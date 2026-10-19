@@ -548,10 +548,25 @@ export const getModelHandler = async ({
         })
       : null;
 
+    // A moderator editing someone else's model: what the owner's account default makes each metric,
+    // so the editor's inherit entry can say so. The owner's own settings are already in the session.
+    const ownerMetricPrivacyDefaults =
+      ctx.user?.isModerator && ctx.user.id !== model.user.id
+        ? getUserMetricPrivacyDefaults(
+            (
+              await dbRead.user.findUnique({
+                where: { id: model.user.id },
+                select: { settings: true },
+              })
+            )?.settings
+          )
+        : null;
+
     return {
       ...model,
       metrics: undefined,
       hiddenMetrics: modelHidden,
+      ownerMetricPrivacyDefaults,
       rank: {
         downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,

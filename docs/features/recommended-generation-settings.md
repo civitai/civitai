@@ -13,7 +13,10 @@
   A non-turbo LoRA has no steps or CFG fields at all, and nothing is applied from an
   ordinary LoRA in the generator.
 - A **checkpoint** version may name a **default turbo LoRA** for the generator's
-  Turbo picker, over the ecosystem default. Recommended steps and CFG on checkpoints
+  Turbo picker, over the ecosystem default. The reference survives the LoRA
+  being unpublished or edited: the editor shows that state under the card, and
+  the generator falls back to the ecosystem default until the LoRA is usable
+  again (PR 2). Only a reference to a deleted version is dropped on save. Recommended steps and CFG on checkpoints
   are deferred (Briant, 2026-10-19): with Turbo off the ecosystem defaults apply.
 - The generator gets a **Turbo picker** outside the resources list: a checkbox and
   the turbo LoRA it uses. Change opens the same resource modal the resources node
@@ -61,7 +64,7 @@
   turbo-style LoRAs and can opt in once their numbers are confirmed from the
   LoRA pages. A parent's entry reaches its children through the defaults
   merge. Only ecosystems with a
-  `lora` show the generator picker; today that is MOSS alone (Z-Image, Flux Draft and Krea 2 Turbo
+  `lora` show the generator picker; MOSS gets its `lora` in PR 2 (Z-Image, Flux Draft and Krea 2 Turbo
   are distilled checkpoints or ecosystems, not LoRAs). Changing the default is a
   constants change and a deploy.
 - **Per-checkpoint override:** `settings.generation.turboLora.id`, picked in the
@@ -76,7 +79,9 @@
   `eq('versions.turbo', true)` for the `filterTurbo` input, beside
   `versions.generatorLoaded`; `selectableVersions` narrows the card to a turbo
   version the same way it does for loaded-only. The modal's existing base-model
-  clause scopes the list to the ecosystem. Saving the version queues the model for
+  clause scopes the list to the ecosystem. The chip also shows in the generator's
+  own resources modal whenever LoRA types are offered, so users can find turbo
+  LoRAs by hand before PR 2 lands; a pinned picker hides it. Saving the version queues the model for
   reindex like any version edit.
 
 ## Version editor
@@ -111,7 +116,10 @@
   range. Scope segments are `[modelId]` plus `['turbo', loraId]` when on, so values
   are remembered per source as MOSS does today.
 - Every image and video graph that has `steps` / `cfgScale` adopts the helper
-  (24 graphs; SD's draft-mode branch keeps its own definitions).
+  (SD's draft-mode branch keeps its own definitions). With a turbo LoRA on, a
+  slider's range widens to cover the LoRA's band and never narrows, so a graph
+  with a higher floor still reaches the LoRA's steps; the editor already bounds
+  what a creator can enter.
 - `mossImageTurboLoraVersions` and `mossImageTurboToggleVersionIds` go away.
 
 ## Generator UI (PR 2)

@@ -333,7 +333,6 @@ export const recommendedRangeSchema = z
     error: 'Default must be within min and max',
     path: ['default'],
   });
-export type RecommendedRange = z.infer<typeof recommendedRangeSchema>;
 
 /** A checkpoint's generation settings. */
 export const recommendedGenerationSettingsSchema = z.object({
@@ -349,7 +348,6 @@ export const turboSettingsSchema = z.object({
   steps: recommendedRangeSchema,
   cfgScale: recommendedRangeSchema,
 });
-export type TurboSettings = z.infer<typeof turboSettingsSchema>;
 
 /** The model types a turbo block may be saved on. */
 export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];

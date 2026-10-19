@@ -2,6 +2,7 @@ import {
   getMetaMetricVisibility,
   getUserMetricPrivacyDefaults,
   modelMetricPrivacyKeys,
+  type HiddenModelMetrics,
   type ModelMetricPrivacyKey,
 } from '~/server/utils/model-metric-privacy';
 
@@ -20,11 +21,14 @@ export function inheritedMetricPrivacy({
   userSettings,
   modelMeta,
   isOwner,
+  ownerDefaults,
 }: {
   level: 'model' | 'version';
   userSettings?: unknown;
   modelMeta?: unknown;
   isOwner: boolean;
+  /** The owner's account defaults, served to a moderator with the model; absent for anyone else. */
+  ownerDefaults?: HiddenModelMetrics | null;
 }): Record<ModelMetricPrivacyKey, InheritedMetricState> {
   const account = isOwner ? getUserMetricPrivacyDefaults(userSettings) : null;
   const model = level === 'version' ? getMetaMetricVisibility(modelMeta) : {};
@@ -33,19 +37,23 @@ export function inheritedMetricPrivacy({
     const modelSetting = model[key];
     if (modelSetting) states[key] = { hidden: modelSetting === 'hide', source: 'model' };
     else if (account) states[key] = { hidden: account[key], source: 'account' };
-    else states[key] = { hidden: null, source: 'owner' };
+    else states[key] = { hidden: ownerDefaults ? ownerDefaults[key] : null, source: 'owner' };
   }
   return states;
 }
 
-const SOURCE_LABEL: Record<InheritedMetricSource, string> = {
-  account: 'your account default',
-  model: 'this model',
-  owner: "the owner's account default",
-};
-
-/** e.g. "Hidden, from your account default" / "Shown, from this model". */
-export function describeInheritedMetric({ hidden, source }: InheritedMetricState) {
-  if (hidden === null) return `Follows ${SOURCE_LABEL[source]}`;
-  return `${hidden ? 'Hidden' : 'Shown'}, from ${SOURCE_LABEL[source]}`;
+/**
+ * The read-time gate is the OWNER's Creator Program membership, so the controls follow the owner:
+ * an owner without one gets no controls, and a moderator editing someone else's model gets live
+ * ones. The owner's membership is only known when the editor is the owner.
+ */
+export function metricPrivacyAccessFor({
+  isOwner,
+  ownerHasMembership,
+}: {
+  isOwner: boolean;
+  ownerHasMembership: boolean;
+}): 'owner' | 'owner-inactive' | 'moderator' {
+  if (!isOwner) return 'moderator';
+  return ownerHasMembership ? 'owner' : 'owner-inactive';
 }

@@ -37,12 +37,19 @@ import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donatio
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
-import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
 import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
 import { RecommendedRangeInputs } from '~/components/Resource/Forms/RecommendedRangeInputs';
+import { scopeRecommendedSettings } from '~/components/Resource/Forms/model-version-settings';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
+import {
+  getMetricVisibilityChoices,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -244,11 +251,17 @@ export function ModelVersionUpsertForm({
     useMutateUserSettings();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const isModelOwner = !model?.user || model.user.id === currentUser?.id;
   const inheritedMetrics = inheritedMetricPrivacy({
     level: 'version',
     userSettings,
     modelMeta: model?.meta,
-    isOwner: !model?.user || model.user.id === currentUser?.id,
+    isOwner: isModelOwner,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
+  });
+  const metricPrivacyAccess = metricPrivacyAccessFor({
+    isOwner: isModelOwner,
+    ownerHasMembership: isActiveCreatorMember,
   });
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
@@ -683,17 +696,10 @@ export function ModelVersionUpsertForm({
     ...data
   }: Schema) => {
     const schemaResult = querySchema.safeParse(router.query);
-    // Each block belongs to one model type; the other type's inputs are never rendered, so a value
-    // here is a leftover (a template, a stale draft), not a choice.
-    const settings = data.settings
-      ? {
-          ...data.settings,
-          generation: showTurboLoraPicker
-            ? { turboLora: data.settings.generation?.turboLora }
-            : undefined,
-          turbo: showTurboSection ? data.settings.turbo : undefined,
-        }
-      : data.settings;
+    const settings = scopeRecommendedSettings(data.settings, {
+      turboSection: showTurboSection,
+      turboLoraPicker: showTurboLoraPicker,
+    });
     const decision = decideModelVersionSubmit(
       { ...data, settings, recommendedResources: rawRecommendedResources },
       {
@@ -1144,23 +1150,6 @@ export function ModelVersionUpsertForm({
                 includeControls={['formatting', 'list', 'link', 'blurb']}
                 editorSize="xl"
               />
-              <Stack gap="xs">
-                <Divider label="Version metric privacy" />
-                <MetricPrivacyControls
-                  level="version"
-                  inherited={inheritedMetrics}
-                  disabled={!isActiveCreatorMember}
-                  note={
-                    <>
-                      These stats appear in this version&apos;s details card. Set the default for
-                      all your models in Creator Controls.{' '}
-                      {isActiveCreatorMember
-                        ? 'You and moderators always see your real stats.'
-                        : 'Requires an active Creator Program membership.'}
-                    </>
-                  }
-                />
-              </Stack>
               {acceptsTrainedWords && (
                 <Stack gap="xs">
                   {!skipTrainedWords && (
@@ -1187,6 +1176,21 @@ export function ModelVersionUpsertForm({
                     />
                   )}
                 </Stack>
+              )}
+              {modelDownloadEnabled && (
+                <InputSwitch
+                  name="requireAuth"
+                  label="Require users to be logged in to download this asset"
+                  description={
+                    <>
+                      This limits a bots ability to download the files associated with this
+                      resource.
+                      <br />
+                      This will also require third-party applications to utilize a user API key to
+                      download the asset files.
+                    </>
+                  }
+                />
               )}
               <Stack gap={4}>
                 <Divider label="Training Params" />
@@ -1352,25 +1356,6 @@ export function ModelVersionUpsertForm({
                       />
                     </>
                   )}
-                </Stack>
-              )}
-              {modelDownloadEnabled && (
-                <Stack gap={8}>
-                  <Divider label="Additional options" />
-
-                  <InputSwitch
-                    name="requireAuth"
-                    label="Require users to be logged in to download this asset"
-                    description={
-                      <>
-                        This limits a bots ability to download the files associated with this
-                        resource.
-                        <br />
-                        This will also require third-party applications to utilize a user API key to
-                        download the asset files.
-                      </>
-                    }
-                  />
                 </Stack>
               )}
             </Stack>
@@ -2082,6 +2067,16 @@ export function ModelVersionUpsertForm({
               </Stack>
             </Card>
           )}
+          <Card withBorder p="md">
+            <Stack gap="sm">
+              <Text fw={600}>Version metric privacy</Text>
+              <MetricPrivacyControls
+                level="version"
+                inherited={inheritedMetrics}
+                access={metricPrivacyAccess}
+              />
+            </Stack>
+          </Card>
         </Stack>
         {children({ loading: upsertVersionMutation.isPending, canSave })}
       </Form>
@@ -2110,7 +2105,13 @@ type Props = {
   // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. The edit
   // page and both wizards pass a query result carrying it; ModelWizard's template/bounty paths don't, but
   // those carry no version `meta` either, so the check lands on asking rather than on a silent bypass.
-  model?: Partial<ModelUpsertInput & { publishedAt: Date | null; user: { id: number } | null }>;
+  model?: Partial<
+    ModelUpsertInput & {
+      publishedAt: Date | null;
+      user: { id: number } | null;
+      ownerMetricPrivacyDefaults: HiddenModelMetrics | null;
+    }
+  >;
   // Base model of the model's most recent existing version; used to default the
   // picker when adding a brand-new version to an existing model.
   previousBaseModel?: string | null;

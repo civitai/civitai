@@ -533,12 +533,7 @@ function assertOwnerTrainingStatusChange(
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
 
-/**
- * The turbo block marks a LoRA as a turbo variant and the generation block is a checkpoint's own
- * recommendation; saved on the wrong type, each would steer the generator from a resource it never
- * reads them on. Turbo is also an ecosystem opt-in: only one with turbo defaults takes a turbo
- * variant or names a default turbo LoRA.
- */
+/** Turbo is an ecosystem opt-in: a turbo block or default turbo LoRA is refused where the ecosystem has no turbo defaults. */
 export function assertRecommendedSettingsForType(
   settings: ModelVersionUpsertInput['settings'],
   { modelType, baseModel }: { modelType: ModelType; baseModel?: string | null }
@@ -552,6 +547,17 @@ export function assertRecommendedSettingsForType(
     throw throwBadRequestError(
       `Turbo LoRAs are not supported for ${baseModel ?? 'this base model'}`
     );
+}
+
+/** The default turbo LoRA reference survives that LoRA being unpublished or edited; only a deleted version is dropped. */
+async function withExistingTurboLora<T extends ModelVersionUpsertInput['settings']>(
+  settings: T
+): Promise<T> {
+  const id = settings?.generation?.turboLora?.id;
+  if (!id) return settings;
+  const lora = await getVersionById({ id, select: { id: true } });
+  if (lora) return settings;
+  return { ...settings, generation: { ...settings?.generation, turboLora: null } };
 }
 
 export const upsertModelVersion = async ({
@@ -623,6 +629,7 @@ export const upsertModelVersion = async ({
     select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
   assertRecommendedSettingsForType(settings, { modelType: model.type, baseModel: data.baseModel });
+  settings = await withExistingTurboLora(settings);
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit

@@ -57,17 +57,14 @@ export type RecommendedRange = { min: number; max: number; default: number };
 /** The settings a turbo LoRA applies when it is on. */
 export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
 
-/**
- * Distillation recipes recur across ecosystems, so an opt-in names a preset rather than its own
- * numbers. Each preset's numbers are what the LoRA pages on the site state for that ecosystem.
- */
+/** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
 export const TURBO_PRESETS = {
-  /** The MOSS Image DMD LoRAs: 8 steps (the Base one also 4 to 8), designed to run without CFG. */
+  /** The MOSS Image DMD LoRAs, designed to run without CFG. */
   mossDmd: {
     steps: { min: 4, max: 8, default: 8 },
     cfgScale: { min: 1, max: 1, default: 1 },
   },
-  /** The Anima turbo / DMD2 LoRAs: CFG 1 at 8 to 12 steps, up to 16; CFG 1.2 to 1.4 with more steps. */
+  /** The Anima turbo / DMD2 LoRAs: CFG stays at 1 unless the step count goes up. */
   animaDmd2: {
     steps: { min: 8, max: 16, default: 12 },
     cfgScale: { min: 1, max: 1.4, default: 1 },

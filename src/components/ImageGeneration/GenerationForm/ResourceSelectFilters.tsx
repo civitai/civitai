@@ -53,7 +53,6 @@ export function ResourceSelectFiltersDropdown() {
   } = useResourceSelectContext();
   const features = useFeatureFlags();
   const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
-  // Only LoRA types carry a turbo block; a pinned picker has nothing to toggle.
   const canFilterTurbo =
     !turboPinned &&
     (resources.length === 0 ||

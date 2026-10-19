@@ -17,6 +17,21 @@ describe('assertRecommendedSettingsForType', () => {
     ).not.toThrow();
   });
 
+  it.each(['LoCon', 'DoRA'] as const)('takes a turbo block on a %s too', (modelType) => {
+    expect(() =>
+      assertRecommendedSettingsForType({ turbo }, { modelType, baseModel: 'MOSS Image' })
+    ).not.toThrow();
+  });
+
+  it('refuses a checkpoint block on a LoRA, even in an opted-in ecosystem', () => {
+    expect(() =>
+      assertRecommendedSettingsForType(
+        { generation: { turboLora: { id: 1 } } },
+        { modelType: 'LORA', baseModel: 'MOSS Image' }
+      )
+    ).toThrow(/checkpoint/);
+  });
+
   it('refuses a turbo block on a checkpoint', () => {
     expect(() =>
       assertRecommendedSettingsForType(

@@ -61,7 +61,6 @@ type ResourceSelectState = Omit<
   setTab: React.Dispatch<React.SetStateAction<Tabs>>;
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
-  /** The caller pinned the picker to turbo variants, so the chip is not offered. */
   turboPinned: boolean;
   sort: ResourceSort;
   setSort: React.Dispatch<React.SetStateAction<ResourceSort>>;

@@ -37,7 +37,6 @@ describe('selectableVersions', () => {
     ).toEqual([2]);
   });
 
-  // Same shape: one turbo version makes the model match, and the card must open on that one.
   it('keeps only turbo versions under the turbo filter', () => {
     expect(
       pick([version(1), version(2, { turbo: true }), version(3)], { turboOnly: true })

@@ -1,12 +1,7 @@
-import { Button, Collapse, Group, Input, Stack, Text } from '@mantine/core';
-import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
-import { useState } from 'react';
+import { Alert, Badge, Group, Stack, Text } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
-import {
-  describeInheritedMetric,
-  type InheritedMetricState,
-} from '~/components/Resource/Forms/metric-privacy-hints';
-import { InputSegmentedControl } from '~/libs/form';
+import type { InheritedMetricState } from '~/components/Resource/Forms/metric-privacy-hints';
+import { InputSelect } from '~/libs/form';
 import {
   modelMetricPrivacyKeys,
   type MetricVisibilityChoice,
@@ -19,85 +14,89 @@ const METRIC_LABEL: Record<ModelMetricPrivacyKey, string> = {
   generations: 'Generations',
 };
 
-const CHOICES: { label: string; value: MetricVisibilityChoice }[] = [
-  { label: 'Inherit', value: 'inherit' },
-  { label: 'Hide', value: 'hide' },
-  { label: 'Show', value: 'show' },
-];
+const INHERIT_LABEL: Record<InheritedMetricState['source'], string> = {
+  account: 'Inherit from account',
+  model: 'Inherit from model',
+  owner: "Inherit from owner's account",
+};
 
 /**
- * Metric privacy for one model or version: what each stat inherits, and a collapsed per-metric
- * override (inherit / hide / show) bound to `meta.metricVisibility.<metric>`. The account default
- * in Creator Controls is the primary control; this is the exception to it.
+ * Who is editing, relative to the owner whose Creator Program membership gates the feature at read
+ * time. An owner without one gets the sentence and no controls; a moderator gets live controls,
+ * since the stored choice takes effect once the owner qualifies.
+ */
+export type MetricPrivacyAccess = 'owner' | 'owner-inactive' | 'moderator';
+
+/**
+ * Metric privacy for one model or version: one row per stat with the effective result and a select
+ * bound to `meta.metricVisibility.<metric>`, whose inherit entry names its source. The account
+ * default in Creator Controls is the primary control; this is the exception to it.
  */
 export function MetricPrivacyControls({
   level,
   inherited,
-  disabled,
-  note,
+  access,
 }: {
   level: 'model' | 'version';
   inherited: Record<ModelMetricPrivacyKey, InheritedMetricState>;
-  disabled?: boolean;
-  note?: React.ReactNode;
+  access: MetricPrivacyAccess;
 }) {
   const { watch } = useFormContext();
   const choices = watch('meta.metricVisibility') as
     | Partial<Record<ModelMetricPrivacyKey, MetricVisibilityChoice>>
     | undefined;
-  const overrides = modelMetricPrivacyKeys.filter(
-    (key) => choices?.[key] && choices[key] !== 'inherit'
-  );
-  const [open, setOpen] = useState(overrides.length > 0);
+
+  if (access === 'owner-inactive')
+    return (
+      <Alert color="yellow" data-testid={`metric-privacy-${level}`}>
+        Metric privacy applies while you hold an active Creator Program membership. These stats are
+        shown until then.
+      </Alert>
+    );
 
   return (
     <Stack gap="xs" data-testid={`metric-privacy-${level}`}>
-      {note && (
-        <Text size="xs" c="dimmed">
-          {note}
-        </Text>
-      )}
-      {modelMetricPrivacyKeys.map((key) => (
-        <Group key={key} justify="space-between" gap="xs" wrap="nowrap">
-          <Text size="sm">{METRIC_LABEL[key]}</Text>
-          <Text size="xs" c="dimmed" data-testid={`metric-privacy-inherited-${key}`}>
-            {choices?.[key] && choices[key] !== 'inherit'
-              ? `${choices[key] === 'hide' ? 'Hidden' : 'Shown'}, overridden for this ${level}`
-              : describeInheritedMetric(inherited[key])}
-          </Text>
-        </Group>
-      ))}
-      <Button
-        variant="subtle"
-        size="compact-sm"
-        onClick={() => setOpen((value) => !value)}
-        rightSection={open ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
-        className="self-start"
-        data-testid={`metric-privacy-override-toggle-${level}`}
-      >
-        Override for this {level}
-        {overrides.length ? ` (${overrides.length})` : ''}
-      </Button>
-      <Collapse in={open}>
-        <Stack gap="xs">
-          {modelMetricPrivacyKeys.map((key) => (
-            <Input.Wrapper key={key} label={METRIC_LABEL[key]}>
-              <InputSegmentedControl
-                name={`meta.metricVisibility.${key}`}
-                data={CHOICES}
-                size="xs"
-                disabled={disabled}
-                fullWidth
-              />
-            </Input.Wrapper>
-          ))}
-          {level === 'version' && (
-            <Text size="xs" c="dimmed">
-              Show reveals this version&apos;s own count even when the model hides it.
-            </Text>
-          )}
-        </Stack>
-      </Collapse>
+      <Text size="xs" c="dimmed">
+        {level === 'model'
+          ? "What this model's page and cards show."
+          : "What this version's details card shows."}{' '}
+        {access === 'moderator'
+          ? 'Applies while the owner holds an active Creator Program membership.'
+          : 'You and moderators always see the real numbers.'}
+      </Text>
+      {modelMetricPrivacyKeys.map((key) => {
+        const choice = choices?.[key] ?? 'inherit';
+        const hidden = choice === 'inherit' ? inherited[key].hidden : choice === 'hide';
+        return (
+          <Group key={key} justify="space-between" gap="xs" wrap="nowrap">
+            <Group gap="xs" wrap="nowrap">
+              <Text size="sm">{METRIC_LABEL[key]}</Text>
+              {hidden !== null && (
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={hidden ? 'red' : 'green'}
+                  data-testid={`metric-privacy-effective-${key}`}
+                >
+                  {hidden ? 'hidden' : 'shown'}
+                </Badge>
+              )}
+            </Group>
+            <InputSelect
+              name={`meta.metricVisibility.${key}`}
+              size="xs"
+              w={210}
+              allowDeselect={false}
+              data-testid={`metric-privacy-select-${key}`}
+              data={[
+                { value: 'inherit', label: INHERIT_LABEL[inherited[key].source] },
+                { value: 'hide', label: `Hide for this ${level}` },
+                { value: 'show', label: `Show for this ${level}` },
+              ]}
+            />
+          </Group>
+        );
+      })}
     </Stack>
   );
 }
