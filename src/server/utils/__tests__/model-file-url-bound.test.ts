@@ -181,6 +181,11 @@ describe('urls refused before any rule is matched', () => {
       `https://${R2_BUCKET}.acct.r2.example.com.evil.example/${own}`,
       'unknown-host',
     ],
+    [
+      'a nested host under the bucket',
+      `https://x.${R2_BUCKET}.acct.r2.example.com/${own}`,
+      'unknown-host',
+    ],
     ['another port', `https://acct.r2.example.com:8443/${R2_BUCKET}/${own}`, 'unknown-host'],
     ['plain http', `http://acct.r2.example.com/${R2_BUCKET}/${own}`, 'unknown-host'],
     ['not a url', 'model/7/x.bin', 'malformed'],
