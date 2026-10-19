@@ -40,10 +40,25 @@ describe('liftStorylineScanTakedown', () => {
     expect(await lift()).toEqual({ ok: true, tosViolation: true });
   });
 
+  // A timeout told as a refusal reads as "not lifted", and a retry is then refused as not scan-held.
+  it.each([
+    ['a timeout', { ok: false, error: 'Lift takedown failed.', requestNeverSent: false }],
+    ['a server error', { ok: false, error: 'Lift takedown returned 502.', status: 502 }],
+  ])('says the lift may have gone through after %s', async (_label, outcome) => {
+    callModEndpoint.mockResolvedValue(outcome);
+
+    const result = await lift();
+
+    expect(result).toEqual({ ok: false, error: expect.stringMatching(/may have gone through/) });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
   it('passes on a refusal and records nothing', async () => {
     callModEndpoint.mockResolvedValue({
       ok: false,
       error: 'Lift takedown: The title has changed since it was reviewed',
+      status: 400,
+      reason: 'The title has changed since it was reviewed',
     });
 
     expect(await lift()).toEqual({

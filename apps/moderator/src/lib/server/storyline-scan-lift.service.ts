@@ -20,7 +20,16 @@ export async function liftStorylineScanTakedown({
     { storylineId, reviewedTitle },
     'Lift takedown'
   );
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) {
+    // A timeout, dropped socket or server error may come after the main app lifted it.
+    const mayHaveLifted = !result.requestNeverSent && (result.status ?? 500) >= 500;
+    return {
+      ok: false,
+      error: mayHaveLifted
+        ? 'The lift did not get an answer and may have gone through. Reload to check before lifting again.'
+        : result.error,
+    };
+  }
   await recordModActivity({
     userId: moderatorId,
     entityType: 'storyline',

@@ -28,7 +28,7 @@ vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   delistGame,
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-// Calls the main app over HTTP as the request's moderator, which needs a SvelteKit request in scope.
+// Imports the main-app client (`$app/server`, private env), which nothing else in this graph loads.
 vi.mock('$lib/server/storyline-scan-lift.service', () => ({ liftStorylineScanTakedown: vi.fn() }));
 // Stubbed for a different reason than the others: no database, but `canAccess` reads a grants store
 // only the request hook fills, so the real one answers false for everything here.
