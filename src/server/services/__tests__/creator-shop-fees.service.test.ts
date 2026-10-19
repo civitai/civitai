@@ -91,6 +91,18 @@ describe('getCreatorShopFees', () => {
     );
   });
 
+  // The two non-type fees are separate figures: setting one must not price the other.
+  it('resolves the mystery pack fee independently of the pack fee', async () => {
+    stored({ pack: 2000, mysteryPack: 3000 });
+    const fees = await getCreatorShopFees();
+
+    expect(fees.pack).toBe(2000);
+    expect(fees.mysteryPack).toBe(3000);
+
+    stored({ pack: 2000 });
+    expect((await getCreatorShopFees()).mysteryPack).toBe(DEFAULT_CREATOR_SHOP_FEES.mysteryPack);
+  });
+
   it('keeps a usable sibling when one type is junk', async () => {
     stored({ submission: { Sticker: 5000, Badge: 'free' } });
     const fees = await getCreatorShopFees();
@@ -126,6 +138,16 @@ describe('setCreatorShopFees', () => {
     expect(next.submission.Badge).toBe(12000);
     expect(next.pack).toBe(2000);
     expect(mocks.executeRawUnsafe).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the mystery pack fee alone when another fee is set, and sets it alone', async () => {
+    stored({ pack: 2000, mysteryPack: 3000 });
+    expect((await setCreatorShopFees({ pack: 2500 })).mysteryPack).toBe(3000);
+
+    stored({ pack: 2000, mysteryPack: 3000 });
+    const next = await setCreatorShopFees({ mysteryPack: 4000 });
+    expect(next.mysteryPack).toBe(4000);
+    expect(next.pack).toBe(2000);
   });
 
   // This write decides how much Buzz every creator is charged before review, so

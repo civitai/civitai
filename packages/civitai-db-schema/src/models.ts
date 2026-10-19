@@ -756,6 +756,7 @@ export interface User {
   serviceOfferings?: ServiceOffering[];
   serviceDealsBought?: ServiceDeal[];
   serviceDealsSold?: ServiceDeal[];
+  mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
 }
 
@@ -3426,6 +3427,8 @@ export interface ItemDefinition {
   status: string;
   createdById: number | null;
   updatedById: number | null;
+  sellerId: number | null;
+  seller?: User | null;
   createdAt: Date;
   updatedAt: Date;
   items?: Item[];
@@ -3433,6 +3436,7 @@ export interface ItemDefinition {
   boxContents?: BoxContent[];
   rewardOf?: BoxContent[];
   oddsSnapshots?: BoxOddsSnapshot[];
+  revisions?: BoxRevision[];
   shopItems?: CosmeticShopItem[];
 }
 
@@ -3489,6 +3493,21 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  createdAt: Date;
+}
+
+export interface BoxRevision {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  baseVersion: number;
+  proposal: JsonValue;
+  status: string;
+  appliedVersion: number | null;
+  submittedById: number;
+  reviewedById: number | null;
+  reviewedAt: Date | null;
+  note: string | null;
   createdAt: Date;
 }
 

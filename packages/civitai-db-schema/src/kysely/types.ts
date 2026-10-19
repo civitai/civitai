@@ -1852,6 +1852,31 @@ export type BoxOpening = {
   rewardStatus: string;
   createdAt: Generated<Timestamp>;
 };
+export type BoxRevision = {
+  id: Generated<number>;
+  boxDefinitionId: number;
+  /**
+   * The box version the proposal was made against. Approval refuses it once the box has moved on.
+   */
+  baseVersion: number;
+  /**
+   * { steepness, tiers: [{ key, cosmeticIds }], price }
+   */
+  proposal: unknown;
+  /**
+   * pending | approved | rejected | withdrawn | stale (text + CHECK)
+   */
+  status: Generated<string>;
+  /**
+   * The box version approval produced.
+   */
+  appliedVersion: number | null;
+  submittedById: number;
+  reviewedById: number | null;
+  reviewedAt: Timestamp | null;
+  note: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type BoxTier = {
   id: Generated<number>;
   boxDefinitionId: number;
@@ -3358,6 +3383,10 @@ export type ItemDefinition = {
   status: Generated<string>;
   createdById: number | null;
   updatedById: number | null;
+  /**
+   * A creator box: the user its sales pay. NULL = a platform box, which pays no one. Only a box has one (CHECK).
+   */
+  sellerId: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
 };
@@ -5855,6 +5884,7 @@ export type DB = {
   BoxContent: BoxContent;
   BoxOddsSnapshot: BoxOddsSnapshot;
   BoxOpening: BoxOpening;
+  BoxRevision: BoxRevision;
   BoxTier: BoxTier;
   Bug: Bug;
   BuildGuide: BuildGuide;
