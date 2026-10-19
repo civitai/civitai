@@ -1,3 +1,4 @@
+import { CosmeticShopItemStatus, CosmeticType } from '@civitai/db-schema/enums';
 import { describe, expect, it } from 'vitest';
 import {
   CREATOR_BOX_MAX_CONTENTS,
@@ -5,6 +6,7 @@ import {
   CREATOR_BOX_MIN_CONTENTS,
   CREATOR_BOX_MIN_TIERS,
   CREATOR_BOX_STEEPNESS,
+  CREATOR_BOX_TIERS,
   CREATOR_BOX_WEIGHT_TOTAL,
   creatorBoxContentProblem,
   creatorBoxContentValue,
@@ -95,10 +97,33 @@ describe('creatorBoxWeights over every layout and preset', () => {
     }
   );
 
-  it("the design's worked example: 10 / 5 / 2 / 1 items, Standard", () => {
-    expect(creatorBoxWeights([10, 5, 2, 1], 'standard')).toEqual({
-      ok: true,
-      weights: [8075, 1615, 258, 52],
+  // One vector per preset pins the steepness fractions themselves, which the exhaustive test can't
+  // see: its oracle reads the same fractions.
+  it.each<[CreatorBoxSteepness, number[]]>([
+    ['gentle', [7176, 2153, 516, 155]],
+    ['standard', [8075, 1615, 258, 52]],
+    ['steep', [9019, 902, 72, 7]],
+  ])("the design's worked example, 10 / 5 / 2 / 1 items: %s", (steepness, weights) => {
+    expect(creatorBoxWeights([10, 5, 2, 1], steepness)).toEqual({ ok: true, weights });
+  });
+
+  it('names tiers by count, commonest first', () => {
+    expect(CREATOR_BOX_TIERS).toEqual({
+      2: [
+        { key: 'common', name: 'Common' },
+        { key: 'rare', name: 'Rare' },
+      ],
+      3: [
+        { key: 'common', name: 'Common' },
+        { key: 'rare', name: 'Rare' },
+        { key: 'legendary', name: 'Legendary' },
+      ],
+      4: [
+        { key: 'common', name: 'Common' },
+        { key: 'uncommon', name: 'Uncommon' },
+        { key: 'rare', name: 'Rare' },
+        { key: 'legendary', name: 'Legendary' },
+      ],
     });
   });
 
@@ -207,15 +232,21 @@ describe('creatorBoxPriceBounds', () => {
       500
     );
     expect(bounds.average).toBe(507);
+    expect(creatorBoxPriceProblem(507, bounds)).toBeNull();
   });
 
-  it.each([
-    ['a zero weight', [{ weight: 0, values: [500] }]],
-    ['an empty tier', [{ weight: 1, values: [] }]],
-    ['a zero value', [{ weight: 1, values: [0] }]],
-    ['no tiers', []],
-  ])('throws on %s', (_label, tiers) => {
-    expect(() => creatorBoxPriceBounds(tiers, 500)).toThrow(RangeError);
+  const tier = [{ weight: 1, values: [500] }];
+  it.each<[string, { weight: number; values: number[] }[], number]>([
+    ['a zero weight', [{ weight: 0, values: [500] }], 500],
+    ['an empty tier', [{ weight: 1, values: [] }], 500],
+    ['a zero value', [{ weight: 1, values: [0] }], 500],
+    ['no tiers', [], 500],
+    // A floor read from config that came back unset would otherwise allow a free box.
+    ['a missing floor', tier, NaN],
+    ['a zero floor', tier, 0],
+    ['a negative floor', tier, -50],
+  ])('throws on %s', (_label, tiers, floor) => {
+    expect(() => creatorBoxPriceBounds(tiers, floor)).toThrow(RangeError);
   });
 });
 
@@ -235,8 +266,10 @@ describe('creatorBoxPriceProblem', () => {
     expect(creatorBoxPriceProblem(price, bounds)).toBe(problem);
   });
 
-  it('refuses above twice the worst draw', () => {
-    expect(creatorBoxPriceProblem(1001, { min: 500, max: 1000, average: 1400, worst: 500 })).toBe(
+  it('allows exactly twice the worst draw and refuses one more', () => {
+    const capped = { min: 500, max: 1000, average: 1400, worst: 500 };
+    expect(creatorBoxPriceProblem(1000, capped)).toBeNull();
+    expect(creatorBoxPriceProblem(1001, capped)).toBe(
       'The price is at most 1000, 2 times the least valuable item'
     );
   });
@@ -256,14 +289,20 @@ describe('creatorBoxContentValue', () => {
 
 describe('creatorBoxContentProblem', () => {
   const now = new Date('2026-10-19T00:00:00Z');
-  const rules = { creatorId: 7, types: ['Badge', 'Sticker'], stickersEnabled: true, now };
+  const rules = {
+    creatorId: 7,
+    types: [CosmeticType.Badge, CosmeticType.Sticker],
+    stickersEnabled: true,
+    now,
+  };
   const qualifying: CreatorBoxCandidate = {
     cosmeticId: 1,
-    type: 'Badge',
+    type: CosmeticType.Badge,
     createdById: 7,
-    isEvent: false,
+    data: { url: 'badge.png' },
     listing: {
-      status: 'Published',
+      addedById: 7,
+      status: CosmeticShopItemStatus.Published,
       archivedAt: null,
       availableQuantity: null,
       availableFrom: null,
@@ -274,10 +313,13 @@ describe('creatorBoxContentProblem', () => {
     ...qualifying,
     listing: { ...qualifying.listing!, ...listing },
   });
+  const notLive = 'Only items approved and live in your shop can go in a mystery pack';
+  const limited = "Items with limited stock or an end date can't go in a mystery pack";
 
   // Each refusal below changes one field of this candidate, so this is their control.
-  it('accepts an own, live, uncapped item', () => {
+  it('accepts an own, live, uncapped item, including one whose sale started now or earlier', () => {
     expect(creatorBoxContentProblem(qualifying, rules)).toBeNull();
+    expect(creatorBoxContentProblem(withListing({ availableFrom: now }), rules)).toBeNull();
     expect(
       creatorBoxContentProblem(withListing({ availableFrom: new Date('2026-10-01') }), rules)
     ).toBeNull();
@@ -290,36 +332,37 @@ describe('creatorBoxContentProblem', () => {
       'Only items you made can go in your mystery pack',
     ],
     [
-      'an item with no listing of its creator',
-      { ...qualifying, listing: null },
-      'Only items approved and live in your shop can go in a mystery pack',
+      'a platform item',
+      { ...qualifying, createdById: null },
+      'Only items you made can go in your mystery pack',
     ],
+    ['an item with no listing', { ...qualifying, listing: null }, notLive],
+    // A reseller's listing of the creator's own item is not the creator's listing.
+    ["another creator's listing of it", withListing({ addedById: 8 }), notLive],
     [
       'an item pending review',
-      withListing({ status: 'Pending' }),
-      'Only items approved and live in your shop can go in a mystery pack',
+      withListing({ status: CosmeticShopItemStatus.PendingReview }),
+      notLive,
     ],
-    [
-      'an archived listing',
-      withListing({ archivedAt: new Date('2026-10-01') }),
-      'Only items approved and live in your shop can go in a mystery pack',
-    ],
+    ['an archived listing', withListing({ archivedAt: new Date('2026-10-01') }), notLive],
     [
       'a type creators cannot sell',
-      { ...qualifying, type: 'NamePlate' },
+      { ...qualifying, type: CosmeticType.NamePlate },
       "This kind of item can't go in a mystery pack",
     ],
-    ['an event item', { ...qualifying, isEvent: true }, "Event items can't go in a mystery pack"],
     [
-      'a capped listing',
-      withListing({ availableQuantity: 100 }),
-      "Items with limited stock or an end date can't go in a mystery pack",
+      'an event item',
+      { ...qualifying, data: { event: 'birthday' } },
+      "Event items can't go in a mystery pack",
     ],
     [
-      'a listing with an end date',
-      withListing({ availableTo: new Date('2026-12-01') }),
-      "Items with limited stock or an end date can't go in a mystery pack",
+      'a team item',
+      { ...qualifying, data: { team: 'red' } },
+      "Team items can't go in a mystery pack",
     ],
+    ['a capped listing', withListing({ availableQuantity: 100 }), limited],
+    ['a listing capped at zero', withListing({ availableQuantity: 0 }), limited],
+    ['a listing with an end date', withListing({ availableTo: new Date('2026-12-01') }), limited],
     [
       'a listing not on sale yet',
       withListing({ availableFrom: new Date('2026-11-01') }),
@@ -330,7 +373,7 @@ describe('creatorBoxContentProblem', () => {
   });
 
   it('refuses a sticker only while stickers are off', () => {
-    const sticker = { ...qualifying, type: 'Sticker' };
+    const sticker = { ...qualifying, type: CosmeticType.Sticker };
     expect(creatorBoxContentProblem(sticker, rules)).toBeNull();
     expect(creatorBoxContentProblem(sticker, { ...rules, stickersEnabled: false })).toBe(
       "This kind of item can't go in a mystery pack"

@@ -34,6 +34,12 @@ export const ITEM_DEFINITION_STATUS = {
 export type ItemDefinitionStatus =
   (typeof ITEM_DEFINITION_STATUS)[keyof typeof ITEM_DEFINITION_STATUS];
 
+/** The event a cosmetic is sold for (`Cosmetic.data.event`), if any. */
+export function cosmeticEventOf(data: unknown): string | undefined {
+  const event = (data as { event?: unknown } | null)?.event;
+  return typeof event === 'string' ? event : undefined;
+}
+
 /** The team a cosmetic was made for (`Cosmetic.data.team`), if any. */
 export function cosmeticTeamOf(data: unknown): string | undefined {
   const team = (data as { team?: unknown } | null)?.team;

@@ -7,6 +7,8 @@
  * tier's weight is proportional to `items in tier × r^tier` (Common is tier 0). Every item in a tier
  * is then `r` times as likely as one in the tier below it.
  */
+import { CosmeticShopItemStatus, CosmeticType } from '@civitai/db-schema/enums';
+import { cosmeticEventOf, cosmeticTeamOf } from './mystery-box';
 
 export const CREATOR_BOX_MIN_CONTENTS = 6;
 export const CREATOR_BOX_MAX_CONTENTS = 50;
@@ -50,13 +52,14 @@ export const CREATOR_BOX_TIERS: Record<number, readonly CreatorBoxTierName[]> = 
 
 export type CreatorBoxCandidate = {
   cosmeticId: number;
-  type: string;
+  type: CosmeticType;
   createdById: number | null;
-  /** `isEventShopItemData(cosmetic.data)`: event items are gated per buyer and team. */
-  isEvent: boolean;
-  /** The creator's own listing of it (`addedById` = the creator), if any. */
+  /** `Cosmetic.data`. */
+  data: unknown;
+  /** The creator's own listing of it, if any. */
   listing: {
-    status: string;
+    addedById: number | null;
+    status: CosmeticShopItemStatus;
     archivedAt: Date | null;
     availableQuantity: number | null;
     availableFrom: Date | null;
@@ -75,15 +78,27 @@ export function creatorBoxContentProblem(
     types,
     stickersEnabled,
     now,
-  }: { creatorId: number; types: readonly string[]; stickersEnabled: boolean; now: Date }
+  }: { creatorId: number; types: readonly CosmeticType[]; stickersEnabled: boolean; now: Date }
 ): string | null {
   if (candidate.createdById !== creatorId) return 'Only items you made can go in your mystery pack';
   const { listing } = candidate;
-  if (!listing || listing.status !== 'Published' || listing.archivedAt)
+  if (
+    !listing ||
+    listing.addedById !== creatorId ||
+    listing.status !== CosmeticShopItemStatus.Published ||
+    listing.archivedAt
+  )
     return 'Only items approved and live in your shop can go in a mystery pack';
-  if (!types.includes(candidate.type) || (candidate.type === 'Sticker' && !stickersEnabled))
+  if (
+    !types.includes(candidate.type) ||
+    (candidate.type === CosmeticType.Sticker && !stickersEnabled)
+  )
     return "This kind of item can't go in a mystery pack";
-  if (candidate.isEvent) return "Event items can't go in a mystery pack";
+  // Event items are gated per buyer; a team item is drawn only by its team, so it would count
+  // toward the price bounds for buyers who can never get it.
+  if (cosmeticEventOf(candidate.data) !== undefined)
+    return "Event items can't go in a mystery pack";
+  if (cosmeticTeamOf(candidate.data) !== undefined) return "Team items can't go in a mystery pack";
   // A box draw doesn't count against a listing's stock or sale window, so a capped or scheduled
   // item would sell past its cap, before its drop or after it ended.
   if (listing.availableQuantity !== null || listing.availableTo !== null)
@@ -201,20 +216,24 @@ export function creatorBoxPriceBounds(
       throw new RangeError('Item values are positive integers');
   }
   if (!tiers.length) throw new RangeError('A box needs at least one tier');
+  // The floor is the only lower bound on the price, so a missing or zero floor would allow a free box.
+  if (!Number.isSafeInteger(floor) || floor < 1)
+    throw new RangeError(`Price floor ${floor} is not a positive integer`);
 
   // average = Σ weight × mean(values) / Σ weight, exactly: over the common denominator
   // Π(tier sizes) × Σ weight, in BigInt because values are creator-set and unbounded.
+  const zero = BigInt(0);
   const sizes = tiers.map((tier) => BigInt(tier.values.length));
-  const product = sizes.reduce((a, b) => a * b, 1n);
+  const product = sizes.reduce((a, b) => a * b, BigInt(1));
   const numerator = tiers.reduce(
     (acc, tier, i) =>
       acc +
       BigInt(tier.weight) *
-        tier.values.reduce((sum, v) => sum + BigInt(v), 0n) *
+        tier.values.reduce((sum, v) => sum + BigInt(v), zero) *
         (product / sizes[i]),
-    0n
+    zero
   );
-  const totalWeight = tiers.reduce((sum, tier) => sum + BigInt(tier.weight), 0n);
+  const totalWeight = tiers.reduce((sum, tier) => sum + BigInt(tier.weight), zero);
   const average = Number(numerator / (product * totalWeight));
   const worst = Math.min(...tiers.flatMap((tier) => tier.values));
   return {
