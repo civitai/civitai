@@ -1295,7 +1295,7 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
-type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean };
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean; withheld: boolean };
 
 export const getUserCosmeticsHandler = async ({
   input,
