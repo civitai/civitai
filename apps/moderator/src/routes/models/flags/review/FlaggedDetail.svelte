@@ -230,11 +230,11 @@
       {civitaiUrl}
     >
       {#snippet chips()}
-        <FlaggedSourceBadge {row} size="md" />
-        <FlagBadge label={row.label} size="md" />
-        {#if row.hasPendingAppeal}<MetaChip size="md" tone="amber">also in Appeals</MetaChip>{/if}
+        <FlaggedSourceBadge {row} />
+        <FlagBadge label={row.label} />
+        {#if row.hasPendingAppeal}<MetaChip tone="amber">also in Appeals</MetaChip>{/if}
         {#if row.daysLeft !== null}
-          <MetaChip size="md" tone="amber"
+          <MetaChip tone="amber"
             >{row.daysLeft === 0 ? 'review window closed' : `${row.daysLeft} d left in review window`}</MetaChip
           >
         {/if}
@@ -271,8 +271,8 @@
       <div
         class={scanEntry?.names?.length ? 'grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]' : ''}
       >
-        <TriageCard title="Why it was flagged">
-          <div class="space-y-2 text-base text-dark-0">
+        <TriageCard dense title="Why it was flagged">
+          <div class="space-y-2 text-dark-0">
             <p class="m-0">
               Text scan: {labelName}
               {#if row.flaggedAt}
@@ -324,8 +324,8 @@
       />
     {:else}
       <div class="grid gap-4 lg:grid-cols-2">
-        <TriageCard title="Why it was flagged">
-          <div class="space-y-2 text-base text-dark-0">
+        <TriageCard dense title="Why it was flagged">
+          <div class="space-y-2 text-dark-0">
             <p class="m-0">
               Its main file is byte-identical to a file in a model a moderator flagged as minor. The
               flag was applied automatically.

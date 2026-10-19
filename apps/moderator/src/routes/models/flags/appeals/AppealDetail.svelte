@@ -200,9 +200,9 @@
       {civitaiUrl}
     >
       {#snippet chips()}
-        <MetaChip size="md" tone="amber">appeal</MetaChip>
-        <AppealTags {row} size="md" />
-        <MetaChip size="md" tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
+        <MetaChip tone="amber">appeal</MetaChip>
+        <AppealTags {row} />
+        <MetaChip tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
       {/snippet}
     </ModelDetailHeader>
 

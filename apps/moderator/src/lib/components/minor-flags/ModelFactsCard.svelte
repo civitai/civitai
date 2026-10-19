@@ -22,8 +22,8 @@
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
 </script>
 
-<TriageCard title="Model">
-  <p class="m-0 text-base text-dark-0">
+<TriageCard dense title="Model">
+  <p class="m-0 text-dark-0">
     {row.modelType}{row.baseModel ? ` · ${row.baseModel}` : ''} ·
     <span title={dateTime(row.modelCreatedAt)}>uploaded {shortAge(row.modelCreatedAt)} ago</span>
   </p>

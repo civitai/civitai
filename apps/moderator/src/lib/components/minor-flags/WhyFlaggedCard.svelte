@@ -37,8 +37,8 @@
   const hashDetail = $derived(browser && isHash ? fetchHashDetail(modelId) : null);
 </script>
 
-<TriageCard title="Why it was flagged">
-  <div class="space-y-2 text-base text-dark-0">
+<TriageCard dense title="Why it was flagged">
+  <div class="space-y-2 text-dark-0">
     <p class="m-0">{sourceLabel(row.flagSource, row.flagConfirmedFrom)}</p>
 
     {#if row.flaggedAt}

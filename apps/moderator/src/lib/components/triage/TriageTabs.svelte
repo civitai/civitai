@@ -20,7 +20,7 @@
   const counts = sidebarCounts();
 </script>
 
-<nav class="flex gap-2 border-b border-dark-4 px-6" aria-label={label}>
+<nav class="flex items-end gap-1 border-b border-dark-4 px-6 pt-3.5" aria-label={label}>
   {#each tabs as t (t.href)}
     {@const count = t.countKey ? counts.value?.[t.countKey] : undefined}
     {@const active = isPathActive(t.href, current)}
@@ -28,27 +28,27 @@
       href={t.href}
       aria-current={active ? 'page' : undefined}
       class={cn(
-        '-mb-px flex flex-col gap-0.5 border-b-2 px-4 pt-1 pb-2',
+        '-mb-px flex flex-col gap-0.5 border-b-2 px-3 pt-1.5 pb-2.5',
         active
-          ? 'border-blue-500 text-white'
-          : 'border-transparent text-dark-1 hover:text-white'
+          ? 'border-blue-500 font-semibold text-white'
+          : 'border-transparent font-medium text-dark-0 hover:text-white'
       )}
     >
-      <span class="flex items-center gap-2 text-base font-medium">
+      <span class="flex items-center gap-2 text-sm">
         {t.label}
         <!-- Absent until loaded: a placeholder 0 reads as "nothing to review". -->
         {#if count !== undefined}
           <span
             class={cn(
-              'rounded-full px-2 text-xs font-semibold tabular-nums',
-              active ? 'bg-blue-500 text-white' : 'bg-dark-5 text-dark-1'
+              'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
+              active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
             )}
           >
             {num(count)}
           </span>
         {/if}
       </span>
-      {#if t.hint}<span class="text-xs text-dark-2">{t.hint}</span>{/if}
+      {#if t.hint}<span class="text-[11px] font-normal text-dark-2">{t.hint}</span>{/if}
     </a>
   {/each}
 </nav>

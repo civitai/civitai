@@ -3,10 +3,7 @@
   import { detectionCopy, detectionKind } from '$lib/minor-flags/text-scan-verdicts';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
 
-  let {
-    row,
-    size = 'sm',
-  }: { row: Pick<FlaggedRow, 'source' | 'redetected'>; size?: 'sm' | 'md' } = $props();
+  let { row }: { row: Pick<FlaggedRow, 'source' | 'redetected'> } = $props();
 
   const kind = $derived(
     row.source === 'redetected' && row.redetected ? detectionKind(row.redetected) : null
@@ -14,11 +11,11 @@
 </script>
 
 {#if kind}
-  <MetaChip {size} tone={kind === 'first' ? 'violet' : 'amber'}>
+  <MetaChip tone={kind === 'first' ? 'violet' : 'amber'}>
     {detectionCopy(kind).badge.toLowerCase()}
   </MetaChip>
 {:else if row.source === 'text-scan'}
-  <MetaChip {size} tone="violet">text-scan</MetaChip>
+  <MetaChip tone="violet">text-scan</MetaChip>
 {:else}
-  <MetaChip {size} tone="blue">hash</MetaChip>
+  <MetaChip tone="blue">hash</MetaChip>
 {/if}

@@ -21,17 +21,19 @@
   } = $props();
 
   const href = $derived(modelUrl(civitaiUrl, modelId));
+  const LINK_BUTTON =
+    'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
 </script>
 
-<TriageDetailHeader title={modelName} titleHref={href} reference="#{modelId}" {chips}>
+<TriageDetailHeader title={modelName} reference="#{modelId}" {chips}>
   {#snippet links()}
-    <Button variant="outline" size="sm" {href} target="_blank" rel="noreferrer">
+    <Button variant="outline" size="sm" class={LINK_BUTTON} {href} target="_blank" rel="noreferrer">
       <IconExternalLink aria-hidden="true" /> Open on Civitai
     </Button>
-    <Button variant="outline" size="sm" href="/reports/model/{modelId}">
+    <Button variant="outline" size="sm" class={LINK_BUTTON} href="/reports/model/{modelId}">
       <IconFlag aria-hidden="true" /> Reports
     </Button>
-    <Button variant="outline" size="sm" href={userLookupUrl(userId)}>
+    <Button variant="outline" size="sm" class={LINK_BUTTON} href={userLookupUrl(userId)}>
       <IconUser aria-hidden="true" /> Uploader
     </Button>
   {/snippet}

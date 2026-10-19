@@ -48,7 +48,7 @@
   {/if}
 {/snippet}
 
-<TriageCard title="Shared file, side by side">
+<TriageCard dense title="Shared file, side by side">
   {#if request}
     {#await request}
       <p class="m-0 text-sm text-dark-2">Loading detail…</p>

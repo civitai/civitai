@@ -126,6 +126,7 @@
 {/snippet}
 
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row: FlaggedRow) => row.key}
   {parseKey}

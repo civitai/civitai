@@ -16,8 +16,8 @@
   } = $props();
 </script>
 
-<TriageCard title="Uploader">
-  <p class="m-0 text-base text-dark-0">
+<TriageCard dense title="Uploader">
+  <p class="m-0 text-dark-0">
     {#if row.username}
       <a href={userLookupUrl(row.userId)} class="font-medium {LINK_CLASS}">{row.username}</a>
     {:else}

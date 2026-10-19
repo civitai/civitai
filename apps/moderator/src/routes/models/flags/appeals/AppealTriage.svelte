@@ -88,7 +88,7 @@
 
 {#snippet notice()}
   {#if form?.rescanQueued}
-    <p class="m-0 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
+    <p class="m-0 mx-6 mt-3 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
       Model #{form.modelId}: the owner edited the text while the appeal was open, so it will be
       scanned again.
     </p>
@@ -115,6 +115,7 @@
 {/snippet}
 
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row: MinorFlagAppealRow) => row.appealId}
   parseKey={(raw) => Number(raw) || null}

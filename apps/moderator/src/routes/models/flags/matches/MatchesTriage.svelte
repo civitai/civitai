@@ -57,6 +57,7 @@
 {/snippet}
 
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row: MinorHashReviewRow) => row.modelId}
   {parseKey}

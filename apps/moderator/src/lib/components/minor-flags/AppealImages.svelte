@@ -7,14 +7,14 @@
 </script>
 
 {#if images.length}
-  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+  <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
       <a
         href={getEdgeUrl(image.url, { type: 'image', original: true })}
         target="_blank"
         rel="noreferrer"
         aria-label="Open image {i + 1} of {images.length} full size"
-        class="block h-60 overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
+        class="block h-[180px] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
         <EdgeMedia src={image.url} type="image" width={450} class="size-full object-cover" />
       </a>

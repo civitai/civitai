@@ -36,8 +36,8 @@
 </script>
 
 {#if visible}
-  <TriageCard title="Prior rulings and appeals">
-    <div class="space-y-1.5 text-base text-dark-0">
+  <TriageCard dense title="Prior rulings and appeals">
+    <div class="space-y-1.5 text-dark-0">
       {#if showPriorClear}
         <p class="m-0">
           {#if granted}

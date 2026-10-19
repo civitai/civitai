@@ -19,7 +19,7 @@
 <section aria-label="Preview images">
   <AppealImages images={shown} />
   {#if images.length}
-    <div class="mt-2 flex items-center justify-between gap-3 text-sm text-dark-2">
+    <div class="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-dark-2">
       <span>
         {images.length} preview image{images.length === 1 ? '' : 's'}{images.length > SHOWN
           ? `, ${SHOWN} shown`

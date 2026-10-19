@@ -14,26 +14,27 @@
   // A plain GET form: the tab's filters and sort ride along, while the page, the open item and the
   // old search describe the result set being replaced.
   const carried = $derived(carriedSearchParams(page.url.searchParams));
+  const KBD = 'h-[15px] min-w-[15px] rounded border border-dark-4 bg-dark-6 px-1 text-[11px] font-semibold text-dark-0';
 </script>
 
-<div class="flex flex-col gap-3 pb-4 lg:h-[calc(100svh-3rem)]">
-  <header class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6">
-    <div class="min-w-0">
-      <h1 class="m-0 text-2xl font-semibold text-white">Model Flags</h1>
-      <p class="m-0 mt-1 text-sm text-dark-1">
+<div class="flex flex-col lg:h-[calc(100svh-3rem)]">
+  <header class="flex flex-nowrap items-center justify-between gap-6 px-6 pt-4">
+    <div class="min-w-0 flex-1">
+      <h1 class="m-0 text-xl font-semibold text-white">Model Flags</h1>
+      <p class="m-0 mt-0.5 text-[13px] text-dark-2">
         Minor and real-person flags on models: appeals, automation flags and file-match leads in one
         place.
       </p>
     </div>
-    <div class="flex flex-wrap items-center gap-4">
+    <div class="flex shrink-0 items-center gap-2">
       <!-- Keyed on q: the Input's value is bindable, so a one-way prop would latch on what was typed. -->
       {#key q}
-        <form method="GET" class="relative w-72">
+        <form method="GET" class="relative w-[260px]">
           {#each carried as [name, value], i (`${name}:${i}`)}
             <input type="hidden" {name} {value} />
           {/each}
           <IconSearch
-            class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-dark-2"
+            class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-dark-2"
             aria-hidden="true"
           />
           <Input
@@ -41,19 +42,20 @@
             value={q}
             placeholder="Model name, id or uploader"
             aria-label="Search model flags"
-            class="h-9 pl-9 text-sm"
+            class="h-[30px] rounded-md border-dark-4 bg-dark-7 pl-8 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
           />
         </form>
       {/key}
-      <p class="m-0 flex items-center gap-1.5 text-sm text-dark-1">
-        <Kbd>1</Kbd> flag stays <Kbd>2</Kbd> no flag <Kbd>J/K</Kbd> move
+      <p class="m-0 flex items-center gap-1 text-xs whitespace-nowrap text-dark-2">
+        <Kbd class={KBD}>1</Kbd> flag stays <Kbd class="{KBD} ml-1.5">2</Kbd> no flag
+        <Kbd class="{KBD} ml-1.5">J/K</Kbd> move
       </p>
     </div>
   </header>
 
   <TriageTabs tabs={data.modelFlagTabs} current={page.url.pathname} label="Model Flags" />
 
-  <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6">
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
     {@render children()}
   </div>
 </div>

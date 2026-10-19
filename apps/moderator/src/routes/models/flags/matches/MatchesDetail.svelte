@@ -50,17 +50,17 @@
       {civitaiUrl}
     >
       {#snippet chips()}
-        <MetaChip size="md">file match</MetaChip>
-        <MetaChip size="md" tone="green">not flagged</MetaChip>
-        <MetaChip size="md" tone="amber">different uploader</MetaChip>
+        <MetaChip>file match</MetaChip>
+        <MetaChip tone="green">not flagged</MetaChip>
+        <MetaChip tone="amber">different uploader</MetaChip>
       {/snippet}
     </ModelDetailHeader>
 
     <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <TriageCard title="Why it is here">
-        <div class="space-y-2 text-base text-dark-0">
+      <TriageCard dense title="Why it is here">
+        <div class="space-y-2 text-dark-0">
           <p class="m-0">
             Its main file is byte-identical to a file in a model a moderator flagged as minor. The
             uploader is a different account, so nothing was applied automatically. Decide whether

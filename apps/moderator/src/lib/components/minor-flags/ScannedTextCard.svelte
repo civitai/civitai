@@ -21,8 +21,8 @@
   } = $props();
 </script>
 
-<TriageCard {title}>
-  <div class="space-y-2 text-base text-dark-0">
+<TriageCard dense {title}>
+  <div class="space-y-2 text-dark-0">
     <p class="m-0">
       Text scan: {label === 'poi' ? 'real person' : 'minor'}
       {#if detection.at}

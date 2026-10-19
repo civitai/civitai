@@ -21,16 +21,17 @@
 </script>
 
 <Button
-  size="lg"
   variant={primary ? 'default' : 'outline'}
   aria-pressed={pressed}
   class={cn(
-    'h-11 gap-2.5 px-4 text-base',
-    primary && 'bg-red-600 text-white hover:bg-red-700',
+    'h-8 gap-2 rounded-md px-3.5 text-[13px] font-semibold text-white',
+    primary ? 'bg-red-600 hover:bg-red-700' : 'border-dark-4 bg-transparent dark:bg-transparent',
     pressed && 'ring-2 ring-white/50'
   )}
   {...rest}
 >
-  <Kbd class={primary ? 'bg-black/30 text-white' : 'bg-dark-5 text-white'}>{key}</Kbd>
+  <Kbd class="h-[13px] min-w-0 rounded-[3px] bg-black/25 px-[5px] text-[11px] font-semibold text-white">
+    {key}
+  </Kbd>
   {@render children()}
 </Button>

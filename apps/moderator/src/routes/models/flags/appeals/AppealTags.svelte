@@ -3,13 +3,7 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { sourceKey } from '$lib/minor-flags/appeal-filters';
 
-  let {
-    row,
-    size = 'sm',
-  }: {
-    row: { flagSource: string | null; minor: boolean; poi: boolean };
-    size?: 'sm' | 'md';
-  } = $props();
+  let { row }: { row: { flagSource: string | null; minor: boolean; poi: boolean } } = $props();
 
   const SOURCE = {
     'text-scan': { tone: 'violet', label: 'text-scan' },
@@ -21,13 +15,13 @@
   const source = $derived(SOURCE[sourceKey(row.flagSource)]);
 </script>
 
-<MetaChip {size} tone={source.tone}>{source.label}</MetaChip>
+<MetaChip tone={source.tone}>{source.label}</MetaChip>
 {#if row.minor}
-  <FlagBadge label="minor" {size} />
+  <FlagBadge label="minor" />
 {/if}
 {#if row.poi}
-  <FlagBadge label="poi" {size} />
+  <FlagBadge label="poi" />
 {/if}
 {#if !row.minor && !row.poi}
-  <MetaChip {size} tone="green">no longer flagged</MetaChip>
+  <MetaChip tone="green">no longer flagged</MetaChip>
 {/if}
