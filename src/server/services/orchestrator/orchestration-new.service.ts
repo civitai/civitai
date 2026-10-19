@@ -3172,7 +3172,7 @@ export async function updateWorkflow({
     assertUnlockAllowed(viewer);
     await assertUnlockReleasesOutput(props);
   }
-  const workflow = await clientUpdateWorkflow(props);
+  const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
 }

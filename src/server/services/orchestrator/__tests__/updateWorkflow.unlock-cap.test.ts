@@ -90,7 +90,7 @@ describe('updateWorkflow unlock', () => {
     expect(clientUpdateWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('does not forward the viewer to the orchestrator', async () => {
+  it('surfaces an orchestrator refusal and does not forward the viewer', async () => {
     getWorkflow.mockResolvedValue({ id: '5-1', steps: [] });
 
     await updateWorkflow(unlock);
@@ -98,6 +98,7 @@ describe('updateWorkflow unlock', () => {
       token: 'tok',
       workflowId: '5-1',
       allowMatureContent: true,
+      throwOnError: true,
     });
   });
 
