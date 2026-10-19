@@ -45,7 +45,9 @@ Prod measurements (read-only replica, taken 2026-10-16 — figures in the plan d
 Decisions & prerequisites:
 
 - [x] Deletion semantics decided — D6: tombstone with replies, hard-delete childless (2026-08-25)
-- [ ] `ComicChapter` integer surrogate id added (pattern: `AppListing.serialId`) + migration applied
+- [x] `ComicChapter` integer surrogate id — already exists (`ComicChapter.id`, migration
+      `20260304123827`; verified in prod 2026-10-19: every chapter thread resolves to one `id`).
+      No migration; comic chapters key on `id` (plan: keying note above _Phase 1_)
 - [ ] Flip order confirmed from volume data (default: bounty/article → review/challenge/misc →
       image/post → comicChapter/crucible → model last)
 - [x] Mute table naming decided (2026-09-01): `CommentMute` + `CommentTopicMute`, not the
@@ -79,7 +81,7 @@ Decisions & prerequisites:
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id and flip order.
+and flip order.
 
 ## Phase 1 — Schema (expand)
 
@@ -104,7 +106,8 @@ decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured
       today's `update_thread_comment_count`), reaction-count port of
       `update_comment_reaction_count`
 - [ ] **(review)** `commentv3_delete_topic` AFTER DELETE trigger on each of the 13 entity tables
-      (`comicChapter` via its surrogate id), so an entity hard-delete cascades its comments
+      (`ComicChapter` passes `OLD.id`, not its composite PK), so an entity hard-delete cascades
+      its comments
 - [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
       `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
       `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
@@ -133,6 +136,9 @@ backfill to race.
 - [ ] `AFTER INSERT/UPDATE/DELETE` mirror triggers on `Comment` (via `legacyV1Id`) and `CommentV2`:
       insert copies any missing ancestor chain first (`Thread.commentId → CommentV2.threadId`);
       delete applies D6 (tombstone if the v3 row has children, else hard-delete)
+- [ ] `commentv3_thread_entity(thread)` SQL function — one `Thread` → `(entityType, entityId)`
+      resolver shared by the mirror triggers and the backfill; the `comicChapter` branch joins
+      `ComicChapter` on `(projectId, position)` and returns its `id`
 - [ ] Mirror triggers on `CommentReaction`/`CommentV2Reaction` → `CommentV3Reaction`,
       `CommentReport`/`CommentV2Report` → `CommentV3Report`, `ThreadMute` → `CommentMute`/
       `CommentTopicMute`
@@ -236,8 +242,9 @@ Surface-specific extras:
 - [ ] **article/post**: purge `articleStatCache` / `postStatCache` after count recompute
 - [ ] **image**: re-point the `EntityMetric` (`metricType='Comment'`) writer; flip
       `daily-challenge-processing.ts` judge gate + `getJudgeCommentForImage` with it
-- [ ] **comicChapter**: `ChapterComments.tsx` client shape change (drops `parentThreadId`);
-      `createChapterComment` moves onto the unified service
+- [ ] **comicChapter**: `ChapterComments.tsx` client shape change (drops `parentThreadId`;
+      `entityId` becomes `ComicChapter.id`, returned by `getChapterThread`); `createChapterComment`
+      moves onto the unified service
 - [ ] **crucible**: `getCommentThreadCrucibleId` + `new-crucible-comment` notification
 - [ ] **model** (last): model discussion UI moves onto the unified provider (display depth 1, same
       presentation); client reaction entityType `commentOld` → `comment`; v1 replica-lag pinning

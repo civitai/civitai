@@ -42,6 +42,9 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-19 — no `ComicChapter` surrogate-id migration.** `ComicChapter.id` has existed since
+  2026-03-04; comic chapters key on it, and one `commentv3_thread_entity` function resolves
+  `Thread` rows for both the mirror and the backfill (keying note above _Phase 1_).
 - **2026-10-19 — `CREATE EXTENSION ltree` is installed on prod** (1.3, schema `public`; verified
   on the replica). The Phase 0 infra sign-off is done; dev, CI and local still need it before the
   migration runs there.
@@ -615,7 +618,7 @@ topic alone — the entity still exists.
 
   CREATE TRIGGER commentv3_delete_topic AFTER DELETE ON "Image"
     FOR EACH ROW EXECUTE FUNCTION commentv3_delete_topic('image');
-  -- …one per entity table; comicChapter uses its integer surrogate id (Phase 1 prerequisite)
+  -- …one per entity table; ComicChapter passes OLD.id (its unique SERIAL, not the composite PK)
   ```
 
 - **Verified 2026-10-16 on Postgres 18.6** (prod is 18.3): a topic cascade deletes a whole reply
@@ -834,9 +837,19 @@ dead surfaces (`clubPostId`, `questionId`/`answerId`). Two schema facts to confi
 `Thread.modelId`/`challengeId`/`model3dId` are declared `@unique` but their back-relations are
 lists (`Model.threads Thread[]` etc.) — verify they are truly 1:1 in prod before assuming one
 `CommentTopic` row per entity.
-**Prerequisite:** `ComicChapter` needs an integer surrogate id (same pattern as
-`AppListing.serialId` — note `Thread.appListingId` already references that surrogate, not the TEXT
-ULID) because its Thread key is composite `(projectId, position)`.
+**Comic chapters key on `ComicChapter.id`, not `(projectId, position)`.** Earlier drafts listed
+an integer surrogate id as a prerequisite migration; it already exists — `ComicChapter.id` is a
+`SERIAL` with a unique constraint since migration `20260304123827_comic_chapter_early_access`,
+`ComicChapterRead` already keys on it, and prod confirmed on 2026-10-19 that every chapter thread
+resolves through the composite key to exactly one `id`. No migration. Positions are not stable
+(`reorderChapters`, `deleteChapter` and `insertChapter` re-pack them through a temp offset, and
+`Thread`'s composite FK only keeps up because it is `ON UPDATE CASCADE`), so `id` is the only
+usable `entityId`. One SQL function, `commentv3_thread_entity(thread)`, resolves a `Thread` row
+to `(entityType, entityId)` for both the Phase 2 mirror triggers and the Phase 3 backfill; comic
+chapter is its one branch that joins (`ComicChapter` on `(projectId, position)`) instead of
+reading a column, and the join is consistent inside a re-pack transaction because the cascade
+updates `Thread` in the same statement. `commentv3_delete_topic` on `ComicChapter` passes
+`OLD.id`.
 
 **Phase 1 — schema.** `CREATE EXTENSION ltree` (on prod since 2026-10-19; dev, CI and local as
 needed), then the DDL above: new tables
@@ -878,7 +891,10 @@ tombstone when the `CommentV3` row has children, hard-delete otherwise — mirro
 one-for-one would hit `parentId ON DELETE RESTRICT` and fail the user's delete. A reply whose
 parent has not been backfilled yet is the other trap (blocker 1): the insert trigger walks
 `Thread.commentId → CommentV2.threadId` to the root and copies any missing ancestors first, so the
-`parentId` FK always resolves. `toggleLockCommentsThread` still needs an app-level pair (set
+`parentId` FK always resolves. Both the mirror and the backfill resolve a `Thread` row to its
+`(entityType, entityId)` through the same `commentv3_thread_entity` function, so the two cannot
+disagree; comic chapter is the one entity that needs a join there (see the keying note above
+Phase 1). `toggleLockCommentsThread` still needs an app-level pair (set
 `Thread.locked` and `CommentTopic.locked` together), and `toggleThreadMute`/`toggleSectionMute`
 write `CommentMute`/`CommentTopicMute` directly. Those app-level writes, and everything in the v3
 service from Phase 4 on, are Kysely transactions on `kyselyWrite` (decision 8). Note the
@@ -960,9 +976,11 @@ Per-surface cutover checklist additions from the residue sweep:
   image surface.
 - **comicChapter flip**: `ChapterComments.tsx` bypasses the comment providers and passes
   `parentThreadId` in its mutation input — the comics client changes shape with its surface flip,
-  unlike every provider-based surface. Its server side, `createChapterComment` in
-  `comics.router.ts`, also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it
-  moves onto the unified service with this flip.
+  unlike every provider-based surface. It also feeds the `Thread` id into `CommentsCtx` as the
+  `entityId`; after the flip the entity id is `ComicChapter.id`, which `getChapterThread` (or the
+  chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
+  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it moves onto the
+  unified service with this flip.
 - **crucible flip**: the newest surface (#5780); `getCommentThreadCrucibleId` and the
   `new-crucible-comment` notification go with it.
 
