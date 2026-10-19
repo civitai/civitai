@@ -100,6 +100,7 @@ describe('AppAssistantChat', () => {
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
     expect(m.configureChat).toHaveBeenCalledWith({
       name: 'App Assistant',
+      model: 'openai/gpt-6-luna',
       maxSteps: 1000,
       contextBudgetTokens: 64000,
     });
