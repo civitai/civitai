@@ -201,4 +201,14 @@ describe('publishModelById meta', () => {
     // toStrictEqual: Prisma.JsonNull is a class instance with no own keys, so plain equality takes it for {}.
     expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({});
   });
+
+  it('stores the meta it is given', async () => {
+    await publishModelById({
+      id: MODEL_ID,
+      versionIds: [OWN_VERSION_ID],
+      meta: { cannotPromote: true },
+    });
+
+    expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({ cannotPromote: true });
+  });
 });

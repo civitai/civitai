@@ -1070,6 +1070,20 @@ describe('review mode: a first detection waits for a moderator', () => {
     expect(meta.textScanFlags.minor.redetected).toMatchObject({ kind: 'first', textHash: NEWER });
   });
 
+  it.each(['minor', 'poi'] as const)(
+    'writes an object over a JSON-null meta when %s is flagged straight away',
+    async (label) => {
+      await seed({ scanHash: SCANNED });
+      await holder.db.query(`UPDATE "Model" SET meta = 'null'::jsonb WHERE id = $1`, [MODEL_ID]);
+
+      await apply(label, NEWER);
+
+      const { meta } = await stored();
+      expect(Array.isArray(meta)).toBe(false);
+      expect(meta.textScanFlags[label].textHash).toBe(NEWER);
+    }
+  );
+
   it('holds poi the same way, without restricting the model', async () => {
     await hold('poi');
     expect((await entryOf('poi')).redetected).toMatchObject({ kind: 'first', textHash: NEWER });

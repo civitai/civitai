@@ -1112,8 +1112,9 @@ describe('dismissMinorHashMatch', () => {
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
     const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
     const text = Prisma.sql(strings as TemplateStringsArray, ...values).sql;
-    expect(text).toContain(`meta = ${asJsonbObject('meta')}`);
-    expect(text).toContain('|| jsonb_build_object');
+    expect(text.replace(/\s+/g, ' ')).toContain(
+      `meta = ${asJsonbObject('meta')} || jsonb_build_object('minorHashDismissed'`
+    );
     expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
       entityType: 'model',
       entityId: 100,
