@@ -2385,7 +2385,12 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     }
   });
 
-  it('🔴 …but not once its icon is above SFW: the republish floors by all media', async () => {
+  // The same rule as an image re-rate: an icon raised above SFW since the grant does not end
+  // the split. civitai.com shows the placeholder, and the state this leaves (SFW rating, R
+  // icon) is the one the T8 seam (`listing-media-split.seam.test.ts`) pins `sfw-slot-mature`
+  // on. The face read still answers R, so a republish that re-checked the face would floor
+  // by all media ('r') and fail here.
+  it('🔴 …and kept when its icon is above SFW: the listing stays on civitai.com, floored by its civitai.com media', async () => {
     wire({
       kind: 'offsite',
       contentRating: 'g',
@@ -2394,7 +2399,7 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     splitFake({ [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13 });
     try {
       await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
-      expect(flipData()).toEqual({ status: 'approved', contentRating: 'r' });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
     } finally {
       mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
     }

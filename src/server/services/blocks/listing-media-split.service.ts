@@ -16,8 +16,7 @@ import {
  * "no split" (the rating floor reads every asset, exactly as before the split existed), clearing
  * is a no-op, and only an explicit grant fails, with {@link MEDIA_SPLIT_UNAVAILABLE_MESSAGE}.
  *
- * The only module that names the table; `listing-media-split.ledger.test.ts` pins that, and
- * that nothing here writes a listing's rating.
+ * The only module that names the table; `listing-media-split.ledger.test.ts` pins that.
  */
 
 type RawClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
@@ -39,10 +38,9 @@ export async function isListingMediaSplitTableAvailable(
 
 /**
  * Whether a moderator has granted `appListingId` a media split. `false` while the table is absent.
- * Read as-is by the paths that keep a LIVE listing live (an image re-rate, a moderator's live edit,
- * the history classifier): a SFW-slot image raised later falls back on civitai.com and is flagged,
- * and the listing stays listed. A go-live no moderator decides uses
- * {@link readListingMediaSplitForGoLive} instead.
+ * Read as-is by every path that keeps a split a moderator granted (an image re-rate, a moderator's
+ * live edit, an owner republish, the history classifier): a SFW-slot image raised later falls back
+ * on civitai.com and is flagged (`sfw-slot-mature`), and the listing stays listed.
  */
 export async function readListingMediaSplit(
   db: Pick<RawClient, '$queryRaw'>,
@@ -85,20 +83,6 @@ export async function assertListingMediaSplitGrantable(
     throw new TRPCError({ code: 'BAD_REQUEST', message: MEDIA_SPLIT_UNAVAILABLE_MESSAGE });
   if (!(await isListingFaceComEligible(db, face)))
     throw new TRPCError({ code: 'BAD_REQUEST', message: MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE });
-}
-
-/**
- * A granted split, for a go-live no moderator decides (owner republish): honoured only while the
- * icon and cover going live are still civitai.com-eligible, the same condition a moderator's
- * grant is refused on. Otherwise the listing is floored by all of its media.
- */
-export async function readListingMediaSplitForGoLive(
-  db: Pick<RawClient, '$queryRaw'>,
-  appListingId: string,
-  face: ListingFace
-): Promise<boolean> {
-  if (!(await readListingMediaSplit(db, appListingId))) return false;
-  return isListingFaceComEligible(db, face);
 }
 
 /**
