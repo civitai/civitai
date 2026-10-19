@@ -49,7 +49,11 @@ vi.mock('~/server/redis/caches', () => ({
   userBountyCountCache: { refresh: vi.fn() },
 }));
 
-import { updateBountyById, upsertBounty } from '~/server/services/bounty.service';
+import {
+  addBenefactorUnitAmount,
+  updateBountyById,
+  upsertBounty,
+} from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
 
 const BOUNTY_ID = 55;
@@ -432,5 +436,43 @@ describe('updateBountyById — a moderator clearing a text-scan poi flag', () =>
     const data = updateData();
     expect(data).not.toHaveProperty('availability');
     expect(data).not.toHaveProperty('meta');
+  });
+});
+
+describe('addBenefactorUnitAmount — bounty schedule', () => {
+  const hour = 60 * 60 * 1000;
+  const support = (startsAt: Date) => {
+    mockDbRead.bounty.findUnique.mockResolvedValue({
+      id: BOUNTY_ID,
+      complete: false,
+      nsfw: false,
+      nsfwLevel: 1,
+      startsAt,
+    });
+    mockDbRead.bountyBenefactor.findUnique.mockResolvedValue({
+      unitAmount: 100,
+      currency: 'BUZZ',
+      buzzTransactionId: [],
+    });
+    return addBenefactorUnitAmount({
+      bountyId: BOUNTY_ID,
+      unitAmount: 50,
+      userId: OWNER_ID,
+      buzzType: 'yellow',
+    });
+  };
+
+  it('refuses added support, and spends no Buzz, before the bounty starts', async () => {
+    await expect(support(new Date(Date.now() + 2 * hour))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.bountyBenefactor.upsert).not.toHaveBeenCalled();
+  });
+
+  it('takes added support once the bounty has started', async () => {
+    await support(new Date(Date.now() - hour));
+
+    expect(mockBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 });

@@ -29,6 +29,7 @@ import {
 import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { assertBountyStarted } from '~/server/services/bounty-schedule';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   hasOpenTextScanFlag,
@@ -857,12 +858,14 @@ export const addBenefactorUnitAmount = async ({
 }: AddBenefactorUnitAmountInputSchema & { userId: number; buzzType: BuzzSpendType }) => {
   const bounty = await dbRead.bounty.findUnique({
     where: { id: bountyId },
-    select: { complete: true, id: true, nsfw: true, nsfwLevel: true },
+    select: { complete: true, id: true, nsfw: true, nsfwLevel: true, startsAt: true },
   });
 
   if (!bounty) {
     throw throwNotFoundError('Bounty not found');
   }
+
+  assertBountyStarted(bounty);
 
   if (bounty.complete) {
     throw throwBadRequestError('Bounty is already complete');
