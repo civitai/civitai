@@ -15,6 +15,17 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
     'It is paused, so you have no sandbox tools; its files are kept. It starts again by itself when the user sends a message. If it is still paused when you need it, call create_app with its name to start it again; its tools arrive with your next reply.',
 };
 
+/**
+ * TEMPORARY (civitai/civitai-app-starters#710): the dev-tunnel preview mints no storage scope
+ * (`TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`), so an unpublished app's `app.storage` calls are all
+ * refused `insufficient_scope` and the SDK has no local stand-in yet. Until it does, the model
+ * puts storage behind one module that falls back to the SDK's in-memory `createFakeStorage` on
+ * exactly that code in a Vite dev build. Real storage is never widened. Delete this rule when
+ * #710 closes.
+ */
+export const PREVIEW_STORAGE_RULE =
+  '- Storage in the live preview (temporary, until civitai/civitai-app-starters#710): an app that is not published yet gets no storage there, so every app.storage call is refused with a StorageError whose code is insufficient_scope. When the app saves data, use app.storage.collection(name) from @civitai/sdk (not the deprecated useAppStorage or useSharedStorage) and keep every storage call in one module, src/storage.ts. In that module, when a call is refused with code insufficient_scope and import.meta.env.DEV is true, switch for the rest of the page to createFakeStorage({ manifest }).storage from @civitai/sdk/testing, imported dynamically inside that branch, with the parsed block.manifest.json as manifest, and show a small badge reading "Preview data is saved only in this tab". Fall back on no other error and save preview data nowhere else; a published app is a production build, so it always uses real storage. The preview has one viewer: tell the user that other people\'s entries, votes and totals appear only once the app is published.';
+
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
 export const APP_ASSISTANT_RULES = [
   'App Assistant rules (these come after the rules above and win where they differ):',
@@ -25,6 +36,7 @@ export const APP_ASSISTANT_RULES = [
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+  PREVIEW_STORAGE_RULE,
 ].join('\n');
 
 /** The chat's built-in rules, then App Assistant's. */

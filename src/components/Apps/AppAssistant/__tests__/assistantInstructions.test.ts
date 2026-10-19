@@ -7,6 +7,13 @@ import {
 
 const running = { name: 'sbx-0123456789ab', app: 'my-app', state: 'running' as const };
 
+// Typed out here, never imported: the expectation must not come from the code under test.
+// Temporary with the rule itself (civitai/civitai-app-starters#710).
+const PREVIEW_STORAGE_RULE_TEXT =
+  '- Storage in the live preview (temporary, until civitai/civitai-app-starters#710): an app that is not published yet gets no storage there, so every app.storage call is refused with a StorageError whose code is insufficient_scope. When the app saves data, use app.storage.collection(name) from @civitai/sdk (not the deprecated useAppStorage or useSharedStorage) and keep every storage call in one module, src/storage.ts. In that module, when a call is refused with code insufficient_scope and import.meta.env.DEV is true, switch for the rest of the page to createFakeStorage({ manifest }).storage from @civitai/sdk/testing, imported dynamically inside that branch, with the parsed block.manifest.json as manifest, and show a small badge reading "Preview data is saved only in this tab". Fall back on no other error and save preview data nowhere else; a published app is a production build, so it always uses real storage. The preview has one viewer: tell the user that other people\'s entries, votes and totals appear only once the app is published.';
+
+const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
+
 describe('buildAssistantInstructions', () => {
   it('without an app, has the assistant create one for a build request, and gives no build steps', () => {
     const text = buildAssistantInstructions({
@@ -142,7 +149,15 @@ describe('buildAssistantSystemPrompt', () => {
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+        PREVIEW_STORAGE_RULE_TEXT,
       ].join('\n')
     );
+  });
+
+  it('tells the model to fall back to a local store in the preview, on insufficient_scope in a dev build only', () => {
+    const rule = APP_ASSISTANT_RULES.split('\n').find((line) =>
+      line.startsWith('- Storage in the live preview')
+    );
+    expect(normalise(rule ?? '')).toBe(normalise(PREVIEW_STORAGE_RULE_TEXT));
   });
 });
