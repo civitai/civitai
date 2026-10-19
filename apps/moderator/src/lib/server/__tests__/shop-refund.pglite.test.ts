@@ -121,6 +121,7 @@ beforeEach(async () => {
   await db.exec(SCHEMA);
   await db.exec(migration('20261105120000_mystery_box_items'));
   await db.exec(migration('20261107120000_mystery_box_listing_unlisted_and_refunds'));
+  await db.exec(migration('20261108120000_creator_mystery_packs'));
   await db.exec(`
     INSERT INTO "Cosmetic" ("id") VALUES (${HAT}), (${OTHER_HAT}), (600), (601), (700);
     INSERT INTO "ItemDefinition" ("id", "type", "name", "status") VALUES
@@ -801,6 +802,7 @@ describe('grantMysteryBoxes', () => {
   it.each([
     ['a draft box', { boxId: 5 }, 'Only a published box can be granted.'],
     ['an archived box', { boxId: 6 }, 'Only a published box can be granted.'],
+    ["a creator's mystery pack", { boxId: 7 }, "A creator's mystery pack can't be granted."],
     ['a cosmetic', { boxId: 2 }, 'No such box.'],
     ['no box', { boxId: 999 }, 'No such box.'],
     ['a user who does not exist', { userIds: [BUYER, 4242] }, "These users don't exist: 4242"],
@@ -812,6 +814,8 @@ describe('grantMysteryBoxes', () => {
     await db.exec(`
       INSERT INTO "ItemDefinition" ("id", "type", "name", "status") VALUES
         (5, 'box', 'Draft box', 'draft'), (6, 'box', 'Old box', 'archived');
+      INSERT INTO "ItemDefinition" ("id", "type", "name", "status", "sellerId") VALUES
+        (7, 'box', 'Creator pack', 'published', ${OTHER});
     `);
     const refused = grantBoxes(overrides);
     await expect(refused).rejects.toBeInstanceOf(BoxGrantRefused);

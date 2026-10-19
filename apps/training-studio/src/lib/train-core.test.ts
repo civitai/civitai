@@ -9,12 +9,13 @@ import {
 
 const submitWorkflow = vi.fn();
 const getWorkflow = vi.fn();
+const getResource = vi.fn();
 // Hand-listed rather than spread over importOriginal: @civitai/client's dist imports a directory,
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
 vi.mock('@civitai/client', () => ({
   Air: { isAir: () => false, stringify: vi.fn() },
-  getResource: vi.fn(),
+  getResource: (...args: unknown[]) => getResource(...args),
   getWorkflow: (...args: unknown[]) => getWorkflow(...args),
   updateWorkflow: vi.fn(),
   submitWorkflow: (...args: unknown[]) => submitWorkflow(...args),
@@ -120,5 +121,29 @@ describe('keep-training currencies', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
     await continueTraining(client, { ...opts, currencies: ['red'] });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+  });
+});
+
+describe('custom base model', () => {
+  const custom = 'urn:air:sdxl:checkpoint:civitai:1@2';
+
+  it('trains an SDXL run on the pasted base', async () => {
+    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
+    await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }]);
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(custom);
+  });
+
+  it('refuses a custom base on an ecosystem that would train on its official base instead', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    getResource.mockClear();
+    await expect(
+      submitTrainingBatch(client, [
+        baseRun(),
+        { ...baseRun(), ecosystem: 'mossImage', modelVariant: 'base', customModel: custom },
+      ])
+    ).rejects.toThrow(/runs\[1\]\.customModel/);
+    expect(getResource).not.toHaveBeenCalled();
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });

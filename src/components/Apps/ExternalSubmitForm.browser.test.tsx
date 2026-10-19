@@ -99,6 +99,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
         removeScreenshot: { useMutation: mutation },
+        setRedMedia: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },

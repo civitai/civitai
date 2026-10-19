@@ -163,6 +163,10 @@ vi.mock('~/utils/trpc', () => {
             isPending: false,
           }),
         },
+        // Called unconditionally by the step (its civitai.red section); not exercised here.
+        setRedMedia: {
+          useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+        },
       },
     },
   };

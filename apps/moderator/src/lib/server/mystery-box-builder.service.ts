@@ -42,6 +42,7 @@ export function listGrantableBoxes(): Promise<GrantableBox[]> {
     .select(['id', 'name'])
     .where('type', '=', ITEM_TYPE.box)
     .where('status', '=', ITEM_DEFINITION_STATUS.published)
+    .where('sellerId', 'is', null)
     .orderBy('id', 'desc')
     .execute();
 }

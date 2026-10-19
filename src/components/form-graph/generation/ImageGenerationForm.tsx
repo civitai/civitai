@@ -39,6 +39,7 @@ import {
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
+import { AvatarFormFields } from '~/components/AvatarGen/AvatarFormFields';
 import type { GenerationStore } from './store';
 
 /**
@@ -195,6 +196,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
+      <AvatarFormFields store={store} />
       <Controller
         graph={generationHub}
         name="upscaler"

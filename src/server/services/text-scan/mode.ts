@@ -42,7 +42,7 @@ export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollou
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
-let lastLabelModeErrorLogAt = 0;
+const labelModeErrorLogAt = { flag: 0, csam: 0 };
 
 function percent(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -78,8 +78,8 @@ const getTextScanRollouts = createTtlMemo(readTextScanRollouts, ROLLOUT_CACHE_MS
 export function resetTextScanRolloutCache() {
   getTextScanRollouts.clear();
   getTextScanWebSearchRollouts.clear();
-  getTextScanLabelModes.clear();
-  lastLabelModeErrorLogAt = 0;
+  getLabelModeState.clear();
+  labelModeErrorLogAt.flag = labelModeErrorLogAt.csam = 0;
 }
 
 export function textScanBucket(entityType: TextScanEntityType, entityId: number) {
@@ -173,42 +173,81 @@ export async function getTextScanWebSearchMode(
 export type TextScanLabelMode = 'auto' | 'review';
 export type TextScanLabelModes = Partial<Record<TextScanFlagLabel, 'review'>>;
 
-/** Uncached read. Only `review` is stored; anything else reads as `auto`. */
-export async function readTextScanLabelModes(): Promise<TextScanLabelModes> {
+/** Whether the csam label is asked for at all. It has no `auto`: it never acts on its own. */
+export type TextScanCsamMode = 'off' | 'review';
+export const TEXT_SCAN_CSAM_MODE_FIELD = 'csam';
+
+type LabelModeState = { labels: TextScanLabelModes; csam: TextScanCsamMode };
+
+async function readLabelModeState(): Promise<LabelModeState> {
   const raw = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES));
-  const modes: TextScanLabelModes = {};
-  for (const label of TEXT_SCAN_FLAG_LABELS) if (raw?.[label] === 'review') modes[label] = 'review';
-  return modes;
+  const labels: TextScanLabelModes = {};
+  for (const label of TEXT_SCAN_FLAG_LABELS)
+    if (raw?.[label] === 'review') labels[label] = 'review';
+  return { labels, csam: raw?.[TEXT_SCAN_CSAM_MODE_FIELD] === 'review' ? 'review' : 'off' };
 }
 
-const getTextScanLabelModes = createTtlMemo(readTextScanLabelModes, ROLLOUT_CACHE_MS, () =>
-  Date.now()
-);
+/** Uncached read. Only `review` is stored; anything else reads as `auto`. */
+export async function readTextScanLabelModes(): Promise<TextScanLabelModes> {
+  return (await readLabelModeState()).labels;
+}
+
+/** Uncached read. Only `review` is stored; anything else reads as `off`. */
+export async function readTextScanCsamMode(): Promise<TextScanCsamMode> {
+  return (await readLabelModeState()).csam;
+}
+
+const getLabelModeState = createTtlMemo(readLabelModeState, ROLLOUT_CACHE_MS, () => Date.now());
 
 const LABEL_MODE_ERROR_LOG_MS = 5 * 60_000;
+
+// Every scan retries a failed read, so the log is throttled per process and per gate.
+function logLabelModeReadFailure(
+  gate: keyof typeof labelModeErrorLogAt,
+  { label, message }: { label: string; message: string },
+  error: unknown
+) {
+  const now = Date.now();
+  if (now - labelModeErrorLogAt[gate] < LABEL_MODE_ERROR_LOG_MS) return;
+  labelModeErrorLogAt[gate] = now;
+  try {
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message,
+      label,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+  } catch {
+    // Logging must not undo the fallback.
+  }
+}
 
 /** A failed read is `auto`: the flag lands as it always did rather than a detection going unheld. */
 export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<TextScanLabelMode> {
   try {
-    return (await getTextScanLabelModes())[label] ?? 'auto';
+    return (await getLabelModeState()).labels[label] ?? 'auto';
   } catch (error) {
-    // Every scan retries a failed read, so the log is throttled per process.
-    const now = Date.now();
-    if (now - lastLabelModeErrorLogAt >= LABEL_MODE_ERROR_LOG_MS) {
-      lastLabelModeErrorLogAt = now;
-      try {
-        logToAxiom({
-          name: 'text-scan',
-          type: 'error',
-          message: 'label mode read failed, falling back to auto',
-          label,
-          error: error instanceof Error ? error.message : String(error),
-        }).catch(() => null);
-      } catch {
-        // Logging must not undo the fail-open.
-      }
-    }
+    logLabelModeReadFailure(
+      'flag',
+      { label, message: 'label mode read failed, falling back to auto' },
+      error
+    );
     return 'auto';
+  }
+}
+
+export async function getTextScanCsamMode(): Promise<TextScanCsamMode> {
+  try {
+    return (await getLabelModeState()).csam;
+  } catch (error) {
+    // Fail closed: an unreadable gate must not start asking for csam on every entity.
+    logLabelModeReadFailure(
+      'csam',
+      { label: 'csam', message: 'csam mode read failed, falling back to off' },
+      error
+    );
+    return 'off';
   }
 }
 

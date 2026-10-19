@@ -50,6 +50,10 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appListingModerationEvent: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The civitai.red-override clone `beginListingRevision` runs: its probe reads "no table"
+    // here (no row), so it issues nothing else — the state before the overrides existed.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]) => 0),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {

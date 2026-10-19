@@ -1,9 +1,10 @@
 import type {
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemHistoryEntry,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
-import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import {
   CREATOR_GRANT_USES_MULTIPLIER,
@@ -114,6 +115,47 @@ export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]
   const index = lastReviewIndex(history);
   return index >= 0 && history![index].action === 'reject';
 };
+
+// Allowlist: a newly recorded edit field that changes what holders see must be added here, or
+// editing it after approval leaves the item wearable unreviewed.
+const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+
+export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
+  !!changes?.some((change) => DISPLAYED_FIELDS.has(change.field));
+
+/**
+ * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
+ * and nothing anyone sees has changed since. Not status alone: relisting, restoring and a large
+ * price edit send an approved, unchanged item back to review.
+ */
+export const isListingDisplayable = ({
+  status,
+  meta,
+  rejectionReason,
+}: {
+  status: CosmeticShopItemStatus;
+  meta: CosmeticShopItemMeta | null;
+  rejectionReason: string | null;
+}) => {
+  if (status === CosmeticShopItemStatus.Published) return true;
+  if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
+  const history = meta?.history ?? [];
+  const index = lastReviewIndex(history);
+  const approved =
+    index >= 0
+      ? history[index].action === 'approve'
+      : // Pre-history items: approval left lastApprovedAmount and no reason; every other verdict left a reason.
+        meta?.lastApprovedAmount != null && !rejectionReason;
+  return approved && !history.slice(index + 1).some((entry) => changesDisplay(entry.changes));
+};
+
+/**
+ * The display verdict to store on a write that clears `rejectionReason` or adds history. Read from
+ * the state before the write, since the fallback above depends on both.
+ */
+export const recordedDisplayVerdict = (listing: Parameters<typeof isListingDisplayable>[0]) =>
+  listing.meta?.displayApproved ?? isListingDisplayable(listing);
 
 /**
  * Resolves the `Cosmetic.data` write for an edit. Replaced artwork rebuilds the

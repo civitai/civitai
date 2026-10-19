@@ -15,9 +15,40 @@ const MIGRATION = path.resolve(
   '../../../../../packages/civitai-db-schema/prisma/migrations/20261018192800_app_listing_red_media/migration.sql'
 );
 
+/** The second migration: the civitai.red icon / cover override columns. */
+const RED_SLOTS_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261019120000_app_listing_red_media_slots/migration.sql'
+);
+
+/** One `Image` row with the columns the store gate reads. */
+export type SplitDbImage = {
+  id: number;
+  nsfwLevel: number;
+  url?: string;
+  ingestion?: string;
+  needsReview?: string | null;
+  poi?: boolean;
+  minor?: boolean;
+  tosViolation?: boolean;
+  acceptableMinor?: boolean;
+  blockedFor?: string | null;
+};
+
 export type SplitDb = {
   db: PGlite;
   applyMigration: () => Promise<void>;
+  /** Apply the override-columns migration (after {@link SplitDb.applyMigration}). */
+  applyRedSlotsMigration: () => Promise<void>;
+  /** Insert or replace `Image` rows with every gate column (defaults: scanned, unflagged). */
+  seedImages: (images: SplitDbImage[]) => Promise<void>;
+  /** Set a listing's override slots directly, as the owning role. */
+  setRedSlots: (
+    appListingId: string,
+    slots: { icon?: number | null; cover?: number | null }
+  ) => Promise<void>;
+  /** A listing's override slots as stored (read as the owning role); `null` = no row. */
+  redSlots: (appListingId: string) => Promise<{ icon: number | null; cover: number | null } | null>;
   seed: (args: {
     listingIds?: string[];
     images?: Record<number, number>;
@@ -59,6 +90,9 @@ export type SplitDb = {
 type RawFn = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 
 const isSplitSql = (strings: TemplateStringsArray, values: unknown[]) => {
+  // A caller may pass a prebuilt `Prisma.sql` object rather than a template; those are never
+  // the split service's (it only uses tagged templates), so they keep answering the fallback.
+  if (!Array.isArray(strings)) return false;
   const text = Prisma.sql(strings, ...values).text;
   return text.includes('app_listing_red_media') || /FROM "Image" WHERE id IN/.test(text);
 };
@@ -68,7 +102,18 @@ export async function createSplitDb(): Promise<SplitDb> {
   await db.exec(`
     SET TIME ZONE 'UTC';
     CREATE TABLE "User" (id INT PRIMARY KEY);
-    CREATE TABLE "Image" (id INT PRIMARY KEY, "nsfwLevel" INT NOT NULL DEFAULT 0);
+    CREATE TABLE "Image" (
+      id INT PRIMARY KEY,
+      "nsfwLevel" INT NOT NULL DEFAULT 0,
+      url TEXT NOT NULL DEFAULT '',
+      ingestion TEXT NOT NULL DEFAULT 'Scanned',
+      "needsReview" TEXT,
+      poi BOOLEAN NOT NULL DEFAULT false,
+      minor BOOLEAN NOT NULL DEFAULT false,
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+      "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+      "blockedFor" TEXT
+    );
     CREATE TABLE "app_listings" (id TEXT PRIMARY KEY, content_rating TEXT);
   `);
   const pg = pgliteRaw(db);
@@ -87,6 +132,15 @@ export async function createSplitDb(): Promise<SplitDb> {
     return rows[0] ?? null;
   };
   let restricted = false;
+  const asOwner = async <T>(f: () => Promise<T>) => {
+    const wasRestricted = restricted;
+    if (wasRestricted) await db.exec(`RESET ROLE`);
+    try {
+      return await f();
+    } finally {
+      if (wasRestricted) await db.exec(`SET ROLE split_test_client`);
+    }
+  };
   const unrestrict = async () => {
     if (!restricted) return;
     await db.exec(`RESET ROLE`);
@@ -145,6 +199,52 @@ export async function createSplitDb(): Promise<SplitDb> {
     applyMigration: async () => {
       await db.exec(readFileSync(MIGRATION, 'utf8'));
     },
+    applyRedSlotsMigration: async () => {
+      await db.exec(readFileSync(RED_SLOTS_MIGRATION, 'utf8'));
+    },
+    seedImages: async (images) => {
+      for (const i of images)
+        await db.query(
+          `INSERT INTO "Image" (id, "nsfwLevel", url, ingestion, "needsReview", poi, minor,
+             "tosViolation", "acceptableMinor", "blockedFor")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (id) DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel", url = EXCLUDED.url,
+             ingestion = EXCLUDED.ingestion, "needsReview" = EXCLUDED."needsReview",
+             poi = EXCLUDED.poi, minor = EXCLUDED.minor, "tosViolation" = EXCLUDED."tosViolation",
+             "acceptableMinor" = EXCLUDED."acceptableMinor", "blockedFor" = EXCLUDED."blockedFor"`,
+          [
+            i.id,
+            i.nsfwLevel,
+            i.url ?? `img-${i.id}.png`,
+            i.ingestion ?? 'Scanned',
+            i.needsReview ?? null,
+            i.poi ?? false,
+            i.minor ?? false,
+            i.tosViolation ?? false,
+            i.acceptableMinor ?? false,
+            i.blockedFor ?? null,
+          ]
+        );
+    },
+    setRedSlots: (appListingId, slots) =>
+      asOwner(async () => {
+        await db.query(
+          `INSERT INTO app_listing_red_media (app_listing_id, red_icon_id, red_cover_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (app_listing_id) DO UPDATE
+             SET red_icon_id = EXCLUDED.red_icon_id, red_cover_id = EXCLUDED.red_cover_id`,
+          [appListingId, slots.icon ?? null, slots.cover ?? null]
+        );
+      }),
+    redSlots: (appListingId) =>
+      asOwner(async () => {
+        const { rows } = await db.query<{ icon: number | null; cover: number | null }>(
+          `SELECT red_icon_id AS icon, red_cover_id AS cover
+           FROM app_listing_red_media WHERE app_listing_id = $1`,
+          [appListingId]
+        );
+        return rows[0] ?? null;
+      }),
     seed: async ({ listingIds = [], images = {}, users = [] }) => {
       for (const id of listingIds)
         await db.query(`INSERT INTO app_listings (id) VALUES ($1) ON CONFLICT DO NOTHING`, [id]);
@@ -157,15 +257,7 @@ export async function createSplitDb(): Promise<SplitDb> {
       for (const id of users)
         await db.query(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [id]);
     },
-    stamp: async (appListingId) => {
-      const wasRestricted = restricted;
-      if (wasRestricted) await db.exec(`RESET ROLE`);
-      try {
-        return await readStamp(appListingId);
-      } finally {
-        if (wasRestricted) await db.exec(`SET ROLE split_test_client`);
-      }
-    },
+    stamp: (appListingId) => asOwner(() => readStamp(appListingId)),
     route: (client, fallback = {}) => {
       client.$queryRaw.mockImplementation(async (strings, ...values) =>
         isSplitSql(strings, values)

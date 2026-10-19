@@ -351,6 +351,7 @@ describe('creator card invalidation ledger', () => {
     }
     expect(calls).toEqual({
       'src/server/auth/session-cache.ts': 1,
+      'src/server/services/cosmetic.service.ts': 1,
       'src/server/services/user.service.ts': 1,
     });
   });

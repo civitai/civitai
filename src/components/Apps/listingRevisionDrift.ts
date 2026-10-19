@@ -120,6 +120,9 @@ export function revisionApplyScope(kind: string | null | undefined): RevisionApp
 export type ListingAssetSnapshot = {
   iconId: number | null;
   coverId: number | null;
+  /** The civitai.red icon / cover overrides — applied to the live listing with the rest. */
+  redIconId: number | null;
+  redCoverId: number | null;
   /** Backing `Image` ids of the screenshots, in `order`. Rows with a deleted Image
    *  (`imageId → null` via `onDelete: SetNull`) are excluded — they display nothing,
    *  so counting them would make a "destructive replace" read as a partial one. */
@@ -164,10 +167,12 @@ export type ScreenshotDrift = {
 export type ListingRevisionDrift = {
   icon: AssetSlotDrift;
   cover: AssetSlotDrift;
+  redIcon: AssetSlotDrift;
+  redCover: AssetSlotDrift;
   screenshots: ScreenshotDrift;
   /**
    * True when approving this revision changes any asset COMPARED HERE (icon, cover,
-   * screenshot set / order / captions).
+   * the civitai.red icon / cover overrides, screenshot set / order / captions).
    *
    * 🔴 `assetsChanged === false` does NOT mean "approving changes nothing" — see
    * {@link noOpApproval}. It was called `hasChanges` and read as exactly that, which
@@ -193,6 +198,10 @@ export type ListingRevisionDrift = {
 export type ListingAssetsLike = {
   iconId: number | null;
   coverId: number | null;
+  redIconId?: number | null;
+  redCoverId?: number | null;
+  /** The listing has an overrides row (`getListingAssets`); absent on an older payload. */
+  redSlotsStaged?: boolean;
   screenshots: { imageId: number | null; order: number; caption?: string | null }[];
 };
 
@@ -214,11 +223,27 @@ export function listingAssetSnapshot(
   return {
     iconId: view.iconId ?? null,
     coverId: view.coverId ?? null,
+    redIconId: view.redIconId ?? null,
+    redCoverId: view.redCoverId ?? null,
     screenshotImageIds: rows.map((s) => s.imageId),
     // '' and null render identically — normalise so flipping between them is not a
     // reported change.
     screenshotCaptions: rows.map((s) => (s.caption == null || s.caption === '' ? null : s.caption)),
   };
+}
+
+/**
+ * The REVISION's snapshot as the apply will treat it: a revision with no overrides row
+ * (`redSlotsStaged: false`) staged no change to them, and `applyRevisionRedSlots` leaves the live
+ * ones as they are — so its overrides read as the live listing's, not as "both removed".
+ */
+export function proposedWithUnstagedRedSlots(
+  proposed: ListingAssetSnapshot,
+  live: ListingAssetSnapshot,
+  shadow: Pick<ListingAssetsLike, 'redSlotsStaged'> | null | undefined
+): ListingAssetSnapshot {
+  if (shadow?.redSlotsStaged !== false) return proposed;
+  return { ...proposed, redIconId: live.redIconId, redCoverId: live.redCoverId };
 }
 
 /** Slot-level comparison: null↔null is `same`, null→value is `added`, value→null is
@@ -284,10 +309,14 @@ export function computeListingRevisionDrift(
 
   const icon = assetSlotDrift(live.iconId, proposed.iconId);
   const cover = assetSlotDrift(live.coverId, proposed.coverId);
+  const redIcon = assetSlotDrift(live.redIconId, proposed.redIconId);
+  const redCover = assetSlotDrift(live.redCoverId, proposed.redCoverId);
 
   const assetsChanged =
     icon !== 'same' ||
     cover !== 'same' ||
+    redIcon !== 'same' ||
+    redCover !== 'same' ||
     addedImageIds.length > 0 ||
     removedImageIds.length > 0 ||
     reordered ||
@@ -296,6 +325,8 @@ export function computeListingRevisionDrift(
   return {
     icon,
     cover,
+    redIcon,
+    redCover,
     screenshots,
     assetsChanged,
     applyScope,

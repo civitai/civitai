@@ -113,6 +113,13 @@ import { isPrivateRunAudience } from '~/shared/constants/block-scope.constants';
  *   F   `mintReviewBlockToken` (render-only)              `pending-…` / `pubreq_…` no    requires `pending`    exempt — no row
  *   F′  `mintReviewBlockToken` (run-for-real)             as F, + `reviewRunForReal`  no  requires `pending`   exempt — from the claim, pre-read
  *
+ *   —   APPROVED app previewed through the dev tunnel   real / real `apb_`       yes   YES (ordinary page mint)  not a dev token — no `dev` claim, gated like a run token
+ *
+ *   The last row never stamps `dev: true` (`resolvePageBlock` succeeds, so neither tunnel
+ *   branch runs); it differs from a `/apps/run/<slug>` token only in carrying no
+ *   document-store scopes (Decision 1, `withoutDocumentStoreScopes` in
+ *   `src/pages/api/v1/block-tokens/index.ts`).
+ *
  * A and E are CLAIM-IDENTICAL: same id shapes, same `dev: true`, both owner-held, no
  * distinguishing field. What separates them is not the token but the preconditions their
  * mints enforce — E requires an ACTIVE dev tunnel, A does not — which is why the guard

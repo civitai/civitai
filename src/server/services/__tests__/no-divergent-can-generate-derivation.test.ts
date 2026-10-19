@@ -196,3 +196,19 @@ describe('a model-locked ecosystem gets no staged expansion', () => {
     );
   });
 });
+
+// The orchestrator refuses a creator's MOSS checkpoint while `mini/[id]` answers canGenerate:false,
+// so re-locking the MOSS ecosystem turns this red.
+describe('MOSS Image community checkpoints', () => {
+  it('admits one under the staged rule', () => {
+    expect(
+      isGenerationEligible({
+        covered: true,
+        coveredLive: false,
+        baseModel: 'MOSS Image',
+        modelType: ModelType.Checkpoint,
+        flags: 0,
+      })
+    ).toBe(true);
+  });
+});

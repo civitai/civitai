@@ -462,7 +462,9 @@ describe('the advisory locks have exactly one call site', () => {
   // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
   // never nested inside another advisory lock.
   // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
-  // writes in submit, revise and withdraw; the only lock in its transaction.
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
+  // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',

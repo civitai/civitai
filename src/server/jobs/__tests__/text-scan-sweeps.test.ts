@@ -14,6 +14,7 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof Mode>()),
   isTextScanEnabled: vi.fn(async () => true),
+  getTextScanCsamMode: vi.fn(async () => 'off'),
 }));
 
 const {
@@ -25,7 +26,7 @@ const {
   textScanNewUsersJob,
 } = await import('~/server/jobs/text-scan-sweeps');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { isTextScanEnabled } = await import('~/server/services/text-scan/mode');
+const { isTextScanEnabled, getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
 
 const NOW = new Date('2026-09-24T12:00:00Z');
 const SETTLED = new Date('2026-09-24T11:50:00Z');
@@ -58,6 +59,7 @@ const eligibleSenders = (...ids: number[]) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanCsamMode).mockResolvedValue('off');
   eligibleSenders(5, 6);
 });
 
@@ -94,6 +96,20 @@ describe('sweepChatWindows', () => {
       true
     );
     upserted(TEXT_SCAN_CHAT_CURSOR_KEY, 8);
+  });
+
+  it('in csam review, scans every sender’s window', async () => {
+    vi.mocked(getTextScanCsamMode).mockResolvedValue('review');
+    eligibleSenders(5);
+    cursorAt(0);
+    dbMock.dbWrite.chatMessage.findMany
+      .mockResolvedValueOnce([msg(1, 10, 5), msg(2, 10, 6)])
+      .mockResolvedValueOnce([msg(3, 12, 9)]);
+    expect(await sweepChatWindows(NOW, { batchSize: 2 })).toMatchObject({
+      scanned: 3,
+      caughtUp: true,
+    });
+    expect(scannedIds()).toEqual([1, 2, 3]);
   });
 
   it('reads past the cursor in id order from the primary, with no createdAt filter', async () => {

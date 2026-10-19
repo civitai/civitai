@@ -168,6 +168,7 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
+      { path: '/csam/text-holds', label: 'CSAM holds', countKey: 'csamTextHolds' },
       { path: '/text-scan/prompts', label: 'Prompts' },
       { path: '/text-scan/model-rules', label: 'Model rules' },
     ],
@@ -287,10 +288,10 @@ export function applyGrants(map: Record<string, string[]>): void {
   // and a grant filtered against a catalogue that failed to load would revoke the app. A grant naming a
   // role nobody holds — a deleted one — matches nobody anyway.
   for (const [key, roles] of Object.entries(map)) {
+    if (!isEditableGrant(key)) continue;
     const allowed = roles.filter(isStorableRole);
-    if (isPermissionKey(key)) {
-      if (isGrantablePermission(key)) nextPermissions[key] = allowed;
-    } else if (isGrantable(key)) nextPages[key] = allowed;
+    if (isPermissionKey(key)) nextPermissions[key] = allowed;
+    else nextPages[key] = allowed;
   }
   if (sameGrants(nextPages, stored) && sameGrants(nextPermissions, storedPermissions)) return;
   stored = nextPages;
@@ -535,6 +536,10 @@ export function pageAccessState(edit?: {
 export function isGrantablePermission(key: string): boolean {
   return !!permissionByKey(key);
 }
+
+/** A key a grant may be stored under: a grantable page, or a declared `grant:` permission. */
+export const isEditableGrant = (key: string): boolean =>
+  isPermissionKey(key) ? isGrantablePermission(key) : isGrantable(key);
 
 // A link with children is a section, and a section is reachable exactly when one of its pages is — there
 // is nothing separate to grant.

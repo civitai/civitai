@@ -518,6 +518,8 @@ describe('🔴 listingRevisionDrift NAMES the source repo among the fields an ap
     const identical = {
       iconId: 1,
       coverId: 2,
+      redIconId: null,
+      redCoverId: null,
       screenshotImageIds: [10],
       screenshotCaptions: [null],
     };
@@ -536,6 +538,8 @@ describe('🔴 listingRevisionDrift NAMES the source repo among the fields an ap
     const identical = {
       iconId: 1,
       coverId: 2,
+      redIconId: null,
+      redCoverId: null,
       screenshotImageIds: [10],
       screenshotCaptions: [null],
     };

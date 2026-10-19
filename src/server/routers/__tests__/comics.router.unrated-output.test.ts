@@ -240,6 +240,22 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses, charging nothing, when the workflow cap blocks every mature output', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    mocks.getWorkflow.mockResolvedValue({
+      id: 'wf-1',
+      status: 'succeeded',
+      nsfwLevel: 'pg13',
+      steps: [
+        { $type: 'comfy', name: '$0', output: { blobs: [output('b1', { nsfwLevel: 'r' })] } },
+      ],
+    });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/PG-13/);
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
   it('keeps an unrated candidate locked instead of saving it as clean', async () => {
     givenPanel({
       status: 'AwaitingSelection',

@@ -64,6 +64,10 @@ export const PERMISSIONS = [
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.
   { id: 'user.creatorScore.grant', label: 'Grant or revoke Creator Score' },
+  // Raises the per-grant ceiling for a holder of `user.creatorScore.grant`; useless without it. Apart
+  // because one grant can carry a creator across several tiers. Checked again by the same endpoint
+  // by this literal.
+  { id: 'user.creatorScore.grantLarge', label: 'Grant more than 10,000 Creator Score at once' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
@@ -78,6 +82,9 @@ export const PERMISSIONS = [
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
+  // Also checked by the main app's `/api/mod/text-scan/csam-hold/resolve` by this literal (`ModeratorGrantId`
+  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds page load refuses without it too,
+  // so rename the two together.
   { id: 'csam.report.file', label: 'File a CSAM report' },
   // A removal that repeats the reason an approved appeal overturned is held until someone with this
   // confirms it on /images/re-removals; a holder's own such removals apply directly.

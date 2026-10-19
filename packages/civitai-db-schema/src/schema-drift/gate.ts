@@ -5,10 +5,11 @@
  *
  * WHAT THIS GATE IS FOR. The detector reports the drift that exists; a gate has to answer a
  * narrower question — did THIS change make it worse? Blocking on the whole report would be
- * red on every run (there are 104 findings on `main` today) and a permanently-red gate just
- * teaches everyone to click through it. So the shape here is the one this org already runs
- * in its infrastructure repo: block only a PASS->FAIL regression the change introduces,
- * warn about everything that was already broken, and never block on a pre-existing finding.
+ * red on every run (the accepted backlog on `main` is over a hundred findings) and a
+ * permanently-red gate just teaches everyone to click through it. So the shape here is the one
+ * this org already runs in its infrastructure repo: block only a PASS->FAIL regression the
+ * change introduces, warn about everything that was already broken, and never block on a
+ * pre-existing finding.
  *
  * TWO SEVERITIES, AND WHY THE SPLIT IS NOT A JUDGEMENT CALL. Migrations in this project are
  * applied BY HAND, per environment. A schema declaration is therefore routinely ahead of the

@@ -396,3 +396,11 @@ export function toKebabCase(str: string) {
     })
     .join('');
 }
+
+/**
+ * Removes NUL and replaces lone surrogates, which Postgres rejects in text and jsonb. It scrubs rather
+ * than rejects, unlike the validators in `platform-feedback.schema.ts` and `apps/doc-store.ts`.
+ */
+export function sanitizeForPostgres(value: string) {
+  return value.replace(/\u0000/g, '').toWellFormed();
+}

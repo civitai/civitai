@@ -7,8 +7,7 @@
   gap: var(--mantine-spacing-xs);
   pointer-events: none;
   white-space: nowrap;
-  font-size: var(--mantine-font-size-sm);
-  font-weight: 800;
+  // Size, weight and family come from the counter's digits it sits under.
   // The counter's digits sit at line-height 0; a normal line box would push the pop past the header.
   line-height: 1;
   margin-top: 2px;
@@ -22,7 +21,7 @@
 }
 
 .big {
-  font-size: var(--mantine-font-size-lg);
+  font-size: 1.25em;
 }
 
 .line {
