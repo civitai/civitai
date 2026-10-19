@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TRPCError } from '@trpc/server';
 import type * as GetServerStripeModule from '~/server/utils/get-server-stripe';
 import type * as SessionInvalidationModule from '~/server/auth/session-invalidation';
+import type * as ReferralServiceModule from '~/server/services/referral.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -24,9 +25,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * cases where no single correct answer exists and a typed error is the honest answer.
  */
 
-const { mockGetServerStripe, mockRefreshSession } = vi.hoisted(() => ({
+const { mockGetServerStripe, mockRefreshSession, mockBindReferralCodeForUser } = vi.hoisted(() => ({
   mockGetServerStripe: vi.fn(),
   mockRefreshSession: vi.fn(),
+  mockBindReferralCodeForUser: vi.fn(),
 }));
 
 // Surgical: spread the original and override the one symbol, so a module that later gains
@@ -38,6 +40,10 @@ vi.mock('~/server/utils/get-server-stripe', async (importOriginal) => ({
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidationModule>()),
   refreshSession: (...args: unknown[]) => mockRefreshSession(...args),
+}));
+vi.mock('~/server/services/referral.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReferralServiceModule>()),
+  bindReferralCodeForUser: (...args: unknown[]) => mockBindReferralCodeForUser(...args),
 }));
 // The block-attribution validator has its own suite and pulls in the block registry. No
 // test here passes a `blockAttribution`, so the stub is only keeping that import graph out.
@@ -176,6 +182,7 @@ beforeEach(() => {
     coupons: { create: vi.fn(), del: vi.fn().mockResolvedValue({}) },
   });
   mockRefreshSession.mockResolvedValue(undefined);
+  mockBindReferralCodeForUser.mockResolvedValue(undefined);
 
   // env.TIER_METADATA_KEY defaults to 'tier'; the filter keys off its presence.
   dbMock.dbRead.product.findMany.mockResolvedValue([
@@ -455,9 +462,14 @@ describe('createSubscribeSession — a gifted month armed for the plan being lef
 
 describe('createSubscribeSession — an upgrade that is not paid', () => {
   const HOSTED_INVOICE_URL = 'https://invoice.example.test/pay';
-  const upgrade = () => {
+  const upgrade = (input: { refCode?: string } = {}) => {
     stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
-    return subscribe();
+    return createSubscribeSession({
+      priceId: GOLD_PRICE_USD,
+      customerId: CUSTOMER_ID,
+      user: USER,
+      ...input,
+    });
   };
   const unpaid = (hosted_invoice_url: string | null) => ({
     id: 'subscription_fixture',
@@ -467,10 +479,6 @@ describe('createSubscribeSession — an upgrade that is not paid', () => {
   });
 
   it('asks Stripe to hold the plan change until the invoice is paid', async () => {
-    // 'default_incomplete' applies the new price at once and leaves the subscription past_due,
-    // which ends the plan the member already paid for. Stripe test mode, declining card:
-    // default_incomplete -> past_due on the new price; pending_if_incomplete -> still active on
-    // the old price with a pending_update.
     await upgrade();
 
     expect(mockSubscriptionsUpdate.mock.calls[0][1]).toMatchObject({
@@ -497,19 +505,36 @@ describe('createSubscribeSession — an upgrade that is not paid', () => {
     );
   });
 
-  it('points the armed gifted month back at its coupon, which the pending change did not remove', async () => {
-    dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue({
-      id: 'gift_fixture',
-      armedCouponId: 'gift_coupon_fixture',
-    });
+  it.each([
+    ['an invoice page', HOSTED_INVOICE_URL],
+    ['no invoice page', null],
+  ])(
+    'leaves the gifted month released when the change is held, with %s',
+    async (_label, hostedUrl) => {
+      // Stripe test mode: `coupon: ''` takes effect at once even while the price change is
+      // held, so re-pointing the row at the coupon would arm a month the subscription no
+      // longer carries, and the webhook would then refuse to arm it ('already-armed').
+      dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue({
+        id: 'gift_fixture',
+        armedCouponId: 'gift_coupon_fixture',
+      });
+      mockSubscriptionsUpdate.mockResolvedValue(unpaid(hostedUrl));
+
+      await upgrade().catch(() => undefined);
+
+      expect(mockSubscriptionsUpdate.mock.calls[0][1].coupon).toBe('');
+      expect(dbMock.dbWrite.membershipGift.update.mock.calls).toEqual([
+        [{ where: { id: 'gift_fixture' }, data: { armedCouponId: null, armedAt: null } }],
+      ]);
+    }
+  );
+
+  it('still binds the referral code when the change is held', async () => {
     mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
 
-    await upgrade();
+    await upgrade({ refCode: ' friend1 ' });
 
-    expect(dbMock.dbWrite.membershipGift.update.mock.calls.at(-1)?.[0]).toMatchObject({
-      where: { id: 'gift_fixture' },
-      data: { armedCouponId: 'gift_coupon_fixture' },
-    });
+    expect(mockBindReferralCodeForUser).toHaveBeenCalledWith(USER.id, 'FRIEND1');
   });
 
   it('still lands on the success page when the upgrade is paid', async () => {
@@ -519,5 +544,51 @@ describe('createSubscribeSession — an upgrade that is not paid', () => {
       sessionId: null,
       url: `/payment/success?cid=${CUSTOMER_ID.slice(-8)}`,
     });
+  });
+
+  it('leaves a downgrade unheld, so it is not charged and applies at the next renewal', async () => {
+    stubStripe({ customerCurrency: 'usd' });
+    mockSubscriptionsList.mockResolvedValue({
+      data: [
+        {
+          id: 'subscription_fixture',
+          status: 'active',
+          items: {
+            data: [
+              {
+                id: 'subscription_item_fixture',
+                subscription: 'subscription_fixture',
+                price: { id: GOLD_PRICE_USD, product: GOLD_PRODUCT_ID },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    mockPricesRetrieve.mockResolvedValue({
+      id: BRONZE_PRICE_USD,
+      product: BRONZE_PRODUCT_ID,
+      currency: 'usd',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    await expect(subscribe()).resolves.toEqual({
+      sessionId: null,
+      url: '/user/membership?downgraded=true&tier=bronze',
+    });
+    const params = mockSubscriptionsUpdate.mock.calls[0][1];
+    expect(params.payment_behavior).toBeUndefined();
+    expect(params.expand).toBeUndefined();
+    expect(params.billing_cycle_anchor).toBe('unchanged');
+  });
+
+  it('does not hold the change for a paused subscription it has just resumed unpaid', async () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+    const { data } = await mockSubscriptionsList();
+    mockSubscriptionsList.mockResolvedValue({ data: [{ ...data[0], status: 'paused' }] });
+
+    await subscribe();
+
+    expect(mockSubscriptionsUpdate.mock.calls[0][1].payment_behavior).toBe('default_incomplete');
   });
 });

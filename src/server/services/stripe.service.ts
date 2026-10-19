@@ -398,18 +398,24 @@ export const createSubscribeSession = async ({
       );
       const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
 
+      // 'default_incomplete' applies the new price at once and leaves the subscription past_due,
+      // which ends the plan the member already paid for. 'pending_if_incomplete' holds the price
+      // change until the invoice is paid. A paused subscription was just resumed without payment,
+      // so holding its change would leave it active unpaid; it keeps the old behaviour.
+      const holdUntilPaid = isUpgrade && activeSubscription.status !== 'paused';
+
       let updated: Stripe.Subscription;
       try {
         updated = await stripe.subscriptions.update(subscriptionId, {
           items,
           billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
           proration_behavior: 'none',
-          // An unpaid upgrade must leave the paid plan as it was. 'default_incomplete' applies the
-          // new price at once and drops the subscription to past_due until the invoice is paid,
-          // which ends the member's current plan; 'pending_if_incomplete' holds the whole change
-          // (price, discount, metadata) until payment succeeds and discards it after ~23h.
-          payment_behavior: isUpgrade ? 'pending_if_incomplete' : undefined,
-          expand: isUpgrade ? ['latest_invoice'] : undefined,
+          payment_behavior: holdUntilPaid
+            ? 'pending_if_incomplete'
+            : isUpgrade
+            ? 'default_incomplete'
+            : undefined,
+          expand: holdUntilPaid ? ['latest_invoice'] : undefined,
           ...(releasedGiftMonth
             ? { coupon: '' }
             : {
@@ -423,21 +429,20 @@ export const createSubscribeSession = async ({
         throw error;
       }
 
+      if (sanitizedRefCode) {
+        const { bindReferralCodeForUser } = await import('~/server/services/referral.service');
+        await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
+      }
+
+      // The released gifted month is NOT restored here: Stripe removes the coupon immediately
+      // even while the price change is held, and the subscription.updated webhook re-arms it.
       if (updated.pending_update) {
-        // Payment was declined or needs authentication. The coupon removal is pending with the
-        // rest of the change, so the gifted month is still on the subscription.
-        if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
         const invoice = updated.latest_invoice;
         const hostedInvoiceUrl = typeof invoice === 'object' ? invoice?.hosted_invoice_url : null;
         if (hostedInvoiceUrl) return { sessionId: null, url: hostedInvoiceUrl };
         throw throwBadRequestError(
           `Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.`
         );
-      }
-
-      if (sanitizedRefCode) {
-        const { bindReferralCodeForUser } = await import('~/server/services/referral.service');
-        await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
       }
 
       await refreshSession(user.id, { caller: 'subscription' });
