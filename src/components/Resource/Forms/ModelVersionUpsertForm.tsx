@@ -37,6 +37,7 @@ import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donatio
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { inheritedMetricPrivacyHints } from '~/components/Resource/Forms/metric-privacy-hints';
 import {
   Form,
   InputCheckbox,
@@ -228,11 +229,17 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { hideDonationGoals } = useCurrentUserSettings();
+  const userSettings = useCurrentUserSettings();
+  const { hideDonationGoals } = userSettings;
   const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
     useMutateUserSettings();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const metricHints = inheritedMetricPrivacyHints({
+    userSettings,
+    modelMeta: model?.meta,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+  });
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
   // For a brand-new version, seed the base model from the previous version (if any),
@@ -1115,18 +1122,21 @@ export function ModelVersionUpsertForm({
                 </Text>
                 <InputSwitch
                   name="meta.hideBuzz"
+                  description={metricHints.buzz}
                   label="Hide earned Buzz"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
                 />
                 <InputSwitch
                   name="meta.hideDownloads"
+                  description={metricHints.downloads}
                   label="Hide download count"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
                 />
                 <InputSwitch
                   name="meta.hideGenerations"
+                  description={metricHints.generations}
                   label="Hide generation count"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
