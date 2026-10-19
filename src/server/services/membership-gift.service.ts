@@ -497,6 +497,9 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
     return mintResidualSubscription({ stripe, giftId: gift.id });
   if (!EXTENDABLE_STATUSES.includes(stripeSub.status))
     return { armed: false as const, reason: `subscription-status-${stripeSub.status}` };
+  // A held upgrade changes the plan when it is paid, so a month armed now would be priced for the
+  // wrong plan. The webhook that applies or drops the change, or the sweep, arms it afterwards.
+  if (stripeSub.pending_update) return { armed: false as const, reason: 'plan-change-pending' };
 
   // Applying a coupon REPLACES whatever discount is there, with no error and no warning
   // from Stripe. Refuse rather than destroy someone's existing discount.

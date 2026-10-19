@@ -635,6 +635,21 @@ describe('armNextGiftMonth', () => {
     expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
+  it('waits while an upgrade is held, so the month is not priced for the plan being left', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([active]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue({
+      ...stripeSub(),
+      pending_update: { expires_at: 1 },
+    });
+
+    const result = await armNextGiftMonth({ userId: 2 });
+
+    expect(result).toMatchObject({ armed: false, reason: 'plan-change-pending' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+  });
+
   it('does not arm a second month while one is already armed', async () => {
     mockDbWrite.membershipGift.findMany.mockResolvedValue([
       { ...active, armedCouponId: 'gift_gift_1_m1' },
