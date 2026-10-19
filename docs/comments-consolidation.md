@@ -25,6 +25,12 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
    CommentsV2 after this plan was written; consolidation must carry it rather than rediscover it.
    Two tables, `CommentMute` + `CommentTopicMute` — settled 2026-09-01, to be re-reviewed with the
    rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
+8. The v3 code is **Kysely, not the Prisma client** (added 2026-10-19, Briant): the v3 service,
+   the backfill jobs and the app-level writes that accompany the trigger mirror run on the main
+   app's `kyselyRead`/`kyselyWrite` (`src/server/db/kyselyDb.ts`, already used by five services),
+   with `path` operations as `sql` fragments in the query builder. The tables are still declared
+   in `schema.full.prisma`, because the Kysely `DB` types are generated from it; nothing calls the
+   Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
 path as the single source of tree truth, with `rootId`/`depth` filled from it by the insert trigger — adopted with
@@ -36,6 +42,9 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-19 — the v3 service, backfill and app-level writes use Kysely, not the Prisma
+  client** (decision 8). The Prisma-only constraints on `path` (blocker 5) fall away; the DDL,
+  triggers and ltree sign-off are unchanged.
 - **2026-10-16 — `rootId`/`depth` move from `GENERATED ALWAYS` columns into the
   `commentv3_set_path` trigger** (blocker 6; schema-review notes under _Target data model_).
 - **2026-10-16 — an entity hard-delete removes its `CommentTopic` through a per-entity
@@ -113,10 +122,11 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
 4. **v1 `ON CONFLICT` targets the wrong column.** v1 rows take new ids, so `ON CONFLICT (id)`
    never fires and a mirrored v1 row is copied twice. Target `"legacyV1Id"` (its unique partial
    index exists for this).
-5. **`path` needs `@default(dbgenerated())`.** A required `Unsupported` column with no default
-   removes `create`, `createMany` and `upsert` from the Prisma delegate (verified on 6.13).
-   `Image.sortAt` is the repo's pattern for a trigger-owned column. Postgres checks NOT NULL after
-   BEFORE triggers run, so the DDL stands.
+5. **`path` and the Prisma delegate — moot under decision 8.** A required `Unsupported` column
+   with no default removes `create`, `createMany` and `upsert` from the Prisma delegate (verified
+   on 6.13). The v3 code is Kysely, so no delegate write exists; the schema still declares
+   `@default(dbgenerated())` because it costs nothing and protects a later Prisma caller.
+   Postgres checks NOT NULL after BEFORE triggers run, so the DDL stands.
 6. **Generated columns have a reverted precedent.** `20240118214315_muted_at` added a
    `GENERATED ALWAYS … STORED` column and `20240119204734_muted_at_trigger` replaced it with a
    trigger the next day. Prisma and Kysely both type the column writable; only Postgres refuses the
@@ -454,14 +464,16 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
 - **`locked` is subtree-scoped**: it refuses new replies anywhere under the row — one ancestor
   check via `path` (`@>` on the GiST index) at write time. Stronger and simpler than v1's
   one-level propagation; note it in the moderation section.
-- **ltree operational constraints**: `CREATE EXTENSION ltree` needs infra sign-off on prod, and
-  Prisma models the column as `Unsupported("ltree") @default(dbgenerated())` — the default is
-  mandatory, because a required `Unsupported` field without one strips `create`/`upsert` from the
-  delegate (`Image.sortAt` is the precedent). Path is invisible to the Prisma client and to the
-  generated Kysely types, so path operations are raw SQL. The trigger-set `rootId`/`depth`
-  integers are normal Prisma-readable columns and are what the hot queries use. The schema-drift
-  tool skips `Unsupported` fields silently (its type regex rejects them), so `path`'s nullability
-  is not drift-checked.
+- **ltree operational constraints**: `CREATE EXTENSION ltree` needs infra sign-off on prod and
+  has to exist on every database the migration runs against (prod, dev, the CI Postgres service,
+  local docker-compose). The schema declares the column as
+  `Unsupported("ltree") @default(dbgenerated())` for type generation only (decision 8: no Prisma
+  delegate touches the table); the generated Kysely type for it is overridden to a string, and
+  path operations (`@>`, `<@`, `nlevel`, `subltree`) are `sql` fragments in the query builder.
+  The trigger-set `rootId`/`depth` integers are ordinary typed columns and are what the hot
+  queries use — a performance split, not a client workaround. The schema-drift tool skips
+  `Unsupported` fields silently (its type regex rejects them), so `path`'s nullability is not
+  drift-checked. Debezium emits the column as a string.
 - **`clubPost` is NOT in the enum** (it was in Koen's draft) — clubs are dead code and their
   threads aren't migrated.
 - **`tosViolation`/`hidden`/`locked` stay booleans, not a bitwise `flags` int** (considered
@@ -820,11 +832,12 @@ ULID) because its Thread key is composite `(projectId, position)`.
 (`CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report`, `CommentMute`,
 `CommentTopicMute`), indexes, `CHECK` constraints, the `commentv3_set_path` tree trigger, plus the count triggers
 (`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
-`CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). Prisma models
-`path` as `Unsupported("ltree") @default(dbgenerated())` and `rootId`/`depth` as plain required
-ints the trigger fills — confirm `db:check-generated` stays clean with that shape (the repo's
-enum, interface and kysely generators were run on it 2026-10-16 and passed). Two more DB-level
-items found in the sweep:
+`CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). The tables are
+declared in `schema.full.prisma` so the Kysely `DB` types are generated (decision 8): `path` as
+`Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` as plain required ints the
+trigger fills — confirm `db:check-generated` stays clean with that shape (the repo's enum,
+interface and kysely generators were run on it 2026-10-16 and passed), and override `path` from
+`unknown` to `string` in the Kysely types. Two more DB-level items found in the sweep:
 
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on
@@ -837,7 +850,8 @@ items found in the sweep:
   retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
   too.
 - **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is a hand-curated allowlist, not
-  generated: add the new tables or their `updatedAt` silently never updates under Kysely writers.
+  generated: add the new tables or their `updatedAt` silently never updates. Under decision 8
+  every v3 writer is a Kysely writer, so this is the only thing that maintains `updatedAt`.
   Deploy the regenerated client _before_ applying the enum-bearing migration writes anything
   (expand/contract rule in CLAUDE.md). Migrations applied manually as always.
 
@@ -855,8 +869,10 @@ parent has not been backfilled yet is the other trap (blocker 1): the insert tri
 `Thread.commentId → CommentV2.threadId` to the root and copies any missing ancestors first, so the
 `parentId` FK always resolves. `toggleLockCommentsThread` still needs an app-level pair (set
 `Thread.locked` and `CommentTopic.locked` together), and `toggleThreadMute`/`toggleSectionMute`
-write `CommentMute`/`CommentTopicMute` directly. Note the `no-io-in-transaction` guard — same-DB
-SQL inside a transaction is fine.
+write `CommentMute`/`CommentTopicMute` directly. Those app-level writes, and everything in the v3
+service from Phase 4 on, are Kysely transactions on `kyselyWrite` (decision 8). Note the
+`no-io-in-transaction` guard — same-DB SQL inside a transaction is fine — and run
+`test:lint-rules` whenever a transaction is touched.
 
 Dual-write ships **before** the backfill runs: with the live edge already maintained, one
 converged backfill pass makes the table complete and it _stays_ complete — no moving-target
@@ -1158,7 +1174,8 @@ until a notification they muted arrives.
 
 ### Moderator app impact (Phase 5 detail)
 
-`apps/moderator` (Kysely, direct DB) has the v1/v2 split baked into six modules; consolidation
+`apps/moderator` (Kysely, direct DB — the same client family as the v3 service under decision 8,
+so the two can share query shapes) has the v1/v2 split baked into six modules; consolidation
 deletes about half of each:
 
 - `user-account.service.ts`: `getComments()` (v1) and `getCommentsV2()` (v2, hand-built

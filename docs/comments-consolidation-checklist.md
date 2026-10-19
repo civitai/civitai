@@ -9,6 +9,7 @@ set by a `BEFORE INSERT` trigger that also fills `rootId`/`depth`, `replyToId`, 
 deletion (`deletedAt` + `parentId ON DELETE RESTRICT`), comments FK'd to `CommentTopic`. Deletion
 semantics are **decided** (D6): tombstone with replies, hard-delete childless. Per-thread
 notification mute is **in scope** (D7, added 2026-09-01 after PR #4524 shipped it for CommentsV2).
+The v3 code is **Kysely, not the Prisma client** (D8, 2026-10-19).
 The 2026-10-16 viability review (plan doc, top) changed Phase 2 to a trigger mirror and added the
 items marked **(review)** below; everything amended since Koen's 2026-08-25 design is listed under
 _Changes since 2026-08-25_ in the plan doc.
@@ -101,16 +102,18 @@ progress 2026-10-19).
       `update_comment_reaction_count`
 - [ ] **(review)** `commentv3_delete_topic` AFTER DELETE trigger on each of the 13 entity tables
       (`comicChapter` via its surrogate id), so an entity hard-delete cascades its comments
-- [ ] Prisma shape: `path` as `Unsupported("ltree") @default(dbgenerated())` — without the default
-      Prisma strips `create`/`upsert` from the delegate **(review)**; `rootId`/`depth` plain
-      required `Int`; `db:check-generated` clean with it
+- [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
+      `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` plain required `Int`;
+      `db:check-generated` clean with it; `path` overridden from `unknown` to `string` in the
+      Kysely `DB` types **(review)**
 - [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`
       (**deploy regenerated client first**, then apply enum migration — expand/contract rule) —
       only if comments have not yet cut over to text-scan (`text-scan/clavata-cutover.ts`)
 - [ ] `entity-moderation.ts` consumes the `CommentV3` JobQueue entity type (same condition)
 - [ ] **(review)** text-scan: `CommentV3` profile + entity type in `text-scan/mode.ts`, `types.ts`,
       `retention.ts`; verdict/retention ledgers alias old `Comment` ids via `legacyV1Id`
-- [ ] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables
+- [ ] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
+      D8 this is the only thing that maintains `updatedAt` on them
 - [ ] `pnpm run db:generate` + `pnpm run db:check-generated` clean
 - [ ] Migration SQL written, committed, **applied manually** (never `prisma migrate deploy`)
 
@@ -134,6 +137,9 @@ backfill to race.
       writes `Thread`/`CommentV2` directly), `scam-cleanup.service.ts` raw hides, ban
       `removeComments`, `block-hide-comments.service.ts`, `restore-from-tos.ts`, the DB cascades
       (model → v1 comments, v1 parent → replies, `Thread` → `CommentV2`, account deletion)
+- [ ] v3 service module on `kyselyRead`/`kyselyWrite` (`src/server/db/kyselyDb.ts`), `path`
+      operations as `sql` fragments, transactions through the Kysely client (D8); `test:lint-rules`
+      run on every transaction change
 - [ ] `toggleLockCommentsThread` sets `Thread.locked` + `CommentTopic.locked` together
 - [ ] `toggleThreadMute` → `CommentMute`, `toggleSectionMute` → `CommentTopicMute` (both v2 controls
       from PR #4524; the section control gains the ability to mute a comment-less entity)
