@@ -39,6 +39,7 @@ import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
 import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { RecommendedRangeInputs } from '~/components/Resource/Forms/RecommendedRangeInputs';
 import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
@@ -62,6 +63,10 @@ import {
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
+  getBaseModelConfig,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
+import {
   BASE_MODEL_ATTESTATION_STATEMENT,
   hasBaseModelAttestation,
   requiresBaseModelAttestation as requiresBaseModelAttestationFor,
@@ -82,6 +87,7 @@ import type {
 import {
   baseModelToTraningDetailsBaseModelMap,
   modelVersionUpsertSchema2,
+  TURBO_VARIANT_MODEL_TYPES,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
@@ -266,6 +272,8 @@ export function ModelVersionUpsertForm({
   // the control out mid-edit.
   const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
+  const showTurboSection = TURBO_VARIANT_MODEL_TYPES.includes(model?.type as ModelType);
+  const showGenerationSettings = model?.type === ModelType.Checkpoint;
   // "Over" means a TIMED window that has ended. A permanent gate (endsAt null) never ends, and a version
   // with no gate has nothing to be over — neither should lock the controls.
   const isEarlyAccessOver =
@@ -335,6 +343,10 @@ export function ModelVersionUpsertForm({
     'settings.minStrength',
     'settings.maxStrength',
   ]) as number[];
+  const isTurbo = !!form.watch('settings.turbo');
+  const ecosystemTurboSettings = getEcosystemTurboSettings(
+    getBaseModelConfig(baseModel).ecosystemId
+  );
   const { isDirty } = form.formState;
   const paidAccessConfig = form.watch('paidAccessConfig');
   // The three generation grants the terms model supports. Seeded from the stored config so an existing
@@ -655,8 +667,17 @@ export function ModelVersionUpsertForm({
     ...data
   }: Schema) => {
     const schemaResult = querySchema.safeParse(router.query);
+    // Each block belongs to one model type; the other type's inputs are never rendered, so a value
+    // here is a leftover (a template, a stale draft), not a choice.
+    const settings = data.settings
+      ? {
+          ...data.settings,
+          generation: showGenerationSettings ? data.settings.generation : undefined,
+          turbo: showTurboSection ? data.settings.turbo : undefined,
+        }
+      : data.settings;
     const decision = decideModelVersionSubmit(
-      { ...data, recommendedResources: rawRecommendedResources },
+      { ...data, settings, recommendedResources: rawRecommendedResources },
       {
         modelId: model?.id,
         modelNsfw: !!model?.nsfw,
@@ -1170,10 +1191,31 @@ export function ModelVersionUpsertForm({
                   />
                 </Group>
               </Stack>
-              {(showClipSkip || showStrengthInput || showRecommendedResources) && (
+              {(showClipSkip ||
+                showStrengthInput ||
+                showRecommendedResources ||
+                showGenerationSettings) && (
                 <Stack gap={4}>
                   <Divider label="Recommended Settings" />
                   <Group gap="xs" className="*:grow">
+                    {showGenerationSettings && (
+                      <Stack gap="xs" w="100%">
+                        <RecommendedRangeInputs
+                          name="settings.generation.steps"
+                          label="Steps"
+                          min={1}
+                          max={100}
+                        />
+                        <RecommendedRangeInputs
+                          name="settings.generation.cfgScale"
+                          label="CFG scale"
+                          min={0}
+                          max={30}
+                          step={0.5}
+                          decimalScale={1}
+                        />
+                      </Stack>
+                    )}
                     {showClipSkip && (
                       <InputNumber
                         name="clipSkip"
@@ -1227,6 +1269,43 @@ export function ModelVersionUpsertForm({
                       />
                     )}
                   </Group>
+                </Stack>
+              )}
+              {showTurboSection && (
+                <Stack gap="xs">
+                  <Divider label="Turbo" />
+                  <Checkbox
+                    label="Turbo variant"
+                    description="A distillation LoRA for fewer steps. The generator's Turbo picker lists it and applies these settings when it is on."
+                    checked={isTurbo}
+                    onChange={(e) =>
+                      form.setValue(
+                        'settings.turbo',
+                        e.currentTarget.checked ? ecosystemTurboSettings : null,
+                        { shouldDirty: true, shouldValidate: true }
+                      )
+                    }
+                  />
+                  {isTurbo && (
+                    <>
+                      <RecommendedRangeInputs
+                        name="settings.turbo.steps"
+                        label="Steps"
+                        min={1}
+                        max={100}
+                        required
+                      />
+                      <RecommendedRangeInputs
+                        name="settings.turbo.cfgScale"
+                        label="CFG scale"
+                        min={0}
+                        max={30}
+                        step={0.5}
+                        decimalScale={1}
+                        required
+                      />
+                    </>
+                  )}
                 </Stack>
               )}
               {modelDownloadEnabled && (

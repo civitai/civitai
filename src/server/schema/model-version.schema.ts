@@ -321,11 +321,59 @@ export const modelVersionUpsertSchema = z.object({
   // recipe: z.array(recipeSchema).optional(),
 });
 
+// A cleared number input submits '', which `z.coerce.number()` would read as 0.
+const blankToUndefined = (value: unknown) => (value === '' || value === null ? undefined : value);
+const rangeNumber = z.preprocess(blankToUndefined, z.coerce.number());
+const RANGE_KEYS = ['min', 'max', 'default'] as const;
+
+/** A recommended value and the advisory band around it; the generator paints the band on the slider. */
+export const recommendedRangeSchema = z.preprocess(
+  // A band the form rendered but nobody filled in is no band, not three invalid numbers.
+  (value) => {
+    if (!value || typeof value !== 'object') return value;
+    const record = value as Record<string, unknown>;
+    return RANGE_KEYS.every((key) => blankToUndefined(record[key]) === undefined)
+      ? undefined
+      : value;
+  },
+  z
+    .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
+    .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
+    .refine((r) => r.min <= r.default && r.default <= r.max, {
+      error: 'Default must be within min and max',
+      path: ['default'],
+    })
+);
+export type RecommendedRange = z.infer<typeof recommendedRangeSchema>;
+
+/** A checkpoint's recommendations, applied when it is loaded in the generator. */
+export const recommendedGenerationSettingsSchema = z
+  .object({
+    steps: recommendedRangeSchema.optional(),
+    cfgScale: recommendedRangeSchema.optional(),
+  })
+  .transform((g) => (g.steps || g.cfgScale ? g : undefined));
+
+/**
+ * A LoRA's turbo block. Its presence marks the version as a turbo variant, so both ranges are
+ * required: the generator applies them whole when the LoRA is on.
+ */
+export const turboSettingsSchema = z.object({
+  steps: recommendedRangeSchema,
+  cfgScale: recommendedRangeSchema,
+});
+export type TurboSettings = z.infer<typeof turboSettingsSchema>;
+
+/** The model types a turbo block may be saved on. */
+export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];
+
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({
   minStrength: z.coerce.number().nullish(),
   maxStrength: z.coerce.number().nullish(),
   strength: z.coerce.number().nullish(),
+  generation: recommendedGenerationSettingsSchema.nullish(),
+  turbo: turboSettingsSchema.nullish(),
 });
 
 export const linkedComponentSettingsSchema = z.object({

@@ -37,6 +37,13 @@ describe('selectableVersions', () => {
     ).toEqual([2]);
   });
 
+  // Same shape: one turbo version makes the model match, and the card must open on that one.
+  it('keeps only turbo versions under the turbo filter', () => {
+    expect(
+      pick([version(1), version(2, { turbo: true }), version(3)], { turboOnly: true })
+    ).toEqual([2]);
+  });
+
   // Versions arrive in the model's own order, so the first survivor is what the card selects.
   it('leaves the topmost loaded version first, which is the one the card selects', () => {
     const [first] = pick(

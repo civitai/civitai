@@ -72,6 +72,7 @@ import type {
   UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
+import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
@@ -528,6 +529,21 @@ function assertOwnerTrainingStatusChange(
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
 
+/**
+ * The turbo block marks a LoRA as a turbo variant and the generation block is a checkpoint's own
+ * recommendation; saved on the wrong type, each would steer the generator from a resource it never
+ * reads them on.
+ */
+export function assertRecommendedSettingsForType(
+  settings: ModelVersionUpsertInput['settings'],
+  modelType: ModelType
+) {
+  if (settings?.turbo && !TURBO_VARIANT_MODEL_TYPES.includes(modelType))
+    throw throwBadRequestError('Only LoRA versions can be turbo variants');
+  if (settings?.generation && modelType !== 'Checkpoint')
+    throw throwBadRequestError('Only checkpoint versions carry recommended generation settings');
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -596,6 +612,7 @@ export const upsertModelVersion = async ({
     where: { id: data.modelId },
     select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
+  assertRecommendedSettingsForType(settings, model.type);
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
