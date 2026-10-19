@@ -200,7 +200,7 @@
                 Text scan · {ratingReviewLevelLabel(review.entityType, review.scan.level)}
               </span>
               {#if review.scan.reason}
-                <p class="whitespace-pre-wrap">{review.scan.reason}</p>
+                <p class="whitespace-pre-wrap wrap-anywhere">{review.scan.reason}</p>
               {/if}
             </div>
           {:else}
@@ -210,7 +210,7 @@
           {#if review.userComment}
             <div class="rounded-md bg-muted/40 p-2 text-sm">
               <span class="text-xs font-medium text-muted-foreground">Owner comment</span>
-              <p class="whitespace-pre-wrap">{review.userComment}</p>
+              <p class="whitespace-pre-wrap wrap-anywhere">{review.userComment}</p>
             </div>
           {:else}
             <span class="text-xs italic text-muted-foreground">No comment from owner</span>
@@ -267,7 +267,7 @@
                 {#if review.resolvedAt}<span>· {fmtDate(review.resolvedAt)}</span>{/if}
               </div>
               {#if review.modComment}
-                <p class="whitespace-pre-wrap">{review.modComment}</p>
+                <p class="whitespace-pre-wrap wrap-anywhere">{review.modComment}</p>
               {/if}
             </div>
           {/if}

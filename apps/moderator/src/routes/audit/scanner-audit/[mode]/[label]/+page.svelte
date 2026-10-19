@@ -415,7 +415,10 @@
 </div>
 
 <Sheet bind:open={policyOpen}>
-  <SheetContent side="right" class="w-[92vw] overflow-y-auto sm:max-w-md">
+  <SheetContent
+    side="right"
+    class="overflow-y-auto data-[side=right]:w-[92vw] data-[side=right]:sm:max-w-md"
+  >
     <SheetHeader><SheetTitle>Policy — {data.label}</SheetTitle></SheetHeader>
     <div class="px-4 pb-4">
       {@render policyBody()}
@@ -424,7 +427,10 @@
 </Sheet>
 
 <Sheet bind:open={rawOpen}>
-  <SheetContent side="right" class="w-[92vw] overflow-y-auto sm:max-w-[84rem]">
+  <SheetContent
+    side="right"
+    class="overflow-y-auto data-[side=right]:w-[92vw] data-[side=right]:sm:max-w-[84rem]"
+  >
     <SheetHeader><SheetTitle>Raw workflow</SheetTitle></SheetHeader>
     <div class="p-4">
       {#if rawLoading}
