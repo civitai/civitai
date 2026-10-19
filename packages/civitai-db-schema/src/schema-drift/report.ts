@@ -5,6 +5,7 @@ const KIND_TITLES: Record<DriftKind, string> = {
   'referential-action':
     'Referential-action drift (foreign key present, ON DELETE/UPDATE differs from the schema)',
   'missing-column': 'Missing columns (declared in the schema, absent from the table)',
+  'missing-table': 'Missing tables (a model mapped to something that is neither table nor view)',
   nullability: 'Nullability drift (schema optionality vs column NOT NULL)',
   uniqueness: 'Uniqueness drift (@unique/@@unique with no total unique index)',
 };
@@ -12,12 +13,15 @@ const KIND_TITLES: Record<DriftKind, string> = {
 const KIND_ORDER: DriftKind[] = [
   'missing-foreign-key',
   'referential-action',
+  'missing-table',
   'missing-column',
   'nullability',
   'uniqueness',
 ];
 
 function label(finding: DriftFinding): string {
+  // A missing-table finding is about the whole relation, so it carries no columns.
+  if (finding.columns.length === 0) return finding.table;
   return `${finding.table}.${finding.columns.join('+')}`;
 }
 
@@ -37,6 +41,15 @@ export function formatReport(report: DriftReport, options: { verbose?: boolean }
   if (counts.referentialActionUnknown > 0) {
     lines.push(
       `  action not comparable          : ${counts.referentialActionUnknown} (catalog carried no ON DELETE/UPDATE data)`
+    );
+  }
+  lines.push('');
+  lines.push('Tables');
+  lines.push(`  models NOT compared at all     : ${report.skippedModels.length}`);
+  lines.push(`  MISSING table                  : ${counts.missingTables}`);
+  if (counts.modelsUnclassified > 0) {
+    lines.push(
+      `  view or absent, not classified : ${counts.modelsUnclassified} (this catalog carries no view list)`
     );
   }
   lines.push('');
