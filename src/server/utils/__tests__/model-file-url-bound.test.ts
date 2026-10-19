@@ -24,6 +24,8 @@ const OTHER = 8;
 const VERSION = 100; // the version the file is on
 const SIBLING = 101; // another version of the same model
 const FOREIGN = 200; // a version of someone else's model
+const THEIRS_A = 300; // two versions of one model owned by someone else
+const THEIRS_B = 301;
 
 const r2Path = (key: string) => `${R2}/${R2_BUCKET}/${key}`;
 const r2Virtual = (key: string) => `https://${R2_BUCKET}.acct.r2.example.com/${key}`;
@@ -35,11 +37,22 @@ const versions = new Map([
   [VERSION, 1],
   [SIBLING, 1],
   [FOREIGN, 2],
+  [THEIRS_A, 3],
+  [THEIRS_B, 3],
+]);
+// model id -> current owner
+const modelOwners = new Map([
+  [1, ME],
+  [2, OTHER],
+  [3, OTHER],
 ]);
 let files: { url: string; ownerId: number; replacedAt: Date | null }[];
 
 type FileWhere = { url: string; replacedAt?: null; modelVersion?: { model?: { userId?: number } } };
-type VersionWhere = { id: number; model: { modelVersions: { some: { id: number } } } };
+type VersionWhere = {
+  id: number;
+  model: { userId?: number; modelVersions: { some: { id: number } } };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -64,7 +77,10 @@ beforeEach(() => {
   dbMock.dbWrite.modelVersion.findFirst.mockImplementation(
     async ({ where }: { where: VersionWhere }) => {
       const model = versions.get(where.id);
-      return model !== undefined && model === versions.get(where.model.modelVersions.some.id)
+      const owner = where.model.userId;
+      return model !== undefined &&
+        model === versions.get(where.model.modelVersions.some.id) &&
+        (owner === undefined || modelOwners.get(model) === owner)
         ? { id: where.id }
         : null;
     }
@@ -125,6 +141,15 @@ describe('rule 2: a checkpoint copied to a version of the same model', () => {
     await expect(miss(r2Virtual(`modelVersion/${FOREIGN}/epoch_8.safetensors`))).resolves.toBe(
       'other-model-version'
     );
+  });
+
+  // The create check runs before the version's ownership is, so its answer must not depend on how
+  // versions the caller cannot edit relate to each other.
+  it('gives the same answer for two versions of a model the caller does not own', async () => {
+    const sameModel = miss(r2Virtual(`modelVersion/${THEIRS_B}/epoch.safetensors`), ME, THEIRS_A);
+    const otherModel = miss(r2Virtual(`modelVersion/${FOREIGN}/epoch.safetensors`), ME, THEIRS_A);
+    await expect(sameModel).resolves.toBe('other-model-version');
+    await expect(otherModel).resolves.toBe('other-model-version');
   });
 
   it('refuses a version id with a leading zero rather than reading it as the same version', async () => {
@@ -216,6 +241,26 @@ describe('keys with encoded slashes are decoded once, then checked', () => {
     await expect(miss(r2Path(`default%2F${ME}%2F..%2F${OTHER}%2Fx.bin`))).resolves.toBe(
       'non-canonical'
     );
+  });
+
+  // Storage takes a path-style bucket from the raw path; one that only decodes to an upload bucket is
+  // not one.
+  it.each([
+    ['R2', R2],
+    ['B2', B2],
+  ])(
+    'refuses a %s path-style bucket segment that carries an encoded slash',
+    async (_store, host) => {
+      const bucket = host === R2 ? R2_BUCKET : B2_BUCKET;
+      await expect(
+        miss(`${host}/${bucket}%2Fdefault%2F${ME}/default/${OTHER}/x.bin`)
+      ).resolves.toBe('unknown-host');
+    }
+  );
+
+  it('allows a space once decoded, which an uploaded file name can carry', async () => {
+    await expect(miss(r2Path(`default/${ME}/x.safe%20tensors`))).resolves.toBeNull();
+    await expect(miss(r2Path(`default/${ME}/x.safe tensors`))).resolves.toBe('non-canonical');
   });
 
   it('parses the encoded and plain path-style forms of one object to the same key', () => {

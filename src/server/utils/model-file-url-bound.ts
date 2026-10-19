@@ -37,7 +37,8 @@ type ParsedStorageUrl =
 // `new URL` silently drops tabs and newlines, turns `\` into `/` and resolves `.`/`..` (also when
 // written `%2e`), so a raw url can name a different object than its parsed form appears to. Such a
 // url is refused outright rather than matched on what it normalises to.
-const CONTROL_OR_SPACE = /[\u0000- \u007f]/;
+const CONTROL_OR_SPACE = /[\u0000-\u0020\u007f]/;
+const CONTROL = /[\u0000-\u001f\u007f]/;
 const DOT_SEGMENT = /^\.{1,2}$/;
 const B2_PATH_STYLE_HOST = /^s3\.[a-z0-9-]+\.backblazeb2\.com$/;
 const B2_VIRTUAL_HOST = /^([a-z0-9][a-z0-9-]*)\.(s3\.[a-z0-9-]+\.backblazeb2\.com)$/;
@@ -80,7 +81,9 @@ export function parseUploadObjectUrl(raw: string): ParsedStorageUrl {
   const segments = decodePathOnce(rawPath);
   if (!segments) return { ok: false, reason: 'non-canonical' };
 
-  const located = locateBucket(url, segments);
+  // Storage reads a path-style bucket from the raw path, so it must not need decoding to be found.
+  const rawBucket = rawPath.slice(1).split('/')[0];
+  const located = locateBucket(url, segments, !rawBucket.includes('%'));
   if (!located) return { ok: false, reason: 'unknown-host' };
   if (!uploadBuckets().includes(located.bucket)) return { ok: false, reason: 'not-upload-bucket' };
   if (!located.key) return { ok: false, reason: 'malformed' };
@@ -100,15 +103,19 @@ function decodePathOnce(rawPath: string): string[] | null {
   } catch {
     return null;
   }
-  if (CONTROL_OR_SPACE.test(decoded) || decoded.includes('\\') || decoded.includes('%'))
-    return null;
+  if (CONTROL.test(decoded) || decoded.includes('\\') || decoded.includes('%')) return null;
   const segments = decoded.split('/');
   if (segments.some((segment) => segment === '' || DOT_SEGMENT.test(segment))) return null;
   return segments;
 }
 
-function locateBucket(url: URL, segments: string[]): { bucket: string; key: string } | null {
-  const pathStyle = () => ({ bucket: segments[0], key: segments.slice(1).join('/') });
+function locateBucket(
+  url: URL,
+  segments: string[],
+  plainFirstSegment: boolean
+): { bucket: string; key: string } | null {
+  const pathStyle = () =>
+    plainFirstSegment ? { bucket: segments[0], key: segments.slice(1).join('/') } : null;
   const virtualHost = (bucket: string) => ({ bucket, key: segments.join('/') });
 
   for (const endpoint of [hostOf(env.S3_UPLOAD_ENDPOINT), hostOf(env.S3_UPLOAD_B2_ENDPOINT)]) {
@@ -152,10 +159,18 @@ export function classifyUploadKey(
   return { kind: 'miss', reason: 'unrecognised-key' };
 }
 
-async function isVersionOfSameModel(keyVersionId: number, targetVersionId: number) {
+// Scoped to the caller's own models, so the answer says nothing about versions they cannot edit.
+async function isVersionOfSameOwnedModel(
+  keyVersionId: number,
+  targetVersionId: number,
+  userId: number
+) {
   if (keyVersionId === targetVersionId) return true;
   const version = await dbWrite.modelVersion.findFirst({
-    where: { id: keyVersionId, model: { modelVersions: { some: { id: targetVersionId } } } },
+    where: {
+      id: keyVersionId,
+      model: { userId, modelVersions: { some: { id: targetVersionId } } },
+    },
     select: { id: true },
   });
   return !!version;
@@ -191,7 +206,7 @@ export async function findClientFileUrlMiss({
     const key = classifyUploadKey(parsed.key, userId);
     if (key.kind === 'own-upload') return null;
     if (key.kind === 'model-version') {
-      if (await isVersionOfSameModel(key.modelVersionId, modelVersionId)) return null;
+      if (await isVersionOfSameOwnedModel(key.modelVersionId, modelVersionId, userId)) return null;
       miss = 'other-model-version';
     } else miss = key.reason;
   }
