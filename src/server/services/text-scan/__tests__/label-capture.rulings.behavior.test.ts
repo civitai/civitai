@@ -367,6 +367,48 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
         }),
       ]);
     });
+
+    it('a dismissal that lands on nothing records nothing', async () => {
+      // The held text moved after the queue read it: the write is refused as stale.
+      await seed({ flags: { minor: { ...granted, redetected: { ...held, textHash: NEWER } } } });
+      db.model.findUnique.mockResolvedValueOnce({
+        minor: false,
+        poi: false,
+        meta: { textScanFlags: { minor: { ...granted, redetected: held } } },
+      } as never);
+
+      await expect(
+        resolveTextScanRedetection({
+          modelId: MODEL,
+          label: 'minor',
+          keep: false,
+          textHash: SCANNED,
+          userId: MOD,
+        })
+      ).rejects.toThrow();
+
+      expect(await labels()).toEqual([]);
+    });
+  });
+
+  it('records nothing for a real-person lift that lands on nothing', async () => {
+    // An earlier grant is on the flag: a refused lift must not record it again as this ruling.
+    await seed({
+      poi: true,
+      flags: { poi: { ...verdict, appealGranted: { at: 'x', by: 1, textHash: SCANNED } } },
+    });
+
+    expect(
+      await grantModelTextScanPoi({
+        modelId: MODEL,
+        userId: MOD,
+        grantHash: SCANNED,
+        via: 'moderator',
+        expectTextHash: 'another-hash',
+      })
+    ).toBe(false);
+
+    expect(await labels()).toEqual([]);
   });
 
   it('records nothing for a flag with no text-scan verdict', async () => {

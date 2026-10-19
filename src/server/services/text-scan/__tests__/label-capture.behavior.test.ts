@@ -13,6 +13,8 @@ import type { TextScanModelLabelInput } from '~/server/services/text-scan/label-
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const db = { pg: null as unknown as PGlite };
+// Statements the connection refuses, to drive the savepoint's own failure paths.
+const refused = new Set<string>();
 const tx = {
   $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const { text, values: params } = Prisma.sql(strings, ...(values as never[]));
@@ -20,6 +22,8 @@ const tx = {
   },
   $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const { text, values: params } = Prisma.sql(strings, ...(values as never[]));
+    if ([...refused].some((prefix) => text.startsWith(prefix)))
+      throw new Error(`connection refused ${text}`);
     return (await db.pg.query(text, params as unknown[])).affectedRows ?? 0;
   },
 };
@@ -204,6 +208,62 @@ describe('recordTextScanModelLabel', () => {
     expect(await minorFlag()).toBe(true);
     expect(await labels()).toEqual([]);
     expect(await failures()).toHaveLength(1);
+  });
+
+  // What statement_timeout raises; record_label's own handler does not catch it.
+  it('leaves the decision standing when the store call is cancelled', async () => {
+    const signature = `text, text, text, text, text, text, text, text, timestamptz, integer, text,
+      integer, text, text, integer, jsonb, bigint, integer`;
+    await db.pg.exec(`
+      ALTER FUNCTION label_store.record_label(${signature}) RENAME TO record_label_real;
+      CREATE FUNCTION label_store.record_label(
+        p_subject_type text, p_subject_id text, p_content_hash text, p_family text, p_question text,
+        p_value text, p_labeller_kind text, p_source_ref text, p_labelled_at timestamptz,
+        p_labeller_user_id integer DEFAULT NULL, p_labeller_ref text DEFAULT NULL,
+        p_question_version integer DEFAULT 1, p_reason text DEFAULT NULL,
+        p_reason_note text DEFAULT NULL, p_ms_on_item integer DEFAULT NULL,
+        p_snapshot jsonb DEFAULT NULL, p_phash bigint DEFAULT NULL, p_owner_user_id integer DEFAULT NULL
+      ) RETURNS bigint LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'canceling statement due to statement timeout' USING ERRCODE = 'query_canceled';
+      END $$;
+    `);
+    try {
+      expect(await decide(ruling())).toBe(false);
+      expect(await minorFlag()).toBe(true);
+      expect(await labels()).toEqual([]);
+    } finally {
+      await db.pg.exec(`
+        DROP FUNCTION label_store.record_label(${signature});
+        ALTER FUNCTION label_store.record_label_real(${signature}) RENAME TO record_label;
+      `);
+    }
+  });
+
+  // A failed rollback leaves the transaction aborted, and its COMMIT would silently roll the
+  // decision back: the caller must see the failure instead of a success.
+  it('fails the decision loudly when the savepoint cannot be rolled back', async () => {
+    await db.pg.exec(`ALTER SCHEMA label_store RENAME TO label_store_absent`);
+    refused.add('ROLLBACK TO SAVEPOINT');
+    await db.pg.exec('BEGIN');
+    try {
+      await expect(recordTextScanModelLabel(tx, ruling())).rejects.toThrow('connection refused');
+    } finally {
+      refused.clear();
+      await db.pg.exec('ROLLBACK');
+      await db.pg.exec(`ALTER SCHEMA label_store_absent RENAME TO label_store`);
+    }
+  });
+
+  it('fails the decision loudly when the savepoint cannot be taken', async () => {
+    refused.add('SAVEPOINT');
+    await db.pg.exec('BEGIN');
+    try {
+      await expect(recordTextScanModelLabel(tx, ruling())).rejects.toThrow('connection refused');
+    } finally {
+      refused.clear();
+      await db.pg.exec('ROLLBACK');
+    }
   });
 
   it('leaves the decision standing when the store is missing', async () => {
