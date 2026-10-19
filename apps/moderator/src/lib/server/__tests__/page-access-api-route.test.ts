@@ -8,11 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { changePageRoles, GrantConflictError, GrantHistoryUnavailableError } = vi.hoisted(() => {
   class GrantConflictError extends Error {
+    readonly status = 409;
     constructor(readonly path: string, readonly current: string[]) {
       super(`${path} changed`);
     }
   }
-  class GrantHistoryUnavailableError extends Error {}
+  class GrantHistoryUnavailableError extends Error {
+    readonly status = 503;
+  }
   return {
     changePageRoles: vi.fn(async (input: { entries: { path: string; roles: string[] }[] }) => ({
       changed: input.entries.map((e) => ({ path: e.path, before: [], after: e.roles })),
@@ -53,15 +56,12 @@ function call(
     tokenClient?: string;
     body?: unknown;
     headers?: Record<string, string>;
+    query?: string;
   } = {}
 ) {
-  const url = new URL('/api/admin/page-access', ORIGIN);
+  const url = new URL(`/api/admin/page-access${opts.query ?? ''}`, ORIGIN);
   const headers = new Headers(
-    opts.headers ?? {
-      origin: ORIGIN,
-      'content-type': 'application/json',
-      'x-civitai-grant-change': '1',
-    }
+    opts.headers ?? { origin: ORIGIN, 'content-type': 'application/json' }
   );
   const request = new Request(url, {
     method: 'POST',
@@ -134,16 +134,13 @@ describe('POST /api/admin/page-access — who may call', () => {
 });
 
 describe('POST /api/admin/page-access — refused before any write', () => {
-  const base = {
-    origin: ORIGIN,
-    'content-type': 'application/json',
-    'x-civitai-grant-change': '1',
-  };
   it.each([
-    ['another origin', { ...base, origin: 'https://evil.example.test' }],
-    ['no origin', { 'content-type': 'application/json', 'x-civitai-grant-change': '1' }],
-    ['no change header', { origin: ORIGIN, 'content-type': 'application/json' }],
-    ['a form content type', { ...base, 'content-type': 'application/x-www-form-urlencoded' }],
+    ['another origin', { origin: 'https://evil.example.test', 'content-type': 'application/json' }],
+    ['no origin', { 'content-type': 'application/json' }],
+    [
+      'a form content type',
+      { origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' },
+    ],
   ])('%s → 403', async (_, headers) => {
     expect(await status(call({ headers }))).toBe(403);
     expect(changePageRoles).not.toHaveBeenCalled();
@@ -152,10 +149,17 @@ describe('POST /api/admin/page-access — refused before any write', () => {
   it.each([
     ['/admin itself', { path: '/admin' }],
     ['an unknown path', { path: '/no-such-page' }],
+    // Six junk characters then a real permission id: a prefix strip that does not check the prefix.
+    ['a mis-prefixed permission key', { path: 'XXXXXXassistant.use' }],
     ['the admin role', { role: 'moderator:admin' }],
     ['a role the hub does not list', { role: 'moderator:invented' }],
   ])('%s → 400', async (_, patch) => {
     expect(await status(call({ body: { ...BODY, ...patch } }))).toBe(400);
+    expect(changePageRoles).not.toHaveBeenCalled();
+  });
+
+  it('a change named in the query string → 400', async () => {
+    expect(await status(call({ query: '?path=/decisions' }))).toBe(400);
     expect(changePageRoles).not.toHaveBeenCalled();
   });
 
@@ -176,6 +180,16 @@ describe('POST /api/admin/page-access — the change', () => {
   it('revoke removes only the named role', async () => {
     await call({ body: { ...BODY, op: 'revoke', role: 'moderator:mod-high-access' } });
     expect(changePageRoles.mock.calls[0][0].entries).toEqual([{ path: '/blocklists', roles: [] }]);
+  });
+
+  it('carries every other stored role, retired or not, unchanged', async () => {
+    await call({ body: { ...BODY, expect: ['moderator:retired', 'moderator:mod-high-access'] } });
+    expect(changePageRoles.mock.calls[0][0].entries).toEqual([
+      {
+        path: '/blocklists',
+        roles: ['moderator:retired', 'moderator:mod-high-access', 'moderator:cm-high-access'],
+      },
+    ]);
   });
 
   it('a moved grant is a 409 carrying the current roles', async () => {

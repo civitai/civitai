@@ -106,9 +106,9 @@ const historyRows = async () =>
       path: string;
       roles_before: string[];
       roles_after: string[];
-      applied: boolean;
+      outcome: string;
     }>(
-      `SELECT actor_id, via, gate_ref, path, roles_before, roles_after, applied
+      `SELECT actor_id, via, gate_ref, path, roles_before, roles_after, outcome
        FROM page_access_change ORDER BY id`
     )
   ).rows;
@@ -136,7 +136,7 @@ describe('changePageRoles', () => {
         path: '/blocklists',
         roles_before: [HIGH],
         roles_after: [HIGH, CM],
-        applied: true,
+        outcome: 'applied',
       },
     ]);
     expect(JSON.parse(handles.published.at(-1)!)['/blocklists']).toEqual([HIGH, CM]);
@@ -169,17 +169,17 @@ describe('changePageRoles', () => {
     await history.exec('DROP TABLE page_access_change');
     await expect(grantCm()).rejects.toMatchObject({
       constructor: GrantHistoryUnavailableError,
-      status: 'no-schema',
+      dbStatus: 'no-schema',
     });
     expect(await stored()).toEqual([HIGH]);
   });
 
-  it('refuses a change that raced in after it was recorded, leaving the record unapplied', async () => {
+  it('refuses a change that raced in after it was recorded, and records it refused', async () => {
     race.next = () =>
       main.exec(`UPDATE "AppPageAccess" SET roles = ARRAY[]::text[] WHERE path = '/blocklists'`);
     await expect(grantCm()).rejects.toBeInstanceOf(GrantConflictError);
     expect(await stored()).toEqual([]);
-    expect(await historyRows()).toMatchObject([{ path: '/blocklists', applied: false }]);
+    expect(await historyRows()).toMatchObject([{ path: '/blocklists', outcome: 'refused' }]);
   });
 
   it('records nothing for a change that changes nothing', async () => {
@@ -200,15 +200,16 @@ describe('changePageRoles', () => {
     });
     expect(await stored('/decisions')).toEqual([CM]);
     expect(await historyRows()).toMatchObject([
-      { path: '/decisions', roles_before: [], roles_after: [CM], applied: true },
+      { path: '/decisions', roles_before: [], roles_after: [CM], outcome: 'applied' },
     ]);
   });
 });
 
 describe('/admin save', () => {
-  const save = (changes: Record<string, string[]>) => {
+  const save = (changes: Record<string, string[]>, expected: Record<string, string[]>) => {
     const form = new FormData();
     form.set('changes', JSON.stringify(changes));
+    form.set('expect', JSON.stringify(expected));
     const url = new URL('https://moderator.example.test/admin');
     return actions.save({
       request: new Request(url, { method: 'POST', body: form }),
@@ -218,23 +219,71 @@ describe('/admin save', () => {
   };
 
   it('records one row per path it actually changes', async () => {
-    const result = await save({ '/blocklists': [HIGH], '/decisions': [CM], '/xguard': [HIGH] });
+    const result = await save(
+      { '/blocklists': [HIGH], '/decisions': [CM], '/xguard': [HIGH] },
+      { '/blocklists': [HIGH], '/decisions': [], '/xguard': [] }
+    );
     expect(result).toEqual({ success: true, count: 2 });
     expect(await historyRows()).toEqual([
       expect.objectContaining({
         via: 'admin-page',
         actor_id: 9,
         path: '/decisions',
-        applied: true,
+        outcome: 'applied',
       }),
-      expect.objectContaining({ via: 'admin-page', actor_id: 9, path: '/xguard', applied: true }),
+      expect.objectContaining({
+        via: 'admin-page',
+        actor_id: 9,
+        path: '/xguard',
+        outcome: 'applied',
+      }),
     ]);
   });
 
   it('saves nothing when the history table is missing, and says so', async () => {
     await history.exec('DROP TABLE page_access_change');
-    const result = await save({ '/decisions': [CM] });
+    const result = await save({ '/decisions': [CM] }, { '/decisions': [] });
     expect(result).toMatchObject({ status: 503 });
     expect(await stored('/decisions')).toBeNull();
+  });
+
+  it('refuses, rather than reverts, a grant changed since the page loaded', async () => {
+    // Loaded showing [HIGH]; the API then added CM; the operator saves their own edit.
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', '${CM}'] WHERE path = '/blocklists'`
+    );
+    const result = await save({ '/blocklists': [] }, { '/blocklists': [HIGH] });
+    expect(result).toMatchObject({ status: 409 });
+    expect(await stored()).toEqual([HIGH, CM]);
+    expect(await historyRows()).toEqual([]);
+  });
+
+  it('compares what the page showed: a retired role still stored does not conflict', async () => {
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', 'moderator:retired'] WHERE path = '/blocklists'`
+    );
+    const result = await save({ '/blocklists': [] }, { '/blocklists': [HIGH] });
+    expect(result).toEqual({ success: true, count: 1 });
+    expect(await stored()).toEqual([]);
+  });
+});
+
+describe('page-access/schema.sql', () => {
+  // The harness strips psql meta-commands to apply the file, so it cannot see the directive go missing.
+  it('stops psql at the first failed statement', () => {
+    expect(read('../../../../page-access/schema.sql')).toMatch(/^\\set ON_ERROR_STOP on$/m);
+  });
+
+  it('refuses an API row with no approval, and an unknown outcome', async () => {
+    const insert = (via: string, gateRef: string | null, outcome = 'pending') =>
+      history.query(
+        `INSERT INTO page_access_change (actor_id, via, gate_ref, path, roles_before, roles_after, outcome)
+         VALUES (1, $1, $2, '/x', '{}', '{}', $3)`,
+        [via, gateRef, outcome]
+      );
+    await expect(insert('api', null)).rejects.toThrow(/page_access_change_api_gated/);
+    await expect(insert('api', '  ')).rejects.toThrow(/page_access_change_api_gated/);
+    await expect(insert('admin-page', null, 'done')).rejects.toThrow(/outcome_valid/);
+    await expect(insert('admin-page', null)).resolves.toBeDefined();
   });
 });

@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { defineEndpoint } from '$lib/server/api-endpoint';
-import { isGrantable, isGrantablePermission } from '$lib/server/access';
+import { isEditableGrant } from '$lib/server/access';
 import {
   GrantConflictError,
   GrantHistoryUnavailableError,
@@ -9,13 +9,8 @@ import {
 } from '$lib/server/page-access';
 import { NO_ROLE_CATALOGUE, grantableRoles } from '$lib/server/roles';
 
-// `/admin`'s save as a call: one role on one grant per request, so a script changes what it names and
-// nothing else. Session-authenticated as an `/admin` holder only — a service token has no person
-// behind it to record, and would hold every grant.
-
-// A cross-site page can make a browser send a cookie, but not this header or a JSON body without a
-// preflight this app never answers. Checked on top of SvelteKit's own origin check, which covers forms.
-const CHANGE_HEADER = 'x-civitai-grant-change';
+// Session-authenticated only: a service token has no person behind it to record, and would hold every
+// grant.
 
 export const POST = defineEndpoint({
   page: '/admin',
@@ -40,34 +35,27 @@ export const POST = defineEndpoint({
   }),
   returns: '{ changed, path, before, after }. 409 carries `current`, the roles stored now.',
   notes: [
-    `Send JSON from this app's own origin with the \`${CHANGE_HEADER}: 1\` header.`,
+    'Send JSON in the body from this app’s own origin; query parameters are refused.',
     'Admin-only paths, the admin role, and roles the auth hub does not list are refused.',
   ],
   handler: async ({ path, role, op, expect, gateRef, reason }, event) => {
-    const { request, url } = event;
     const user = event.locals.user;
     if (!user) error(401, 'Not signed in.'); // defineEndpoint already refused this; narrows the type
-    if (
-      request.headers.get('origin') !== url.origin ||
-      request.headers.get(CHANGE_HEADER) !== '1' ||
-      !request.headers.get('content-type')?.startsWith('application/json')
-    )
-      return json(
-        { error: `Send JSON from ${url.origin} with the ${CHANGE_HEADER}: 1 header.` },
-        { status: 403 }
-      );
+    // The shared input collector lets the query override the body; a grant change names itself in one
+    // place only.
+    if (event.url.search)
+      return json({ error: 'Send the change in the JSON body only.' }, { status: 400 });
 
-    if (!isGrantable(path) && !isGrantablePermission(path))
-      return json({ error: `${path} is not editable.` }, { status: 400 });
+    if (!isEditableGrant(path)) return json({ error: `${path} is not editable.` }, { status: 400 });
     const grantable = await grantableRoles();
     if (!grantable) return json({ error: NO_ROLE_CATALOGUE }, { status: 503 });
     // The super role is never in this list (`isStorableRole`), so it cannot be granted from here.
     if (!grantable.includes(role))
       return json({ error: `${role} is not a role that can be granted.` }, { status: 400 });
 
-    // Narrowed to the live catalogue, as `/admin` does, so a retired role is not carried forward.
-    const kept = expect.filter((r) => grantable.includes(r) && r !== role);
-    const after = op === 'grant' ? [...kept, role] : kept;
+    // Only the named role moves; every other stored role, retired or not, is carried as it was.
+    const others = expect.filter((r) => r !== role);
+    const after = op === 'grant' ? [...others, role] : others;
 
     try {
       const { changed } = await changePageRoles({
@@ -86,9 +74,9 @@ export const POST = defineEndpoint({
       };
     } catch (e) {
       if (e instanceof GrantConflictError)
-        return json({ error: e.message, current: e.current }, { status: 409 });
+        return json({ error: e.message, current: e.current }, { status: e.status });
       if (e instanceof GrantHistoryUnavailableError)
-        return json({ error: e.message }, { status: 503 });
+        return json({ error: e.message }, { status: e.status });
       throw e;
     }
   },

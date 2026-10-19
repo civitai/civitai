@@ -5,11 +5,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { IconChevronDown, IconChevronRight } from '@tabler/icons-svelte';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { dateTime } from '$lib/format';
   import { permissionByKey } from '$lib/permissions';
   import type { AccessNode } from '$lib/server/access';
   import type { ActionData, PageData } from './$types';
+  import ChangeHistory from './ChangeHistory.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -150,6 +149,10 @@
     )
   );
   const dirty = $derived(Object.keys(changes).length);
+  // What each changed path held at load, so the save refuses rather than reverts a change made since.
+  const expected = $derived(
+    Object.fromEntries(Object.keys(changes).map((key) => [key, data.granted[key] ?? []]))
+  );
 
   function revert() {
     editedSinceAnswer = true;
@@ -352,6 +355,7 @@
   <Button variant="outline" size="sm" disabled={!dirty} onclick={revert}>Revert</Button>
   <form method="POST" action="?/save" use:enhance>
     <input type="hidden" name="changes" value={JSON.stringify(changes)} />
+    <input type="hidden" name="expect" value={JSON.stringify(expected)} />
     <Button type="submit" size="sm" disabled={!dirty}>Save</Button>
   </form>
 </div>
@@ -414,47 +418,4 @@
   </p>
 {/if}
 
-<h2 class="mt-6 mb-2 text-sm font-semibold text-white">Recent changes</h2>
-<p class="mb-3 text-sm text-dark-2">
-  Every grant change, from this screen and from the API, newest first. A change marked
-  <em>unconfirmed</em> was recorded but never confirmed as written: check the grant above before relying
-  on it.
-</p>
-{#if data.historyError}
-  <ErrorAlert message={data.historyError} />
-{:else if data.changes.length}
-  <div class="overflow-x-auto rounded-xl border border-dark-4 bg-dark-6">
-    <table class="w-full text-left text-xs">
-      <thead class="text-dark-2">
-        <tr>
-          <th class="p-2 font-medium">When</th>
-          <th class="p-2 font-medium">Who</th>
-          <th class="p-2 font-medium">Grant</th>
-          <th class="p-2 font-medium">Before → after</th>
-          <th class="p-2 font-medium">Via</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each data.changes as c (c.id)}
-          <tr class="border-t border-dark-4 align-top">
-            <td class="p-2 whitespace-nowrap">{dateTime(c.at)}</td>
-            <td class="p-2">{c.actorName ?? `#${c.actorId}`}</td>
-            <td class="p-2"><code>{c.path}</code></td>
-            <td class="p-2">
-              {c.before.map(shortRole).join(', ') || 'nobody'} → {c.after.map(shortRole).join(', ') ||
-                'nobody'}
-              {#if c.reason}<div class="text-dark-2">{c.reason}</div>{/if}
-            </td>
-            <td class="p-2">
-              {c.via === 'api' ? 'API' : 'this page'}
-              {#if c.gateRef}<div class="text-dark-2 break-all">{c.gateRef}</div>{/if}
-              {#if !c.applied}<div class="text-red-300">unconfirmed</div>{/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-{:else}
-  <p class="text-sm text-dark-2">No changes recorded yet.</p>
-{/if}
+<ChangeHistory changes={data.changes} historyError={data.historyError} />

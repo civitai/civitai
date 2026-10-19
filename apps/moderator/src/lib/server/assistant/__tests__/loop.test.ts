@@ -156,8 +156,7 @@ describe('runTurn', () => {
     expect(JSON.stringify(complete.mock.calls)).not.toContain('192.0.2.44');
   });
 
-  // An unset provider key throws SvelteKit's `error()`, which is not an `Error`: stringified, the
-  // moderator read `{"message":…}` on prod.
+  // SvelteKit's `error()` throws an HttpError, which is not an `Error`.
   it("shows a SvelteKit error's message, not its JSON", async () => {
     const { run } = turn([], {
       complete: async () => kitError(500, 'OPENROUTER_API_KEY is not configured'),

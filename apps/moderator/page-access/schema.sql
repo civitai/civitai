@@ -19,9 +19,9 @@
 
 \set ON_ERROR_STOP on
 
--- 🔴 APPEND-ONLY, except `applied`. A row is written BEFORE the grant (the two are in different
--- databases, so they cannot share a transaction) and flipped to applied once the grant is committed. A
--- row left `false` is an attempt that did not land, or landed and could not be confirmed.
+-- 🔴 APPEND-ONLY, except `outcome`. A row is written `pending` BEFORE the grant (the two are in
+-- different databases, so they cannot share a transaction), then set `applied` once the grant commits or
+-- `refused` once it rolls back. A row left `pending` is unconfirmed: re-check the grant itself.
 CREATE TABLE IF NOT EXISTS page_access_change (
   id           bigserial   PRIMARY KEY,
   at           timestamptz NOT NULL DEFAULT now(),
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS page_access_change (
   roles_before text[]      NOT NULL,
   roles_after  text[]      NOT NULL,
   reason       text,
-  applied      boolean     NOT NULL DEFAULT false
+  outcome      text        NOT NULL DEFAULT 'pending'
 );
 
 -- `ADD CONSTRAINT` has no `IF NOT EXISTS`, so each is guarded by name to keep the file re-runnable.
@@ -44,6 +44,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'page_access_change'::regclass AND conname = 'page_access_change_via_valid') THEN
     ALTER TABLE page_access_change ADD CONSTRAINT page_access_change_via_valid
       CHECK (via IN ('admin-page', 'api'));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'page_access_change'::regclass AND conname = 'page_access_change_outcome_valid') THEN
+    ALTER TABLE page_access_change ADD CONSTRAINT page_access_change_outcome_valid
+      CHECK (outcome IN ('pending', 'applied', 'refused'));
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'page_access_change'::regclass AND conname = 'page_access_change_api_gated') THEN

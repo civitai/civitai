@@ -1,12 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import {
-  isGrantable,
-  isGrantablePermission,
-  pageAccessState,
-  requireAccess,
-} from '$lib/server/access';
+import { isEditableGrant, pageAccessState, requireAccess } from '$lib/server/access';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
 import {
   GrantConflictError,
@@ -22,8 +17,7 @@ import { usersByIds } from '$lib/server/users.service';
 
 const RECENT_CHANGES = 50;
 
-// The history is shown, not relied on: a history that cannot be read must not take the editing surface
-// down with it. Saving still refuses without it (see `changePageRoles`).
+// A history that can't be read must not take the editing surface down; saving still refuses without it.
 async function recentChanges(): Promise<{
   changes: (PageAccessChange & { actorName: string | null })[];
   historyError: string | null;
@@ -64,8 +58,12 @@ export const actions: Actions = {
     const form = await request.formData();
 
     let changes: Record<string, string[]>;
+    let expect: Record<string, string[]>;
     try {
       changes = changesSchema.parse(JSON.parse(String(form.get('changes') ?? '{}')));
+      // The roles each changed path showed when the page loaded. Without it a save silently reverts
+      // anything changed since, including by the API while this page sat open.
+      expect = changesSchema.parse(JSON.parse(String(form.get('expect') ?? '{}')));
     } catch {
       return fail(400, { error: 'Could not read the submitted changes.' });
     }
@@ -79,8 +77,7 @@ export const actions: Actions = {
 
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
-      if (!isGrantable(path) && !isGrantablePermission(path))
-        return fail(400, { error: `${path} is not editable.` });
+      if (!isEditableGrant(path)) return fail(400, { error: `${path} is not editable.` });
       // The catalogue is re-read here, so a role deleted between load and save lands on an operator who
       // did nothing wrong. Name it and say the save is intact — "unknown role" reads as a bug in the page.
       const retired = roles.filter((role) => !grantable.includes(role));
@@ -98,14 +95,16 @@ export const actions: Actions = {
         entries,
         userId: locals.user.id,
         via: 'admin-page',
+        expect,
+        expectAmong: grantable,
       });
       return { success: true, count: changed.length };
     } catch (e) {
       if (e instanceof GrantConflictError)
-        return fail(409, {
+        return fail(e.status, {
           error: `${e.message} Nothing was saved. Reload the page to see the current grants.`,
         });
-      if (e instanceof GrantHistoryUnavailableError) return fail(503, { error: e.message });
+      if (e instanceof GrantHistoryUnavailableError) return fail(e.status, { error: e.message });
       throw e;
     }
   },
