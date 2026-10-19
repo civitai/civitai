@@ -2375,6 +2375,7 @@ export const takedownCosmeticShopItem = async ({
   // folding the two together would make a total loss read like a partial one.
   let unrecoveredPackPool = 0;
   let refundedValue = 0;
+  let reversedWithPurchase = 0;
   const refundedUserIds: number[] = [];
 
   await logTakedown('info', 'Takedown started', {
@@ -2451,9 +2452,13 @@ export const takedownCosmeticShopItem = async ({
     // paid nothing, and must not be charged back a re-derived share.
     const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
     if (recordedPayouts) {
+      // Payouts are keyed under the purchase prefix, so the refund above may have reversed them.
+      const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
       for (const payout of recordedPayouts) {
         if (payout.amount <= 0) continue;
-        if (payout.transactionId)
+        if (payout.transactionId && reversed.has(payout.transactionId))
+          reversedWithPurchase += payout.amount;
+        else if (payout.transactionId)
           refundablePayouts.push({
             userId: payout.userId,
             amount: payout.amount,
@@ -2525,7 +2530,7 @@ export const takedownCosmeticShopItem = async ({
     }
   }
 
-  let clawedBack = 0;
+  let clawedBack = reversedWithPurchase;
   // Refunding the payout transaction is the cleanest reversal: the Buzz service
   // ties it to the original, so it can't double-apply and needs no external id of
   // our own.
@@ -2742,6 +2747,7 @@ export const takedownCosmeticShopItem = async ({
   }
 
   const owedBack =
+    reversedWithPurchase +
     refundablePayouts.reduce((sum, p) => sum + p.amount, 0) +
     [...clawback.values()].reduce((sum, amount) => sum + amount, 0);
 
