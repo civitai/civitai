@@ -15,6 +15,7 @@ import {
   parseKeptIds,
   planDecision,
   type FlagRef,
+  type PlannedFlag,
 } from '$lib/minor-flags/flagged-decision';
 import {
   getMinorFlagAppealGroups,
@@ -367,8 +368,19 @@ const decideFlags: Actions[string] = async (event) => {
   // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
   // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
   // it escape would hide the flags already ruled.
+  //
+  // Order is load-bearing for a held re-detection on the same label as a hash flag (both minor): the
+  // main app's hash confirm/revert stamps the minor entry and strips its `redetected` marker, so a
+  // re-detection ruled after it is refused as stale although the flag was ruled. Ruling the
+  // re-detection first finds the model already minor and closes it, then the hash ruling lands.
+  // Neither path records the bar's reason for that pair until the hash endpoints take one (P6).
+  // Every other flag keeps the row's order (minor before real person, hash before text scan).
+  const hashLabels = new Set(plan.filter((f) => f.source === 'hash').map((f) => f.label));
+  const first = (f: PlannedFlag) => f.source === 'redetected' && hashLabels.has(f.label);
+  const order = [...plan.keys()].sort((a, b) => Number(first(plan[b])) - Number(first(plan[a])));
   const outcomes = [];
-  for (const [i, flag] of plan.entries()) {
+  for (const i of order) {
+    const flag = plan[i];
     const result = await ruleFlag(modelId, flag, flag.keep, reasons[i]).catch(
       (err: unknown): { ok: false; error: string } => {
         console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);

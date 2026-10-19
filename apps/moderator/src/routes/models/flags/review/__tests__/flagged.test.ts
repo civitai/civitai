@@ -342,6 +342,44 @@ describe('one decision over every flag on the model', () => {
     });
   });
 
+  describe('a hash minor flag with a held minor re-detection', () => {
+    const held = { label: 'minor', source: 'redetected', textHash: 'h-2' };
+    // A fake main app: a hash ruling stamps the minor entry and strips its held detection, so a
+    // re-detection ruled after it is stale.
+    let detectionHeld: boolean;
+    beforeEach(() => {
+      detectionHeld = true;
+      const hashRuling = async () => {
+        detectionHeld = false;
+        return { ok: true };
+      };
+      confirmMinorFlag.mockImplementation(hashRuling);
+      revertMinorFlag.mockImplementation(hashRuling);
+      resolveRedetection.mockImplementation(async () =>
+        detectionHeld
+          ? { ok: true, resolved: 'closed' }
+          : {
+              ok: false,
+              error: 'This re-detection changed or was already resolved. Reload the queue.',
+            }
+      );
+    });
+
+    it.each([
+      ['reverts', '', dismissed, revertMinorFlag],
+      ['confirms', 'minor:hash,minor:redetected', kept, confirmMinorFlag],
+    ] as const)(
+      '%s both by ruling the re-detection before the hash flag',
+      async (_n, keep, reason, hashCall) => {
+        const result = await decide([minorHash, held], keep, reason);
+        expect(result).toMatchObject({ success: true, modelId: 42 });
+        expect(resolveRedetection.mock.invocationCallOrder[0]).toBeLessThan(
+          hashCall.mock.invocationCallOrder[0]
+        );
+      }
+    );
+  });
+
   it('reports a refusal of every flag without calling it partial', async () => {
     confirmMinorFlag.mockResolvedValue({ ok: false, error: 'Appeal open.' });
     const result = await decide([minorHash], 'minor:hash');
