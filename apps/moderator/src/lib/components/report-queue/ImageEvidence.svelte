@@ -1,5 +1,8 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { page as pageState } from '$app/state';
+  import { BlockedIds } from '$lib/blocked-ids.svelte';
+  import { selectionKey } from '$lib/paging';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
@@ -61,21 +64,30 @@
       held = r?.imageHeld === true;
     },
   });
-  // The last write's result, and the selection, belong to the page they were made on. `ImageActionBar`
-  // drops off-screen ids too, but it is not mounted on a page with no images — so the clear is here.
+  // The selection survives an image page turn and nothing else: any other URL change clears it, and
+  // the host's `{#key}` resets it per item. Blocked ids accumulate over the pages shown, since Restore's
+  // "not currently blocked" warning must know the ids carried off earlier pages. The last write's
+  // result belongs to the page it was made on.
+  const blockedIds = new BlockedIds();
+  let shownKey: string | undefined;
   let shownPage: number | undefined;
   $effect.pre(() => {
-    if (paging?.page === shownPage) return;
-    shownPage = paging?.page;
+    const key = selectionKey(pageState.url);
+    const page = paging?.page;
+    const items = images;
     untrack(() => {
-      selected.clear();
-      result = null;
+      if (key !== shownKey) {
+        shownKey = key;
+        selected.clear();
+        blockedIds.clear();
+      }
+      if (page !== shownPage) {
+        shownPage = page;
+        result = null;
+      }
+      blockedIds.absorb(items);
     });
   });
-
-  const blockedIds = $derived(
-    new Set<string | number>(images.filter((i) => i.ingestion === 'Blocked').map((i) => i.id))
-  );
 </script>
 
 {#if form.error}
@@ -97,6 +109,7 @@
       notify={false}
       strike={can.strike}
       {blockedIds}
+      keepOffScreen={paging != null}
     />
   </div>
 {/if}
