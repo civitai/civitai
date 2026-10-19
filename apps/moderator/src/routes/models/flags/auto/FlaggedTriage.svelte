@@ -25,6 +25,7 @@
   } from '$lib/minor-flags/flagged-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
+  import { uniqueBy } from '$lib/triage/unique-by';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
@@ -53,9 +54,6 @@
       .slice(0, 2)
       .map((d) => decisionEnabled(flags, d));
   };
-  const uniqueBy = <T,>(items: T[], key: (item: T) => string) => [
-    ...new Map(items.map((item) => [key(item), item])).values(),
-  ];
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>

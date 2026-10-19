@@ -178,7 +178,13 @@
           </div>
         </TriageCard>
         <SharedFileCard
-          row={{ ...match, modelId: row.modelId, modelName: row.modelName, userId: row.userId, username: row.username }}
+          row={{
+            ...match,
+            modelId: row.modelId,
+            modelName: row.modelName,
+            userId: row.userId,
+            username: row.username,
+          }}
           {civitaiUrl}
           status={{ label: 'not flagged', tone: 'green' }}
         />

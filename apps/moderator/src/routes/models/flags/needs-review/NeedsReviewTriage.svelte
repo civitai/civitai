@@ -29,6 +29,7 @@
   } from '$lib/minor-flags/needs-review';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
+  import { uniqueBy } from '$lib/triage/unique-by';
   import type { NeedsReviewQueueData } from '$lib/server/minor-flag-queue';
   import type { NeedsReviewRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
@@ -109,9 +110,6 @@
 
   const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index);
 
-  const uniqueBy = <T,>(items: T[], key: (item: T) => string) => [
-    ...new Map(items.map((item) => [key(item), item])).values(),
-  ];
   // A held detection is timed by when the scan held it; a match-only row by its file's upload.
   const rowMeta = (row: NeedsReviewRow) => {
     const verb = row.flags.length ? 'detected' : 'uploaded';

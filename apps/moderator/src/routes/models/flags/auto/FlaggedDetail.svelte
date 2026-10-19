@@ -118,13 +118,13 @@
   >
     <IconMessage class="mt-px size-3.5 shrink-0" aria-hidden="true" />
     <p class="m-0">
-    The owner has an open appeal on this model. Reverting a flag here closes it with the same reason;
-    keeping a flag has to wait for the appeal.
-    {#if canOpenAppeals}
-      <a href={appealsHref} class={LINK_CLASS}>Open it in Appeals</a>.
-    {:else}
-      It is waiting in Appeals.
-    {/if}
+      The owner has an open appeal on this model. Reverting a flag here closes it with the same reason;
+      keeping a flag has to wait for the appeal.
+      {#if canOpenAppeals}
+        <a href={appealsHref} class={LINK_CLASS}>Open it in Appeals</a>.
+      {:else}
+        It is waiting in Appeals.
+      {/if}
     </p>
   </div>
 {/snippet}

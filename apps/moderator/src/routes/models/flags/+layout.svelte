@@ -64,7 +64,8 @@
       <Input
         name="q"
         bind:value
-        oninput={() => search.input(value)}
+        oninput={(event: Event) =>
+          search.input((event.currentTarget as HTMLInputElement).value)}
         oncompositionstart={() => search.compositionStart()}
         oncompositionend={(event: CompositionEvent) =>
           search.compositionEnd((event.currentTarget as HTMLInputElement).value)}
