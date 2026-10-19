@@ -11,15 +11,15 @@ const mocks = vi.hoisted(() => ({
     userActivity: vi.fn(),
     post: vi.fn(),
     modelEvent: vi.fn(),
+    chatAudit: vi.fn(),
   },
+  deleteChatMessage: vi.fn(),
   bulkSetCommentTosViolation: vi.fn(),
   bulkSetCommentV2TosViolation: vi.fn(),
   toggleBan: vi.fn(),
   clearUserProfileFields: vi.fn(),
   createStrike: vi.fn(),
   unpublishModelById: vi.fn(),
-  deletePost: vi.fn(),
-  closeAppealsDeletedByOwner: vi.fn(),
   refreshModelCache: vi.fn(),
 }));
 
@@ -33,6 +33,7 @@ vi.mock('~/server/clickhouse/client', () => ({
     userActivity = mocks.tracker.userActivity;
     post = mocks.tracker.post;
     modelEvent = mocks.tracker.modelEvent;
+    chatAudit = mocks.tracker.chatAudit;
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -54,10 +55,7 @@ vi.mock('~/server/services/strike.service', () => ({ createStrike: mocks.createS
 vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mocks.unpublishModelById,
 }));
-vi.mock('~/server/services/post.service', () => ({ deletePost: mocks.deletePost }));
-vi.mock('~/server/services/report.service', () => ({
-  closeAppealsDeletedByOwner: mocks.closeAppealsDeletedByOwner,
-}));
+vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: mocks.deleteChatMessage }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: mocks.refreshModelCache },
 }));
@@ -113,7 +111,7 @@ beforeEach(() => {
   dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: {}, nsfw: false });
   mocks.bulkSetCommentTosViolation.mockResolvedValue({ count: 1 });
   mocks.bulkSetCommentV2TosViolation.mockResolvedValue({ count: 1 });
-  mocks.deletePost.mockResolvedValue({ id: 55, nsfwLevel: 1, deletedImageIds: [1, 2] });
+  mocks.deleteChatMessage.mockResolvedValue({ messageId: 55, chatId: 3 });
   mocks.createStrike.mockResolvedValue({ id: 31 });
   mocks.toggleBan.mockResolvedValue({ id: 900, bannedAt: new Date() });
   redisMock.sysRedis.multi.mockImplementation(() => ({
@@ -243,13 +241,29 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({ userId: 900 });
     });
 
-    it('deletes a post as a moderator and tracks it', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
+    it('soft-deletes a chat message as a moderator, auditing it', async () => {
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'ChatMessage' }));
       await call({ holdId: 12, decision: 'remove' });
-      expect(mocks.deletePost).toHaveBeenCalledWith({ id: 55, isModerator: true });
-      expect(mocks.tracker.post).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'Delete', postId: 55 })
+      expect(mocks.deleteChatMessage).toHaveBeenCalledWith({
+        messageId: 55,
+        actorId: 7,
+        isModerator: true,
+        audit: expect.any(Function),
+      });
+      expect(mocks.deleteChatMessage).toHaveBeenCalledTimes(1);
+      const { audit } = mocks.deleteChatMessage.mock.calls[0][0];
+      await audit({ type: 'delete' });
+      expect(mocks.tracker.chatAudit).toHaveBeenCalledWith({ type: 'delete' });
+    });
+
+    it('deletes every message of the judged chat window, the held one included', async () => {
+      findFirst.mockResolvedValue(
+        pendingHold({ entityType: 'ChatMessage', meta: { chatId: 3, messageIds: [54, 53] } })
       );
+      await call({ holdId: 12, decision: 'remove' });
+      expect(mocks.deleteChatMessage.mock.calls.map(([a]) => a.messageId).sort()).toEqual([
+        53, 54, 55,
+      ]);
     });
 
     it('unpublishes a model as a violation and refreshes its cache', async () => {
@@ -269,16 +283,16 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.refreshModelCache).toHaveBeenCalledWith(55);
     });
 
-    it('refuses a removal for a type with no removal path, before doing anything', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'ChatMessage' }));
+    it('refuses a post removal, which has no reversible service, before doing anything', async () => {
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
       const { status } = await call({ holdId: 12, decision: 'remove_ban' });
       expect(status).toBe(400);
       expect(mocks.toggleBan).not.toHaveBeenCalled();
       expect(updateMany).not.toHaveBeenCalled();
     });
 
-    it('still lets a hold of that type be dismissed', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'ChatMessage' }));
+    it('still lets a post hold be dismissed', async () => {
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
       expect((await call({ holdId: 12, decision: 'dismiss' })).status).toBe(200);
     });
   });

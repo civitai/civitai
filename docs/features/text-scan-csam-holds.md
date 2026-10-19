@@ -32,10 +32,11 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
 | Remove content + ban + NCMEC report | removal and ban; the moderator then completes the existing CSAM report form for the author | `Confirmed` |
 | Do nothing | nothing on the content or the account | `Dismissed` |
 
-- Removal reuses what a moderator already uses for each type: a ToS-violation flag for `Comment` and
-  `CommentV2`, a profile-field clear for `UserProfile`, a moderator post delete for `Post`, and an
-  unpublish-as-violation for `Model`. A `ChatMessage` hold has no removal service yet, so removal
-  actions are refused for it (400) and only "Do nothing" applies.
+- Removal reuses what a moderator already uses for each type, and keeps the content: a ToS-violation
+  flag for `Comment` and `CommentV2`, a profile-field clear for `UserProfile`, an
+  unpublish-as-violation for `Model`, and the chat soft delete (row and content retained, audited) for
+  `ChatMessage`. A `Post` hold has no reversible moderator removal yet (the only delete destroys its
+  images), so removal actions are refused for it (400) and only "Do nothing" applies.
 - The ban skips an author who is already banned, because the ban service toggles. No decision files
   an NCMEC report or creates a `Report` row; the fourth action opens the CSAM report form
   (`/moderator/csam/<userId>`) once the removal and ban have succeeded.

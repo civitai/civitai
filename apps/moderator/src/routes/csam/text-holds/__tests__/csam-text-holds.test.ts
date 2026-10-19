@@ -14,7 +14,7 @@ vi.mock('$lib/server/csam-holds.service', () => ({
 }));
 
 const { actions, load } = await import('../+page.server');
-const { holdPreview } = await import('../hold-entity');
+const { holdPreview, canRemoveHeld } = await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -156,6 +156,17 @@ describe('csam text holds decide', () => {
       status: 400,
       data: { error: 'already decided or missing', key: 12 },
     });
+  });
+});
+
+describe('csam hold removal', () => {
+  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Model'])(
+    'offers removal for a %s hold',
+    (type) => expect(canRemoveHeld(type)).toBe(true)
+  );
+
+  it('offers none for a post, which has no reversible removal', () => {
+    expect(canRemoveHeld('Post')).toBe(false);
   });
 });
 

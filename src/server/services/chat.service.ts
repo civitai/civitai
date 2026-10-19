@@ -21,7 +21,8 @@ import { withSignals } from '~/server/signals/wrapper';
 import { decideDmRouting } from '~/server/utils/chat';
 import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { truncateAuditValue } from '~/server/common/chat-audit.constants';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -724,4 +725,73 @@ export const createMessage = async ({
   }
 
   return resp;
+};
+
+type ChatDeleteAudit = {
+  type: 'delete';
+  chatId: number;
+  messageId: number;
+  actorId: number;
+  subjectId: number;
+  actorRole: 'owner' | 'moderator';
+  oldValue: string;
+  newValue: string;
+  truncated: boolean;
+};
+
+/**
+ * Hides a message from everyone in the chat and retains the row: the delete is recorded, so a report
+ * filed against the thread afterwards still resolves to what was actually said. Authors delete their
+ * own; moderators delete anyone's. A message already deleted is returned as is.
+ */
+export const deleteChatMessage = async ({
+  messageId,
+  actorId,
+  isModerator,
+  audit,
+}: {
+  messageId: number;
+  actorId: number;
+  isModerator: boolean;
+  audit: (event: ChatDeleteAudit) => Promise<unknown>;
+}) => {
+  const existing = await dbWrite.chatMessage.findFirst({
+    where: { id: messageId },
+    select: { id: true, userId: true, chatId: true, content: true, deletedAt: true },
+  });
+
+  if (!existing || (existing.userId !== actorId && !isModerator)) {
+    throw throwNotFoundError(`No message found for ID (${messageId})`);
+  }
+  if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
+
+  await dbWrite.chatMessage.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
+
+  const { value, truncated } = truncateAuditValue(existing.content);
+  await audit({
+    type: 'delete',
+    chatId: existing.chatId,
+    messageId: existing.id,
+    actorId,
+    subjectId: existing.userId,
+    actorRole: existing.userId === actorId ? 'owner' : 'moderator',
+    oldValue: value,
+    newValue: '',
+    truncated,
+  }).catch(() => undefined);
+
+  // Both sides need to drop it; without this the other participant keeps
+  // rendering a message that no longer exists for anyone.
+  withSignals(() =>
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageDeleted}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: existing.id, chatId: existing.chatId }),
+      }
+    )
+  ).catch(() => undefined);
+
+  return { messageId: existing.id, chatId: existing.chatId };
 };

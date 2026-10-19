@@ -56,12 +56,12 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
-/** Removal needs an existing removal path; a chat message has none, so only "do nothing" applies to it. */
+/** Removal needs an existing reversible path; a post has none, so only "do nothing" applies to it. */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
+  'ChatMessage',
   'Comment',
   'CommentV2',
   'UserProfile',
-  'Post',
   'Model',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);

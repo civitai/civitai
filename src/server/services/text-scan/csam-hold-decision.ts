@@ -4,16 +4,15 @@ import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { unpublishModelById } from '~/server/services/model.service';
-import { deletePost } from '~/server/services/post.service';
-import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { EntityType, StrikeReason } from '~/shared/utils/prisma/enums';
+import type { EntityType} from '~/shared/utils/prisma/enums';
+import { StrikeReason } from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -34,8 +33,17 @@ const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: bo
   remove_ban_report: { remove: true, strike: false, ban: true },
 };
 
-/** Types with an existing removal service. A chat message has none yet: its delete lives in a controller. */
-const REMOVABLE_ENTITY_TYPES = ['Comment', 'CommentV2', 'UserProfile', 'Post', 'Model'] as const;
+/**
+ * Types with an existing reversible removal. A post has none: only the owner-driven delete exists, and it
+ * destroys the post's images.
+ */
+const REMOVABLE_ENTITY_TYPES = [
+  'ChatMessage',
+  'Comment',
+  'CommentV2',
+  'UserProfile',
+  'Model',
+] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
 
@@ -83,20 +91,17 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
     case 'UserProfile':
       await clearUserProfileFields({ userId: entityId });
       return;
-    case 'Post': {
-      const result = await deletePost({ id: entityId, isModerator: true });
-      if (!result) return;
-      await closeAppealsDeletedByOwner({
-        entityType: EntityType.Image,
-        entityIds: result.deletedImageIds,
-        ownerId: actor.id,
-      });
-      await tracker.post({
-        type: 'Delete',
-        nsfw: !getIsSafeBrowsingLevel(result.nsfwLevel),
-        postId: result.id,
-        tags: [],
-      });
+    case 'ChatMessage': {
+      // The hold judged the sender's recent window, not one message. A soft delete: rows and content are kept.
+      const window = (hold.meta as { messageIds?: unknown } | null)?.messageIds;
+      const ids = Array.isArray(window) && window.length ? (window as number[]) : [entityId];
+      for (const messageId of new Set([entityId, ...ids]))
+        await deleteChatMessage({
+          messageId,
+          actorId: actor.id,
+          isModerator: true,
+          audit: (event) => tracker.chatAudit(event),
+        });
       return;
     }
     case 'Model': {
