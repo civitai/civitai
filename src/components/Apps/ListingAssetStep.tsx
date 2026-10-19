@@ -42,16 +42,20 @@ import {
   ListingMediaRatingCallout,
   type ListingRatingStage,
 } from '~/components/Apps/ListingRatingNotices';
-import type { EditAsset, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
+import type { EditAsset, EditRedMedia, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
 import {
   listingAssetTooLargeReason,
   validateListingImage,
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
-import type {
-  ListingAssetLevels,
-  ListingRatingDisplayAsset,
+import { RED_SLOTS_UNAVAILABLE_MESSAGE } from '~/shared/constants/listing-media-split.constants';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
+import {
+  MATURE_STORE_HOST,
+  SFW_STORE_HOST,
+  type ListingAssetLevels,
+  type ListingRatingDisplayAsset,
 } from '~/shared/utils/listing-rating-display';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -111,11 +115,30 @@ export type AssetState = {
 
 export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
 
+/**
+ * The attach keys of the two civitai.red override slots. Each is uploaded and validated as the
+ * asset it stands in for (an icon, a cover) through the same path as the regular slots; only the
+ * attach call differs (`setRedMedia` instead of `setIcon` / `setCover`).
+ */
+const RED_SLOT_KEYS = { icon: 'red-icon', cover: 'red-cover' } as const;
+
+/** Which override slot an attach key fills, or `null` for every other asset. */
+function redSlotOfKey(key: string): 'icon' | 'cover' | null {
+  if (key === RED_SLOT_KEYS.icon) return 'icon';
+  if (key === RED_SLOT_KEYS.cover) return 'cover';
+  return null;
+}
+
+/** What the civitai.red section tells the author about the two override slots. */
+export const RED_MEDIA_NOTE = `These images show only on ${MATURE_STORE_HOST}, in place of the icon and cover above, and may be mature. ${SFW_STORE_HOST} always shows the regular icon and cover. Both are optional: an empty slot shows the regular image on ${MATURE_STORE_HOST} too.`;
+
 function assetLevelsByImageId(view: ListingAssetLevels): Map<number, number | null> {
   const byId = new Map<number, number | null>();
   if (view.iconId != null) byId.set(view.iconId, view.iconNsfwLevel);
   if (view.coverId != null) byId.set(view.coverId, view.coverNsfwLevel);
   for (const s of view.screenshots) if (s.imageId != null) byId.set(s.imageId, s.nsfwLevel);
+  if (view.redIconId != null) byId.set(view.redIconId, view.redIconNsfwLevel ?? null);
+  if (view.redCoverId != null) byId.set(view.redCoverId, view.redCoverNsfwLevel ?? null);
   return byId;
 }
 
@@ -210,6 +233,7 @@ export function ListingAssetStep({
   onRepull,
   repullLoading = false,
   rating,
+  redMedia,
 }: {
   listingId: string;
   contentRating: OffsiteContentRating;
@@ -248,11 +272,28 @@ export function ListingAssetStep({
     listingRating: string | null;
     stage: ListingRatingStage;
     assets: ListingAssetLevels;
+    /**
+     * A moderator split the live listing's media, so only its civitai.com-eligible images floor
+     * the rating (`ratingFloorAssets`) — the civitai.red overrides among them never do.
+     */
+    mediaSplit?: boolean;
   } | null;
+  /**
+   * The civitai.red icon / cover override slots of THIS `listingId` (the editor's prefill read).
+   * Omitted: no civitai.red section (the create wizard). `available: false`: the section shows
+   * why the slots cannot be set here instead of a picker.
+   *
+   * 🔴 The previews are shown PLAINLY, like this step's screenshots and regular icon / cover:
+   * this is the author's own editor, showing the author's own uploads, and none of those go
+   * through the viewer's browsing-level guard here either.
+   */
+  redMedia?: EditRedMedia | null;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(() => assetFromInitial(initial?.icon));
   const [cover, setCover] = useState<AssetState>(() => assetFromInitial(initial?.cover));
+  const [redIcon, setRedIcon] = useState<AssetState>(() => assetFromInitial(redMedia?.icon));
+  const [redCover, setRedCover] = useState<AssetState>(() => assetFromInitial(redMedia?.cover));
   const [screenshots, setScreenshots] = useState<ScreenshotSlot[]>(() =>
     (initial?.screenshots ?? [])
       .filter((s) => s.imageId != null)
@@ -285,6 +326,7 @@ export function ListingAssetStep({
   const setCoverMutation = trpc.appListings.setCover.useMutation();
   const addScreenshotMutation = trpc.appListings.addScreenshot.useMutation();
   const removeScreenshotMutation = trpc.appListings.removeScreenshot.useMutation();
+  const setRedMediaMutation = trpc.appListings.setRedMedia.useMutation();
 
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // SEPARATE timer map for the per-asset SCAN poll (distinct from the attach timer).
@@ -318,6 +360,8 @@ export function ListingAssetStep({
   // working→scanning→attached transitions (see mergePreview).
   const applyIcon = (s: AssetState) => setIcon((prev) => mergePreview(prev, s));
   const applyCover = (s: AssetState) => setCover((prev) => mergePreview(prev, s));
+  const applyRedIcon = (s: AssetState) => setRedIcon((prev) => mergePreview(prev, s));
+  const applyRedCover = (s: AssetState) => setRedCover((prev) => mergePreview(prev, s));
 
   function clearTimer(key: string) {
     const t = timersRef.current.get(key);
@@ -467,8 +511,14 @@ export function ListingAssetStep({
 
   async function attachOnce(key: string, kind: AssetKind, imageId: number): Promise<AttachOutcome> {
     try {
-      let res: { status: 'pending' | 'attached'; id?: string };
-      if (kind === 'icon') {
+      let res: { status: 'pending' | 'attached'; id?: string; scanPending?: boolean };
+      const redSlot = redSlotOfKey(key);
+      if (redSlot) {
+        const red = await setRedMediaMutation.mutateAsync({ listingId, slot: redSlot, imageId });
+        // Type narrowing only: a call with an image id never resolves `cleared`.
+        if (red.status === 'cleared') throw new Error(`The ${redSlot} was not attached.`);
+        res = red;
+      } else if (kind === 'icon') {
         res = await setIconMutation.mutateAsync({ listingId, imageId });
       } else if (kind === 'cover') {
         res = await setCoverMutation.mutateAsync({ listingId, imageId });
@@ -716,6 +766,29 @@ export function ListingAssetStep({
     dropScreenshotSlot(id);
   }
 
+  /**
+   * Clear a civitai.red override slot on the server (`setRedMedia` with no image): the listing
+   * then shows its regular icon / cover there too. Any in-flight upload into the slot is
+   * dropped first, so a resolving attach cannot refill it.
+   */
+  async function clearRedSlot(slot: 'icon' | 'cover', apply: (s: AssetState) => void) {
+    const key = RED_SLOT_KEYS[slot];
+    clearTimer(key);
+    bumpEpoch(key);
+    try {
+      await setRedMediaMutation.mutateAsync({ listingId, slot, imageId: null });
+    } catch (err) {
+      showErrorNotification({
+        title: `Could not remove the ${MATURE_STORE_HOST} ${slot}`,
+        error: err as Error,
+      });
+      return;
+    }
+    revokeObjectUrl(key);
+    apply({ status: 'idle', imageId: null, message: null, previewUrl: null });
+    onAssetMutated?.();
+  }
+
   /** Reset an icon/cover row to idle (the wrong-upload escape hatch mid-scan). */
   function cancelAsset(key: string, apply: (s: AssetState) => void) {
     clearTimer(key);
@@ -753,6 +826,14 @@ export function ListingAssetStep({
         ? [{ kind: 'screenshot' as const, position: i + 1, nsfwLevel: levelOf(s.imageId) }]
         : []
     ),
+    // The overrides floor the rating like any other image unless the listing is split
+    // (`ratingFloorAssets` below), exactly as the server's floors read them.
+    ...(redMedia?.available && redIcon.status === 'attached'
+      ? [{ kind: 'red-icon' as const, nsfwLevel: levelOf(redIcon.imageId), redSlot: true }]
+      : []),
+    ...(redMedia?.available && redCover.status === 'attached'
+      ? [{ kind: 'red-cover' as const, nsfwLevel: levelOf(redCover.imageId), redSlot: true }]
+      : []),
   ];
 
   return (
@@ -926,12 +1007,76 @@ export function ListingAssetStep({
         </Stack>
       </Card>
 
+      {redMedia && (
+        <Card withBorder p="sm" data-testid="apps-listing-red-media">
+          <Stack gap="xs">
+            <Group gap={6}>
+              <IconPhoto size={16} />
+              <Text size="sm" fw={600}>
+                {MATURE_STORE_HOST} icon and cover
+              </Text>
+              <Badge size="xs" variant="light" color="gray">
+                optional
+              </Badge>
+            </Group>
+            {redMedia.available ? (
+              <>
+                <Text size="xs" c="dimmed" data-testid="apps-listing-red-media-note">
+                  {RED_MEDIA_NOTE}
+                </Text>
+                <AssetRow
+                  kind="icon"
+                  idKey={RED_SLOT_KEYS.icon}
+                  noun={`${MATURE_STORE_HOST} icon`}
+                  label={`${MATURE_STORE_HOST} icon`}
+                  description="Same rules as the icon: square-ish, ≥128px, png/jpeg/webp."
+                  state={redIcon}
+                  nsfwLevel={levelOf(redIcon.imageId)}
+                  onFile={(f) => void startAttach(RED_SLOT_KEYS.icon, 'icon', f, applyRedIcon)}
+                  onRetry={() => {
+                    if (redIcon.imageId != null)
+                      void retryAttach(RED_SLOT_KEYS.icon, 'icon', redIcon.imageId, applyRedIcon);
+                  }}
+                  onCancel={() => cancelAsset(RED_SLOT_KEYS.icon, applyRedIcon)}
+                  onRemove={() => void clearRedSlot('icon', applyRedIcon)}
+                />
+                <AssetRow
+                  kind="cover"
+                  idKey={RED_SLOT_KEYS.cover}
+                  noun={`${MATURE_STORE_HOST} cover`}
+                  label={`${MATURE_STORE_HOST} cover`}
+                  description="Same rules as the cover: landscape, ≥640px wide, png/jpeg/webp."
+                  state={redCover}
+                  nsfwLevel={levelOf(redCover.imageId)}
+                  onFile={(f) => void startAttach(RED_SLOT_KEYS.cover, 'cover', f, applyRedCover)}
+                  onRetry={() => {
+                    if (redCover.imageId != null)
+                      void retryAttach(
+                        RED_SLOT_KEYS.cover,
+                        'cover',
+                        redCover.imageId,
+                        applyRedCover
+                      );
+                  }}
+                  onCancel={() => cancelAsset(RED_SLOT_KEYS.cover, applyRedCover)}
+                  onRemove={() => void clearRedSlot('cover', applyRedCover)}
+                />
+              </>
+            ) : (
+              <Text size="xs" c="dimmed" data-testid="apps-listing-red-media-unavailable">
+                {RED_SLOTS_UNAVAILABLE_MESSAGE}
+              </Text>
+            )}
+          </Stack>
+        </Card>
+      )}
+
       {rating && (
         <ListingMediaRatingCallout
           declaredRating={rating.declaredRating}
           listingRating={rating.listingRating}
           stage={rating.stage}
-          assets={ratingAssets}
+          assets={ratingFloorAssets(ratingAssets, rating.mediaSplit === true)}
         />
       )}
 
@@ -969,6 +1114,8 @@ export function ListingAssetStep({
 
 function AssetRow({
   kind,
+  idKey = kind,
+  noun = kind,
   label,
   description,
   state,
@@ -976,10 +1123,15 @@ function AssetRow({
   onFile,
   onRetry,
   onCancel,
+  onRemove,
   suggestionUrl,
   onAcceptSuggestion,
 }: {
   kind: AssetKind;
+  /** The row's test-id key, for a row that is not the listing's own `kind` asset. */
+  idKey?: string;
+  /** What the upload control calls the asset ("Replace <noun>"). */
+  noun?: string;
   label: string;
   description: string;
   state: AssetState;
@@ -987,6 +1139,8 @@ function AssetRow({
   onFile: (file: File | null) => void;
   onRetry: () => void;
   onCancel?: () => void;
+  /** Offered once the asset is attached: an optional slot can be emptied again. */
+  onRemove?: () => void;
   suggestionUrl?: string;
   onAcceptSuggestion?: () => void;
 }) {
@@ -1014,7 +1168,7 @@ function AssetRow({
           </Group>
           <Group gap={6}>
             {state.status === 'attached' && (
-              <AssetRatingBadge nsfwLevel={nsfwLevel} testId={`apps-asset-rating-${kind}`} />
+              <AssetRatingBadge nsfwLevel={nsfwLevel} testId={`apps-asset-rating-${idKey}`} />
             )}
             <AssetStatusBadge state={state} />
             {(state.status === 'error' || state.status === 'timeout') && state.imageId != null && (
@@ -1034,9 +1188,21 @@ function AssetRow({
                 color="red"
                 leftSection={<IconX size={12} />}
                 onClick={onCancel}
-                data-testid={`apps-offsite-cancel-${kind}`}
+                data-testid={`apps-offsite-cancel-${idKey}`}
               >
                 Cancel
+              </Button>
+            )}
+            {onRemove && state.status === 'attached' && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="red"
+                leftSection={<IconTrash size={12} />}
+                onClick={onRemove}
+                data-testid={`apps-offsite-remove-${idKey}`}
+              >
+                Remove
               </Button>
             )}
           </Group>
@@ -1048,8 +1214,8 @@ function AssetRow({
             h={kind === 'icon' ? 48 : 68}
             radius="sm"
             fit="contain"
-            alt={`current ${kind}`}
-            data-testid={`apps-offsite-current-${kind}-preview`}
+            alt={`current ${noun}`}
+            data-testid={`apps-offsite-current-${idKey}-preview`}
           />
         )}
         {showSuggestion && (
@@ -1089,10 +1255,10 @@ function AssetRow({
             // "Replace" only once a committed asset is attached; while a preview is
             // merely scanning/errored the author is still on their FIRST upload.
             state.status === 'attached'
-              ? `Replace ${kind}`
+              ? `Replace ${noun}`
               : showSuggestion
-              ? `Or upload your own ${kind}`
-              : `Upload ${kind}`
+              ? `Or upload your own ${noun}`
+              : `Upload ${noun}`
           }
           description={description}
           placeholder="Select an image"

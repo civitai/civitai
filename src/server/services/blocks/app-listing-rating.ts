@@ -10,7 +10,10 @@ import {
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import {
+  readListingMediaSplit,
+  readListingRedSlotAssets,
+} from '~/server/services/blocks/listing-media-split.service';
 import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 
 export const RATING_CHANGE_ACTION =
@@ -30,12 +33,14 @@ export type ListingRatingAsset = {
   imageId: number;
   nsfwLevel: number | null;
   ingestion: string | null;
+  /** A civitai.red icon / cover override (`ratingFloorAssets` leaves it out of a split's floor). */
+  redSlot?: boolean;
 };
 
 type RatingEventWriter = Pick<Prisma.TransactionClient, 'appListingModerationEvent'>;
 type RatingAssetReader = Pick<
   Prisma.TransactionClient,
-  'appListing' | 'appListingScreenshot' | 'image'
+  'appListing' | 'appListingScreenshot' | 'image' | '$queryRaw'
 >;
 
 const ratingLabel = (rating: string | null) =>
@@ -94,7 +99,11 @@ export async function recordListingRatingChange(
   return true;
 }
 
-/** A listing's attached assets (icon, cover, screenshots) with their current levels. */
+/**
+ * A listing's attached assets (icon, cover, screenshots, then its civitai.red icon / cover
+ * overrides, marked `redSlot`) with their current levels. An image used both in its own slot and
+ * as an override appears once for each, so a split, which drops the override, still keeps it.
+ */
 export async function loadListingRatingAssets(
   db: RatingAssetReader,
   appListingId: string
@@ -108,6 +117,7 @@ export async function loadListingRatingAssets(
     where: { appListingId, imageId: { not: null } },
     select: { imageId: true },
   });
+  const redSlots: ListingRatingAsset[] = await readListingRedSlotAssets(db, appListingId);
   const imageIds = [
     ...new Set(
       [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
@@ -115,17 +125,20 @@ export async function loadListingRatingAssets(
       )
     ),
   ];
-  if (imageIds.length === 0) return [];
+  if (imageIds.length === 0) return redSlots;
   const images = await db.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, nsfwLevel: true, ingestion: true },
   });
   const byId = new Map(images.map((i) => [i.id, i]));
-  return imageIds.map((imageId) => ({
-    imageId,
-    nsfwLevel: byId.get(imageId)?.nsfwLevel ?? null,
-    ingestion: byId.get(imageId)?.ingestion ?? null,
-  }));
+  return [
+    ...imageIds.map((imageId) => ({
+      imageId,
+      nsfwLevel: byId.get(imageId)?.nsfwLevel ?? null,
+      ingestion: byId.get(imageId)?.ingestion ?? null,
+    })),
+    ...redSlots,
+  ];
 }
 
 /**
@@ -228,7 +241,8 @@ export function resolveReDerivedListingRating(args: {
   const derivedBefore = deriveContentRatingFromAssets(
     ratingFloorAssets(
       args.assets.map((a) =>
-        a.imageId === args.reratedImageId ? { nsfwLevel: args.previousNsfwLevel } : a
+        // Spread, so a civitai.red override keeps its `redSlot` mark on the "before" side too.
+        a.imageId === args.reratedImageId ? { ...a, nsfwLevel: args.previousNsfwLevel } : a
       ),
       args.mediaSplit
     )

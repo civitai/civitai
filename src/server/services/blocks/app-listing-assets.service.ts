@@ -8,8 +8,15 @@ import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/a
 import {
   readListingMediaSplit,
   readListingMediaSplitState,
+  readListingRedSlotAssets,
+  readListingRedSlots,
+  assertListingRedSlotsWritable,
+  cloneListingRedSlots,
+  writeListingRedSlot,
+  type ListingRedSlot,
 } from '~/server/services/blocks/listing-media-split.service';
 import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
+import { listingRatingAssetLabel } from '~/shared/utils/listing-rating-display';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -838,6 +845,13 @@ export type ListingScanAssets = {
   coverId: number | null;
   /** The listing's screenshot Image ids (imageId-bearing rows only). */
   screenshotImageIds: number[];
+  /**
+   * The civitai.red icon / cover overrides (`readListingRedSlots`), held to the same gate: a
+   * listing may not go live while either is still scanning or `Blocked`. REQUIRED, not optional,
+   * so a new go-live site cannot leave them out without saying `null` on purpose.
+   */
+  redIconId: number | null;
+  redCoverId: number | null;
 };
 
 /** A minimal image reader — `dbRead` / `dbWrite` / an interactive `tx` all satisfy it. */
@@ -866,10 +880,26 @@ export async function assertAssetsScanClean(
   assets: ListingScanAssets,
   db: ImageIngestionReader = dbWrite
 ): Promise<void> {
-  const tagged: { kind: 'icon' | 'cover' | 'screenshot'; id: number }[] = [
-    ...(assets.iconId != null ? [{ kind: 'icon' as const, id: assets.iconId }] : []),
-    ...(assets.coverId != null ? [{ kind: 'cover' as const, id: assets.coverId }] : []),
-    ...assets.screenshotImageIds.map((id) => ({ kind: 'screenshot' as const, id })),
+  const tagged: { kind: string; id: number }[] = [
+    ...(assets.iconId != null ? [{ kind: 'icon', id: assets.iconId }] : []),
+    ...(assets.coverId != null ? [{ kind: 'cover', id: assets.coverId }] : []),
+    ...assets.screenshotImageIds.map((id) => ({ kind: 'screenshot', id })),
+    ...(assets.redIconId != null
+      ? [
+          {
+            kind: listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null }),
+            id: assets.redIconId,
+          },
+        ]
+      : []),
+    ...(assets.redCoverId != null
+      ? [
+          {
+            kind: listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null }),
+            id: assets.redCoverId,
+          },
+        ]
+      : []),
   ];
   if (tagged.length === 0) return;
 
@@ -931,11 +961,14 @@ export async function assertListingAssetsScanCleanInTx(
     where: { appListingId, imageId: { not: null } },
     select: { imageId: true },
   });
+  const red = await readListingRedSlots(db, appListingId);
   await assertAssetsScanClean(
     {
       iconId: listing.iconId,
       coverId: listing.coverId,
       screenshotImageIds: shots.map((s) => s.imageId).filter((v): v is number => v != null),
+      redIconId: red.redIconId,
+      redCoverId: red.redCoverId,
     },
     db
   );
@@ -944,9 +977,11 @@ export async function assertListingAssetsScanCleanInTx(
 /**
  * Go-live RATING FLOOR for a listing whose media was attached while it was directly
  * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
- * rating from the current assets' max `nsfwLevel` and returns `declaredRating` RAISED
+ * rating from the current assets' max `nsfwLevel` — the icon, cover and screenshots, and the
+ * civitai.red icon / cover overrides — and returns `declaredRating` RAISED
  * to the derived value when the media is more mature — never lowered. With `mediaSplit`
- * the derive reads only the civitai.com-eligible assets (`ratingFloorAssets`).
+ * the derive reads only the civitai.com-eligible assets, never an override
+ * (`ratingFloorAssets`).
  *
  * 🔴 The on-site counterpart of the off-site approve's `resolveApprovalContentRating`
  * floor. It upholds the invariant stated at {@link reDeriveContentRatingForModLiveEdit}:
@@ -982,16 +1017,16 @@ export async function resolveListingRatingFloorInTx(
   const imageIds = [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
     (v): v is number => v != null
   );
-  if (imageIds.length === 0) return declaredRating;
-  const images = await db.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { nsfwLevel: true },
-  });
+  const red = await readListingRedSlotAssets(db, appListingId);
+  if (imageIds.length === 0 && red.length === 0) return declaredRating;
+  const images = imageIds.length
+    ? await db.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { nsfwLevel: true },
+      })
+    : [];
   const derived = deriveContentRatingFromAssets(
-    ratingFloorAssets(
-      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
-      mediaSplit
-    )
+    ratingFloorAssets([...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...red], mediaSplit)
   );
   // Floor: only raise. `nsfwLevelFromContentRating` maps null → the SFW floor, so a null
   // declared rating is raised by any mature asset.
@@ -1235,7 +1270,10 @@ async function reDeriveContentRatingForModLiveEdit(
     : [];
   const derived = deriveContentRatingFromAssets(
     ratingFloorAssets(
-      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      [
+        ...images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+        ...(await readListingRedSlotAssets(tx, listing.id)),
+      ],
       await readListingMediaSplit(tx, listing.id)
     )
   );
@@ -1408,6 +1446,69 @@ export async function addListingScreenshot(
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { status: 'attached', id, order: nextOrder, scanPending };
+}
+
+export type SetListingRedMediaResult =
+  | { status: 'pending' }
+  | { status: 'attached'; slot: ListingRedSlot; imageId: number; scanPending?: boolean }
+  | { status: 'cleared'; slot: ListingRedSlot };
+
+/**
+ * Set (`imageId`) or clear (`null`) the listing's civitai.red-only icon or cover override: an
+ * image shown INSTEAD of the listing's own icon / cover on a red-capable host only, to viewers the
+ * store gate lets see it, and never read for any other host (`listing-media-audience`).
+ *
+ * The same rules as {@link setListingIcon} / {@link setListingCover}: an owner's first edit of a
+ * live listing opens a revision and edits that (the override then goes live with the revision);
+ * a moderator edits the live listing directly, and the rating is re-derived. The image is
+ * validated for the slot it fills (an icon's or a cover's format), a `Blocked` or unfetchable one
+ * is refused, and a still-scanning one is stored and held back at go-live by the scan gate. No
+ * ceiling is placed on its level here: XXX is allowed (it only ever renders to a civitai.red
+ * viewer who opted into it). Without a moderator's split it floors the listing's rating like any
+ * other image; a moderator splitting the listing keeps it out of the rating.
+ *
+ * Refused up front, before any revision is opened, while the slots are not available on this
+ * environment (the slot columns are absent).
+ */
+export async function setListingRedMedia(
+  args: { listingId: string; slot: ListingRedSlot; imageId: number | null },
+  user: SessionUser
+): Promise<SetListingRedMediaResult> {
+  // Before the lazy mint: an edit that cannot be saved must not open a revision as a side effect.
+  await assertListingRedSlotsWritable(dbWrite);
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
+  assertOwnerAssetEditable(listing, user);
+  let imageId: number | null = null;
+  let scanPending: boolean | undefined;
+  if (args.imageId != null) {
+    const validated = await loadValidatedImage(args.imageId, args.slot, user, {
+      allowPending: true,
+    });
+    if (validated.pending) return { status: 'pending' };
+    imageId = validated.imageId;
+    scanPending = validated.scanPending;
+  }
+  const raised = await dbWrite.$transaction(async (tx) => {
+    // 🔴 On a revision, start from the live overrides first (a no-op when the revision already
+    // carries them, as `beginListingRevision` normally arranges). Otherwise writing ONE slot
+    // would create the revision's row with the OTHER slot empty, and approving would clear it.
+    if (listing.revisionOfId != null)
+      await cloneListingRedSlots(tx, {
+        fromListingId: listing.revisionOfId,
+        toListingId: listing.id,
+      });
+    await writeListingRedSlot(tx, { appListingId: listing.id, slot: args.slot, imageId });
+    return reDeriveContentRatingForModLiveEdit(tx, listing, user);
+  });
+  await recordModLiveEditRatingChange(listing, user, raised);
+  // Catalog bust: an override can RAISE `content_rating` through the same in-tx re-derive (an
+  // unsplit live listing a moderator edits) — the axis the cached page is keyed on.
+  await bustAppListingCatalogCache().catch(() => undefined);
+  if (imageId == null) return { status: 'cleared', slot: args.slot };
+  return { status: 'attached', slot: args.slot, imageId, scanPending };
 }
 
 /**
@@ -1679,6 +1780,25 @@ export type ListingAssetsView = {
    * app cannot read the split record on this environment, so nobody can tell.
    */
   mediaSplitApproved: boolean | null;
+  /**
+   * The civitai.red icon / cover overrides of THIS listing (a shadow's own, which go live with
+   * it), with their levels and scan states as for the icon / cover above. All `null` when none is
+   * set — and while `redSlotsAvailable` is `false`, when the environment does not have the slots
+   * or the app cannot read them.
+   */
+  redIconId: number | null;
+  redCoverId: number | null;
+  redIconNsfwLevel: number | null;
+  redCoverNsfwLevel: number | null;
+  redIconScanStatus: AssetScanStatus | null;
+  redCoverScanStatus: AssetScanStatus | null;
+  redSlotsAvailable: boolean;
+  /**
+   * This listing has an overrides row. On a revision, `false` means it staged no change to the
+   * overrides — approving leaves the live ones as they are (`applyRevisionRedSlots`) — which the
+   * drift panel must not read as "both cleared".
+   */
+  redSlotsStaged: boolean;
 };
 
 /**
@@ -1697,11 +1817,18 @@ export async function getListingAssets(
     select: { id: true, imageId: true, order: true, caption: true },
     orderBy: { order: 'asc' },
   });
+  // Through the WRITE client, like the split state below: the review must show the overrides
+  // the approve will act on (it reads and copies them with that client).
+  const red = await readListingRedSlots(dbWrite, listing.id);
 
   // Resolve the detected nsfwLevel of every backing Image in ONE query.
-  const imageIds = [listing.iconId, listing.coverId, ...screenshots.map((s) => s.imageId)].filter(
-    (v): v is number => v != null
-  );
+  const imageIds = [
+    listing.iconId,
+    listing.coverId,
+    ...screenshots.map((s) => s.imageId),
+    red.redIconId,
+    red.redCoverId,
+  ].filter((v): v is number => v != null);
   const images = imageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: imageIds } },
@@ -1722,12 +1849,21 @@ export async function getListingAssets(
 
   const iconScanStatus = scanOf(listing.iconId);
   const coverScanStatus = scanOf(listing.coverId);
+  const redIconScanStatus = scanOf(red.redIconId);
+  const redCoverScanStatus = scanOf(red.redCoverId);
   const screenshotViews = screenshots.map((s) => ({
     ...s,
     nsfwLevel: levelOf(s.imageId),
     scanStatus: scanOf(s.imageId),
   }));
-  const allScans = [iconScanStatus, coverScanStatus, ...screenshotViews.map((s) => s.scanStatus)];
+  // The overrides are held to the go-live scan gate too, so they count here.
+  const allScans = [
+    iconScanStatus,
+    coverScanStatus,
+    ...screenshotViews.map((s) => s.scanStatus),
+    redIconScanStatus,
+    redCoverScanStatus,
+  ];
 
   return {
     listingId: listing.id,
@@ -1758,6 +1894,14 @@ export async function getListingAssets(
       dbWrite,
       listing.revisionOfId ?? listing.id
     ),
+    redIconId: red.redIconId,
+    redCoverId: red.redCoverId,
+    redIconNsfwLevel: levelOf(red.redIconId),
+    redCoverNsfwLevel: levelOf(red.redCoverId),
+    redIconScanStatus,
+    redCoverScanStatus,
+    redSlotsAvailable: red.available,
+    redSlotsStaged: red.staged,
   };
 }
 

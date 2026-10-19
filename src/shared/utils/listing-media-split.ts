@@ -36,12 +36,22 @@ export function isComEligibleLevel(nsfwLevel: number | null | undefined): boolea
   return isLevelWithinCeiling(nsfwLevel ?? 0, sfwBrowsingLevelsFlag);
 }
 
-/** The assets that floor a listing's `content_rating`: all of them, or with a split only the eligible ones. */
-export function ratingFloorAssets<T extends { nsfwLevel?: number | null }>(
+/**
+ * The assets that floor a listing's `content_rating`: all of them, or with a split only the
+ * civitai.com-eligible ones.
+ *
+ * `redSlot` marks a civitai.red icon / cover override. civitai.com never shows one, so with a
+ * split it never floors the rating, whatever its level. Without a split it floors it like any
+ * other image: setting a mature civitai.red icon on an unsplit listing rates the listing by it,
+ * until a moderator records the split.
+ */
+export function ratingFloorAssets<T extends { nsfwLevel?: number | null; redSlot?: boolean }>(
   assets: readonly T[],
   mediaSplit: boolean
 ): T[] {
-  return mediaSplit ? assets.filter((a) => isComEligibleLevel(a.nsfwLevel)) : [...assets];
+  return mediaSplit
+    ? assets.filter((a) => a.redSlot !== true && isComEligibleLevel(a.nsfwLevel))
+    : [...assets];
 }
 
 /** Where one listing image can be seen, for the author and moderator labels. */
@@ -63,6 +73,18 @@ export function listingAssetAudience(
   return isLevelWithinCeiling(nsfwLevel, comCeiling) ? 'com-and-red' : 'red-only';
 }
 
+/**
+ * {@link listingAssetAudience} for a display asset: a civitai.red icon / cover override shows only
+ * on civitai.red whatever its level and the listing's rating (or nowhere, before it is rated).
+ */
+export function listingDisplayAssetAudience(
+  asset: Pick<ListingRatingDisplayAsset, 'nsfwLevel' | 'redSlot'>,
+  contentRating: string | null | undefined
+): ListingAssetAudience {
+  if (asset.redSlot === true) return asset.nsfwLevel ? 'red-only' : 'unrated';
+  return listingAssetAudience(asset.nsfwLevel, contentRating);
+}
+
 export const LISTING_ASSET_AUDIENCE_LABEL: Record<ListingAssetAudience, string> = {
   'com-and-red': 'civitai.com + civitai.red',
   'red-only': 'civitai.red only',
@@ -74,7 +96,10 @@ export type ListingMediaSplitSummary = {
   allMediaRating: OffsiteRatingValue;
   /** The rating covering only the civitai.com-eligible images: what a split floors at. */
   comMediaRating: OffsiteRatingValue;
-  /** Some image is above SFW, so a split would change what the rating is floored by. */
+  /**
+   * Some image is above SFW, or the listing has a civitai.red icon / cover override, so a split
+   * would change what the rating is floored by.
+   */
   splitChangesFloor: boolean;
   /** The icon and cover are civitai.com-eligible, which the server requires to grant a split. */
   faceEligible: boolean;
@@ -87,7 +112,7 @@ export function summarizeListingMediaSplit(
   return {
     allMediaRating: deriveContentRatingFromAssets(ratingFloorAssets(assets, false)),
     comMediaRating: deriveContentRatingFromAssets(ratingFloorAssets(assets, true)),
-    splitChangesFloor: assets.some((a) => !isComEligibleLevel(a.nsfwLevel)),
+    splitChangesFloor: assets.some((a) => a.redSlot === true || !isComEligibleLevel(a.nsfwLevel)),
     faceEligible: assets
       .filter((a) => a.kind === 'icon' || a.kind === 'cover')
       .every((a) => isComEligibleLevel(a.nsfwLevel)),
