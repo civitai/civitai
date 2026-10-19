@@ -27,6 +27,7 @@ import {
 
 const TEXT_MAX_BYTES = 64 * 1024;
 const TEXT_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const TEXT_MAX_TOTAL_CHARS = TEXT_MAX_TOTAL_BYTES;
 const MAX_ENTRIES = 5000;
 const DIRECTORY_MAX_BYTES = 4 * 1024 * 1024;
 /** Read with each local header so its name, extra field and data usually arrive in the same GET. */
@@ -61,9 +62,14 @@ export async function assertTrainingTextAllowed({
     throw throwBadRequestError(`${REFUSAL} Reason: ${reasons.join(', ')}`);
   };
 
-  const trigger = triggerWord.trim();
-  const trimmed = captions.map((text) => text.trim()).filter(Boolean);
-  // Every text reaches the classifier whole, which no other audit sends longer than this.
+  // Invisible formatting characters are dropped from the checked copy, so they cannot split a word.
+  const clean = (text: string) => text.replace(/\p{Cf}/gu, '').trim();
+  const trigger = clean(triggerWord);
+  const trimmed = captions.map(clean).filter(Boolean);
+  // Bounds the classifier calls one check can make, whichever caller sent the text.
+  if (trigger.length + trimmed.reduce((sum, text) => sum + text.length, 0) > TEXT_MAX_TOTAL_CHARS)
+    throw throwBadRequestError('Your training data has more text than can be checked.');
+  // A text is never split across classifier batches, so one over the audit's cap is refused outright.
   if ([trigger, ...trimmed].some((text) => text.length > MAX_AUDIT_PROMPT_LENGTH))
     refuse(['a label is too long'], 'labels');
 
@@ -113,7 +119,7 @@ export async function assertTrainingTextAllowed({
 /** The dataset is refused on its shape; the message goes to the user as is. */
 class DatasetLimitError extends Error {}
 
-/** Every other entry in the zip is checked as text. */
+/** Entries named like these are skipped; every other entry is read as text. */
 const MEDIA_EXTENSIONS = new Set([
   'png',
   'jpg',
@@ -137,11 +143,20 @@ const extensionOf = (name: string) => {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
 };
 
-const isTextEntry = (entry: yauzl.Entry) =>
-  !entry.fileName.endsWith('/') &&
-  [entry.fileName, entry.fileNameRaw.toString('utf8'), entry.fileNameRaw.toString('latin1')].some(
-    (name) => !MEDIA_EXTENSIONS.has(extensionOf(name))
-  );
+/** Checked unless every reading of its name says folder or media: an unzip tool may read a name
+ *  another way. A folder holds no data. */
+const isTextEntry = (entry: yauzl.Entry) => {
+  const names = [
+    entry.fileName,
+    entry.fileNameRaw.toString('utf8'),
+    entry.fileNameRaw.toString('latin1'),
+  ];
+  const isFolder =
+    names.every((name) => name.endsWith('/')) &&
+    entry.uncompressedSize === 0 &&
+    entry.compressedSize === 0;
+  return !isFolder && names.some((name) => !MEDIA_EXTENSIONS.has(extensionOf(name)));
+};
 
 /** The text files in a training zip, without reading its media. */
 export async function readTrainingTexts(source: ZipSource): Promise<string[]> {
@@ -177,7 +192,8 @@ export async function readTrainingTexts(source: ZipSource): Promise<string[]> {
       zipfile.readEntry();
     });
 
-    const decoder = new TextDecoder('utf-8');
+    // Strict: text that is not UTF-8 could read one way here and another way to the trainer.
+    const decoder = new TextDecoder('utf-8', { fatal: true });
     const limit = pLimit(READ_CONCURRENCY);
     return await Promise.all(
       entries.map((entry) =>
@@ -196,7 +212,11 @@ export async function readTrainingTexts(source: ZipSource): Promise<string[]> {
           const chunks: Buffer[] = [];
           for await (const chunk of stream as AsyncIterable<Buffer>) chunks.push(chunk);
           reader.evict(start);
-          return decoder.decode(Buffer.concat(chunks));
+          try {
+            return decoder.decode(Buffer.concat(chunks));
+          } catch {
+            throw new DatasetLimitError(`${entry.fileName} is not UTF-8 text`);
+          }
         })
       )
     );
@@ -218,7 +238,7 @@ export async function assertTrainingZipAllowed({
   userId,
   modelVersionId,
 }: {
-  /** Where the dataset is stored: the client and location its download URL is signed for. */
+  /** The client for the bucket holding the dataset (B2 or S3). */
   s3: S3Client;
   bucket: string;
   key: string;

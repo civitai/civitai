@@ -161,6 +161,22 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
         },
+        checkTrainingText: async (input: { triggerWord: string; captions: string[] }) => {
+          const r = await fetch('/api/training-studio/check-text', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(input),
+            redirect: 'error',
+          });
+          const data = (await r.json().catch(() => null)) as {
+            ok?: unknown;
+            error?: string;
+          } | null;
+          // Only an explicit verdict passes.
+          if (r.ok && data?.ok === true) return { ok: true as const };
+          if (r.status === 400) return { ok: false as const, error: data?.error ?? 'Refused.' };
+          throw new Error(data?.error ?? `The training text check failed (${r.status}).`);
+        },
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
         getBuzzBalances: async () => {

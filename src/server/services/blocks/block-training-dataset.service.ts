@@ -202,7 +202,7 @@ async function importTrainingImage(
  *
  * `checkCaptions` is the training text rule (`assertTrainingTextAllowed`), run before
  * any orchestrator import so a refused caption set costs no upload. It is injected
- * because the rule needs the viewer's domain, which only the caller has.
+ * because the log identity (the block's claims) belongs to the caller.
  *
  * Throws BAD_REQUEST when nothing was admitted — a handle to an empty dataset would
  * only fail later, at a quote.

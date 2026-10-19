@@ -415,8 +415,9 @@ export const createTrainingWorkflow = async ({
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
 
   // Content prepared under red's permissive policy (the zip's images aren't re-checked here) must be
-  // paid for and run on red, not laundered onto green by switching domains at the final step. Legacy datasets predate the stamp and fall through to post-run
-  // moderation. See createFileHandler for where uploadDomain is set.
+  // paid for and run on red, not laundered onto green by switching domains at the final step.
+  // Legacy datasets predate the stamp and fall through to post-run moderation. See
+  // createFileHandler for where uploadDomain is set.
   if (domain === 'green' && fileMetadata.uploadDomain === 'red') {
     throw throwBadRequestError(
       'This training dataset was prepared on civitai.red and must be submitted there. Switch back to civitai.red to start this training.'

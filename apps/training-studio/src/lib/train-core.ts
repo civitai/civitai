@@ -38,6 +38,7 @@ import {
 } from '$lib/data/trainingRows';
 import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
+import { TrainingTextRefusedError, type TrainingTextCheck } from '$lib/training-text';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -251,6 +252,12 @@ export class TrainingSubmitError extends Error {
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
 export class TrainingBatchValidationError extends Error {}
 
+export {
+  TrainingTextCheckError,
+  TrainingTextRefusedError,
+  type TrainingTextCheck,
+} from '$lib/training-text';
+
 function fail(field: string, why: string): never {
   throw new TrainingBatchValidationError(`${field} ${why}`);
 }
@@ -377,11 +384,23 @@ export function submitFailureReason(err: unknown): string {
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown, runIndex: number) => void } = {}
+  opts: SubmitOptions & {
+    checkText: TrainingTextCheck;
+    onRunError?: (err: unknown, runIndex: number) => void;
+  }
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+
+  // Every run's text is checked before ANY submit, so a refused batch never part-charges. A sweep
+  // repeats one dataset across runs; each distinct text is checked once.
+  const texts = new Map<string, Parameters<TrainingTextCheck>[0]>();
+  for (const run of runs) {
+    const text = { triggerWord: run.trigger, captions: run.items.map((item) => item.caption) };
+    texts.set(JSON.stringify(text), text);
+  }
+  for (const text of texts.values()) await opts.checkText(text);
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -430,7 +449,11 @@ async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
   { callbacks, traceMode = 'events' }: SubmitOptions
-): Promise<{ body: WorkflowTemplate; steps: number | undefined }> {
+): Promise<{
+  body: WorkflowTemplate;
+  steps: number | undefined;
+  text: Parameters<TrainingTextCheck>[0] | null;
+}> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await getWorkflow({
     client,
@@ -518,6 +541,19 @@ async function buildContinuation(
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
+    text: datasetText(input.triggerWord, input.trainingData),
+  };
+}
+
+/** A blobs dataset's text as the orchestrator echoes it back; null for any other shape. */
+function datasetText(triggerWord: unknown, trainingData: unknown) {
+  const data = trainingData as { type?: unknown; items?: unknown } | null;
+  if (data?.type !== 'blobs' || !Array.isArray(data.items)) return null;
+  return {
+    triggerWord: String(triggerWord ?? ''),
+    captions: data.items.map((item) =>
+      String((item as { caption?: unknown } | null)?.caption ?? '')
+    ),
   };
 }
 
@@ -525,9 +561,13 @@ async function buildContinuation(
 export async function continueTraining(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  submitOpts: SubmitOptions = {}
+  submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body } = await buildContinuation(client, opts, submitOpts);
+  const { body, text } = await buildContinuation(client, opts, submitOpts);
+  // The source run may predate the check, so its text is checked again before it trains again.
+  // Only a blobs dataset's captions can be read back; any other could not be checked.
+  if (!text) throw new TrainingTextRefusedError('This run cannot be continued from the Studio.');
+  await submitOpts.checkText(text);
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id)
     throw new Error(

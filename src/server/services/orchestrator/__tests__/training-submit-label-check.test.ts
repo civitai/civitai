@@ -186,6 +186,53 @@ describe('createTrainingWorkflow label check', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('refuses label files too large in total, though each is within its own cap', async () => {
+    givenTrainingRow();
+    serveZip(await datasetZip(Array.from({ length: 70 }, () => 'ab '.repeat(20_000))));
+
+    await expect(submit()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('too large in total'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a zip with more files than any dataset holds', async () => {
+    givenTrainingRow();
+    serveZip(
+      await datasetZip([], {
+        extra: Object.fromEntries(Array.from({ length: 5001 }, (_, i) => [`f${i}.png`, ''])),
+      })
+    );
+
+    await expect(submit()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('more than 5000 files'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('checks an entry named like a folder that still holds data', async () => {
+    givenTrainingRow();
+    serveZip(await datasetZip(['mystyle, 1girl'], { extra: { 'notes/': '8 year old girl' } }));
+
+    await expect(submit()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a label file that is not UTF-8 text', async () => {
+    givenTrainingRow();
+    const zip = new JSZip();
+    zip.file('000.txt', Buffer.from([0x6d, 0x79, 0xff, 0xfe, 0x20]));
+    serveZip(await zip.generateAsync({ type: 'nodebuffer' }));
+
+    await expect(submit()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('not UTF-8'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('refuses a file that is not a zip, rather than asking for a retry', async () => {
     givenTrainingRow();
     serveZip(Buffer.from('not a zip at all'));

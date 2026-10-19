@@ -14670,8 +14670,8 @@ async function auditBlockTrainingText(opts: {
 }
 
 /**
- * The training text rule every training path applies: dataset captions, and the trigger word
- * (captions are checked when the dataset is prepared).
+ * The training text rule for a block's run. Submit passes only the trigger word: captions are
+ * checked when the dataset is prepared.
  */
 async function checkBlockTrainingText(
   claims: BlockClaims,

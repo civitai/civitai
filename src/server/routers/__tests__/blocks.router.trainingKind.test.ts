@@ -1150,6 +1150,7 @@ describe('training — maturity, currency and re-admission', () => {
     h.checkText.mockClear();
     h.checkText.mockRejectedValueOnce(new Error('trigger word refused'));
     await expect(submit(body({ quoteId }))).rejects.toThrow('trigger word refused');
+    expect(h.checkText).toHaveBeenCalledTimes(1);
     expect(h.checkText).toHaveBeenCalledWith(
       expect.objectContaining({ triggerWord: 'mychar', captions: [] })
     );

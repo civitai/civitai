@@ -3,10 +3,8 @@ import { PassThrough, Readable } from 'stream';
 import * as yauzl from 'yauzl';
 import type { getS3Client } from '~/utils/s3-utils';
 
-/**
- * Opens a remote zip with ranged reads, without downloading it. What a caller allows inside the
- * archive is the caller's policy; this only reads it.
- */
+// Ranged reads of a remote zip, without downloading it. What a caller allows inside the archive is
+// the caller's policy; this only reads it.
 
 export type ZipSource = {
   size: number;

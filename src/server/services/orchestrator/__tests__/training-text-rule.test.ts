@@ -24,6 +24,8 @@ describe('assertTrainingTextAllowed', () => {
       check(['mystyle', 'mystyle, a dog peeing on a tree in the park'])
     ).resolves.toBeUndefined();
     expect(classifyPromptExternally).toHaveBeenCalledTimes(1);
+    // Labelled as neither a generation nor a remix in the classifier's metrics.
+    expect(classifyPromptExternally).toHaveBeenCalledWith(expect.any(String), 'other');
   });
 
   it('refuses a hard hit without asking the classifier', async () => {
@@ -40,6 +42,12 @@ describe('assertTrainingTextAllowed', () => {
     const late = [...clean];
     late[420] = 'mystyle, 8 year old girl';
     await expect(check(late)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('reads past invisible formatting characters inside a word', async () => {
+    await expect(check(['mystyle', 'mystyle, 8 year o\u200bld girl'])).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
   });
 
   it('checks a trigger word on its own, with no captions', async () => {

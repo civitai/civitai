@@ -192,7 +192,7 @@ const storageFailure = (error: unknown) =>
     ? new ZipRejectedError('The file is no longer in storage. Upload it again.')
     : error;
 
-/** A malformed archive is the seller's to fix. */
+/** Opens the archive; a malformed one is refused to the seller. */
 async function openArchive(source: ZipSource) {
   try {
     // Entry sizes unvalidated on purpose: yauzl would otherwise trust the declared size to bound

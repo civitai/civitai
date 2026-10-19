@@ -2819,6 +2819,10 @@ export const REDIS_SYS_KEYS = {
 // `RedisKeyStringsCache` / `RedisKeyTemplateCache` are derived from these literals and are
 // unchanged by the prefixing.
 const REDIS_KEYS_UNPREFIXED = {
+  TRAINING_STUDIO: {
+    // Suffixed with `:${userId}`.
+    TEXT_CHECK_RATE_LIMIT: 'training-studio:text-check-rate-limit',
+  },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',

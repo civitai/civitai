@@ -5,10 +5,7 @@ import {
   packCaptionsForAudit,
 } from '~/utils/metadata/training-label-audit';
 
-/**
- * The trainer walled submission on every audit failure, including the overridable `profanity`
- * category, so a Danbooru tag carrying a bare `fu` blocked a whole dataset.
- */
+/** Profanity is soft in the trainer: it warns and the user may continue. Minor-age and over-length stay hard. */
 
 const labels = (...pairs: [string, string][]) => pairs.map(([key, label]) => ({ key, label }));
 
