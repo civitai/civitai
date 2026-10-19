@@ -1,15 +1,22 @@
-import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
+import {
+  Button,
+  Group,
+  LoadingOverlay,
+  Paper,
+  Stack,
+  Text,
+  useComputedColorScheme,
+} from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
-import React, { useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
-import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
+import { CommentMasonryVirtual } from '~/components/Model/ModelDiscussion/CommentMasonryVirtual';
 import { ReviewSort } from '~/server/common/enums';
+import type { CommentGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import type { CommentGetAllItem } from '~/types/router';
 
 export function ModelDiscussionV2({
   modelId,
@@ -17,6 +24,7 @@ export function ModelDiscussionV2({
   limit: initialLimit = 8,
   onlyHidden,
 }: Props) {
+  const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? initialLimit / 2 : initialLimit;
   const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
@@ -26,7 +34,12 @@ export function ModelDiscussionV2({
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       placeholderData: undefined,
     });
-  const comments = useMemo(() => data?.pages.flatMap((x) => x.comments) ?? [], [data?.pages]);
+  const comments = useMemo(() => {
+    const byId = new Map<number, CommentGetAllItem>();
+    for (const comment of data?.pages.flatMap((x) => x.comments) ?? [])
+      if (!byId.has(comment.id)) byId.set(comment.id, comment);
+    return [...byId.values()];
+  }, [data?.pages]);
   const hasItems = comments.length > 0;
 
   const { data: hiddenCommentsCount = 0 } = trpc.comment.getCommentCountByModel.useQuery(
@@ -38,12 +51,16 @@ export function ModelDiscussionV2({
   );
   const hasHiddenComments = hiddenCommentsCount > 0;
 
-  const renderItem = useCallback(
-    (props: { data: CommentGetAllItem }) => (
-      <CommentDiscussionItem {...props} modelUserId={modelUserId} />
-    ),
-    [modelUserId]
-  );
+  const { data: totalCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery({
+    modelId,
+    hidden: onlyHidden,
+  });
+  const countLabel =
+    totalCount > comments.length
+      ? `Showing ${comments.length} of ${totalCount} comments`
+      : totalCount > 0
+      ? `${totalCount} ${totalCount === 1 ? 'comment' : 'comments'}`
+      : null;
 
   return (
     <ContainerGrid2 gutter="xl">
@@ -51,22 +68,27 @@ export function ModelDiscussionV2({
         <LoadingOverlay visible={isLoading} zIndex={10} />
         {hasItems ? (
           <Stack gap={8}>
-            <MasonryGrid2
-              data={comments}
-              render={renderItem}
-              isRefetching={isRefetching}
-              isFetchingNextPage={isFetchingNextPage}
-              hasNextPage={hasNextPage}
-              fetchNextPage={fetchNextPage}
-              filters={filters}
-              columnWidth={300}
-              autoFetch={false}
-              // Render every loaded comment. MasonryGrid2 virtualizes against window scroll, which
-              // never moves inside the app's ScrollArea, so a finite overscan left later pages
-              // unrendered. Virtualizing properly instead makes long comments jitter on remount:
-              // the Show More label appears a frame late and changes the card's height.
-              overscanBy={Infinity}
-            />
+            <div style={{ position: 'relative' }}>
+              <LoadingOverlay visible={isRefetching && !isFetchingNextPage} zIndex={9} />
+              <CommentMasonryVirtual comments={comments} modelUserId={modelUserId} />
+            </div>
+            <Stack gap={8} align="center">
+              {hasNextPage && (
+                <Button
+                  onClick={() => fetchNextPage()}
+                  loading={isFetchingNextPage}
+                  color="gray"
+                  variant={colorScheme === 'dark' ? 'filled' : 'light'}
+                >
+                  {isFetchingNextPage ? 'Loading more...' : 'Load more'}
+                </Button>
+              )}
+              {countLabel && (
+                <Text size="xs" c="dimmed">
+                  {countLabel}
+                </Text>
+              )}
+            </Stack>
             {hasHiddenComments && !onlyHidden && (
               <RoutedDialogLink
                 name="hiddenComments"
