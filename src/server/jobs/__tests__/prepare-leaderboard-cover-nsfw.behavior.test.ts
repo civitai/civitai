@@ -152,6 +152,10 @@ describe('the prepare-leaderboard job', () => {
       // What happens after the boards are read is not this test's subject.
       await job.run({}).result.catch(() => undefined);
       expect(dbMock.dbWrite.leaderboard.findMany).toHaveBeenCalled();
+      // The job ran the step through the wrapper, not around it.
+      expect(logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'leaderboard-cover-nsfw-level-failed' })
+      );
     } finally {
       await q(`ALTER TABLE "PostGone" RENAME TO "Post"`);
     }
