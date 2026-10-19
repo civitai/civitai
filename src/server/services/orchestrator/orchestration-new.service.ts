@@ -101,6 +101,7 @@ import {
   type RawAirResource,
 } from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { CacheTTL } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import {
@@ -3144,12 +3145,33 @@ export async function assertUnlockReleasesOutput({
     );
 }
 
+type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+
+/**
+ * Generation submits `allowMatureContent: false` on the green domain and for users with mature
+ * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ */
+export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+  if (domain === 'green')
+    throw throwBadRequestError(
+      'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
+    );
+  if (!showNsfw)
+    throw throwBadRequestError(
+      'Enable mature content in your account settings to unlock this generation.'
+    );
+}
+
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
   user,
+  viewer,
   ...props
-}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
-  if (props.allowMatureContent === true) await assertUnlockReleasesOutput(props);
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
+  if (props.allowMatureContent === true) {
+    assertUnlockAllowed(viewer);
+    await assertUnlockReleasesOutput(props);
+  }
   const workflow = await clientUpdateWorkflow(props);
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;

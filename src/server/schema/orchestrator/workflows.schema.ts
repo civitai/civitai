@@ -50,15 +50,27 @@ export const tagsPatchSchema = z.object({
   op: z.enum(['add', 'remove']),
 });
 
+// The orchestrator charges for some top-level fields (`/allowMatureContent` is the yellow-Buzz
+// unlock, which must go through `updateWorkflow`'s guards), and it matches field names
+// case-insensitively.
+const workflowMetadataPointer = z
+  .string()
+  .regex(/^\/metadata(\/|$)/i, 'Workflow patches may only change /metadata');
+
 export type PatchWorkflowParams = z.infer<typeof patchWorkflowSchema>;
 export const patchWorkflowSchema = z.object({
   workflowId: z.string(),
-  patches: jsonPatchSchema.array(),
+  patches: jsonPatchSchema
+    .extend({ path: workflowMetadataPointer, from: workflowMetadataPointer.optional() })
+    .array(),
 });
 
+// Step patch paths are relative; the router roots them under the step's /metadata.
 export type PatchWorkflowStepParams = z.infer<typeof patchWorkflowStepSchema>;
-export const patchWorkflowStepSchema = patchWorkflowSchema.extend({
+export const patchWorkflowStepSchema = z.object({
+  workflowId: z.string(),
   stepName: z.string(),
+  patches: jsonPatchSchema.array(),
 });
 
 // export const deleteSchema = z.object({
