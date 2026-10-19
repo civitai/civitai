@@ -60,6 +60,11 @@ vi.mock('~/components/CreatorShop/Manage/ManageHeader', () => ({ ManageHeader: (
 vi.mock('~/components/CreatorShop/Manage/ManageEmptyState', () => ({
   ManageEmptyState: () => null,
 }));
+vi.mock('~/components/CreatorShop/Manage/ManageStats', () => ({ ManageStats: () => null }));
+vi.mock('~/components/CreatorShop/Manage/ManageToolbar', () => ({ ManageToolbar: () => null }));
+vi.mock('~/components/CreatorShop/Manage/ManageItemsTable', () => ({
+  ManageItemsTable: () => null,
+}));
 vi.mock('~/components/Profile/ProfileLayout2', () => ({ UserProfileLayout: () => null }));
 
 const { default: ManageShopPage } = await import('~/pages/user/[username]/shop/manage');
@@ -81,6 +86,12 @@ describe('manage page: publishing a shop', () => {
     const html = render();
     expect(html).toContain('Publish shop');
     expect(publishDisabled(html)).toBe(false);
+  });
+
+  it('lets an owner with cosmetics and no services publish', () => {
+    mocks.flags = { creatorServices: false };
+    mocks.cosmetics = [{}];
+    expect(publishDisabled(render())).toBe(false);
   });
 
   it('does not count services for an owner without the services flag', () => {

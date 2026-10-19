@@ -86,6 +86,11 @@ describe('the manage page publish banner', () => {
     expect(mocks.fetched).toEqual([true, false]);
   });
 
+  it('enables Publish when offerings this domain hides might be Active; the server answers', () => {
+    mocks.mine.hiddenOffDomain = 2;
+    expect(publishDisabled(render({}))).toBe(false);
+  });
+
   it('enables Publish when cosmetics fill the shop', () => {
     expect(publishDisabled(render({ cosmeticCount: 1 }))).toBe(false);
   });
