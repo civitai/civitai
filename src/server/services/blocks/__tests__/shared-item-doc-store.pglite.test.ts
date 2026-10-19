@@ -92,6 +92,15 @@ const MANIFEST = {
 const BROKEN_MANIFEST = { storage: { collections: { posts: { visibility: 'bogus' } } } };
 /** Storage declared, but no shared collection: the app's shared items are legacy. */
 const LEGACY_ONLY_MANIFEST = { storage: { collections: { prefs: { visibility: 'private' } } } };
+/**
+ * The only shared collection is `write: "none"` (counters/marks only): it holds no item, so the
+ * app has not moved and its shared items are legacy.
+ */
+const COUNTERS_ONLY_MANIFEST = {
+  storage: {
+    collections: { tallies: { visibility: 'shared', write: 'none', counters: ['plays'] } },
+  },
+};
 const BOARD_ONLY_MANIFEST = {
   storage: { collections: { board: { visibility: 'shared', write: 'own' } } },
 };
@@ -243,10 +252,29 @@ function defineSuite(rls: boolean) {
         expect(await subListing(app, 'mine')).toBeNull();
       });
 
-      it('a counter document has no author: it matches no publisher', async () => {
+      it('a document in a write-"none" collection is not an item: not found', async () => {
         const app = freshApp();
         await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'counted', 'plays', 1);
-        expect(await subListing(app, 'counted')).toEqual({ authorUserId: null, hidden: false });
+        expect(await subListing(app, 'counted')).toBeNull();
+      });
+
+      it("a counter kept under an item's own key does not make the key ambiguous", async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'voted', DOC_AUTHOR);
+        await store.increment(ctx(app, NS_PROD, OTHER_AUTHOR), TALLIES, 'voted', 'plays', 1);
+        expect(await subListing(app, 'voted')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
+        expect(h.legacyCalls).toBe(0);
+      });
+
+      it('an app whose only shared collection is write-"none" still resolves from the legacy store', async () => {
+        const app = freshApp(COUNTERS_ONLY_MANIFEST);
+        legacyRow(app, 'old', LEGACY_AUTHOR);
+        await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'old', 'plays', 1);
+        expect(await subListing(app, 'old')).toEqual({
+          authorUserId: LEGACY_AUTHOR,
+          hidden: false,
+        });
+        expect(h.legacyCalls).toBe(1);
       });
 
       it('a document-store read failure is a 503, and the legacy store is not read instead', async () => {
@@ -386,6 +414,19 @@ function defineSuite(rls: boolean) {
         const app = freshApp();
         await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'counted', 'plays', 1);
         expect(await attribution(app, 'counted')).toBeNull();
+      });
+
+      it("a counter kept under an item's own key does not make the key ambiguous", async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'voted', DOC_AUTHOR);
+        await store.increment(ctx(app, NS_PROD, OTHER_AUTHOR), TALLIES, 'voted', 'plays', 1);
+        expect(await attribution(app, 'voted')).toBe(DOC_AUTHOR);
+      });
+
+      it('an app whose only shared collection is write-"none" still attributes from the legacy store', async () => {
+        const app = freshApp(COUNTERS_ONLY_MANIFEST);
+        legacyRow(app, 'old', LEGACY_AUTHOR);
+        expect(await attribution(app, 'old')).toBe(LEGACY_AUTHOR);
       });
 
       it('a document-store read failure attributes nobody and does not read the legacy store', async () => {

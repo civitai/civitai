@@ -494,7 +494,8 @@ export type RecordSpendAttributionResult = {
  *
  * FORGE-SAFETY: the author is NEVER taken from client input. It is looked up
  * from the calling app's OWN shared data — the App Blocks document store when
- * its approved manifest declares a shared collection, else the legacy per-app
+ * its approved manifest declares an item collection (shared, `write` other than
+ * "none"), else the legacy per-app
  * `app_<slug>.shared_kv` (`resolveSharedItem`) — addressed
  * by the SERVER-derived `appBlockId` (itself from the verified block token),
  * so app A can only ever resolve keys in app A's data. A forged/bogus key at
