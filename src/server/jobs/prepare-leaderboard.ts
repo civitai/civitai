@@ -132,6 +132,10 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     log('Leaderboards - Done');
     await updateLegendsBoardResults(excludedUserIds);
     await setLastRun();
+    // The routers cache these boards for a day. Without this, a board read before the job
+    // finished (a late or re-run job) keeps serving that read until clear-leaderboard-cache
+    // runs at midnight: on 2026-10-19 that was an empty board, all day.
+    await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
     logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
