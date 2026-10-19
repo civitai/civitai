@@ -1,14 +1,14 @@
 <script module lang="ts">
   import type { ResolutionVerdict, TextScanLabel } from '@civitai/shared/resolution-reasons';
+  import { APPEAL_SPLITS } from '$lib/minor-flags/appeal-split';
   import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
 
-  type Decision = 'uphold' | 'overturn';
   type Ruling = {
     action: 'upholdAppeal' | 'overturnAppeal' | 'splitAppeal';
     verdict: ResolutionVerdict<'flagAppeal'>;
     label: string;
     outcome: string;
-    split?: { minor: Decision; poi: Decision; lifted: TextScanLabel };
+    split?: { lifted: TextScanLabel };
   };
 
   const choice = (verdict: ResolutionVerdict<'flagAppeal'>) => {
@@ -17,7 +17,8 @@
     return found;
   };
 
-  // A split lifts one flag, so it is an Approved ruling.
+  // A split lifts one flag, so it is an Approved ruling. Its button posts only `ruling`; the route
+  // action sets minor/poi from it, so a submit before hydration is complete too.
   const RULINGS = {
     Rejected: { ...choice('Rejected'), action: 'upholdAppeal', outcome: 'Appeal rejected' },
     Approved: { ...choice('Approved'), action: 'overturnAppeal', outcome: 'Appeal approved' },
@@ -26,14 +27,14 @@
       verdict: 'Approved',
       label: 'Keep minor, lift real person',
       outcome: 'Kept minor, lifted real person',
-      split: { minor: 'uphold', poi: 'overturn', lifted: 'poi' },
+      split: APPEAL_SPLITS.liftPoi,
     },
     liftMinor: {
       action: 'splitAppeal',
       verdict: 'Approved',
       label: 'Lift minor, keep real person',
       outcome: 'Lifted minor, kept real person',
-      split: { minor: 'overturn', poi: 'uphold', lifted: 'minor' },
+      split: APPEAL_SPLITS.liftMinor,
     },
   } satisfies Record<string, Ruling>;
 
@@ -154,10 +155,6 @@
       return;
     }
     problem = null;
-    if (ruling.split) {
-      input.formData.set('minor', ruling.split.minor);
-      input.formData.set('poi', ruling.split.poi);
-    }
     return submit(ruling.outcome)(input);
   };
 </script>

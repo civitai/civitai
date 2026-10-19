@@ -72,6 +72,18 @@ describe('model flag appeal rulings — reason', () => {
     );
   });
 
+  // A plain form post (no JS yet) sends only the pressed split button's `ruling`.
+  it.each([
+    ['liftPoi', 'not-a-real-person', { minor: 'uphold', poi: 'overturn' }],
+    ['liftMinor', 'not-a-minor', { minor: 'overturn', poi: 'uphold' }],
+  ])('rules both labels from a %s button posted without JS', async (ruling, reason, decisions) => {
+    await run('splitAppeal', { modelId: '42', ruling, resolvedReason: reason });
+    expect(resolveMinorFlagAppealPerLabel).toHaveBeenCalledExactlyOnceWith(42, decisions, {
+      resolvedReason: reason,
+      internalNotes: undefined,
+    });
+  });
+
   it.each([
     ['upholdAppeal', 'no reason', {}, /Pick a reason/],
     [
