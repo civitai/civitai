@@ -65,6 +65,8 @@ const callers = svelteFiles(SRC).flatMap((file) =>
     (tag) => ({
       file: path.relative(SRC, file),
       cls: classOf(tag),
+      hasClass: /(^|\s)class=/.test(tag.attrs),
+      dynamicSide: /(^|\s)side=\{/.test(tag.attrs),
       side: /(^|\s)side="(\w+)"/.exec(tag.attrs)?.[2] ?? 'right',
     })
   )
@@ -107,8 +109,13 @@ describe('SheetContent: a caller-supplied width reaches the page', () => {
 
   it.each(callers.map((c) => [`${c.file} (side=${c.side})`, c] as const))(
     '%s: no primitive width token out-specifies the caller',
-    (_, { cls, side }) => {
-      if (cls === null) throw new Error('class is not a literal; this pin cannot read it');
+    (_, { cls, hasClass, dynamicSide, side }) => {
+      if (dynamicSide) throw new Error('side is an expression; this pin cannot tell which side');
+      // No class at all is the default width, which is legitimate (see the no-width case above).
+      if (!hasClass) return;
+      if (cls === null || cls.includes('{')) {
+        throw new Error('class is not a plain literal; this pin cannot read every token');
+      }
       expect(overriddenBy(cls, side)).toEqual([]);
     }
   );

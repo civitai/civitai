@@ -82,8 +82,9 @@ describe('390px: user text and labels cannot widen the page', () => {
     const links = find(file, isUserLink);
     expect(links.length).toBe(1);
     const cls = classOf(links[0].tag) ?? '';
-    // A `shrink-0` link is fine only while something caps it; uncapped, a long name pins the row.
-    if (has(cls, 'shrink-0')) expect(cls).toMatch(/(^|\s)max-w-\S+/);
+    // The link needs a width cap with or without `shrink-0`: its automatic minimum width is the
+    // unwrapped username, so dropping `shrink-0` alone still pins the row (measured: 501px at 390).
+    expect(cls).toMatch(/(^|\s)max-w-\S+/);
     const names = find(
       file,
       (t, ancestors) => ancestors.some(isUserLink) && has(classOf(t), 'truncate')
