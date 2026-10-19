@@ -116,7 +116,7 @@ async function seed({
   await holder.db.exec(`
     TRUNCATE label_store.subject, label_store.change, label_store.record_failure,
       label_store.erased_subject, label_store.erased_owner RESTART IDENTITY CASCADE;
-    TRUNCATE "Model";
+    TRUNCATE "Model", "EntityModeration";
   `);
   await holder.db.query(
     `INSERT INTO "Model" (id, name, "userId", status, minor, poi, "lockedProperties", meta)
@@ -307,8 +307,13 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
     };
     const granted = { ...verdict, textHash: 'hash-older', appealGranted: { at: 'x', by: 1 } };
 
-    it('keep records a flag on the held text', async () => {
+    it("keep records a flag on the held text with the held detection's verdict", async () => {
       await seed({ flags: { minor: { ...granted, redetected: held } } });
+      // The live scan row belongs to another workflow: the kept flag must not take its prompts.
+      await holder.db.query(`INSERT INTO "EntityModeration" VALUES ('Model', $1, 'wf-other', $2)`, [
+        MODEL,
+        JSON.stringify({ version: 1, promptIds: { base: 99 } }),
+      ]);
 
       expect(
         await resolveTextScanRedetection({
@@ -320,8 +325,17 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
         })
       ).toBe('kept');
 
-      expect(await labels()).toMatchObject([
-        { value: 'flag', labellerKind: 'moderator', contentHash: SCANNED },
+      expect(await labels()).toEqual([
+        expect.objectContaining({
+          value: 'flag',
+          labellerKind: 'moderator',
+          contentHash: SCANNED,
+          snapshot: expect.objectContaining({
+            workflowId: 'wf-held',
+            promptIds: { base: 3 },
+            verdictReason: 'held reason',
+          }),
+        }),
       ]);
     });
 

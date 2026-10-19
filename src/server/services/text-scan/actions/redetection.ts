@@ -242,6 +242,7 @@ async function resolve({
       via: 'moderator',
       reason,
       note,
+      heldDetection: detection,
     });
   // Last, so a failure anywhere above leaves the item in the queue to retry.
   await dropRedetection({ modelId, label, textHash });

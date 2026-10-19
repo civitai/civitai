@@ -8,7 +8,10 @@ import { bustPublicModelResponseCache } from '~/server/services/model-version.se
 import { createNotification } from '~/server/services/notification.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
-import { writeTextScanRuling } from '~/server/services/text-scan/label-capture';
+import {
+  writeTextScanRuling,
+  type TextScanModelRuling,
+} from '~/server/services/text-scan/label-capture';
 import {
   appealGrantCoversText,
   buildTextScanFlagEntry,
@@ -735,6 +738,7 @@ export async function stampModelTextScanAppeal({
   reason,
   note,
   expectTextHash,
+  heldDetection,
 }: {
   modelId: number;
   userId: number;
@@ -746,6 +750,8 @@ export async function stampModelTextScanAppeal({
   note?: string;
   /** Stamp only while the first label's flag still carries this text hash. */
   expectTextHash?: string;
+  /** A held detection being ruled on: the verdict its label records, as the flag entry may not carry it whole. */
+  heldDetection?: TextScanModelRuling['heldDetection'];
 }): Promise<number> {
   if (!labels.length) return 0;
   // A grant covers the text the moderator reviewed, per label because the scan that owns a label
@@ -757,7 +763,7 @@ export async function stampModelTextScanAppeal({
   const hashes = JSON.stringify(granted ? grantHashes : {});
   // The ruling and its labels commit together.
   return writeTextScanRuling(
-    { modelId, labels, decision, via, moderatorId: userId, reason, note },
+    { modelId, labels, decision, via, moderatorId: userId, reason, note, heldDetection },
     (tx) => tx.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
