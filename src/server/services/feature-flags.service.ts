@@ -526,6 +526,12 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'model-metric-privacy-readtime',
   },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
+  // Perf: serve the viewer-independent model row behind `model.getById` from a shared 60 s cache
+  // (`model-detail-cache.service.ts`); every per-viewer field is still computed per request.
+  // `availability: []` = DARK by default and fails CLOSED when Flipt is absent or down, so OFF
+  // reads the database exactly as before. Ramp moderators first (they use the cache), then a
+  // percentage; instant rollback = set the rollout to 0.
+  modelPublicPayloadCache: { availability: [], fliptKey: 'model-public-payload-cache' },
   // User-composed hubs (/hubs). `availability: []` = DARK by default and FAILS
   // CLOSED, so the pages, the tRPC router and the nav entry all stay off until the
   // `user-hubs` flag exists in Flipt — the flag lands separately, in the private

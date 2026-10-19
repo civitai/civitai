@@ -2949,6 +2949,9 @@ const REDIS_KEYS_UNPREFIXED = {
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
     PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response',
+    // `<prefix>:<shape>:<modelId>` — the viewer-independent model row behind `model.getById`. See
+    // model-detail-cache.service.ts for the shape segment.
+    MODEL_DETAIL_PUBLIC: 'packed:caches:model-detail-public',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
     BASIC_USERS: 'packed:caches:basic-users',

@@ -17,6 +17,7 @@ import {
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 export type CacheTarget = 'main' | 'sys';
 
@@ -403,6 +404,53 @@ export async function fetchThroughCache<T>(
       });
     }
   }
+}
+
+/**
+ * `fetchThroughCache` for a read path that must never wait on the cache for more than `deadlineMs`
+ * and never fail because of it. Every cache-side failure resolves to `fetchFn()`:
+ * - A Redis read error: `fetchThroughCache` already fails open to the origin fetch.
+ * - A cold key whose refill lock another request holds: `retryCount: 0` makes that throw at once
+ *   instead of sleeping, and `fetchFn()` runs directly.
+ * - A cache call still unsettled after `deadlineMs`: if this call's own origin fetch is already
+ *   running, its result is awaited (not started a second time); otherwise `fetchFn()` runs
+ *   directly. The abandoned cache call keeps running in the background and its result is ignored;
+ *   if it reaches the origin fetch after the deadline, that fetch is refused rather than run, so a
+ *   stalled cache does not cost two origin reads per request.
+ * An error from `fetchFn` itself is rethrown unchanged.
+ *
+ * Use `fetchThroughCache` directly when a stalled cache may delay the caller; use this when the
+ * caller ran without the cache before and must not get slower or less available because of it.
+ */
+export async function fetchThroughCacheWithDeadline<T>(
+  key: RedisKeyTemplateCache,
+  fetchFn: () => Promise<T>,
+  options: { ttl: number; deadlineMs: number }
+): Promise<T> {
+  let origin: Promise<T> | undefined;
+  let abandoned = false;
+  const timedOut = Symbol('fetch-through-cache-deadline');
+  try {
+    const cached = await withTimeoutFallback<T | typeof timedOut>(
+      fetchThroughCache(
+        key,
+        () => {
+          if (abandoned) return Promise.reject(new Error('cache read abandoned at its deadline'));
+          origin = fetchFn();
+          return origin;
+        },
+        { ttl: options.ttl, retryCount: 0 }
+      ),
+      options.deadlineMs,
+      timedOut
+    );
+    if (cached !== timedOut) return cached as T;
+    abandoned = true;
+  } catch (error) {
+    // The origin fetch ran inside the cache call and failed: that is a real error, not a cache one.
+    if (origin) throw error;
+  }
+  return origin ?? fetchFn();
 }
 
 /**

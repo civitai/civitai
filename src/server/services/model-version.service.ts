@@ -160,6 +160,7 @@ import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.con
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { bustModelDetailPublicCache } from '~/server/utils/model-detail-cache-key';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -2832,19 +2833,22 @@ export function publicModelResponseKey(
   return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
 }
 
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
+// Best-effort, fail-open invalidation of the shared public model caches: the model row
+// behind `model.getById` (model-detail-cache.service), and the origin-side public response
+// cache for GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
+// unpublish / takedown / update / delete drops the cached entries immediately rather
+// than serving stale for up to the cache TTL globally. For the public API it busts BOTH
+// browsing-level keys the handler can write (all-levels for unrestricted regions, sfw-only
+// for region-restricted ones). Deletes the physical keys — both readers key off key
+// PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT throw into
+// the mutation path, so it is swallowed (the entry otherwise expires via its TTL).
 export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
   const modelIds = Array.isArray(modelId) ? modelId : [modelId];
   if (modelIds.length === 0) return;
+  // Not behind the public API's environment gate: the model-row cache is gated by its own flag at
+  // read time, and a delete of an absent key is harmless.
+  await bustModelDetailPublicCache(modelIds);
+  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
   const keys = modelIds.flatMap((id) => [
     publicModelResponseKey(id, allBrowsingLevelsFlag),
     publicModelResponseKey(id, sfwBrowsingLevelsFlag),

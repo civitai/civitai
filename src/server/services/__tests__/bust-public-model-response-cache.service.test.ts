@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Unit tests for bustPublicModelResponseCache (model-version.service.ts) — the
-// origin-side response-cache invalidation helper wired into bustMvCache,
+// public model-cache invalidation helper (the public API's origin-side response
+// cache and the model-row cache behind model.getById) wired into bustMvCache,
 // updateModelById, deleteModelById, AND upsertModel (FIX 1). upsertModel itself
 // is too dependency-laden (Prisma + profanity + search-index + collections +
 // ingest) to unit-test in isolation without a brittle scaffold, so its bust
@@ -64,6 +65,7 @@ vi.mock('~/server/services/model-file.service', () => ({
 }));
 
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
+import { MODEL_DETAIL_PUBLIC_SHAPE } from '~/server/utils/model-detail-cache-key';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -79,6 +81,8 @@ const keysFor = (id: number) => [
   `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,
   `packed:caches:public-model-response:${id}:${sfwBrowsingLevelsFlag}`,
 ];
+const modelRowKey = (id: number) =>
+  `packed:caches:model-detail-public:${MODEL_DETAIL_PUBLIC_SHAPE}:${id}`;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -86,16 +90,20 @@ beforeEach(() => {
 });
 
 describe('bustPublicModelResponseCache', () => {
-  it('deletes BOTH browsing-level keys for a single model id', async () => {
+  // Two deletes since the model-row cache joined this bust: its key is not behind the public
+  // API's environment gate, so it is dropped in a call of its own.
+  it('deletes BOTH browsing-level keys and the model-row key for a single model id', async () => {
     await bustPublicModelResponseCache(123);
-    expect(mockRedisDel).toHaveBeenCalledTimes(1);
+    expect(mockRedisDel).toHaveBeenCalledTimes(2);
     expect(mockRedisDel).toHaveBeenCalledWith(keysFor(123));
+    expect(mockRedisDel).toHaveBeenCalledWith([modelRowKey(123)]);
   });
 
-  it('deletes BOTH keys for EVERY id when given an array (batch)', async () => {
+  it('deletes every key for EVERY id when given an array (batch)', async () => {
     await bustPublicModelResponseCache([1, 2]);
-    expect(mockRedisDel).toHaveBeenCalledTimes(1);
+    expect(mockRedisDel).toHaveBeenCalledTimes(2);
     expect(mockRedisDel).toHaveBeenCalledWith([...keysFor(1), ...keysFor(2)]);
+    expect(mockRedisDel).toHaveBeenCalledWith([modelRowKey(1), modelRowKey(2)]);
   });
 
   // NB: the IS_DATAPACKET gate (PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) is captured
@@ -108,7 +116,8 @@ describe('bustPublicModelResponseCache', () => {
   });
 
   it('fails open: swallows a Redis error and does not throw into the mutation path', async () => {
-    mockRedisDel.mockRejectedValueOnce(new Error('redis down'));
+    // Every delete fails, the model-row one included.
+    mockRedisDel.mockRejectedValue(new Error('redis down'));
     await expect(bustPublicModelResponseCache(123)).resolves.toBeUndefined();
   });
 });
