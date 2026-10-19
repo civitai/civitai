@@ -39,6 +39,13 @@ describe('mergePostPages', () => {
       [2, [21], false],
       [1, [11, 12], false],
     ]);
+
+    // The sponsored slot can also come after an ordinary card of the same post.
+    const after = mergePostPages([[card(1, [12]), sponsored], [card(1, [13])]]);
+    expect(after.map((x) => [x.postId, x.images.map((i) => i.id), !!x.sponsored])).toEqual([
+      [1, [12, 13], false],
+      [1, [11], true],
+    ]);
   });
 
   // With lazy post images a card carries its first few images and the count of that page's
