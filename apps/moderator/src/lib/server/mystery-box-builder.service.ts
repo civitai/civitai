@@ -8,6 +8,16 @@ import {
   type BoxOddsSnapshotData,
 } from '@civitai/shared/box-odds-snapshot';
 import {
+  assertDraftFitsRows,
+  boxEventOf,
+  boxParamsForSave,
+  BoxRefusal,
+  keptContentIds,
+  planContentWrites,
+  planTierWrites,
+  type BoxParams,
+} from '@civitai/shared/box-builder';
+import {
   boxChecklist,
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
@@ -18,12 +28,9 @@ import { openingStats } from '$lib/mystery-box-openings';
 import { dbRead, dbWrite } from './db';
 import { readEventTeams, readRewards } from './item-definitions.service';
 
-/** A refusal the moderator can act on. Thrown before anything commits; the action answers 409. */
-export class BoxRefusal extends Error {}
+export { BoxRefusal } from '@civitai/shared/box-builder';
 
 export type Trx = Transaction<DB>;
-
-type BoxParams = Record<string, unknown> & { event?: unknown; emptyRule?: unknown; art?: unknown };
 
 export async function listBoxes() {
   return dbRead
@@ -127,7 +134,7 @@ export async function readBoxForEditor(boxId: number) {
     name: box.name,
     description: box.description ?? '',
     imageUrl: box.imageUrl ?? '',
-    event: typeof params.event === 'string' ? params.event : '',
+    event: boxEventOf(params) ?? '',
     emptyRule: 'keep',
     art: (params.art && typeof params.art === 'object' ? params.art : {}) as BoxArt,
     tiers: tiers.map(({ id, key, name, weight, color }) => ({ id, key, name, weight, color })),
@@ -258,22 +265,16 @@ export async function saveBox({
     const status = publish ? ITEM_DEFINITION_STATUS.published : box.status;
     const before = await liveSnapshot(trx, boxId);
     const params = (box.params ?? {}) as BoxParams;
-    const eventBefore = typeof params.event === 'string' ? params.event : null;
-    const event = draft.event.trim() || null;
+    const eventBefore = boxEventOf(params);
+    const { event, params: nextParams } = boxParamsForSave(params, draft);
 
-    const { event: _event, ...rest } = params;
     await trx
       .updateTable('ItemDefinition')
       .set({
         name: draft.name.trim(),
         description: draft.description.trim() || null,
         imageUrl: draft.imageUrl.trim() || null,
-        params: sql`${JSON.stringify({
-          ...rest,
-          ...(event ? { event } : {}),
-          emptyRule: draft.emptyRule,
-          art: draft.art,
-        })}::jsonb`,
+        params: sql`${JSON.stringify(nextParams)}::jsonb`,
         updatedById: userId,
         updatedAt: new Date(),
       })
@@ -333,63 +334,19 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
       .where('boxDefinitionId', '=', boxId)
       .execute(),
   ]);
-  const tierById = new Map(tiers.map((tier) => [tier.id, tier]));
-  const contentById = new Map(contents.map((content) => [content.id, content]));
-
-  const keys = new Set<string>();
-  for (const tier of draft.tiers) {
-    if (keys.has(tier.key)) throw new BoxRefusal(`Two tiers share the key "${tier.key}".`);
-    keys.add(tier.key);
-    if (tier.id === null) {
-      if (tiers.some((existing) => existing.key === tier.key))
-        throw new BoxRefusal(`The key "${tier.key}" is already used by a tier of this box.`);
-      continue;
-    }
-    const existing = tierById.get(tier.id);
-    if (!existing) throw new BoxRefusal(`Tier #${tier.id} isn't in this box.`);
-    if (existing.key !== tier.key)
-      throw new BoxRefusal(`Tier "${existing.key}" can't change its key once saved.`);
-  }
-  const contentIds = new Set<number>();
-  for (const content of draft.contents) {
-    if (content.id === null) continue;
-    if (!contentById.has(content.id))
-      throw new BoxRefusal(`Content #${content.id} isn't in this box.`);
-    // UPDATE … FROM VALUES applies only one of several rows for the same id, and which is unspecified.
-    if (contentIds.has(content.id))
-      throw new BoxRefusal(`Content #${content.id} is in the box twice.`);
-    contentIds.add(content.id);
-  }
+  assertDraftFitsRows(draft, tiers, contents);
 
   // Contents first: removed contents free the (box, reward) slot a re-added reward needs, and let a
   // removed tier go (BoxContent.tierId is RESTRICT).
-  const keptContentIds = draft.contents.flatMap((content) => (content.id ? [content.id] : []));
+  const kept = keptContentIds(draft);
   await trx
     .deleteFrom('BoxContent')
     .where('boxDefinitionId', '=', boxId)
-    .$if(keptContentIds.length > 0, (qb) => qb.where('id', 'not in', keptContentIds))
+    .$if(kept.length > 0, (qb) => qb.where('id', 'not in', kept))
     .execute();
 
   // Runs under the lock every open waits on: write only changed rows, batched, not row by row.
-  const tierIdByKey = new Map<string, number>();
-  const newTiers = [];
-  const changedTiers = [];
-  for (const [sortOrder, tier] of draft.tiers.entries()) {
-    const values = { name: tier.name.trim(), weight: tier.weight, color: tier.color, sortOrder };
-    if (tier.id === null) {
-      newTiers.push({ boxDefinitionId: boxId, key: tier.key, ...values });
-      continue;
-    }
-    tierIdByKey.set(tier.key, tier.id);
-    const existing = tierById.get(tier.id)!;
-    if (
-      existing.name !== values.name ||
-      existing.weight !== values.weight ||
-      existing.color !== values.color ||
-      existing.sortOrder !== values.sortOrder
-    )
-      changedTiers.push({ id: tier.id, ...values });
-  }
+  const { newTiers, changedTiers, tierIdByKey } = planTierWrites(boxId, draft, tiers);
   if (newTiers.length)
     for (const row of await trx
       .insertInto('BoxTier')
@@ -410,27 +367,7 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
       WHERE t."id" = v."id" AND t."boxDefinitionId" = ${boxId}
     `.execute(trx);
 
-  const newContents = [];
-  const changedContents = [];
-  for (const content of draft.contents) {
-    const tierId = tierIdByKey.get(content.tierKey);
-    if (tierId === undefined)
-      throw new BoxRefusal(
-        `Reward #${content.rewardDefinitionId} is in a tier the box doesn't have.`
-      );
-    if (content.id === null) {
-      newContents.push({
-        boxDefinitionId: boxId,
-        tierId,
-        rewardDefinitionId: content.rewardDefinitionId,
-        enabled: content.enabled,
-      });
-      continue;
-    }
-    const existing = contentById.get(content.id)!;
-    if (existing.tierId !== tierId || existing.enabled !== content.enabled)
-      changedContents.push({ id: content.id, tierId, enabled: content.enabled });
-  }
+  const { newContents, changedContents } = planContentWrites(boxId, draft, contents, tierIdByKey);
   if (newContents.length) await trx.insertInto('BoxContent').values(newContents).execute();
   if (changedContents.length)
     await sql`
