@@ -1799,7 +1799,8 @@ export async function getListingDetail(
  * The image a listing's public page offers link unfurlers (`og:image`) on this host, or null —
  * `listingSocialImage` over the same row, under EXACTLY the gates of {@link getListingDetail}
  * (one shared loader), so a listing whose detail this request may not read yields no image
- * either. Never the requester's browsing level: see `listingSocialImage`.
+ * either. Never the requester's browsing level, and never a civitai.red override (they are not
+ * read here at all): see `listingSocialImage`.
  */
 export async function getListingSocialImage(
   input: GetAppListingDetailInput,
@@ -1811,11 +1812,7 @@ export async function getListingSocialImage(
     floor: opts.floor ?? 'public',
   });
   if (!gated) return null;
-  // 🔴 The civitai.red overrides are read ONLY for a red-capable request, as on the detail.
-  const red = opts.redCapable
-    ? (await readListingRedMediaManyForRender(dbRead, [gated.row.id])).get(gated.row.id) ?? null
-    : null;
-  return listingSocialImage(gated.row, { redCapable: opts.redCapable }, red);
+  return listingSocialImage(gated.row, { redCapable: opts.redCapable });
 }
 
 /**

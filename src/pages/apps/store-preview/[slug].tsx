@@ -32,8 +32,8 @@ import { trpc } from '~/utils/trpc';
  *
  * The ONE thing read server-side is the `og:image` (`resolveListingPageSocialImage`): link
  * unfurlers do not run the client query. It is a single image chosen under the detail read's own
- * gates and the anonymous ceiling of this host — never mature on any host, and on civitai.red the
- * civitai.red cover / icon override only when it passes that ceiling — carried with its level so
+ * gates and the anonymous ceiling of this host, from the listing's own media only — never mature
+ * on any host, and never a civitai.red cover / icon override — carried with its level so
  * `Meta`'s own safe-level check applies too.
  */
 type PageProps = { socialImage: ListingSocialImage | null };

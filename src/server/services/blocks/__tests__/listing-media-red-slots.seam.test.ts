@@ -359,13 +359,14 @@ describe('the moderator preview carries every image with its level, overrides in
 });
 
 /**
- * P3 — the listing page's social image (`og:image`), through the real detail gates and the real
- * override read. Held to the ANONYMOUS ceiling of the host: no host ever gets a mature image;
- * civitai.red may use its cover / icon override only when that passes, else the listing's own.
- * Extra fixtures: 31 (R own cover, `or.png`).
+ * P3 — the listing page's social image (`og:image`), through the real detail gates. Held to the
+ * ANONYMOUS ceiling of the host, so no host ever gets a mature image, and chosen from the
+ * listing's OWN media only: a civitai.red icon / cover override is never a candidate on any host
+ * (design invariant I6). Extra fixtures: 31 (R own cover, `or.png`), 14 (PG screenshot, `s.png`).
  */
-describe('P3 — the page’s social image is per host and never mature', () => {
+describe('P3 — the page’s social image is per host, never mature, never a red override', () => {
   const OWN_R = img(31, 'or.png', R);
+  const SHOT_PG = img(14, 's.png', PG);
   const social = (redCapable: boolean) =>
     getListingSocialImage({ slug: 'red-seam' }, { redCapable, scope: 'full', floor: 'public' });
 
@@ -379,27 +380,44 @@ describe('P3 — the page’s social image is per host and never mature', () => 
     expect(await social(false)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
-  it('🔴 civitai.red uses its cover override when it passes the gate', async () => {
+  // 🔴 REGRESSION (I6): an override that WOULD pass the anonymous ceiling — PG, the one level any
+  // host admits — is still never the og image. Each step of the own-media fallback is pinned.
+  it('🔴 a SFW civitai.red cover override is never the og image on a red host: own cover, else the fallback', async () => {
     await split.setRedSlots(LISTING_ID, { cover: 23 });
-    expect(await social(true)).toEqual({ url: 'edge:rp.png@1200', nsfwLevel: PG });
+    // Positive control: the page itself DOES show the override on this host, so the override is
+    // live and readable — its absence below is the og rule, not a missing slot.
+    expect((await detail(true, undefined)).coverUrl).toBe('edge:rp.png@1200');
+    expect(await social(true), 'own cover').toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    row = { ...listingRow({ cover: null }), screenshots: [{ caption: 'pg', image: SHOT_PG }] };
+    expect(await social(true), 'first passing screenshot').toEqual({
+      url: 'edge:s.png@1200',
+      nsfwLevel: PG,
+    });
+    row = { ...listingRow({ cover: null }), screenshots: [] };
+    expect(await social(true), 'own icon').toEqual({ url: 'edge:a.png@256', nsfwLevel: PG });
   });
 
-  it('🔴 civitai.red falls back to the SFW cover when the override is mature — even XXX', async () => {
-    await split.setRedSlots(LISTING_ID, { cover: 22, icon: 21 });
-    expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
-  });
-
-  it('civitai.red uses its icon override when no cover passes', async () => {
+  it('🔴 a SFW civitai.red icon override is never the og image on a red host: the own icon is', async () => {
     await split.setRedSlots(LISTING_ID, { icon: 23 });
     row = { ...listingRow({ cover: null }), screenshots: [] };
-    expect(await social(true)).toEqual({ url: 'edge:rp.png@256', nsfwLevel: PG });
+    expect(await social(true)).toEqual({ url: 'edge:a.png@256', nsfwLevel: PG });
   });
 
-  it('🔴 civitai.com never reads an override, and never shows one — even a SFW one', async () => {
+  it('🔴 the og read never reaches the override table, on either host', async () => {
     await split.setRedSlots(LISTING_ID, { cover: 23, icon: 23 });
-    redStatements.dbRead = 0;
-    expect(await social(false)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
-    expect(redStatements.dbRead, 'a non-red read reached the override table').toBe(0);
+    for (const redCapable of [true, false]) {
+      redStatements.dbRead = 0;
+      expect(await social(redCapable)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+      expect(redStatements.dbRead, `red=${redCapable}: og read the override table`).toBe(0);
+    }
+    // Positive control: the page's own detail read on a red host does reach it.
+    await detail(true, undefined);
+    expect(redStatements.dbRead, 'positive control: the detail reads the table').toBeGreaterThan(0);
+  });
+
+  it('civitai.red falls back to the SFW cover when an override is mature — even XXX', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 22, icon: 21 });
+    expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('a listing the detail read would refuse yields no image (shared gates)', async () => {
@@ -415,7 +433,7 @@ describe('P3 — the page’s social image is per host and never mature', () => 
     expect(await social(false)).toEqual({ url: 'edge:c.png@1200', nsfwLevel: PG13 });
   });
 
-  it('🔴 a mature, Blocked or unrated civitai.red ICON override falls back to the own icon', async () => {
+  it('a mature, Blocked or unrated civitai.red ICON override is not the og image: the own icon is', async () => {
     row = { ...listingRow({ cover: null }), screenshots: [] };
     for (const icon of [21, 24, 25]) {
       await split.setRedSlots(LISTING_ID, { icon });
@@ -427,7 +445,6 @@ describe('P3 — the page’s social image is per host and never mature', () => 
   });
 
   it('with no cover that passes, the first screenshot that passes is the image', async () => {
-    const SHOT_PG = img(14, 's.png', PG);
     row = {
       ...listingRow({ cover: null }),
       screenshots: [
@@ -438,11 +455,12 @@ describe('P3 — the page’s social image is per host and never mature', () => 
     expect(await social(false)).toEqual({ url: 'edge:s.png@1200', nsfwLevel: PG });
   });
 
-  // The og image follows the page's OWN choice order — it is what an anonymous viewer of this
-  // host sees as the cover, else the icon. Pinned as a relationship, so a change to the page's
-  // cover fallback cannot leave the preview on the old order.
-  it('the og image is exactly what an anonymous viewer of the host sees as the cover, else the icon', async () => {
-    const SHOT_PG = img(14, 's.png', PG);
+  // The og image follows the page's OWN choice order over the listing's OWN media — on either
+  // host it is what an anonymous viewer of civitai.com (which never shows an override) sees as
+  // the cover, else the icon. Pinned as a relationship, so a change to the page's cover fallback
+  // cannot leave the preview on the old order. The override cases are where the red page and the
+  // og image deliberately differ (I6).
+  it('on either host, the og image is what an anonymous civitai.com viewer sees as the cover, else the icon', async () => {
     const cases: { label: string; set: () => Promise<void> }[] = [
       { label: 'own media', set: async () => void (row = listingRow()) },
       {
@@ -471,8 +489,8 @@ describe('P3 — the page’s social image is per host and never mature', () => 
     for (const c of cases) {
       await split.db.exec(`TRUNCATE app_listing_red_media`);
       await c.set();
+      const page = await detail(false, undefined);
       for (const redCapable of [false, true]) {
-        const page = await detail(redCapable, undefined);
         expect((await social(redCapable))?.url ?? null, `${c.label} / red=${redCapable}`).toBe(
           page.coverUrl ?? page.iconUrl
         );
@@ -501,10 +519,17 @@ describe('P3 — the listing page SSR wiring', () => {
       isClient,
     });
 
-  it('🔴 the request host decides: the override on civitai.red, the own cover on civitai.com', async () => {
+  // The host is observable through the detail gates: an `r` listing is served on civitai.red
+  // only, so it has an og image there and none on civitai.com.
+  it('🔴 the request host decides: an `r` listing has its own SFW cover on civitai.red, nothing on civitai.com', async () => {
+    row = listingRow({ contentRating: 'r' });
+    expect(await page('civitai.red')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    expect(await page('civitai.com')).toBeNull();
+  });
+
+  it('🔴 civitai.red never offers its SFW cover override as the og image', async () => {
     await split.setRedSlots(LISTING_ID, { cover: 23 });
-    expect(await page('civitai.red')).toEqual({ url: 'edge:rp.png@1200', nsfwLevel: PG });
-    expect(await page('civitai.com')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    expect(await page('civitai.red')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('the store scope is resolved for the request’s own session user', async () => {
@@ -519,8 +544,10 @@ describe('P3 — the listing page SSR wiring', () => {
   });
 
   it('a request with no host is not red-capable', async () => {
-    await split.setRedSlots(LISTING_ID, { cover: 23 });
-    expect(await page(undefined)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    row = listingRow({ contentRating: 'r' });
+    expect(await page(undefined)).toBeNull();
+    // Positive control: the same listing IS served on a red host.
+    expect(await page('civitai.red')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('a client-side navigation reads nothing', async () => {
