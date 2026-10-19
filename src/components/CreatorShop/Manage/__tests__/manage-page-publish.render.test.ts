@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   },
   flags: { creatorServices: true } as Record<string, boolean>,
   cosmetics: [] as unknown[],
+  cosmeticsLoading: false,
   offerings: [{ status: 'Active' }] as { status: string }[],
 }));
 
@@ -32,7 +33,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
-  useQueryCreatorShopManage: () => ({ items: mocks.cosmetics, isLoading: false }),
+  useQueryCreatorShopManage: () => ({ items: mocks.cosmetics, isLoading: mocks.cosmeticsLoading }),
   useQueryCreatorShopSettings: () => ({ settings: { enabled: false } }),
   useQueryCreatorShopResaleStats: () => ({ resaleStats: undefined }),
   useMutateCreatorShop: () => ({
@@ -78,6 +79,7 @@ beforeEach(() => {
   mocks.user = { id: 1, username: 'Seller', isModerator: false };
   mocks.flags = { creatorServices: true };
   mocks.cosmetics = [];
+  mocks.cosmeticsLoading = false;
   mocks.offerings = [{ status: ServiceOfferingStatus.Active }];
 });
 
@@ -91,6 +93,13 @@ describe('manage page: publishing a shop', () => {
   it('lets an owner with cosmetics and no services publish', () => {
     mocks.flags = { creatorServices: false };
     mocks.cosmetics = [{}];
+    expect(publishDisabled(render())).toBe(false);
+  });
+
+  it('does not block Publish while the cosmetics are still loading', () => {
+    mocks.flags = { creatorServices: false };
+    mocks.offerings = [];
+    mocks.cosmeticsLoading = true;
     expect(publishDisabled(render())).toBe(false);
   });
 

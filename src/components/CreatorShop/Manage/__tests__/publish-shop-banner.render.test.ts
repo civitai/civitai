@@ -91,6 +91,15 @@ describe('the manage page publish banner', () => {
     expect(publishDisabled(render({}))).toBe(false);
   });
 
+  it('does not block Publish while the services are still loading', () => {
+    mocks.loading = true;
+    expect(publishDisabled(render({}))).toBe(false);
+  });
+
+  it('does not block Publish while the cosmetics are still loading', () => {
+    expect(publishDisabled(render({ cosmeticsLoading: true }))).toBe(false);
+  });
+
   it('enables Publish when cosmetics fill the shop', () => {
     expect(publishDisabled(render({ cosmeticCount: 1 }))).toBe(false);
   });

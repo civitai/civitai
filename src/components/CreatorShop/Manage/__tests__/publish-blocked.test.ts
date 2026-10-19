@@ -36,6 +36,12 @@ describe('what can fill a shop so it may be published', () => {
     expect(shopPublishBlockedReason({ ...base, hiddenServiceCount: 2 })).toBeUndefined();
   });
 
+  it('does not let hidden services fill the shop for a viewer whose services do not count', () => {
+    expect(shopPublishBlockedReason({ ...base, servicesCount: false, hiddenServiceCount: 2 })).toBe(
+      'Add at least one item before publishing your shop.'
+    );
+  });
+
   it('blocks nothing while the lists are still loading', () => {
     expect(shopPublishBlockedReason({ ...base, loading: true })).toBeUndefined();
   });
