@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ArticleIngestionStatus, Availability } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -213,15 +213,22 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         },
       })
       .catch(() => null),
+    // Same pick as the model page's showcase (getImagesForModelVersion): the owner's own
+    // posts only, earliest post first, unless the model belongs to the system account.
     dbRead.image.findFirst({
       where: {
-        post: { publishedAt: { not: null }, modelVersionId: publishedVersion.id },
+        post: {
+          publishedAt: { not: null },
+          modelVersionId: publishedVersion.id,
+          availability: Availability.Public,
+          ...(model.userId !== -1 ? { userId: model.userId } : {}),
+        },
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
       },
       select: ogImageSelect,
-      orderBy: { index: 'asc' },
+      orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
     }),
   ]);
 
