@@ -70,7 +70,7 @@ vi.mock('../store', () => ({
   })),
 }));
 
-const { TOOLS, toolsFor, quoted } = await import('../tools');
+const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler } = await import('../turn.service');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
@@ -195,5 +195,47 @@ describe('quoted', () => {
   it('truncates long text and marks it', () => {
     expect(quoted('x'.repeat(700), 600)).toBe(`⟦${'x'.repeat(600)}…⟧`);
     expect(quoted(null)).toBeNull();
+  });
+});
+
+describe('reactorClusters', () => {
+  const acct = (userId: number, peers: number[], withTarget = false) => ({
+    userId,
+    username: `u${userId}`,
+    withTarget,
+    peers: peers.map((p) => ({ userId: p })),
+  });
+  const members = (...ids: number[]) => ids.map((id) => ({ userId: id, username: `u${id}` }));
+
+  it('groups reactors linked to each other, through a chain, whether or not to the creator', () => {
+    // 1-2-3 is a chain (1 never shares with 3 directly); 4-5 a pair touching the creator (99); 6 alone.
+    const clusters = reactorClusters([
+      acct(1, [2]),
+      acct(2, [1, 3]),
+      acct(3, [2]),
+      acct(4, [5, 99], true),
+      acct(5, [4]),
+      acct(6, [99], true),
+    ] as never);
+    expect(clusters).toEqual([
+      { size: 3, linkedToCreator: false, members: members(1, 2, 3) },
+      { size: 2, linkedToCreator: true, members: members(4, 5) },
+    ]);
+  });
+
+  it('ignores peers outside the reactor set, so the creator never merges everyone', () => {
+    expect(reactorClusters([acct(1, [99], true), acct(2, [99], true)] as never)).toEqual([]);
+  });
+});
+
+describe('toolCatalog', () => {
+  it('lists every tool with its inputs, for the playbook editor', () => {
+    const catalog = toolCatalog();
+    expect(catalog.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
+    expect(catalog.find((t) => t.name === 'reactors_of')?.inputs).toEqual([
+      'userId',
+      'days',
+      'minCount',
+    ]);
   });
 });

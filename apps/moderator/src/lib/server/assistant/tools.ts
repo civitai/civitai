@@ -14,7 +14,7 @@ import {
   maskLinkedAddresses,
   type LinkedAccounts,
 } from '../ip-links.service';
-import { getInflationActors, getSharedIps } from '../reactor-lookup.service';
+import { getInflationActors, getSharedIps, type SharedIpAccount } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import {
   getReportsOnUser,
@@ -175,6 +175,41 @@ function reportRow(r: UserReportRow) {
   };
 }
 
+/**
+ * Reactors linked to EACH OTHER by shared addresses, grouped (connected components over `peers`),
+ * biggest first. A ring that boosts a creator need not share an address with the creator itself, and a
+ * flat per-account list left the model to assemble the groups, which it did not do.
+ */
+export function reactorClusters(
+  shared: Pick<SharedIpAccount, 'userId' | 'username' | 'withTarget' | 'peers'>[]
+): {
+  size: number;
+  linkedToCreator: boolean;
+  members: { userId: number; username: string | null }[];
+}[] {
+  const byId = new Map(shared.map((s) => [s.userId, s]));
+  const parent = new Map(shared.map((s) => [s.userId, s.userId]));
+  const root = (id: number): number => {
+    let r = id;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(id, r);
+    return r;
+  };
+  for (const s of shared)
+    for (const p of s.peers) if (byId.has(p.userId)) parent.set(root(s.userId), root(p.userId));
+
+  const groups = new Map<number, typeof shared>();
+  for (const s of shared) groups.set(root(s.userId), [...(groups.get(root(s.userId)) ?? []), s]);
+  return [...groups.values()]
+    .filter((g) => g.length > 1)
+    .map((g) => ({
+      size: g.length,
+      linkedToCreator: g.some((s) => s.withTarget),
+      members: g.map((s) => ({ userId: s.userId, username: s.username })),
+    }))
+    .sort((a, b) => b.size - a.size);
+}
+
 export const TOOLS = [
   tool({
     name: 'find_user',
@@ -318,7 +353,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -335,6 +370,7 @@ export const TOOLS = [
       const label = shownAddress(ctx);
       return {
         data: {
+          clusters: reactorClusters(shared),
           breadth,
           overFloor: report.total,
           belowFloor: report.belowFloor,
@@ -618,6 +654,18 @@ export type ToolName = (typeof TOOLS)[number]['name'];
 
 export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
   TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
+
+/** Every tool a playbook may name, with its inputs, for the playbook editor. */
+export function toolCatalog(): { name: string; description: string; inputs: string[] }[] {
+  return TOOLS.map((t) => {
+    const parameters = toolSpec(t).function.parameters as { properties?: Record<string, unknown> };
+    return {
+      name: t.name,
+      description: t.description,
+      inputs: Object.keys(parameters.properties ?? {}),
+    };
+  });
+}
 
 export function toolSpec(t: (typeof TOOLS)[number]) {
   const { $schema: _schema, ...parameters } = z.toJSONSchema(t.input, { io: 'input' }) as Record<

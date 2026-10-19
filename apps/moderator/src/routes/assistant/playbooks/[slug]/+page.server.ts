@@ -8,6 +8,7 @@ import {
   reviewProposal,
   setPlaybookArchived,
 } from '$lib/server/assistant/store';
+import { toolCatalog } from '$lib/server/assistant/tools';
 import { usersByIds } from '$lib/server/users.service';
 import { canSeeAddresses } from '$lib/server/access';
 import { redactAddresses } from '$lib/server/redact-addresses';
@@ -39,6 +40,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
     !!raw && !!current && (raw.body !== current.body || raw.summary !== current.summary);
   return {
     slug,
+    tools: toolCatalog(),
     archived: history.archived,
     current,
     redacted,

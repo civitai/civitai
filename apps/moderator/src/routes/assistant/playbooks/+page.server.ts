@@ -8,6 +8,7 @@ import {
   listPlaybooks,
   listUnservedPlaybooks,
 } from '$lib/server/assistant/store';
+import { toolCatalog } from '$lib/server/assistant/tools';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
 import { assistantStoreMessage } from '../store-status';
 import { firstIssue, playbookDraftSchema, playbookSlugSchema } from './playbook-form';
@@ -26,10 +27,16 @@ export const load: PageServerLoad = async ({ locals }) => {
       })),
       unserved,
       storeError: null,
+      tools: toolCatalog(),
     };
   } catch (e) {
     console.error('[assistant] playbooks unavailable', e);
-    return { playbooks: [], unserved: [], storeError: assistantStoreMessage(moderatorDbStatus(e)) };
+    return {
+      playbooks: [],
+      unserved: [],
+      storeError: assistantStoreMessage(moderatorDbStatus(e)),
+      tools: toolCatalog(),
+    };
   }
 };
 
