@@ -20,6 +20,9 @@ vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
   ...shop,
 }));
 
+const review = vi.hoisted(() => ({ getMysteryPackReview: vi.fn(async () => ({ boxId: 1 })) }));
+vi.mock('~/server/services/creator-mystery-pack-review.service', () => review);
+
 import { creatorShopRouter } from '../creator-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -144,6 +147,21 @@ describe('creator mystery pack procedures', () => {
         })
       );
     }
+  });
+
+  it("refuses the review pane's read to a non-moderator, and hands a moderator's the stickers flag", async () => {
+    await expect(caller(ALL_ON).getMysteryPackReview({ id: 3 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(review.getMysteryPackReview).not.toHaveBeenCalled();
+
+    await caller({ ...ALL_ON, stickers: true }, { isModerator: true }).getMysteryPackReview({
+      id: 3,
+    });
+    expect(review.getMysteryPackReview).toHaveBeenCalledWith({
+      listingId: 3,
+      stickersEnabled: true,
+    });
   });
 
   // The service loads every item it is handed, so the cap holds before it is called.

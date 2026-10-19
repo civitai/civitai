@@ -6,9 +6,10 @@ import type { RouterOutput } from '~/types/router';
 import type {
   GetCommunityCosmeticsInput,
   GetPublicShopItemsInput,
+  GetReviewQueueInput,
   ReviewQueueSort,
 } from '~/server/schema/creator-shop.schema';
-import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -130,7 +131,7 @@ export const useQueryCreatorShopReviewQueue = ({
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
-  cosmeticTypes?: (CosmeticType | 'Pack')[];
+  cosmeticTypes?: GetReviewQueueInput['cosmeticTypes'];
   sort?: ReviewQueueSort;
   page?: number;
   enabled?: boolean;

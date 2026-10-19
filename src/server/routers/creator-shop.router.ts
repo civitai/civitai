@@ -69,6 +69,7 @@ import {
   submitMysteryPack,
   withdrawMysteryPackRevision,
 } from '~/server/services/creator-mystery-pack.service';
+import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
@@ -344,6 +345,12 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('cosmeticSimilarity'))
     .input(getSimilarCosmeticsSchema)
     .query(({ input }) => getSimilarCosmetics(input)),
+  getMysteryPackReview: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getByIdSchema)
+    .query(({ input, ctx }) =>
+      getMysteryPackReview({ listingId: input.id, stickersEnabled: ctx.features.stickers })
+    ),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
