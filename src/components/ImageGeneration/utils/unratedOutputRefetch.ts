@@ -7,8 +7,11 @@ import { isNeverRatedVideoStep, isUnratedOutput } from '~/shared/orchestrator/wo
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
 
 // No step event follows the rating of a finished workflow, so the generator re-reads it on a timer.
-export const UNRATED_REFETCH_INTERVAL_MS = 2000;
-export const UNRATED_REFETCH_MAX_ATTEMPTS = 6;
+// A rating can land minutes after the output, so the timer backs off rather than giving up early.
+export const UNRATED_REFETCH_MIN_INTERVAL_MS = 2000;
+export const UNRATED_REFETCH_MAX_INTERVAL_MS = 20_000;
+export const UNRATED_REFETCH_BACKOFF = 1.5;
+export const UNRATED_REFETCH_GIVE_UP_MS = 5 * 60_000;
 
 type CachedWorkflow = {
   id: string;
@@ -22,7 +25,8 @@ type CachedWorkflow = {
 
 export function selectUnratedRefetch(
   workflows: CachedWorkflow[],
-  attempts: ReadonlyMap<string, number>
+  firstSeen: ReadonlyMap<string, number>,
+  now: number
 ) {
   const workflowIds = new Set<string>();
   const blobIds = new Set<string>();
@@ -32,7 +36,7 @@ export function selectUnratedRefetch(
       for (const output of step.output ?? []) {
         if (!output.id || !isUnratedOutput(output as NormalizedWorkflowStepOutput, neverRated))
           continue;
-        if ((attempts.get(output.id) ?? 0) >= UNRATED_REFETCH_MAX_ATTEMPTS) continue;
+        if (now - (firstSeen.get(output.id) ?? now) >= UNRATED_REFETCH_GIVE_UP_MS) continue;
         workflowIds.add(workflow.id);
         blobIds.add(output.id);
       }
@@ -41,6 +45,7 @@ export function selectUnratedRefetch(
   return { workflowIds: [...workflowIds], blobIds: [...blobIds] };
 }
 
+/** One batched re-read per tick for every waiting output; a new output resets the backoff. */
 export function createUnratedRefetchScheduler({
   readWorkflows,
   refetch,
@@ -48,14 +53,16 @@ export function createUnratedRefetchScheduler({
   readWorkflows: () => CachedWorkflow[];
   refetch: (workflowIds: string[]) => Promise<unknown>;
 }) {
-  const attempts = new Map<string, number>();
+  const firstSeen = new Map<string, number>();
+  let interval = UNRATED_REFETCH_MIN_INTERVAL_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let dueAt = 0;
 
   async function run() {
     timer = undefined;
-    const { workflowIds, blobIds } = selectUnratedRefetch(readWorkflows(), attempts);
+    const { workflowIds } = selectUnratedRefetch(readWorkflows(), firstSeen, Date.now());
     if (!workflowIds.length) return;
-    for (const id of blobIds) attempts.set(id, (attempts.get(id) ?? 0) + 1);
+    interval = Math.min(interval * UNRATED_REFETCH_BACKOFF, UNRATED_REFETCH_MAX_INTERVAL_MS);
     await refetch(workflowIds).catch((error) =>
       console.error('[generation] unrated output refetch failed', error)
     );
@@ -63,9 +70,21 @@ export function createUnratedRefetchScheduler({
   }
 
   function schedule() {
+    const now = Date.now();
+    const { blobIds } = selectUnratedRefetch(readWorkflows(), firstSeen, now);
+    if (!blobIds.length) return;
+    const fresh = blobIds.filter((id) => !firstSeen.has(id));
+    for (const id of fresh) firstSeen.set(id, now);
+    if (fresh.length) {
+      interval = UNRATED_REFETCH_MIN_INTERVAL_MS;
+      if (timer && dueAt > now + interval) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    }
     if (timer) return;
-    if (!selectUnratedRefetch(readWorkflows(), attempts).workflowIds.length) return;
-    timer = setTimeout(run, UNRATED_REFETCH_INTERVAL_MS);
+    dueAt = now + interval;
+    timer = setTimeout(run, interval);
   }
 
   return schedule;

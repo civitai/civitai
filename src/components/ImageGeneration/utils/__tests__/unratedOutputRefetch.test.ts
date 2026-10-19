@@ -4,8 +4,10 @@ import { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  UNRATED_REFETCH_INTERVAL_MS,
-  UNRATED_REFETCH_MAX_ATTEMPTS,
+  UNRATED_REFETCH_BACKOFF,
+  UNRATED_REFETCH_GIVE_UP_MS,
+  UNRATED_REFETCH_MAX_INTERVAL_MS,
+  UNRATED_REFETCH_MIN_INTERVAL_MS,
   createUnratedRefetchScheduler,
   readCachedGeneratorWorkflows,
   selectUnratedRefetch,
@@ -27,7 +29,8 @@ describe('selectUnratedRefetch', () => {
   it('re-fetches a workflow holding an available output with no rating', () => {
     const { workflowIds, blobIds } = selectUnratedRefetch(
       [workflow('wf-1', [image('a')]), workflow('wf-2', [image('b', { nsfwLevel: 'r' })])],
-      new Map()
+      new Map(),
+      0
     );
 
     expect(workflowIds).toEqual(['wf-1']);
@@ -44,7 +47,8 @@ describe('selectUnratedRefetch', () => {
         workflow('mesh', [image('e', { type: 'model3d' })]),
         workflow('unscanned', [image('f', { type: 'video', nsfwLevel: 'na' })]),
       ],
-      new Map()
+      new Map(),
+      0
     );
 
     expect(workflowIds).toEqual([]);
@@ -53,7 +57,8 @@ describe('selectUnratedRefetch', () => {
   it('includes an unrated video', () => {
     const { workflowIds } = selectUnratedRefetch(
       [workflow('wf-1', [image('a', { type: 'video' })])],
-      new Map()
+      new Map(),
+      0
     );
 
     expect(workflowIds).toEqual(['wf-1']);
@@ -74,27 +79,28 @@ describe('selectUnratedRefetch', () => {
           steps: [{ $type: 'videoGen', metadata: { params: { prompt: 'x' } }, output: video('e') }],
         },
       ],
-      new Map()
+      new Map(),
+      0
     );
 
     expect(workflowIds).toEqual(['image', 'upscale', 'own-params']);
   });
 
-  it('stops once an output has used up its attempts', () => {
-    const spent = new Map([['a', UNRATED_REFETCH_MAX_ATTEMPTS]]);
-    const almost = new Map([['a', UNRATED_REFETCH_MAX_ATTEMPTS - 1]]);
+  it('stops once an output has waited out the give-up window', () => {
+    const seen = new Map([['a', 0]]);
+    const wf = [workflow('wf-1', [image('a')])];
 
-    expect(selectUnratedRefetch([workflow('wf-1', [image('a')])], spent).workflowIds).toEqual([]);
-    expect(selectUnratedRefetch([workflow('wf-1', [image('a')])], almost).workflowIds).toEqual([
+    expect(selectUnratedRefetch(wf, seen, UNRATED_REFETCH_GIVE_UP_MS).workflowIds).toEqual([]);
+    expect(selectUnratedRefetch(wf, seen, UNRATED_REFETCH_GIVE_UP_MS - 1).workflowIds).toEqual([
       'wf-1',
     ]);
   });
 
   it('keeps re-fetching for a fresh output after another one gave up', () => {
-    const spent = new Map([['a', UNRATED_REFETCH_MAX_ATTEMPTS]]);
     const { workflowIds, blobIds } = selectUnratedRefetch(
       [workflow('wf-1', [image('a'), image('b')])],
-      spent
+      new Map([['a', 0]]),
+      UNRATED_REFETCH_GIVE_UP_MS
     );
 
     expect(workflowIds).toEqual(['wf-1']);
@@ -104,7 +110,8 @@ describe('selectUnratedRefetch', () => {
   it('lists a workflow once however many outputs it is waiting on', () => {
     const { workflowIds } = selectUnratedRefetch(
       [workflow('wf-1', [image('a'), image('b')]), workflow('wf-1', [image('a'), image('b')])],
-      new Map()
+      new Map(),
+      0
     );
 
     expect(workflowIds).toEqual(['wf-1']);
@@ -112,6 +119,7 @@ describe('selectUnratedRefetch', () => {
 });
 
 describe('createUnratedRefetchScheduler', () => {
+  const SECOND_INTERVAL_AT = UNRATED_REFETCH_MIN_INTERVAL_MS * (1 + UNRATED_REFETCH_BACKOFF);
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -128,23 +136,47 @@ describe('createUnratedRefetchScheduler', () => {
     return { refetch, schedule };
   };
 
-  it('re-reads every interval and stops at the attempt cap', async () => {
+  it('backs off to the max interval and gives up after the window', async () => {
     const { refetch, schedule } = neverRated();
+    const start = Date.now();
+    const at: number[] = [];
+    refetch.mockImplementation(async () => void at.push(Date.now() - start));
     schedule();
-    // 2x the budget: a missing cap shows as a count past it.
-    await vi.advanceTimersByTimeAsync(
-      UNRATED_REFETCH_INTERVAL_MS * UNRATED_REFETCH_MAX_ATTEMPTS * 2
-    );
+    // 2x the window: a missing give-up shows as a re-read past it.
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS * 2);
 
-    expect(refetch).toHaveBeenCalledTimes(UNRATED_REFETCH_MAX_ATTEMPTS);
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    expect(at[0]).toBe(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    expect(gaps.every((gap, i) => i === 0 || gap >= gaps[i - 1])).toBe(true);
+    expect(Math.max(...gaps)).toBe(UNRATED_REFETCH_MAX_INTERVAL_MS);
+    expect(at.at(-1)).toBeLessThan(UNRATED_REFETCH_GIVE_UP_MS);
+    expect(at.at(-1)).toBeGreaterThan(UNRATED_REFETCH_GIVE_UP_MS - UNRATED_REFETCH_MAX_INTERVAL_MS);
     expect(refetch).toHaveBeenLastCalledWith(['wf-1']);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('drops back to the min interval when a new output starts waiting', async () => {
+    let outputs = [image('a')];
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', outputs)],
+      refetch,
+    });
+    schedule();
+    // Stop just after a re-read, once the backoff has the next one many seconds away.
+    while (refetch.mock.calls.length < 6) await vi.advanceTimersByTimeAsync(100);
+    const before = refetch.mock.calls.length;
+
+    outputs = [image('a'), image('b')];
+    schedule();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    expect(refetch).toHaveBeenCalledTimes(before + 1);
   });
 
   it('waits one interval before the first re-read', async () => {
     const { refetch, schedule } = neverRated();
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS - 1);
     expect(refetch).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(refetch).toHaveBeenCalledTimes(1);
@@ -155,7 +187,7 @@ describe('createUnratedRefetchScheduler', () => {
     schedule();
     schedule();
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
 
     expect(refetch).toHaveBeenCalledTimes(1);
   });
@@ -170,7 +202,7 @@ describe('createUnratedRefetchScheduler', () => {
       refetch,
     });
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 2);
+    await vi.advanceTimersByTimeAsync(SECOND_INTERVAL_AT);
 
     expect(refetch).toHaveBeenCalledTimes(2);
     error.mockRestore();
@@ -186,7 +218,7 @@ describe('createUnratedRefetchScheduler', () => {
       refetch,
     });
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 4);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS * 4);
 
     expect(refetch).toHaveBeenCalledTimes(1);
   });
@@ -201,16 +233,34 @@ describe('createUnratedRefetchScheduler', () => {
       refetch,
     });
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
     expect(refetch).toHaveBeenCalledTimes(1);
 
     schedule();
     release();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(SECOND_INTERVAL_AT - UNRATED_REFETCH_MIN_INTERVAL_MS - 1);
     expect(refetch).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('picks up a rating that lands 20 s after the output', async () => {
+    const start = Date.now();
+    let cached = {};
+    // The rating reaches the cache only through a re-read made after it landed.
+    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
+      if (Date.now() - start >= 20_000) cached = { nsfwLevel: 'pg' };
+    });
+    const schedule = createUnratedRefetchScheduler({
+      readWorkflows: () => [workflow('wf-1', [image('a', cached)])],
+      refetch,
+    });
+    schedule();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(cached).toEqual({ nsfwLevel: 'pg' });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does nothing when nothing is waiting on a rating', async () => {
@@ -220,7 +270,7 @@ describe('createUnratedRefetchScheduler', () => {
       refetch,
     });
     schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_INTERVAL_MS * 4);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS * 4);
 
     expect(refetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
