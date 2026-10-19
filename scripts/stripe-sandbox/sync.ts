@@ -5,7 +5,6 @@
  *   pnpm exec tsx scripts/stripe-sandbox/sync.ts                 # dry run: prints the plan
  *   pnpm exec tsx scripts/stripe-sandbox/sync.ts --apply         # writes to the sandbox
  *     [--include-inactive] [--map-out <file.json>]
- *     [--dev-db]   with --apply: also upsert the sandbox Product/Price rows into DATABASE_URL
  *
  * Target: STRIPE_SECRET_KEY (process env, then the repo .env); must be sk_test_/rk_test_.
  * Source: STRIPE_LIVE_READ_KEY, else STRIPE_SECRET_KEY in .claude/skills/stripe/.env.
@@ -14,16 +13,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import pg from 'pg';
 import { runScriptAndExit } from '../lib/run-as-script';
-import {
-  applyPlan,
-  createReader,
-  createSandboxWriter,
-  describePlan,
-  planSync,
-  upsertSandboxRows,
-} from './sync.lib';
+import { applyPlan, createReader, createSandboxWriter, describePlan, planSync } from './sync.lib';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -46,7 +37,6 @@ async function main() {
   const includeInactive = args.includes('--include-inactive');
   const mapOutIdx = args.indexOf('--map-out');
   const mapOut = mapOutIdx >= 0 ? args[mapOutIdx + 1] : undefined;
-  const devDb = args.includes('--dev-db');
 
   const targetKey =
     process.env.STRIPE_SECRET_KEY ?? readEnvVar(resolve(repoRoot, '.env'), 'STRIPE_SECRET_KEY');
@@ -88,17 +78,6 @@ async function main() {
       const name = s.kind === 'createProduct' ? ` "${s.params.name}"` : '';
       console.log(`  ${s.kind} ${id}${target}${name}`);
     }
-    if (devDb) {
-      const sampled: unknown[][] = [];
-      const counts = await upsertSandboxRows(async (_sql, values) => {
-        sampled.push(values);
-      }, sandboxCatalogue);
-      console.log(
-        `dev db: would upsert ${counts.products} products, ${counts.prices} prices from the ` +
-          `CURRENT sandbox (a first run has none until --apply). Samples:`,
-        JSON.stringify(sampled.slice(0, 2))
-      );
-    }
     console.log('dry run: nothing written. Re-run with --apply.');
     return;
   }
@@ -107,22 +86,6 @@ async function main() {
   if (mapOut) {
     writeFileSync(mapOut, JSON.stringify(ids, null, 2) + '\n');
     console.log(`wrote live->sandbox id map to ${mapOut}`);
-  }
-
-  if (devDb) {
-    const url = process.env.DATABASE_URL ?? readEnvVar(resolve(repoRoot, '.env'), 'DATABASE_URL');
-    if (!url) throw new Error('--dev-db needs DATABASE_URL');
-    const client = new pg.Client({ connectionString: url });
-    await client.connect();
-    try {
-      const synced = { products: await sandbox.listProducts(), prices: await sandbox.listPrices() };
-      const counts = await upsertSandboxRows((sql, values) => client.query(sql, values), synced);
-      console.log(
-        `dev db ${new URL(url).host}: upserted ${counts.products} products, ${counts.prices} prices`
-      );
-    } finally {
-      await client.end();
-    }
   }
 }
 

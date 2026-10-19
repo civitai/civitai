@@ -53,10 +53,10 @@ pnpm exec tsx scripts/stripe-sandbox/sync.ts --apply --map-out ids.json
 - Inactive live products and prices are skipped unless `--include-inactive`. Tiered prices are skipped.
 - `ids.json` maps each live id to its sandbox id.
 
-### Database rows
+### Membership checkout stays broken locally (for now)
 
 The app reads `Product` and `Price` rows from the database (written by the Stripe webhook), then
-hands those ids to Stripe. A database cloned from production holds live ids, so with a sandbox key a
-membership checkout fails at `prices.retrieve`. `--dev-db` (with `--apply`) upserts the sandbox rows
-into `DATABASE_URL`, leaving the live rows alone. Only run it against a database no live-key
-environment reads: a live-mode app would list the sandbox plans too and fail to charge them.
+hands those ids to Stripe. A database cloned from production holds live ids, so with a sandbox key
+a membership checkout fails at `prices.retrieve`. Writing the sandbox rows into a shared dev
+database would show them to every live-key environment reading it too, so that waits for the app
+to tell sandbox rows (`metadata.live_id`) from live ones by key mode.

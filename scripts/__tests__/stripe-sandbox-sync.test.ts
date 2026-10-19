@@ -5,7 +5,6 @@ import {
   createSandboxWriter,
   LIVE_ID_KEY,
   planSync,
-  upsertSandboxRows,
   type Catalogue,
 } from '../stripe-sandbox/sync.lib';
 
@@ -223,23 +222,6 @@ describe('planSync + applyPlan', () => {
     await sync(live, sb);
     expect(sb.cat.products[0].active).toBe(false);
     expect(planSync(live, sb.cat)).toEqual([]);
-  });
-
-  it('upserts only synced sandbox rows into the dev db, products before their prices', async () => {
-    const sb = fakeSandbox();
-    sb.cat.products.push(product({ id: 'prod_handmade', name: 'Made in the sandbox UI' }));
-    const ids = await sync(liveCatalogue(), sb);
-    const calls: [string, unknown[]][] = [];
-    await upsertSandboxRows(async (sql, values) => {
-      calls.push([sql.match(/INSERT INTO "(\w+)"/)![1], values]);
-    }, sb.cat);
-
-    expect(calls.map(([table, values]) => [table, values[0]])).toEqual([
-      ['Product', ids.products.prod_gold],
-      ['Product', ids.products.prod_bare],
-      ['Price', ids.prices.price_gold_m],
-      ['Price', ids.prices.price_gold_y],
-    ]);
   });
 
   it('matches by live_id, not by id, so a sandbox with unrelated objects gets its own copies', async () => {
