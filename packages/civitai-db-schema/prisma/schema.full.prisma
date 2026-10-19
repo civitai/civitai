@@ -659,6 +659,7 @@ model User {
   serviceOfferings                   ServiceOffering[]
   serviceDealsBought                 ServiceDeal[]              @relation("ServiceDealBuyer")
   serviceDealsSold                   ServiceDeal[]              @relation("ServiceDealSeller")
+  mysteryBoxesSold                   ItemDefinition[]           @relation("ItemDefinitionSeller")
 
   gameFrameGames          GameFrameGame[]
 
@@ -5591,6 +5592,9 @@ model ItemDefinition {
   status            String    @default("draft")
   createdById       Int?
   updatedById       Int?
+  /// A creator box: the creator its sales pay (the creator side of computeCreatorShopSplit, never a reseller). NULL = a platform box, which pays no one. Only a box has one (CHECK).
+  sellerId          Int?
+  seller            User?     @relation("ItemDefinitionSeller", fields: [sellerId], references: [id], onDelete: Restrict)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @default(now()) @updatedAt
 
@@ -5599,9 +5603,12 @@ model ItemDefinition {
   boxContents     BoxContent[]        @relation("BoxContentBox")
   rewardOf        BoxContent[]        @relation("BoxContentReward")
   oddsSnapshots   BoxOddsSnapshot[]
+  revisions       BoxRevision[]
   shopItems       CosmeticShopItem[]
 
   @@index([type, status])
+  /// Partial (WHERE "sellerId" IS NOT NULL) in the migration.
+  @@index([sellerId])
 }
 
 /// A held item. v1 holds only unopened boxes; cosmetic rewards are granted as UserCosmetic rows.
@@ -5677,6 +5684,29 @@ model BoxOpening {
   createdAt          DateTime @default(now())
 
   @@index([userId, createdAt])
+  @@index([boxDefinitionId, createdAt])
+}
+
+/// A creator's proposed next version of their box, waiting for review. Approval applies it as a new
+/// box version. One pending revision per box: a partial unique index in the migration (Prisma cannot express it).
+model BoxRevision {
+  id              Int            @id @default(autoincrement())
+  boxDefinitionId Int
+  box             ItemDefinition @relation(fields: [boxDefinitionId], references: [id], onDelete: Cascade)
+  /// The box version the proposal was made against. Approval refuses it once the box has moved on.
+  baseVersion     Int
+  /// { steepness, tiers: [{ key, cosmeticIds }], price }
+  proposal        Json
+  /// pending | approved | rejected | withdrawn | stale (text + CHECK)
+  status          String         @default("pending")
+  /// The box version approval produced.
+  appliedVersion  Int?
+  submittedById   Int
+  reviewedById    Int?
+  reviewedAt      DateTime?
+  note            String?
+  createdAt       DateTime       @default(now())
+
   @@index([boxDefinitionId, createdAt])
 }
 

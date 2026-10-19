@@ -6,7 +6,16 @@ import * as z from 'zod';
  */
 export const boxOddsSnapshotSchema = z.object({
   tiers: z.array(z.object({ key: z.string(), name: z.string(), weight: z.number().int() })),
-  contents: z.array(z.object({ tier: z.string(), cosmeticId: z.number().int() })),
+  contents: z.array(
+    z.object({
+      tier: z.string(),
+      cosmeticId: z.number().int(),
+      /** A creator box's value for this content at approval: what the price bounds were checked against. */
+      value: z.number().int().optional(),
+    })
+  ),
+  /** A creator box's price at this version. Platform boxes record none. */
+  price: z.number().int().optional(),
 });
 
 export type BoxOddsSnapshotData = z.infer<typeof boxOddsSnapshotSchema>;
@@ -30,7 +39,10 @@ export function snapshotOfLiveBox(
   };
 }
 
-/** Same tiers and weights in the same order, and the same cosmetics in the same tiers. */
+/**
+ * Same tiers and weights in the same order, and the same cosmetics in the same tiers. Price and
+ * values are left out: they don't change the odds, so a price edit is not an odds change.
+ */
 export function snapshotsMatch(a: BoxOddsSnapshotData, b: BoxOddsSnapshotData) {
   const tiersOf = (s: BoxOddsSnapshotData) => s.tiers.map((t) => `${t.key}:${t.name}:${t.weight}`);
   const contentsOf = (s: BoxOddsSnapshotData) =>

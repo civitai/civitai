@@ -114,6 +114,8 @@ const SUBMISSION_FEE_DEFAULT = 10000;
  * was submitted.
  */
 const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+/** A mystery pack is built from the creator's own reviewed items, like a pack. */
+const MYSTERY_PACK_SUBMISSION_FEE_DEFAULT = 1000;
 
 /** What a creator pays to submit this cosmetic type for review. */
 export const submissionFeeDefault = (type: CosmeticType): number => {
@@ -129,12 +131,13 @@ export const submissionFeeDefault = (type: CosmeticType): number => {
 };
 
 /**
- * Operator-tunable submission fees. A pack carries one figure rather than a
- * per-type map because it has no CosmeticType of its own.
+ * Operator-tunable submission fees. A pack and a mystery pack carry one figure
+ * each rather than a per-type map because neither has a CosmeticType of its own.
  */
 export type CreatorShopFees = {
   submission: Record<CreatorCosmeticType, number>;
   pack: number;
+  mysteryPack: number;
 };
 
 export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
@@ -142,6 +145,7 @@ export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
     creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
   ) as Record<CreatorCosmeticType, number>,
   pack: PACK_SUBMISSION_FEE_DEFAULT,
+  mysteryPack: MYSTERY_PACK_SUBMISSION_FEE_DEFAULT,
 };
 
 // A fee is charged before anything is reviewed, so a mistyped row must not reach
@@ -159,7 +163,7 @@ const usableFee = (value: unknown, fallback: number): number =>
     : fallback;
 
 export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
-  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown; mysteryPack?: unknown };
   const submission = (row.submission ?? {}) as Record<string, unknown>;
   return {
     submission: Object.fromEntries(
@@ -172,6 +176,7 @@ export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
       ])
     ) as Record<CreatorCosmeticType, number>,
     pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
+    mysteryPack: usableFee(row.mysteryPack, DEFAULT_CREATOR_SHOP_FEES.mysteryPack),
   };
 };
 
