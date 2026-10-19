@@ -179,6 +179,12 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // where it is false this query can only return nothing. The mutations that add
   // an entry here (approving, submitting) invalidate the whole placement router,
   // so `hasEntries` refetches, flips, and this runs.
+  //
+  // ⚠️ A disabled query keeps its cached page and is skipped by invalidation. That
+  // is harmless today only because every remix mutation invalidates the WHOLE
+  // router: when the last entry goes, this query is still enabled at that moment
+  // and refetches empty alongside the visibility. Invalidating the visibility
+  // alone would leave the removed entry drawn.
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getRemixGallery.useInfiniteQuery(
       { imageId, browsingLevel },

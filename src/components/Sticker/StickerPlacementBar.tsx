@@ -93,11 +93,7 @@ export function StickerPlacementBar({
   } = resolveStickerCounts({
     wantPlacements,
     combined: { data: combinedCounts, isLoading: placementsLoading, isError: placementsError },
-    countsOnly: {
-      data: countsOnly.data,
-      isLoading: countsOnly.isLoading,
-      isError: countsOnly.isError,
-    },
+    countsOnly,
   });
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);

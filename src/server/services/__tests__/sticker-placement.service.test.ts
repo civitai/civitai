@@ -2522,6 +2522,8 @@ describe('the listing and the counts from one read', () => {
     expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
   });
 
+  // The whole `where` is pinned on purpose: its `OR` is what keeps a pending placement visible to
+  // its two parties and nobody else, and a looser clause would pass every count assertion here.
   it('reads the placement rows once, scoped the way the listing has always been', async () => {
     await getStickerPlacementsAndCounts({ imageIds: [IMAGE, SECOND_IMAGE], viewerId: PLACER });
 

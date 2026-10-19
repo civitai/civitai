@@ -133,7 +133,7 @@ let root: Root | undefined;
 
 async function settle() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 150));
   });
 }
 

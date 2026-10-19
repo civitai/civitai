@@ -157,6 +157,17 @@ describe('which call a surface reads its counts from', () => {
     ).toEqual({ counts: {}, isLoading: false, isError: true });
   });
 
+  // A choice, pinned so it stays one: an answer already on screen is kept rather than replaced by
+  // an error. Reachable only for a signed-out viewer who revealed, who cannot place, so the
+  // invitation that reads "known zero" off `isError` is never offered on it.
+  it('keeps an earlier count-only answer when the combined call fails', () => {
+    expect(resolveStickerCounts({ wantPlacements: true, combined: failed, countsOnly })).toEqual({
+      counts: { 8100: 2 },
+      isLoading: false,
+      isError: false,
+    });
+  });
+
   it('reports the count-only call’s failure where that is the call in use', () => {
     expect(resolveStickerCounts({ wantPlacements: false, combined, countsOnly: failed })).toEqual({
       counts: {},

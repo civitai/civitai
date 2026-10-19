@@ -91,7 +91,10 @@ function stubFetch() {
         path === 'placement.getRemixGalleryVisibility'
           ? visibility(hasEntries)
           : path === 'placement.getRemixGallery'
-          ? galleryPage
+          ? // As the server answers: the page and `hasEntries` share one predicate.
+            hasEntries
+            ? galleryPage
+            : { items: [], nextCursor: null }
           : null;
       return new Response(JSON.stringify({ result: { data: { json: data } } }), {
         status: 200,
@@ -116,6 +119,16 @@ async function renderCard() {
   });
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+}
+
+const entries = () =>
+  [...container.querySelectorAll('[data-entry]')].map((el) => el.getAttribute('data-entry'));
+
+/** What a placement mutation's `utils.placement.invalidate()` does to this card's queries. */
+async function invalidatePlacements() {
+  await act(async () => {
+    await queryClient.invalidateQueries();
   });
 }
 
@@ -158,5 +171,37 @@ describe('the remix gallery card on an image view', () => {
       [...container.querySelectorAll('[data-entry]')].map((el) => el.getAttribute('data-entry'))
     ).toEqual([String(ENTRY_IMAGE)]);
     expect(container.textContent).not.toContain('Get your remix seen here');
+  });
+
+  // INVARIANT GUARD on the real removal path. Once `hasEntries` is false the gallery query is
+  // disabled, and a disabled query keeps its cached page — so this holds only because a removal
+  // invalidates the whole router, refetching the page while it is still enabled.
+  it('drops the last entry from the grid as soon as it is removed', async () => {
+    hasEntries = true;
+    await renderCard();
+    await until(() => entries().length > 0);
+    expect(entries()).toEqual([String(ENTRY_IMAGE)]);
+
+    hasEntries = false;
+    await invalidatePlacements();
+    await until(() => container.textContent?.includes('Get your remix seen here') ?? false);
+
+    expect(entries()).toEqual([]);
+    expect(container.textContent).toContain('Get your remix seen here');
+  });
+
+  // The other direction, and the positive control for the first test's window: the same harness
+  // sees the gallery request once there is something to list.
+  it('asks for the page once a first entry arrives', async () => {
+    hasEntries = false;
+    await renderCard();
+    expect(count('placement.getRemixGallery')).toBe(0);
+
+    hasEntries = true;
+    await invalidatePlacements();
+    await until(() => entries().length > 0);
+
+    expect(count('placement.getRemixGallery')).toBe(1);
+    expect(entries()).toEqual([String(ENTRY_IMAGE)]);
   });
 });

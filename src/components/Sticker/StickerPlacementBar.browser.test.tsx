@@ -70,9 +70,13 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   // — which then also carries `placementsLoading` — for everyone else. Both mocks
   // read the same fields so each test states the count's state once, whichever
   // call the bar is supposed to take it from.
+  //
+  // Each mock answers ONLY when the bar enabled it, as a real query does: a
+  // disabled call that still handed back counts would let a bar reading the
+  // wrong call's answer render the right number.
   useStickerPlacementCounts: (_ids: number[], enabled?: boolean) => {
     countsOnlyEnabled.push(enabled);
-    const landed = !queryState.countsLoading && !queryState.countsError;
+    const landed = enabled !== false && !queryState.countsLoading && !queryState.countsError;
     return {
       counts: queryState.counts,
       data: landed ? queryState.counts : undefined,
@@ -83,7 +87,10 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   useStickerPlacements: (_ids: number[], enabled?: boolean) => {
     placementsEnabled.push(enabled);
     const landed =
-      !queryState.countsLoading && !queryState.countsError && !queryState.placementsLoading;
+      enabled !== false &&
+      !queryState.countsLoading &&
+      !queryState.countsError &&
+      !queryState.placementsLoading;
     return {
       byImage: new Map(queryState.pending.length ? [[IMAGE_ID, queryState.pending]] : []),
       counts: landed ? queryState.counts : undefined,
@@ -158,6 +165,12 @@ const renderBar = async () => {
 const invitations = () => page.getByRole('button', { name: INVITATION }).elements().length;
 
 describe('StickerPlacementBar', () => {
+  // Restored after every test rather than at the end of the one that changes it,
+  // so a failure there cannot flip every later test to signed-out.
+  afterEach(() => {
+    queryState.signedIn = true;
+  });
+
   test('claims the image is empty only once both queries have arrived', async () => {
     Object.assign(queryState, {
       counts: {},
@@ -268,7 +281,6 @@ describe('StickerPlacementBar', () => {
     expect(countsOnlyEnabled.length).toBeGreaterThan(0);
     expect(countsOnlyEnabled.every((enabled) => enabled !== false)).toBe(true);
     expect(placementsEnabled.every((enabled) => enabled === false)).toBe(true);
-    queryState.signedIn = true;
   });
 });
 
