@@ -67,6 +67,7 @@ describe('ResourceSelectProvider persistence', () => {
       types: ['LORA'],
       baseModels: ['SDXL 1.0'],
       loadedOnly: false,
+      turboOnly: false,
       hidePaid: false,
     });
     first.unmount();
@@ -79,6 +80,7 @@ describe('ResourceSelectProvider persistence', () => {
       types: ['LORA'],
       baseModels: [],
       loadedOnly: false,
+      turboOnly: false,
       hidePaid: false,
     });
     second.unmount();

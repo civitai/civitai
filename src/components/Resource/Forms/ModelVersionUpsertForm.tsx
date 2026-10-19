@@ -40,6 +40,8 @@ import { useCurrentUserSettings, useMutateUserSettings } from '~/components/User
 import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
 import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
 import { RecommendedRangeInputs } from '~/components/Resource/Forms/RecommendedRangeInputs';
+import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
@@ -347,6 +349,18 @@ export function ModelVersionUpsertForm({
   const ecosystemTurboSettings = getEcosystemTurboSettings(
     getBaseModelConfig(baseModel).ecosystemId
   );
+  // The form keeps only the id; the card needs the resource, picked here or fetched for a stored id.
+  const turboLoraId = form.watch('settings.generation.turboLora')?.id;
+  const [pickedTurboLora, setPickedTurboLora] = useState<GenerationResource | null>(null);
+  const { data: storedTurboLora } = trpc.generation.getResourceDataByIds.useQuery(
+    { ids: [turboLoraId ?? 0] },
+    { enabled: showGenerationSettings && !!turboLoraId && pickedTurboLora?.id !== turboLoraId }
+  );
+  const turboLora = !turboLoraId
+    ? null
+    : pickedTurboLora?.id === turboLoraId
+    ? pickedTurboLora
+    : storedTurboLora?.find((r) => r.id === turboLoraId) ?? null;
   const { isDirty } = form.formState;
   const paidAccessConfig = form.watch('paidAccessConfig');
   // The three generation grants the terms model supports. Seeded from the stored config so an existing
@@ -1213,6 +1227,28 @@ export function ModelVersionUpsertForm({
                           max={30}
                           step={0.5}
                           decimalScale={1}
+                        />
+                        <ResourceSelect
+                          label="Default turbo LoRA"
+                          description="What the generator's Turbo picker starts on with this checkpoint. Leave empty for the ecosystem's default."
+                          buttonLabel="Set a turbo LoRA"
+                          value={turboLora}
+                          onChange={(resource) => {
+                            setPickedTurboLora(resource);
+                            form.setValue(
+                              'settings.generation.turboLora',
+                              resource ? { id: resource.id } : null,
+                              { shouldDirty: true }
+                            );
+                          }}
+                          selectSource="modelVersion"
+                          options={{
+                            resources: TURBO_VARIANT_MODEL_TYPES.map((type) => ({
+                              type,
+                              baseModels: [baseModel],
+                            })),
+                            turboOnly: true,
+                          }}
                         />
                       </Stack>
                     )}

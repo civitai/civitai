@@ -42,6 +42,22 @@ describe('recommendedSettingsSchema', () => {
     );
   });
 
+  // The editor renders both bands for every checkpoint; cleared inputs submit '' and must not block the save.
+  it('treats a band of blank inputs as no recommendation', () => {
+    const blank = { min: '', max: '', default: '' };
+    const parsed = recommendedSettingsSchema.parse({
+      generation: { steps: blank, cfgScale: blank },
+    });
+    expect(parsed.generation).toBeUndefined();
+  });
+
+  it('keeps the turbo LoRA a checkpoint names', () => {
+    const parsed = recommendedSettingsSchema.parse({
+      generation: { steps: { min: '', max: '', default: '' }, turboLora: { id: 3413516 } },
+    });
+    expect(parsed.generation).toEqual({ turboLora: { id: 3413516 } });
+  });
+
   it('lets a checkpoint recommend one of the two', () => {
     expect(
       recommendedSettingsSchema.safeParse({ generation: { steps: range(20, 40, 25) } }).success

@@ -60,11 +60,12 @@
   unset. Only ecosystems with a `lora` show the picker; today that is
   MOSS alone (Z-Image, Flux Draft and Krea 2 Turbo are distilled checkpoints or
   ecosystems, not LoRAs). Changing it is a constants change and a deploy.
-- **Per-checkpoint override:** a checkpoint version may name its own default
-  through a `RecommendedResource` row with `settings: { role: 'turbo' }` (the row
-  type that links a VAE today). It outranks the code default; that is how MOSS Base
-  names its own LoRA while SFT and community checkpoints inherit the ecosystem's.
-  Nothing is required of creators.
+- **Per-checkpoint override:** a checkpoint version may name its own default as
+  `settings.generation.turboLora.id`, picked in the editor from the resource
+  modal pinned to turbo variants. It outranks the code default; that is how MOSS
+  Base names its own LoRA while SFT and community checkpoints inherit the
+  ecosystem's. Nothing is required of creators. It rides the version's settings
+  into the generator's resource data, so no extra subquery.
 - **Finding turbo LoRAs:** the resource modal is backed by the models search
   index, and the loaded-only filter is the exact precedent. The index gets a
   per-version boolean `versions.turbo` derived from `settings.turbo` being present, listed in
@@ -96,8 +97,6 @@
   between parses. They are client-supplied and only steer defaults and zones; the
   server never trusts them for anything else and the orchestrator handlers do not
   read them.
-- One more `resourceDataCache` subquery, `turboLoraId`, beside `vaeId`, for the
-  checkpoint's override row.
 
 ## Graph
 
@@ -134,8 +133,12 @@ searchable before the generator changes land.
 1. **PR 1: editor and index.** Settings schema, the version editor (Turbo section,
    checkpoint recommendations, the override picker), ecosystem turbo defaults for
    prefill, `versions.turbo` in the models index with the `turboOnly` filter in
-   the resource modal. No generator behaviour change. After deploy: set the turbo
-   block on the three MOSS turbo LoRAs and Base's override row by SQL, reindex.
+   the resource modal. No generator behaviour change. After deploy, in order: apply the new
+   filterable attribute to the live index with
+   `/api/admin/temp/apply-models-index-filterable-attributes` (hours to apply;
+   until then the turbo clause is dropped and the picker narrows client-side),
+   set the turbo block on the three MOSS turbo LoRAs and Base's `turboLora` by
+   SQL, reindex those models.
 2. **PR 2: generator.** Resource data forwarding, graph helper, `turbo` field, the
    Turbo row, slider zone, the MOSS code default; remove the hard-coded map.
 

@@ -305,6 +305,7 @@ export async function getResourceSelectModels(
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
     !filterLoaded &&
+    !input.filterTurbo &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the

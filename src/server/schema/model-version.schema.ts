@@ -327,32 +327,43 @@ const rangeNumber = z.preprocess(blankToUndefined, z.coerce.number());
 const RANGE_KEYS = ['min', 'max', 'default'] as const;
 
 /** A recommended value and the advisory band around it; the generator paints the band on the slider. */
-export const recommendedRangeSchema = z.preprocess(
-  // A band the form rendered but nobody filled in is no band, not three invalid numbers.
-  (value) => {
-    if (!value || typeof value !== 'object') return value;
-    const record = value as Record<string, unknown>;
-    return RANGE_KEYS.every((key) => blankToUndefined(record[key]) === undefined)
-      ? undefined
-      : value;
-  },
-  z
-    .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
-    .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
-    .refine((r) => r.min <= r.default && r.default <= r.max, {
-      error: 'Default must be within min and max',
-      path: ['default'],
-    })
-);
+export const recommendedRangeSchema = z
+  .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
+  .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
+  .refine((r) => r.min <= r.default && r.default <= r.max, {
+    error: 'Default must be within min and max',
+    path: ['default'],
+  });
 export type RecommendedRange = z.infer<typeof recommendedRangeSchema>;
 
-/** A checkpoint's recommendations, applied when it is loaded in the generator. */
-export const recommendedGenerationSettingsSchema = z
-  .object({
-    steps: recommendedRangeSchema.optional(),
-    cfgScale: recommendedRangeSchema.optional(),
-  })
-  .transform((g) => (g.steps || g.cfgScale ? g : undefined));
+const isBlankRange = (value: unknown) =>
+  !!value &&
+  typeof value === 'object' &&
+  RANGE_KEYS.every(
+    (key) => blankToUndefined((value as Record<string, unknown>)[key]) === undefined
+  );
+
+/**
+ * A checkpoint's recommendations, applied when it is loaded in the generator. A band the form
+ * rendered but nobody filled in is dropped here, before `optional()` looks: the wrapper only
+ * treats `undefined` as absent, and three blank inputs are an object.
+ */
+export const recommendedGenerationSettingsSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== 'object') return value;
+    const record = { ...(value as Record<string, unknown>) };
+    for (const key of ['steps', 'cfgScale']) if (isBlankRange(record[key])) delete record[key];
+    return record;
+  },
+  z
+    .object({
+      steps: recommendedRangeSchema.optional(),
+      cfgScale: recommendedRangeSchema.optional(),
+      /** The LoRA the generator's Turbo picker starts on with this checkpoint, over the ecosystem default. */
+      turboLora: z.object({ id: z.number().int().positive() }).nullish(),
+    })
+    .transform((g) => (g.steps || g.cfgScale || g.turboLora ? g : undefined))
+);
 
 /**
  * A LoRA's turbo block. Its presence marks the version as a turbo variant, so both ranges are
