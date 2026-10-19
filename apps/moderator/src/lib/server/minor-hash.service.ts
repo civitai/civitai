@@ -374,8 +374,13 @@ const scanLabelValue = (row: ScanRowAlias, label: FlagLabel) =>
 const scanCarriesLabel = (row: ScanRowAlias, label: FlagLabel) =>
   sql`COALESCE(jsonb_typeof(${scanLabelValue(row, label)}) = 'object', FALSE)`;
 
-// `updatedAt` is a UTC timestamp without time zone. jsonb renders it with no offset and the
-// TIMESTAMP parser that appends Z only reaches plain columns, so it is formatted as UTC here.
+/** `EntityModeration.updatedAt` is a UTC `timestamp WITHOUT time zone`. jsonb renders it with no offset
+ *  and the TIMESTAMP parser that appends Z only reaches plain columns, so it is formatted here. No
+ *  `AT TIME ZONE 'UTC'`: on this type that converts to timestamptz, which `to_char` then renders in the
+ *  session zone (unlike `revertedLastAt`, whose input is already timestamptz). */
+const scanUpdatedAtSql = (row: ScanRowAlias) =>
+  sql`to_char(${sql.raw(row)}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
 const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
   const value = scanLabelValue(row, label);
   const r = sql.raw(row);
@@ -384,7 +389,7 @@ const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
                      THEN (${value}->>'detected')::boolean END,
     'reason', ${value}->>'reason', 'source', ${sql.lit(SCAN_ROW_SOURCE[row])},
     'status', ${r}.status::text,
-    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    'updatedAt', ${scanUpdatedAtSql(row)}
   )`;
 };
 
@@ -406,7 +411,7 @@ const scanRowSql = (row: ScanRowAlias) => {
   const r = sql.raw(row);
   return sql`CASE WHEN ${r}."entityId" IS NOT NULL THEN jsonb_build_object(
     'workflowId', ${r}."workflowId", 'textHash', ${r}.result->>'textHash', 'status', ${r}.status::text,
-    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    'updatedAt', ${scanUpdatedAtSql(row)}
   ) END`;
 };
 
@@ -1081,12 +1086,22 @@ type ModelFactsRow = Omit<ModelFlagDetail, 'strikes' | 'notes' | 'promptVersions
   userId: number;
 };
 
+/** ISO 8601 date with optional time and offset, field ranges checked. Not `pg_input_is_valid`
+ *  (Postgres 16+ only); an impossible day such as Feb 31 still passes and would still throw. */
+const ISO_TIMESTAMP_PATTERN =
+  '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])([T ]([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?)?(Z|[+-]\\d{2}(:?\\d{2})?)?$';
+
+/** A meta timestamp read from OTHER models: one malformed value must not fail the whole statement, so
+ *  anything that is not an ISO string reads as null. */
+const safeTimestamptz = (value: RawBuilder<unknown>) =>
+  sql`CASE WHEN ${value} ~ ${sql.lit(ISO_TIMESTAMP_PATTERN)} THEN (${value})::timestamptz END`;
+
 /** A flag lifted on a model: a hash flag rolled back (`minorHashCleared`) or a text-scan flag cleared
  *  on appeal or by a moderator (`appealGranted`). `o` is the model. */
 const revertedAtSql = sql`GREATEST(
-  (o.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz,
-  (o.meta->'textScanFlags'->'minor'->'appealGranted'->>'at')::timestamptz,
-  (o.meta->'textScanFlags'->'poi'->'appealGranted'->>'at')::timestamptz
+  ${safeTimestamptz(sql`o.meta->${MINOR_HASH_CLEARED_KEY}->>'at'`)},
+  ${safeTimestamptz(sql`o.meta->'textScanFlags'->'minor'->'appealGranted'->>'at'`)},
+  ${safeTimestamptz(sql`o.meta->'textScanFlags'->'poi'->'appealGranted'->>'at'`)}
 )`;
 const revertedSql = sql`(
   o.meta ? ${MINOR_HASH_CLEARED_KEY}

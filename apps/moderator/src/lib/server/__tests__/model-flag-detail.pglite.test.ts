@@ -135,6 +135,19 @@ describe('getModelFlagDetail', () => {
     expect(memory.notes).toHaveBeenCalledWith(1, null);
   });
 
+  it('ignores a sibling flag whose timestamp does not parse instead of failing the pane', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" ("id","name","userId","meta") VALUES
+        (14, 'bad stamp', 1, '{"minorHashCleared": {"at": "yesterday-ish"}}'),
+        (15, 'month 13', 1, '{"textScanFlags": {"minor": {"appealGranted": {"at": "2026-13-01T00:00:00Z"}}}}'),
+        (16, 'numeric stamp', 1, '{"textScanFlags": {"poi": {"appealGranted": {"at": 1700000000}}}}');
+    `);
+    const detail = await getModelFlagDetail({ modelId: 10 });
+    // Still reverted flags; only their unreadable times drop out of "latest".
+    expect(detail?.flagsReverted.count).toBe(5);
+    expect(new Date(detail!.flagsReverted.lastAt!).toISOString()).toBe('2025-11-02T00:00:00.000Z');
+  });
+
   it('numbers each asked-for prompt within its key', async () => {
     const detail = await getModelFlagDetail({ modelId: 10, promptIds: [4, 3, 99] });
     expect(detail?.promptVersions).toEqual({ 4: 2, 3: 2 });

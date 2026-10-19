@@ -679,6 +679,8 @@ describe('text-scan auto-flags', () => {
     await pg.exec(`INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", "status", "result", "updatedAt")
       VALUES ('Model:search', 30, 'wf', 'Succeeded', '{"textHash":"h-1"}', '2026-10-01T00:00:00'),
              ('Model', 31, 'wf-x', 'Succeeded', '{"textHash":"h-9"}', '2026-10-01T00:00:00')`);
+    // The column holds UTC without a zone: the rendered time must not follow the session's zone.
+    await pg.exec(`SET TIME ZONE 'America/New_York'`);
     const { items } = await getFlaggedModels({ limit: 20 });
     const byKey = Object.fromEntries(items.map((r) => [r.key, r.scanRows]));
     expect(byKey['30:minor:text-scan']).toEqual({
