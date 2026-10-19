@@ -55,6 +55,10 @@ const row = (prompt: string, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// A record shaped as an over-length refusal is stored: 2000 chars of the input plus the marker.
+const overLengthRecord = (head = 'a prompt') =>
+  `${head.padEnd(2000, ' ')}… [truncated from 30000 chars]`;
+
 const seededEntries = () =>
   mockSysRedis.rPush.mock.calls.map(([, json]: unknown[]) => JSON.parse(json as string));
 
@@ -94,8 +98,32 @@ describe('cold-seeding the blocked-prompt list from the audit log', () => {
   });
 
   it('leaves an over-length refusal out of the list', async () => {
-    const entries = await seed([row('a prompt… [truncated from 30000 chars]'), row(HARD_PROMPT)]);
+    const record = overLengthRecord();
+    const entries = await seed([row(record), row(HARD_PROMPT)]);
     expect(entries.map((e) => e.prompt)).toEqual([HARD_PROMPT]);
+  });
+
+  it('keeps a hard-blocked row that merely carries the marker text', async () => {
+    const carrier = `${HARD_PROMPT} … [truncated from 30000 chars]`;
+    const entries = await seed([row(carrier)]);
+    expect(entries.map((e) => e.prompt)).toEqual([carrier]);
+    expect(entries[0].category).toBe('inappropriate_minor');
+  });
+
+  it('keeps a full-shape record whose text still re-audits as a hard block', async () => {
+    const record = overLengthRecord(HARD_PROMPT);
+    const entries = await seed([row(record)]);
+    expect(entries.map((e) => e.prompt)).toEqual([record]);
+  });
+
+  it('bounds the query and stops once the mute threshold is covered', async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => row(`${HARD_PROMPT} ${i}`));
+    const entries = await seed(rows);
+    const [, ...values] = mockClickhouseQuery.mock.calls[0];
+    expect(values).toContain(200);
+    expect(entries.length).toBe(10);
+    // oldest of the kept rows first, so the newest ends up at the head of the list
+    expect(entries[entries.length - 1].prompt).toBe(`${HARD_PROMPT} 0`);
   });
 
   it('keeps a row the audit does not explain, without inventing evidence', async () => {

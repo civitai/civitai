@@ -19,6 +19,7 @@ import {
   isBlankAuditInput,
   isOverLengthRefusal,
   isSoftBlock,
+  MAX_AUDIT_PROMPT_LENGTH,
   type PromptTrigger,
   type PromptTriggerCategory,
   type PromptTriggerField,
@@ -67,6 +68,9 @@ const GREEN_SFW_REDIRECT =
   'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
 
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
+// Seeding only needs enough hard blocks to put the counter past the mute threshold, so the
+// request re-audits at most this many of the newest rows and stops at the cap below.
+const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
 
@@ -81,7 +85,17 @@ const truncateForRecord = (text: string | undefined) =>
   text != null && text.length > OVER_LENGTH_RECORDED_CHARS
     ? `${text.slice(0, OVER_LENGTH_RECORDED_CHARS)}… [truncated from ${text.length} chars]`
     : text;
-const TRUNCATED_RECORD = /… \[truncated from \d+ chars\]$/;
+const TRUNCATED_RECORD = /… \[truncated from (\d+) chars\]$/;
+
+/** Whether a stored prompt has the exact shape `truncateForRecord` gives an over-length input. */
+function hasOverLengthRecordShape(text: string | undefined): boolean {
+  const match = text != null ? TRUNCATED_RECORD.exec(text) : null;
+  if (!match) return false;
+  return (
+    Number(match[1]) > MAX_AUDIT_PROMPT_LENGTH &&
+    text!.length === OVER_LENGTH_RECORDED_CHARS + match[0].length
+  );
+}
 
 /** The evidence a blocked entry keeps from the audit's first trigger. */
 function triggerEvidence(trigger?: PromptTrigger) {
@@ -99,7 +113,8 @@ function triggerEvidence(trigger?: PromptTrigger) {
 /**
  * What the regex audit says about a row read back from the audit log. The log does not record
  * whether a row was a hard block, so a soft one is recognised by its re-audit and an over-length
- * refusal by the truncation it was recorded with. A row the audit no longer matches is kept
+ * refusal by the shape of its truncation record, unless the text itself still re-audits as a hard
+ * block. A row the audit no longer matches is kept
  * without evidence, as is an External row, which the regex layer cannot explain.
  */
 async function reauditSeededRow(row: {
@@ -107,9 +122,8 @@ async function reauditSeededRow(row: {
   negativePrompt: string;
   source: string;
 }): Promise<{ hardBlock: boolean; evidence?: PromptTrigger }> {
-  if (TRUNCATED_RECORD.test(row.prompt) || TRUNCATED_RECORD.test(row.negativePrompt ?? '')) {
-    return { hardBlock: false };
-  }
+  const overLengthShape =
+    hasOverLengthRecordShape(row.prompt) || hasOverLengthRecordShape(row.negativePrompt);
   if (row.source === 'External') return { hardBlock: true };
 
   try {
@@ -121,11 +135,11 @@ async function reauditSeededRow(row: {
     ]);
     // Profanity is checked because a soft row recorded on the green domain can only be told apart by it.
     const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
-    if (success || triggers.length === 0) return { hardBlock: true };
+    if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
     if (isSoftBlock(triggers)) return { hardBlock: false };
     return { hardBlock: true, evidence: triggers[0] };
   } catch {
-    return { hardBlock: true };
+    return { hardBlock: !overLengthShape };
   }
 }
 
@@ -159,14 +173,24 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     SELECT prompt, negativePrompt, source, remixOfId, inputImages, inputVideo, time
     FROM prohibitedRequests
     WHERE time > subtractDays(now(), ${BLOCKED_PROMPTS_WINDOW_DAYS}) AND userId = ${userId}
-    ORDER BY time ASC
+    ORDER BY time DESC
+    LIMIT ${SEED_MAX_ROWS}
   `;
 
-  // Add the hard blocks (oldest first, so newest ends up at head)
-  let seeded = 0;
-  for (const row of data) {
+  // Newest first, bounded: past the mute threshold (plus a margin) more rows change nothing.
+  const seedCap = constants.imageGeneration.requestBlocking.muted + 2;
+  const hardBlocks: { row: (typeof data)[number]; evidence?: PromptTrigger }[] = [];
+  for (const [index, row] of data.entries()) {
+    if (hardBlocks.length >= seedCap) break;
+    // Re-auditing is synchronous regex work; hand the event loop back between batches.
+    if (index > 0 && index % 10 === 0) await new Promise((resolve) => setImmediate(resolve));
     const { hardBlock, evidence } = await reauditSeededRow(row);
-    if (!hardBlock) continue;
+    if (hardBlock) hardBlocks.push({ row, evidence });
+  }
+
+  // Add the hard blocks oldest first, so the newest ends up at head.
+  let seeded = 0;
+  for (const { row, evidence } of hardBlocks.reverse()) {
     const entry: BlockedPromptEntry = {
       prompt: row.prompt,
       negativePrompt: row.negativePrompt,
