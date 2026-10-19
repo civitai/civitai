@@ -29,18 +29,17 @@ Day 1 ────────────────────────�
 
 ### Buzz Types & Accounts
 
-| Account              | Purpose                                  |
-| -------------------- | ---------------------------------------- |
-| `yellow`             | Main .com buzz (earned, purchased)       |
-| `green`              | Green buzz (.green domain)               |
+| Account | Purpose |
+|---------|---------|
+| `yellow` | Main .com buzz (earned, purchased) |
+| `green` | Green buzz (.green domain) |
 | `creatorProgramBank` | Unified bank account for all banked buzz |
-| `cashPending`        | Cash allocated but not yet settled       |
-| `cashSettled`        | Cash ready for withdrawal                |
+| `cashPending` | Cash allocated but not yet settled |
+| `cashSettled` | Cash ready for withdrawal |
 
 Both yellow and green buzz bank into the same `creatorProgramBank` account. The source type is preserved in ClickHouse transaction records (`fromAccountType`), so extraction can refund each type correctly.
 
 **Relevant file:** `src/shared/constants/buzz.constants.ts`
-
 - `buzzBankTypes` = `['green', 'yellow']` (order matters for iteration)
 - `BuzzSpendType`, `BuzzCreatorProgramType`, `BuzzAccountType` - type definitions
 
@@ -125,12 +124,12 @@ getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | n
 
 **`src/shared/constants/creator-program.constants.ts`**
 
-| Tier    | Cap            | Peak Earning Multiplier |
-| ------- | -------------- | ----------------------- |
-| Founder | 100,000        | -                       |
-| Bronze  | 100,000        | -                       |
-| Silver  | 1,000,000      | 1.25x                   |
-| Gold    | No fixed limit | 1.5x                    |
+| Tier | Cap | Peak Earning Multiplier |
+|------|-----|------------------------|
+| Founder | 100,000 | - |
+| Bronze | 100,000 | - |
+| Silver | 1,000,000 | 1.25x |
+| Gold | No fixed limit | 1.5x |
 
 - Minimum cap: 100,000 for all tiers
 - Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access (`PEAK_EARNING_PREDICATE_SQL`). Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. Pool forecasts and `earnedCache` in `buzz.service.ts` still count compensation
@@ -159,25 +158,23 @@ bankable = yellow+green balance at the cutover
 
 **`src/shared/constants/creator-program.constants.ts`**
 
-| Buzz Amount           | Fee Rate |
-| --------------------- | -------- |
-| 0 - 100,000           | 0%       |
-| 100,001 - 1,000,000   | 5%       |
-| 1,000,001 - 5,000,000 | 10%      |
-| 5,000,001+            | 15%      |
+| Buzz Amount | Fee Rate |
+|-------------|----------|
+| 0 - 100,000 | 0% |
+| 100,001 - 1,000,000 | 5% |
+| 1,000,001 - 5,000,000 | 10% |
+| 5,000,001+ | 15% |
 
 Tiered: e.g., 200,000 buzz = 0% on first 100k + 5% on next 100k = 5,000 fee.
 
 ### Cash & Withdrawals
 
 **Flow:**
-
 1. Distribution job allocates pool value to `cashPending` accounts (last day of month)
 2. Settlement job moves `cashPending` to `cashSettled` (15th of next month)
 3. User calls `withdrawCash()` which creates a Tipalti payment
 
 **Withdrawal fees** (from Tipalti payment method):
-
 - ACH: $2.00 fixed
 - PayPal: 5%
 - Check: $4.00 fixed
@@ -190,15 +187,15 @@ Tiered: e.g., 200,000 buzz = 0% on first 100k + 5% on next 100k = 5,000 fee.
 
 **`src/server/jobs/creators-program-jobs.ts`**
 
-| Job                                  | Cron          | What it does                                                 |
-| ------------------------------------ | ------------- | ------------------------------------------------------------ |
-| `creatorsProgramDistribute`          | `2 23 L * *`  | Allocates pool value to participants as `cashPending`        |
-| `creatorsProgramInviteTipalti`       | `50 23 L * *` | Creates Tipalti payee for users above $50 threshold          |
-| `creatorsProgramRollover`            | `0 0 1 * *`   | Flushes all caches for new month                             |
-| `creatorsProgramSettleCash`          | `0 0 15 * *`  | Moves `cashPending` -> `cashSettled`, notifies users         |
-| `bankingPhaseEndingNotification`     | `5 0 * * *`   | Sends only on the last banking day per `getPhases` (L-3)     |
-| `extractionPhaseStartedNotification` | `5 0 * * *`   | Sends only on the first extraction day per `getPhases` (L-2) |
-| `extractionPhaseEndingNotification`  | `5 0 * * *`   | Sends only on the last day of the month                      |
+| Job | Cron | What it does |
+|-----|------|-------------|
+| `creatorsProgramDistribute` | `2 23 L * *` | Allocates pool value to participants as `cashPending` |
+| `creatorsProgramInviteTipalti` | `50 23 L * *` | Creates Tipalti payee for users above $50 threshold |
+| `creatorsProgramRollover` | `0 0 1 * *` | Flushes all caches for new month |
+| `creatorsProgramSettleCash` | `0 0 15 * *` | Moves `cashPending` -> `cashSettled`, notifies users |
+| `bankingPhaseEndingNotification` | `5 0 * * *` | Sends only on the last banking day per `getPhases` (L-3) |
+| `extractionPhaseStartedNotification` | `5 0 * * *` | Sends only on the first extraction day per `getPhases` (L-2) |
+| `extractionPhaseEndingNotification` | `5 0 * * *` | Sends only on the last day of the month |
 
 The three stage notifications run daily and gate on `getStageNotificationDays`, rather than encoding the day in an `L-n` cron: after `bankingPhaseEndingNotification` moved from `L-4` to `L-3`, the external scheduler still fired it on the `L-4` day. They are registered as `creator-program-notify-<stage>` so the scheduler picks them up as new jobs.
 
@@ -215,16 +212,16 @@ The three stage notifications run daily and gate on `getStageNotificationDays`, 
 
 ### Redis Keys (`REDIS_KEYS.CREATOR_PROGRAM`)
 
-| Key                 | Content                                                                                                                    | TTL               |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `CAPS`              | User cap data (tier, peak earnings, cap amount). A cap cached before `BANKABLE_CUTOVER` is refilled on first read after it | 1 day             |
-| `BANKED:{userId}`   | Per-type banked amounts for user                                                                                           | 1 day             |
-| `BANKABLE:{userId}` | Bankable ledger for display (cutover balance, earned, consumed)                                                            | 3 min             |
-| `CASH`              | User cash balance (pending, ready, withdrawn)                                                                              | 1 day             |
-| `POOL_VALUE`        | Monthly pool dollar value                                                                                                  | 1 day             |
-| `POOL_SIZE`         | Current total banked buzz                                                                                                  | Not cached (live) |
-| `POOL_FORECAST`     | Forecasted pool size                                                                                                       | 1 day             |
-| `PREV_MONTH_STATS`  | Previous month statistics                                                                                                  | 1 month           |
+| Key | Content | TTL |
+|-----|---------|-----|
+| `CAPS` | User cap data (tier, peak earnings, cap amount). A cap cached before `BANKABLE_CUTOVER` is refilled on first read after it | 1 day |
+| `BANKED:{userId}` | Per-type banked amounts for user | 1 day |
+| `BANKABLE:{userId}` | Bankable ledger for display (cutover balance, earned, consumed) | 3 min |
+| `CASH` | User cash balance (pending, ready, withdrawn) | 1 day |
+| `POOL_VALUE` | Monthly pool dollar value | 1 day |
+| `POOL_SIZE` | Current total banked buzz | Not cached (live) |
+| `POOL_FORECAST` | Forecasted pool size | 1 day |
+| `PREV_MONTH_STATS` | Previous month statistics | 1 month |
 
 **Cache busting:** After bank/extract/withdraw operations, relevant caches are busted and signals sent for realtime UI updates.
 
@@ -237,7 +234,6 @@ The `bustCompensationPoolCache()` function also clears old per-type cache keys (
 ### ClickHouse (`buzzTransactions` table)
 
 Used for:
-
 - Peak earnings calculation (license fees, early access)
 - Bankable amount (cutover balance, bankable earnings, banked and extracted since the cutover)
 - Pool value calculation (purchases, redeemable codes)
@@ -246,21 +242,21 @@ Used for:
 
 ### PostgreSQL
 
-| Table                              | Purpose                                                    |
-| ---------------------------------- | ---------------------------------------------------------- |
-| `User`                             | `onboarding` bitwise flags for program membership/bans     |
-| `CustomerSubscription` + `Product` | Membership tier for cap calculation                        |
-| `CashWithdrawal`                   | Withdrawal records (status, amount, fee, Tipalti metadata) |
-| `UserPaymentConfiguration`         | Tipalti account setup, payment method, status              |
+| Table | Purpose |
+|-------|---------|
+| `User` | `onboarding` bitwise flags for program membership/bans |
+| `CustomerSubscription` + `Product` | Membership tier for cap calculation |
+| `CashWithdrawal` | Withdrawal records (status, amount, fee, Tipalti metadata) |
+| `UserPaymentConfiguration` | Tipalti account setup, payment method, status |
 
 ## Realtime Updates
 
 **Signal topic:** `SignalTopic.CreatorProgram` (`'creators-program'`)
 
-| Signal                   | When                      | Data                     |
-| ------------------------ | ------------------------- | ------------------------ |
-| `CompensationPoolUpdate` | After bank/extract        | Full pool object         |
-| `CashInvalidator`        | After withdraw/settlement | Empty (triggers refetch) |
+| Signal | When | Data |
+|--------|------|------|
+| `CompensationPoolUpdate` | After bank/extract | Full pool object |
+| `CashInvalidator` | After withdraw/settlement | Empty (triggers refetch) |
 
 Frontend hooks in `src/components/Buzz/CreatorProgramV2/CreatorProgram.util.ts` listen via `useCreatorPoolListener()`.
 
@@ -276,10 +272,10 @@ Frontend hooks in `src/components/Buzz/CreatorProgramV2/CreatorProgram.util.ts` 
 
 Bitwise flags on `User.onboarding`:
 
-| Flag                   | Value | Meaning                                 |
-| ---------------------- | ----- | --------------------------------------- |
-| `CreatorProgram`       | 16    | User has joined the creator program     |
-| `BannedCreatorProgram` | 32    | User is banned from the creator program |
+| Flag | Value | Meaning |
+|------|-------|---------|
+| `CreatorProgram` | 16 | User has joined the creator program |
+| `BannedCreatorProgram` | 32 | User is banned from the creator program |
 
 ## Tipalti Integration
 
@@ -303,27 +299,27 @@ Bitwise flags on `User.onboarding`:
 
 ### Components
 
-| Component               | File                                                         | Purpose                                                                                                                                                            |
-| ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CreatorProgramV2`      | `src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx`  | Main dashboard                                                                                                                                                     |
-| `BankBuzzCard`          | Same file                                                    | Buzz type selector + amount input for banking                                                                                                                      |
-| `ExtractBuzzCard`       | Same file                                                    | All-or-nothing extraction button                                                                                                                                   |
-| `CompensationPoolCard`  | Same file                                                    | Unified pool value and size                                                                                                                                        |
-| `EstimatedEarningsCard` | Same file                                                    | Per-type banked breakdown + value estimate                                                                                                                         |
-| `WithdrawCashCard`      | Same file                                                    | Cash withdrawal interface                                                                                                                                          |
-| `MembershipLapsedCard`  | Same file                                                    | Notice for an onboarded member whose membership lapsed: banking is closed, banked Buzz still pays out at month end, withdrawing needs $50 ready plus payment setup |
-| `getPaidCards`          | `src/components/Buzz/CreatorProgramV2/getPaidCards.ts`       | Which Bank / Extract / Estimated Earnings / Withdraw cards render for a phase and lapse state; only Bank is hidden when lapsed                                     |
-| `BankableBuzzMeter`     | `src/components/Buzz/CreatorProgramV2/BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`)                              |
+| Component | File | Purpose |
+|-----------|------|---------|
+| `CreatorProgramV2` | `src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx` | Main dashboard |
+| `BankBuzzCard` | Same file | Buzz type selector + amount input for banking |
+| `ExtractBuzzCard` | Same file | All-or-nothing extraction button |
+| `CompensationPoolCard` | Same file | Unified pool value and size |
+| `EstimatedEarningsCard` | Same file | Per-type banked breakdown + value estimate |
+| `WithdrawCashCard` | Same file | Cash withdrawal interface |
+| `MembershipLapsedCard` | Same file | Notice for an onboarded member whose membership lapsed: banking is closed, banked Buzz still pays out at month end, withdrawing needs $50 ready plus payment setup |
+| `getPaidCards` | `src/components/Buzz/CreatorProgramV2/getPaidCards.ts` | Which Bank / Extract / Estimated Earnings / Withdraw cards render for a phase and lapse state; only Bank is hidden when lapsed |
+| `BankableBuzzMeter` | `src/components/Buzz/CreatorProgramV2/BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 
 ### Hooks (`CreatorProgram.util.ts`)
 
-| Hook                        | Returns                                  |
-| --------------------------- | ---------------------------------------- |
-| `useCompensationPool()`     | Unified pool data                        |
-| `useBankedBuzz()`           | `{ perType, total, cap, bankable }`      |
-| `useCreatorProgramPhase()`  | Current phase ('bank' or 'extraction')   |
-| `useCreatorProgramMutate()` | Bank, extract, withdraw mutations        |
-| `useCreatorPoolListener()`  | Subscribes to realtime pool/cash signals |
+| Hook | Returns |
+|------|---------|
+| `useCompensationPool()` | Unified pool data |
+| `useBankedBuzz()` | `{ perType, total, cap, bankable }` |
+| `useCreatorProgramPhase()` | Current phase ('bank' or 'extraction') |
+| `useCreatorProgramMutate()` | Bank, extract, withdraw mutations |
+| `useCreatorPoolListener()` | Subscribes to realtime pool/cash signals |
 
 ### Pages
 
@@ -337,7 +333,6 @@ Test files: `src/server/services/__tests__/creator-program.service.test.ts`, `sr
 Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`/`getBankedBalance`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants, the bankable amount.
 
 Run tests:
-
 ```bash
 pnpm exec vitest run --project 'unit*' src/server/services/__tests__/creator-program.service.test.ts src/server/services/__tests__/creator-program-bankable.test.ts src/shared/utils/__tests__/creator-program.utils.test.ts
 ```
@@ -346,10 +341,10 @@ Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts`
 
 ## Environment Variables
 
-| Variable                        | Purpose                                          |
-| ------------------------------- | ------------------------------------------------ |
-| `CREATOR_POOL_TAXES`            | Tax percentage to deduct from gross revenue      |
-| `CREATOR_POOL_PORTION`          | Percentage of post-tax revenue allocated to pool |
-| `CREATOR_POOL_FORECAST_PORTION` | Percentage for forecasted pool size              |
-| `TIPALTI_API_URL`               | Tipalti API base URL                             |
-| `TIPALTI_*`                     | Various Tipalti auth credentials                 |
+| Variable | Purpose |
+|----------|---------|
+| `CREATOR_POOL_TAXES` | Tax percentage to deduct from gross revenue |
+| `CREATOR_POOL_PORTION` | Percentage of post-tax revenue allocated to pool |
+| `CREATOR_POOL_FORECAST_PORTION` | Percentage for forecasted pool size |
+| `TIPALTI_API_URL` | Tipalti API base URL |
+| `TIPALTI_*` | Various Tipalti auth credentials |
