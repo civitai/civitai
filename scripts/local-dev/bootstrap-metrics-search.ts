@@ -11,11 +11,19 @@ export const jobs: Job[] = [...metricJobs, ...searchIndexJobs];
 async function main() {
   checkLocalMeili();
 
+  // Some jobs read production-only ClickHouse aggregates; don't let one of those block the rest.
+  const failed: string[] = [];
   for (const job of jobs) {
     log(`Running job ${job.name}`);
-    await job.run().result;
-    log(`Job ${job.name} completed`);
+    try {
+      await job.run().result;
+      log(`Job ${job.name} completed`);
+    } catch (error) {
+      failed.push(job.name);
+      log(`Job ${job.name} failed: ${(error as Error).message}`);
+    }
   }
+  if (failed.length) log(`${failed.length} job(s) failed: ${failed.join(', ')}`);
 }
 
 main()
