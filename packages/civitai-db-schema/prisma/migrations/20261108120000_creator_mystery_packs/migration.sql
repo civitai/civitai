@@ -16,6 +16,10 @@
 -- file again. In a client that keeps the session open after an error, ROLLBACK before retrying: an
 -- aborted transaction keeps its locks until it is rolled back.
 --
+-- Before running, check that no autovacuum (pg_stat_progress_vacuum) or long-running write
+-- (pg_stat_activity) is on "User" or "ItemDefinition". A lock timeout (SQLSTATE 55P03) means another
+-- session held a lock past 1 s; the step that timed out changed nothing, so run the file again.
+--
 -- Locks:
 --   - "ItemDefinition" is read FOR SHARE by every box open, and opens give up after 2 s. Step 1 takes
 --     ACCESS EXCLUSIVE on it, which blocks those reads, for a catalog change plus a CHECK scan of a
@@ -35,9 +39,10 @@ ALTER TABLE "ItemDefinition"
 
 COMMIT;
 
--- Step 2: the foreign key. NOT VALID then VALIDATE: the column is all NULL, so validation is free, and
--- VALIDATE takes only SHARE UPDATE EXCLUSIVE. Guarded by a catalog check rather than DROP CONSTRAINT
--- IF EXISTS, which takes ACCESS EXCLUSIVE even when there is nothing to drop.
+-- Step 2: the foreign key. The column is all NULL, so checking existing rows costs nothing. Added NOT
+-- VALID inside a catalog check, then validated on every run, so a re-run also validates a constraint
+-- that exists but was left NOT VALID. The catalog check stands in for DROP CONSTRAINT IF EXISTS, which
+-- takes ACCESS EXCLUSIVE even when there is nothing to drop.
 BEGIN;
 SET LOCAL lock_timeout = '1s';
 

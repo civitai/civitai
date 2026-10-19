@@ -44,4 +44,16 @@ describe('snapshotsMatch: a price edit is not an odds change', () => {
     };
     expect(snapshotsMatch(live, stored)).toBe(true);
   });
+
+  it('still counts a moved item as a change when the snapshot has a price', () => {
+    const live = snapshotOfLiveBox(TIERS, CONTENTS);
+    const stored = {
+      ...live,
+      price: 700,
+      contents: live.contents.map((content) =>
+        content.cosmeticId === 11 ? { ...content, tier: 'rare', value: 500 } : content
+      ),
+    };
+    expect(snapshotsMatch(live, stored)).toBe(false);
+  });
 });
