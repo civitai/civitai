@@ -6741,7 +6741,7 @@ export async function createImage({
     verifiedSourceImageIds
   );
   const metadata = stripBlockProvenanceMetadata(image.metadata);
-  // A ban blocks the owner's media once, when it lands, so a row created after that would stay up.
+  // A banned owner's new image is stored blocked, like the media the ban already blocked.
   const owner = await dbWrite.user.findUnique({
     where: { id: image.userId },
     select: { bannedAt: true },

@@ -21,7 +21,8 @@ beforeEach(() => {
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
 });
 
-const create = () => createImage({ url: KEY, userId: 7, type: 'image' } as never);
+const create = (over: Record<string, unknown> = {}) =>
+  createImage({ url: KEY, userId: 7, type: 'image', ...over } as never);
 const createdData = () => dbMock.dbWrite.image.create.mock.calls[0][0].data;
 
 describe('createImage for an owner', () => {
@@ -30,12 +31,25 @@ describe('createImage for an owner', () => {
 
     await create();
 
+    // The mock answers whatever it is asked, so pin the question: the owner's own ban state.
+    expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 7 },
+      select: { bannedAt: true },
+    });
     expect(createdData()).toMatchObject({
       ingestion: 'Blocked',
       blockedFor: 'moderated',
       nsfwLevel: 32,
     });
     expect(createImageIngestionRequest).not.toHaveBeenCalled();
+  });
+
+  it('who is banned stores the image blocked even when the caller skips ingestion', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: new Date() } as never);
+
+    await create({ skipIngestion: true });
+
+    expect(createdData()).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
   });
 
   it('who is not banned stores the image pending and sends it to scan', async () => {

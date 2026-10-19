@@ -6,8 +6,8 @@ import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
 
 /**
- * A ban blocks the owner's media, including images still being scanned. The scan that lands
- * afterwards must not put them back up, or they also escape the blocked-image purge.
+ * A block on a banned owner's image is the ban's decision, so a clean scan result that lands
+ * afterwards keeps it. An owner who is not banned keeps today's behaviour: the scan decides.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -162,6 +162,15 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
     await scan(loaded(3, BANNED, 'Blocked', 'tos'));
 
     expect((await imageRow(3)).blockedFor).toBe('tos');
+  });
+
+  it('records a block with no reason as moderated', async () => {
+    await insertImage(6, BANNED, 'Blocked', null);
+
+    const outcome = await scan(loaded(6, BANNED, 'Blocked', null));
+
+    expect(outcome.blockedFor).toBe('moderated');
+    expect((await imageRow(6)).blockedFor).toBe('moderated');
   });
 });
 
