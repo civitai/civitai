@@ -14,6 +14,26 @@ export const MAX_INT4 = 2_147_483_647;
 export const isInt4Id = (value: number) =>
   Number.isInteger(value) && value > 0 && value <= MAX_INT4;
 
+export type AccountStatus = 'active' | 'banned' | 'deleted' | 'gone';
+
+/** `gone`: no `User` row, so a hard-deleted account or an id that never existed. */
+export const accountStatus = (
+  user: Pick<UserSummary, 'bannedAt' | 'deletedAt'> | null | undefined
+): AccountStatus =>
+  !user ? 'gone' : user.bannedAt ? 'banned' : user.deletedAt ? 'deleted' : 'active';
+
+const INSTANT_VERIFY_SECONDS = 120;
+
+/** Email verified within `INSTANT_VERIFY_SECONDS` of signup. Null when either timestamp is missing,
+ *  which is not the same as false. */
+export const isInstantVerify = (
+  createdAt: Date | string | null,
+  verifiedAt: Date | string | null
+): boolean | null =>
+  createdAt && verifiedAt
+    ? new Date(verifiedAt).getTime() - new Date(createdAt).getTime() < INSTANT_VERIFY_SECONDS * 1000
+    : null;
+
 export type UserSearchResult = { id: number; username: string | null; image: string | null };
 
 export type UserSummary = {

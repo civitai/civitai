@@ -181,7 +181,7 @@ export async function resolveUsername(userId: number): Promise<{ username: strin
  * Retool-era `UserStrikes`. Nothing writes both, so counting only the legacy one showed 0 for every
  * strike the live system has issued — on a header chip that exists to say how much rope is left.
  */
-async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
+export async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
   const row = await dbRead
     .selectFrom('UserStrike')
     .select((eb) => [
@@ -640,7 +640,7 @@ async function getCommentFlags(userId: number) {
   ].filter((f) => f.count > 0);
 }
 
-async function getCounts(userId: number): Promise<UserCounts> {
+export async function getCounts(userId: number): Promise<UserCounts> {
   const [counts, modelFlags, commentFlags] = await Promise.all([
     Promise.all(
       COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {

@@ -13,6 +13,7 @@
   import SuspectPanel from './SuspectPanel.svelte';
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import AccountActions from './AccountActions.svelte';
+  import InvestigateButton from '$lib/components/InvestigateButton.svelte';
   import type { ReportActionGrants } from '$lib/report-queue';
 
   // The open account, rendered the same by the bare queue (its first account) and by
@@ -22,6 +23,7 @@
     items,
     canAct,
     canBan,
+    canInvestigate,
     can,
     civitaiUrl,
   }: {
@@ -30,6 +32,8 @@
     /** Mute, ban and profile text — the `/users` page. Ruling needs only the queue. */
     canAct: boolean;
     canBan: boolean;
+    /** Open a mod assistant chat on this account and its newest open report. */
+    canInvestigate: boolean;
     can: ReportActionGrants;
     civitaiUrl: string;
   } = $props();
@@ -78,7 +82,13 @@
        site links. A heading above it repeated the username and both links. It sits across both
        columns because that state decides what every tab's evidence and every action means. -->
   {#if account.details}
-    <UserCard card={account.details.card} lookupLink openReports={false} />
+    <UserCard card={account.details.card} lookupLink openReports={false}>
+      {#snippet actions()}
+        {#if canInvestigate && account}
+          <InvestigateButton userId={account.suspectId} reportId={openReports[0]?.id ?? null} />
+        {/if}
+      {/snippet}
+    </UserCard>
   {:else}
     <h2 class="m-0 text-lg font-semibold">Account #{account.suspectId}</h2>
   {/if}

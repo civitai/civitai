@@ -11,6 +11,7 @@
   items={data.items}
   canAct={data.canAct}
   canBan={data.canBan}
+  canInvestigate={data.canInvestigate}
   can={reportActionGrants(data.grants)}
   civitaiUrl={data.civitaiUrl}
 />
