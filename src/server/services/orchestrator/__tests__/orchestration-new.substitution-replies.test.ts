@@ -490,7 +490,7 @@ describe('generateFromGraph — creator tip vs resource eligibility', () => {
   const tips = { civitaiTip: 0.05, creatorTip: 0.25 };
 
   /** The resolved Qwen checkpoint, generatable, with its owner's tip eligibility. */
-  const resource = (tipsEnabled: boolean) => ({
+  const resource = (tipsEnabled: boolean, isOwnedByUser = false) => ({
     id: QWEN_DEFAULT,
     name: 'Qwen',
     air: `urn:air:qwen:checkpoint:civitai:1@${QWEN_DEFAULT}`,
@@ -504,6 +504,7 @@ describe('generateFromGraph — creator tip vs resource eligibility', () => {
     maxStrength: 2,
     model: { id: 1, name: 'Qwen', type: 'Checkpoint', poi: false },
     tipsEnabled,
+    isOwnedByUser,
   });
 
   beforeEach(() => {
@@ -532,6 +533,10 @@ describe('generateFromGraph — creator tip vs resource eligibility', () => {
 
   it('passes the creator tip through when a resource is tip-eligible', async () => {
     expect(await submittedTips([resource(true)])).toEqual({ civitai: 0.05, creators: 0.25 });
+  });
+
+  it("drops the creator tip when the only eligible resource is the user's own", async () => {
+    expect(await submittedTips([resource(true, true)])).toEqual({ civitai: 0.05, creators: 0 });
   });
 
   it('drops the creator tip when no resource resolves', async () => {

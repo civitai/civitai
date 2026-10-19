@@ -4,8 +4,8 @@ function toTipRate(value: unknown) {
 }
 
 /**
- * The `tips` body sent to the orchestrator. With no tip-eligible resource the creator tip is dropped
- * rather than charged, since the orchestrator would have no one to pay it to.
+ * The `tips` body sent to the orchestrator. With no tip-eligible resource (none with a payable
+ * owner other than the generating user) the creator tip is dropped rather than charged.
  */
 export function buildWorkflowTips({
   civitaiTip,
