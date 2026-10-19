@@ -427,10 +427,8 @@ type FailedScanFile = {
   modelVersion: { modelId: number; baseModel: string; model: { type: ModelType } };
 };
 
-// The orchestrator caches a version's /mini answer for hours, so a failing answer cached during an
-// outage fails every retry until something busts it. It caches per exact AIR, and a scan resolves
-// its own file-pinned AIR, so that one is busted separately: the version AIRs at most once per
-// version per hour (its files fail together), the scanned AIR at most once per file per hour.
+// The orchestrator caches answers for hours per exact AIR, so one cached during an outage fails
+// every retry until busted. The scan's file-pinned AIR is a separate entry from the version's.
 // Logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {

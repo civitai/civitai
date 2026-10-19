@@ -95,11 +95,7 @@ async function invalidateVersions(versionIds: number[], userId?: number) {
   await invalidateAirs(airs, userId);
 }
 
-/**
- * Drop the orchestrator's cached answer for the AIR a file scan resolves. That AIR is pinned to the
- * file (`@<version>+<fileId>`), and the orchestrator caches per exact AIR string, so the version
- * busts above never reach it. Never throws.
- */
+/** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
 export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 

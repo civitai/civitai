@@ -357,7 +357,6 @@ describe('model-file-scan.service', () => {
         expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
       });
 
-      // The scan resolves `@100+<fileId>`, a separate orchestrator cache entry from the version's.
       it("busts each failing file's own scanned AIR, even when its version was just busted", async () => {
         setupFileFound();
         await applyScanOutcome({ fileId: 1, failed: true });

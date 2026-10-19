@@ -113,8 +113,6 @@ describe('bustOrchestratorModelCache', () => {
 });
 
 describe('bustOrchestratorScannedFileCache', () => {
-  // A scan resolves the file-pinned AIR without the file kind (createModelFileScanRequest), and the
-  // orchestrator caches per exact string — the version AIRs above never evict this entry.
   it('invalidates the exact AIR a file scan resolves', async () => {
     await bustOrchestratorScannedFileCache({
       fileId: 2869903,
