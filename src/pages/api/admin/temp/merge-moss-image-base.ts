@@ -25,7 +25,7 @@ import type { NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { bustMvCache } from '~/server/services/model-version.service';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 const OLD_BASE_MODEL = 'MOSS Image Base';
@@ -105,8 +105,7 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
     if (error instanceof DryRunRollback) {
       return res.status(200).json({ dryRun: true, ...counts(error.result) });
     }
-    const message = error instanceof Error ? error.message : String(error);
-    return res.status(500).json({ error: message });
+    return handleEndpointError(res, error);
   }
 
   if (result.versions.length) {
