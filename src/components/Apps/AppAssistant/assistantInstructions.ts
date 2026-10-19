@@ -17,14 +17,14 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
 
 /**
  * TEMPORARY (civitai/civitai-app-starters#710): the dev-tunnel preview mints no storage scope
- * (`TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`), so an unpublished app's `app.storage` calls are all
- * refused `insufficient_scope` and the SDK has no local stand-in yet. Until it does, the model
+ * (`TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`), so a preview's storage calls can be refused
+ * `insufficient_scope` and the SDK has no local stand-in yet. Until it does, the model
  * puts storage behind one module that falls back to the SDK's in-memory `createFakeStorage` on
  * exactly that code in a Vite dev build. Real storage is never widened. Delete this rule when
  * #710 closes.
  */
 export const PREVIEW_STORAGE_RULE =
-  '- Storage in the live preview (temporary, until civitai/civitai-app-starters#710): an app that is not published yet gets no storage there, so every app.storage call is refused with a StorageError whose code is insufficient_scope. When the app saves data, use app.storage.collection(name) from @civitai/sdk (not the deprecated useAppStorage or useSharedStorage) and keep every storage call in one module, src/storage.ts. In that module, when a call is refused with code insufficient_scope and import.meta.env.DEV is true, switch for the rest of the page to createFakeStorage({ manifest }).storage from @civitai/sdk/testing, imported dynamically inside that branch, with the parsed block.manifest.json as manifest, and show a small badge reading "Preview data is saved only in this tab". Fall back on no other error and save preview data nowhere else; a published app is a production build, so it always uses real storage. The preview has one viewer: tell the user that other people\'s entries, votes and totals appear only once the app is published.';
+  '- Storage in the live preview (temporary, until civitai/civitai-app-starters#710): the live preview may have no real storage, so a storage call there can be refused with a StorageError whose code is insufficient_scope. When the app saves data, use app.storage.collection(name) from @civitai/sdk (not the deprecated useAppStorage or useSharedStorage) and keep every storage call in one module, src/storage.ts. In that module, the first time a call is refused with code insufficient_scope while import.meta.env.DEV is true, create one local store, createFakeStorage({ manifest }).storage from @civitai/sdk/testing, imported dynamically inside that branch, with the parsed block.manifest.json as manifest; retry the refused call on it, use it for every later call on the page, and show a small badge reading "Preview data is saved only in this tab" while it is in use. Fall back on no other error and save preview data nowhere else. A published app is a production build, so it always uses real storage; never set NODE_ENV in any committed .env file. Unit-test src/storage.ts with a stub whose calls throw a StorageError with code insufficient_scope while import.meta.env.DEV is true, and assert that the module retries the call on the local store, reads back its own writes, and reports that the badge is shown. The preview has one viewer: tell the user that other people\'s entries, votes and totals appear only in the published app.';
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
 export const APP_ASSISTANT_RULES = [
