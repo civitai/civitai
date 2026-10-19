@@ -650,7 +650,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
-      if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      if (input.sort === ImageSort.Newest)
+        images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
       let nsfwLevel = 0;
       for (const imageNsfwLevel of imageNsfwLevels) {

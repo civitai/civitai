@@ -350,7 +350,7 @@ async function fetchPostData(id: number): Promise<EntityData | null> {
         ingestion: 'Scanned',
       },
       select: ogImageSelect,
-      orderBy: { index: 'asc' },
+      orderBy: [{ index: 'asc' }, { id: 'asc' }],
     }),
   ]);
 
