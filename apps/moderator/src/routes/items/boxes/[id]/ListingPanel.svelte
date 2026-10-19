@@ -2,7 +2,11 @@
   import { ITEM_DEFINITION_STATUS } from '$lib/mystery-box';
   import ListingForm, { type Listing } from './ListingForm.svelte';
 
-  let { boxStatus, listings }: { boxStatus: string; listings: Listing[] } = $props();
+  let {
+    boxStatus,
+    listings,
+    defaultTitle = '',
+  }: { boxStatus: string; listings: Listing[]; defaultTitle?: string } = $props();
 </script>
 
 <section class="mb-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -19,6 +23,6 @@
     {#each listings as listing (listing.id)}
       <ListingForm {listing} />
     {/each}
-    <ListingForm listing={null} />
+    <ListingForm listing={null} {defaultTitle} />
   </div>
 </section>

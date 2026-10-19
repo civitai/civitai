@@ -20,7 +20,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
 
-  let { listing }: { listing: Listing | null } = $props();
+  let { listing, defaultTitle = '' }: { listing: Listing | null; defaultTitle?: string } = $props();
 
   const STATUSES = ['Draft', 'Published', 'Archived'] as const;
   /** `datetime-local` wants `YYYY-MM-DDTHH:mm`; the times are UTC, and the server reads them as UTC. */
@@ -40,7 +40,7 @@
   <div class="grid gap-2 md:grid-cols-3">
     <label class="text-xs text-dark-2">
       Title
-      <Input name="title" class="mt-1" value={listing?.title ?? ''} required />
+      <Input name="title" class="mt-1" value={listing?.title ?? defaultTitle} required />
     </label>
     <label class="text-xs text-dark-2">
       Price (Buzz)
@@ -76,7 +76,7 @@
   </div>
   <div class="mt-2 flex items-center gap-2">
     <Button type="submit" size="sm" disabled={form.submitting}>
-      {listing ? 'Save listing' : 'Create listing'}
+      {listing ? 'Save listing' : form.error ? 'Retry' : 'Create listing'}
     </Button>
   </div>
   {#if form.error}
