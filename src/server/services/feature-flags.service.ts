@@ -127,6 +127,18 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // SSR-CPU trial on `/models/[id]/[[...slug]]`: when ON, the model page's below-the-fold,
+  // non-SEO sidebar sections (creator card, license/permissions, collection-showcase body, the
+  // viewer's own review card) render client-side after hydration behind fixed-height
+  // placeholders, and `getServerSideProps` stops prefetching `user.getCreator`, which only the
+  // creator card reads. OFF = the page renders as before. `availability: []` = DARK by default and
+  // fails CLOSED when the Flipt key is absent or Flipt is down, so the
+  // `model-page-defer-below-fold` rollout is the only on-switch (NOT `['mod']`: the client's
+  // static fallback would switch it on for every moderator at deploy). Hydration cannot mismatch:
+  // the server render and the hydrating render read the same serialised flags. gSSP evaluates the
+  // flag separately for the same user, so a disagreement can only cost a client fetch or a
+  // wasted prefetch.
+  modelPageDeferBelowFold: { availability: [], fliptKey: 'model-page-defer-below-fold' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.

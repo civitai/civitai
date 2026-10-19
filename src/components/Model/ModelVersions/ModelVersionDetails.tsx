@@ -130,6 +130,7 @@ import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
 import { restoreMembership, snapshotMembership } from '~/store/engaged-models.store';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import useIsClient from '~/hooks/useIsClient';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   CAROUSEL_LIMIT,
@@ -198,6 +199,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const features = useFeatureFlags();
+  // `modelPageDeferBelowFold` trial: below-the-fold, non-SEO sections render only once the client
+  // has mounted, behind fixed-height placeholders. The flag is serialised with the page, so the
+  // server render and the hydrating render both see `true && !isClient` and emit the same
+  // placeholders; the real sections replace them on the next client render. With the flag off this
+  // is always false and the page renders exactly as before.
+  const isClient = useIsClient();
+  const deferBelowFold = !!features.modelPageDeferBelowFold && !isClient;
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [detailAccordions, setDetailAccordions] = useLocalStorage({
@@ -1211,7 +1219,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </div>
                 </div>
                 <Accordion.Panel>
-                  <CollectionShowcase modelId={model.id} loading={settingShowcase} />
+                  {/* Collapsed by default, so deferring the body moves nothing on first paint. */}
+                  {!deferBelowFold && (
+                    <CollectionShowcase modelId={model.id} loading={settingShowcase} />
+                  )}
                 </Accordion.Panel>
               </Accordion.Item>
             )}
@@ -1759,89 +1770,98 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           </Accordion>
 
           {/* Resource Review - shown after model details for users who downloaded */}
-          {!model.locked && alreadyDownloaded && (
-            <UserResourceReviewComposite
-              modelId={model.id}
-              modelVersionId={version.id}
-              modelName={model.name}
-            >
-              {({ modelId, modelVersionId, userReview, loading }) => (
-                <Card p={8} withBorder>
-                  <Stack gap={8}>
-                    <Group gap={8} justify="space-between" wrap="nowrap">
-                      <Group gap={8} wrap="nowrap">
-                        {loading ? (
-                          <Loader size="xs" />
-                        ) : userReview ? (
-                          <>
-                            {userReview.recommended ? (
-                              <ThumbsUpIcon size={18} />
-                            ) : (
-                              <ThumbsDownIcon size={18} />
-                            )}
-                          </>
+          {/* One child slot for both branches, so the flag doesn't shift later siblings' useId. */}
+          {!model.locked &&
+            alreadyDownloaded &&
+            (deferBelowFold ? (
+              <div data-deferred-section="user-review" className={classes.deferredUserReview} />
+            ) : (
+              <UserResourceReviewComposite
+                modelId={model.id}
+                modelVersionId={version.id}
+                modelName={model.name}
+              >
+                {({ modelId, modelVersionId, userReview, loading }) => (
+                  <Card p={8} withBorder>
+                    <Stack gap={8}>
+                      <Group gap={8} justify="space-between" wrap="nowrap">
+                        <Group gap={8} wrap="nowrap">
+                          {loading ? (
+                            <Loader size="xs" />
+                          ) : userReview ? (
+                            <>
+                              {userReview.recommended ? (
+                                <ThumbsUpIcon size={18} />
+                              ) : (
+                                <ThumbsDownIcon size={18} />
+                              )}
+                            </>
+                          ) : (
+                            <IconHeart size={18} />
+                          )}
+                          {userReview ? (
+                            <Text size="sm">
+                              You reviewed this on {formatDateMin(userReview.createdAt, false)}
+                            </Text>
+                          ) : (
+                            <Text size="sm">What did you think of this resource?</Text>
+                          )}
+                        </Group>
+                        {!userReview || !userReview.details ? (
+                          <ResourceReviewThumbActions
+                            modelId={modelId}
+                            modelVersionId={modelVersionId}
+                            userReview={userReview}
+                            size="xs"
+                          />
                         ) : (
-                          <IconHeart size={18} />
-                        )}
-                        {userReview ? (
-                          <Text size="sm">
-                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
-                          </Text>
-                        ) : (
-                          <Text size="sm">What did you think of this resource?</Text>
+                          <Group wrap="nowrap" gap={4}>
+                            <Button
+                              size="xs"
+                              color="gray"
+                              onClick={() => openResourceReviewEditModal(userReview)}
+                            >
+                              See Review
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="gray"
+                              component={Link}
+                              px={7}
+                              href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
+                            >
+                              <IconPhotoPlus size={16} />
+                            </Button>
+                          </Group>
                         )}
                       </Group>
-                      {!userReview || !userReview.details ? (
-                        <ResourceReviewThumbActions
+                    </Stack>
+                    {userReview && !userReview.details && (
+                      <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                        <EditUserResourceReviewLight
                           modelId={modelId}
                           modelVersionId={modelVersionId}
                           userReview={userReview}
-                          size="xs"
                         />
-                      ) : (
-                        <Group wrap="nowrap" gap={4}>
-                          <Button
-                            size="xs"
-                            color="gray"
-                            onClick={() => openResourceReviewEditModal(userReview)}
-                          >
-                            See Review
-                          </Button>
-                          <Button
-                            size="xs"
-                            color="gray"
-                            component={Link}
-                            px={7}
-                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
-                          >
-                            <IconPhotoPlus size={16} />
-                          </Button>
-                        </Group>
-                      )}
-                    </Group>
-                  </Stack>
-                  {userReview && !userReview.details && (
-                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewLight
-                        modelId={modelId}
-                        modelVersionId={modelVersionId}
-                        userReview={userReview}
-                      />
-                    </Card.Section>
-                  )}
-                </Card>
-              )}
-            </UserResourceReviewComposite>
-          )}
+                      </Card.Section>
+                    )}
+                  </Card>
+                )}
+              </UserResourceReviewComposite>
+            ))}
 
           <ModelVersionDonationGoal modelVersionId={version.id} />
 
-          <SmartCreatorCard
-            user={model.user}
-            tipBuzzEntityType="Model"
-            tipBuzzEntityId={model.id}
-            tipsEnabled={!model.poi}
-          />
+          {deferBelowFold ? (
+            <div data-deferred-section="creator-card" className={classes.deferredCreatorCard} />
+          ) : (
+            <SmartCreatorCard
+              user={model.user}
+              tipBuzzEntityType="Model"
+              tipBuzzEntityId={model.id}
+              tipsEnabled={!model.poi}
+            />
+          )}
           {onSite && (
             <Group
               align="flex-start"
@@ -1858,61 +1878,65 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </Group>
           )}
 
-          <Group justify="space-between" align="flex-start" wrap="nowrap">
-            {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
-              <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
-                <BaseModelLicense license={license} plural={model.licenses.length > 0}>
-                  {showAddendumLicense && (
-                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
-                      <Anchor
-                        variant="text"
-                        td="underline"
-                        size="xs"
-                        c="dimmed"
-                        style={{ lineHeight: 1.1 }}
-                      >
-                        Addendum
-                      </Anchor>
-                    </Link>
-                  )}
-                </BaseModelLicense>
-                {model.licenses.map(({ url, name }) => (
-                  <Text
-                    key={name}
-                    component="a"
-                    rel="nofollow"
-                    href={url}
-                    td="underline"
-                    size="xs"
-                    c="dimmed"
-                    target="_blank"
-                    style={{ lineHeight: 1.1 }}
-                  >
-                    {name}
-                  </Text>
-                ))}
-              </Stack>
-            )}
-            <PermissionIndicator
-              permissions={{
-                ...model,
-                // Permissions are derived per displayed version from its base model:
-                // non-commercial base models (e.g. Ideogram) force commercial use off,
-                // mature-restricted base models force SFW-only generation, and
-                // same-license base models (e.g. LTXV 2.5) force merges to match.
-                allowCommercialUse: getEffectiveCommercialUse(
-                  model.allowCommercialUse,
-                  version.baseModel
-                ),
-                sfwOnly: model.sfwOnly || baseModelRestrictsMature,
-                allowDifferentLicense: getEffectiveDifferentLicense(
-                  model.allowDifferentLicense,
-                  version.baseModel
-                ),
-              }}
-              ml="auto"
-            />
-          </Group>
+          {deferBelowFold ? (
+            <div data-deferred-section="license" className={classes.deferredLicense} />
+          ) : (
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
+                <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                  <BaseModelLicense license={license} plural={model.licenses.length > 0}>
+                    {showAddendumLicense && (
+                      <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
+                        <Anchor
+                          variant="text"
+                          td="underline"
+                          size="xs"
+                          c="dimmed"
+                          style={{ lineHeight: 1.1 }}
+                        >
+                          Addendum
+                        </Anchor>
+                      </Link>
+                    )}
+                  </BaseModelLicense>
+                  {model.licenses.map(({ url, name }) => (
+                    <Text
+                      key={name}
+                      component="a"
+                      rel="nofollow"
+                      href={url}
+                      td="underline"
+                      size="xs"
+                      c="dimmed"
+                      target="_blank"
+                      style={{ lineHeight: 1.1 }}
+                    >
+                      {name}
+                    </Text>
+                  ))}
+                </Stack>
+              )}
+              <PermissionIndicator
+                permissions={{
+                  ...model,
+                  // Permissions are derived per displayed version from its base model:
+                  // non-commercial base models (e.g. Ideogram) force commercial use off,
+                  // mature-restricted base models force SFW-only generation, and
+                  // same-license base models (e.g. LTXV 2.5) force merges to match.
+                  allowCommercialUse: getEffectiveCommercialUse(
+                    model.allowCommercialUse,
+                    version.baseModel
+                  ),
+                  sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+                  allowDifferentLicense: getEffectiveDifferentLicense(
+                    model.allowDifferentLicense,
+                    version.baseModel
+                  ),
+                }}
+                ml="auto"
+              />
+            </Group>
+          )}
           {license?.notice && (
             <Text size="xs" c="dimmed">
               {license.notice}

@@ -57,6 +57,7 @@ export const RUM_EXPERIMENT_ATTR_PREFIX = 'exp_';
  */
 export const RUM_EXPERIMENT_FLAGS = [
   { flag: 'genTabDeferView', attr: 'exp_gen_tab_defer_view' },
+  { flag: 'modelPageDeferBelowFold', attr: 'exp_model_page_defer_below_fold' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**
