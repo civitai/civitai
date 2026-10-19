@@ -30,7 +30,6 @@ vi.mock('~/server/db/pgDb', () => {
     },
   };
 });
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/jobs/apply-discord-roles', () => ({ applyDiscordLeaderboardRoles: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
@@ -42,7 +41,7 @@ vi.mock('~/server/services/leaderboard.service', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { logToAxiom } from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   leaderboardJobs,
   setCoverImageNsfwLevel,
@@ -55,7 +54,7 @@ const modelMeta = async (id: number) =>
 const versionMeta = async (id: number) =>
   (await q(`SELECT meta FROM "ModelVersion" WHERE id = $1`, [id])).rows[0] as { meta: unknown };
 const malformedLogs = () =>
-  vi.mocked(logToAxiom).mock.calls.filter(([e]) => e.name === 'leaderboard-malformed-meta');
+  loggingMock.logToAxiom.mock.calls.filter(([e]) => e.name === 'leaderboard-malformed-meta');
 
 /** A Published model whose first version's post carries `level`, with the model's meta as given. */
 async function model(id: number, meta: string, level = 4) {
@@ -87,7 +86,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  vi.mocked(logToAxiom).mockClear();
+  loggingMock.logToAxiom.mockClear();
   holder.afterRead = null;
   await q(`TRUNCATE "Model", "ModelVersion", "Post"`);
 });
@@ -153,7 +152,7 @@ describe('the prepare-leaderboard job', () => {
       await job.run({}).result.catch(() => undefined);
       expect(dbMock.dbWrite.leaderboard.findMany).toHaveBeenCalled();
       // The job ran the step through the wrapper, not around it.
-      expect(logToAxiom).toHaveBeenCalledWith(
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'leaderboard-cover-nsfw-level-failed' })
       );
     } finally {
@@ -167,7 +166,7 @@ describe('setCoverImageNsfwLevelOrLog', () => {
     await q(`ALTER TABLE "Post" RENAME TO "PostGone"`);
     try {
       await expect(setCoverImageNsfwLevelOrLog()).resolves.toBeUndefined();
-      expect(logToAxiom).toHaveBeenCalledWith(
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'leaderboard-cover-nsfw-level-failed' })
       );
     } finally {
