@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardByType } from '$lib/data/trainingModels';
+import { MODEL_CARDS, cardByType } from '$lib/data/trainingModels';
 import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
@@ -15,6 +15,8 @@ import {
   seedPrompts,
   startLabelPass,
   withTrigger,
+  versionOptions,
+  CUSTOM_VERSION_KEY,
   type Img,
   type Run,
 } from './trainingFlow';
@@ -290,5 +292,18 @@ describe('compareFileNames', () => {
       'clip2.txt',
       'clip10.mp4',
     ]);
+  });
+});
+
+describe('Custom base version', () => {
+  // The orchestrator trains on a pasted base only for these cards' ecosystems; every other card
+  // would silently train (and charge) on its official base.
+  const CUSTOM_CARDS = ['anima', 'illustrious', 'pony', 'sd15', 'sdxl'];
+
+  it('is offered on exactly the cards whose ecosystem honours a custom base', () => {
+    const offered = MODEL_CARDS.filter((card) =>
+      versionOptions(card).some((v) => v.key === CUSTOM_VERSION_KEY)
+    ).map((card) => card.type);
+    expect(offered.sort()).toEqual(CUSTOM_CARDS);
   });
 });
