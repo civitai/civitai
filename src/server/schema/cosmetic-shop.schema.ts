@@ -42,7 +42,7 @@ export type CosmeticShopItemHistoryEntry = z.infer<typeof cosmeticShopItemHistor
 export const cosmeticShopItemHistoryEntry = z.object({
   at: z.string(),
   userId: z.number(),
-  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown']),
+  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown', 'refunded']),
   // Status the item landed in after this event.
   status: z.string().optional(),
   // Review verdict for `reviewed` entries: approve | reject | request-changes | revert.
@@ -120,6 +120,18 @@ export const cosmeticShopItemMeta = z.object({
     .object({
       reason: z.string(),
       moderatorId: z.number(),
+      at: z.string(),
+    })
+    .optional(),
+  // Set when a moderator rejects the item or it is archived while withheld: purchases made up to
+  // `at` that are still unrefunded get refunded, and the creator's payouts reversed when
+  // `clawback`. The withdrawn-refund job retries from it until none are left; approval and restore
+  // clear it.
+  withdrawnRefund: z
+    .object({
+      trigger: z.enum(['reject', 'archive']),
+      clawback: z.boolean(),
+      userId: z.number(),
       at: z.string(),
     })
     .optional(),

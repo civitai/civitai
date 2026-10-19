@@ -28,6 +28,7 @@ import {
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
+import { refundWithdrawnShopItem } from '~/server/services/creator-shop-withdrawn-refund.service';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
 import {
@@ -1077,6 +1078,17 @@ const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; ti
     });
 };
 
+// The verdict or archive has landed whatever happens here; `sweepWithdrawnShopRefunds` retries it.
+const startWithdrawnRefund = (shopItemId: number) =>
+  refundWithdrawnShopItem(shopItemId).catch((error) =>
+    logToAxiom({
+      level: 'error',
+      name: 'creator-shop-withdrawn-refund',
+      message: 'Withdrawn refund failed; the job retries it',
+      data: { shopItemId, error: error instanceof Error ? error.message : String(error) },
+    }).catch(() => undefined)
+  );
+
 export const archiveCreatorShopItem = async ({
   userId,
   isModerator,
@@ -1101,11 +1113,39 @@ export const archiveCreatorShopItem = async ({
       cosmeticId: existing.cosmeticId,
       sellerId: existing.addedById,
     });
+  // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
+  // are refunded. The creator keeps the payouts: no moderator ruled against the item.
+  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
+  const now = new Date();
+  const withheld =
+    existing.cosmeticId != null &&
+    !isListingDisplayable({
+      status: existing.status,
+      meta,
+      rejectionReason: existing.rejectionReason,
+    });
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
+    data: {
+      status: CosmeticShopItemStatus.Archived,
+      archivedAt: now,
+      ...(withheld
+        ? {
+            meta: {
+              ...meta,
+              withdrawnRefund: {
+                trigger: 'archive',
+                clawback: false,
+                userId,
+                at: now.toISOString(),
+              },
+            } as Prisma.InputJsonValue,
+          }
+        : {}),
+    },
     select: creatorShopItemSelect,
   });
+  if (withheld) await startWithdrawnRefund(id);
 
   await endResaleListings({ shopItemId: id, title: existing.title });
 
@@ -1216,7 +1256,9 @@ export const unarchiveCreatorShopItem = async ({
     throw throwBadRequestError('Only archived items can be restored');
   // `preArchiveStatus` is a leftover from when restoring returned an item to
   // where it was; it now re-enters review either way, so drop any stored value.
-  const { preArchiveStatus, ...meta } = (existing.meta ?? {}) as CosmeticShopItemMeta & {
+  // A refund owed for the archive stops here: buyers who were not refunded keep the cosmetic.
+  const { preArchiveStatus, withdrawnRefund, ...meta } = (existing.meta ??
+    {}) as CosmeticShopItemMeta & {
     preArchiveStatus?: CosmeticShopItemStatus;
   };
   if (meta.takedown)
@@ -2150,9 +2192,15 @@ export const reviewCreatorShopItem = async ({
   // The verdict is recorded on the history too, not just on rejectionReason —
   // the next edit clears that column, and a re-review needs to see what was
   // said last time.
+  // A rejection refunds the item's buyers and reverses the creator's payouts. Any other verdict
+  // stops a refund an earlier rejection left unfinished.
+  const withdrawnRefund: CosmeticShopItemMeta['withdrawnRefund'] =
+    action === 'reject' && item.cosmeticId != null
+      ? { trigger: 'reject', clawback: true, userId: reviewerId, at: now.toISOString() }
+      : undefined;
   const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
     appendItemHistory(
-      { ...meta, ...extra },
+      { ...meta, ...extra, withdrawnRefund },
       {
         at: now.toISOString(),
         userId: reviewerId,
@@ -2212,6 +2260,7 @@ export const reviewCreatorShopItem = async ({
   // have to come off sale too.
   if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
   if (action !== 'approve') await unequipWithheldCosmetic(item.cosmeticId);
+  if (withdrawnRefund) await startWithdrawnRefund(id);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {
