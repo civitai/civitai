@@ -31,9 +31,8 @@ export function reviewActions({
   return {
     revert: live,
     remove: false,
-    verdicts:
-      status !== CosmeticShopItemStatus.Rejected &&
-      (hasEdit || status === CosmeticShopItemStatus.PendingReview),
+    // A rejected pack takes no edits, so it never qualifies.
+    verdicts: hasEdit || status === CosmeticShopItemStatus.PendingReview,
     blocked: !loaded,
     // The pack stays on sale whatever the verdict on its edit.
     liveEdit: hasEdit && live,

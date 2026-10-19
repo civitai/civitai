@@ -191,6 +191,8 @@ beforeEach(async () => {
     DELETE FROM "Cosmetic";
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${CREATOR}), (${OTHER}), (${MOD});
+    -- Revision ids apart from box versions, so a read that returns one for the other is caught.
+    ALTER SEQUENCE "BoxRevision_id_seq" RESTART WITH 100;
   `);
   await seedItems();
 });

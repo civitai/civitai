@@ -150,8 +150,10 @@ describe('creator mystery pack procedures', () => {
   });
 
   it("refuses the review pane's read to a non-moderator, and hands a moderator's the stickers flag", async () => {
+    // The moderator gate's own refusal: the creatorShop flag also answers FORBIDDEN for a member.
     await expect(caller(ALL_ON).getMysteryPackReview({ id: 3 })).rejects.toMatchObject({
       code: 'FORBIDDEN',
+      message: 'You do not have permission to perform this action',
     });
     expect(review.getMysteryPackReview).not.toHaveBeenCalled();
 
