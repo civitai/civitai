@@ -31,9 +31,10 @@ describe('minor queue search', () => {
 
   it('compares a username case-insensitively', async () => {
     const statement = await compile(() =>
-      getMinorHashMatchesForReview({ limit: 50, search: { username: 'Someone' } })
+      getMinorHashMatchesForReview({ limit: 50, search: { text: 'Someone' } })
     );
     expect(statement).toContain('lower("u"."username") = lower($');
+    expect(statement).toContain(`"c"."modelName" ILIKE $`);
   });
 
   it('adds nothing but TRUE without a search', async () => {

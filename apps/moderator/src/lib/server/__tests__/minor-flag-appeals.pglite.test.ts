@@ -252,7 +252,7 @@ describe('paging under a filter', () => {
 describe('search', () => {
   it('narrows within a filter, by username and by id', async () => {
     expect(
-      await getMinorFlagAppealsForReview({ limit: 50, search: { username: 'OWNER' } }).then((r) =>
+      await getMinorFlagAppealsForReview({ limit: 50, search: { text: 'OWNER' } }).then((r) =>
         r.items.map((i) => i.modelId)
       )
     ).toEqual([1, 5]);
@@ -262,6 +262,24 @@ describe('search', () => {
       filters: { ...DEFAULT_APPEAL_FILTERS, source: 'moderator', flag: 'minor' },
     });
     expect(items.map((i) => i.modelId)).toEqual([1]);
+  });
+
+  it('matches a model name as a case-insensitive substring, wildcards taken literally', async () => {
+    await db.query(`UPDATE "Model" SET name = 'Anime 10%_Girl' WHERE id = 5`);
+    const ids = async (text: string) =>
+      (await getMinorFlagAppealsForReview({ limit: 50, search: { text } })).items.map(
+        (i) => i.modelId
+      );
+
+    expect(await ids('aNiMe')).toEqual([5]);
+    expect(await ids('10%')).toEqual([5]);
+    // Unescaped, `_` would match the space in "model 1".
+    expect(await ids('l_1')).toEqual([]);
+    const f = appealFacets(
+      await getMinorFlagAppealGroups({ search: { text: 'anime' } }),
+      DEFAULT_APPEAL_FILTERS
+    );
+    expect(f.source.all).toBe(1);
   });
 });
 
@@ -275,7 +293,7 @@ describe('facet groups', () => {
 
   it('honours the search', async () => {
     const f = appealFacets(
-      await getMinorFlagAppealGroups({ search: { username: 'owner' } }),
+      await getMinorFlagAppealGroups({ search: { text: 'owner' } }),
       DEFAULT_APPEAL_FILTERS
     );
     expect(f.source.all).toBe(2);

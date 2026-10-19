@@ -141,6 +141,22 @@ describe('getMinorHashMatchesForReview', () => {
     expect(row).toMatchObject({ fileName: 'file-11.safetensors', fileSizeKB: 1024 });
   });
 
+  it('searches a model name as a case-insensitive substring, wildcards taken literally', async () => {
+    await seedModel(15, 3, 'aa');
+    await pg.query(`UPDATE "Model" SET name = 'Cute 100%_Chibi' WHERE id = 15`);
+    const ids = async (text: string) =>
+      (await getMinorHashMatchesForReview({ limit: 10, search: { text } })).items.map(
+        (r) => r.modelId
+      );
+
+    expect(await ids('chibi')).toEqual([15]);
+    expect(await ids('%')).toEqual([15]);
+    // Unescaped, `_` would match the space in "model 11".
+    expect(await ids('l_1')).toEqual([]);
+    // The uploader's name still matches whole.
+    expect(await ids('COPIER')).toEqual([11]);
+  });
+
   it('pages with one extra row to know there is another page', async () => {
     await seedModel(15, 3, 'aa');
     const first = await getMinorHashMatchesForReview({ limit: 1 });

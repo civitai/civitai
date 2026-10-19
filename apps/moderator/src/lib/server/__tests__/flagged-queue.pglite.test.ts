@@ -167,8 +167,21 @@ describe('getFlaggedModels', () => {
   });
 
   it('searches by username, ignoring case', async () => {
-    const { items } = await getFlaggedModels({ limit: 10, search: { username: 'OTHER' } });
+    const { items } = await getFlaggedModels({ limit: 10, search: { text: 'OTHER' } });
     expect(rowLabels(items)).toEqual([[2, ['minor', 'poi']]]);
+  });
+
+  it('searches a model name as a case-insensitive substring, wildcards taken literally', async () => {
+    await pg.query(`UPDATE "Model" SET name = 'Pony 50%_off' WHERE id = 2`);
+    const ids = async (text: string) =>
+      (await getFlaggedModels({ limit: 10, search: { text } })).items.map((r) => r.modelId);
+
+    expect(await ids('pONY')).toEqual([2]);
+    expect(await ids('%')).toEqual([2]);
+    // Unescaped, `_` would match the space in "model 1".
+    expect(await ids('l_1')).toEqual([]);
+    expect(await getFlaggedCount({ search: { text: 'pony' } })).toBe(1);
+    expect(await getRedetectedCount({ search: { text: 'pony' } })).toBe(2);
   });
 
   it('filters by label', async () => {
@@ -289,10 +302,10 @@ describe("getRedetectedCount with the list's filters", () => {
   it('counts under the flag filter and search, matching the list', async () => {
     expect(await getRedetectedCount({ flag: 'poi' })).toBe(1);
     expect(await getRedetectedCount({ flag: 'minor' })).toBe(2);
-    expect(await getRedetectedCount({ search: { username: 'OTHER' } })).toBe(2);
+    expect(await getRedetectedCount({ search: { text: 'OTHER' } })).toBe(2);
     expect(await getRedetectedCount({ search: { modelOrUserId: 1 } })).toBe(1);
     const filters = { source: 'all', flag: 'minor', sort: 'oldest' } as const;
-    const search = { username: 'owner' };
+    const search = { text: 'owner' };
     expect(await getRedetectedCount({ flag: 'minor', search })).toBe(
       (await getFlaggedModels({ limit: 10, search, filters })).items.length
     );
@@ -433,7 +446,7 @@ describe('hash auto-flags and the merged queue', () => {
       '1:minor:redetected',
     ]);
     expect(await keys({ search: { modelOrUserId: 21 } })).toEqual(['21:minor:hash']);
-    expect(await keys({ search: { username: 'OTHER' } })).toEqual(['21:minor:hash']);
+    expect(await keys({ search: { text: 'OTHER' } })).toEqual(['21:minor:hash']);
   });
 
   it('finds an aged-out hash flag only when searched by its model id', async () => {
@@ -441,7 +454,7 @@ describe('hash auto-flags and the merged queue', () => {
     expect(await keys({ search: { modelOrUserId: 22 } })).toEqual(['22:minor:hash']);
     // The uploader's id is not the model's: the window still applies to their other flags.
     expect(await keys({ search: { modelOrUserId: 1 } })).not.toContain('22:minor:hash');
-    expect(await keys({ search: { username: 'owner' } })).not.toContain('22:minor:hash');
+    expect(await keys({ search: { text: 'owner' } })).not.toContain('22:minor:hash');
     expect(await getFlaggedCount({ search: { modelOrUserId: 22 } })).toBe(1);
     expect(await getAutoFlaggedCount({ search: { modelOrUserId: 22 } })).toBe(1);
 
@@ -490,7 +503,7 @@ describe('hash auto-flags and the merged queue', () => {
     expect(await getFlaggedCount({ source: 'redetected' })).toBe(1);
     expect(await getFlaggedCount({ flag: 'poi' })).toBe(0);
     expect(await getFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
-    expect(await getFlaggedCount({ search: { username: 'other' } })).toBe(1);
+    expect(await getFlaggedCount({ search: { text: 'other' } })).toBe(1);
   });
 });
 
@@ -741,7 +754,7 @@ describe('text-scan auto-flags', () => {
     expect(await getTextScanFlaggedCount()).toBe(3);
     expect(await getTextScanFlaggedCount({ flag: 'poi' })).toBe(2);
     expect(await getTextScanFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
-    expect(await getTextScanFlaggedCount({ search: { username: 'other' } })).toBe(1);
+    expect(await getTextScanFlaggedCount({ search: { text: 'other' } })).toBe(1);
     // Models, not labels: 30 and 31 each carry two flags and count once.
     expect(await getFlaggedCount()).toBe(3);
     expect(await getFlaggedCount({ source: 'text-scan' })).toBe(2);

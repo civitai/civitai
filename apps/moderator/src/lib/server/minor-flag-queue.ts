@@ -80,7 +80,7 @@ function parsePaging(url: URL) {
     ? undefined
     : numeric !== null
     ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
-    : { username: q };
+    : { text: q };
   return { limit, page, q, offset: (page - 1) * limit, search };
 }
 

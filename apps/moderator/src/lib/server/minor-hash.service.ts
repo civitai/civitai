@@ -111,16 +111,32 @@ const minorSrcCte = sql`
  *  column to key on. The cost is dominated by building the seed set, which every page pays anyway. */
 export type Page = { limit: number; offset?: number; search?: MinorSearch };
 
-export type MinorSearch = { modelOrUserId: number } | { username: string };
+/** A numeric search is a model or user id; any other text is a whole username or part of a model name. */
+export type MinorSearch = { modelOrUserId: number } | { text: string };
 
+/** Needs the uploader joined as `u`. */
+const joinsUploader = (search: MinorSearch | undefined) => !!search && 'text' in search;
+
+const likeContains = (text: string) => `%${text.replace(/[\\%_]/g, '\\$&')}%`;
+
+/** A model `m` and its uploader `u`, the shape every queue but File matches searches. */
+const userRefs = {
+  modelId: 'm.id',
+  modelName: 'm.name',
+  userId: 'm.userId',
+  username: 'u.username',
+};
+
+/** The name match is an unindexed ILIKE, so it only ever narrows a queue's already-filtered set. */
 const searchPredicate = (
   search: MinorSearch | undefined,
-  refs: { modelId: string; userId: string; username: string },
+  refs: { modelId: string; modelName: string; userId: string; username: string },
   orSeed?: (id: number) => RawBuilder<unknown>
 ) => {
   if (!search) return sql`TRUE`;
-  if ('username' in search)
-    return sql`lower(${sql.ref(refs.username)}) = lower(${search.username})`;
+  if ('text' in search)
+    return sql`(lower(${sql.ref(refs.username)}) = lower(${search.text})
+      OR ${sql.ref(refs.modelName)} ILIKE ${likeContains(search.text)})`;
   const id = search.modelOrUserId;
   return sql`(${sql.ref(refs.modelId)} = ${id} OR ${sql.ref(refs.userId)} = ${id}${
     orSeed ? sql` OR ${orSeed(id)}` : sql``
@@ -211,7 +227,12 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
       -- searching another flagged model on that hash misses the row.
       AND ${searchPredicate(
         search,
-        { modelId: 'c.modelId', userId: 'c.userId', username: 'u.username' },
+        {
+          modelId: 'c.modelId',
+          modelName: 'c.modelName',
+          userId: 'c.userId',
+          username: 'u.username',
+        },
         (id) => sql`EXISTS (
           SELECT 1 FROM minor_src s3
           WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
@@ -506,11 +527,7 @@ export async function getMinorFlagAppealsForReview({
         AND a.status::text = 'Pending'
         AND ${appealSourcePredicate(filters.source)}
         AND ${appealFlagPredicate(filters.flag)}
-        AND ${searchPredicate(search, {
-          modelId: 'm.id',
-          userId: 'm.userId',
-          username: 'u.username',
-        })}
+        AND ${searchPredicate(search, userRefs)}
       ORDER BY ${inner}
       LIMIT ${limit + 1} OFFSET ${offset}
     )
@@ -572,14 +589,10 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
     SELECT ${flagSourceSql} AS source, m.minor, m.poi, count(*)::int AS count
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
-    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE a."entityType" = 'Model' AND a.category IS NULL
       AND a.status::text = 'Pending'
-      AND ${searchPredicate(search, {
-        modelId: 'm.id',
-        userId: 'm.userId',
-        username: 'u.username',
-      })}
+      AND ${searchPredicate(search, userRefs)}
     GROUP BY 1, 2, 3
   `.execute(dbRead);
   return rows.rows;
@@ -659,8 +672,6 @@ const redetectedLabelsJoin = sql`
 `;
 
 const redetectedAt = sql`(l.entry->'redetected'->>'at')::timestamptz`;
-
-const userRefs = { modelId: 'm.id', userId: 'm.userId', username: 'u.username' };
 
 /** Every branch selects the same columns, in this order, so they can be UNIONed and grouped. Only the
  *  model id and the flag's own facts: the model's columns are joined once after grouping, so no
@@ -888,7 +899,7 @@ export async function getAutoFlaggedCount({ search }: { search?: MinorSearch } =
   const result = await sql<{ count: number }>`
     SELECT count(*)::int AS count
     FROM "Model" m
-    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE ${hashFlaggedPredicate(search)}
       AND ${searchPredicate(search, userRefs)}
   `.execute(dbRead);
@@ -921,7 +932,7 @@ export async function getTextScanFlaggedCount({
     SELECT count(*)::int AS count
     FROM "Model" m
     ${redetectedLabelsJoin}
-    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE ${textScanFlaggedPredicate}
       AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
       AND ${searchPredicate(search, userRefs)}
@@ -939,15 +950,11 @@ export async function getRedetectedCount({
     SELECT count(*)::int AS count
     FROM "Model" m
     ${redetectedLabelsJoin}
-    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE ${redetectedIndexPredicate}
       AND l.entry ? 'redetected'
       AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
-      AND ${searchPredicate(search, {
-        modelId: 'm.id',
-        userId: 'm.userId',
-        username: 'u.username',
-      })}
+      AND ${searchPredicate(search, userRefs)}
   `.execute(dbRead);
   return result.rows[0]?.count ?? 0;
 }
