@@ -451,6 +451,30 @@ export interface SamplePrompt {
   text: string;
 }
 
+export const MAX_SAMPLE_PROMPTS = 6;
+
+/** The list with one more, empty, prompt row (an id past every existing one), or unchanged at the cap.
+ *  Empty, not example text: whatever the row holds is submitted unless the user rewrites it. */
+export function addSamplePrompt(prompts: SamplePrompt[]): SamplePrompt[] {
+  if (prompts.length >= MAX_SAMPLE_PROMPTS) return prompts;
+  const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
+  return [...prompts, { id, text: '' }];
+}
+
+/** The filled sample prompts, trimmed. An added row starts empty, and an empty sample prompt is not a
+ *  test image anyone asked for. */
+export function filledPrompts(texts: string[]): string[] {
+  return texts.map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
+/** The sample prompts a run is submitted with: the filled ones, or the rows as they are when none is
+ *  filled. Blank prompts generate no images either way; an all-blank list keeps the shape every
+ *  trainer has always sent rather than an empty array no submit path has been seen to accept. */
+export function submittedPrompts(texts: string[]): string[] {
+  const filled = filledPrompts(texts);
+  return filled.length ? filled : texts;
+}
+
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
  *  is no trigger, so callers can use it directly as "nothing to warn about". */
 export function promptHasTrigger(trigger: string, text: string): boolean {
@@ -566,7 +590,7 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
-      prompts,
+      prompts: submittedPrompts(prompts),
       currencies,
       meta: {
         name: name.trim() || t || selection.loraType,
