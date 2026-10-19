@@ -60,15 +60,36 @@
 -- approve of that listing until someone cleared the slot by hand. The indexes keep each "Image"
 -- DELETE's check of this table an index lookup, not a scan. The cost is the one-time lock above.
 --
--- GRANTS — nothing new: the columns are covered by the table-level grants of the earlier
--- migration (column privileges follow table privileges). Two roles matter for these columns:
---   - the role the app WRITES with (SELECT, INSERT, UPDATE, as before): setting or clearing a
---     slot, carrying the slots onto and back from a revision, and the review reading them;
---   - the role the app's READ client connects as (SELECT): the civitai.red store pages read the
---     slots through it, and so do the moderator queue rows and the per-submission review page.
---     Without it the store shows the listing's own icon and cover on civitai.red too (nothing
---     breaks) and those two moderator surfaces show no override tile; the review modal, its
---     preview and the approve itself still see the slots, because they use the write client.
+-- GRANTS — A REQUIRED STEP, AND IT ADDS ONE THE EARLIER MIGRATION SAID WAS NOT NEEDED
+-- (corrected 2026-10-19). `20261018192800_app_listing_red_media` says the read client's role needs
+-- no grant on this table; that stopped being true with these columns, which the app reads
+-- through its READ client. The columns themselves need nothing beyond table-level grants (column
+-- privileges follow table privileges), but BOTH roles must hold them. After applying this file,
+-- unless new tables are automatically granted to these roles in this environment, run (with
+-- this environment's actual role names):
+--   GRANT SELECT, INSERT, UPDATE ON "app_listing_red_media" TO <app_write_role>;
+--   GRANT SELECT ON "app_listing_red_media" TO <app_read_role>;
+-- and check both with `has_table_privilege('<role>', 'app_listing_red_media', '<privilege>')`.
+--   - <app_write_role>, the role the app's primary (write) client connects as — SELECT, INSERT,
+--     UPDATE: setting or clearing a slot, carrying the slots onto a revision when it is opened
+--     and back to the live listing when it is approved, the rating floors, the go-live scan
+--     check, and the review modal and its preview. Every slot write is an upsert, which
+--     PostgreSQL refuses without ALL THREE even when no row conflicts. Without them:
+--       · no SELECT: every listing reads as having no override (as before this file); setting
+--         or clearing a slot fails with a permission error;
+--       · SELECT but no INSERT: setting or clearing a slot fails with a permission error, so no
+--         revision can stage one; opening a revision still works (the code skips carrying the
+--         overrides onto it rather than fail the open), and approving it leaves the live
+--         overrides as they are;
+--       · SELECT and INSERT but no UPDATE: setting or clearing a slot fails with a permission
+--         error, and so does APPROVING A REVISION of a listing that has overrides (opening it
+--         carried them onto the revision; applying them back is an upsert).
+--   - <app_read_role>, the role the app's READ client connects as — SELECT: the civitai.red
+--     store pages, both moderator queues' rows and the per-submission review page read the
+--     slots through it, as does the approve's early (replica) scan check. Without it nothing
+--     fails: civitai.red shows each listing's own icon and cover instead of its overrides, those
+--     moderator surfaces show no override tile, and the early scan check skips the overrides
+--     (the authoritative in-transaction check on the write client still covers them).
 --
 -- ROLLBACK (discards every civitai.red icon and cover; every listing then shows its own icon
 -- and cover on every host, and the code does not need rolling back). Dropping the columns drops
