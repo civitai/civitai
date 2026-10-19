@@ -51,10 +51,11 @@ export function ModelDiscussionV2({
   );
   const hasHiddenComments = hiddenCommentsCount > 0;
 
-  const { data: totalCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery({
+  const { data: loadedTotal = 0 } = trpc.comment.getVisibleCountByModel.useQuery({
     modelId,
     hidden: onlyHidden,
   });
+  const totalCount = Math.max(loadedTotal, comments.length);
   const countLabel =
     totalCount > comments.length
       ? `Showing ${comments.length} of ${totalCount} comments`

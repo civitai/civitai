@@ -164,6 +164,14 @@ const CLAMP_HEIGHT = 100;
  * the Show More control, so deciding on mount shifted every card below it in the column.
  */
 const clampStateById = new Map<number, { overflows: boolean; expanded: boolean }>();
+const CLAMP_CACHE_LIMIT = 500;
+
+function rememberClampState(id: number, state: { overflows: boolean; expanded: boolean }) {
+  clampStateById.delete(id);
+  clampStateById.set(id, state);
+  if (clampStateById.size > CLAMP_CACHE_LIMIT)
+    clampStateById.delete(clampStateById.keys().next().value!);
+}
 
 function ClampedContent({ commentId, children }: { commentId: number; children: ReactNode }) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -172,7 +180,7 @@ function ClampedContent({ commentId, children }: { commentId: number; children: 
   const [expanded, setExpanded] = useState(cached?.expanded ?? false);
 
   useIsomorphicLayoutEffect(() => {
-    clampStateById.set(commentId, { overflows, expanded });
+    rememberClampState(commentId, { overflows, expanded });
   }, [commentId, overflows, expanded]);
 
   useIsomorphicLayoutEffect(() => {

@@ -1,5 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { assignLanes } from '~/components/Model/ModelDiscussion/comment-lanes';
+import type { Lanes } from '~/components/Model/ModelDiscussion/comment-lanes';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -33,30 +35,22 @@ export function CommentMasonryVirtual({
   const scrollMargin = useScrollMargin(ref);
 
   const heights = useRef(new Map<number, number>());
-  const lanes = useRef({ columnCount, byId: new Map<number, number>() });
+  const lanes = useRef<Lanes>({ columnCount, byId: new Map() });
 
-  // Columns are assigned once per comment. TanStack's own `lanes` option re-picks the shortest
-  // lane for every item on every measurement pass, so cards swap columns as heights settle.
   const columns = useMemo(() => {
     if (width === 0) return [];
-    if (lanes.current.columnCount !== columnCount) {
-      lanes.current = { columnCount, byId: new Map() };
-      heights.current.clear();
-    }
-    const { byId } = lanes.current;
-    const columnHeights = Array<number>(columnCount).fill(0);
-    const result: CommentGetAllItem[][] = Array.from({ length: columnCount }, () => []);
-
-    for (const comment of comments) {
-      let lane = byId.get(comment.id);
-      if (lane === undefined) {
-        lane = columnHeights.indexOf(Math.min(...columnHeights));
-        byId.set(comment.id, lane);
-      }
-      columnHeights[lane] += (heights.current.get(comment.id) ?? ESTIMATED_HEIGHT) + GAP;
-      result[lane].push(comment);
-    }
-    return result;
+    if (lanes.current.columnCount !== columnCount) heights.current.clear();
+    const result = assignLanes({
+      ids: comments.map((c) => c.id),
+      columnCount,
+      previous: lanes.current,
+      heights: heights.current,
+      estimate: ESTIMATED_HEIGHT,
+      gap: GAP,
+    });
+    lanes.current = result.lanes;
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    return result.columns.map((ids) => ids.map((id) => byId.get(id)!));
   }, [comments, columnCount, width]);
 
   return (
