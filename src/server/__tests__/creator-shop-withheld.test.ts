@@ -229,6 +229,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(listingsIn(() => [listingRow(LIVE)]));
   dbMock.dbRead.cosmeticShopItem.findUnique.mockReset().mockImplementation(() => storedListing);
+  dbMock.dbWrite.cosmeticShopItem.findUnique.mockReset().mockImplementation(() => storedListing);
   dbMock.dbWrite.cosmeticShopItem.update
     .mockReset()
     .mockImplementation(({ data }: { data: Record<string, unknown> }) => {
@@ -412,5 +413,132 @@ describe('equipped cosmetics shown to other users', () => {
     const worn = await userCosmeticCache.fetch([BUYER]);
 
     expect(worn[BUYER].cosmetics.map((c) => c.cosmeticId)).toEqual([OTHER_COSMETIC]);
+  });
+});
+
+describe('a verdict landing while an equip is in flight', () => {
+  type Worn = { equippedAt: Date | null; equippedToId: number | null; equippedToType: unknown };
+  // The creator's one copy, written through the same calls the services make.
+  let held: Worn;
+  type Where = {
+    userId?: number;
+    cosmeticId?: number | { in: number[] };
+    equippedAt?: { not: null };
+    OR?: Where[];
+  };
+  const matches = (where: Where): boolean =>
+    (where.userId === undefined || where.userId === CREATOR) &&
+    (where.cosmeticId === undefined ||
+      (typeof where.cosmeticId === 'number'
+        ? where.cosmeticId === COSMETIC
+        : where.cosmeticId.in.includes(COSMETIC))) &&
+    (where.equippedAt === undefined || held.equippedAt !== null) &&
+    (where.OR === undefined || where.OR.some((w) => matches(w)));
+  const nothingWorn: Worn = { equippedAt: null, equippedToId: null, equippedToType: null };
+
+  beforeEach(() => {
+    storedListing = listingRow(LIVE);
+    held = { ...nothingWorn };
+    dbMock.dbWrite.userCosmetic.updateMany.mockImplementation(
+      ({ where, data }: { where: Where; data: Partial<Worn> }) => {
+        if (!matches(where)) return { count: 0 };
+        held = { ...held, ...data };
+        return { count: 1 };
+      }
+    );
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation(({ where }: { where: Where }) =>
+      held.equippedAt || held.equippedToId
+        ? [{ userId: CREATOR, ...held, cosmeticId: COSMETIC, claimKey: 'creator-shop' }].filter(
+            () => matches(where)
+          )
+        : []
+    );
+    // The equip's own withheld check reads the item still live; the moderator's request-changes
+    // commits, and sweeps, right after it.
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockImplementationOnce(async (args) => {
+      const beforeVerdict = await listingsIn(() => [storedListing])(args);
+      await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
+      return beforeVerdict;
+    });
+  });
+
+  it('a worn equip ends unequipped', async () => {
+    dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
+      { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
+    ]);
+
+    const outcome = await equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC }).then(
+      () => 'equipped',
+      (e: Error) => e.message
+    );
+
+    expect(storedListing.status).toBe('RequestedChanges');
+    expect(held).toEqual(nothingWorn);
+    expect(outcome).toBe(IN_REVIEW);
+  });
+
+  it('a content placement ends unplaced', async () => {
+    dbMock.dbWrite.userCosmetic.findFirst.mockResolvedValue({
+      obtainedAt: new Date(),
+      equippedToId: null,
+      equippedToType: null,
+      forId: null,
+      forType: null,
+      data: null,
+      cosmetic: { type: 'ContentDecoration', data: { cssFrame: 'red' } },
+    });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: CREATOR });
+
+    const outcome = await equipCosmeticToEntity({
+      userId: CREATOR,
+      cosmeticId: COSMETIC,
+      claimKey: 'creator-shop',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    }).then(
+      () => 'placed',
+      (e: Error) => e.message
+    );
+
+    expect(storedListing.status).toBe('RequestedChanges');
+    expect(held).toEqual(nothingWorn);
+    expect(outcome).toBe(IN_REVIEW);
+  });
+});
+
+describe('a verdict landing while a creator edit is in flight', () => {
+  it('keeps the verdict, and the item stays withheld', async () => {
+    storedListing = listingRow(RELISTED);
+    // The edit reads the item still in review; the moderator's request-changes commits right after.
+    // Hooked on both clients so the test does not depend on which one the edit reads.
+    let verdictLanded = false;
+    const readThenVerdict = async () => {
+      const beforeVerdict = storedListing;
+      if (!verdictLanded) {
+        verdictLanded = true;
+        await reviewCreatorShopItem({
+          reviewerId: MOD,
+          id: 42,
+          action: 'request-changes',
+          rejectionReason: 'Visual quality',
+        });
+      }
+      return beforeVerdict;
+    };
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementationOnce(readThenVerdict);
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementationOnce(readThenVerdict);
+    const verdict = expect.objectContaining({ kind: 'reviewed', action: 'request-changes' });
+
+    const outcome = await updateCreatorShopItem({ id: 42, userId: CREATOR, price: 520 }).then(
+      () => 'saved',
+      (e: Error) => e.message
+    );
+
+    expect(storedListing).toMatchObject({
+      status: 'RequestedChanges',
+      rejectionReason: 'Visual quality',
+      meta: { displayApproved: false, history: expect.arrayContaining([verdict]) },
+    });
+    expect(outcome).toMatch(/changed while you were editing/);
   });
 });
