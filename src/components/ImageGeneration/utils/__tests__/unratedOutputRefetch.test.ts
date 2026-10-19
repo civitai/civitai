@@ -11,7 +11,7 @@ import {
   readCachedGeneratorWorkflows,
   scheduleUnratedRefetch,
   selectUnratedRefetch,
-  watchHeldOutputs,
+  createHeldOutputsWatch,
   watchUnratedRefetch,
 } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
@@ -351,15 +351,35 @@ describe('the generator re-reads only what is on screen', () => {
   it('re-reads the workflows the feed is holding back an output for', async () => {
     cache('held');
     cache('not-held');
-    const unwatch = watchHeldOutputs([
+    const watch = createHeldOutputsWatch();
+    watch.update([
       { id: 'held', pendingRatingOutput: [{}] },
       { id: 'not-held', pendingRatingOutput: [] },
     ]);
     await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
-    unwatch();
+    watch.stop();
 
     expect(updateWorkflowsStatus).toHaveBeenCalledTimes(1);
     expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['held']);
+  });
+
+  it('leaves a held workflow on its window when another one joins the list', async () => {
+    cache('stuck');
+    cache('joiner');
+    const watch = createHeldOutputsWatch();
+    watch.update([{ id: 'stuck', pendingRatingOutput: [{}] }]);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS * 2);
+    vi.mocked(updateWorkflowsStatus).mockClear();
+
+    watch.update([
+      { id: 'stuck', pendingRatingOutput: [{}] },
+      { id: 'joiner', pendingRatingOutput: [{}] },
+    ]);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS * 4);
+    watch.stop();
+
+    expect(vi.mocked(updateWorkflowsStatus).mock.calls.flat(2)).not.toContain('stuck');
+    expect(updateWorkflowsStatus).toHaveBeenCalledWith(['joiner']);
   });
 });
 

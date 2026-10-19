@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { getQueryKey } from '@trpc/react-query';
 import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
@@ -142,11 +142,23 @@ export function watchUnratedRefetch(workflowId: string) {
 
 type HoldingWorkflow = { id: string; pendingRatingOutput: unknown[] };
 
-export function watchHeldOutputs(workflows: HoldingWorkflow[]) {
-  const unwatch = workflows
-    .filter((workflow) => workflow.pendingRatingOutput.length)
-    .map((workflow) => watchUnratedRefetch(workflow.id));
-  return () => unwatch.forEach((fn) => fn());
+/** Watches the workflows holding an output for its rating. */
+export function createHeldOutputsWatch() {
+  let unwatch: Array<() => void> = [];
+  return {
+    update(workflows: HoldingWorkflow[]) {
+      // Watch the new set before dropping the old, so a workflow in both keeps its window.
+      const next = workflows
+        .filter((workflow) => workflow.pendingRatingOutput.length)
+        .map((workflow) => watchUnratedRefetch(workflow.id));
+      unwatch.forEach((fn) => fn());
+      unwatch = next;
+    },
+    stop() {
+      unwatch.forEach((fn) => fn());
+      unwatch = [];
+    },
+  };
 }
 
 /**
@@ -157,6 +169,9 @@ export function useWatchHeldOutputs(workflows: HoldingWorkflow[]) {
   // Keyed by the held ids: re-watching on every cache write would restart their backoff.
   const held = workflows.filter((workflow) => workflow.pendingRatingOutput.length);
   const key = held.map(({ id }) => id).join(',');
+  const watch = useRef<ReturnType<typeof createHeldOutputsWatch>>();
+  watch.current ??= createHeldOutputsWatch();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => watchHeldOutputs(held), [key]);
+  useEffect(() => watch.current?.update(held), [key]);
+  useEffect(() => () => watch.current?.stop(), []);
 }
