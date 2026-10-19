@@ -28,6 +28,7 @@ const {
   mockCheckDuplicateHashOnScan,
   mockIsFlipt,
   mockBustOrchestratorModelCache,
+  mockBustOrchestratorScannedFileCache,
   mockResourceDataBust,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
@@ -60,6 +61,7 @@ const {
     mockCheckDuplicateHashOnScan: vi.fn().mockResolvedValue('none'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
     mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
+    mockBustOrchestratorScannedFileCache: vi.fn().mockResolvedValue(undefined),
     mockResourceDataBust: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -96,6 +98,7 @@ vi.mock('~/server/services/notification.service', () => ({
 vi.mock('~/server/services/orchestrator/models', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorModels>()),
   bustOrchestratorModelCache: mockBustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache: mockBustOrchestratorScannedFileCache,
 }));
 
 vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
@@ -287,7 +290,7 @@ describe('model-file-scan.service', () => {
       id: 1,
       type: 'Model',
       modelVersionId: 100,
-      modelVersion: { modelId: 200 },
+      modelVersion: { modelId: 200, baseModel: 'SDXL 1.0', model: { type: 'Checkpoint' } },
     };
 
     function setupFileFound(file: typeof baseFile | null = baseFile) {
@@ -352,6 +355,36 @@ describe('model-file-scan.service', () => {
         expect(mockBustOrchestratorModelCache).toHaveBeenCalledTimes(1);
         expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
         expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      });
+
+      // The scan resolves `@100+<fileId>`, a separate orchestrator cache entry from the version's.
+      it("busts each failing file's own scanned AIR, even when its version was just busted", async () => {
+        setupFileFound();
+        await applyScanOutcome({ fileId: 1, failed: true });
+        setupFileFound({ ...baseFile, id: 2 });
+        await applyScanOutcome({ fileId: 2, failed: true });
+
+        expect(mockBustOrchestratorScannedFileCache.mock.calls).toEqual([
+          [
+            {
+              fileId: 1,
+              modelVersionId: 100,
+              modelId: 200,
+              modelType: 'Checkpoint',
+              baseModel: 'SDXL 1.0',
+            },
+          ],
+          [expect.objectContaining({ fileId: 2, modelVersionId: 100 })],
+        ]);
+      });
+
+      it("busts a file's scanned AIR once per window", async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+        await applyScanOutcome({ fileId: 1, failed: true });
+
+        expect(mockBustOrchestratorScannedFileCache).toHaveBeenCalledTimes(1);
       });
 
       it('busts each failing version', async () => {

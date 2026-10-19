@@ -9,8 +9,10 @@ import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.sc
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
+  modelFileScanAir,
   modelVersionAirSelect,
   modelVersionToAir,
+  type ModelFileScanAirInput,
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
 
@@ -90,6 +92,30 @@ async function invalidateVersions(versionIds: number[], userId?: number) {
     ),
   ];
 
+  await invalidateAirs(airs, userId);
+}
+
+/**
+ * Drop the orchestrator's cached answer for the AIR a file scan resolves. That AIR is pinned to the
+ * file (`@<version>+<fileId>`), and the orchestrator caches per exact AIR string, so the version
+ * busts above never reach it. Never throws.
+ */
+export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+
+  try {
+    await invalidateAirs([modelFileScanAir(file)]);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      fileId: file.fileId,
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateAirs(airs: string[], userId?: number) {
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 

@@ -21,7 +21,7 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelFileScanAir } from '~/server/utils/resource-air';
 import {
   DeliveryWorkerError,
   StorageResolverError,
@@ -844,13 +844,7 @@ export async function createModelFileScanRequest({
     }
   }
 
-  const air = stringifyAIR({
-    baseModel,
-    type: modelType,
-    modelId,
-    id: modelVersionId,
-    fileId,
-  });
+  const air = modelFileScanAir({ fileId, modelVersionId, modelId, modelType, baseModel });
 
   const metadata = { fileId, modelVersionId };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;

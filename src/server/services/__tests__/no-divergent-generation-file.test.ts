@@ -22,8 +22,6 @@ const AIR_ALLOWLIST = [
   // What the orchestrator reads. Default pick is getGenerationFile; an explicit modelFileId adds
   // `+<fileId>`, and the epoch arm addresses an orchestrator-hosted file, not a civitai one.
   'src/pages/api/v1/model-versions/mini/[id].ts',
-  // A model-file scan addresses one file by id, not a generation resource.
-  'src/server/services/orchestrator/orchestrator.service.ts',
   // Client display of the file the viewer selected, and training inputs — not generation.
   'src/components/Model/ModelURN/ModelURN.tsx',
   'src/components/Resource/Forms/TrainingSelectFile.tsx',
@@ -33,7 +31,6 @@ const AIR_ALLOWLIST = [
 
 const AIR_CALLS_PER_FILE: Record<string, number> = {
   'src/server/services/generation/generation.service.ts': 1,
-  'src/server/services/orchestrator/orchestrator.service.ts': 1,
   'src/pages/api/v1/model-versions/mini/[id].ts': 2,
 };
 

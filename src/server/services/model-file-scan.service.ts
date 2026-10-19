@@ -19,7 +19,10 @@ import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/mi
 import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  bustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache,
+} from '~/server/services/orchestrator/models';
 import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
@@ -159,7 +162,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       modelVersion: {
         select: {
           modelId: true,
-          model: { select: { userId: true, status: true, meta: true } },
+          baseModel: true,
+          model: { select: { userId: true, status: true, meta: true, type: true } },
         },
       },
     },
@@ -188,7 +192,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       where: { id: fileId },
       data: { scanRequestedAt: new Date() },
     });
-    await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId);
+    await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
     return;
   }
 
@@ -417,15 +421,35 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
 
+type FailedScanFile = {
+  id: number;
+  modelVersionId: number;
+  modelVersion: { modelId: number; baseModel: string; model: { type: ModelType } };
+};
+
 // The orchestrator caches a version's /mini answer for hours, so a failing answer cached during an
-// outage fails every retry until something busts it. At most once per version per hour (its files
-// fail together); logged, not thrown, so the retry bump already written stands.
-async function bustAfterFailedScan(modelVersionId: number) {
+// outage fails every retry until something busts it. It caches per exact AIR, and a scan resolves
+// its own file-pinned AIR, so that one is busted separately: the version AIRs at most once per
+// version per hour (its files fail together), the scanned AIR at most once per file per hour.
+// Logged, not thrown, so the retry bump already written stands.
+async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {
-    const key =
-      `${REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST}:${modelVersionId}` as const;
-    if (!(await sysRedis.setNxKeepTtlWithEx(key, '1', FAILURE_BUST_TTL_SECONDS))) return;
-    await bustOrchestratorModelCache(modelVersionId);
+    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    const [bustVersion, bustFile] = await Promise.all([
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+    ]);
+    await Promise.all([
+      bustVersion && bustOrchestratorModelCache(modelVersionId),
+      bustFile &&
+        bustOrchestratorScannedFileCache({
+          fileId: file.id,
+          modelVersionId: file.modelVersionId,
+          modelId: file.modelVersion.modelId,
+          modelType: file.modelVersion.model.type,
+          baseModel: file.modelVersion.baseModel,
+        }),
+    ]);
   } catch (e) {
     logToAxiom(
       {
@@ -433,6 +457,7 @@ async function bustAfterFailedScan(modelVersionId: number) {
         name: 'model-file-scan',
         message: `failed-scan bust failed: ${String(e)}`,
         modelVersionId,
+        fileId: file.id,
       },
       'webhooks'
     ).catch(() => undefined);
