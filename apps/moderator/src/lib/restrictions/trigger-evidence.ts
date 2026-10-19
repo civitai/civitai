@@ -47,12 +47,12 @@ export function explainMatches(trigger: MatchSource): ExplainedMatch[] {
   const raw = trigger.matches?.length
     ? trigger.matches
     : trigger.category ||
-        trigger.matchedWord ||
-        trigger.matchedText ||
-        trigger.matchedRegex ||
-        trigger.gateWord
-      ? [trigger]
-      : [];
+      trigger.matchedWord ||
+      trigger.matchedText ||
+      trigger.matchedRegex ||
+      trigger.gateWord
+    ? [trigger]
+    : [];
   return raw.map((m) => ({
     category: m.category || undefined,
     text: m.matchedText || m.matchedWord || undefined,
