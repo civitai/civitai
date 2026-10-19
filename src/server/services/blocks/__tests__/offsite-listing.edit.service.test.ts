@@ -2232,10 +2232,9 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
       .mockResolvedValueOnce([row])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    // Icon R → the icon problem (not the PG cover's); screenshot X counted, the PG-13 one not.
+    // Icon R → the icon problem (not the PG cover's); the X and PG-13 screenshots raise none.
     expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
       ['sfw-slot-mature', 'Your icon is rated R'],
-      ['red-only-screenshots', '1 screenshot is rate'],
     ]);
   });
 

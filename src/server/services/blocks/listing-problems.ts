@@ -116,8 +116,7 @@ export type ListingProblemCode =
   | 'blocked-media'
   | 'scanning-media'
   | 'hidden-mature-rating'
-  | 'sfw-slot-mature'
-  | 'red-only-screenshots';
+  | 'sfw-slot-mature';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
@@ -246,7 +245,7 @@ function isEmpty(value: string | null | undefined): boolean {
  * Enumerate a listing's advisory problems. Never throws. Order is stable: assets
  * (icon → cover → screenshots, from the shared gate), empty text fields (description →
  * tagline → category), media scans (blocked, then pending), the hidden-rating notice,
- * then the civitai.com media problems (icon → cover → screenshots). Returns
+ * then the civitai.com media problems (icon → cover). Returns
  * `{ problems: [] }` when none apply.
  */
 export function computeListingProblems(listing: ListingProblemInput): ListingProblemsResult {
@@ -326,9 +325,11 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
 }
 
 /**
- * A live listing still shown on civitai.com whose icon, cover or screenshots are rated above
- * what civitai.com shows for its rating: the store there falls back past them, and only
- * civitai.red shows them. Advisory — the listing stays listed either way.
+ * A live listing still shown on civitai.com whose icon or cover is rated above what
+ * civitai.com shows for its rating: the store there falls back past it (a placeholder icon,
+ * another image as cover), and only civitai.red shows it. Advisory — the listing stays listed
+ * either way. Screenshots above the rating raise nothing: they are hidden per image on
+ * civitai.com and nothing stands in for them.
  */
 function comMediaProblems(
   listing: ListingProblemInput,
@@ -358,16 +359,6 @@ function comMediaProblems(
       severity: 'advisory',
     });
   }
-  const shots = redOnly.filter((s) => s.kind === 'screenshot').length;
-  if (shots > 0)
-    out.push({
-      code: 'red-only-screenshots',
-      label:
-        shots === 1
-          ? `1 screenshot is rated above this listing's rating and shows only on ${MATURE_STORE_HOST}.`
-          : `${shots} screenshots are rated above this listing's rating and show only on ${MATURE_STORE_HOST}.`,
-      severity: 'advisory',
-    });
   return out;
 }
 

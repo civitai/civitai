@@ -54,28 +54,17 @@ describe('computeListingProblems — civitai.com media', () => {
     ]);
   });
 
-  it('counts the screenshots that show only on civitai.red, in one problem', () => {
+  it('screenshots rated above the listing raise no problem; the icon beside them still does', () => {
     expect(
       problems({
         assetScans: [
+          scan('icon', NsfwLevel.R),
           scan('screenshot', NsfwLevel.R),
           scan('screenshot', NsfwLevel.PG),
           scan('screenshot', NsfwLevel.XXX),
         ],
-      })
-    ).toEqual([
-      {
-        code: 'red-only-screenshots',
-        severity: 'advisory',
-        label: "2 screenshots are rated above this listing's rating and show only on civitai.red.",
-      },
-    ]);
-  });
-
-  it('one screenshot is singular', () => {
-    expect(problems({ assetScans: [scan('screenshot', NsfwLevel.R)] })[0].label).toBe(
-      "1 screenshot is rated above this listing's rating and shows only on civitai.red."
-    );
+      }).map((p) => p.code)
+    ).toEqual(['sfw-slot-mature']);
   });
 
   it('measures against the listing rating, not SFW: a PG-13 icon on a g listing is flagged, on a pg13 one it is not', () => {
