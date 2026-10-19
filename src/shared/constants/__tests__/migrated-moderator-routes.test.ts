@@ -50,11 +50,11 @@ describe('isMigratedModeratorHref ignores query and hash', () => {
 
 describe('Model Flags redirects', () => {
   it('sends each old tab path to its own page', () => {
-    expect(resolveMigratedRoute('minor-hash-matches')).toBe('models/flags/matches');
-    expect(resolveMigratedRoute('minor-hash-matches/appeals')).toBe('models/flags/appeals');
-    expect(resolveMigratedRoute('minor-hash-matches/auto')).toBe(
-      'models/flags/review?source=hash'
+    expect(resolveMigratedRoute('minor-hash-matches')).toBe(
+      'models/flags/needs-review?source=hash'
     );
+    expect(resolveMigratedRoute('minor-hash-matches/appeals')).toBe('models/flags/appeals');
+    expect(resolveMigratedRoute('minor-hash-matches/auto')).toBe('models/flags/auto?source=hash');
   });
 
   it('marks the nav links that now leave the app', () => {
