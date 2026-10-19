@@ -1060,6 +1060,14 @@ const hasFeature = (
     if (!serverMatch) return false;
   }
 
+  // [DO NOT MERGE] Demo-only: Creator Services on for this PR's preview deployment.
+  if (
+    key === 'creatorServices' &&
+    process.env.IS_PREVIEW === 'true' &&
+    process.env.CACHE_KEY_NAMESPACE === 'preview'
+  )
+    return true;
+
   // Flipt overrides role checks (both enable AND disable) — but not ENV, region, or domain.
   // When Flipt is unavailable, fall through to static evaluation.
   if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
