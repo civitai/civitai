@@ -1,6 +1,6 @@
 # CSAM text holds queue
 
-A moderator-app queue at `/csam/text-holds` (sidebar: Images > Text holds) listing every Pending
+A moderator-app queue at `/csam/text-holds` (sidebar: Text Scan > CSAM holds) listing every Pending
 `TextScanHold` row with label `csam`, oldest first. Each item shows the held text as the scan
 composed it, the model's reason, the author, when the hold and the content were created, the prompt
 id and the workflow id, with a link to the content where one exists. It can be narrowed to one
