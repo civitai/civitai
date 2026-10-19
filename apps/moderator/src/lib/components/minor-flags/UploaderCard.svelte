@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { userLookupUrl } from '$lib/entity-url';
-  import { LINK_CLASS, plural } from '$lib/format';
+  import { plural } from '$lib/format';
   import { yearMonth } from '$lib/minor-flags/appeal-row';
   import { flagsText, type ModelFlagDetail } from '$lib/minor-flags/model-detail';
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
@@ -25,7 +24,7 @@
   <dl class="m-0 space-y-2">
     <FactRow label="User">
       {#if row.username}
-        <a href={userLookupUrl(row.userId)} class="font-medium {LINK_CLASS}">{row.username}</a>
+        <span class="font-medium text-white">{row.username}</span>
       {:else}
         user #{row.userId}
       {/if}

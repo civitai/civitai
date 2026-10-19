@@ -26,7 +26,6 @@
     detail: Promise<ModelFlagDetail>;
   } = $props();
 
-  const tags = $derived(clipList(row.tags, 12, row.tagCount));
   const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
 </script>
 
@@ -51,18 +50,6 @@
       )}
     </FactRow>
     <FactRow label="Files">{@render loaded((d) => filesText(d.mainFile))}</FactRow>
-    {#if tags.shown.length}
-      <FactRow label="Tags">
-        <span class="flex flex-wrap items-center gap-1.5">
-          {#each tags.shown as tag (tag)}
-            <Badge variant="secondary" class="h-5 max-w-56 px-2 text-xs">
-              <span class="truncate">{tag}</span>
-            </Badge>
-          {/each}
-          {#if tags.more}<span class="text-dark-2">+{tags.more} more</span>{/if}
-        </span>
-      </FactRow>
-    {/if}
     {#if words.shown.length}
       <FactRow label="Trigger words">
         <span class="flex flex-wrap items-center gap-1.5">

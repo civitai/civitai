@@ -36,8 +36,8 @@
 </script>
 
 {#snippet listHeader()}
-  <p class="m-0 flex items-start gap-2 text-sm text-dark-1">
-    <IconInfoCircle class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+  <p class="m-0 flex items-start gap-2 text-xs leading-[1.45] text-dark-1">
+    <IconInfoCircle class="mt-px size-3.5 shrink-0" aria-hidden="true" />
     <span>
       Minor only. Unflagged models that share a file with a minor-flagged model, from a different
       uploader. Same-uploader matches are auto-flagged and sit in Flagged.
@@ -87,7 +87,7 @@
       onselect={state.select}
     >
       {#snippet badges()}
-        <MetaChip>shares file with {row.minorModelName ?? `model #${row.minorModelId}`}</MetaChip>
+        <MetaChip truncate>shares file with {row.minorModelName ?? `model #${row.minorModelId}`}</MetaChip>
       {/snippet}
     </TriageRow>
   {/snippet}

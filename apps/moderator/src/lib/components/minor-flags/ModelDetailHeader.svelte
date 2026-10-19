@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userLookupUrl } from '$lib/entity-url';
-  import { modelUrl } from '$lib/minor-flags/appeal-row';
+  import { modelRef, modelUrl } from '$lib/minor-flags/appeal-row';
   import type { ModelFlagDetail } from '$lib/minor-flags/model-detail';
 
   let {
@@ -29,7 +29,7 @@
     'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
 </script>
 
-<TriageDetailHeader title={modelName} reference="#{modelId}" {chips}>
+<TriageDetailHeader title={modelName} reference={modelRef(modelId)} {chips} linksBeside>
   {#snippet links()}
     <Button variant="outline" size="sm" class={LINK_BUTTON} {href} target="_blank" rel="noreferrer">
       <IconExternalLink aria-hidden="true" /> Open on Civitai

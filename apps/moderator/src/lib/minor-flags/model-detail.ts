@@ -121,3 +121,21 @@ export const textSinceFlag = (
   if (!newest) return null;
   return newest.textHash === flagHash ? 'unchanged' : 'changed';
 };
+
+/** The provenance line of a hash flag: "hash sweep, 3 d ago · 27 days left, then the flag is presumed
+ *  correct". `daysLeft` is null outside the review window's reach (a confirmed or manual flag). */
+export const hashSweepText = (
+  flaggedAt: Date | string | null,
+  daysLeft: number | null,
+  now = Date.now()
+) => {
+  const parts = [flaggedAt ? `hash sweep, ${ago(flaggedAt, now)}` : 'hash sweep'];
+  if (daysLeft === 0) parts.push('review window closed; the flag is presumed correct');
+  else if (daysLeft !== null)
+    parts.push(`${plural(daysLeft, 'day')} left, then the flag is presumed correct`);
+  return parts.join(' · ');
+};
+
+/** Why a hash flag was applied, in the words the Flagged and Appeals why-cards share. */
+export const HASH_FLAG_REASON =
+  'Its main file is byte-identical to a file in a model a moderator flagged as minor. The uploader is the same account, so the flag was applied automatically.';

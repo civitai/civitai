@@ -259,7 +259,7 @@
         appealedAt={row.appealCreatedAt}
         nthThisYear={row.appealNthThisYear}
       />
-      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} {detail} />
+      <WhyFlaggedCard {row} {canUphold} {detail} />
     </div>
 
     <PriorRulingsCard

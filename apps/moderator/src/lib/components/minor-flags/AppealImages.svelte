@@ -8,7 +8,11 @@
 </script>
 
 {#if images.length}
-  <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+  <!-- As many columns as tiles (up to four), so two or three previews fill the row. -->
+  <div
+    class="grid grid-cols-2 gap-2.5 md:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]"
+    style:--tiles={Math.min(images.length, 4)}
+  >
     {#each images as image, i (image.id)}
       <a
         href={getEdgeUrl(image.url, { type: 'image', original: true })}

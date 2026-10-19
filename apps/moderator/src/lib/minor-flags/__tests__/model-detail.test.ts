@@ -7,6 +7,7 @@ import {
   previewCountText,
   ratingText,
   textSinceFlag,
+  hashSweepText,
   versionsText,
 } from '../model-detail';
 
@@ -101,5 +102,23 @@ describe('textSinceFlag', () => {
     expect(textSinceFlag('h', { main: row('a', null), search: null })).toBeNull();
     expect(textSinceFlag(null, { main: row('a', 'h'), search: null })).toBeNull();
     expect(textSinceFlag('h', null)).toBeNull();
+  });
+});
+
+describe('hashSweepText', () => {
+  it('names the sweep, its age and what is left of the review window', () => {
+    expect(hashSweepText('2026-10-16T12:00:00Z', 27, NOW)).toBe(
+      'hash sweep, 3 d ago · 27 days left, then the flag is presumed correct'
+    );
+    expect(hashSweepText('2026-10-16T12:00:00Z', 1, NOW)).toBe(
+      'hash sweep, 3 d ago · 1 day left, then the flag is presumed correct'
+    );
+    expect(hashSweepText('2026-09-01T12:00:00Z', 0, NOW)).toBe(
+      'hash sweep, 48 d ago · review window closed; the flag is presumed correct'
+    );
+  });
+  it('leaves out what it does not know', () => {
+    expect(hashSweepText('2026-10-16T12:00:00Z', null, NOW)).toBe('hash sweep, 3 d ago');
+    expect(hashSweepText(null, null, NOW)).toBe('hash sweep');
   });
 });

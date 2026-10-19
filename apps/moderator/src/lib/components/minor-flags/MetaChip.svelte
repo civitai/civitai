@@ -6,11 +6,14 @@
   let {
     tone = 'neutral',
     solid = false,
+    truncate = false,
     children,
   }: {
     tone?: 'neutral' | 'blue' | 'violet' | 'amber' | 'green' | 'red';
     /** Filled with the tone, white text: the one chip that names what the item is (an appeal). */
     solid?: boolean;
+    /** Clip a long label with an ellipsis inside the row instead of overflowing it. */
+    truncate?: boolean;
     children: Snippet;
   } = $props();
 
@@ -37,8 +40,9 @@
   variant="outline"
   class={cn(
     'h-auto rounded px-[7px] py-0.5 text-[11px] leading-[13px] font-medium',
-    solid ? ['text-white', SOLID[tone]] : ['bg-dark-6', TONE[tone]]
+    solid ? ['text-white', SOLID[tone]] : ['bg-dark-6', TONE[tone]],
+    truncate && 'min-w-0 max-w-full'
   )}
 >
-  {@render children()}
+  {#if truncate}<span class="truncate">{@render children()}</span>{:else}{@render children()}{/if}
 </Badge>

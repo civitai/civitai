@@ -73,7 +73,7 @@
       {detail}
     />
 
-    <div class="grid gap-4 lg:grid-cols-[1fr_400px]">
+    <div class="grid items-start gap-4 lg:grid-cols-[1fr_400px]">
       <TriageCard dense title="Why it is here">
         <div class="space-y-2 text-dark-0">
           <p class="m-0">

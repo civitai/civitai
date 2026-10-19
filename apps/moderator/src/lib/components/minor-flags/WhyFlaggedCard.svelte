@@ -4,13 +4,15 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { dateTime } from '$lib/format';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
-  import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
+  import { ago } from '$lib/minor-flags/appeal-row';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
   import {
+    HASH_FLAG_REASON,
     flagPromptId,
     flagScanSource,
+    hashSweepText,
     type ModelFlagDetail,
   } from '$lib/minor-flags/model-detail';
   import {
@@ -24,12 +26,10 @@
 
   let {
     row,
-    civitaiUrl,
     canUphold,
     detail,
   }: {
     row: MinorFlagAppealRow;
-    civitaiUrl: string;
     canUphold: boolean;
     detail: Promise<ModelFlagDetail>;
   } = $props();
@@ -49,22 +49,35 @@
   const isHash = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash');
   // Derived, not an effect: the parent keys the detail per appeal, so a late response can't land on another one.
   const hashDetail = $derived(browser && isHash ? fetchHashDetail(modelId) : null);
+
+  // A minor flag no text-scan verdict explains (hash, a moderator, or no record) gets its own block, so
+  // every label in force reads the same way: label, Flagged chip, reason, where it came from.
+  const minorBlock = $derived.by(() => {
+    if (!row.minor || verdicts.some((v) => v.label === 'minor')) return null;
+    const source = effectiveSource(row.flagSource, row.flagConfirmedFrom);
+    if (source === 'hash')
+      return { reason: HASH_FLAG_REASON, provenance: hashSweepText(row.flaggedAt, null) };
+    const at = row.flaggedAt ? `, ${ago(row.flaggedAt)}` : '';
+    return source === 'moderator'
+      ? { reason: 'A moderator set this model as minor.', provenance: `set as minor${at}` }
+      : {
+          reason: 'Nothing stored says what set this flag.',
+          provenance: `${sourceLabel(row.flagSource, row.flagConfirmedFrom).toLowerCase()}${at}`,
+        };
+  });
 </script>
 
 <TriageCard dense title="Why it was flagged">
   <div class="space-y-2 text-dark-0">
-    <p class="m-0">{sourceLabel(row.flagSource, row.flagConfirmedFrom)}</p>
-
-    {#if row.flaggedAt}
-      <p class="m-0 text-sm" title={dateTime(row.flaggedAt)}>Flagged {ago(row.flaggedAt)}</p>
-    {/if}
-    {#if row.flaggedByUsername}
-      <p class="m-0 text-sm">
-        Set by <span class="font-medium text-white">{row.flaggedByUsername}</span>
-        {#if row.flaggedByAt}
-          <span title={dateTime(row.flaggedByAt)}>{ago(row.flaggedByAt)}</span>
-        {/if}
-      </p>
+    {#if minorBlock}
+      <FlagVerdictBlock label="minor" reason={minorBlock.reason}>
+        {#snippet provenance()}
+          <span title={row.flaggedAt ? dateTime(row.flaggedAt) : undefined}>{minorBlock.provenance}</span
+          >{#if row.flaggedByUsername}{' · '}set by {row.flaggedByUsername}{#if row.flaggedByAt}{' '}<span
+                title={dateTime(row.flaggedByAt)}>{ago(row.flaggedByAt)}</span
+              >{/if}{/if}
+        {/snippet}
+      </FlagVerdictBlock>
     {/if}
 
     {#each verdicts as { label, flag } (label)}
@@ -115,33 +128,11 @@
       </div>
     {/if}
 
+    <!-- The matched model is not shown here (the design has no shared-file box on an appeal); only a
+         match that no longer resolves is called out, since it changes whether to keep the flag. -->
     {#if hashDetail}
-      {#await hashDetail}
-        <p class="m-0 text-sm text-dark-2">Looking up the matched model…</p>
-      {:then payload}
-        {#if payload.match}
-          {@const m = payload.match}
-          {@const d = payload.detail}
-          <div class="rounded-md bg-dark-6 p-3 text-sm">
-            <p class="m-0">
-              Shares a file with
-              <a
-                href={modelUrl(civitaiUrl, m.minorModelId, m.minorModelVersionId)}
-                target="_blank"
-                rel="noreferrer"
-                class={LINK_CLASS}
-              >
-                {m.minorModelName ?? `#${m.minorModelId}`} ↗
-              </a>
-              {#if d?.minorUsername}by {d.minorUsername}{/if}
-              {#if d?.minorModelStatus}({d.minorModelStatus}){/if}
-            </p>
-            {#if d?.minorModelDeletedAt}
-              <p class="m-0 mt-1">Deleted {dateTime(d.minorModelDeletedAt)}</p>
-            {/if}
-            <p class="m-0 mt-1 text-xs break-all text-dark-2">SHA256 <code>{m.hash}</code></p>
-          </div>
-        {:else}
+      {#await hashDetail then payload}
+        {#if !payload.match}
           <p
             class="m-0 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"
           >
@@ -151,16 +142,8 @@
           </p>
         {/if}
       {:catch}
-        <p class="m-0 text-sm text-red-300">Could not load the matched model.</p>
+        <p class="m-0 text-xs text-red-300">Could not check the matched model.</p>
       {/await}
-    {/if}
-
-    {#if row.prevNsfw != null || row.prevGalleryLevel != null}
-      <p class="m-0 text-sm">
-        Before the flag: NSFW {row.prevNsfw ? 'on' : 'off'}{row.prevGalleryLevel != null
-          ? `, gallery level ${row.prevGalleryLevel}`
-          : ''}
-      </p>
     {/if}
 
     {#if !canUphold}

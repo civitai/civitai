@@ -4,6 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
+  import { IconMessage } from '@tabler/icons-svelte';
   import { page } from '$app/state';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
@@ -36,8 +37,10 @@
     type FlagRef,
   } from '$lib/minor-flags/flagged-decision';
   import {
+    HASH_FLAG_REASON,
     fetchModelFlagDetail,
     flagPromptId,
+    hashSweepText,
     flagScanSource,
     textSinceFlag,
   } from '$lib/minor-flags/model-detail';
@@ -177,7 +180,11 @@
 </script>
 
 {#snippet appealNotice()}
-  <div class="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
+  <div
+    class="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs leading-[1.45] text-amber-200"
+  >
+    <IconMessage class="mt-px size-3.5 shrink-0" aria-hidden="true" />
+    <p class="m-0">
     The owner has an open appeal on this model. Reverting a flag here closes it with the same reason;
     keeping a flag has to wait for the appeal.
     {#if canOpenAppeals}
@@ -185,6 +192,7 @@
     {:else}
       It is waiting in Appeals.
     {/if}
+    </p>
   </div>
 {/snippet}
 
@@ -214,23 +222,12 @@
 {/snippet}
 
 {#snippet hashWhy(flag: FlaggedFlagItem)}
-  <FlagVerdictBlock
-    label={flag.label}
-    reason="Its main file is byte-identical to a file in a model a moderator flagged as minor. The uploader is the same account, so the flag was applied automatically."
-  >
+  <FlagVerdictBlock label={flag.label} reason={HASH_FLAG_REASON}>
     {#snippet provenance()}
-      hash sweep{#if flag.flaggedAt}, <span title={dateTime(flag.flaggedAt)}>{ago(flag.flaggedAt)}</span
-        >{/if}{#if flag.daysLeft !== null}
-        · {#if flag.daysLeft === 0}review window closed; the flag is presumed correct{:else}{flag.daysLeft}
-          day{flag.daysLeft === 1 ? '' : 's'} left, then the flag is presumed correct{/if}{/if}
+      <span title={flag.flaggedAt ? dateTime(flag.flaggedAt) : undefined}
+        >{hashSweepText(flag.flaggedAt, flag.daysLeft)}</span
+      >
     {/snippet}
-    {#if flag.prevNsfw != null || flag.prevGalleryLevel != null}
-      <p class="m-0 text-[11px] text-dark-2">
-        Before the flag: NSFW {flag.prevNsfw ? 'on' : 'off'}{flag.prevGalleryLevel != null
-          ? `, gallery level ${flag.prevGalleryLevel}`
-          : ''}
-      </p>
-    {/if}
   </FlagVerdictBlock>
 {/snippet}
 
