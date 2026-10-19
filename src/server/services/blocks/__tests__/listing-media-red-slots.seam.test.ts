@@ -18,6 +18,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * 23 (PG, `rp.png`), 24 (R but Blocked, `rb.png`), 25 (unrated, `ru.png`).
  */
 
+// For the page's SSR wiring, which takes a request HOST: `civitai.red` is configured as a blue
+// alias AND the red primary, as in production (see `listing-media-audience.test.ts`).
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+  process.env.SERVER_DOMAIN_BLUE_ALIASES = 'civitai.red';
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
 vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (src: string, opts?: { width?: number }) => `edge:${src}@${opts?.width ?? 'auto'}`,
 }));
@@ -45,13 +52,23 @@ vi.mock('~/server/utils/cache-helpers', async () => {
   };
 });
 
+// The listing page's SSR scope read (`resolveListingPageSocialImage`); everything else real.
+const { storeScope } = vi.hoisted(() => ({ storeScope: { current: 'full' as string } }));
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppBlocksFlag>()),
+  resolveStoreVisibilityScope: vi.fn(async () => storeScope.current),
+}));
+import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   getListingDetail,
   getListingPreviewForReview,
+  getListingSocialImage,
   listAvailableListings,
 } from '../app-listing.service';
+import { resolveListingPageSocialImage } from '../listing-page-social-image';
 import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -159,6 +176,7 @@ function namesOverrideTable(strings: TemplateStringsArray, values: unknown[]) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  storeScope.current = 'full';
   cacheStore.clear();
   redStatements.dbRead = 0;
   redStatements.dbWrite = 0;
@@ -330,5 +348,91 @@ describe('the moderator preview carries every image with its level, overrides in
     });
     // Read through the WRITE client, like the rest of the review's media state.
     expect(redStatements.dbWrite).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * P3 — the listing page's social image (`og:image`), through the real detail gates and the real
+ * override read. Held to the ANONYMOUS ceiling of the host: no host ever gets a mature image;
+ * civitai.red may use its cover / icon override only when that passes, else the listing's own.
+ * Extra fixtures: 31 (R own cover, `or.png`).
+ */
+describe('P3 — the page’s social image is per host and never mature', () => {
+  const OWN_R = img(31, 'or.png', R);
+  const social = (redCapable: boolean) =>
+    getListingSocialImage({ slug: 'red-seam' }, { redCapable, scope: 'full', floor: 'public' });
+
+  it('🔴 civitai.com never emits a mature image: an R own cover falls to the next SFW image', async () => {
+    row = { ...listingRow(), cover: OWN_R };
+    // Not the R cover; the `g` listing's PG-13 screenshot is outside its own rating too; the
+    // PG icon is what passes.
+    expect(await social(false)).toEqual({ url: 'edge:a.png@256', nsfwLevel: PG });
+    // Positive control: with a PG own cover, the cover is the image.
+    row = listingRow();
+    expect(await social(false)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('🔴 civitai.red uses its cover override when it passes the gate', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 23 });
+    expect(await social(true)).toEqual({ url: 'edge:rp.png@1200', nsfwLevel: PG });
+  });
+
+  it('🔴 civitai.red falls back to the SFW cover when the override is mature — even XXX', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 22, icon: 21 });
+    expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('civitai.red uses its icon override when no cover passes', async () => {
+    await split.setRedSlots(LISTING_ID, { icon: 23 });
+    row = { ...listingRow({ cover: null }), screenshots: [] };
+    expect(await social(true)).toEqual({ url: 'edge:rp.png@256', nsfwLevel: PG });
+  });
+
+  it('🔴 civitai.com never reads an override, and never shows one — even a SFW one', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 23, icon: 23 });
+    redStatements.dbRead = 0;
+    expect(await social(false)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    expect(redStatements.dbRead, 'a non-red read reached the override table').toBe(0);
+  });
+
+  it('a listing the detail read would refuse yields no image (shared gates)', async () => {
+    // A mature listing off a red host is not served at all, so it has no preview there either.
+    row = listingRow({ contentRating: 'r' });
+    expect(await social(false)).toBeNull();
+    // Positive control: the same listing on a red host is served, with its SFW cover.
+    expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('a listing with no image that passes yields none', async () => {
+    row = { ...listingRow({ cover: OWN_R }), icon: OWN_R, screenshots: [] };
+    expect(await social(false)).toBeNull();
+    expect(await social(true)).toBeNull();
+  });
+});
+
+describe('P3 — the listing page SSR wiring', () => {
+  const page = (host: string, isClient = false) =>
+    resolveListingPageSocialImage({ slug: 'red-seam', host, user: null, isClient });
+
+  it('🔴 the request host decides: the override on civitai.red, the own cover on civitai.com', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 23 });
+    expect(await page('civitai.red')).toEqual({ url: 'edge:rp.png@1200', nsfwLevel: PG });
+    expect(await page('civitai.com')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('a client-side navigation reads nothing', async () => {
+    expect(await page('civitai.red', true)).toBeNull();
+    expect(dbMock.dbRead.appListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('no store scope, no image', async () => {
+    storeScope.current = 'none';
+    expect(await page('civitai.com')).toBeNull();
+    expect(dbMock.dbRead.appListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a failing read is no image, never an error page', async () => {
+    dbMock.dbRead.appListing.findFirst.mockRejectedValueOnce(new Error('connection reset'));
+    expect(await page('civitai.com')).toBeNull();
   });
 });

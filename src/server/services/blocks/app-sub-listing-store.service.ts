@@ -113,16 +113,26 @@ export type SubListingViewer = {
 };
 
 /**
- * The levels an item image may carry to be shown to this viewer on this card: the viewer's
- * browsing level, capped at SFW unless the host is red-capable, and capped at the card's own
- * (effective) rating so an image cannot be more mature than the card that carries it.
+ * The levels an image may carry to be shown to this viewer on one sub-listing card — the item's
+ * own image and the parent's cover / icon fallback alike.
+ *
+ * Off a red-capable host: the viewer's browsing level ∩ SFW ∩ the card's own (effective)
+ * rating, so an image there is never more mature than the card that carries it.
+ *
+ * On a red-capable host: that same non-red ceiling, lifted by the shared listing-media red-host
+ * rule (`redHostMediaCeiling`: ∪ the viewer's opted-in levels, Blocked excluded). The card's
+ * rating does NOT cap it there — a `pg` item may show its R image to a viewer who opted into R,
+ * as the main listing's screenshots do. A viewer who has not opted in, anonymous included, sees
+ * exactly what a non-red host shows, never less.
  */
 export function subListingImageCeiling(viewer: SubListingViewer, rating: string | null): number {
   const viewerLevel = onlySelectableLevels(viewer.browsingLevel ?? 0) || publicBrowsingLevelsFlag;
   const ratingMax = nsfwLevelFromContentRating(rating);
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
-  const hostLevels = viewer.redCapable ? ratingLevels : sfwBrowsingLevelsFlag;
-  return viewerLevel & ratingLevels & hostLevels;
+  return redHostMediaCeiling(
+    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
+    viewerLevel & ratingLevels & sfwBrowsingLevelsFlag
+  );
 }
 
 /**
@@ -157,19 +167,11 @@ export function projectSubListingCard(
       : null;
   if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
-  // The child's own image keeps its long-standing ceiling, `subListingImageCeiling` (viewer ∩
-  // host ∩ this card's effective rating — the more mature of parent and child).
-  const childCeiling = subListingImageCeiling(viewer, contentRating);
-  // The parent's cover and icon FALLBACK follow the shared listing-media red-host rule: off a red
-  // host they get exactly the ceiling the child's image gets there; on a red host, that same
-  // non-red ceiling UNION the viewer's opted-in levels (`redHostMediaCeiling`). So the fallback
-  // never shows less on a red host than off one, and shows mature parent media only to a viewer
-  // who opted into it.
-  const parentCeiling = redHostMediaCeiling(
-    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
-    subListingImageCeiling({ ...viewer, redCapable: false }, contentRating)
-  );
-  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], parentCeiling);
+  // ONE ceiling for every image on the card — the item's own image and the parent's cover / icon
+  // fallback (see `subListingImageCeiling`; the card rating is the more mature of parent and
+  // child).
+  const ceiling = subListingImageCeiling(viewer, contentRating);
+  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], ceiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
   // made private or unpublished later stops showing its image on the card.
@@ -185,7 +187,7 @@ export function projectSubListingCard(
         acceptableMinor: row.image_acceptable_minor,
         blockedFor: row.image_blocked_for,
       },
-      childCeiling
+      ceiling
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
     coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
@@ -208,7 +210,7 @@ export function projectSubListingCard(
       id: row.parent_id,
       slug: row.parent_slug,
       name: row.parent_name,
-      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), parentCeiling),
+      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), ceiling),
     },
     ...(externalHref
       ? { runHref: externalHref, external: true as const }

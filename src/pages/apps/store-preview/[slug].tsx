@@ -8,6 +8,7 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type { ListingSocialImage } from '~/server/services/blocks/listing-media-audience';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
@@ -28,13 +29,38 @@ import { trpc } from '~/utils/trpc';
  * CLIENT-SIDE via `appListings.getAppDetail` (itself dark behind the same flag +
  * approved-only, public-allowlist DTO). `deIndex` stays on. A missing /
  * non-approved slug 404s server-side → `NotFound`.
+ *
+ * The ONE thing read server-side is the `og:image` (`resolveListingPageSocialImage`): link
+ * unfurlers do not run the client query. It is a single image chosen under the detail read's own
+ * gates and the anonymous ceiling of this host — never mature on any host, and on civitai.red the
+ * civitai.red cover / icon override only when it passes that ceiling — carried with its level so
+ * `Meta`'s own safe-level check applies too.
  */
-export const getServerSideProps = createServerSideProps({
+type PageProps = { socialImage: ListingSocialImage | null };
+
+export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  resolver: async ({ ctx, features, session, isClient }) => {
+    const access = resolveAppsPageAccess({ features });
+    if ('notFound' in access) return access;
+    const { resolveListingPageSocialImage } = await import(
+      '~/server/services/blocks/listing-page-social-image'
+    );
+    const slug = ctx.params?.slug;
+    return {
+      props: {
+        socialImage: await resolveListingPageSocialImage({
+          slug: typeof slug === 'string' ? slug : null,
+          host: ctx.req.headers.host,
+          user: session?.user,
+          isClient,
+        }),
+      },
+    };
+  },
 });
 
-export default function AppStoreListingDetailPage() {
+export default function AppStoreListingDetailPage({ socialImage }: Partial<PageProps>) {
   const features = useFeatureFlags();
   const router = useRouter();
   const slug = typeof router.query.slug === 'string' ? router.query.slug : '';
@@ -55,14 +81,22 @@ export default function AppStoreListingDetailPage() {
   if (error) return <NotFound />;
 
   const detail = data as ListingDetail | undefined;
+  const title = detail ? `${detail.name} — App store preview` : 'App store preview — Civitai';
+  const description = detail?.tagline ?? 'Unified app store preview';
 
   return (
     <>
-      <Meta
-        title={detail ? `${detail.name} — App store preview` : 'App store preview — Civitai'}
-        description={detail?.tagline ?? 'Unified app store preview'}
-        deIndex
-      />
+      {socialImage ? (
+        <Meta
+          title={title}
+          description={description}
+          imageUrl={socialImage.url}
+          imageNsfwLevel={socialImage.nsfwLevel}
+          deIndex
+        />
+      ) : (
+        <Meta title={title} description={description} deIndex />
+      )}
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']}>
         {isLoading ? (
           <Center py="xl">

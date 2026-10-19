@@ -49,10 +49,12 @@ import {
 } from '~/server/services/blocks/listing-media-url';
 import {
   listingMediaImageSelect,
+  listingSocialImage,
   MODERATOR_REVIEW_MEDIA,
   projectListingMedia,
   SFW_PUBLIC_MEDIA,
   type ListingMediaView,
+  type ListingSocialImage,
 } from '~/server/services/blocks/listing-media-audience';
 import {
   readListingRedMediaManyForRender,
@@ -1754,6 +1756,79 @@ export async function getListingDetail(
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
+  const gated = await loadStoreVisibleListingRow(input, { redCapable, scope: opts.scope, floor });
+  if (!gated) return null;
+  const { row, visibility } = gated;
+
+  // All three extras run in PARALLEL with each other, so the public detail read still costs
+  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
+  // against its own manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
+  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
+  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
+  // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
+  // to "none" on any error, like beta).
+  const [collaborators, sourceRepo, beta, red] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
+    redCapable
+      ? readListingRedMediaManyForRender(dbRead, [row.id])
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+  ]);
+  return projectListingDetail(
+    row,
+    collaborators,
+    sourceRepo.value,
+    beta,
+    row.connectRequestedScopes,
+    // The level gate already admitted this viewer, and `restrictedAudienceForViewer`
+    // re-applies that same predicate rather than relying on it — so if this gate is ever
+    // widened (say, to let an owner open their own restricted listing), who is TOLD the level
+    // still stays the owner, moderators and the cohort the level admits.
+    restrictedAudienceForRow(row, visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER),
+    {
+      kind: 'public',
+      audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+      red: red.get(row.id) ?? null,
+    }
+  );
+}
+
+/**
+ * The image a listing's public page offers link unfurlers (`og:image`) on this host, or null —
+ * `listingSocialImage` over the same row, under EXACTLY the gates of {@link getListingDetail}
+ * (one shared loader), so a listing whose detail this request may not read yields no image
+ * either. Never the requester's browsing level: see `listingSocialImage`.
+ */
+export async function getListingSocialImage(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+): Promise<ListingSocialImage | null> {
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable: opts.redCapable,
+    scope: opts.scope,
+    floor: opts.floor ?? 'public',
+  });
+  if (!gated) return null;
+  // 🔴 The civitai.red overrides are read ONLY for a red-capable request, as on the detail.
+  const red = opts.redCapable
+    ? (await readListingRedMediaManyForRender(dbRead, [gated.row.id])).get(gated.row.id) ?? null
+    : null;
+  return listingSocialImage(gated.row, { redCapable: opts.redCapable }, red);
+}
+
+/**
+ * The one approved, store-visible listing row a public detail read may serve, with its
+ * visibility level — or null for a row this request may not see, indistinguishable from a
+ * missing one. Every gate of the public detail lives here, shared by {@link getListingDetail}
+ * and {@link getListingSocialImage}.
+ */
+async function loadStoreVisibleListingRow(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor: ListingAudienceFloor }
+) {
+  const { redCapable, floor } = opts;
   // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
   // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
   // reach a listing's full detail through the public REST endpoint.
@@ -1822,40 +1897,7 @@ export async function getListingDetail(
   // Maturity gate off a non-red host: a mature listing is indistinguishable from
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
-
-  // All three extras run in PARALLEL with each other, so the public detail read still costs
-  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
-  // against its own manual-apply migration being outstanding — the collaborator TABLE
-  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
-  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
-  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
-  // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
-  // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red] = await Promise.all([
-    loadDisplayedCollaboratorChips(row.id),
-    readListingSourceRepoUrl(row.id, dbRead),
-    readListingBetaForRender(row.id, dbRead),
-    redCapable
-      ? readListingRedMediaManyForRender(dbRead, [row.id])
-      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
-  ]);
-  return projectListingDetail(
-    row,
-    collaborators,
-    sourceRepo.value,
-    beta,
-    row.connectRequestedScopes,
-    // The level gate above already admitted this viewer, and `restrictedAudienceForViewer`
-    // re-applies that same predicate rather than relying on it — so if this gate is ever
-    // widened (say, to let an owner open their own restricted listing), who is TOLD the level
-    // still stays the owner, moderators and the cohort the level admits.
-    restrictedAudienceForRow(row, level.visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER),
-    {
-      kind: 'public',
-      audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
-      red: red.get(row.id) ?? null,
-    }
-  );
+  return { row, visibility: level.visibility };
 }
 
 /**
