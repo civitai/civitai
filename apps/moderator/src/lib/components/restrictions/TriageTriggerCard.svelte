@@ -262,17 +262,26 @@
           </div>
         {/if}
         {#if trigger.prompt}
-          <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Prompt</p>
-          <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
+          <div class="max-h-[32rem] overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
+            <span class="mb-1 block text-xs font-semibold tracking-wide text-dark-2 uppercase">
+              Prompt
+            </span>
             <HighlightedText text={trigger.prompt} highlight={highlights.prompt} />
           </div>
         {/if}
         {#if trigger.negativePrompt}
-          <p class="mt-2 mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">
-            Negative
-          </p>
-          <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <HighlightedText text={trigger.negativePrompt} highlight={highlights.negativePrompt} />
+          <div
+            class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2 {trigger.prompt
+              ? 'mt-2'
+              : ''}"
+          >
+            <span class="mb-1 block text-xs font-semibold tracking-wide text-dark-2 uppercase">
+              Negative
+            </span>
+            <HighlightedText
+              text={trigger.negativePrompt}
+              highlight={highlights.negativePrompt}
+            />
           </div>
         {/if}
 
