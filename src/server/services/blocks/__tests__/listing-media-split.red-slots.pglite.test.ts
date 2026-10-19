@@ -21,8 +21,9 @@ import { createSplitDb, type SplitDb } from './listing-media-split.harness';
  * The civitai.red icon / cover OVERRIDE SLOTS against the REAL migrations: with only the first
  * (the split table) applied — the state of an environment between the two manual applies — and
  * with both, and with the table present but not granted to the role a read connects as (the read
- * client's role may lack SELECT; the role that writes the table is assumed to hold every grant, so
- * writes are not probed for privileges).
+ * client's role may lack SELECT; the role that writes the table must hold every grant, so an
+ * owner's slot write and a revision apply are not probed for privileges — the clone every revision
+ * open runs is, and is skipped without INSERT).
  *
  * Fixture ids are pairwise distinct and distinct from every constant the code names: listings
  * `apl_red_live` / `apl_red_shadow` / `apl_red_other`, images 31 (PG) / 32 (R) / 33 (XXX) /
@@ -400,5 +401,22 @@ describe('both migrations applied, the table NOT granted to the role a read conn
     expect((await readListingRedMediaManyForRender(s.raw, [LIVE])).get(LIVE)?.cover?.id).toBe(
       XXX_IMG
     );
+  });
+
+  it('🔴 SELECT without INSERT: the revision clone is skipped and never aborts its transaction', async () => {
+    await s.restrictTo(['SELECT']);
+    const after = await s.db.transaction(async (tx) => {
+      await cloneListingRedSlots(createTxRaw(tx), { fromListingId: OTHER, toListingId: SHADOW });
+      await cloneListingRedSlots(createTxRaw(tx), { fromListingId: LIVE, toListingId: SHADOW });
+      return (await tx.query<{ n: number }>(`SELECT 40 + 2 AS n`)).rows[0].n;
+    });
+    expect(after).toBe(42);
+    expect(await s.redSlots(SHADOW)).toBeNull();
+  });
+
+  it('positive control: with INSERT the same clone copies the overrides', async () => {
+    await s.restrictTo(['SELECT', 'INSERT']);
+    await cloneListingRedSlots(s.raw, { fromListingId: LIVE, toListingId: SHADOW });
+    expect(await s.redSlots(SHADOW)).toEqual({ icon: R_IMG, cover: XXX_IMG });
   });
 });

@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { seq } = vi.hoisted(() => ({ seq: { n: 0 } }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -81,6 +82,8 @@ beforeEach(async () => {
   };
   dbMock.dbRead.appListing.findUnique.mockResolvedValue(parent);
   dbMock.dbRead.appListing.findFirst.mockResolvedValue(null);
+  // Reset, not just cleared: a test that throws mid-open leaves a queued `Once` value behind.
+  dbMock.dbWrite.appListing.findFirst.mockReset();
   dbMock.dbWrite.appListing.findFirst
     .mockResolvedValueOnce(null)
     .mockResolvedValueOnce({ id: SHADOW });
@@ -109,5 +112,41 @@ describe('T10 — a revision carries the live overrides', () => {
     });
     await applyRevisionRedSlots(split.raw, { shadowId: SHADOW, parentId: PARENT });
     expect(await split.redSlots(PARENT)).toEqual({ icon: RED_ICON, cover: NEW_RED_COVER });
+  });
+});
+
+/** The SQL text of every raw call the write client made that names the overrides table. */
+function tableStatements(kind: '$queryRaw' | '$executeRaw') {
+  const calls = (dbMock.dbWrite[kind] as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+  return calls
+    .filter(([strings]) => Array.isArray(strings))
+    .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).text)
+    .filter((text) => text.includes('app_listing_red_media'));
+}
+
+describe('T10b — a write role that may only SELECT the overrides table', () => {
+  afterEach(() => split.unrestrict());
+
+  it('🔴 opening a revision of a listing with no overrides still succeeds, issuing nothing against the table', async () => {
+    // Postgres checks INSERT privilege before it looks for rows, so even the zero-row
+    // `INSERT … SELECT` the clone used to issue here raised "permission denied" and failed
+    // every revision open.
+    await split.db.exec(`TRUNCATE app_listing_red_media`);
+    await split.restrictTo(['SELECT']);
+    expect(await beginListingRevision({ listingId: PARENT, userId: OWNER })).toEqual({
+      shadowId: SHADOW,
+      created: true,
+    });
+    expect(tableStatements('$executeRaw')).toEqual([]);
+    // The only read naming the table is the privilege probe (`to_regclass`).
+    expect(tableStatements('$queryRaw').every((t) => t.includes('to_regclass'))).toBe(true);
+    expect(await split.redSlots(SHADOW)).toBeNull();
+  });
+
+  it('positive control: with INSERT the same open carries the overrides', async () => {
+    await split.restrictTo(['SELECT', 'INSERT']);
+    await beginListingRevision({ listingId: PARENT, userId: OWNER });
+    expect(tableStatements('$executeRaw')).toHaveLength(1);
+    expect(await split.redSlots(SHADOW)).toEqual({ icon: RED_ICON, cover: OLD_RED_COVER });
   });
 });

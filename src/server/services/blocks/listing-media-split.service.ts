@@ -264,9 +264,11 @@ export async function applyListingMediaSplitDecision(
 // ({@link probeListingMediaSplitTable} `redSlots`): while they are absent every read is "no
 // slots" and a write is refused with {@link RED_SLOTS_UNAVAILABLE_MESSAGE} before anything is
 // issued. A read also needs SELECT on the table (as the split's own read does): the read client's
-// role may not have it, and the store then shows the listing's own icon and cover. Writes are not
-// probed for INSERT / UPDATE: the role that writes the table holds all three (the migration's
-// GRANTS note).
+// role may not have it, and the store then shows the listing's own icon and cover. An owner's
+// slot write and a revision apply are not probed for INSERT / UPDATE: the role that writes the
+// table must hold all three (the migration's GRANTS step). The one exception is the clone a
+// revision open runs ({@link cloneListingRedSlots}): it runs for every listing, so without INSERT
+// it is skipped rather than allowed to fail the open.
 // ---------------------------------------------------------------------------
 
 /** One of the two override slots. */
@@ -387,8 +389,10 @@ export async function readListingRedSlotAssets(
 }
 
 /**
- * The live, non-shadow listings whose override slot shows `imageId` — so a moderator's re-rate of
- * that image re-derives their ratings too. Empty while the slots cannot be read.
+ * Every listing whose override slot holds `imageId` — live listings, drafts and revision shadows
+ * alike: the table carries no status, so this does not filter. A moderator's re-rate of that image
+ * passes them to `reDeriveListingRatingInTx`, which skips any that is not a live, non-shadow
+ * listing. Empty while the slots cannot be read.
  */
 export async function listListingIdsWithRedSlotImage(
   db: Pick<RawClient, '$queryRaw'>,
@@ -541,15 +545,20 @@ export async function writeListingRedSlot(
  * revision that does not touch them leaves them in place when it is applied. Copies only a row
  * with a filled slot, never the split decision (that belongs to the live listing alone).
  *
- * A no-op while the slots cannot be read: the shadow then carries no slots row, which
- * {@link applyRevisionRedSlots} reads as "nothing staged" and leaves the live slots alone.
+ * A no-op while the slots cannot be read, or this role may not INSERT into the table: the shadow
+ * then carries no slots row, which {@link applyRevisionRedSlots} reads as "nothing staged" and
+ * leaves the live slots alone.
+ *
+ * 🔴 THE INSERT PROBE IS LOAD-BEARING. This runs on EVERY revision open, not only for a listing
+ * with overrides, and PostgreSQL checks INSERT privilege before it looks for rows: without the
+ * grant even the zero-row `INSERT … SELECT` below raises "permission denied" and fails the open.
  */
 export async function cloneListingRedSlots(
   db: RawClient,
   args: { fromListingId: string; toListingId: string }
 ): Promise<void> {
   const access = await probeListingMediaSplitTable(db);
-  if (!canReadRedSlots(access)) return;
+  if (!canReadRedSlots(access) || !access.insert) return;
   await db.$executeRaw`
     INSERT INTO app_listing_red_media (app_listing_id, red_icon_id, red_cover_id)
     SELECT ${args.toListingId}, red_icon_id, red_cover_id
