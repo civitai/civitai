@@ -98,6 +98,30 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="resources"
+        render={({ value, meta, onChange }) => {
+          const turbo = meta && 'turbo' in meta ? meta.turbo : undefined;
+          if (!turbo) return null;
+          const full = !turbo.enabled && value.length >= meta.limit;
+          return (
+            <Checkbox
+              label="Turbo"
+              description={
+                full
+                  ? 'Remove a resource to make room for Turbo'
+                  : 'Fewer steps for faster, cheaper images, at some cost to quality'
+              }
+              checked={turbo.enabled}
+              disabled={full}
+              onChange={(e) =>
+                onChange(e.currentTarget.checked ? turbo.withTurbo : turbo.withoutTurbo)
+              }
+            />
+          );
+        }}
+      />
+      <Controller
+        graph={imageHub}
+        name="resources"
         render={({ value, meta, onChange }) => (
           <ResourceSelectMultipleInput
             value={value}

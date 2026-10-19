@@ -9,12 +9,14 @@ const EXT: GenerationCtx = {
   gateRules: [],
 };
 
-const turboLora = {
-  id: 3411385,
-  baseModel: 'MOSS Image',
+const turboLoraVersion = (id: number, baseModel = 'MOSS Image') => ({
+  id,
+  baseModel,
   model: { id: 3006599, type: 'LORA' },
   strength: 1,
-};
+});
+const turboLora = turboLoraVersion(3411385);
+const turbo4StepLora = turboLoraVersion(3414934);
 const otherLora = {
   id: 9000001,
   baseModel: 'MOSS Image',
@@ -33,15 +35,154 @@ function memoryStorage() {
   };
 }
 
-function mossStore(storage?: ReturnType<typeof memoryStorage>) {
+function mossStore(
+  storage?: ReturnType<typeof memoryStorage>,
+  ecosystem: 'MossImage' | 'MossImage_base' = 'MossImage'
+) {
   const store = generationHub.createStore({ ext: EXT, storage });
-  store.set({ workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'x' });
+  store.set({ workflow: 'txt2img', ecosystem, prompt: 'x' });
   return store;
 }
 
-const values = (store: ReturnType<typeof mossStore>) => ({
+type MossStore = ReturnType<typeof mossStore>;
+
+const values = (store: MossStore) => ({
   cfgScale: store.getField('cfgScale')?.value,
   steps: store.getField('steps')?.value,
+});
+
+const resourceIds = (store: MossStore) =>
+  (store.getField('resources')?.value as { id: number }[] | undefined)?.map((r) => r.id);
+
+type TurboToggle = { enabled: boolean; withTurbo: unknown[]; withoutTurbo: unknown[] };
+
+const turboToggle = (store: MossStore) => {
+  const turbo = (store.getField('resources')?.meta as { turbo?: TurboToggle } | undefined)?.turbo;
+  if (!turbo) throw new Error('the form offers no Turbo toggle');
+  return turbo;
+};
+
+/** What the Turbo checkbox does: write the next resources the graph offers. */
+const setTurbo = (store: MossStore, on: boolean) => {
+  const turbo = turboToggle(store);
+  store.set({ resources: on ? turbo.withTurbo : turbo.withoutTurbo });
+};
+
+describe('MOSS Image Turbo toggle', () => {
+  it('on SFT adds the 8-step turbo LoRA at 8 steps / CFG 1; off removes it and restores', () => {
+    const store = mossStore();
+    store.set({ resources: [otherLora], cfgScale: 4, steps: 30 });
+    expect(turboToggle(store).enabled).toBe(false);
+
+    setTurbo(store, true);
+    expect(resourceIds(store)).toEqual([otherLora.id, 3411385]);
+    expect(store.getField('resources')?.value[1]).toMatchObject({
+      baseModel: 'MOSS Image',
+      model: { id: 3006599, type: 'LORA' },
+    });
+    expect(turboToggle(store).enabled).toBe(true);
+    expect(values(store)).toEqual({ cfgScale: 1, steps: 8 });
+    expect(store.validate().success).toBe(true);
+
+    setTurbo(store, false);
+    expect(resourceIds(store)).toEqual([otherLora.id]);
+    expect(turboToggle(store).enabled).toBe(false);
+    expect(values(store)).toEqual({ cfgScale: 4, steps: 30 });
+  });
+
+  it('on Base adds the Base 8-step turbo LoRA, which the Base compatibility filter keeps', () => {
+    const store = mossStore(undefined, 'MossImage_base');
+    setTurbo(store, true);
+    expect(resourceIds(store)).toEqual([3413516]);
+    expect(store.getField('resources')?.value[0]).toMatchObject({ baseModel: 'MOSS Image Base' });
+    expect(values(store)).toEqual({ cfgScale: 1, steps: 8 });
+    expect(store.validate().success).toBe(true);
+  });
+
+  it("switching checkpoint keeps Turbo on with that checkpoint's turbo LoRA", () => {
+    const store = mossStore();
+    store.set({ resources: [otherLora] });
+    setTurbo(store, true);
+
+    // otherLora is an SFT LoRA, so the Base compatibility filter drops it
+    store.set({ ecosystem: 'MossImage_base' });
+    expect(resourceIds(store)).toEqual([3413516]);
+    expect(turboToggle(store).enabled).toBe(true);
+    expect(values(store)).toEqual({ cfgScale: 1, steps: 8 });
+
+    store.set({ ecosystem: 'MossImage' });
+    expect(resourceIds(store)).toEqual([otherLora.id, 3411385]);
+    expect(turboToggle(store).enabled).toBe(true);
+  });
+
+  it('on SFT swaps a Base turbo LoRA for the SFT one', () => {
+    const store = mossStore();
+    store.set({ resources: [turboLoraVersion(3413516, 'MOSS Image Base')] });
+    expect(resourceIds(store)).toEqual([3411385]);
+    expect(values(store)).toEqual({ cfgScale: 1, steps: 8 });
+  });
+
+  it('leaves the 4-step version alone on SFT', () => {
+    const store = mossStore();
+    store.set({ resources: [turbo4StepLora] });
+    expect(resourceIds(store)).toEqual([turbo4StepLora.id]);
+    expect(values(store).steps).toBe(4);
+  });
+
+  it('shows as on for a hand-added turbo LoRA of any version, and off removes it', () => {
+    const store = mossStore();
+    store.set({ resources: [turbo4StepLora, otherLora] });
+    expect(turboToggle(store).enabled).toBe(true);
+
+    setTurbo(store, false);
+    expect(resourceIds(store)).toEqual([otherLora.id]);
+    expect(values(store)).toEqual({ cfgScale: 3, steps: 25 });
+  });
+});
+
+describe('MOSS Image turbo steps per LoRA version', () => {
+  it.each([
+    [3411385, 'MOSS Image', 8],
+    [3413516, 'MOSS Image Base', 8],
+    [3414934, 'MOSS Image', 4],
+  ])('version %i defaults to its own step count', (id, baseModel, steps) => {
+    const store = mossStore();
+    store.set({ resources: [turboLoraVersion(id, baseModel)] });
+    expect(values(store)).toEqual({ cfgScale: 1, steps });
+  });
+
+  it('each turbo version remembers its own steps', () => {
+    const store = mossStore();
+    store.set({ resources: [turboLora] });
+    store.set({ steps: 10 });
+
+    store.set({ resources: [turbo4StepLora] });
+    expect(values(store).steps).toBe(4);
+    store.set({ steps: 5 });
+
+    store.set({ resources: [turboLora] });
+    expect(values(store).steps).toBe(10);
+    store.set({ resources: [turbo4StepLora] });
+    expect(values(store).steps).toBe(5);
+  });
+});
+
+describe('MOSS Image turbo CFG', () => {
+  it('keeps the remembered turbo CFG across Turbo off/on and a turbo version swap', () => {
+    const store = mossStore();
+    store.set({ cfgScale: 4 });
+    setTurbo(store, true);
+    store.set({ cfgScale: 3 });
+
+    setTurbo(store, false);
+    expect(values(store).cfgScale).toBe(4);
+
+    setTurbo(store, true);
+    expect(values(store)).toEqual({ cfgScale: 3, steps: 8 });
+
+    store.set({ resources: [turbo4StepLora] });
+    expect(values(store)).toEqual({ cfgScale: 3, steps: 4 });
+  });
 });
 
 describe('MOSS Image turbo LoRA steps/CFG', () => {
@@ -97,7 +238,8 @@ describe('MOSS Image turbo LoRA steps/CFG', () => {
   });
 
   // Standard values keep the address they had before turbo awareness, so values users
-  // already stored still apply; turbo values get their own address beside them.
+  // already stored still apply; turbo values get their own address beside them, steps
+  // one per turbo LoRA version.
   it('persists standard values at the pre-existing address and turbo values beside them', () => {
     const storage = memoryStorage();
     const store = mossStore(storage);
@@ -108,7 +250,7 @@ describe('MOSS Image turbo LoRA steps/CFG', () => {
     expect(storage.saved()).toMatchObject({
       'steps@MossImage': 30,
       'cfgScale@MossImage': 4,
-      'steps@MossImage/turbo': 10,
+      'steps@MossImage/turbo/3411385': 10,
       'cfgScale@MossImage/turbo': 1.5,
     });
 
@@ -119,12 +261,11 @@ describe('MOSS Image turbo LoRA steps/CFG', () => {
     expect(values(reloaded)).toEqual({ cfgScale: 4, steps: 30 });
   });
 
-  // A 'MOSS Image' LoRA is not compatible with the Base variant, so turbo never engages there.
-  it('on the Base variant the turbo LoRA is dropped and the standard defaults stay', () => {
-    const store = generationHub.createStore({ ext: EXT });
-    store.set({ workflow: 'txt2img', ecosystem: 'MossImage_base', prompt: 'x' });
-    store.set({ resources: [turboLora] });
-    expect(store.getField('resources')?.value).toEqual([]);
-    expect(values(store)).toEqual({ cfgScale: 3, steps: 25 });
+  // A 'MOSS Image' LoRA is not compatible with the Base variant, which has its own turbo version.
+  it('on the Base variant an SFT turbo LoRA becomes the Base one; other SFT LoRAs are dropped', () => {
+    const store = mossStore(undefined, 'MossImage_base');
+    store.set({ resources: [otherLora, turbo4StepLora] });
+    expect(resourceIds(store)).toEqual([3413516]);
+    expect(values(store)).toEqual({ cfgScale: 1, steps: 8 });
   });
 });
