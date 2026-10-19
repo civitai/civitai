@@ -1,4 +1,10 @@
 import { sql } from '@civitai/db/kysely';
+import {
+  BOX_OPENING_REWARD_STATUS,
+  ITEM_DEFINITION_STATUS,
+  ITEM_TYPE,
+  MOD_GRANT_SOURCE_PREFIX,
+} from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
@@ -615,6 +621,74 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Capp
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
+}
+
+// MYSTERY BOXES a moderator granted this user, held or opened, for taking one back. A grant has no
+// purchase row, so these are found by their `sourceKey` (`modGrantSourceKey`) instead.
+export type GrantedBox = {
+  sourceKey: string;
+  boxName: string;
+  /** When it was granted, or, once opened, when it was opened. */
+  at: Date;
+  state: 'held' | 'opened' | 'takenBack';
+  /** What it gave, once opened. */
+  reward: string | null;
+};
+
+export async function getGrantedBoxes(userId: number, limit = 50): Promise<Capped<GrantedBox>> {
+  const prefix = `${escapeLike(MOD_GRANT_SOURCE_PREFIX)}%`;
+  const [held, opened] = await Promise.all([
+    dbRead
+      .selectFrom('Item as i')
+      .innerJoin('ItemDefinition as box', 'box.id', 'i.itemDefinitionId')
+      .select(['i.sourceKey', 'box.name as boxName', 'i.createdAt as at'])
+      .where('i.holderType', '=', 'user')
+      .where('i.holderId', '=', userId)
+      .where('i.sourceKey', 'like', prefix)
+      .orderBy('i.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('BoxOpening as o')
+      .innerJoin('ItemDefinition as box', 'box.id', 'o.boxDefinitionId')
+      .leftJoin('ItemDefinition as reward', 'reward.id', 'o.rewardDefinitionId')
+      .select([
+        'o.boxSourceKey as sourceKey',
+        'box.name as boxName',
+        'o.createdAt as at',
+        'o.rewardStatus',
+        'reward.name as reward',
+      ])
+      .where('o.userId', '=', userId)
+      .where('o.boxSourceKey', 'like', prefix)
+      .orderBy('o.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+  ]);
+  const rows: GrantedBox[] = [
+    ...held.map((row) => ({ ...row, state: 'held' as const, reward: null })),
+    ...opened.map(({ rewardStatus, ...row }) => ({
+      ...row,
+      state:
+        rewardStatus === BOX_OPENING_REWARD_STATUS.granted
+          ? ('opened' as const)
+          : ('takenBack' as const),
+    })),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
+  return capped(rows, limit);
+}
+
+// Published boxes, for the grant picker: an archived box is no longer handed out.
+export type GrantableBox = { id: number; name: string };
+
+export async function getGrantableBoxes(): Promise<GrantableBox[]> {
+  return dbRead
+    .selectFrom('ItemDefinition')
+    .select(['id', 'name'])
+    .where('type', '=', ITEM_TYPE.box)
+    .where('status', '=', ITEM_DEFINITION_STATUS.published)
+    .orderBy('id', 'desc')
+    .execute();
 }
 
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.

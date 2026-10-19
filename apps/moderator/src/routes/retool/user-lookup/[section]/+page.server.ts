@@ -2,7 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
-import { parseForm, userIdSchema } from '$lib/server/query';
+import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -33,6 +33,7 @@ import {
   removeSocial,
   resolveRestriction,
   setModerationFlag,
+  takeBackGrantedBox,
   forceLogout,
   refreshSessionCache,
   resetSubscriptionCaches,
@@ -41,6 +42,9 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { BoxGrantRefused, grantMysteryBoxes } from '$lib/server/mystery-box-grant.service';
+import { MAX_BOXES_PER_USER } from '$lib/mystery-box';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
 import { accountEnforcementActions } from '$lib/server/account-actions';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import {
@@ -397,6 +401,51 @@ export const actions: Actions = {
     });
     if (!result.ok) return shopFail(result.error);
     return { success: true };
+  }),
+
+  grantBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        boxId: int4Id,
+        count: z.coerce.number().int().min(1).max(MAX_BOXES_PER_USER),
+        grantId: z.string().trim().min(1).max(64),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    try {
+      const result = await grantMysteryBoxes({
+        boxId: input.boxId,
+        userIds: [input.userId],
+        count: input.count,
+        grantId: input.grantId,
+        moderatorId: locals.user.id,
+      });
+      if (result.busyUserIds.length) return shopFail(ITEM_HOLDER_BUSY_MESSAGE);
+      if (result.alreadyGrantedUserIds.length)
+        return shopFail('This grant was already made. Reload to grant again.');
+      return { success: true };
+    } catch (e) {
+      if (e instanceof BoxGrantRefused) return shopFail(e.message);
+      throw e;
+    }
+  }),
+
+  takeBackGrantedBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({ sourceKey: z.string().trim().min(1).max(200) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    const result = await takeBackGrantedBox({
+      userId: input.userId,
+      sourceKey: input.sourceKey,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return shopFail(result.error);
+    return { success: true, warning: result.warning };
   }),
 
   removeCosmetic: async ({ request, locals }) => {
