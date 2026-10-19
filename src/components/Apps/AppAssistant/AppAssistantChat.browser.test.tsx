@@ -101,7 +101,6 @@ describe('AppAssistantChat', () => {
     expect(m.configureChat).toHaveBeenCalledWith({
       name: 'App Assistant',
       model: 'openai/gpt-6-luna',
-      models: [{ id: 'openai/gpt-6-luna', label: 'GPT-6 Luna' }],
       maxSteps: 1000,
       contextBudgetTokens: 64000,
     });
