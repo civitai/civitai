@@ -3,12 +3,17 @@ import { z } from 'zod';
 import { denied, requiresGrant } from '$lib/server/access';
 import {
   countPendingCsamHolds,
-  dismissCsamHold,
+  decideCsamHold,
   listPendingCsamHolds,
 } from '$lib/server/csam-holds.service';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
-import { CSAM_HOLD_ENTITY_TYPES, NOTE_MAX_LENGTH } from './hold-entity';
+import {
+  CSAM_HOLD_DECISION_GRANTS,
+  CSAM_HOLD_DECISIONS,
+  CSAM_HOLD_ENTITY_TYPES,
+  NOTE_MAX_LENGTH,
+} from './hold-entity';
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
@@ -32,8 +37,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return { limit, page, offset, entityType: entityType ?? null, total, ...queue, fullBleed: true };
 };
 
-const dismissSchema = z.object({
+const decideSchema = z.object({
   holdId: int4Id,
+  decision: z.enum(CSAM_HOLD_DECISIONS),
   note: z
     .string()
     .trim()
@@ -43,11 +49,15 @@ const dismissSchema = z.object({
 });
 
 export const actions: Actions = {
-  dismiss: requiresGrant('csam.report.file', async ({ request }) => {
-    const input = parseForm(dismissSchema, await request.formData());
+  decide: requiresGrant('csam.report.file', async ({ request, locals }) => {
+    const input = parseForm(decideSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
-    const result = await dismissCsamHold(input);
+    const needed = CSAM_HOLD_DECISION_GRANTS[input.decision];
+    if (needed && !locals.grants[needed])
+      return fail(403, { scope: 'denied' as const, error: denied(needed), key: input.holdId });
+
+    const result = await decideCsamHold(input);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
     return { success: true, key: input.holdId };
   }),

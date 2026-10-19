@@ -27,6 +27,45 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   UserProfile: 'Profile',
 };
 
+/** What a moderator can do with a pending hold, in the order the actions are offered. */
+export const CSAM_HOLD_DECISIONS = [
+  'remove',
+  'remove_strike',
+  'remove_ban',
+  'remove_ban_report',
+  'dismiss',
+] as const;
+
+export type CsamHoldDecision = (typeof CSAM_HOLD_DECISIONS)[number];
+
+/** The action grants a decision needs besides `csam.report.file`: the ones strike and ban carry on every other page. */
+export const CSAM_HOLD_DECISION_GRANTS: Partial<
+  Record<CsamHoldDecision, 'user.strike' | 'user.ban'>
+> = {
+  remove_strike: 'user.strike',
+  remove_ban: 'user.ban',
+  remove_ban_report: 'user.ban',
+};
+
+/** What a decided hold shows in the queue. */
+export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
+  remove: 'Content removed',
+  remove_strike: 'Content removed, author struck',
+  remove_ban: 'Content removed, author banned',
+  remove_ban_report: 'Content removed, author banned — file the CSAM report',
+  dismiss: 'Dismissed',
+};
+
+/** Removal needs an existing removal path; a chat message has none, so only "do nothing" applies to it. */
+const REMOVABLE_ENTITY_TYPES: readonly string[] = [
+  'Comment',
+  'CommentV2',
+  'UserProfile',
+  'Post',
+  'Model',
+];
+export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
+
 const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
   (CSAM_HOLD_ENTITY_TYPES as readonly string[]).includes(value);
 

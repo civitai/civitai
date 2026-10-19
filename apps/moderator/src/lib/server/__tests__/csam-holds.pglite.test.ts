@@ -19,7 +19,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../user-actions.service', () => ({ callModEndpoint }));
 
-const { countPendingCsamHolds, dismissCsamHold, listPendingCsamHolds } = await import(
+const { countPendingCsamHolds, decideCsamHold, listPendingCsamHolds } = await import(
   '../csam-holds.service'
 );
 
@@ -134,10 +134,12 @@ describe('countPendingCsamHolds', () => {
   });
 });
 
-describe('dismissCsamHold', () => {
+describe('decideCsamHold', () => {
   it('asks the main app to dismiss the hold', async () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { holdId: 3, status: 'Dismissed' } });
-    expect(await dismissCsamHold({ holdId: 3, note: 'fine' })).toEqual({ ok: true });
+    expect(await decideCsamHold({ holdId: 3, decision: 'dismiss', note: 'fine' })).toEqual({
+      ok: true,
+    });
     expect(callModEndpoint).toHaveBeenCalledWith(
       'text-scan/csam-hold/resolve',
       { holdId: 3, decision: 'dismiss', note: 'fine' },
@@ -145,43 +147,60 @@ describe('dismissCsamHold', () => {
     );
   });
 
+  it.each(['remove', 'remove_strike', 'remove_ban', 'remove_ban_report'] as const)(
+    'sends %s to the main app and expects the hold Confirmed',
+    async (decision) => {
+      callModEndpoint.mockResolvedValue({ ok: true, body: { holdId: 3, status: 'Confirmed' } });
+      expect(await decideCsamHold({ holdId: 3, decision })).toEqual({ ok: true });
+      expect(callModEndpoint).toHaveBeenCalledWith(
+        'text-scan/csam-hold/resolve',
+        { holdId: 3, decision },
+        expect.any(String)
+      );
+    }
+  );
+
   it('passes the main app refusal through', async () => {
     callModEndpoint.mockResolvedValue({
       ok: false,
-      error: 'Dismiss hold: already decided',
+      error: 'Decide hold: already decided',
       status: 409,
     });
-    expect(await dismissCsamHold({ holdId: 3 })).toEqual({
+    expect(await decideCsamHold({ holdId: 3, decision: 'remove' })).toEqual({
       ok: false,
-      error: 'Dismiss hold: already decided',
+      error: 'Decide hold: already decided',
     });
   });
 
   it('passes a request that never left through as a plain failure', async () => {
     callModEndpoint.mockResolvedValue({
       ok: false,
-      error: 'Dismiss hold failed.',
+      error: 'Decide hold failed.',
       requestNeverSent: true,
     });
-    expect(await dismissCsamHold({ holdId: 3 })).toEqual({
+    expect(await decideCsamHold({ holdId: 3, decision: 'remove' })).toEqual({
       ok: false,
-      error: 'Dismiss hold failed.',
+      error: 'Decide hold failed.',
     });
   });
 
-  it('says the dismissal may have completed when the response was lost', async () => {
+  it('says the decision may have completed when the response was lost', async () => {
     callModEndpoint.mockResolvedValue({
       ok: false,
-      error: 'Dismiss hold failed.',
+      error: 'Decide hold failed.',
       requestNeverSent: false,
     });
-    const result = await dismissCsamHold({ holdId: 3 });
+    const result = await decideCsamHold({ holdId: 3, decision: 'remove_ban' });
     expect(result).toMatchObject({ ok: false });
     expect(result.ok === false && result.error).toMatch(/may already have completed.*reload/i);
   });
 
-  it('treats a success that did not dismiss the hold as a failure', async () => {
-    callModEndpoint.mockResolvedValue({ ok: true, body: {} });
-    expect(await dismissCsamHold({ holdId: 3 })).toMatchObject({ ok: false });
+  it.each([
+    ['a removal reported as dismissed', 'remove', 'Dismissed'],
+    ['a dismissal reported as confirmed', 'dismiss', 'Confirmed'],
+    ['a success with no status', 'remove', undefined],
+  ] as const)('treats %s as a failure', async (_, decision, status) => {
+    callModEndpoint.mockResolvedValue({ ok: true, body: status ? { status } : {} });
+    expect(await decideCsamHold({ holdId: 3, decision })).toMatchObject({ ok: false });
   });
 });

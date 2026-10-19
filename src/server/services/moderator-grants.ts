@@ -16,6 +16,8 @@ export type ModeratorGrantId =
   | 'creatorServices.resolveDispute'
   | 'image.removal.confirm'
   | 'csam.report.file'
+  | 'user.ban'
+  | 'user.strike'
   | 'labelStore.submitPrediction';
 
 export async function hasModeratorGrant(

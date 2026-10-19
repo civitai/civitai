@@ -16,17 +16,39 @@ Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Mo
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
 Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta;
-the row, reason, ids and decision stay. Confirmed holds are left alone: their retention is decided
-with the Confirm feature.
+the row, reason, ids and decision stay. Confirmed holds are kept whole, text and meta included.
 
 ## Decisions
 
-- **Dismiss** (with an optional moderator-only note, up to 500 characters) sets the hold to
-  `Dismissed` and records who decided it and when. It changes nothing on the content or the account.
-  The main app's `/api/mod/text-scan/csam-hold/resolve` owns the write and refuses (409) a hold that is
-  missing or no longer Pending. Each decision is logged to Axiom (`text-scan` / `csam-hold-decision`).
-- **Confirm** is not offered yet; it is pending a product decision. Until then, a moderator escalates
-  by hand through the "File CSAM report" link on the item.
+A moderator picks one of five actions on a Pending hold, with an optional moderator-only note (up to
+500 characters). The main app's `/api/mod/text-scan/csam-hold/resolve` owns the write, and the
+rules below live in `csam-hold-decision.ts` beside the text-scan actions.
+
+| Action | What runs | Hold becomes |
+|---|---|---|
+| Remove content | the entity's existing moderator removal | `Confirmed` |
+| Remove content + strike | removal, then a strike on the author | `Confirmed` |
+| Remove content + ban | removal, then a ban on the author | `Confirmed` |
+| Remove content + ban + NCMEC report | removal and ban; the moderator then completes the existing CSAM report form for the author | `Confirmed` |
+| Do nothing | nothing on the content or the account | `Dismissed` |
+
+- Removal reuses what a moderator already uses for each type: a ToS-violation flag for `Comment` and
+  `CommentV2`, a profile-field clear for `UserProfile`, a moderator post delete for `Post`, and an
+  unpublish-as-violation for `Model`. A `ChatMessage` hold has no removal service yet, so removal
+  actions are refused for it (400) and only "Do nothing" applies.
+- The ban skips an author who is already banned, because the ban service toggles. No decision files
+  an NCMEC report or creates a `Report` row; the fourth action opens the CSAM report form
+  (`/moderator/csam/<userId>`) once the removal and ban have succeeded.
+- Strike and ban are held to the moderator-app grants they carry elsewhere (`user.strike`,
+  `user.ban`) in addition to `csam.report.file`, in the page action and again in the endpoint.
+- Content, strike and ban run first, each safe to repeat; the hold update and its `label_store`
+  record (`record_label`, question `csam_text.verdict`, value `csam` or `not_csam`, the action as
+  the reason) are then one transaction. If anything fails the hold stays Pending and the same
+  decision can be sent again. The action is also kept in the hold's `meta.decision`.
+- The endpoint refuses (409) a hold that is missing or no longer Pending, and logs every decision to
+  Axiom (`text-scan` / `csam-hold-decision`).
+- Destructive actions ask for confirmation before submitting; none has a keyboard shortcut.
+- Hiding content while a hold waits is not built: holds stay non-hiding.
 
 ## Access
 
@@ -35,5 +57,5 @@ with the Confirm feature.
   applied by hand. Until it runs, only `moderator:admin` can open the page.
 - Nav visibility = page grant; opening the page and acting = `csam.report.file`. The page load
   refuses (403) a moderator without that permission, the form action checks it again, and so does
-  the main-app endpoint.
+  the main-app endpoint. Strike and ban need their own grants on top (see Decisions).
 - The sidebar badge (`csamTextHolds`) counts Pending csam holds and refreshes with the sidebar cache.

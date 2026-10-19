@@ -28,5 +28,11 @@
   <nav aria-label="Entity type" data-sveltekit-noscroll>
     <LinkTabs items={filters} active={data.entityType ?? ALL} />
   </nav>
-  <CsamHoldTriage {data} {form} canDismiss={data.grants['csam.report.file'] === true} />
+  <CsamHoldTriage
+    {data}
+    {form}
+    canDecide={data.grants['csam.report.file'] === true}
+    canStrike={data.grants['user.strike'] === true}
+    canBan={data.grants['user.ban'] === true}
+  />
 </div>

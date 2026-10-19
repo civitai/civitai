@@ -13,11 +13,15 @@
   let {
     data,
     form,
-    canDismiss,
+    canDecide,
+    canStrike,
+    canBan,
   }: {
     data: PageData;
     form: ActionData;
-    canDismiss: boolean;
+    canDecide: boolean;
+    canStrike: boolean;
+    canBan: boolean;
   } = $props();
 
   const parseKey = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : null);
@@ -51,8 +55,7 @@
   selectionParam="hold"
   queueLabel="CSAM text holds queue"
   itemLabel="Hold"
-  decisionEnabled={() => [canDismiss]}
-  decisionActions={['dismiss']}
+  decisionEnabled={() => []}
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}
@@ -83,7 +86,9 @@
     <CsamHoldDetail
       {row}
       civitaiUrl={data.civitaiUrl}
-      {canDismiss}
+      {canDecide}
+      {canStrike}
+      {canBan}
       verdict={state.verdict}
       error={state.error}
       submit={state.submit}

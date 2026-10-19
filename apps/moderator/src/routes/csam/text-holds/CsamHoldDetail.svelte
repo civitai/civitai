@@ -1,21 +1,32 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { tick } from 'svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { CsamHoldRow } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
-  import { NOTE_MAX_LENGTH, entityLabel, holdEntityHref } from './hold-entity';
+  import {
+    CSAM_HOLD_OUTCOMES,
+    NOTE_MAX_LENGTH,
+    canRemoveHeld,
+    entityLabel,
+    holdEntityHref,
+    type CsamHoldDecision,
+  } from './hold-entity';
 
   let {
     row,
     civitaiUrl,
-    canDismiss,
+    canDecide,
+    canStrike,
+    canBan,
     verdict,
     error,
     submit,
@@ -23,7 +34,12 @@
   }: {
     row: CsamHoldRow;
     civitaiUrl: string;
-    canDismiss: boolean;
+    /** Holds `csam.report.file`: the page itself is closed to anyone else. */
+    canDecide: boolean;
+    /** Holds `user.strike`. */
+    canStrike: boolean;
+    /** Holds `user.ban`. */
+    canBan: boolean;
     verdict: string | undefined;
     error: string | undefined;
     submit: (outcome: Outcome) => SubmitFunction;
@@ -31,6 +47,34 @@
   } = $props();
 
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
+  const canRemove = $derived(canRemoveHeld(row.entityType));
+  const hasAuthor = $derived(row.userId !== null);
+
+  let formEl: HTMLFormElement | undefined = $state();
+  let decision = $state<CsamHoldDecision>('dismiss');
+
+  // One form and one note for every action; the hidden field carries which button was pressed.
+  async function decide(next: CsamHoldDecision) {
+    decision = next;
+    await tick();
+    formEl?.requestSubmit();
+  }
+
+  const outcome = (data: FormData) =>
+    CSAM_HOLD_OUTCOMES[data.get('decision') as CsamHoldDecision] ?? 'Decided';
+
+  // The existing CSAM report form is where an NCMEC report is filed; open it for the author once the
+  // removal and ban have landed. A blocked pop-up leaves the "File CSAM report" link in the header.
+  const decided: SubmitFunction = (input) => {
+    const reportUserId = input.formData.get('decision') === 'remove_ban_report' ? row.userId : null;
+    const inner = submit(outcome)(input);
+    return async (opts) => {
+      const finish = await inner;
+      await finish?.(opts);
+      if (reportUserId !== null && opts.result.type === 'success')
+        window.open(csamReportUrl(civitaiUrl, reportUserId), '_blank', 'noopener');
+    };
+  };
 </script>
 
 <TriageDetailFrame {verdict} {error}>
@@ -93,24 +137,68 @@
     </TriageCard>
   {/snippet}
   {#snippet actions()}
-    {#if canDismiss}
+    {#if canDecide}
       <form
+        bind:this={formEl}
         method="POST"
-        action={actionHref('dismiss')}
-        data-triage-action="dismiss"
-        use:enhance={submit('Dismissed')}
+        action={actionHref('decide')}
+        use:enhance={decided}
         class="flex flex-1 flex-wrap items-end gap-3"
       >
         <input type="hidden" name="holdId" value={row.id} />
+        <input type="hidden" name="decision" value={decision} />
         <Textarea
           name="note"
           rows={1}
           maxlength={NOTE_MAX_LENGTH}
           placeholder="Note (optional)"
-          aria-label="Dismissal note"
+          aria-label="Decision note"
           class="min-w-60 flex-1"
         />
-        <Button type="submit" size="lg">Dismiss <kbd class="ml-1 text-xs text-dark-2">1</kbd></Button>
+        <div class="flex flex-wrap items-center gap-2">
+          {#if canRemove}
+            <Button type="button" size="lg" onclick={() => decide('remove')}>Remove content</Button>
+            {#if canStrike && hasAuthor}
+              <ConfirmButton
+                size="lg"
+                label="Remove content + strike"
+                title="Remove the content and strike the author?"
+                description="The content is taken down and the author receives a strike and a notification."
+                onconfirm={() => decide('remove_strike')}
+              />
+            {/if}
+            {#if canBan && hasAuthor}
+              <ConfirmButton
+                size="lg"
+                label="Remove content + ban"
+                title="Remove the content and ban the author?"
+                description="The content is taken down and the account is banned, which also removes its other content."
+                onconfirm={() => decide('remove_ban')}
+              />
+              <ConfirmButton
+                size="lg"
+                label="Remove content + ban + NCMEC report"
+                title="Remove, ban and file an NCMEC report?"
+                description="The content is taken down and the account is banned. The CSAM report form then opens for the author so you can file the report."
+                onconfirm={() => decide('remove_ban_report')}
+              />
+            {/if}
+          {/if}
+          <Button type="button" size="lg" variant="outline" onclick={() => decide('dismiss')}>
+            Do nothing
+          </Button>
+        </div>
+        {#if !canRemove}
+          <p class="m-0 basis-full text-sm text-dark-2">
+            A {entityLabel(row.entityType).toLowerCase()} cannot be removed from here yet. Remove it by
+            hand, or choose "Do nothing".
+          </p>
+        {:else if !canStrike || !canBan}
+          <p class="m-0 basis-full text-sm text-dark-2">
+            {#if !canStrike}Striking needs the “Strike or notify an account” permission. {/if}
+            {#if !canBan}Banning needs the “Ban or unban an account” permission.{/if}
+          </p>
+        {/if}
       </form>
     {:else}
       <p class="m-0 text-sm text-dark-2">Deciding a hold needs the “File a CSAM report” permission.</p>
