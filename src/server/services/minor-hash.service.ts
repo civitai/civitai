@@ -28,6 +28,7 @@ import {
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -921,7 +922,7 @@ export async function dismissMinorHashMatch({
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = COALESCE(meta, '{}'::jsonb)
+    SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object('minorHashDismissed', jsonb_build_object('at', now(), 'by', ${userId}))
     WHERE id = ${modelId}
   `;
@@ -1187,7 +1188,7 @@ export async function acceptExpiredMinorAutoFlags({
   }
 
   const accepted = await dbWrite.$executeRaw`
-    UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb)
+    UPDATE "Model" SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object(${MINOR_HASH_ACCEPTED_KEY}, jsonb_build_object('at', now()))
     WHERE id IN (
       SELECT m.id
