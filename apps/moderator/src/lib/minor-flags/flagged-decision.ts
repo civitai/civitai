@@ -99,6 +99,16 @@ export function flagRuling(flag: Pick<PlannedFlag, 'source' | 'keep'>): FlagRuli
   return null;
 }
 
+/** Runs `run` with the ruling's subject and verdict typed as a pair. The reason helpers are generic in
+ *  the subject, which a union value cannot satisfy in one call, so the narrowing lives here once. */
+export const withRuling = <T>(
+  ruling: FlagRuling,
+  run: <S extends FlagRuling['subject']>(subject: S, verdict: ResolutionVerdict<S>) => T
+): T =>
+  ruling.subject === 'flagReview'
+    ? run(ruling.subject, ruling.verdict)
+    : run(ruling.subject, ruling.verdict);
+
 /** In a split the picked reason explains the revert; the kept flag records that its detection was
  *  correct, which is what keeping it asserts. */
 export const SPLIT_KEPT_REASON = 'detection-correct';
@@ -123,24 +133,16 @@ export function planReasonProblem(
   for (const flag of plan) {
     const ruling = flagRuling(flag);
     if (!ruling) continue;
-    const problem =
-      ruling.subject === 'flagReview'
-        ? decisionReasonProblem(
-            ruling.subject,
-            ruling.verdict,
-            decisionLabel,
-            decisionReasonFor(plan, flag, reason),
-            note,
-            [flag.label]
-          )
-        : decisionReasonProblem(
-            ruling.subject,
-            ruling.verdict,
-            decisionLabel,
-            decisionReasonFor(plan, flag, reason),
-            note,
-            [flag.label]
-          );
+    const problem = withRuling(ruling, (subject, verdict) =>
+      decisionReasonProblem(
+        subject,
+        verdict,
+        decisionLabel,
+        decisionReasonFor(plan, flag, reason),
+        note,
+        [flag.label]
+      )
+    );
     if (problem) return problem;
   }
   return null;
@@ -158,10 +160,9 @@ export function flaggedReasonGroups(
     const seen = new Map<string, ResolutionReason>();
     for (const flag of reasoned) {
       const ruling = flagRuling({ source: flag.source, keep })!;
-      const reasons =
-        ruling.subject === 'flagReview'
-          ? resolutionReasonsFor(ruling.subject, ruling.verdict, [flag.label])
-          : resolutionReasonsFor(ruling.subject, ruling.verdict, [flag.label]);
+      const reasons = withRuling(ruling, (subject, verdict) =>
+        resolutionReasonsFor(subject, verdict, [flag.label])
+      );
       for (const r of reasons) if (!seen.has(r.value)) seen.set(r.value, r);
     }
     return [...seen.values()];

@@ -16,6 +16,7 @@ import {
   planDecision,
   type FlagRef,
   type PlannedFlag,
+  withRuling,
 } from '$lib/minor-flags/flagged-decision';
 import {
   getMinorFlagAppealGroups,
@@ -281,10 +282,9 @@ const flaggedAction =
     if (!textHash.success) return fail(400, { error: 'Missing text hash.' });
     const flag: FlagRef = { label: label.data, source: source.data, textHash: textHash.data };
     const ruling = flagRuling({ source: flag.source, keep })!;
-    const reason =
-      ruling.subject === 'flagReview'
-        ? rulingReasonFromForm(ruling.subject, ruling.verdict, form, [flag.label])
-        : rulingReasonFromForm(ruling.subject, ruling.verdict, form, [flag.label]);
+    const reason = withRuling(ruling, (subject, verdict) =>
+      rulingReasonFromForm(subject, verdict, form, [flag.label])
+    );
     if (typeof reason === 'string') return refusal(reason);
 
     const result = await ruleFlag(modelId, flag, keep, reason);
@@ -356,10 +356,9 @@ const decideFlags: Actions[string] = async (event) => {
       resolvedReason: decisionReasonFor(plan, flag, input.resolvedReason ?? ''),
       internalNotes: input.internalNotes,
     };
-    const reason =
-      ruling.subject === 'flagReview'
-        ? checkedResolutionReason(ruling.subject, ruling.verdict, picked, [flag.label])
-        : checkedResolutionReason(ruling.subject, ruling.verdict, picked, [flag.label]);
+    const reason = withRuling(ruling, (subject, verdict) =>
+      checkedResolutionReason(subject, verdict, picked, [flag.label])
+    );
     if (typeof reason === 'string')
       return refusal(plan.length > 1 ? `${flagName(flag)}: ${reason}` : reason);
     reasons.push(reason);

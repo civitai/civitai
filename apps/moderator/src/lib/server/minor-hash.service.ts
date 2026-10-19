@@ -317,6 +317,9 @@ LEFT JOIN LATERAL (
 ) ci ON TRUE
 `;
 
+/** The version a model's facts describe: the newest published one, else the newest. Needs `mv`. */
+const latestVersionOrder = sql`(mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC`;
+
 /** Latest version's base model and trigger words, plus the model's tags, joined to a CTE named `pg`
  *  with "modelId". Bounded by the page, like the cover images. */
 const modelFactsJoin = sql`
@@ -326,7 +329,7 @@ LEFT JOIN LATERAL (
   )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
   FROM "ModelVersion" mv
   WHERE mv."modelId" = pg."modelId"
-  ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+  ORDER BY ${latestVersionOrder}
   LIMIT 1
 ) v ON TRUE
 LEFT JOIN LATERAL (
@@ -1214,7 +1217,7 @@ export async function getModelFlagDetail({
       LEFT JOIN LATERAL (
         SELECT mv.id FROM "ModelVersion" mv
         WHERE mv."modelId" = m.id
-        ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+        ORDER BY ${latestVersionOrder}
         LIMIT 1
       ) lv ON TRUE
       LEFT JOIN LATERAL (

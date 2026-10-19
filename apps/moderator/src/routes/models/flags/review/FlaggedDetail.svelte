@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
   import { browser } from '$app/environment';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -250,17 +251,19 @@
         {d.label}
       </TriageKeyButton>
     {:else}
-      <button
+      <Button
         type="submit"
+        variant="outline"
+        size="sm"
         name="keep"
         value={d.keep.join(',')}
         formaction={actionHref('decideFlags')}
         disabled={!!unavailable}
         title={unavailable ?? undefined}
-        class="h-8 rounded-md border border-dark-4 bg-transparent px-3 text-[13px] font-semibold text-dark-0 hover:bg-dark-6 disabled:opacity-50"
+        class="h-8 border-dark-4 bg-transparent text-[13px] font-semibold text-dark-0 dark:bg-transparent"
       >
         {d.label}
-      </button>
+      </Button>
     {/if}
   {/each}
 {/snippet}

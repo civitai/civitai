@@ -285,18 +285,18 @@
         </span>
         {#if acted.size}
           <!-- Offsets shift once items are decided, so paging on would skip some; reload re-cuts the page. -->
-          <button type="button" class="text-blue-400 hover:underline" onclick={() => invalidateAll()}>
+          <button type="button" class={LINK_CLASS} onclick={() => invalidateAll()}>
             Refresh queue ({acted.size} decided)
           </button>
         {:else}
           <span class="flex gap-2.5">
             {#if pageNumber > 1}
-              <a href={pageHref(pageNumber - 1)} class="text-blue-400 hover:underline">Prev</a>
+              <a href={pageHref(pageNumber - 1)} class={LINK_CLASS}>Prev</a>
             {:else}
               <span aria-disabled="true">Prev</span>
             {/if}
             {#if hasMore}
-              <a href={pageHref(pageNumber + 1)} class="text-blue-400 hover:underline">Next</a>
+              <a href={pageHref(pageNumber + 1)} class={LINK_CLASS}>Next</a>
             {:else}
               <span aria-disabled="true">Next</span>
             {/if}
