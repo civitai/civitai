@@ -50,7 +50,8 @@ export async function getMysteryPackReview({
       ORDER BY version DESC
       LIMIT 1`,
   ]);
-  const live = liveRow ? liveOf(liveRow.version, liveRow.snapshot) : null;
+  // At the listing's price, not the approval's: a price cut applies without a new version.
+  const live = liveRow ? { ...liveOf(liveRow.version, liveRow.snapshot), price: box.price } : null;
 
   let proposed = null;
   if (revision) {

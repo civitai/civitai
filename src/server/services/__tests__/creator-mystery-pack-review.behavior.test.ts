@@ -300,6 +300,29 @@ describe('getMysteryPackReview', () => {
     expect(result.cosmetics.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
+  // A price cut is not a version, so the approval snapshot's price is stale after one.
+  it('compares an edit against the price the pack sells at after a cut, not the approved one', async () => {
+    await q(`UPDATE "CosmeticShopItem" SET "unitAmount" = 1000 WHERE "cosmeticId" IS NOT NULL`);
+    const boxId = await submit(undefined, 900);
+    await approvePack(boxId);
+    await packs.lowerMysteryPackPrice({ userId: CREATOR, boxId, price: 700 });
+    await packs.reviseMysteryPack({
+      userId: CREATOR,
+      countryCode: 'US',
+      stickersEnabled: false,
+      boxId,
+      steepness: 'standard',
+      tiers: [
+        [1, 2, 3, 4],
+        [5, 6],
+      ],
+      price: 800,
+    });
+    const result = await read(boxId);
+    expect(result.live?.price).toBe(700);
+    expect(result.diff?.price).toEqual({ before: 700, after: 800 });
+  });
+
   it('shows a pack pulled back to review with no edit as its live version alone', async () => {
     const boxId = await submit();
     await approvePack(boxId);

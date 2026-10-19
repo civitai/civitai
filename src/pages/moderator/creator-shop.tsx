@@ -1082,7 +1082,7 @@ function CreatorShopReviewPage() {
                         label={isPack && !isMysteryPack ? 'Creators earn (split)' : 'Creator earns'}
                         value={
                           isMysteryPack
-                            ? 'Payouts not live yet'
+                            ? 'Not live yet'
                             : `${numberWithCommas(
                                 Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
                               )} Buzz${isPack ? ' across members' : ''}`

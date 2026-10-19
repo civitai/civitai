@@ -48,7 +48,7 @@ export function MysteryPackReviewPanel({ review }: { review: MysteryPackReview }
             count: live.contents.filter((c) => c.tier === t.key).length,
           })),
           contents: live.contents.map((c) => ({ ...c, value: c.value ?? null })),
-          price: live.price ?? review.price,
+          price: live.price,
           bounds: live.bounds,
         }
       : null;
