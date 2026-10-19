@@ -32,7 +32,7 @@ export { BoxRefusal } from '@civitai/shared/box-builder';
 
 export type Trx = Transaction<DB>;
 
-// Published boxes, for the grant picker: an archived box is no longer handed out.
+// Same published-only rule as grantMysteryBoxes.
 export type GrantableBox = { id: number; name: string };
 
 export function listGrantableBoxes(): Promise<GrantableBox[]> {

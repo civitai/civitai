@@ -1099,9 +1099,7 @@ async function takeBackBox(
     .execute();
 }
 
-// TAKE BACK A GRANTED BOX. A moderator grant has no purchase to refund, so it is taken back by its
-// `sourceKey` instead, the same way a refunded box is: the held box, or once opened, its reward. There
-// is no Buzz to return.
+// TAKE BACK A GRANTED BOX: no purchase to refund, so it is found by sourceKey. No Buzz is returned.
 export async function takeBackGrantedBox(input: {
   userId: number;
   sourceKey: string;

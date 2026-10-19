@@ -618,8 +618,8 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Capp
     .then((rows) => capped(rows, limit));
 }
 
-// MYSTERY BOXES a moderator granted this user, held or opened, for taking one back. A grant has no
-// purchase row, so these are found by their `sourceKey` (`modGrantSourceKey`) instead.
+// MYSTERY BOXES a moderator granted this user. A grant has no purchase row, so they are found by
+// sourceKey prefix.
 export type GrantedBox = {
   sourceKey: string;
   boxName: string;

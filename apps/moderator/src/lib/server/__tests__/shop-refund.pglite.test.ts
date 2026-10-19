@@ -737,7 +737,6 @@ describe('grantMysteryBoxes', () => {
         [ITEM_HOLDER_LOCK_TIMEOUT],
         [1229455361, user],
       ]);
-      // The prior-grant reads and the insert all run after the lock, on this user's keys.
       expect(own.slice(2).map((st) => st.sql.trim().split(/\s+/)[0].toLowerCase())).toEqual([
         'select',
         'select',
@@ -749,8 +748,8 @@ describe('grantMysteryBoxes', () => {
     }
   });
 
-  // The users before a failure already have their boxes: throwing would hide that, and the form's
-  // grant id with it, so the next attempt would give them a second set.
+  // Throwing would end the request and lose the form's grant id while earlier users keep their
+  // boxes, so the next attempt would give them a second set.
   it('reports a user whose grant fails for another reason, and goes on to the rest', async () => {
     lockFails.set(BUYER, '40P01');
     await expect(grantBoxes()).resolves.toEqual({
@@ -764,7 +763,6 @@ describe('grantMysteryBoxes', () => {
 
   it('gives nothing more to a user who already opened what this form gave', async () => {
     await grantBoxes({ userIds: [BUYER], count: 1 });
-    // The open deletes the Item; its key lives on in the opening.
     await db.query(`DELETE FROM "Item"`);
     await openedBox(modGrantSourceKey('g1', BUYER, 1), 77, 2, HAT);
 
@@ -784,7 +782,6 @@ describe('grantMysteryBoxes', () => {
     expect(await items()).toHaveLength(1);
   });
 
-  // User 1's keys must not be read as already covering user 12's, nor the reverse.
   it('tells apart users whose ids share a prefix', async () => {
     await db.exec(`INSERT INTO "User" ("id") VALUES (1), (12)`);
     await expect(grantBoxes({ userIds: [12, 1], count: 1 })).resolves.toMatchObject({

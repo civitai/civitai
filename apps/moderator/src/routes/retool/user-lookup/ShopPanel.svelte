@@ -34,7 +34,7 @@
   let badgeId = $state('');
   // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
   const boxGranting = new FormState({ onSuccess: () => onSuccess(), reset: false });
-  // Its own state, so taking one back leaves a half-made grant alone.
+  // Separate from boxGranting: that one sets reset: false, this one needs the default reset.
   const boxTakingBack = new FormState({ onSuccess: () => onSuccess() });
 </script>
 
@@ -44,6 +44,15 @@
 {#if form.warning}
   <WarningAlert class="mb-4" message={form.warning} />
 {/if}
+<!-- Above the account load, as `form`'s are: a write reloads it, and an alert inside would go too. -->
+{#each [boxGranting, boxTakingBack] as state, i (i)}
+  {#if state.error}
+    <ErrorAlert class="mb-4" message={state.error} />
+  {/if}
+  {#if state.warning}
+    <WarningAlert class="mb-4" message={state.warning} />
+  {/if}
+{/each}
 
 {#await account}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">

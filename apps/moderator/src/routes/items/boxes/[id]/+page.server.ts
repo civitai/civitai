@@ -79,7 +79,6 @@ const saveSchema = z.object({
 const versionSchema = z.object({ expectedVersion: z.coerce.number().int().positive() });
 
 const grantSchema = z.object({
-  // Ids separated by commas, spaces or new lines, as pasted from a sheet.
   userIds: z.string().transform((value, ctx) => {
     const ids = parseUserIdList(value);
     const bad = ids.find((id) => !int4Id.safeParse(id).success);
@@ -185,7 +184,7 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { scope: 'grant', error: input });
     try {
       const result = await grantMysteryBoxes({ boxId, ...input, moderatorId: locals.user.id });
-      // The count as granted, for the confirmation: the field may have changed since it was posted.
+      // Echoed: the form's count field may have changed by the time the result arrives.
       return { scope: 'grant', count: input.count, ...result };
     } catch (e) {
       if (e instanceof BoxGrantRefused) return fail(409, { scope: 'grant', error: e.message });

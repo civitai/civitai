@@ -32,8 +32,7 @@ export const PERMISSIONS = [
   { id: 'user.buzz.bank', label: 'See bank transactions in Buzz history' },
   { id: 'user.moderator.toggle', label: 'Activate or deactivate moderator' },
   { id: 'user.cosmetics.grant', label: 'Grant cosmetics' },
-  // Apart from cosmetics: a box is a paid product, and one bulk grant reaches 500 users × 10 boxes.
-  // Covers taking a granted box back too.
+  // Apart from cosmetics: a box is a paid product, and one bulk grant reaches many users.
   { id: 'items.boxes.grant', label: 'Grant mystery boxes, and take granted ones back' },
   // Three destructive actions on User Lookup that were gated on the `/users` PAGE grant, so
   // granting a role the new-signups list handed it mass comment deletion, ban and purge in the same

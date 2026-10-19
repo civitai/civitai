@@ -31,8 +31,8 @@
     onSuccess: (data) => {
       const result = data as BoxGrantResult & { count: number };
       last = result;
-      // The users left out stay in the box with the same grant id: granting again finishes the job
-      // and cannot give anyone twice. Once nobody is left, the next grant is a new one.
+      // Busy and failed users go back in the box under the same grant id, so granting again finishes
+      // the job and cannot give anyone twice.
       const retry = [...result.busyUserIds, ...result.failedUserIds];
       userIds = retry.join(' ');
       if (!retry.length) grantId = newBoxGrantId();

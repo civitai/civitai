@@ -6,8 +6,6 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import WarningAlert from '$lib/components/WarningAlert.svelte';
   import type { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import { MAX_BOXES_PER_USER, newBoxGrantId } from '$lib/mystery-box';
@@ -26,14 +24,13 @@
     grantableBoxes: Account['grantableBoxes'];
     userId: number;
     canGrantBoxes: boolean;
-    /** Held by ShopPanel, outside the account load: a write reloads the account, which remounts this
-     *  card, and a warning held here would go with it. */
+    /** Owned by ShopPanel, which shows their alerts: a write reloads the account and remounts this card. */
     granting: FormState;
     takingBack: FormState;
   } = $props();
 
-  // Minted in the browser, on each mount: a grant that lands reloads the account and remounts this
-  // card, so the next grant is a new one rather than a repeat of the last.
+  // On each mount: a landed grant reloads the account and remounts this card, so the next grant gets
+  // a new id.
   let grantId = $state('');
   onMount(() => (grantId = newBoxGrantId()));
   let boxId = $state('');
@@ -49,14 +46,6 @@
     A granted box is free: no purchase, no Buzz. Taking one back removes the box, or what it gave
     once opened.
   </p>
-  {#each [granting, takingBack] as state, i (i)}
-    {#if state.error}
-      <ErrorAlert class="mb-3" message={state.error} />
-    {/if}
-    {#if state.warning}
-      <WarningAlert class="mb-3" message={state.warning} />
-    {/if}
-  {/each}
   {#if !canGrantBoxes}
     <p class="text-sm text-dark-2">{denied('items.boxes.grant')}</p>
   {:else if grantableBoxes.length === 0}

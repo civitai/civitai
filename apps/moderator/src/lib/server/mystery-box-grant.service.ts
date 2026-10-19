@@ -33,15 +33,16 @@ export type BoxGrantResult = {
 
 /**
  * Gives each user `count` held boxes of a published box, as `Item` rows keyed by `modGrantSourceKey`.
- * No purchase, claim or Buzz is involved, and none may be: the main app reads any purchase of a box
- * as its having gone on sale.
+ * No purchase, claim or Buzz may be involved: the main app reads any purchase of a box as its having
+ * gone on sale.
  *
- * `grantId` is minted when the form renders. A user this grant id already reached gets nothing more,
- * whatever `count` is now and whether or not they opened what it gave, so a resubmitted form never
- * grants twice; granting again to the users it skipped finishes the job. The exception: once every
- * box it gave a user is taken back unopened, nothing records it, and the same form grants them again. One transaction per user under
- * their item-holder lock, as the main app's purchases and opens take it; a failure for one user is
- * reported, not thrown, since the users before them already have their boxes.
+ * `grantId` is minted when the form renders. A user it already reached, boxes held or opened, gets
+ * nothing more whatever `count` is now, so a resubmitted form never grants twice; granting again
+ * finishes the users it skipped. Gap: once every box it gave a user is taken back unopened, nothing
+ * records it and the same form grants them again.
+ *
+ * One transaction per user; a failure for one is reported, not thrown, since earlier users already
+ * have their boxes.
  */
 export async function grantMysteryBoxes({
   boxId,
@@ -94,7 +95,7 @@ export async function grantMysteryBoxes({
     failedUserIds: [],
   };
   for (const userId of uniqueUserIds) {
-    // Every key this grant id has ever given this user, whatever the count was.
+    // Any count. The trailing '-' stops user 1's keys matching user 12's.
     const given = `${escapeLike(`${MOD_GRANT_SOURCE_PREFIX}${grantId}-${userId}-`)}%`;
     let outcome: 'granted' | 'already';
     try {
@@ -143,7 +144,8 @@ export async function grantMysteryBoxes({
       continue;
     }
     result.grantedUserIds.push(userId);
-    // Per user, as each commits: a later user's failure must not leave this grant unattributed.
+    // Per user, as each commits: a request that dies mid-loop still leaves the earlier grants
+    // attributed.
     await recordModActivity({
       userId: moderatorId,
       entityType: 'user',
