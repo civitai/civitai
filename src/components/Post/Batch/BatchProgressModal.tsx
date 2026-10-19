@@ -122,14 +122,19 @@ export function BatchProgressModal({
   const created = createdRef.current;
   const first = created.length ? new Date(created[0].publishedAt) : null;
   const last = created.length ? new Date(created[created.length - 1].publishedAt) : null;
+  // Locked only while posts are being created; closing a finished screen takes its plain way out.
+  const dismissible = phase !== 'running';
 
   return (
     <Modal
       opened
-      onClose={() => undefined}
-      withCloseButton={false}
-      closeOnClickOutside={false}
-      closeOnEscape={false}
+      onClose={() => {
+        if (phase === 'done') onScheduleAnother();
+        else if (phase === 'failed') onKeepEditing();
+      }}
+      withCloseButton={dismissible}
+      closeOnClickOutside={dismissible}
+      closeOnEscape={dismissible}
       centered
       title={
         phase === 'running'
