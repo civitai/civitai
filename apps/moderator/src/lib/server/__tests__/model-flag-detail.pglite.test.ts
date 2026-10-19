@@ -8,7 +8,6 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 const { dbHandle, memory } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   memory: {
-    strikes: vi.fn<(ids: number[]) => Promise<Map<number, number>>>(),
     notes: vi.fn<(userId: number, viewer: string | null) => Promise<unknown[]>>(),
   },
 }));
@@ -25,7 +24,6 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
 vi.mock('../moderation-memory.service', () => ({
-  strikeCountsByUserIds: memory.strikes,
   getUserNotes: memory.notes,
 }));
 
@@ -55,6 +53,10 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ModelReport" ("modelId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+CREATE TABLE "UserStrike" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "status" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP NOT NULL, "voidedAt" TIMESTAMP
+);
 CREATE TABLE "TextScanPrompt" ("id" INTEGER PRIMARY KEY, "key" TEXT NOT NULL, "content" TEXT NOT NULL);
 `;
 
@@ -63,7 +65,6 @@ beforeEach(async () => {
   pg = new PGlite();
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   await pg.exec(SCHEMA);
-  memory.strikes.mockResolvedValue(new Map([[1, 2]]));
   memory.notes.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
   await pg.exec(`
     INSERT INTO "User" VALUES (1, 'owner', '2024-03-05T00:00:00Z'), (2, 'other', '2025-01-01');
@@ -88,6 +89,14 @@ beforeEach(async () => {
     INSERT INTO "Image" VALUES (1, 1, 'image'), (2, 1, 'image'), (3, 2, 'image'), (4, 2, 'video'), (5, 3, 'image');
     INSERT INTO "Report" VALUES (1, 'Pending'), (2, 'Processing'), (3, 'Actioned'), (4, 'Pending');
     INSERT INTO "ModelReport" VALUES (10, 1), (10, 2), (10, 3), (11, 4);
+    INSERT INTO "UserStrike" VALUES
+      (1, 1, 'Active', now() + interval '30 days', NULL),
+      (2, 1, 'Active', now() + interval '30 days', NULL),
+      (3, 1, 'Voided', now() + interval '30 days', now()),
+      (4, 1, 'Expired', now() - interval '1 day', NULL),
+      -- Past its expiry but not yet swept to Expired.
+      (5, 1, 'Active', now() - interval '1 day', NULL),
+      (6, 2, 'Active', now() + interval '30 days', NULL);
     INSERT INTO "TextScanPrompt" VALUES (1, 'base', 'a'), (2, 'label:minor', 'b'), (3, 'base', 'c'),
       (4, 'label:minor', 'd'), (5, 'label:minor', 'e');
   `);
@@ -131,7 +140,6 @@ describe('getModelFlagDetail', () => {
     });
     expect(detail?.flagsReverted.count).toBe(2);
     expect(new Date(detail!.flagsReverted.lastAt!).toISOString()).toBe('2025-11-02T00:00:00.000Z');
-    expect(memory.strikes).toHaveBeenCalledWith([1]);
     expect(memory.notes).toHaveBeenCalledWith(1, null);
   });
 
@@ -153,8 +161,12 @@ describe('getModelFlagDetail', () => {
     expect(detail?.promptVersions).toEqual({ 4: 2, 3: 2 });
   });
 
-  it('degrades the moderator-database facts to null instead of failing the pane', async () => {
-    memory.strikes.mockRejectedValue(new Error('down'));
+  it('counts only active strikes: not voided, expired or past their expiry', async () => {
+    expect((await getModelFlagDetail({ modelId: 10 }))?.strikes).toBe(2);
+  });
+
+  it('degrades the strike and note counts to null instead of failing the pane', async () => {
+    await pg.exec('DROP TABLE "UserStrike"');
     memory.notes.mockRejectedValue(new Error('down'));
     const detail = await getModelFlagDetail({ modelId: 10 });
     expect(detail).toMatchObject({ strikes: null, notes: null, previewCount: 3 });

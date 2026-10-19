@@ -1,7 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
 import { dbRead } from './db';
-import { getUserNotes, strikeCountsByUserIds } from './moderation-memory.service';
+import { getUserNotes } from './moderation-memory.service';
 import {
   DEFAULT_APPEAL_FILTERS,
   SNAPSHOT_SOURCE,
@@ -1151,11 +1151,26 @@ const revertedSql = sql`(
   OR o.meta->'textScanFlags'->'poi' ? 'appealGranted'
 )`;
 
+/** Strikes in force: Active, not voided and not past expiry (the status lags until the expiry job
+ *  sweeps it). Not `strikeCountsByUserIds`, which counts every strike ever issued, voided and expired
+ *  included, plus legacy moderator-database rows that carry no status at all. */
+async function activeStrikeCount(userId: number) {
+  const result = await sql<{ count: number }>`
+    SELECT count(*)::int AS count
+    FROM "UserStrike" s
+    WHERE s."userId" = ${userId}
+      AND s.status::text = 'Active'
+      AND s."voidedAt" IS NULL
+      AND s."expiresAt" > now()
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
+}
+
 /**
  * What only the open detail pane shows, for one model: fetched on selection rather than joined into
  * the list, so a 50-row page does not pay for facts 49 rows never show. One statement on the main
- * database, then the uploader's strikes and notes from the moderator database, which degrade to null
- * rather than failing the pane.
+ * database, then the uploader's active strikes and their notes (moderator database), which degrade to
+ * null rather than failing the pane.
  */
 export async function getModelFlagDetail({
   modelId,
@@ -1236,10 +1251,7 @@ export async function getModelFlagDetail({
   const { userId, ...model } = row;
 
   const [strikes, notes] = await Promise.all([
-    strikeCountsByUserIds([userId]).then(
-      (counts) => counts.get(userId) ?? 0,
-      () => null
-    ),
+    activeStrikeCount(userId).catch(() => null),
     getUserNotes(userId, null).then(
       (list) => list.length,
       () => null

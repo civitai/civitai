@@ -57,12 +57,13 @@ describe('filesText', () => {
 });
 
 describe('flagsText', () => {
-  it('counts the reverted flags on other models and the strikes', () => {
+  it('counts the reverted flags on other models and the active strikes', () => {
     expect(flagsText({ count: 1, lastAt: '2025-09-04T00:00:00Z' }, 0)).toBe(
       '1 flag reverted on another model, 2025-09 · 0 strikes'
     );
     expect(flagsText({ count: 0, lastAt: null }, 2)).toBe('none reverted · 2 strikes');
-    expect(flagsText({ count: 0, lastAt: null }, null)).toBe('none reverted');
+    // An unreadable count must not read as a clean record.
+    expect(flagsText({ count: 0, lastAt: null }, null)).toBe('none reverted · strikes unavailable');
   });
 });
 

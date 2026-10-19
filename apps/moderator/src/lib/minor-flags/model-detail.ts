@@ -93,7 +93,7 @@ export const flagsText = (reverted: ModelFlagDetail['flagsReverted'], strikes: n
         reverted.lastAt ? `, ${yearMonth(reverted.lastAt)}` : ''
       }`
     : 'none reverted';
-  return strikes === null ? flags : `${flags} · ${plural(strikes, 'strike')}`;
+  return `${flags} · ${strikes === null ? 'strikes unavailable' : plural(strikes, 'strike')}`;
 };
 
 /** Which scan raised the flag, while that scan's row still carries its workflow. A rescan replaces the
