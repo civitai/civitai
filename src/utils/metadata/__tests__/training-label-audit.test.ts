@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { auditTrainingLabels } from '~/components/Training/Form/training-label-audit';
+import {
+  auditTrainingLabels,
+  labelAsTrained,
+  packCaptionsForAudit,
+} from '~/utils/metadata/training-label-audit';
 
 /**
  * The trainer walled submission on every audit failure, including the overridable `profanity`
- * category, so a Danbooru tag carrying a bare `fu` blocked a whole dataset (ClickUp 868m5agjq).
+ * category, so a Danbooru tag carrying a bare `fu` blocked a whole dataset.
  */
 
 const labels = (...pairs: [string, string][]) => pairs.map(([key, label]) => ({ key, label }));
@@ -71,6 +75,16 @@ describe('auditTrainingLabels', () => {
     });
   });
 
+  it('marks no label for a trigger word that leads it as written to the dataset', () => {
+    const result = auditTrainingLabels({
+      triggerWord: 'fagus',
+      labels: labels(['a.png', labelAsTrained('1girl', 'fagus', 'tag')]),
+      checkProfanity: true,
+    });
+    expect(result.triggerWordInvalid).toBe(true);
+    expect(result.invalidKeys).toEqual([]);
+  });
+
   it('skips the profanity check off green', () => {
     const result = auditTrainingLabels({
       triggerWord: 'fagus',
@@ -133,5 +147,49 @@ describe('auditTrainingLabels', () => {
       checkProfanity: true,
     });
     expect(result.severity).toBe('clean');
+  });
+});
+
+describe('labelAsTrained', () => {
+  it.each([
+    ['tags', '1girl, solo', 'tag', 'mystyle, 1girl, solo'],
+    ['a caption', 'a woman walking', 'caption', 'mystyle a woman walking'],
+    ['an empty label', '', 'tag', 'mystyle'],
+    ['tags already led by the trigger word', 'mystyle, 1girl', 'tag', 'mystyle, 1girl'],
+    ['a caption already led by the trigger word', 'mystyle a woman', 'caption', 'mystyle a woman'],
+    [
+      'a tag that only starts with the trigger word',
+      'mystyles, 1girl',
+      'tag',
+      'mystyle, mystyles, 1girl',
+    ],
+  ] as const)('leads %s with the trigger word once', (_l, label, type, expected) => {
+    expect(labelAsTrained(label, 'mystyle', type)).toBe(expected);
+  });
+
+  it('matches a trigger word with regex characters literally', () => {
+    expect(labelAsTrained('c++, 1girl', 'c++', 'tag')).toBe('c++, 1girl');
+    expect(labelAsTrained('cx, 1girl', 'c.', 'tag')).toBe('c., cx, 1girl');
+  });
+
+  it('leaves a label alone without a trigger word', () => {
+    expect(labelAsTrained('1girl', '', 'tag')).toBe('1girl');
+  });
+});
+
+describe('packCaptionsForAudit', () => {
+  const text = (length: number) => 'x'.repeat(length);
+
+  it('fills a batch to exactly the cap, and splits one character past it', () => {
+    expect(packCaptionsForAudit([text(6), text(3)], 10).map((b) => b.length)).toEqual([10]);
+    expect(packCaptionsForAudit([text(6), text(4)], 10).map((b) => b.length)).toEqual([6, 4]);
+  });
+
+  it('never splits a caption: one over the cap is a batch of its own', () => {
+    expect(packCaptionsForAudit(['a', text(15), 'b'], 10)).toEqual(['a', text(15), 'b']);
+  });
+
+  it('drops empty captions and keeps order', () => {
+    expect(packCaptionsForAudit(['a', '', 'b'], 10)).toEqual(['a\nb']);
   });
 });

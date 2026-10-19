@@ -1,16 +1,15 @@
 import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  bufferZipSource,
   deliveryName,
   openEntryStream,
   openZip,
   pathRefusal,
   readEntry,
-  s3ZipSource,
   ZipRejectedError,
   type EntryKind,
 } from '~/server/utils/service-deal-zip';
+import { bufferZipSource, s3ZipSource } from '~/server/utils/zip-range-reader';
 import {
   SERVICE_ZIP_MAX_ENTRIES,
   SERVICE_ZIP_MAX_ENTRY_BYTES,
@@ -412,6 +411,28 @@ describe('what an archive actually does', () => {
   });
 });
 
+describe('a final missing from the bucket', () => {
+  it('is refused once, with a reason, rather than retried for ever', async () => {
+    const send = vi.fn(async () => {
+      throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+    });
+    await expect(openZip(s3ZipSource({ send } as never, 'bucket', 'key', 100))).rejects.toThrow(
+      new ZipRejectedError('The file is no longer in storage. Upload it again.')
+    );
+  });
+
+  it('while any other storage failure is left to be retried', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('connection reset');
+    });
+    const error = await openZip(s3ZipSource({ send } as never, 'bucket', 'key', 100)).catch(
+      (e: unknown) => e
+    );
+    expect(error).not.toBeInstanceOf(ZipRejectedError);
+    expect((error as Error).message).toBe('connection reset');
+  });
+});
+
 describe('reading from the bucket', () => {
   it('asks for exactly the range, and for nothing when the range is empty', async () => {
     const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abc')]) }));
@@ -525,8 +546,9 @@ describe('copying an entry out', () => {
   });
 
   it('fails when the source of the archive fails part-way, rather than waiting for ever', async () => {
+    // Larger than the tail the reader holds in memory, so the entry's bytes are read from the source.
     const whole = bufferZipSource(
-      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(2000)), method: 'store' }])
+      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(40000)), method: 'store' }])
     );
     let failing = false;
     const flaky = {

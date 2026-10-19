@@ -6318,7 +6318,7 @@ export const blocksRouter = router({
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
-      const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
+      const { userId } = await assertTrainingRequestAllowed(claims, ctx);
       const rate = await checkBlockTrainingDatasetRateLimit(
         claims.blockInstanceId,
         userId,
@@ -6348,7 +6348,7 @@ export const blocksRouter = router({
         },
         items: input.items,
         token,
-        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
+        checkCaptions: (captions) => checkBlockTrainingText(claims, userId, '', captions),
       });
     }),
 
@@ -14598,8 +14598,11 @@ async function estimateTrainingWorkflow(opts: {
     isModerator: !!user.isModerator,
   });
 
-  // App-supplied text that drives sample generation — moderated like a prompt.
-  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+  // The sample prompts drive sample generation, so they are moderated as prompts.
+  await Promise.all([
+    checkBlockTrainingText(claims, userId, body.triggerWord, []),
+    auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
+  ]);
 
   const step = { ...run.step, name: BLOCK_STEP_NAME };
   const token = await getOrchestratorToken(userId, ctx);
@@ -14666,9 +14669,29 @@ async function auditBlockTrainingText(opts: {
   await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
 }
 
-/** A training body's own free text, joined for one audit. */
+/**
+ * The training text rule every training path applies: dataset captions, and the trigger word
+ * (captions are checked when the dataset is prepared).
+ */
+async function checkBlockTrainingText(
+  claims: BlockClaims,
+  userId: number,
+  triggerWord: string,
+  captions: string[]
+) {
+  const { assertTrainingTextAllowed } = await import(
+    '~/server/services/orchestrator/training/training-label-check'
+  );
+  await assertTrainingTextAllowed({
+    triggerWord,
+    captions,
+    log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
+  });
+}
+
+/** A training body's sample prompts, joined for one audit. */
 function trainingBodyAuditText(body: BlockTrainingBody): string {
-  return [body.triggerWord, ...body.samplePrompts]
+  return body.samplePrompts
     .map((t) => t.trim())
     .filter((t) => t.length > 0)
     .join('\n');
@@ -14736,7 +14759,10 @@ async function submitTrainingWorkflow(opts: {
           features,
           isModerator: !!user.isModerator,
         });
-        await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+        await Promise.all([
+          checkBlockTrainingText(claims, userId, body.triggerWord, []),
+          auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
+        ]);
         // `name` is what the snapshot/publish extractors key on.
         const step = { ...run.step, name: BLOCK_STEP_NAME };
         return {

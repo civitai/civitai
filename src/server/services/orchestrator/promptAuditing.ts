@@ -440,6 +440,29 @@ export async function classifyPromptServer(
 }
 
 /**
+ * The external classifier alone, sent the same benign-stripped copy `classifyPromptServer` sends
+ * it. For text whose word rules are applied elsewhere: training text is checked tag by tag, so a
+ * regex pass over joined captions would match across unrelated tags. Fails open and records
+ * nothing, as there.
+ */
+export async function classifyPromptExternally(
+  prompt: string,
+  moderationSource?: ExternalModerationSource
+): Promise<Pick<PromptClassification, 'categories' | 'externalError'>> {
+  if (!prompt.trim()) return { categories: [], externalError: null };
+  const audited = await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase);
+  try {
+    const { flagged, categories } = await extModeration.moderatePrompt(
+      audited ?? prompt,
+      moderationSource
+    );
+    return { categories: flagged ? categories : [], externalError: null };
+  } catch (error) {
+    return { categories: [], externalError: { message: (error as Error)?.message } };
+  }
+}
+
+/**
  * Centralized prompt auditing function that handles both regex and external moderation checks.
  *
  * @param options - Audit options including prompt, userId, and isGreen flag

@@ -17,12 +17,12 @@ import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service
 import {
   openZip,
   readEntry,
-  s3ZipSource,
   sniffEntry,
   ZipRejectedError,
   type OpenedZip,
   type ZipEntry,
 } from '~/server/utils/service-deal-zip';
+import { s3ZipSource } from '~/server/utils/zip-range-reader';
 import {
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_UNPACK_RETRY_MS,

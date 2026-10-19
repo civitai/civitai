@@ -21,7 +21,7 @@ import {
   templates,
 } from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import { AuditTimer, type AuditTimerOptions } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
@@ -305,7 +305,7 @@ export const auditPromptEnriched = (
   // 5. Profanity check (green domain only)
   if (checkProfanity) {
     const profanityResults = timer.time('profanity', () => {
-      const profanityFilter = createProfanityFilter();
+      const profanityFilter = getProfanityFilter();
       // Strip Danbooru rating/score/source tags first, for the same reason
       // `includesMinorAge` does: they are metadata, not language. `rating_explicit` is
       // how a booru labels an image, and obscenity matches inside it — so the tag alone

@@ -11,8 +11,12 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
+vi.mock('~/server/services/orchestrator/training/training-label-check', () => ({
+  assertTrainingZipAllowed: vi.fn(async () => undefined),
+}));
 vi.mock('~/utils/s3-utils', () => ({
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
+  getS3Client: vi.fn(),
   getB2S3Client: vi.fn(),
   isB2Url: vi.fn(() => false),
 }));

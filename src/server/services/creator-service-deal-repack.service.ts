@@ -15,10 +15,10 @@ import {
   openEntryStream,
   openZip,
   readEntry,
-  s3ZipSource,
   ZipRejectedError,
   type OpenedZip,
 } from '~/server/utils/service-deal-zip';
+import { s3ZipSource } from '~/server/utils/zip-range-reader';
 import {
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_UNPACK_STALE_MS,

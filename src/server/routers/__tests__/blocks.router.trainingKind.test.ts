@@ -39,6 +39,7 @@ const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(async () => undefined),
   audit: vi.fn(async () => undefined),
+  checkText: vi.fn(async (_input: { triggerWord: string; captions: string[] }) => undefined),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   reserveAppSpend: vi.fn(async () => ({ allowed: true, dailyKey: 'app-daily' })),
   refundAppSpend: vi.fn(async () => undefined),
@@ -93,6 +94,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (...a: unknown[]) => h.audit(...(a as [])),
+}));
+vi.mock('~/server/services/orchestrator/training/training-label-check', () => ({
+  assertTrainingTextAllowed: (input: { triggerWord: string; captions: string[] }) =>
+    h.checkText(input),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -478,11 +483,18 @@ describe('training ESTIMATE — prices the run and stores a quote', () => {
     ]);
   });
 
-  it('audits the trigger word and sample prompts before pricing', async () => {
+  it('checks the trigger word under the training rule and audits the sample prompts, before pricing', async () => {
     await estimate();
+    expect(h.checkText).toHaveBeenCalledTimes(1);
+    expect(h.checkText).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar', captions: [] })
+    );
+    expect(h.checkText.mock.invocationCallOrder[0]).toBeLessThan(
+      h.submitWorkflow.mock.invocationCallOrder[0]
+    );
     expect(h.audit).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: 'mychar\nmychar on a beach',
+        prompt: 'mychar on a beach',
         userId: VIEWER,
         isGreen: true,
       })
@@ -1133,6 +1145,18 @@ describe('training — maturity, currency and re-admission', () => {
     expect(counter('system:blocks:buzz-cap')).toBe(0);
   });
 
+  it('the submit re-checks the trigger word, and a refusal charges nothing', async () => {
+    const quoteId = await confirmedQuote();
+    h.checkText.mockClear();
+    h.checkText.mockRejectedValueOnce(new Error('trigger word refused'));
+    await expect(submit(body({ quoteId }))).rejects.toThrow('trigger word refused');
+    expect(h.checkText).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar', captions: [] })
+    );
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+  });
+
   it('a fractional whatif price is rounded UP, never down', async () => {
     whatifPrice = { total: 1199.2 };
     const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { total: number } } };
@@ -1312,8 +1336,8 @@ describe('prepareTrainingDataset — router wiring', () => {
       ],
     });
     expect(out.rejected).toEqual([{ imageId: 6, reason: 'not-eligible' }]);
-    expect(h.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'a cat', userId: VIEWER, isGreen: true })
+    expect(h.checkText).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: '', captions: ['a cat'] })
     );
     expect(h.imageUpload).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'orch-token', allowMatureContent: false })

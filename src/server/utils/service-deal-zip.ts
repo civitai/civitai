@@ -1,6 +1,5 @@
-import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { PassThrough, Readable, Transform } from 'stream';
-import * as yauzl from 'yauzl';
+import { Transform, type Readable } from 'stream';
+import type * as yauzl from 'yauzl';
 import {
   SERVICE_ZIP_ARCHIVE_EXTENSIONS,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
@@ -13,7 +12,12 @@ import {
   SERVICE_ZIP_RATIO_FLOOR_BYTES,
   SERVICE_ZIP_VIDEO_EXTENSIONS,
 } from '~/shared/constants/creator-services.constants';
-import type { getS3Client } from '~/utils/s3-utils';
+import {
+  InvalidZipError,
+  openRangeZip,
+  RangeReadError,
+  type ZipSource,
+} from '~/server/utils/zip-range-reader';
 
 /**
  * Reads a zip Final without ever holding more than one entry: the central directory is read with
@@ -29,54 +33,6 @@ export class ZipRejectedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ZipRejectedError';
-  }
-}
-
-export type ZipSource = {
-  size: number;
-  /** A stream of bytes [start, end) of the archive. */
-  readRange: (start: number, end: number) => Readable;
-};
-
-/** A zip held in memory: for tests, and for any caller that already has the bytes. */
-export const bufferZipSource = (buffer: Buffer): ZipSource => ({
-  size: buffer.byteLength,
-  readRange: (start, end) => Readable.from([buffer.subarray(start, end)]),
-});
-
-/** Ranged reads of an object in the bucket. */
-export const s3ZipSource = (
-  client: ReturnType<typeof getS3Client>,
-  bucket: string,
-  key: string,
-  size: number
-): ZipSource => ({
-  size,
-  readRange: (start, end) => {
-    const out = new PassThrough();
-    if (end <= start) {
-      out.end();
-      return out;
-    }
-    client
-      .send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${end - 1}` }))
-      .then((response) => {
-        const body = response.Body as Readable | undefined;
-        if (!body) throw new Error('Empty object body');
-        body.on('error', (error) => out.destroy(error));
-        body.pipe(out);
-      })
-      .catch((error) => out.destroy(error));
-    return out;
-  },
-});
-
-class SourceReader extends yauzl.RandomAccessReader {
-  constructor(private readonly source: ZipSource) {
-    super();
-  }
-  _readStreamForRange(start: number, end: number) {
-    return this.source.readRange(start, end);
   }
 }
 
@@ -227,24 +183,28 @@ function yauzlRefusal(error: Error) {
   return new ZipRejectedError('This is not a valid .zip file.');
 }
 
-const openArchive = (source: ZipSource) =>
-  new Promise<yauzl.ZipFile>((resolve, reject) => {
-    yauzl.fromRandomAccessReader(
-      new SourceReader(source),
-      source.size,
-      {
-        lazyEntries: true,
-        autoClose: false,
-        // Off on purpose: yauzl would otherwise trust the declared size to bound what it inflates.
-        // The reader below counts what actually comes out and enforces every limit on that.
-        validateEntrySizes: false,
-      },
-      (error, zipfile) =>
-        error || !zipfile
-          ? reject(new ZipRejectedError('This is not a valid .zip file.'))
-          : resolve(zipfile)
-    );
-  });
+/**
+ * A storage failure is retried, except a missing object: no retry can bring it back, so the seller
+ * is told instead.
+ */
+const storageFailure = (error: unknown) =>
+  error instanceof RangeReadError && error.notFound
+    ? new ZipRejectedError('The file is no longer in storage. Upload it again.')
+    : error;
+
+/** A malformed archive is the seller's to fix. */
+async function openArchive(source: ZipSource) {
+  try {
+    // Entry sizes unvalidated on purpose: yauzl would otherwise trust the declared size to bound
+    // what it inflates. The reader below counts what actually comes out and enforces every limit on
+    // that.
+    return (await openRangeZip(source, { validateEntrySizes: false })).zipfile;
+  } catch (error) {
+    if (error instanceof InvalidZipError)
+      throw new ZipRejectedError('This is not a valid .zip file.');
+    throw storageFailure(error);
+  }
+}
 
 /**
  * Opens the archive and reads its directory, refusing it on anything the headers already show.
@@ -375,7 +335,7 @@ export async function readEntry(
     // not, and is retried.
     if (((error as { code?: string })?.code ?? '').startsWith('Z_'))
       throw new ZipRejectedError('The archive is damaged.');
-    throw error;
+    throw storageFailure(error);
   }
 
   return { kind, bytes, data: keep(kind) ? Buffer.concat(chunks) : null };
@@ -430,7 +390,7 @@ export async function openEntryStream(
     ? SERVICE_ZIP_MAX_IMAGE_BYTES
     : SERVICE_ZIP_MAX_ENTRY_BYTES;
   const limited = new LimitedEntry(Math.max(1, entry.raw.compressedSize), cap, budget);
-  source.on('error', (error) => limited.destroy(error));
+  source.on('error', (error) => limited.destroy(storageFailure(error) as Error));
   limited.on('close', () => source.destroy());
   return source.pipe(limited);
 }

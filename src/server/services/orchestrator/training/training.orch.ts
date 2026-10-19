@@ -36,6 +36,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingZipAllowed } from '~/server/services/orchestrator/training/training-label-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -43,7 +44,7 @@ import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
+import { getGetUrl, getB2S3Client, getS3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
   getTrainingFields,
@@ -413,9 +414,8 @@ export const createTrainingWorkflow = async ({
   const fileMetadata = modelVersion.fileMetadata ?? {};
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
 
-  // Content prepared under red's permissive policy (captions/images live in the training zip and
-  // aren't re-checked here) must be paid for and run on red, not laundered onto green by switching
-  // domains at the final step. Legacy datasets predate the stamp and fall through to post-run
+  // Content prepared under red's permissive policy (the zip's images aren't re-checked here) must be
+  // paid for and run on red, not laundered onto green by switching domains at the final step. Legacy datasets predate the stamp and fall through to post-run
   // moderation. See createFileHandler for where uploadDomain is set.
   if (domain === 'green' && fileMetadata.uploadDomain === 'red') {
     throw throwBadRequestError(
@@ -440,9 +440,9 @@ export const createTrainingWorkflow = async ({
   if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
     throw throwBadRequestError('Audio training is not currently enabled.');
 
-  const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
-    ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
-    : await getGetUrl(modelVersion.trainingUrl);
+  const trainingDataS3 = isB2Url(modelVersion.trainingUrl) ? getB2S3Client() : getS3Client();
+  const trainingDataLocation = await getGetUrl(modelVersion.trainingUrl, { s3: trainingDataS3 });
+  const trainingData = trainingDataLocation.url;
 
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
@@ -457,6 +457,15 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingZipAllowed({
+    s3: trainingDataS3,
+    bucket: trainingDataLocation.bucket,
+    key: trainingDataLocation.key,
+    triggerWord,
+    userId,
+    modelVersionId,
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.

@@ -67,7 +67,7 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingLabels } from '~/components/Training/Form/training-label-audit';
+import { auditTrainingLabels, labelAsTrained } from '~/utils/metadata/training-label-audit';
 import {
   blankTagStr,
   labelDescriptions,
@@ -1114,24 +1114,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         try {
           const filenameBase = String(idx).padStart(3, '0');
 
-          let label = imgData.label;
-
-          if (triggerWord.length) {
-            const separator = labelType === 'caption' ? '' : ',';
-            const regMatch =
-              labelType === 'caption'
-                ? new RegExp(`^${triggerWord}( |$)`)
-                : new RegExp(`^${triggerWord}(${separator}|$)`);
-
-            if (!regMatch.test(label)) {
-              label =
-                label.length > 0
-                  ? labelType === 'caption'
-                    ? [triggerWord, label].join(' ')
-                    : [triggerWord, label].join(`${separator} `)
-                  : triggerWord;
-            }
-          }
+          const label = labelAsTrained(imgData.label, triggerWord, labelType);
 
           label.length > 0 && zip.file(`${filenameBase}.txt`, label);
 
@@ -1323,7 +1306,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       const audit = auditTrainingLabels({
         triggerWord,
-        labels: imageList.map((i) => ({ key: getShortNameFromUrl(i), label: i.label })),
+        // Checked as written to the dataset, which is what the submit re-checks.
+        labels: imageList.map((i) => ({
+          key: getShortNameFromUrl(i),
+          label: labelAsTrained(i.label, triggerWord, labelType),
+        })),
         checkProfanity: isGreen,
       });
 
