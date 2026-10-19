@@ -141,9 +141,13 @@ vi.mock('@aws-sdk/lib-storage', () => {
   return { Upload, default: { Upload } };
 });
 
-const scanSeam = vi.hoisted(() => ({ submitFinalScan: vi.fn(async () => 'Pending' as const) }));
+const scanSeam = vi.hoisted(() => ({
+  submitFinalScan: vi.fn(async () => 'Pending' as const),
+  isFinalsMalwareScanOn: vi.fn(async () => true),
+}));
 vi.mock('~/server/services/creator-service-deal-file-scan', () => ({
   submitFinalScan: scanSeam.submitFinalScan,
+  isFinalsMalwareScanOn: scanSeam.isFinalsMalwareScanOn,
 }));
 
 const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
