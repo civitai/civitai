@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
+import type * as TrpcModule from '~/utils/trpc';
 
 // React 18.3 exposes `act` on the `react` export, but our @types/react (18.0.14)
 // predates that typing. Use the runtime `React.act` (no test-utils deprecation
@@ -11,7 +12,8 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 // --- module mocks (must be declared before importing the hook) ---
 const queryMock = vi.fn<(input: { modelIds: number[] }) => Promise<Record<string, number[]>>>();
-vi.mock('~/utils/trpc', () => ({
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpcVanilla: {
     user: { getEngagedModelsByIds: { query: (input: { modelIds: number[] }) => queryMock(input) } },
   },
