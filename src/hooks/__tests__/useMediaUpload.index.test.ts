@@ -44,6 +44,7 @@ vi.mock('~/utils/metadata/audit', () => ({ auditMetaData: vi.fn() }));
 
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
+import { preprocessFile } from '~/utils/media-preprocessors';
 
 const image = (name: string) => ({ file: new File(['x'], name, { type: 'image/jpeg' }) });
 
@@ -69,7 +70,14 @@ async function mount(count: number) {
   const pick = (...names: string[]) => act(async () => upload(names.map(image)));
   const finish = () => act(async () => releaseUploads());
   const indexes = () => Object.fromEntries(added.map((x) => [x.objectUrl.slice(5), x.index]));
-  return { pick, finish, render, indexes, unmount: () => act(async () => root.unmount()) };
+  return {
+    upload: (data: Parameters<typeof upload>[0]) => upload(data),
+    pick,
+    finish,
+    render,
+    indexes,
+    unmount: () => act(async () => root.unmount()),
+  };
 }
 
 describe('useMediaUpload image index', () => {
@@ -91,6 +99,34 @@ describe('useMediaUpload image index', () => {
     await editor.finish();
     await editor.finish(); // c.jpg waits for a free upload slot
     expect(editor.indexes()).toEqual({ 'a.jpg': 1, 'b.jpg': 2, 'c.jpg': 3 });
+    await editor.unmount();
+  });
+
+  it('gives a pick made while an earlier one is still being prepared the next index', async () => {
+    let finishPreparing!: () => void;
+    vi.mocked(preprocessFile).mockImplementationOnce(
+      (file) =>
+        new Promise((resolve) => {
+          finishPreparing = () =>
+            resolve({
+              type: 'image',
+              objectUrl: `blob:${(file as File).name}`,
+              metadata: { width: 1, height: 1, hash: 'h' },
+            } as never);
+        })
+    );
+    const editor = await mount(0);
+    let preparing!: Promise<void>;
+    await act(async () => {
+      preparing = editor.upload([image('slow.jpg')]);
+    });
+    await editor.pick('fast.jpg');
+    await act(async () => {
+      finishPreparing();
+      await preparing;
+    });
+    await editor.finish();
+    expect(editor.indexes()).toEqual({ 'slow.jpg': 1, 'fast.jpg': 2 });
     await editor.unmount();
   });
 
