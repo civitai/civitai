@@ -5,6 +5,7 @@ import {
 } from '~/server/services/blocks/block-gated-images.logic';
 import {
   LISTING_COVER_WIDTH,
+  LISTING_ICON_WIDTH,
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
@@ -23,8 +24,8 @@ import {
  * that renders a listing's icon, cover or screenshots.
  *
  * 🔴 ONE RULE, ONE PLACE. The store card, the detail page and its gallery, the cover's
- * first-screenshot fallback, a sub-listing card's parent-cover/icon fallback, the post "Published
- * with" chip, and the app chrome's "Recently run" icons (which read the detail's `iconUrl`) all
+ * first-screenshot fallback, a sub-listing card's own item image and its parent-cover/icon
+ * fallback, the post "Published with" chip, and the app chrome's "Recently run" icons (which read the detail's `iconUrl`) all
  * decide here whether an `Image` may be shown. None
  * of them reads `nsfwLevel` itself. `listing-media-audience.ledger.test.ts` pins the set of
  * modules that project listing media, so a new public surface cannot hydrate a listing image and
@@ -56,7 +57,8 @@ import {
  * the SAME ceiling as the listing's own media, and fall back to it: a hidden icon override to
  * the listing's own icon, a hidden cover override to the listing's own cover, then to the first
  * screenshot this viewer may see. A view that is not red-capable never uses them, and the store
- * never reads them for one (`readListingRedMediaManyForRender`, red-capable reads only).
+ * never reads them for one (`readListingRedMediaManyForRender`, red-capable reads only). They are
+ * never a social-preview (`og:image`) candidate on any host: see {@link listingSocialImage}.
  *
  * WHAT A HIDDEN ASSET BECOMES. A hidden icon is `null` (every renderer already draws its own
  * placeholder for that). A hidden cover falls back to the first screenshot THIS viewer may see,
@@ -133,7 +135,8 @@ export const SFW_LISTING_MEDIA_AUDIENCE: ListingMediaAudience = { redCapable: fa
  * viewer who opted into a mature level sees anything above the non-red ceiling.
  *
  * Every surface computes its own `nonRedCeiling` (a store card: SFW ∩ the listing rating; a
- * sub-listing card's parent fallback: that card's own non-red ceiling) and lifts it through
+ * sub-listing card: the viewer ∩ SFW ∩ that card's rating, for its item image and its parent
+ * fallback alike) and lifts it through
  * here, so the red half of the rule exists exactly once.
  */
 export function redHostMediaCeiling(audience: ListingMediaAudience, nonRedCeiling: number): number {
@@ -334,4 +337,51 @@ export function projectListingMedia(
       : gatedListingCoverUrl(row.cover, row.screenshots, ceiling),
     screenshots: gallery ? gatedListingScreenshots(row.screenshots, ceiling) : [],
   };
+}
+
+/** One listing image chosen for a social preview: its delivery url and its own level. */
+export type ListingSocialImage = { url: string; nsfwLevel: number };
+
+/**
+ * The image a listing's page offers link unfurlers and crawlers (`og:image` / `twitter:image`)
+ * on one host, or null for none.
+ *
+ * 🔴 HELD TO THE ANONYMOUS CEILING OF THE HOST, NEVER THE REQUESTER'S. An unfurler is not signed
+ * in and sees no host gating of its own, and a page rendered for one viewer can be shared to
+ * anyone, so the requester's browsing level is deliberately not an input. Off a red-capable host
+ * that ceiling is SFW ∩ the listing's rating; on one it is the same (an anonymous viewer there
+ * sees exactly what a non-red host shows) — so whichever host, a mature image is never chosen.
+ *
+ * 🔴 THE LISTING'S OWN MEDIA ONLY — A civitai.red ICON / COVER OVERRIDE IS NEVER A CANDIDATE, ON
+ * ANY HOST (design invariant I6), even one at a level the anonymous ceiling would admit. The
+ * override slots exist to carry media for civitai.red's own pages; a social preview leaves the
+ * host, so it is not one of them. This takes no overrides, and its caller never reads them.
+ *
+ * Same choice order as the page's own cover, gated image by image: the listing's own cover, then
+ * the first screenshot that passes, then the listing's own icon.
+ *
+ * The level travels with the url so the page's `Meta` can apply its own, host-independent
+ * safe-level check as a second belt (`Meta`'s `imageNsfwLevel`).
+ */
+export function listingSocialImage(
+  row: ListingMediaRow,
+  host: Pick<ListingMediaAudience, 'redCapable'>
+): ListingSocialImage | null {
+  const ceiling = listingMediaCeiling({ redCapable: host.redCapable }, row.contentRating);
+  const pick = (images: readonly (ListingMediaImage | null | undefined)[]) =>
+    images.find(
+      (image): image is ListingMediaImage & { url: string } =>
+        !!image?.url && isListingImageVisible(image, ceiling)
+    );
+  const cover = pick([row.cover, ...row.screenshots.map((s) => s.image)]);
+  if (cover) {
+    return {
+      url: getEdgeUrl(cover.url, { width: LISTING_COVER_WIDTH }),
+      nsfwLevel: cover.nsfwLevel,
+    };
+  }
+  const icon = pick([row.icon]);
+  return icon
+    ? { url: getEdgeUrl(icon.url, { width: LISTING_ICON_WIDTH }), nsfwLevel: icon.nsfwLevel }
+    : null;
 }
