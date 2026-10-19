@@ -2,8 +2,16 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type { CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import '@civitai/components-chat/civitai-chat/define';
-import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
-import { releaseHeld, type Release } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
+import {
+  isDictating,
+  listenReplyResume,
+  messageBoxText,
+} from '~/components/Apps/AppAssistant/chatAdapter';
+import {
+  releaseHeld,
+  retryWhenReady,
+  type Release,
+} from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 
 afterEach(() => {
   document.querySelectorAll('civitai-chat').forEach((el) => el.remove());
@@ -195,6 +203,105 @@ test('a message released into the real chat waits out its hold in the box, sends
   expect(sends).toHaveBeenCalledTimes(2);
   // The untouched copy leaves the box once the message went.
   await expect.element(box).toHaveValue('');
+});
+
+/**
+ * The real element, signed in to a fake app, whose every reply loses its connection at once (Safari's
+ * words, which the chat does not retry by itself): it fails with Retry, and a resume point. `asked()`
+ * counts the reply requests.
+ */
+async function realChatWhoseRepliesFail() {
+  let asked = 0;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (!String(url).includes('chat/completions')) return new Response('{}');
+      if (!(JSON.parse(String(init?.body ?? '{}')) as { stream?: boolean }).stream)
+        return new Response('{}', { status: 503 });
+      asked++;
+      throw new TypeError('The network connection was lost.');
+    })
+  );
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const chat = document.createElement('civitai-chat') as CivitaiChat;
+  chat.mcp = { orchestration: false, site: false } as never;
+  chat.app = {
+    getToken: async () => 'token',
+    requestGrants: async () => true,
+    site: { get: async () => ({ username: 'viewer' }) },
+    orchestration: {
+      queryWorkflows: async () => ({ items: [], next: '' }),
+      submitWorkflow: vi.fn(),
+    },
+  } as never;
+  document.body.append(chat);
+  await vi.waitFor(() => expect(chat.canSend).toBe(true), { timeout: 10_000 });
+  await chat.send('build me a timer');
+  await vi.waitFor(() =>
+    expect(
+      chat.shadowRoot!.querySelector('civitai-chat-turn civitai-alert[color="error"]')
+    ).not.toBeNull()
+  );
+  await vi.waitFor(() => expect(chat.canSend).toBe(true));
+  expect(asked).toBe(1);
+  return { chat, asked: () => asked };
+}
+
+test('the real chat’s ask by itself as the page comes back online is kept back by a reply-resume hold, and retryReply then asks once', async () => {
+  const { chat, asked } = await realChatWhoseRepliesFail();
+  const triggers: string[] = [];
+  const stop = listenReplyResume(chat, (trigger) => {
+    triggers.push(trigger);
+    return true;
+  });
+  window.dispatchEvent(new Event('online'));
+  expect(triggers).toEqual(['online']);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(asked()).toBe(1);
+  stop();
+  // The page's own ask fires no reply-resume, and counts as the chat's one ask by itself.
+  expect(await chat.retryReply()).toBe(true);
+  await vi.waitFor(() => expect(asked()).toBe(2));
+  expect(triggers).toEqual(['online']);
+});
+
+test('NEGATIVE CONTROL: a reply-resume listener that does not hold lets the real chat ask by itself', async () => {
+  const { chat, asked } = await realChatWhoseRepliesFail();
+  const triggers: string[] = [];
+  const stop = listenReplyResume(chat, (trigger) => {
+    triggers.push(trigger);
+    return false;
+  });
+  window.dispatchEvent(new Event('online'));
+  await vi.waitFor(() => expect(asked()).toBe(2));
+  expect(triggers).toEqual(['online']);
+  stop();
+});
+
+test('retryWhenReady asks the real chat for its failed reply only once it can send, and not at all once stopped', async () => {
+  const { chat, asked } = await realChatWhoseRepliesFail();
+  chat.holdReason = 'Your app is starting…';
+  await chat.updateComplete;
+  expect(chat.canSend).toBe(false);
+  const retry = vi.spyOn(chat, 'retryReply');
+  const asking = retryWhenReady({ current: chat }, new AbortController().signal);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(retry).not.toHaveBeenCalled();
+  chat.holdReason = undefined;
+  expect(await asking).toBe(true);
+  expect(retry).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(asked()).toBe(2));
+
+  // Failed again: a stopped wait asks nothing when the hold lifts.
+  await vi.waitFor(() => expect(chat.canSend).toBe(true));
+  chat.holdReason = 'Your app is starting…';
+  await chat.updateComplete;
+  const stop = new AbortController();
+  const stopped = retryWhenReady({ current: chat }, stop.signal);
+  stop.abort();
+  chat.holdReason = undefined;
+  expect(await stopped).toBe(false);
+  expect(retry).toHaveBeenCalledTimes(1);
 });
 
 test('a message the real chat keeps back on a refused grant while the user dictates is taken out of the box and reported unsent', async () => {

@@ -2,6 +2,7 @@ import type {
   BeforeSendDetail,
   ChatChangeDetail,
   CivitaiChat,
+  ReplyResumeDetail,
 } from '@civitai/components-chat/civitai-chat';
 
 /** Calls `hold` before each message the chat sends; returning true keeps that message from going out. */
@@ -11,6 +12,22 @@ export function listenBeforeSend(el: HTMLElement, hold: (text: string) => boolea
   };
   el.addEventListener('before-send', listener);
   return () => el.removeEventListener('before-send', listener);
+}
+
+/**
+ * Calls `hold` before the chat asks again for a failed reply (Retry, or by itself as the page wakes or
+ * comes back online), which fires no `before-send`; returning true keeps it from asking. The page then
+ * asks with `chat.retryReply()` once it is ready.
+ */
+export function listenReplyResume(
+  el: HTMLElement,
+  hold: (trigger: ReplyResumeDetail['trigger']) => boolean
+): () => void {
+  const listener = (event: Event) => {
+    if (hold((event as CustomEvent<ReplyResumeDetail>).detail.trigger)) event.preventDefault();
+  };
+  el.addEventListener('reply-resume', listener);
+  return () => el.removeEventListener('reply-resume', listener);
 }
 
 /** Calls `onChange` with the open chat's id whenever the viewer opens another chat. */

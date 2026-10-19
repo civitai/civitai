@@ -7,6 +7,7 @@ import type {
   ChatToolGate,
   ChatToolResult,
   CivitaiChat,
+  ReplyResumeDetail,
 } from '@civitai/components-chat/civitai-chat';
 import {
   APP_ASSISTANT_CHAT_CONFIG,
@@ -15,7 +16,11 @@ import {
   APP_ASSISTANT_PLACEHOLDER,
 } from '~/components/Apps/AppAssistant/assistantChatConfig';
 import { buildAssistantSystemPrompt } from '~/components/Apps/AppAssistant/assistantInstructions';
-import { listenBeforeSend, listenChatChange } from '~/components/Apps/AppAssistant/chatAdapter';
+import {
+  listenBeforeSend,
+  listenChatChange,
+  listenReplyResume,
+} from '~/components/Apps/AppAssistant/chatAdapter';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
@@ -40,6 +45,8 @@ export interface AppAssistantChatProps {
   chatRef?: MutableRefObject<CivitaiChat | null>;
   /** Asked before each message goes out; true keeps it back. */
   onBeforeSend?: (text: string) => boolean;
+  /** Asked before the chat asks again for a failed reply (no `before-send`); true keeps it from asking. */
+  onReplyResume?: (trigger: ReplyResumeDetail['trigger']) => boolean;
   onChatChange?: (chatId: string | null) => void;
 }
 
@@ -53,6 +60,7 @@ export function AppAssistantChat({
   onToolResult,
   chatRef,
   onBeforeSend,
+  onReplyResume,
   onChatChange,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
@@ -127,6 +135,12 @@ export function AppAssistantChat({
     if (!ready || !el || !onBeforeSend) return;
     return listenBeforeSend(el, onBeforeSend);
   }, [ready, onBeforeSend]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el || !onReplyResume) return;
+    return listenReplyResume(el, onReplyResume);
+  }, [ready, onReplyResume]);
 
   useEffect(() => {
     const el = ref.current;
