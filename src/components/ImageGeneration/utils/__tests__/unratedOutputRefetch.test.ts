@@ -4,7 +4,6 @@ import { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  UNRATED_REFETCH_BACKOFF,
   UNRATED_REFETCH_GIVE_UP_MS,
   UNRATED_REFETCH_MAX_INTERVAL_MS,
   UNRATED_REFETCH_MIN_INTERVAL_MS,
@@ -26,8 +25,13 @@ const image = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 describe('selectUnratedRefetch', () => {
+  const select = (...args: Parameters<typeof selectUnratedRefetch>) => {
+    const waiting = selectUnratedRefetch(...args);
+    return { workflowIds: [...new Set(waiting.values())], blobIds: [...waiting.keys()] };
+  };
+
   it('re-fetches a workflow holding an available output with no rating', () => {
-    const { workflowIds, blobIds } = selectUnratedRefetch(
+    const { workflowIds, blobIds } = select(
       [workflow('wf-1', [image('a')]), workflow('wf-2', [image('b', { nsfwLevel: 'r' })])],
       new Map(),
       0
@@ -38,7 +42,7 @@ describe('selectUnratedRefetch', () => {
   });
 
   it('ignores outputs that are rated, blocked, not yet available, or never rated', () => {
-    const { workflowIds } = selectUnratedRefetch(
+    const { workflowIds } = select(
       [
         workflow('rated', [image('a', { nsfwLevel: 'pg' })]),
         workflow('blocked', [image('b', { blockedReason: 'NSFWLevel' })]),
@@ -55,7 +59,7 @@ describe('selectUnratedRefetch', () => {
   });
 
   it('includes an unrated video', () => {
-    const { workflowIds } = selectUnratedRefetch(
+    const { workflowIds } = select(
       [workflow('wf-1', [image('a', { type: 'video' })])],
       new Map(),
       0
@@ -67,7 +71,7 @@ describe('selectUnratedRefetch', () => {
   it('skips unrated video from an engine the orchestrator never rates, as WorkflowData does', () => {
     const kling = { params: { ecosystem: 'Kling' } };
     const video = (id: string) => [image(id, { type: 'video' })];
-    const { workflowIds } = selectUnratedRefetch(
+    const { workflowIds } = select(
       [
         { id: 'wf-level', metadata: kling, steps: [{ $type: 'videoGen', output: video('a') }] },
         { id: 'step-level', steps: [{ $type: 'videoGen', metadata: kling, output: video('b') }] },
@@ -90,14 +94,12 @@ describe('selectUnratedRefetch', () => {
     const seen = new Map([['a', 0]]);
     const wf = [workflow('wf-1', [image('a')])];
 
-    expect(selectUnratedRefetch(wf, seen, UNRATED_REFETCH_GIVE_UP_MS).workflowIds).toEqual([]);
-    expect(selectUnratedRefetch(wf, seen, UNRATED_REFETCH_GIVE_UP_MS - 1).workflowIds).toEqual([
-      'wf-1',
-    ]);
+    expect(select(wf, seen, UNRATED_REFETCH_GIVE_UP_MS).workflowIds).toEqual([]);
+    expect(select(wf, seen, UNRATED_REFETCH_GIVE_UP_MS - 1).workflowIds).toEqual(['wf-1']);
   });
 
   it('keeps re-fetching for a fresh output after another one gave up', () => {
-    const { workflowIds, blobIds } = selectUnratedRefetch(
+    const { workflowIds, blobIds } = select(
       [workflow('wf-1', [image('a'), image('b')])],
       new Map([['a', 0]]),
       UNRATED_REFETCH_GIVE_UP_MS
@@ -108,7 +110,7 @@ describe('selectUnratedRefetch', () => {
   });
 
   it('lists a workflow once however many outputs it is waiting on', () => {
-    const { workflowIds } = selectUnratedRefetch(
+    const { workflowIds } = select(
       [workflow('wf-1', [image('a'), image('b')]), workflow('wf-1', [image('a'), image('b')])],
       new Map(),
       0
@@ -119,7 +121,7 @@ describe('selectUnratedRefetch', () => {
 });
 
 describe('createUnratedRefetchScheduler', () => {
-  const SECOND_INTERVAL_AT = UNRATED_REFETCH_MIN_INTERVAL_MS * (1 + UNRATED_REFETCH_BACKOFF);
+  const SECOND_INTERVAL_AT = UNRATED_REFETCH_MIN_INTERVAL_MS * 2;
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -155,22 +157,21 @@ describe('createUnratedRefetchScheduler', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('drops back to the min interval when a new output starts waiting', async () => {
-    let outputs = [image('a')];
+  it('re-reads a new output at the min interval without speeding up an older one', async () => {
+    const workflows = [workflow('wf-1', [image('a')])];
     const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', outputs)],
-      refetch,
-    });
+    const schedule = createUnratedRefetchScheduler({ readWorkflows: () => workflows, refetch });
     schedule();
     // Stop just after a re-read, once the backoff has the next one many seconds away.
-    while (refetch.mock.calls.length < 6) await vi.advanceTimersByTimeAsync(100);
-    const before = refetch.mock.calls.length;
+    for (let i = 0; i < 1000 && refetch.mock.calls.length < 6; i++)
+      await vi.advanceTimersByTimeAsync(100);
+    expect(refetch).toHaveBeenCalledTimes(6);
 
-    outputs = [image('a'), image('b')];
+    workflows.push(workflow('wf-2', [image('b')]));
     schedule();
     await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
-    expect(refetch).toHaveBeenCalledTimes(before + 1);
+    expect(refetch).toHaveBeenCalledTimes(7);
+    expect(refetch).toHaveBeenLastCalledWith(['wf-2']);
   });
 
   it('waits one interval before the first re-read', async () => {

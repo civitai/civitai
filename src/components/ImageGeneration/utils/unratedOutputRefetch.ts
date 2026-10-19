@@ -7,11 +7,18 @@ import { isNeverRatedVideoStep, isUnratedOutput } from '~/shared/orchestrator/wo
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
 
 // No step event follows the rating of a finished workflow, so the generator re-reads it on a timer.
-// A rating can land minutes after the output, so the timer backs off rather than giving up early.
+// A rating can land minutes after the output; don't shorten the give-up window.
 export const UNRATED_REFETCH_MIN_INTERVAL_MS = 2000;
 export const UNRATED_REFETCH_MAX_INTERVAL_MS = 20_000;
-export const UNRATED_REFETCH_BACKOFF = 1.5;
 export const UNRATED_REFETCH_GIVE_UP_MS = 5 * 60_000;
+
+/** Waits half the output's age, so each output backs off on its own clock. */
+export function nextUnratedRefetchDelay(ageMs: number) {
+  return Math.min(
+    Math.max(ageMs / 2, UNRATED_REFETCH_MIN_INTERVAL_MS),
+    UNRATED_REFETCH_MAX_INTERVAL_MS
+  );
+}
 
 type CachedWorkflow = {
   id: string;
@@ -28,8 +35,8 @@ export function selectUnratedRefetch(
   firstSeen: ReadonlyMap<string, number>,
   now: number
 ) {
-  const workflowIds = new Set<string>();
-  const blobIds = new Set<string>();
+  /** Output id to the workflow that holds it. */
+  const waiting = new Map<string, string>();
   for (const workflow of workflows) {
     for (const step of workflow.steps ?? []) {
       const neverRated = isNeverRatedVideoStep(step, workflow.metadata?.params);
@@ -37,15 +44,13 @@ export function selectUnratedRefetch(
         if (!output.id || !isUnratedOutput(output as NormalizedWorkflowStepOutput, neverRated))
           continue;
         if (now - (firstSeen.get(output.id) ?? now) >= UNRATED_REFETCH_GIVE_UP_MS) continue;
-        workflowIds.add(workflow.id);
-        blobIds.add(output.id);
+        waiting.set(output.id, workflow.id);
       }
     }
   }
-  return { workflowIds: [...workflowIds], blobIds: [...blobIds] };
+  return waiting;
 }
 
-/** One batched re-read per tick for every waiting output; a new output resets the backoff. */
 export function createUnratedRefetchScheduler({
   readWorkflows,
   refetch,
@@ -54,37 +59,41 @@ export function createUnratedRefetchScheduler({
   refetch: (workflowIds: string[]) => Promise<unknown>;
 }) {
   const firstSeen = new Map<string, number>();
-  let interval = UNRATED_REFETCH_MIN_INTERVAL_MS;
+  const nextAt = new Map<string, number>();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let dueAt = 0;
+  let dueAt = Infinity;
 
   async function run() {
     timer = undefined;
-    const { workflowIds } = selectUnratedRefetch(readWorkflows(), firstSeen, Date.now());
-    if (!workflowIds.length) return;
-    interval = Math.min(interval * UNRATED_REFETCH_BACKOFF, UNRATED_REFETCH_MAX_INTERVAL_MS);
-    await refetch(workflowIds).catch((error) =>
-      console.error('[generation] unrated output refetch failed', error)
-    );
+    dueAt = Infinity;
+    const now = Date.now();
+    const workflowIds = new Set<string>();
+    for (const [id, workflowId] of selectUnratedRefetch(readWorkflows(), firstSeen, now)) {
+      if ((nextAt.get(id) ?? Infinity) > now) continue;
+      workflowIds.add(workflowId);
+      nextAt.set(id, now + nextUnratedRefetchDelay(now - (firstSeen.get(id) ?? now)));
+    }
+    if (workflowIds.size)
+      await refetch([...workflowIds]).catch((error) =>
+        console.error('[generation] unrated output refetch failed', error)
+      );
     schedule();
   }
 
   function schedule() {
     const now = Date.now();
-    const { blobIds } = selectUnratedRefetch(readWorkflows(), firstSeen, now);
-    if (!blobIds.length) return;
-    const fresh = blobIds.filter((id) => !firstSeen.has(id));
-    for (const id of fresh) firstSeen.set(id, now);
-    if (fresh.length) {
-      interval = UNRATED_REFETCH_MIN_INTERVAL_MS;
-      if (timer && dueAt > now + interval) {
-        clearTimeout(timer);
-        timer = undefined;
+    let earliest = Infinity;
+    for (const id of selectUnratedRefetch(readWorkflows(), firstSeen, now).keys()) {
+      if (!firstSeen.has(id)) {
+        firstSeen.set(id, now);
+        nextAt.set(id, now + UNRATED_REFETCH_MIN_INTERVAL_MS);
       }
+      earliest = Math.min(earliest, nextAt.get(id) ?? now);
     }
-    if (timer) return;
-    dueAt = now + interval;
-    timer = setTimeout(run, interval);
+    if (earliest === Infinity || earliest >= dueAt) return;
+    clearTimeout(timer);
+    dueAt = earliest;
+    timer = setTimeout(run, Math.max(earliest - now, 0));
   }
 
   return schedule;
