@@ -19,6 +19,8 @@
  * precedence rules can be unit-tested directly against the real functions.
  */
 
+import * as z from 'zod';
+
 export const modelMetricPrivacyKeys = ['buzz', 'downloads', 'generations'] as const;
 export type ModelMetricPrivacyKey = (typeof modelMetricPrivacyKeys)[number];
 
@@ -112,6 +114,45 @@ export function getMetaMetricPrivacy(meta: unknown): HiddenModelMetrics {
     downloads: settings.downloads === 'hide',
     generations: settings.generations === 'hide',
   };
+}
+
+/** What an editor offers per metric: `inherit` stores nothing, so the level above decides. */
+export const metricVisibilityChoices = ['inherit', 'hide', 'show'] as const;
+export type MetricVisibilityChoice = (typeof metricVisibilityChoices)[number];
+/** Per-metric choices from an editor; `inherit` is stored as nothing. */
+export const metricVisibilityChoicesSchema = z.object({
+  buzz: z.enum(metricVisibilityChoices).nullish(),
+  downloads: z.enum(metricVisibilityChoices).nullish(),
+  generations: z.enum(metricVisibilityChoices).nullish(),
+});
+
+export type MetricVisibilityChoices = Partial<
+  Record<ModelMetricPrivacyKey, MetricVisibilityChoice | null>
+>;
+
+/** An editor's starting choice for each metric, read the way the resolver reads it. */
+export function getMetricVisibilityChoices(
+  meta: unknown
+): Record<ModelMetricPrivacyKey, MetricVisibilityChoice> {
+  const settings = getMetaMetricVisibility(meta);
+  return {
+    buzz: settings.buzz ?? 'inherit',
+    downloads: settings.downloads ?? 'inherit',
+    generations: settings.generations ?? 'inherit',
+  };
+}
+
+/**
+ * The `meta` fields to merge in for a saved set of choices. The legacy flags are cleared: left in
+ * place, a stale `hideX: true` would come back as a hide the moment the new setting was removed.
+ */
+export function metricVisibilityMetaFromChoices(choices: MetricVisibilityChoices) {
+  const metricVisibility: MetricVisibilitySettings = {};
+  for (const key of modelMetricPrivacyKeys) {
+    const choice = choices[key];
+    if (choice === 'hide' || choice === 'show') metricVisibility[key] = choice;
+  }
+  return { metricVisibility, hideBuzz: null, hideDownloads: null, hideGenerations: null };
 }
 
 /** The privacy fields of a `meta` blob, for callers that carry them apart from the rest of it. */

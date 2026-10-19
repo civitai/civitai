@@ -1,37 +1,55 @@
 import { describe, expect, it } from 'vitest';
 import {
-  HIDDEN_BY_ACCOUNT_DEFAULT,
-  HIDDEN_BY_MODEL,
-  inheritedMetricPrivacyHints,
+  describeInheritedMetric,
+  inheritedMetricPrivacy,
 } from '~/components/Resource/Forms/metric-privacy-hints';
 
-describe('inheritedMetricPrivacyHints', () => {
-  it('names the account default on exactly the metrics it hides', () => {
+describe('inheritedMetricPrivacy', () => {
+  it("gives a model the owner's account default", () => {
     expect(
-      inheritedMetricPrivacyHints({
-        userSettings: { hideModelDownloads: true, hideModelGenerations: true },
+      inheritedMetricPrivacy({
+        level: 'model',
+        userSettings: { hideModelDownloads: true },
+        modelMeta: { metricVisibility: { downloads: 'show' } },
         isOwner: true,
       })
-    ).toEqual({ downloads: HIDDEN_BY_ACCOUNT_DEFAULT, generations: HIDDEN_BY_ACCOUNT_DEFAULT });
+    ).toEqual({
+      buzz: { hidden: false, source: 'account' },
+      downloads: { hidden: true, source: 'account' },
+      generations: { hidden: false, source: 'account' },
+    });
   });
 
-  it('names the model when the model hides a metric the account does not', () => {
-    expect(
-      inheritedMetricPrivacyHints({
-        userSettings: { hideModelDownloads: true },
-        modelMeta: { hideBuzz: true, hideDownloads: true },
-        isOwner: true,
-      })
-    ).toEqual({ downloads: HIDDEN_BY_ACCOUNT_DEFAULT, buzz: HIDDEN_BY_MODEL });
+  it("gives a version the model's explicit setting over the account default", () => {
+    const states = inheritedMetricPrivacy({
+      level: 'version',
+      userSettings: { hideModelDownloads: true },
+      modelMeta: { metricVisibility: { downloads: 'show' }, hideBuzz: true },
+      isOwner: true,
+    });
+    expect(states.downloads).toEqual({ hidden: false, source: 'model' });
+    expect(states.buzz).toEqual({ hidden: true, source: 'model' });
+    expect(states.generations).toEqual({ hidden: false, source: 'account' });
   });
 
-  it("ignores the editor's own defaults on a model they do not own", () => {
-    expect(
-      inheritedMetricPrivacyHints({
-        userSettings: { hideModelDownloads: true },
-        modelMeta: { hideGenerations: true },
-        isOwner: false,
-      })
-    ).toEqual({ generations: HIDDEN_BY_MODEL });
+  it("does not stand in the editor's own defaults for a model they do not own", () => {
+    const states = inheritedMetricPrivacy({
+      level: 'version',
+      userSettings: { hideModelDownloads: true },
+      modelMeta: { metricVisibility: { generations: 'hide' } },
+      isOwner: false,
+    });
+    expect(states.downloads).toEqual({ hidden: null, source: 'owner' });
+    expect(states.generations).toEqual({ hidden: true, source: 'model' });
+  });
+});
+
+describe('describeInheritedMetric', () => {
+  it.each([
+    [{ hidden: true, source: 'account' } as const, 'Hidden, from your account default'],
+    [{ hidden: false, source: 'model' } as const, 'Shown, from this model'],
+    [{ hidden: null, source: 'owner' } as const, "Follows the owner's account default"],
+  ])('%o reads %s', (state, text) => {
+    expect(describeInheritedMetric(state)).toBe(text);
   });
 });
