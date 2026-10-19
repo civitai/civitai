@@ -132,7 +132,7 @@ let world: {
     quantity: number;
   }[];
   openings: { boxItemId: bigint; boxDefinitionId: number; userId: number }[];
-  purchases: { buzzTransactionId: string; shopItemId: number }[];
+  purchases: { buzzTransactionId: string; shopItemId: number; refunded: boolean }[];
   blocked: unknown;
   owned: { userId: number; cosmeticId: number }[];
 };
@@ -472,8 +472,17 @@ describe('before the box goes on sale', () => {
   it('shows it to anyone once one was bought, from a listing no longer on sale', async () => {
     world.listings = [listing({ status: 'Archived', availableFrom: nextWeek() })];
     expect(await read()).toBeNull();
-    world.purchases = [{ buzzTransactionId: 'item-purchase-v1-a', shopItemId: 42 }];
+    world.purchases = [
+      { buzzTransactionId: 'item-purchase-v1-a', shopItemId: 42, refunded: false },
+    ];
     expect(await read({ viewer: STRANGER })).not.toBeNull();
+    expect(await read()).not.toBeNull();
+  });
+
+  // The sale happened; a refund afterwards does not un-publish what was disclosed at the time.
+  it('counts a refunded purchase as a sale', async () => {
+    world.listings = [listing({ status: 'Archived' })];
+    world.purchases = [{ buzzTransactionId: 'item-purchase-v1-r', shopItemId: 42, refunded: true }];
     expect(await read()).not.toBeNull();
   });
 
@@ -482,7 +491,9 @@ describe('before the box goes on sale', () => {
       listing({ status: 'Archived' }),
       listing({ id: 43, itemDefinitionId: OTHER_BOX }),
     ];
-    world.purchases = [{ buzzTransactionId: 'item-purchase-v1-b', shopItemId: 43 }];
+    world.purchases = [
+      { buzzTransactionId: 'item-purchase-v1-b', shopItemId: 43, refunded: false },
+    ];
     expect(await read()).toBeNull();
   });
 

@@ -234,7 +234,8 @@ export async function getMysteryBoxOddsPage({
 
 /**
  * Whether anyone has bought this box from any of its listings, whatever their status now: a listing
- * unpublished after its sale is not read as on sale, but the box was sold.
+ * unpublished after its sale is not read as on sale, but the box was sold. Any purchase row counts,
+ * so a grant must never write one.
  */
 async function boxEverSold(boxDefinitionId: number) {
   const listings = await dbRead.cosmeticShopItem.findMany({

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MOD_GRANT_SOURCE_PREFIX, modGrantSourceKey } from '../mystery-box';
+import { modGrantSourceKey } from '../mystery-box';
 
 describe('modGrantSourceKey', () => {
-  // Rows already written carry this shape, and the moderator app finds granted boxes by the prefix.
+  // Once the moderator grant writes rows, they carry this shape, and its take-back finds them by the
+  // prefix: a change here would orphan every box already granted.
   it('keeps its shape', () => {
     expect(modGrantSourceKey('g7k2', 4322372, 3)).toBe('mod-grant-g7k2-4322372-3');
-    expect(modGrantSourceKey('g7k2', 1, 1).startsWith(MOD_GRANT_SOURCE_PREFIX)).toBe(true);
   });
 
   // Item.sourceKey is unique: one grant to two users must not write the same key twice.
@@ -20,11 +20,12 @@ describe('modGrantSourceKey', () => {
   });
 
   it.each([
-    [0, 1],
-    [1, 0],
-    [1.5, 1],
-    [1, -1],
-  ])('refuses user %d, item %d', (userId, n) => {
-    expect(() => modGrantSourceKey('g1', userId, n)).toThrow();
+    [0, 1, 'Not a user id'],
+    [-1, 1, 'Not a user id'],
+    [1.5, 1, 'Not a user id'],
+    [1, 0, 'Not an item number'],
+    [1, 1.5, 'Not an item number'],
+  ])('refuses user %d, item %d', (userId, n, message) => {
+    expect(() => modGrantSourceKey('g1', userId, n)).toThrow(message);
   });
 });

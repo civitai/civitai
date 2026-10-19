@@ -606,12 +606,12 @@ describe('opening a mystery box', () => {
   });
 });
 
-// A box a moderator granted has no purchase behind it: no claim, no charge, and its holder may never
-// have joined the event. The open alone places them on a team and draws from it.
-describe('a box a moderator granted', () => {
+// A box can reach a holder who never joined its event (a moderator grants it; nothing is bought, so
+// no purchase placed them). The open itself places them on a team, before the lock, and draws from it.
+describe('a holder who never joined the event', () => {
   const GRANTED = modGrantSourceKey('g1', HOLDER, 1);
 
-  it('opens with no purchase behind it, placing the holder on a team before the lock', async () => {
+  beforeEach(() => {
     world.items = [{ ...holderBox(), sourceKey: GRANTED }];
     world.box.params = { event: 'birthday' };
     world.contents = [
@@ -619,14 +619,18 @@ describe('a box a moderator granted', () => {
       hat(2, COMMON, { event: 'birthday', team: 'blue' }),
       hat(3, RARE, { event: 'birthday', team: 'red' }),
     ];
-    // A balanced event: the holder has no team until settled, and a strict read refuses them.
+    mocks.getEventBuyerTeam.mockImplementation(actual.getEventBuyerTeam!);
+  });
+
+  // A balanced event: the holder has no team until settled, and a strict read refuses them.
+  const balancedEvent = (settle: () => Promise<string>) => {
     let placed: string | undefined;
-    const event = {
+    return {
       name: 'birthday',
       teams: ['red', 'blue'],
       settleBalancedTeam: vi.fn(async () => {
         world.log.push('settle');
-        placed = 'blue';
+        placed = await settle();
         return placed;
       }),
       getUserTeam: vi.fn(async () => {
@@ -634,12 +638,15 @@ describe('a box a moderator granted', () => {
         return placed;
       }),
     };
+  };
+
+  it('is placed on a team by the open, before the lock, and draws from that team', async () => {
+    const event = balancedEvent(async () => 'blue');
     mocks.loadEvents.mockResolvedValue([event]);
-    mocks.getEventBuyerTeam.mockImplementation(actual.getEventBuyerTeam!);
 
     const result = await open();
 
-    expect(event.settleBalancedTeam).toHaveBeenCalledWith(HOLDER);
+    expect(event.settleBalancedTeam.mock.calls).toEqual([[HOLDER]]);
     expect(event.getUserTeam).toHaveBeenCalledWith(HOLDER, { strict: true });
     expect(world.log.indexOf('settle')).toBeLessThan(
       world.log.findIndex((line) => line.startsWith('lock:'))
@@ -651,6 +658,22 @@ describe('a box a moderator granted', () => {
       contentId: 2,
     });
     expect(world.items).toEqual([]);
+  });
+
+  it('keeps the box when no team can be confirmed for them', async () => {
+    mocks.loadEvents.mockResolvedValue([
+      balancedEvent(async () => {
+        throw new Error('settle failed');
+      }),
+    ]);
+    await expect(open()).rejects.toThrow("We couldn't confirm your team");
+    nothingOpened();
+  });
+
+  it("keeps the box when its event isn't registered any more", async () => {
+    mocks.loadEvents.mockResolvedValue([]);
+    await expect(open()).rejects.toThrow('This item is not available');
+    nothingOpened();
   });
 });
 
