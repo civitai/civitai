@@ -228,6 +228,12 @@ export function useUpdateWorkflow() {
         items[index] = response as any;
       });
     },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Could not unlock this generation',
+        error: new Error(error.message),
+      });
+    },
   });
 }
 
