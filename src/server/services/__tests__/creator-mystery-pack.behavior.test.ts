@@ -953,33 +953,39 @@ describe('an item in a mystery pack on sale', () => {
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
   });
 
-  // Decision (the lead, PR 5 plan): re-listing and a reprice past the review threshold are allowed.
-  // Both send the item back to review, but the pack keeps the values it was approved at; the cost
-  // is only that the item fails the pack checks at the next edit until it is approved again.
-  // Don't restore the refusal without that reason changing.
+  // Decision: re-listing and a reprice past the review threshold are allowed. Both send the item
+  // back to review, but the pack keeps the values it was approved at; the only cost is that the
+  // item fails the pack checks at the next edit until it is approved again. Don't restore the
+  // refusal without that reason changing.
   it.each([
     [
       'delisted',
       (id: number) => shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: false }),
+      { listed: false },
     ],
     [
-      're-listed',
+      're-listed, back to review',
       (id: number) => shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: true }),
+      { listed: true, status: 'PendingReview' },
     ],
     [
-      'repriced within the threshold',
+      'repriced within the threshold, staying on sale',
       (id: number) => shop.updateCreatorShopItem({ userId: CREATOR, id, price: 550 }),
+      { status: 'Published' },
     ],
     [
-      'repriced past the threshold',
+      'repriced past the threshold, back to review',
       (id: number) => shop.updateCreatorShopItem({ userId: CREATOR, id, price: 1000 }),
+      { status: 'PendingReview' },
     ],
-  ])('can be %s by its creator', async (_label, act) => {
+  ])('can be %s by its creator', async (_label, act, data) => {
     const id = await inLivePack();
     dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await act(id);
-    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
+    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining(data) })
+    );
   });
 
   it("can't be capped by its creator", async () => {

@@ -751,6 +751,8 @@ export const reviewCreatorShopItemSchema = z
     // revert = pull a published item back into the review queue.
     action: z.enum(['approve', 'reject', 'request-changes', 'revert']),
     rejectionReason: z.string().max(1000).optional(),
+    // A mystery pack's verdict names the edit (BoxRevision) the moderator reviewed.
+    boxRevisionId: z.number().int().positive().optional(),
   })
   .refine((v) => v.action === 'approve' || !!v.rejectionReason?.length, {
     message: 'A note is required when rejecting, requesting changes, or reverting',

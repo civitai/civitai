@@ -21,17 +21,27 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { ReviewCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
 import {
   checkProposal,
+  creatorIsRestricted,
   lockCreator,
   type MysteryPackProposal,
 } from '~/server/services/creator-mystery-pack.service';
 import { appendItemHistory } from '~/server/services/creator-shop.data';
 import { createNotification } from '~/server/services/notification.service';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  isPrismaLockTimeout,
+  throwBadRequestError,
+  throwNotFoundError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 
 type Tx = Prisma.TransactionClient;
 type ReviewAction = ReviewCreatorShopItemInput['action'];
 
+const REJECTED_FINAL = 'This mystery pack was rejected, which is final.';
+const EDIT_CHANGED =
+  "This pack's edit changed since you opened it. Reload to review the one waiting now.";
+const OWN_PACK = "You can't review your own mystery pack.";
 const STALE =
   'This mystery pack changed after the edit was made, so the edit no longer applies. The creator has to edit it again.';
 
@@ -87,6 +97,25 @@ const closeRevision = (
       note = ${note ?? null}, "appliedVersion" = ${appliedVersion ?? null}
     WHERE id = ${revisionId}`;
 
+/** A pack waiting for review goes back to its creator, who can then edit it again. */
+async function markStale(tx: Tx, revisionId: number, box: ReviewedBox, moderatorId: number) {
+  await closeRevision(tx, revisionId, { status: 'stale', reviewerId: moderatorId });
+  if (box.listingStatus !== 'PendingReview') return;
+  const meta = appendItemHistory(box.meta ?? { purchases: 0 }, {
+    at: new Date().toISOString(),
+    userId: moderatorId,
+    kind: 'reviewed',
+    status: 'RequestedChanges',
+    action: 'request-changes',
+    note: STALE,
+  });
+  await tx.$executeRaw`
+    UPDATE "CosmeticShopItem"
+    SET status = 'RequestedChanges', "rejectionReason" = ${STALE}, "reviewedById" = ${moderatorId},
+      "reviewedAt" = now(), meta = ${JSON.stringify(meta)}::jsonb
+    WHERE id = ${box.listingId}`;
+}
+
 /** Defines each content's cosmetic as a reward if it isn't one yet, as the builder's define step does. */
 async function defineRewards(tx: Tx, cosmeticIds: number[], userId: number) {
   await tx.$executeRaw`
@@ -129,18 +158,18 @@ function draftOf(
   rewardIdOf: (cosmeticId: number) => number,
   rows: Awaited<ReturnType<typeof readRows>>
 ) {
-  const tierIdByKey = new Map(rows.tiers.map((tier) => [tier.key, tier.id]));
+  const tierByKey = new Map(rows.tiers.map((tier) => [tier.key, tier]));
   const contentIdByReward = new Map(
     rows.contents.map((content) => [content.rewardDefinitionId, content.id])
   );
   const names = CREATOR_BOX_TIERS[proposal.tiers.length];
   const tiers: DraftTier[] = proposal.tiers.map((tier, t) => ({
-    id: tierIdByKey.get(tier.key) ?? null,
+    id: tierByKey.get(tier.key)?.id ?? null,
     key: tier.key,
     name: names[t].name,
     weight: weights[t],
-    // Tier colours come with the pack composer.
-    color: null,
+    // A creator can't pick tier colours; one a moderator set is kept.
+    color: tierByKey.get(tier.key)?.color ?? null,
   }));
   const contents: DraftContent[] = proposal.tiers.flatMap((tier) =>
     tier.cosmeticIds.map((cosmeticId) => {
@@ -156,18 +185,22 @@ function draftOf(
   return { tiers, contents };
 }
 
+const BOX_LOCK_TIMEOUT = '3s';
+
 /**
  * FOR NO KEY UPDATE waits for every open in flight (each reads this row FOR SHARE). Never take the
- * item-holder lock after it: opens take that lock before this row.
+ * item-holder lock after it: opens take that lock before this row. The wait is bounded because
+ * Prisma's transaction timeout doesn't cancel a waiting statement; it stays set to commit.
  */
 async function lockBox(tx: Tx, boxId: number) {
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${BOX_LOCK_TIMEOUT}, true)`;
   const [box] = await tx.$queryRaw<{ status: string; version: number; updatedAt: Date }[]>`
     SELECT status, version, "updatedAt" FROM "ItemDefinition" WHERE id = ${boxId}
     FOR NO KEY UPDATE`;
   return box;
 }
 
-/** The builder's save, on Prisma: changed rows only, batched. Same order as the moderator's save. */
+/** The builder's save on Prisma, in the builder's order: changed rows only, batched. */
 async function writeTiersAndContents(
   tx: Tx,
   boxId: number,
@@ -279,11 +312,14 @@ export async function applyBoxRevision({
   moderatorId,
   stickersEnabled,
   note,
+  revisionId,
 }: {
   boxId: number;
   moderatorId: number;
   stickersEnabled: boolean;
   note?: string;
+  /** The edit the moderator reviewed; approval refuses any other. */
+  revisionId: number;
 }) {
   const [owner] = await dbWrite.$queryRaw<{ sellerId: number }[]>`
     SELECT "sellerId" FROM "ItemDefinition"
@@ -293,15 +329,22 @@ export async function applyBoxRevision({
   let outcome;
   try {
     outcome = await dbWrite.$transaction(async (tx) => {
-      // Holds off the creator's revise, withdraw and price cut, and a second moderator's verdict.
+      // Same lock every pack write takes.
       await lockCreator(tx, owner.sellerId);
       const box = await readBox(tx, boxId);
-      if (box.status === ITEM_DEFINITION_STATUS.archived)
+      if (box.status === ITEM_DEFINITION_STATUS.archived || box.listingStatus === 'Archived')
         throw throwBadRequestError('This mystery pack is archived');
+      if (box.listingStatus === 'Rejected') throw throwBadRequestError(REJECTED_FINAL);
       const revision = await pendingRevisionOf(tx, boxId);
       if (!revision) throw throwBadRequestError('This mystery pack has no edit waiting for review');
+      if (revision.id !== revisionId) throw throwBadRequestError(EDIT_CHANGED);
+      // Refused before anything is written, so the edit stays waiting.
+      if (await creatorIsRestricted(tx, owner.sellerId))
+        throw throwBadRequestError(
+          "This pack's creator is muted, banned or deleted, so it can't be approved. The edit stays waiting."
+        );
       if (box.version !== revision.baseVersion) {
-        await closeRevision(tx, revision.id, { status: 'stale', reviewerId: moderatorId });
+        await markStale(tx, revision.id, box, moderatorId);
         return { stale: true as const };
       }
 
@@ -324,12 +367,12 @@ export async function applyBoxRevision({
 
       const locked = await lockBox(tx, boxId);
       if (locked.version !== revision.baseVersion) {
-        await closeRevision(tx, revision.id, { status: 'stale', reviewerId: moderatorId });
+        await markStale(tx, revision.id, box, moderatorId);
         return { stale: true as const };
       }
       if (locked.status === ITEM_DEFINITION_STATUS.archived)
         throw throwBadRequestError('This mystery pack is archived');
-      // Every builder save stamps updatedAt, and a save that leaves the odds alone keeps the version.
+      // A version-keeping builder save moves only updatedAt, so compare it, not the version.
       if (locked.updatedAt.getTime() !== box.updatedAt.getTime()) {
         rows = await readRows(tx, boxId);
         draft = draftOf(proposal, weights, rewardIdOf, rows);
@@ -359,7 +402,8 @@ export async function applyBoxRevision({
       );
       if (problems.length) throw new BoxRefusal(problems.join(' '));
 
-      // Every approval is a new version, so each approved price has its own snapshot.
+      // Every approval is a new version, so each approved price has its own snapshot; a held box
+      // opened meanwhile refreshes on its stale expected version.
       const [{ version }] = await tx.$queryRaw<{ version: number }[]>`
         UPDATE "ItemDefinition"
         SET version = version + 1, status = ${ITEM_DEFINITION_STATUS.published},
@@ -415,9 +459,14 @@ export async function applyBoxRevision({
     });
   } catch (error) {
     if (error instanceof BoxRefusal) throw throwBadRequestError(error.message);
+    if (isPrismaLockTimeout(error))
+      throw throwRateLimitError(
+        'This mystery pack is busy being opened. Try again in a moment.',
+        error
+      );
     throw error;
   }
-  // Committed: the revision is marked stale so the creator sees why it went nowhere.
+  // Thrown after commit: throwing inside the transaction would roll back the stale mark.
   if (outcome.stale) throw throwBadRequestError(STALE);
   return { version: outcome.version, listingId: outcome.listingId };
 }
@@ -430,9 +479,8 @@ const VERDICT_NOTIFICATION: Record<ReviewAction, string> = {
 };
 
 /**
- * A moderator's verdict on a creator's mystery pack, by its listing. A pack that never sold can be
- * rejected for good; on a live pack, reject only turns the edit down, as request-changes does, and
- * the live version keeps selling.
+ * A moderator's verdict on a creator's mystery pack, by its listing. A pack never approved can be
+ * rejected for good; on an approved pack, reject only turns the edit down, as request-changes does.
  */
 export async function reviewMysteryPack({
   boxId,
@@ -440,17 +488,20 @@ export async function reviewMysteryPack({
   action,
   rejectionReason,
   stickersEnabled,
+  revisionId,
 }: {
   boxId: number;
   reviewerId: number;
   action: ReviewAction;
   rejectionReason?: string;
   stickersEnabled: boolean;
+  /** The edit the moderator reviewed; required while one waits, so a verdict can't land on another. */
+  revisionId?: number;
 }) {
   const note = rejectionReason || undefined;
-  let result: { listingId: number; title: string; sellerId: number };
+  let result: { listingId: number; title: string; sellerId: number; finalReject?: boolean };
   if (action === 'approve') {
-    result = await approveMysteryPack({ boxId, reviewerId, stickersEnabled, note });
+    result = await approveMysteryPack({ boxId, reviewerId, stickersEnabled, note, revisionId });
   } else {
     result = await dbWrite.$transaction(async (tx) => {
       const [owner] = await tx.$queryRaw<{ sellerId: number; title: string }[]>`
@@ -461,8 +512,10 @@ export async function reviewMysteryPack({
         ORDER BY s.id
         LIMIT 1`;
       if (!owner) throw throwNotFoundError('Mystery pack not found');
+      if (owner.sellerId === reviewerId) throw throwBadRequestError(OWN_PACK);
       await lockCreator(tx, owner.sellerId);
       const box = await readBox(tx, boxId);
+      if (box.listingStatus === 'Rejected') throw throwBadRequestError(REJECTED_FINAL);
       const revision = await pendingRevisionOf(tx, boxId);
       const neverSold = box.status === ITEM_DEFINITION_STATUS.draft;
 
@@ -475,6 +528,7 @@ export async function reviewMysteryPack({
       } else {
         if (!revision && box.listingStatus !== 'PendingReview')
           throw throwBadRequestError('This mystery pack has no edit waiting for review');
+        if ((revision?.id ?? undefined) !== revisionId) throw throwBadRequestError(EDIT_CHANGED);
         if (revision)
           await closeRevision(tx, revision.id, { status: 'rejected', reviewerId, note });
         if (action === 'reject' && neverSold) {
@@ -505,11 +559,18 @@ export async function reviewMysteryPack({
         meta
       )}::jsonb
         WHERE id = ${box.listingId}`;
-      return { listingId: box.listingId, title: owner.title, sellerId: owner.sellerId };
+      return {
+        listingId: box.listingId,
+        title: owner.title,
+        sellerId: owner.sellerId,
+        finalReject: nextStatus === 'Rejected',
+      };
     });
   }
 
-  const type = VERDICT_NOTIFICATION[action];
+  // A reject that only turned the edit down reads to the creator as changes requested.
+  const type =
+    VERDICT_NOTIFICATION[action === 'reject' && !result.finalReject ? 'request-changes' : action];
   await createNotification({
     type,
     userId: result.sellerId,
@@ -527,11 +588,13 @@ async function approveMysteryPack({
   reviewerId,
   stickersEnabled,
   note,
+  revisionId,
 }: {
   boxId: number;
   reviewerId: number;
   stickersEnabled: boolean;
   note?: string;
+  revisionId?: number;
 }) {
   const [box] = await dbWrite.$queryRaw<
     { sellerId: number; title: string; status: string; listingStatus: string; pending: boolean }[]
@@ -546,16 +609,22 @@ async function approveMysteryPack({
     ORDER BY s.id
     LIMIT 1`;
   if (!box) throw throwNotFoundError('Mystery pack not found');
+  if (box.sellerId === reviewerId) throw throwBadRequestError(OWN_PACK);
+  if (box.listingStatus === 'Rejected') throw throwBadRequestError(REJECTED_FINAL);
   if (box.pending) {
+    if (revisionId === undefined) throw throwBadRequestError(EDIT_CHANGED);
     const { listingId } = await applyBoxRevision({
       boxId,
       moderatorId: reviewerId,
       stickersEnabled,
       note,
+      revisionId,
     });
     return { listingId, title: box.title, sellerId: box.sellerId };
   }
 
+  // The edit the moderator reviewed is gone; re-publishing the live version isn't what they decided.
+  if (revisionId !== undefined) throw throwBadRequestError(EDIT_CHANGED);
   return dbWrite.$transaction(async (tx) => {
     await lockCreator(tx, box.sellerId);
     const current = await readBox(tx, boxId);
@@ -567,6 +636,10 @@ async function approveMysteryPack({
     // Raced an edit submitted since the read above: that edit is what needs reviewing.
     if (await pendingRevisionOf(tx, boxId))
       throw throwBadRequestError('An edit to this mystery pack just arrived. Review it instead.');
+    if (await creatorIsRestricted(tx, box.sellerId))
+      throw throwBadRequestError(
+        "This pack's creator is muted, banned or deleted, so it can't go back on sale."
+      );
     const meta = appendItemHistory(current.meta ?? { purchases: 0 }, {
       at: new Date().toISOString(),
       userId: reviewerId,

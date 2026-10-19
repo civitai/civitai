@@ -724,7 +724,7 @@ export async function purchaseMysteryBox({
 
   const box = await dbWrite.itemDefinition.findUnique({
     where: { id: boxDefinitionId },
-    select: { id: true, type: true, status: true, version: true, params: true },
+    select: { id: true, type: true, status: true, version: true, params: true, sellerId: true },
   });
 
   const start = await beginShopPurchase({
@@ -746,6 +746,8 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('This box is not available');
     if (!box || box.type !== ITEM_TYPE.box || box.status !== ITEM_DEFINITION_STATUS.published)
       throw throwBadRequestError('This box is not available');
+    // A creator's pack isn't sold until its sale pays the creator; approving one doesn't open it.
+    if (box.sellerId != null) throw throwBadRequestError('This box is not available');
 
     if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
       throw throwBadRequestError('Mystery boxes are not available in your region');

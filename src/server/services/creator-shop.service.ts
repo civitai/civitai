@@ -1888,8 +1888,8 @@ export const getCreatorShopReviewQueue = async ({
       (t): t is CosmeticType => t !== PACK_FILTER_VALUE && t !== MYSTERY_PACK_FILTER_VALUE
     ) ?? [];
   const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
-  const mysteryPacksWanted =
-    !cosmeticTypes?.length || cosmeticTypes.includes(MYSTERY_PACK_FILTER_VALUE);
+  // Only when asked for, until the review pane can show a pack's contents and odds.
+  const mysteryPacksWanted = !!cosmeticTypes?.includes(MYSTERY_PACK_FILTER_VALUE);
   const singlesWanted = !cosmeticTypes?.length || types.length > 0;
 
   // A specific status filters to it (including Archived); no status = every
@@ -2015,6 +2015,7 @@ export const reviewCreatorShopItem = async ({
   id,
   action,
   rejectionReason,
+  boxRevisionId,
   stickersEnabled,
 }: ReviewCreatorShopItemInput & { reviewerId: number; stickersEnabled: boolean }) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
@@ -2042,7 +2043,6 @@ export const reviewCreatorShopItem = async ({
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
-  // A verdict on a creator's mystery pack reviews its pending edit, not just the listing.
   if (item.itemDefinition?.sellerId != null) {
     await reviewMysteryPack({
       boxId: item.itemDefinition.id,
@@ -2050,6 +2050,7 @@ export const reviewCreatorShopItem = async ({
       action,
       rejectionReason,
       stickersEnabled,
+      revisionId: boxRevisionId,
     });
     return dbWrite.cosmeticShopItem.findUniqueOrThrow({
       where: { id },

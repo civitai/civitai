@@ -58,7 +58,22 @@ type Tx = Prisma.TransactionClient;
 export const lockCreator = (tx: Tx, userId: number) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(${MYSTERY_PACK_LOCK_CLASS}::int, ${userId}::int)`;
 
-/** Reads the primary, not the session: a mute or ban the session hasn't seen must still refuse. */
+/** Reads the primary, not the session: a mute or ban the session hasn't seen must still count. */
+export async function creatorIsRestricted(client: Tx, userId: number) {
+  const [user] = await client.$queryRaw<
+    { muted: boolean; bannedAt: Date | null; deletedAt: Date | null }[]
+  >`SELECT muted, "bannedAt", "deletedAt" FROM "User" WHERE id = ${userId}`;
+  return !user || user.muted || !!user.bannedAt || !!user.deletedAt;
+}
+
+export const hasPendingRevision = async (client: Tx, boxId: number) =>
+  (
+    await client.$queryRaw<{ pending: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM "BoxRevision" WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'
+      ) AS pending`
+  )[0].pending;
+
 async function assertCreatorMayBuild({
   userId,
   countryCode,
@@ -66,10 +81,7 @@ async function assertCreatorMayBuild({
   userId: number;
   countryCode: string | null;
 }) {
-  const [user] = await dbWrite.$queryRaw<
-    { muted: boolean; bannedAt: Date | null; deletedAt: Date | null }[]
-  >`SELECT muted, "bannedAt", "deletedAt" FROM "User" WHERE id = ${userId}`;
-  if (!user || user.muted || user.bannedAt || user.deletedAt)
+  if (await creatorIsRestricted(dbWrite, userId))
     throw throwAuthorizationError("You can't build mystery packs right now");
 
   // `takedown.at` is an ISO string, which sorts as the time it names.
@@ -106,10 +118,7 @@ type ContentRow = {
   unitAmount: number | null;
 };
 
-/**
- * Values and checks each content by the creator's own listing of it (`addedById`) only. Returns the
- * tier weights and each content's value by cosmetic id with the proposal.
- */
+/** Values and checks each content by the creator's own listing of it (`addedById`) only. */
 export async function checkProposal(
   client: Tx,
   {
@@ -387,11 +396,7 @@ export async function reviseMysteryPack({
     if (box.listingStatus === 'Rejected') throw throwBadRequestError(REJECTED_IS_FINAL);
     if (box.listingStatus !== 'Published' && box.listingStatus !== 'RequestedChanges')
       throw throwBadRequestError("This mystery pack can't be edited right now");
-    const [{ pending }] = await tx.$queryRaw<{ pending: boolean }[]>`
-      SELECT EXISTS (
-        SELECT 1 FROM "BoxRevision" WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'
-      ) AS pending`;
-    if (pending)
+    if (await hasPendingRevision(tx, boxId))
       throw throwBadRequestError(
         'This mystery pack already has an edit waiting for review. Withdraw it first.'
       );
@@ -473,11 +478,7 @@ export async function lowerMysteryPackPrice({
     const box = await getOwnBox(tx, boxId, userId);
     if (box.listingStatus !== 'Published')
       throw throwBadRequestError('Only a mystery pack on sale can be repriced');
-    const [{ pending }] = await tx.$queryRaw<{ pending: boolean }[]>`
-      SELECT EXISTS (
-        SELECT 1 FROM "BoxRevision" WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'
-      ) AS pending`;
-    if (pending)
+    if (await hasPendingRevision(tx, boxId))
       throw throwBadRequestError(
         'This mystery pack has an edit waiting for review. Set the price in that edit instead.'
       );

@@ -128,13 +128,22 @@ describe('creator mystery pack procedures', () => {
 
   // A pack's approval re-runs the content checks, stickers included.
   it("hands a moderator's verdict the stickers flag", async () => {
-    await caller({ ...ALL_ON, stickers: true }, { isModerator: true }).reviewItem({
-      id: 3,
-      action: 'approve',
-    });
-    expect(shop.reviewCreatorShopItem).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 3, reviewerId: creator.id, stickersEnabled: true })
-    );
+    for (const stickers of [true, false]) {
+      shop.reviewCreatorShopItem.mockClear();
+      await caller({ ...ALL_ON, stickers }, { isModerator: true }).reviewItem({
+        id: 3,
+        action: 'approve',
+        boxRevisionId: 9,
+      });
+      expect(shop.reviewCreatorShopItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 3,
+          reviewerId: creator.id,
+          boxRevisionId: 9,
+          stickersEnabled: stickers,
+        })
+      );
+    }
   });
 
   // The service loads every item it is handed, so the cap holds before it is called.

@@ -126,8 +126,30 @@ describe('getCreatorShopReviewQueue', () => {
     expect(armsOf()).toHaveLength(2);
   });
 
+  // Until the review pane can show a pack's contents and odds (the next PR lifts this).
+  it('leaves mystery packs out of the unfiltered view', async () => {
+    await getCreatorShopReviewQueue(baseInput);
+    expect(armsOf().length).toBeGreaterThan(0);
+    expect(mysteryArm()).toBeUndefined();
+  });
+
+  it("filters mystery packs by their creator's username", async () => {
+    await getCreatorShopReviewQueue({
+      ...baseInput,
+      cosmeticTypes: ['MysteryPack'],
+      username: 'ann',
+    });
+    expect(mysteryArm()).toMatchObject({
+      addedBy: { username: { contains: 'ann', mode: 'insensitive' } },
+    });
+  });
+
   it('shows a mystery pack on sale with an edit waiting in the PendingReview view', async () => {
-    await getCreatorShopReviewQueue({ ...baseInput, status: 'PendingReview' });
+    await getCreatorShopReviewQueue({
+      ...baseInput,
+      status: 'PendingReview',
+      cosmeticTypes: ['MysteryPack', 'Pack'],
+    });
     expect(mysteryArm()).toEqual({
       itemDefinition: { sellerId: { not: null } },
       OR: [

@@ -145,21 +145,38 @@ const reprice = async (boxId: number, price: number) => {
   );
 };
 
-const apply = (boxId: number) =>
-  approve.applyBoxRevision({ boxId, moderatorId: MOD, stickersEnabled: false });
+/** The edit waiting on the box, as the review pane shows it. */
+const pendingRevisionId = async (boxId: number) =>
+  (
+    await q<{ id: number }>(
+      `SELECT id FROM "BoxRevision" WHERE "boxDefinitionId" = $1 AND status = 'pending'`,
+      [boxId]
+    )
+  )[0]?.id;
+
+const apply = async (boxId: number, stickersEnabled = false) =>
+  approve.applyBoxRevision({
+    boxId,
+    moderatorId: MOD,
+    stickersEnabled,
+    revisionId: (await pendingRevisionId(boxId)) ?? 0,
+  });
 
 const verdict = (
   boxId: number,
   action: 'approve' | 'reject' | 'request-changes' | 'revert',
   rejectionReason?: string
 ) =>
-  approve.reviewMysteryPack({
-    boxId,
-    reviewerId: MOD,
-    action,
-    rejectionReason,
-    stickersEnabled: false,
-  });
+  pendingRevisionId(boxId).then((revisionId) =>
+    approve.reviewMysteryPack({
+      boxId,
+      reviewerId: MOD,
+      action,
+      rejectionReason,
+      stickersEnabled: false,
+      revisionId,
+    })
+  );
 
 const boxRow = async (id: number) =>
   (
@@ -279,6 +296,65 @@ const weightsOf = (sizes: number[]) => {
   return layout.weights;
 };
 
+/**
+ * Runs `sql` inside the next transaction, just before its first statement containing `marker`: a
+ * concurrent write landing at that point.
+ */
+const withStatementsBefore = async <T>(
+  marker: string,
+  boxId: number,
+  sql: string[],
+  run: () => Promise<T>
+) => {
+  const original = dbMock.dbWrite.$transaction.getMockImplementation()!;
+  dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+    fn: (tx: unknown) => Promise<unknown>
+  ) =>
+    holder.db.transaction(async (tx) => {
+      const inner = bridge(tx);
+      let done = false;
+      const before =
+        (run: (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown>) =>
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (!done && strings.join('?').includes(marker)) {
+            done = true;
+            for (const statement of sql) await tx.query(statement, [boxId]);
+          }
+          return run(strings, ...values);
+        };
+      inner.$queryRaw = before(inner.$queryRaw) as typeof inner.$queryRaw;
+      inner.$executeRaw = before(inner.$executeRaw) as typeof inner.$executeRaw;
+      return fn(inner);
+    })) as never);
+  try {
+    return await run();
+  } finally {
+    dbMock.dbWrite.$transaction.mockImplementation(original);
+  }
+};
+
+/** The creator's pack lock count each time the listing row was written, recorded inside the write. */
+const creatorLockAtListingWrites = async (run: () => Promise<unknown>) => {
+  await holder.db.exec(`
+    CREATE TABLE "SeenLock" (n int);
+    CREATE FUNCTION see_lock() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO "SeenLock" SELECT count(*) FROM pg_locks
+      WHERE locktype = 'advisory' AND classid = x'434d0001'::int::oid AND objid = ${CREATOR} AND objsubid = 2;
+      RETURN NEW;
+    END $$;
+    CREATE TRIGGER see_lock BEFORE UPDATE ON "CosmeticShopItem" FOR EACH ROW EXECUTE FUNCTION see_lock();
+  `);
+  try {
+    await run();
+    return (await q<{ n: number }>(`SELECT n FROM "SeenLock"`)).map((row) => row.n);
+  } finally {
+    await holder.db.exec(
+      `DROP TRIGGER see_lock ON "CosmeticShopItem"; DROP FUNCTION see_lock; DROP TABLE "SeenLock";`
+    );
+  }
+};
+
 describe('approving a first submission', () => {
   it('writes the tiers and contents, publishes version 2 with its snapshot, and puts the listing on sale', async () => {
     const boxId = await submit();
@@ -339,6 +415,56 @@ describe('approving a first submission', () => {
         `SELECT bc."rewardDefinitionId" FROM "BoxContent" bc JOIN "ItemDefinition" d ON d.id = bc."rewardDefinitionId" WHERE d."cosmeticId" = 1`
       )
     ).toEqual([{ rewardDefinitionId: existing.id }]);
+  });
+
+  it("lays the tiers out by the edit's steepness", async () => {
+    const gentle = creatorBoxWeights([4, 2], 'gentle');
+    const standard = creatorBoxWeights([4, 2], 'standard');
+    if (!gentle.ok || !standard.ok) throw new Error('layout');
+    expect(gentle.weights).not.toEqual(standard.weights);
+    const boxId = await submit();
+    await q(`UPDATE "BoxRevision" SET proposal = jsonb_set(proposal, '{steepness}', '"gentle"')`);
+
+    await apply(boxId);
+
+    expect((await contentsOf(boxId)).map((tier) => tier.weight)).toEqual(gentle.weights);
+  });
+
+  it('refuses a sticker while stickers are off for the approver, and leaves the edit waiting', async () => {
+    await q(`UPDATE "Cosmetic" SET type = 'Sticker' WHERE id = 6`);
+    const { boxId } = await packs.submitMysteryPack({
+      userId: CREATOR,
+      countryCode: 'US',
+      stickersEnabled: true,
+      name: 'My pack',
+      description: null,
+      buzzType: 'yellow',
+      quotedFee: DEFAULT_CREATOR_SHOP_FEES.mysteryPack,
+      steepness: 'standard',
+      tiers: [
+        [1, 2, 3, 4],
+        [5, 6],
+      ],
+      price: 500,
+    });
+
+    await expect(apply(boxId)).rejects.toThrow('Badge 6');
+    expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'pending' })]);
+    await expect(apply(boxId, true)).resolves.toMatchObject({ version: 2 });
+  });
+
+  it.each([
+    ['muted', 'muted = true'],
+    ['banned', '"bannedAt" = now()'],
+    ['deleted', '"deletedAt" = now()'],
+  ])('refuses while the creator is %s, and leaves the edit waiting', async (_label, set) => {
+    const boxId = await submit();
+    await q(`UPDATE "User" SET ${set} WHERE id = ${CREATOR}`);
+
+    await expect(apply(boxId)).rejects.toThrow("This pack's creator is muted, banned or deleted");
+
+    expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'pending' })]);
+    expect(await boxRow(boxId)).toEqual({ status: 'draft', version: 1 });
   });
 
   it("values each content at approval, from the creator's listing then, not at submission", async () => {
@@ -425,7 +551,7 @@ describe('approving an edit to a pack on sale', () => {
 });
 
 describe('approval refuses, and writes nothing,', () => {
-  it('an edit made against an older version, which it marks stale', async () => {
+  it('an edit made against an older version, which it marks stale and sends back', async () => {
     const boxId = await submit();
     await q(`UPDATE "ItemDefinition" SET version = 5 WHERE id = $1`, [boxId]);
 
@@ -436,7 +562,50 @@ describe('approval refuses, and writes nothing,', () => {
     ]);
     expect(await boxRow(boxId)).toEqual({ status: 'draft', version: 5 });
     expect(await contentsOf(boxId)).toEqual([]);
-    expect((await listingOf(boxId)).status).toBe('PendingReview');
+    // Back with its creator, who can edit it again.
+    expect((await listingOf(boxId)).status).toBe('RequestedChanges');
+  });
+
+  it('an old edit whose contents also went bad, which it still marks stale', async () => {
+    const boxId = await submit();
+    await q(`UPDATE "ItemDefinition" SET version = 5 WHERE id = $1`, [boxId]);
+    await q(`UPDATE "CosmeticShopItem" SET "archivedAt" = now() WHERE "cosmeticId" = 6`);
+
+    await expect(apply(boxId)).rejects.toThrow('The creator has to edit it again');
+    expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'stale' })]);
+  });
+
+  it('an edit other than the one the moderator reviewed', async () => {
+    const boxId = await submit();
+    const reviewed = (await pendingRevisionId(boxId))!;
+    await q(`UPDATE "BoxRevision" SET status = 'withdrawn' WHERE "boxDefinitionId" = $1`, [boxId]);
+    await q(
+      `INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
+       SELECT "boxDefinitionId", "baseVersion", proposal, "submittedById" FROM "BoxRevision" WHERE id = $1`,
+      [reviewed]
+    );
+
+    await expect(
+      approve.applyBoxRevision({
+        boxId,
+        moderatorId: MOD,
+        stickersEnabled: false,
+        revisionId: reviewed,
+      })
+    ).rejects.toThrow("This pack's edit changed since you opened it");
+    expect(await boxRow(boxId)).toMatchObject({ version: 1 });
+  });
+
+  it('a pack whose listing a moderator archived', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await reprice(boxId, 800);
+    await q(`UPDATE "CosmeticShopItem" SET status = 'Archived' WHERE "itemDefinitionId" = $1`, [
+      boxId,
+    ]);
+
+    await expect(apply(boxId)).rejects.toThrow('This mystery pack is archived');
+    expect((await listingOf(boxId)).status).toBe('Archived');
   });
 
   it.each([
@@ -500,43 +669,31 @@ describe('the box row lock', () => {
 
     await apply(boxId);
 
-    const at = (pattern: RegExp) => holder.statements.findIndex((sql) => pattern.test(sql));
+    const at = (pattern: RegExp) => {
+      const index = holder.statements.findIndex((sql) => pattern.test(sql));
+      if (index < 0) throw new Error(`no statement matches ${pattern}`);
+      return index;
+    };
     const creatorLock = at(/pg_advisory_xact_lock/);
-    const boxLock = at(/FOR NO KEY UPDATE/);
+    const boxRead = at(/JOIN "CosmeticShopItem" s ON/);
+    const revisionRead = at(/FROM "BoxRevision"/);
     const contentCheck = at(/FROM "Cosmetic" c\s+LEFT JOIN LATERAL/);
     const define = at(/INSERT INTO "ItemDefinition"/);
+    const rowsRead = at(/SELECT id, "rewardDefinitionId", "tierId", enabled FROM "BoxContent"/);
+    const lockTimeout = at(/set_config\('lock_timeout'/);
+    const boxLock = at(/FOR NO KEY UPDATE/);
     const firstBoxWrite = at(/(INSERT INTO|UPDATE|DELETE FROM) "Box(Tier|Content)"/);
-    expect([creatorLock, contentCheck, define, boxLock, firstBoxWrite].every((i) => i >= 0)).toBe(
-      true
-    );
-    expect(creatorLock).toBeLessThan(contentCheck);
-    expect(contentCheck).toBeLessThan(boxLock);
-    expect(define).toBeLessThan(boxLock);
+    // The stale and pending decisions are made under the creator's lock.
+    expect(creatorLock).toBeLessThan(boxRead);
+    expect(creatorLock).toBeLessThan(revisionRead);
+    for (const prep of [contentCheck, define, rowsRead]) expect(prep).toBeLessThan(boxLock);
+    expect(lockTimeout).toBeLessThan(boxLock);
     expect(boxLock).toBeLessThan(firstBoxWrite);
   });
 
-  /** Runs `sql` inside the approval's transaction, between its prep reads and the box lock. */
-  const approveWithChangeBeforeLock = async (boxId: number, sql: string[]) => {
-    const original = dbMock.dbWrite.$transaction.getMockImplementation()!;
-    dbMock.dbWrite.$transaction.mockImplementationOnce((async (
-      fn: (tx: unknown) => Promise<unknown>
-    ) =>
-      holder.db.transaction(async (tx) => {
-        const inner = bridge(tx);
-        const queryRaw = inner.$queryRaw;
-        inner.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-          if (strings.join('?').includes('FOR NO KEY UPDATE'))
-            for (const statement of sql) await tx.query(statement, [boxId]);
-          return queryRaw(strings, ...values);
-        };
-        return fn(inner);
-      })) as never);
-    try {
-      return await apply(boxId);
-    } finally {
-      dbMock.dbWrite.$transaction.mockImplementation(original);
-    }
-  };
+  /** A write landing between the approval's prep reads and its box lock. */
+  const approveWithChangeBeforeLock = (boxId: number, sql: string[]) =>
+    withStatementsBefore('FOR NO KEY UPDATE', boxId, sql, () => apply(boxId));
 
   it('reads the rows again when a save changed them without a new version', async () => {
     const boxId = await submit();
@@ -597,6 +754,7 @@ describe("a moderator's verdict", () => {
       status: 'RequestedChanges',
       note: 'Swap item 6',
     });
+    expect(notifications.createNotification).toHaveBeenCalledTimes(1);
     expect(notifications.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'creator-shop-item-changes-requested',
@@ -614,9 +772,151 @@ describe("a moderator's verdict", () => {
     expect((await listingOf(boxId)).status).toBe('Rejected');
     expect((await boxRow(boxId)).status).toBe('archived');
     expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'rejected' })]);
+    expect(notifications.createNotification).toHaveBeenCalledTimes(1);
     expect(notifications.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'creator-shop-item-rejected', userId: CREATOR })
     );
+  });
+
+  it.each(['reject', 'request-changes'] as const)(
+    '%s on a pack pulled back to review sends it to its creator, and says changes were requested',
+    async (action) => {
+      const boxId = await submit();
+      await apply(boxId);
+      await verdict(boxId, 'revert', 'Checking a report');
+      notifications.createNotification.mockClear();
+
+      await verdict(boxId, action, 'Fix the art');
+
+      expect((await listingOf(boxId)).status).toBe('RequestedChanges');
+      expect(await boxRow(boxId)).toEqual({ status: 'published', version: 2 });
+      expect(notifications.createNotification.mock.calls.map(([n]) => n.type)).toEqual([
+        'creator-shop-item-changes-requested',
+      ]);
+    }
+  );
+
+  it.each(['approve', 'request-changes', 'reject', 'revert'] as const)(
+    '%s on a rejected pack is refused: the rejection is final',
+    async (action) => {
+      const boxId = await submit();
+      await verdict(boxId, 'reject', 'Not allowed');
+
+      await expect(verdict(boxId, action, 'Reopen')).rejects.toThrow(
+        'was rejected, which is final'
+      );
+      expect((await listingOf(boxId)).status).toBe('Rejected');
+    }
+  );
+
+  it("refuses a moderator's verdict on their own pack", async () => {
+    const boxId = await submit();
+    for (const action of ['approve', 'request-changes'] as const)
+      await expect(
+        approve.reviewMysteryPack({
+          boxId,
+          reviewerId: CREATOR,
+          action,
+          rejectionReason: 'x',
+          stickersEnabled: false,
+          revisionId: await pendingRevisionId(boxId),
+        })
+      ).rejects.toThrow("You can't review your own mystery pack");
+    expect((await revisionsOf(boxId))[0].status).toBe('pending');
+  });
+
+  it.each([
+    ['naming no edit while one waits', undefined],
+    ['naming another edit', 999],
+  ])('request-changes refuses %s', async (_label, revisionId) => {
+    const boxId = await submit();
+
+    await expect(
+      approve.reviewMysteryPack({
+        boxId,
+        reviewerId: MOD,
+        action: 'request-changes',
+        rejectionReason: 'x',
+        stickersEnabled: false,
+        revisionId,
+      })
+    ).rejects.toThrow("This pack's edit changed since you opened it");
+    expect((await revisionsOf(boxId))[0].status).toBe('pending');
+  });
+
+  it('approve naming an edit that is gone does not re-publish the live version', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await verdict(boxId, 'revert', 'Checking a report');
+
+    await expect(
+      approve.reviewMysteryPack({
+        boxId,
+        reviewerId: MOD,
+        action: 'approve',
+        stickersEnabled: false,
+        revisionId: 999,
+      })
+    ).rejects.toThrow("This pack's edit changed since you opened it");
+    expect((await listingOf(boxId)).status).toBe('PendingReview');
+  });
+
+  it('approve without an edit refuses while the creator is muted', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await verdict(boxId, 'revert', 'Checking a report');
+    await q(`UPDATE "User" SET muted = true WHERE id = ${CREATOR}`);
+
+    await expect(verdict(boxId, 'approve')).rejects.toThrow("can't go back on sale");
+    expect((await listingOf(boxId)).status).toBe('PendingReview');
+  });
+
+  it('approve without an edit refuses when one arrives before the lock', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await verdict(boxId, 'revert', 'Checking a report');
+
+    await expect(
+      withStatementsBefore(
+        'pg_advisory_xact_lock',
+        boxId,
+        [
+          `INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
+           SELECT "boxDefinitionId", 2, proposal, "submittedById" FROM "BoxRevision" WHERE "boxDefinitionId" = $1 LIMIT 1`,
+        ],
+        () => verdict(boxId, 'approve')
+      )
+    ).rejects.toThrow('An edit to this mystery pack just arrived');
+    expect((await listingOf(boxId)).status).toBe('PendingReview');
+  });
+
+  it('a stale edit on a pack waiting for review sends the pack back to its creator', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await verdict(boxId, 'revert', 'Checking a report');
+    await q(
+      `INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
+       SELECT "boxDefinitionId", 1, proposal, "submittedById" FROM "BoxRevision" WHERE "boxDefinitionId" = $1 LIMIT 1`,
+      [boxId]
+    );
+
+    await expect(verdict(boxId, 'approve')).rejects.toThrow('The creator has to edit it again');
+
+    expect((await listingOf(boxId)).status).toBe('RequestedChanges');
+    expect((await revisionsOf(boxId)).at(-1)).toMatchObject({ status: 'stale' });
+  });
+
+  it.each([
+    ['request-changes on a first submission', 'request-changes', false],
+    ['approve on a pack pulled back to review', 'approve', true],
+  ] as const)("holds the creator's lock for %s", async (_label, action, reverted) => {
+    const boxId = await submit();
+    if (reverted) {
+      await apply(boxId);
+      await verdict(boxId, 'revert', 'Checking a report');
+    }
+
+    expect(await creatorLockAtListingWrites(() => verdict(boxId, action, 'note'))).toEqual([1]);
   });
 
   it.each(['reject', 'request-changes'] as const)(
@@ -697,9 +997,11 @@ describe("a moderator's verdict", () => {
       reviewerId: MOD,
       action: 'approve',
       stickersEnabled: false,
+      boxRevisionId: await pendingRevisionId(boxId),
     });
 
     expect(await boxRow(boxId)).toEqual({ status: 'published', version: 2 });
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
+    expect(notifications.createNotification).toHaveBeenCalledTimes(1);
   });
 });
