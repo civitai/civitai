@@ -212,7 +212,7 @@ describe('a red host shows an override to a viewer the store rule lets see it', 
     expect((await detail(true, ALL_VIEWER)).coverUrl).toBe('edge:rc.png@1200');
   });
 
-  it('🔴 a viewer who has not opted in gets the listing’s own icon and cover instead', async () => {
+  it('invariant guard: a viewer who has not opted in gets the listing’s own icon and cover instead', async () => {
     await split.setRedSlots(LISTING_ID, { icon: 21, cover: 22 });
     for (const level of [undefined, R_VIEWER]) {
       const c = await card(true, level);
@@ -227,7 +227,7 @@ describe('a red host shows an override to a viewer the store rule lets see it', 
     expect((await card(true, undefined)).iconUrl).toBe('edge:rp.png@256');
   });
 
-  it('🔴 a Blocked or unrated override never renders; the listing’s own media does', async () => {
+  it('invariant guard: a Blocked or unrated override never renders; the listing’s own media does', async () => {
     await split.setRedSlots(LISTING_ID, { icon: 24, cover: 25 });
     const c = await card(true, ALL_VIEWER);
     expect(c).toEqual(
@@ -274,7 +274,7 @@ describe('T9 — a non-red request never reads an override (I2), and never shows
 });
 
 describe('fail-safe while the environment cannot serve overrides', () => {
-  it('🔴 columns absent: a red host shows the listing’s own media, and nothing throws', async () => {
+  it('invariant guard: columns absent: a red host shows the listing’s own media, and nothing throws', async () => {
     const t = await createSplitDb();
     // The render read's catch-all would turn a "column does not exist" into "no overrides" as
     // well, so pin that it never got that far: the PROBE answered, and nothing was logged.

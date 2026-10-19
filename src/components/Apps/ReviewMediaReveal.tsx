@@ -5,7 +5,7 @@ import {
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   getHighestBrowsingLevelBit,
   nsfwBrowsingLevelsFlag,
@@ -38,7 +38,9 @@ export function ReviewMediaReveal({
   explain?: boolean;
   testId?: string;
 }) {
-  const features = useFeatureFlags();
+  // Optional: a surface rendered outside the flags provider reads as civitai.com (blur), never
+  // as a crash or as a host that shows mature content.
+  const features = useOptionalFeatureFlags();
   const ctx = useBrowsingLevelContext();
   if (!image || !reviewMediaNeedsReveal(features?.canViewNsfw, image.nsfwLevel))
     return <>{children}</>;

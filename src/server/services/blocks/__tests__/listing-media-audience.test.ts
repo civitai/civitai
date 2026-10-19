@@ -229,7 +229,7 @@ describe('projectListingMedia — the civitai.red icon / cover overrides', () =>
     });
   });
 
-  it('🔴 a non-red view never uses an override, even one the caller passed and the viewer could see', () => {
+  it('invariant guard: a non-red view never uses an override, even one the caller passed and the viewer could see', () => {
     // A PG override is inside the non-red ceiling: only the host test keeps it out.
     const pgRed = { icon: img('red-pg-icon.png', PG), cover: img('red-pg-cover.png', PG) };
     expect(
@@ -241,7 +241,7 @@ describe('projectListingMedia — the civitai.red icon / cover overrides', () =>
     ).toMatchObject({ iconUrl: 'edge:own-icon.png@256', coverUrl: 'edge:own-cover.png@1200' });
   });
 
-  it('🔴 a Blocked, flagged or unrated override never renders', () => {
+  it('invariant guard: a Blocked, flagged or unrated override never renders', () => {
     for (const bad of [
       img('red-blocked.png', R, { ingestion: 'Blocked' }),
       img('red-flagged.png', R, { tosViolation: true }),

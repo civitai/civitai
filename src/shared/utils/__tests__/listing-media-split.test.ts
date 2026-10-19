@@ -55,7 +55,7 @@ describe('ratingFloorAssets', () => {
     { id: 'red-cover', nsfwLevel: 0, redSlot: true },
   ];
 
-  it('🔴 without a split the civitai.red overrides floor it like any other image', () => {
+  it('invariant guard: without a split the civitai.red overrides floor it like any other image', () => {
     expect(ratingFloorAssets(withOverrides, false).map((a) => a.id)).toEqual([
       'icon',
       'shot-r',

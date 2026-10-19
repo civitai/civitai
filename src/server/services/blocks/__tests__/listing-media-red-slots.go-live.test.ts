@@ -269,7 +269,7 @@ describe.each(SITES)('$site', ({ wire, goesLive, rates }) => {
 
   it(
     rates
-      ? '🔴 with a split, an override never floors the rating — even a PG-13 one civitai.com could show'
+      ? 'invariant guard: with a split, an override never floors the rating — even a PG-13 one civitai.com could show'
       : 'invariant guard: with a split, the assets-only apply writes no rating for a PG-13 override',
     async () => {
       // PG-13 is civitai.com-eligible by LEVEL, so only the override mark keeps it out of a

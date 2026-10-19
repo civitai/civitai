@@ -126,7 +126,7 @@ describe('the override mark reaches the re-rate floor', () => {
     expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalled();
   });
 
-  it('🔴 the "before" side keeps the mark: lowering an override a split never counted lowers nothing', async () => {
+  it('invariant guard: the "before" side keeps the mark: lowering an override a split never counted lowers nothing', async () => {
     // An on-site app declared g, rated pg13 by something else, split. Its override is re-rated
     // PG-13 → PG. The override never floored this split listing, so it cannot "explain" the
     // stored pg13 and the rating must stay — reading the override's previous level WITHOUT its

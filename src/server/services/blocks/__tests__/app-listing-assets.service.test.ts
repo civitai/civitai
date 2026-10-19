@@ -78,6 +78,9 @@ vi.mock('~/server/utils/app-block-ids', () => ({
 }));
 
 const owner = { id: 42, isModerator: false } as never;
+
+/** No civitai.red icon / cover overrides (the scan gate's required override ids). */
+const NO_RED_SLOTS = { redIconId: null, redCoverId: null } as const;
 const otherUser = { id: 99, isModerator: false } as never;
 const mod = { id: 7, isModerator: true } as never;
 
@@ -1879,13 +1882,18 @@ describe('assertAssetsScanClean', () => {
     ]);
     const { assertAssetsScanClean } = await import('../app-listing-assets.service');
     await expect(
-      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [10] })
+      assertAssetsScanClean({ ...NO_RED_SLOTS, iconId: 1, coverId: 2, screenshotImageIds: [10] })
     ).resolves.toBeUndefined();
   });
 
   it('is a no-op (no query) when there are no assets', async () => {
     const { assertAssetsScanClean } = await import('../app-listing-assets.service');
-    await assertAssetsScanClean({ iconId: null, coverId: null, screenshotImageIds: [] });
+    await assertAssetsScanClean({
+      ...NO_RED_SLOTS,
+      iconId: null,
+      coverId: null,
+      screenshotImageIds: [],
+    });
     expect(mockDb.image.findMany).not.toHaveBeenCalled();
   });
 
@@ -1896,7 +1904,7 @@ describe('assertAssetsScanClean', () => {
     ]);
     const { assertAssetsScanClean } = await import('../app-listing-assets.service');
     await expect(
-      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [] })
+      assertAssetsScanClean({ ...NO_RED_SLOTS, iconId: 1, coverId: 2, screenshotImageIds: [] })
     ).rejects.toThrow(/still scanning: icon/);
   });
 
@@ -1910,7 +1918,12 @@ describe('assertAssetsScanClean', () => {
     const { TRPCError } = await import('@trpc/server');
     let thrown: unknown;
     try {
-      await assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [10] });
+      await assertAssetsScanClean({
+        ...NO_RED_SLOTS,
+        iconId: 1,
+        coverId: 2,
+        screenshotImageIds: [10],
+      });
     } catch (e) {
       thrown = e;
     }
@@ -1924,7 +1937,7 @@ describe('assertAssetsScanClean', () => {
     mockDb.image.findMany.mockResolvedValue([{ id: 1, ingestion: 'Scanned' }]);
     const { assertAssetsScanClean } = await import('../app-listing-assets.service');
     await expect(
-      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [] })
+      assertAssetsScanClean({ ...NO_RED_SLOTS, iconId: 1, coverId: 2, screenshotImageIds: [] })
     ).rejects.toThrow(/still scanning: cover/);
   });
 
@@ -1932,7 +1945,10 @@ describe('assertAssetsScanClean', () => {
     const txFindMany = vi.fn(async () => [{ id: 1, ingestion: 'Scanned' }]);
     const tx = { image: { findMany: txFindMany } };
     const { assertAssetsScanClean } = await import('../app-listing-assets.service');
-    await assertAssetsScanClean({ iconId: 1, coverId: null, screenshotImageIds: [] }, tx as never);
+    await assertAssetsScanClean(
+      { ...NO_RED_SLOTS, iconId: 1, coverId: null, screenshotImageIds: [] },
+      tx as never
+    );
     // Used the passed-in reader, not the default dbWrite mock.
     expect(txFindMany).toHaveBeenCalledTimes(1);
     expect(mockDb.image.findMany).not.toHaveBeenCalled();

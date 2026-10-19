@@ -10,7 +10,7 @@ import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMe
 import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
 import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
 import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ListingReviewImage,
   ListingReviewMedia,
@@ -98,7 +98,7 @@ export function ReviewListingMedia({
 }) {
   const [index, setIndex] = useState<number | null>(null);
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
-  const features = useFeatureFlags();
+  const features = useOptionalFeatureFlags();
   // 🔴 THE LIGHTBOX NEVER SHOWS AN IMAGE THE REVEAL IS HOLDING BACK. The viewer below is a
   // separate full-size surface the reveal does not wrap, and it navigates between the two images
   // — so opening the SFW icon and pressing ← would otherwise show a blurred mature cover
