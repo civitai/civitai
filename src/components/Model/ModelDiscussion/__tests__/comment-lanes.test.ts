@@ -27,6 +27,32 @@ describe('assignLanes', () => {
     ]);
   });
 
+  it('counts the gap under every item when picking the shortest column', () => {
+    const first = assignLanes({ ...base, ids: [1, 2, 3], columnCount: 2 });
+    expect(first.columns).toEqual([[1, 3], [2]]);
+    const heights = new Map([
+      [1, 100],
+      [2, 210],
+      [3, 100],
+    ]);
+    const place = (gap: number) =>
+      assignLanes({
+        ...base,
+        gap,
+        heights,
+        ids: [1, 2, 3, 4],
+        columnCount: 2,
+        previous: { columnCount: 2, byId: new Map(first.lanes.byId) },
+      }).columns;
+
+    // Column 0 holds two items, so two gaps: 232 vs 226 with a 16px gap, 200 vs 210 without.
+    expect(place(16)).toEqual([
+      [1, 3],
+      [2, 4],
+    ]);
+    expect(place(0)).toEqual([[1, 3, 4], [2]]);
+  });
+
   it('puts a new id in the shortest column using measured heights, else the estimate', () => {
     const first = assignLanes({ ...base, ids: [1, 2], columnCount: 2 });
     const next = assignLanes({

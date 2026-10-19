@@ -28,6 +28,9 @@ const countWheres = () => dbMock.dbRead.comment.count.mock.calls.map(([arg]) => 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMock.dbRead.comment.count.mockReset();
+  dbMock.dbRead.comment.findMany.mockReset();
+  dbMock.dbRead.model.findUnique.mockReset();
   hidden.mockResolvedValue([]);
   blockedBy.mockResolvedValue([]);
   blocked.mockResolvedValue([]);
