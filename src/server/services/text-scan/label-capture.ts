@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -18,9 +18,8 @@ export const textScanModelQuestion = (label: TextScanFlagLabel) => `text_scan.mo
 
 type RawTx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
 
-// maxWait: Prisma's default pool_timeout, what a ruling written as a bare statement waited for a
-// connection. timeout: the ruling's write plus the read-back and at most two labels (an appeal rules
-// both flags at once), each capped at 3s (`guarded`), with room for the write to wait on the model's row lock.
+const LABEL_STATEMENT_TIMEOUT_MS = 3_000;
+// timeout: the write, the read-back and up to two labels (an appeal rules both flags), plus a wait on the model's row lock.
 const RULING_TRANSACTION = { maxWait: 10_000, timeout: 15_000 };
 
 type TextScanVerdict = { workflowId: string; promptIds?: PromptIds | null; reason?: string | null };
@@ -37,13 +36,11 @@ export type TextScanModelLabelInput = {
   textHash: string;
   /** The model's composed text now; stored only while it still hashes to `textHash`. */
   text: string | null;
-  /** The scan verdict the moderator ruled on. */
   verdict: TextScanVerdict;
   reason?: string;
   note?: string;
 };
 
-/** A ruling as the flag writers stamp it on `Model.meta.textScanFlags`. */
 export type TextScanModelRuling = {
   modelId: number;
   labels: TextScanFlagLabel[];
@@ -61,11 +58,7 @@ export async function loadTextScanSubject(entityType: string, entityId: number) 
   return (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
 }
 
-/**
- * Runs a flag writer and records its ruling as a label in the same transaction, so the label
- * commits and rolls back with the decision. `wrote` says whether the write changed anything; a
- * write that landed on nothing records nothing. Recording never fails the write.
- */
+/** Runs a flag writer and records its ruling as a label in the same transaction. `wrote` says whether the write changed anything; a write that landed on nothing records nothing. A failed label never fails the write (see `guarded`). */
 export async function writeTextScanRuling<T>(
   ruling: TextScanModelRuling,
   write: (tx: Prisma.TransactionClient) => Promise<T>,
@@ -78,17 +71,12 @@ export async function writeTextScanRuling<T>(
   );
   return dbWrite.$transaction(async (tx) => {
     const result = await write(tx);
-    // Last, as the label statement timeout it sets lasts to the end of the transaction.
     if (wrote(result)) await recordTextScanModelRuling(tx, ruling, text);
     return result;
   }, RULING_TRANSACTION);
 }
 
-/**
- * Records one label per ruled label that carries a text-scan verdict; a flag with no verdict (a
- * hash-only flag, a ruling stub) records nothing. Reads the ruling back from the row the caller just
- * wrote, for the hash it stamped. Must be the transaction's last step; see `guarded`.
- */
+/** Records one label per ruled label that carries a text-scan verdict; a hash-only flag or ruling stub records nothing. Must be the transaction's last step; see `guarded`. */
 export function recordTextScanModelRuling(
   tx: RawTx,
   ruling: TextScanModelRuling,
@@ -128,12 +116,7 @@ export function recordTextScanModelRuling(
   });
 }
 
-/**
- * Records a moderator's ruling on a text-scan model flag as a human label, inside the caller's
- * decision transaction so the label commits and rolls back with it. Must be the transaction's last
- * step; see `guarded`. True when a label was added; a retry of the same ruling by the same
- * moderator on the same text adds nothing.
- */
+/** Records a moderator's ruling as a human label inside the caller's transaction. Must be the last step; see `guarded`. True when a label was added; a retry of the same ruling by the same moderator on the same text adds nothing. */
 export function recordTextScanModelLabel(tx: RawTx, input: TextScanModelLabelInput) {
   return guarded(tx, input.modelId, () => recordLabel(tx, input));
 }
@@ -172,19 +155,14 @@ async function recordLabel(tx: RawTx, input: TextScanModelLabelInput) {
   return row?.id != null;
 }
 
-/**
- * Runs the label work under a savepoint with a statement timeout, so a store that refuses, is
- * missing or is slow rolls back to the savepoint and the decision still commits: the store logs
- * its own refusals to `record_failure`, the rest is logged here. The timeout is `SET LOCAL` and
- * outlives a released savepoint, hence last step only. Throws only when the savepoint itself fails,
- * since the transaction is then aborted and its COMMIT would silently drop the decision.
- */
+/** Runs the label work under a savepoint with a statement timeout, so a refusing, missing or slow store rolls back to the savepoint and the decision still commits. `SET LOCAL` outlives a released savepoint, hence last step only. Throws only when the savepoint itself fails: the transaction is then aborted and its COMMIT would silently drop the decision. */
 async function guarded(tx: RawTx, modelId: number, record: () => Promise<boolean>) {
   await tx.$executeRaw`SAVEPOINT text_scan_label`;
   try {
-    // Above the store's own 2s lock_timeout, so one lock wait completes; a label cut off here rolls
-    // back to the savepoint.
-    await tx.$executeRaw`SET LOCAL statement_timeout = '3s'`;
+    // Above the store's 2s lock_timeout, so one lock wait completes.
+    await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(
+      String(LABEL_STATEMENT_TIMEOUT_MS)
+    )}`;
     const recorded = await record();
     await tx.$executeRaw`RELEASE SAVEPOINT text_scan_label`;
     return recorded;

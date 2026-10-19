@@ -634,7 +634,6 @@ export async function grantModelTextScanPoi({
   });
   if (!before?.poi) return false;
 
-  // The lift and its label commit together.
   const [after] = await writeTextScanRuling(
     { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
     (tx) => tx.$queryRaw<ModelFlagRow[]>`
@@ -761,7 +760,6 @@ export async function stampModelTextScanAppeal({
   if (granted && !labels.every((label) => grantHashes?.[label]))
     throw new Error('A granted appeal needs the grant hash it covers for every label');
   const hashes = JSON.stringify(granted ? grantHashes : {});
-  // The ruling and its labels commit together.
   return writeTextScanRuling(
     { modelId, labels, decision, via, moderatorId: userId, reason, note, heldDetection },
     (tx) => tx.$executeRaw`

@@ -5,17 +5,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 import type { TextScanModelLabelInput } from '~/server/services/text-scan/label-capture';
 
-// The capture is hand-written SQL against the label store's own functions, run inside the
-// moderator's decision transaction. A mocked statement cannot show that a label lands, that a retry
-// records nothing, or that a store failure leaves the decision standing, so this runs the committed
-// migration on real Postgres.
+// Runs the committed label-store migration on real Postgres: a mocked statement can't show that a label lands, a retry records nothing, or a store failure leaves the decision standing.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const db = { pg: null as unknown as PGlite };
-// Statements the connection refuses, to drive the savepoint's own failure paths.
 const refused = new Set<string>();
-// The statement timeout in force each time the store is called, read on the same connection.
 const storeCallTimeouts: string[] = [];
 const tx = {
   $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -88,7 +83,6 @@ const failures = () => rows<{ sourceRef: string }>(`SELECT * FROM label_store.re
 const personHash = async (kind: 'owner' | 'labeller', id: number) =>
   (await rows<{ h: string }>(`SELECT label_store.person_hash($1, $2) AS h`, [kind, id]))[0].h;
 
-// The decision itself: the flag write the label rides on.
 async function decide(input: TextScanModelLabelInput, end: 'COMMIT' | 'ROLLBACK' = 'COMMIT') {
   await db.pg.exec('BEGIN');
   await db.pg.query(`UPDATE "Model" SET minor = $1 WHERE id = $2`, [input.value === 'flag', MODEL]);
@@ -164,13 +158,11 @@ describe('recordTextScanModelLabel', () => {
         verdictReason: 'verdict reason',
       },
     });
-    // The store keys a subject by the hash of the snapshot it holds.
     expect(
       (
         await rows<{ h: string }>(`SELECT label_store.text_hash($1) AS h`, [label.snapshot?.text])
       )[0].h
     ).toBe(label.contentHash);
-    // The moderator is stored hashed, never as a raw id.
     expect(label.sourceRef.split(':')).not.toContain(String(MOD));
   });
 

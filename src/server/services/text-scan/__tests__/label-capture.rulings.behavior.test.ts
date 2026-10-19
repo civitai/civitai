@@ -7,10 +7,7 @@ import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture'
 import type { TextScanFlags } from '~/server/services/text-scan/flag-snapshot';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
-// Every moderator ruling on a text-scan model flag goes through one of four flag writers, and each
-// records the ruling in the label store in the same transaction. This runs those writers, and the
-// two decision services that call them with their own arguments, on real Postgres with the
-// committed label-store migration.
+// Runs the flag writers and the two decision services that call them on real Postgres with the committed migration.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -309,7 +306,6 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
 
     it("keep records a flag on the held text with the held detection's verdict", async () => {
       await seed({ flags: { minor: { ...granted, redetected: held } } });
-      // The live scan row belongs to another workflow: the kept flag must not take its prompts.
       await holder.db.query(`INSERT INTO "EntityModeration" VALUES ('Model', $1, 'wf-other', $2)`, [
         MODEL,
         JSON.stringify({ version: 1, promptIds: { base: 99 } }),
@@ -369,7 +365,6 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
     });
 
     it('a dismissal that lands on nothing records nothing', async () => {
-      // The held text moved after the queue read it: the write is refused as stale.
       await seed({ flags: { minor: { ...granted, redetected: { ...held, textHash: NEWER } } } });
       db.model.findUnique.mockResolvedValueOnce({
         minor: false,
