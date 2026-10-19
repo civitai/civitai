@@ -18,12 +18,13 @@ import { setCreatorProgramBan } from '~/server/services/creator-program-ban.serv
  * arithmetic is Postgres's, not a fake's.
  */
 
-const holder = { db: null as unknown as PGlite };
+const holder = { db: null as unknown as PGlite, failAudit: false };
 const tx = {
   $queryRawUnsafe: async (sql: string, ...params: unknown[]) =>
     (await holder.db.query(sql, params)).rows,
   // trackModActivity's tagged template, numbered the way Prisma numbers it.
   $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (holder.failAudit) throw new Error('ModActivity insert failed');
     // Prisma sends an int array typed; PGlite needs the cast to resolve UNNEST's overload.
     const text = strings
       .reduce((acc, part, i) => `${acc}$${i}${part}`)
@@ -95,6 +96,7 @@ async function seed(value: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  holder.failAudit = false;
 });
 
 describe('setCreatorProgramBan: only the ban bit moves', () => {
@@ -188,5 +190,45 @@ describe('setCreatorProgramBan: refusals write nothing', () => {
       )
     ).rejects.toThrow('No user with id 1.');
     expect(await activities()).toHaveLength(0);
+  });
+
+  it('a 501-char reason is refused', async () => {
+    await seed(15);
+    await expect(ban('set', { reason: 'x'.repeat(501) })).rejects.toThrow('longer than 500');
+    expect(await onboarding()).toBe(15);
+    expect(await activities()).toHaveLength(0);
+  });
+
+  it.each(['set', 'clear'] as const)(
+    'a moderator cannot %s the ban on their own account',
+    async (action) => {
+      await seed(47);
+      await expect(
+        setCreatorProgramBan(
+          { userId: MODERATOR, action, reason: 'x', moderatorId: MODERATOR },
+          client
+        )
+      ).rejects.toThrow('your own account');
+      expect(await onboarding(MODERATOR)).toBe(15);
+      expect(await activities()).toHaveLength(0);
+    }
+  );
+
+  it('a ban that cannot be audited is not written', async () => {
+    await seed(15);
+    holder.failAudit = true;
+    await expect(ban('set')).rejects.toThrow('ModActivity insert failed');
+    expect(await onboarding()).toBe(15);
+    expect(await activities()).toHaveLength(0);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('setCreatorProgramBan: a failed session refresh', () => {
+  it('still returns the committed change', async () => {
+    await seed(15);
+    refreshSession.mockRejectedValueOnce(new Error('hub unreachable'));
+    await expect(ban('set')).resolves.toMatchObject({ before: 15, after: 47, changed: true });
+    expect(await onboarding()).toBe(47);
   });
 });

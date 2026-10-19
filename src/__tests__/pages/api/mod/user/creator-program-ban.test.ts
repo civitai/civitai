@@ -45,6 +45,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
   },
 }));
+// The limits are restated rather than imported so the bounds below are pinned to these numbers.
 vi.mock('~/server/services/creator-program-ban.service', () => ({
   CREATOR_PROGRAM_BAN_REASON_MAX: 500,
   CREATOR_PROGRAM_BAN_GATE_REF_MAX: 200,
@@ -159,6 +160,7 @@ describe('schema bounds', () => {
     ['no action', { action: undefined }],
     ['no userId', { userId: undefined }],
     ['a blank gateRef', { gateRef: ' ' }],
+    ['a 201-char gateRef', { gateRef: 'x'.repeat(201) }],
   ])('refuses %s with a 400 and changes nothing', async (_label, patch) => {
     const { status } = await call({ ...BAN, ...patch });
     expect(status).toBe(400);

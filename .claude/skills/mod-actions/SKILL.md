@@ -68,7 +68,7 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 node .claude/skills/mod-actions/query.mjs user 3879899
 node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
-node .claude/skills/mod-actions/query.mjs creator-program-ban 3879899 set --internal "Counterparty farming" --gate hub:request:abc
+node .claude/skills/mod-actions/query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
 ```
 
 ---

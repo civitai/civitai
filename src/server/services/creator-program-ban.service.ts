@@ -47,6 +47,8 @@ export async function setCreatorProgramBan(
     throw throwBadRequestError(
       `The reason is longer than ${CREATOR_PROGRAM_BAN_REASON_MAX} characters.`
     );
+  if (userId === moderatorId)
+    throw throwBadRequestError('You cannot change the Creator Program ban on your own account.');
 
   const bit = OnboardingSteps.BannedCreatorProgram;
   const result = await client.$transaction(async (tx) => {

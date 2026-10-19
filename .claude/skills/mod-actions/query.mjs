@@ -102,7 +102,7 @@ Examples:
   node query.mjs leaderboard 3879899 false
   node query.mjs remove-content 3879899 --dry-run
   node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
-  node query.mjs creator-program-ban 3879899 set --internal "Counterparty farming" --gate hub:request:abc
+  node query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
 
 Configuration:
   Set CIVITAI_API_KEY and CIVITAI_API_URL in .claude/skills/mod-actions/.env
