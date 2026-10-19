@@ -172,11 +172,18 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
     { enabled }
   );
 
+  // Asked only where there is something to list. `render` is true on nearly
+  // every image — an open gallery renders its pitch even when empty — so gating
+  // on it fetched an empty page on almost every image view. `hasEntries` is the
+  // gallery's own visibility predicate (`entryIsVisible`, same viewer level), so
+  // where it is false this query can only return nothing. The mutations that add
+  // an entry here (approving, submitting) invalidate the whole placement router,
+  // so `hasEntries` refetches, flips, and this runs.
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.placement.getRemixGallery.useInfiniteQuery(
       { imageId, browsingLevel },
       {
-        enabled: enabled && !!visibility?.render,
+        enabled: enabled && !!visibility?.hasEntries,
         getNextPageParam: (lastPage) => lastPage.nextCursor,
       }
     );

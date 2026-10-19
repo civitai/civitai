@@ -176,6 +176,7 @@ const {
   getPendingStickerPlacements,
   getMyStickerPlacements,
   getStickerPlacementCounts,
+  getStickerPlacementsAndCounts,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -2435,5 +2436,128 @@ describe('a sticker flagged NSFW placements only', () => {
         })
       ).resolves.toMatchObject({ id: FLAGGED_ROW });
     });
+  });
+});
+
+/**
+ * The combined listing-and-count call is what every current surface asks for, so it has to say
+ * EXACTLY what the two separate calls say — including the two places the listing and the count
+ * have always disagreed on purpose. Literal expectations throughout: deriving them from the other
+ * two functions would pass if all three drifted together.
+ */
+describe('the listing and the counts from one read', () => {
+  const OTHER_COSMETIC = 225;
+  const SECOND_IMAGE = 236;
+  const FLAGGED_ROW = 247;
+  const PLAIN_ROW = 258;
+  const PENDING_ROW = 269;
+  const BROKEN_ROW = 280;
+  const SECOND_IMAGE_ROW = 291;
+
+  const row = (
+    id: number,
+    {
+      status = 'approved',
+      cosmeticId = OTHER_COSMETIC,
+      targetId = IMAGE,
+      data = undefined as unknown,
+    }
+  ) => ({
+    id,
+    targetId,
+    placerId: PLACER,
+    ownerId: OWNER,
+    status,
+    amount: PRICE,
+    free: false,
+    createdAt: new Date(0),
+    data: data ?? { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+  });
+
+  beforeEach(() => {
+    // FLAGGED_ROW carries an SFW-only sticker on an XXX image, so it is kept off that image.
+    cosmeticCacheFetch.mockResolvedValue({
+      [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+      [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+    });
+    imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    placementFindMany.mockResolvedValue([
+      row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
+      row(PLAIN_ROW, {}),
+      row(PENDING_ROW, { status: 'pending' }),
+      // `data` that no longer parses: never drawn, always counted.
+      row(BROKEN_ROW, { data: { nonsense: true } }),
+      row(SECOND_IMAGE_ROW, { targetId: SECOND_IMAGE }),
+    ]);
+  });
+
+  it('gives the placer their pending row in the listing, and counts approved rows only', async () => {
+    const result = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: PLACER,
+    });
+
+    expect(result.placements.map((placement) => placement.id)).toEqual([
+      PLAIN_ROW,
+      PENDING_ROW,
+      SECOND_IMAGE_ROW,
+    ]);
+    // PLAIN_ROW and BROKEN_ROW on IMAGE (FLAGGED_ROW kept off, PENDING_ROW not approved).
+    expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
+  });
+
+  it('shows a moderator the kept-off row, and still leaves it out of their count', async () => {
+    const result = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: STRANGER,
+      isModerator: true,
+    });
+
+    expect(result.placements.map((placement) => placement.id)).toEqual([
+      FLAGGED_ROW,
+      PLAIN_ROW,
+      PENDING_ROW,
+      SECOND_IMAGE_ROW,
+    ]);
+    expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
+  });
+
+  it('reads the placement rows once, scoped the way the listing has always been', async () => {
+    await getStickerPlacementsAndCounts({ imageIds: [IMAGE, SECOND_IMAGE], viewerId: PLACER });
+
+    expect(placementFindMany).toHaveBeenCalledTimes(1);
+    expect((placementFindMany.mock.calls[0][0] as { where: unknown }).where).toEqual({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: { in: [IMAGE, SECOND_IMAGE] },
+      OR: [
+        { status: 'approved' },
+        { status: 'pending', placerId: PLACER },
+        { status: 'pending', ownerId: PLACER },
+      ],
+    });
+  });
+
+  it('agrees with the count-only call, which keeps working for older clients', async () => {
+    // The count-only read asks the database for approved rows; the mock hands back what it would.
+    placementFindMany.mockResolvedValue([
+      row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
+      row(PLAIN_ROW, {}),
+      row(BROKEN_ROW, { data: { nonsense: true } }),
+      row(SECOND_IMAGE_ROW, { targetId: SECOND_IMAGE }),
+    ]);
+
+    await expect(getStickerPlacementCounts([IMAGE, SECOND_IMAGE])).resolves.toEqual({
+      [IMAGE]: 2,
+      [SECOND_IMAGE]: 1,
+    });
+  });
+
+  it('asks nothing for an empty id list', async () => {
+    await expect(getStickerPlacementsAndCounts({ imageIds: [] })).resolves.toEqual({
+      placements: [],
+      counts: {},
+    });
+    expect(placementFindMany).not.toHaveBeenCalled();
   });
 });

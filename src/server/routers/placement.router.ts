@@ -64,6 +64,7 @@ import {
   getPlacementSettlementStates,
   getStickerPlacementCounts,
   getStickerPlacements,
+  getStickerPlacementsAndCounts,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -267,6 +268,21 @@ export const placementRouter = router({
   getStickerPlacementCounts: publicProcedure
     .input(getStickerPlacementsSchema)
     .query(({ input }) => getStickerPlacementCounts(input.imageIds)),
+
+  // The listing and the counts in one call, for every surface that wants both —
+  // which is every surface a signed-in viewer sees. Same input cap as the two it
+  // replaces there. Both of those stay: anonymous viewers who have not revealed
+  // stickers still ask for counts alone (an edge-cacheable call), and clients
+  // built before this procedure keep calling the pair for hours after a release.
+  getStickerPlacementsAndCounts: publicProcedure
+    .input(getStickerPlacementsSchema)
+    .query(({ input, ctx }) =>
+      getStickerPlacementsAndCounts({
+        imageIds: input.imageIds,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
