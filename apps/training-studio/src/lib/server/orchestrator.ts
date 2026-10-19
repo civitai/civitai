@@ -4,7 +4,12 @@ import { createCivitaiClient } from '@civitai/client';
 import { env } from '$env/dynamic/private';
 import * as core from '$lib/orchestrator-core';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type {
+  ArchiveKind,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { Media } from '$lib/data/trainingModels';
 
 export { isFlux2 } from '$lib/orchestrator-core';
@@ -41,8 +46,12 @@ export function getTrainingWorkflow(
   return core.getTrainingWorkflow(orchestratorClient(token), workflowId);
 }
 
-export function createEpochArchive(token: string, workflowId: string): Promise<core.EpochArchive> {
-  return core.createEpochArchive(orchestratorClient(token), workflowId);
+export function createEpochArchive(
+  token: string,
+  workflowId: string,
+  kind: ArchiveKind
+): Promise<core.EpochArchive[]> {
+  return core.createEpochArchive(orchestratorClient(token), workflowId, kind);
 }
 
 export function getRunDataset(

@@ -45,7 +45,11 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
+    epochWeightsFileName,
+    namedDownloadUrl,
     overallProgressPct,
+    runFileStem,
+    type ArchiveKind,
     type TrainingDetail,
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
@@ -54,7 +58,7 @@
   import { extOfAir } from '$lib/media';
   import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
-  import { RETENTION_DAYS } from '$lib/orchestrator-core';
+  import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -315,29 +319,48 @@
     }
   }
 
-  let archiving = $state(false);
+  let archiving = $state<ArchiveKind | null>(null);
   let archiveError = $state('');
+  // Set when one kind had to be split into several zips: browsers block all but the first of several
+  // scripted opens, so each part is offered as its own link instead.
+  let archiveParts = $state<EpochArchive[]>([]);
   // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
   // blob the archive could include.
   const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
-  async function downloadAllCheckpoints() {
+  const hasSamples = $derived(
+    archivableEpochs > 0 && d.epochs.some((e) => e.samples.some((s) => s !== null))
+  );
+  async function downloadArchive(kind: ArchiveKind) {
     if (archiving) return;
-    archiving = true;
+    archiving = kind;
     archiveError = '';
+    archiveParts = [];
     try {
-      const { url } = await backend().epochArchive(d.workflowId);
-      const a = document.createElement('a');
-      a.href = url;
-      // New tab: an attachment response downloads there; a failed one can't replace the run page.
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.click();
+      const parts = await backend().epochArchive(d.workflowId, kind);
+      if (parts.length === 1) {
+        const a = document.createElement('a');
+        a.href = parts[0].url;
+        // New tab: an attachment response downloads there; a failed one can't replace the run page.
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.click();
+      } else {
+        archiveParts = parts;
+      }
     } catch (e) {
       archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
     } finally {
-      archiving = false;
+      archiving = null;
     }
   }
+
+  // Every file this run downloads is named `<run>-<base>-epoch-NN…`, not by its opaque blob id.
+  const fileStem = $derived(runFileStem(d.name, d.base));
+  const maxEpoch = $derived(Math.max(0, ...d.epochs.map((e) => e.number)));
+  const weightsHref = (e: TrainingDetailEpoch) =>
+    e.modelUrl
+      ? namedDownloadUrl(e.modelUrl, epochWeightsFileName(fileStem, e.number, maxEpoch, e.modelKey))
+      : undefined;
 
   function downloadSettings() {
     saveBlob(
@@ -519,6 +542,8 @@
     // The quote itself blanks via debouncedQuote (workflowIdKey is part of its key).
     quoteError = '';
     downloadError = '';
+    archiveError = '';
+    archiveParts = [];
     showLineage = false;
   });
 </script>
@@ -674,12 +699,21 @@
     <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
       <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
       {#if archivableEpochs > 0}
-        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
-          title="One zip with every ready checkpoint's weights and sample images">
+        <Button size="sm" variant="outline" disabled={archiving !== null}
+          onclick={() => downloadArchive('weights')}
+          title="One zip with every ready checkpoint's weights">
           <IconPackages size={14} stroke={2} />
-          {archiving
+          {archiving === 'weights'
             ? 'Building archive…'
             : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      {#if hasSamples}
+        <Button size="sm" variant="ghost" disabled={archiving !== null}
+          onclick={() => downloadArchive('samples')}
+          title="Every checkpoint's sample images">
+          <IconPhoto size={14} stroke={2} />
+          {archiving === 'samples' ? 'Building archive…' : 'Samples (.zip)'}
         </Button>
       {/if}
       <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
@@ -687,6 +721,16 @@
       </Button>
       {#if archiveError}
         <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+      {#if archiveParts.length}
+        <span class="basis-full font-mono text-xs text-dark-2">
+          Too many files for one zip — download each part:
+          {#each archiveParts as part, i (part.url)}
+            <a href={part.url} target="_blank" rel="noopener" class="ml-2 text-primary hover:underline"
+              >{i + 1} of {archiveParts.length}</a
+            >
+          {/each}
+        </span>
       {/if}
     </div>
   </header>
@@ -930,7 +974,7 @@
                 )}
               {/if}
               <a
-                href={featured.modelUrl}
+                href={weightsHref(featured)}
                 download
                 class="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
               >

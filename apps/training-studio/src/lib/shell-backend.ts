@@ -109,12 +109,13 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
-  epochArchive: async (workflowId) => {
-    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
-      method: 'POST',
-    });
+  epochArchive: async (workflowId, kind) => {
+    const res = await fetch(
+      `/api/epoch-archive?id=${encodeURIComponent(workflowId)}&kind=${kind}`,
+      { method: 'POST' }
+    );
     if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
-    return (await res.json()) as EpochArchive;
+    return (await res.json()) as EpochArchive[];
   },
 
   deleteTraining: async (workflowId) => {
