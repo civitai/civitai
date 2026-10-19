@@ -4,7 +4,8 @@ import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs'
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 // [DO NOT MERGE] Demo-only: PR previews run no scheduled jobs, so a moderator runs the Creator
-// Services jobs once from here. Answers 404 anywhere but this PR's preview deployment.
+// Services jobs once from here (GET too, so it runs from the address bar). Answers 404 anywhere
+// but this PR's preview deployment.
 const isDemoPreview = () =>
   process.env.IS_PREVIEW === 'true' && process.env.CACHE_KEY_NAMESPACE === 'preview';
 
@@ -23,5 +24,5 @@ export default ModEndpoint(
     }
     return res.status(200).json(results);
   },
-  ['POST']
+  ['GET', 'POST']
 );
