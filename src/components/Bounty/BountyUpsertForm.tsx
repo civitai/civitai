@@ -42,7 +42,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
-  InputDateTimePicker,
+  InputDatePicker,
   InputMultiFileUpload,
   InputMultiSelect,
   InputNumber,
@@ -57,11 +57,7 @@ import {
 } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import {
-  getMinBountyExpiresAt,
-  getMinBountyStartsAt,
-  upsertBountyInputSchema,
-} from '~/server/schema/bounty.schema';
+import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
 import {
   BountyEntryMode,
@@ -71,7 +67,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import type { BountyGetById } from '~/types/router';
-import { fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
+import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -108,22 +104,13 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
   .extend({
-    // Picker values are "display UTC" dates: local fields hold the UTC wall time.
     startsAt: stringToDate(
-      z
-        .date()
-        .refine(
-          (date) => fromDisplayUTC(date) >= getMinBountyStartsAt(),
-          'Start time cannot be in the past'
-        )
+      z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future')
     ),
     expiresAt: stringToDate(
       z
         .date()
-        .refine(
-          (date) => fromDisplayUTC(date) >= getMinBountyExpiresAt(),
-          'Expiration must be at least a day from now'
-        )
+        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
     ),
   })
   .refine((data) => data.poi !== true, {
@@ -185,10 +172,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         bounty?.minBenefactorUnitAmount ?? constants.bounties.minCreateAmount,
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
-      expiresAt: toDisplayUTC(
-        bounty ? bounty.expiresAt : dayjs.utc().startOf('hour').add(7, 'day').toDate()
-      ),
-      startsAt: toDisplayUTC(bounty ? bounty.startsAt : dayjs.utc().startOf('hour').toDate()),
+      expiresAt: bounty
+        ? dateWithoutTimezone(bounty.expiresAt)
+        : dayjs().add(7, 'day').startOf('day').toDate(),
+      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : dayjs().startOf('day').toDate(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -288,8 +275,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           ...bounty,
           ...rest,
           buzzType: mainBuzzType as 'green' | 'yellow',
-          startsAt: fromDisplayUTC(startsAt).toISOString(),
-          expiresAt: fromDisplayUTC(expiresAt).toISOString(),
+          startsAt: stripTime(startsAt),
+          expiresAt: stripTime(expiresAt),
           images: filteredImages,
         });
 
@@ -572,29 +559,26 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 {!alreadyStarted && (
                   <Stack>
                     <Group gap="md" grow>
-                      <InputDateTimePicker
+                      <InputDatePicker
                         className={classes.fluid}
                         name="startsAt"
-                        label="Start Date (UTC)"
-                        placeholder="Select a start date and time"
+                        label="Start Date"
+                        placeholder="Select a start date"
                         leftSection={<IconCalendar size={16} />}
-                        valueFormat="lll"
                         minDate={minStartDate}
                         maxDate={maxStartDate}
-                        timeInputProps={{ step: 3600 }}
                         clearable={false}
                         withAsterisk
                       />
-                      <InputDateTimePicker
+                      <InputDatePicker
                         className={classes.fluid}
                         name="expiresAt"
-                        label="Deadline (UTC)"
-                        placeholder="Select an end date and time"
+                        label="Deadline"
+                        placeholder="Select an end date"
                         leftSection={<IconCalendarDue size={16} />}
-                        valueFormat="lll"
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
-                        timeInputProps={{ step: 3600 }}
+                        // dateParser={(dateString) => new Date(Date.parse(dateString))}
                         clearable={false}
                         withAsterisk
                       />
@@ -603,7 +587,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       <Text fw={590}>
                         With the selected dates, your bounty will expire{' '}
                         <Text fw="bold" c="red.5" span>
-                          <DaysFromNow date={fromDisplayUTC(new Date(expiresAt))} />
+                          <DaysFromNow date={stripTime(expiresAt)} inUtc />
                         </Text>
                         . All times are in{' '}
                         <Text fw="bold" c="red.5" span>

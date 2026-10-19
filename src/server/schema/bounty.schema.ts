@@ -13,13 +13,12 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
+import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
-// Functions, not values: a bound computed at module load freezes "now" at the pod's boot time.
-// The schedule is hour-granular (the pickers step by an hour), so "now" is floored to the hour.
-export const getMinBountyStartsAt = () => dayjs.utc().startOf('hour').toDate();
-export const getMinBountyExpiresAt = () => dayjs.utc().startOf('hour').add(1, 'day').toDate();
+// A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
+const utcToday = () => dayjs.utc(stripTime(new Date()));
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -69,13 +68,13 @@ export const createBountyInputSchema = z.object({
     z
       .date()
       .refine(
-        (date) => date >= getMinBountyExpiresAt(),
-        'Expiration must be at least a day from now'
+        (date) => date >= utcToday().add(1, 'day').toDate(),
+        'Expiration date must come after the start date'
       )
   ),
   startsAt: z.coerce
     .date()
-    .refine((date) => date >= getMinBountyStartsAt(), 'Start time cannot be in the past'),
+    .refine((date) => date >= utcToday().toDate(), 'Start date must be in the future'),
   mode: z.enum(BountyMode),
   type: z.enum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
@@ -120,8 +119,8 @@ export const updateBountyInputSchema = createBountyInputSchema
       z
         .date()
         .refine(
-          (date) => date >= getMinBountyExpiresAt(),
-          'Expiration must be at least a day from now'
+          (date) => date >= dayjs().add(1, 'day').startOf('day').toDate(),
+          'Expiration date must be in the future'
         )
     ),
     lockedProperties: z.string().array().optional(),
