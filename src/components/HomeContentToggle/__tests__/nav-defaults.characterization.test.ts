@@ -55,20 +55,19 @@ describe('sub-nav default layout', () => {
   });
 
   /**
-   * `posts` and `events` are absent because they default to `hidden`, not because a gate hides
-   * them — they carry no gate at all now, so the modal can offer them to everyone. This matches
-   * what a user who never touched account settings has always seen. The flags that used to
-   * surface them are deleted in this change; anyone who had them on re-adds them from the modal.
+   * `posts` is absent because it defaults to `hidden`, not because a gate hides it — it carries
+   * no gate at all now, so the modal can offer it to everyone. This matches what a user who never
+   * touched account settings has always seen. The flag that used to surface it is deleted in this
+   * change; anyone who had it on re-adds it from the modal.
    *
    * The four promoted user-menu destinations (leaderboard, auctions, vault, collections)
    * exist in the registry but default to hidden — the sub nav is an additional surface for them,
    * not a move, so they appear only once a user places them.
    */
-  it('leaves posts, events and the promoted user-menu items out of the default layout', () => {
+  it('leaves posts and the promoted user-menu items out of the default layout', () => {
     const { bar, more } = resolve(allFlags(true));
     const placed = [...bar, ...more].map((e) => e.key);
     expect(placed).not.toContain('posts');
-    expect(placed).not.toContain('events');
     expect(placed).not.toContain('leaderboard');
     expect(placed).not.toContain('auctions');
     expect(placed).not.toContain('vault');
@@ -142,13 +141,6 @@ describe('the apps pill gate', () => {
     // anchoring rule doing its job, not a stray: an unplaced key anchors beside its REGISTRY
     // neighbour, so moving `apps` earlier in the registry drags the keys that follow it into
     // that slot too.
-    //
-    // 🔴 `updates` is NOT the key that anchors there — `events` is, because it is `apps`'s
-    // actual registry successor. `events` is `defaultHidden`, so it is filtered out of the
-    // rendered bar and `updates` is simply the first key behind it that survives. Do not read
-    // this vector as "`apps`'s neighbour takes its place": a `defaultHidden` entry can be the
-    // direct anchor and silently pass the slot along to ITS follower, which is the non-obvious
-    // part and the only reason this array moved the way it did.
     //
     // The durable point: a registry REORDER changes the surviving ORDER here, not just which
     // key vanishes — which is exactly what this vector exists to pin.

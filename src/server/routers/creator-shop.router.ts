@@ -16,6 +16,7 @@ import {
   getShopItemResellersSchema,
   reorderResoldItemsSchema,
   resoldItemSchema,
+  lowerMysteryPackPriceSchema,
   reviseMysteryPackSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
@@ -61,6 +62,7 @@ import {
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import {
+  lowerMysteryPackPrice,
   reviseMysteryPack,
   submitMysteryPack,
   withdrawMysteryPackRevision,
@@ -179,6 +181,12 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       assertMysteryPacksEnabled(ctx.features);
       return withdrawMysteryPackRevision({ ...input, userId: ctx.user.id });
+    }),
+  lowerMysteryPackPrice: guardedProcedure
+    .input(lowerMysteryPackPriceSchema)
+    .mutation(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return lowerMysteryPackPrice({ ...input, userId: ctx.user.id });
     }),
   // #endregion
   updateItem: creatorShopProcedure
@@ -337,7 +345,13 @@ export const creatorShopRouter = router({
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
-    .mutation(({ input, ctx }) => reviewCreatorShopItem({ ...input, reviewerId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      reviewCreatorShopItem({
+        ...input,
+        reviewerId: ctx.user.id,
+        stickersEnabled: ctx.features.stickers,
+      })
+    ),
   // Deliberately not flag-gated: takedowns cover official shop items too, and
   // pulling infringing content can't wait on the Creator Shop rollout.
   takedownItem: moderatorProcedure

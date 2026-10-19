@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
+import type * as LabelCapture from '~/server/services/text-scan/label-capture';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChangesMock } =
@@ -12,6 +13,16 @@ const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChange
     entityChangesMock: vi.fn(),
   }));
 
+// Label capture runs on real Postgres in label-capture.rulings.behavior.test.ts; here the flag
+// writer runs on the plain client so its own statement can be read.
+vi.mock('~/server/services/text-scan/label-capture', async (importOriginal) => {
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return {
+    ...(await importOriginal<typeof LabelCapture>()),
+    writeTextScanRuling: (_ruling: unknown, write: (tx: unknown) => unknown) =>
+      write(dbMock.dbWrite),
+  };
+});
 // Hand-listed: the real model.service pulls the whole model graph (meili, prom, redis) at load.
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,

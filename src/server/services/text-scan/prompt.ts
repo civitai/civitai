@@ -35,8 +35,8 @@ import {
   throwConflictError,
 } from '~/server/utils/errorHandling';
 
-export const DEFAULT_TEXT_SCAN_MODEL =
-  'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
+/** An orchestrator alias: it can be repointed without a deploy, and the content hash will not see it move. */
+export const DEFAULT_TEXT_SCAN_MODEL = 'civitai/qwen3.8';
 const DEFAULT_MAX_INPUT_CHARS = 200000;
 const DEFAULT_MAX_SEGMENTS = 10;
 /** Each segment is a billed call; bounds a bad config override. */

@@ -467,6 +467,13 @@ export default defineNextConfig(
           destination: '/apps/activity',
           statusCode: 301,
         },
+        // `/events` page removed; the sitemap and external links still point at it. Official
+        // articles are now the Civitai Official chip on `/articles`.
+        {
+          source: '/events',
+          destination: '/articles',
+          statusCode: 301,
+        },
         {
           source: '/api/download/training-data/:modelVersionId',
           destination: '/api/download/models/:modelVersionId?type=Training%20Data',

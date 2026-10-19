@@ -421,6 +421,13 @@ export interface BlockInitPayload {
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
   effectiveBrowsingLevel?: number;
+  /**
+   * Advisory local-storage hint for the SDK; see
+   * `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`. Optional and ADDED, like
+   * `viewer.signedIn`, so it cannot trip the deployed guard's missing-field /
+   * wrong-shape rejections documented above.
+   */
+  storageMode?: 'local-preview';
 }
 
 export interface BlockManifest {

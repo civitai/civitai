@@ -69,6 +69,11 @@ interface TokenResponse {
   effectiveBrowsingLevel?: number;
 }
 
+export interface UseBlockTokenOptions {
+  /** A dev-tunnel preview: the mint then signs no document-store scopes. */
+  devTunnel?: boolean;
+}
+
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
 const RATE_LIMIT_BACKOFF_MS = 60 * 1000; // 1 minute base backoff on HTTP 429
 const RATE_LIMIT_JITTER_MS = 15 * 1000; // ±15s jitter — avoids thundering herd
@@ -92,7 +97,11 @@ const MIN_REFRESH_MS = 30 * 1000;
  * `blockInstanceId`. If a caller needs to force a refresh on context change,
  * use the returned `refresh()`.
  */
-export function useBlockToken(install: BlockInstall, context: SlotContext): UseBlockTokenResult {
+export function useBlockToken(
+  install: BlockInstall,
+  context: SlotContext,
+  options: UseBlockTokenOptions = {}
+): UseBlockTokenResult {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [kind, setKind] = useState<'block' | 'oauth' | undefined>(undefined);
@@ -166,6 +175,10 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const abortRef = useRef<AbortController | null>(null);
   const contextRef = useRef<SlotContext>(context);
   contextRef.current = context;
+  // Read through a ref like `contextRef`, so an inline options literal does not
+  // re-key `requestToken` (and so re-mint) on every render.
+  const devTunnelRef = useRef<boolean>(options.devTunnel === true);
+  devTunnelRef.current = options.devTunnel === true;
 
   const requestToken = useCallback(async (): Promise<void> => {
     // 🔴 BAIL BEFORE CLAIMING `abortRef`. This check used to sit just below the
@@ -209,6 +222,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
           body: JSON.stringify({
             blockInstanceId: instanceId,
             slotContext: contextRef.current,
+            ...(devTunnelRef.current ? { devTunnel: true } : {}),
           }),
         });
         if (res.status === 429 && attempt === 0) {

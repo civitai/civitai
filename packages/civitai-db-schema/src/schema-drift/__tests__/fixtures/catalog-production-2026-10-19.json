@@ -8,17 +8,16 @@
     "WildcardSetCategory",
     "block_buzz_attribution",
     "app_ownership_transfers",
-    "CollectionItem",
     "CreatorScoreGrant",
-    "ArticleRank",
+    "CollectionItem",
     "HuggingFaceImport",
     "Thread",
     "LegendsBoardResult",
-    "BountyRank",
     "AdToken",
     "BlockedImage",
     "CustomerSubscription_Paddle_Backup_Simple",
     "Leaderboard",
+    "ArticleRank",
     "CosmeticShopItemCosmetic",
     "UserCosmeticShopPurchaseCosmetic",
     "ImageMetaFlags",
@@ -34,8 +33,9 @@
     "StorylineEarlyAccessSignup",
     "Feedback",
     "StorylineReport",
-    "ResourceIntentVocabulary",
     "ServiceDealTransaction",
+    "BountyRank",
+    "ResourceIntentVocabulary",
     "StorylineBranchChoice",
     "StorylineCreateClick",
     "ChallengeJudge",
@@ -43,6 +43,7 @@
     "block_scope_invocations",
     "CollectionInvite",
     "AnnouncementReport",
+    "ModelFileScanKick_20261017",
     "ChatMember",
     "Placement",
     "Cosmetic",
@@ -66,6 +67,7 @@
     "CashWithdrawal",
     "RatingReview",
     "ScanLabelFlag",
+    "EntityMetric",
     "block_good_entitlement",
     "GenerationSizePreset",
     "ScanLabelClaim",
@@ -103,7 +105,6 @@
     "_LicenseToModel",
     "UserPushSetting",
     "UserStorageUsage",
-    "EntityMetric",
     "UserStorageRollup",
     "UserStorageSnapshot",
     "ModelBaseModelMetric",
@@ -114,6 +115,7 @@
     "ArticleMetric",
     "JobQueue",
     "app_listing_moderation_events",
+    "Item",
     "ScanLabelItem",
     "EcosystemCheckpoints",
     "EntityCollaborator",
@@ -184,25 +186,28 @@
     "ModelVersionExploration",
     "ApiKey",
     "ModelMetric",
+    "BoxTier",
     "CosmeticShopPurchaseClaim",
     "ArticleReport",
     "ArticleReaction",
     "TagsOnArticle",
-    "ScanLabelCopyObject",
     "AuctionBase",
-    "Appeal",
+    "BoxContent",
+    "ScanLabelCopyObject",
     "Article",
     "ComicPanelReference",
     "ChallengeType",
     "tmp_s",
     "RestrictedBaseModels",
     "ModelVersionSponsorshipSettings",
+    "BoxOpening",
+    "Appeal",
+    "BoxOddsSnapshot",
     "CommentV2",
     "ZKP2P_BlacklistedDepositor",
     "temp_deleted_followers",
     "temp_deleted_user_posts",
     "License",
-    "AppealDecisionRecord",
     "ModelMetricDaily",
     "Partner",
     "CollectionItemScore",
@@ -210,6 +215,7 @@
     "CommentReport",
     "NewOrderRank",
     "EventCosmeticScoreDaily",
+    "AppealDecisionRecord",
     "AppealTrainingObjectDeletion",
     "Webhook",
     "Vault",
@@ -234,22 +240,25 @@
     "ImageFlag",
     "PoiStaleFlagSnapshot_20261014",
     "ClubMembershipCharge",
+    "app_listing_red_media",
     "ModelEngagement",
     "ModelFlag",
+    "UserRank",
     "ModelPermissionSnapshot",
     "ServiceDealFileEntry",
     "UserLink",
-    "UserRank",
     "TagsOnQuestions",
     "TagsOnTags",
     "VaultItem",
     "ServiceDealFile",
+    "ResourceIntentTagIndexSnapshot",
     "ModelSelfGeneration",
     "ImageReaction",
     "UserReferral",
     "_prisma_migrations",
     "ModelVersionRank",
     "app_user_scope_grants",
+    "ImageRemovalConfirmation",
     "UserReferralCode",
     "kono_tmp",
     "research_ratings",
@@ -264,10 +273,10 @@
     "temp_leaderboard",
     "temp_model_downloads",
     "temp_model_files",
+    "TagsOnImageNew",
     "temp_paddle_import",
     "temp_popular_models",
     "CollectionContributor",
-    "TagsOnImageNew",
     "ComicProjectReport",
     "block_user_subscriptions",
     "GenerationPreset",
@@ -275,7 +284,10 @@
     "ImageEngagement",
     "Storyline",
     "CollectionMetric",
+    "_gdpr_reaction_snapshot_20261017",
+    "ItemDefinition",
     "ReferralReward",
+    "BoxRevision",
     "Donation",
     "CommentV2Reaction",
     "CosmeticShopSection",
@@ -294,12 +306,12 @@
     "ModelVersionEngagement",
     "Bug",
     "NewOrderPlayer",
+    "PostMetric",
+    "CosmeticShopItem",
     "QueryDurationLog",
     "TagsOnBounty",
     "app_block_publish_requests",
     "DonationGoal",
-    "PostMetric",
-    "CosmeticShopItem",
     "UserPaymentConfiguration",
     "RewardsBonusEvent",
     "ReferralMilestone",
@@ -393,16 +405,16 @@
     "CryptoDeposit",
     "CryptoWallet",
     "CustomerSubscription",
-    "Image",
     "ImageResource",
     "Model",
     "Price",
     "Product",
-    "ResourceReview",
     "UserStripeConnect",
+    "Image",
     "ModelVersion",
-    "Post",
+    "ResourceReview",
     "BountyEntry",
+    "Post",
     "EntityModeration",
     "BidRecurring",
     "HiddenDownload",
@@ -424,11 +436,11 @@
     "_account_dup_backup",
     "temp_users_to_rename",
     "temp_users_to_rename_username",
+    "User",
     "UserRestriction",
     "UserCosmetic",
     "UserStrike",
-    "UserReport",
-    "User"
+    "UserReport"
   ],
   "columns": [
     {
@@ -887,6 +899,51 @@
       "notNull": false
     },
     {
+      "table": "CreatorScoreGrant",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "amount",
+      "notNull": true
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "reason",
+      "notNull": true
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "grantedById",
+      "notNull": false
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "revokedAt",
+      "notNull": false
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "revokedById",
+      "notNull": false
+    },
+    {
+      "table": "CreatorScoreGrant",
+      "column": "revokeReason",
+      "notNull": false
+    },
+    {
       "table": "CollectionItem",
       "column": "id",
       "notNull": true
@@ -977,49 +1034,459 @@
       "notNull": false
     },
     {
-      "table": "CreatorScoreGrant",
+      "table": "HuggingFaceImport",
       "column": "id",
       "notNull": true
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "userId",
+      "table": "HuggingFaceImport",
+      "column": "repo",
       "notNull": true
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "amount",
+      "table": "HuggingFaceImport",
+      "column": "revision",
       "notNull": true
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "reason",
+      "table": "HuggingFaceImport",
+      "column": "filename",
       "notNull": true
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "grantedById",
+      "table": "HuggingFaceImport",
+      "column": "groupName",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "sourceUrl",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "sizeBytes",
       "notNull": false
     },
     {
-      "table": "CreatorScoreGrant",
+      "table": "HuggingFaceImport",
+      "column": "sourceSha256",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "bytesTransferred",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "uploadId",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "partSize",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "parts",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "bucket",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "key",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "url",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "error",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "attempts",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "nextAttemptAt",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "userId",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "modelVersionId",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "modelFileId",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "claimedBy",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "claimedAt",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "heartbeatAt",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "startedAt",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "completedAt",
+      "notNull": false
+    },
+    {
+      "table": "HuggingFaceImport",
       "column": "createdAt",
       "notNull": true
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "revokedAt",
+      "table": "HuggingFaceImport",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "HuggingFaceImport",
+      "column": "attachVersionId",
       "notNull": false
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "revokedById",
+      "table": "HuggingFaceImport",
+      "column": "attachType",
       "notNull": false
     },
     {
-      "table": "CreatorScoreGrant",
-      "column": "revokeReason",
+      "table": "Thread",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Thread",
+      "column": "locked",
+      "notNull": true
+    },
+    {
+      "table": "Thread",
+      "column": "questionId",
       "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "answerId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "imageId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "postId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "reviewId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "metadata",
+      "notNull": true
+    },
+    {
+      "table": "Thread",
+      "column": "modelId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "commentId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "articleId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "bountyEntryId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "bountyId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "clubPostId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "parentThreadId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "rootThreadId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "commentCount",
+      "notNull": true
+    },
+    {
+      "table": "Thread",
+      "column": "challengeId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "comicProjectId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "comicChapterPosition",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "model3dId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "model3dReviewId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "appListingId",
+      "notNull": false
+    },
+    {
+      "table": "Thread",
+      "column": "crucibleId",
+      "notNull": false
+    },
+    {
+      "table": "LegendsBoardResult",
+      "column": "userId",
+      "notNull": false
+    },
+    {
+      "table": "LegendsBoardResult",
+      "column": "leaderboardId",
+      "notNull": false
+    },
+    {
+      "table": "LegendsBoardResult",
+      "column": "score",
+      "notNull": false
+    },
+    {
+      "table": "LegendsBoardResult",
+      "column": "metrics",
+      "notNull": false
+    },
+    {
+      "table": "LegendsBoardResult",
+      "column": "position",
+      "notNull": false
+    },
+    {
+      "table": "AdToken",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "AdToken",
+      "column": "token",
+      "notNull": true
+    },
+    {
+      "table": "AdToken",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "AdToken",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "AdToken",
+      "column": "expiresAt",
+      "notNull": false
+    },
+    {
+      "table": "BlockedImage",
+      "column": "hash",
+      "notNull": true
+    },
+    {
+      "table": "BlockedImage",
+      "column": "reason",
+      "notNull": true
+    },
+    {
+      "table": "BlockedImage",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "id",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "userId",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "metadata",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "status",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "priceId",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "productId",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "cancelAtPeriodEnd",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "cancelAt",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "canceledAt",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "currentPeriodStart",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "currentPeriodEnd",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "createdAt",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "endedAt",
+      "notNull": false
+    },
+    {
+      "table": "CustomerSubscription_Paddle_Backup_Simple",
+      "column": "updatedAt",
+      "notNull": false
+    },
+    {
+      "table": "Leaderboard",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "index",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "title",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "description",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "scoringDescription",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "query",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "active",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "public",
+      "notNull": true
+    },
+    {
+      "table": "Leaderboard",
+      "column": "domain",
+      "notNull": true
     },
     {
       "table": "ArticleRank",
@@ -1350,616 +1817,6 @@
       "table": "ArticleRank",
       "column": "tippedAmountCountAllTimeRank",
       "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "repo",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "revision",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "filename",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "groupName",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "sourceUrl",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "sizeBytes",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "sourceSha256",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "status",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "bytesTransferred",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "uploadId",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "partSize",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "parts",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "bucket",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "key",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "url",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "error",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "attempts",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "nextAttemptAt",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "userId",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "modelVersionId",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "modelFileId",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "claimedBy",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "claimedAt",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "heartbeatAt",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "startedAt",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "completedAt",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "attachVersionId",
-      "notNull": false
-    },
-    {
-      "table": "HuggingFaceImport",
-      "column": "attachType",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "Thread",
-      "column": "locked",
-      "notNull": true
-    },
-    {
-      "table": "Thread",
-      "column": "questionId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "answerId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "imageId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "postId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "reviewId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "metadata",
-      "notNull": true
-    },
-    {
-      "table": "Thread",
-      "column": "modelId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "commentId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "articleId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "bountyEntryId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "bountyId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "clubPostId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "parentThreadId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "rootThreadId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "commentCount",
-      "notNull": true
-    },
-    {
-      "table": "Thread",
-      "column": "challengeId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "comicProjectId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "comicChapterPosition",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "model3dId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "model3dReviewId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "appListingId",
-      "notNull": false
-    },
-    {
-      "table": "Thread",
-      "column": "crucibleId",
-      "notNull": false
-    },
-    {
-      "table": "LegendsBoardResult",
-      "column": "userId",
-      "notNull": false
-    },
-    {
-      "table": "LegendsBoardResult",
-      "column": "leaderboardId",
-      "notNull": false
-    },
-    {
-      "table": "LegendsBoardResult",
-      "column": "score",
-      "notNull": false
-    },
-    {
-      "table": "LegendsBoardResult",
-      "column": "metrics",
-      "notNull": false
-    },
-    {
-      "table": "LegendsBoardResult",
-      "column": "position",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "bountyId",
-      "notNull": true
-    },
-    {
-      "table": "BountyRank",
-      "column": "favoriteCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "favoriteCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "favoriteCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "favoriteCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "favoriteCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "trackCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "trackCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "trackCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "trackCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "trackCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "entryCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "entryCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "entryCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "entryCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "entryCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "benefactorCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "benefactorCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "benefactorCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "benefactorCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "benefactorCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "unitAmountCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "unitAmountCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "unitAmountCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "unitAmountCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "unitAmountCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "commentCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "commentCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "commentCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "commentCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "BountyRank",
-      "column": "commentCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "AdToken",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "AdToken",
-      "column": "token",
-      "notNull": true
-    },
-    {
-      "table": "AdToken",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "AdToken",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "AdToken",
-      "column": "expiresAt",
-      "notNull": false
-    },
-    {
-      "table": "BlockedImage",
-      "column": "hash",
-      "notNull": true
-    },
-    {
-      "table": "BlockedImage",
-      "column": "reason",
-      "notNull": true
-    },
-    {
-      "table": "BlockedImage",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "id",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "userId",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "metadata",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "status",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "priceId",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "productId",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "cancelAtPeriodEnd",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "cancelAt",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "canceledAt",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "currentPeriodStart",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "currentPeriodEnd",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "createdAt",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "endedAt",
-      "notNull": false
-    },
-    {
-      "table": "CustomerSubscription_Paddle_Backup_Simple",
-      "column": "updatedAt",
-      "notNull": false
-    },
-    {
-      "table": "Leaderboard",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "index",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "title",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "description",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "scoringDescription",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "query",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "active",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "public",
-      "notNull": true
-    },
-    {
-      "table": "Leaderboard",
-      "column": "domain",
-      "notNull": true
     },
     {
       "table": "CosmeticShopItemCosmetic",
@@ -2487,46 +2344,6 @@
       "notNull": true
     },
     {
-      "table": "ResourceIntentVocabulary",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "vocabVersion",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "status",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "payload",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "rulesSummary",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "frozenAt",
-      "notNull": false
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "frozenBy",
-      "notNull": false
-    },
-    {
       "table": "ServiceDealTransaction",
       "column": "id",
       "notNull": true
@@ -2580,6 +2397,201 @@
       "table": "ServiceDealTransaction",
       "column": "createdAt",
       "notNull": true
+    },
+    {
+      "table": "BountyRank",
+      "column": "bountyId",
+      "notNull": true
+    },
+    {
+      "table": "BountyRank",
+      "column": "favoriteCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "favoriteCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "favoriteCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "favoriteCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "favoriteCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "trackCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "trackCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "trackCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "trackCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "trackCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "entryCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "entryCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "entryCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "entryCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "entryCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "benefactorCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "benefactorCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "benefactorCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "benefactorCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "benefactorCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "unitAmountCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "unitAmountCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "unitAmountCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "unitAmountCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "unitAmountCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "commentCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "commentCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "commentCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "commentCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "BountyRank",
+      "column": "commentCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "vocabVersion",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "payload",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "rulesSummary",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "frozenAt",
+      "notNull": false
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "frozenBy",
+      "notNull": false
     },
     {
       "table": "StorylineBranchChoice",
@@ -2900,6 +2912,16 @@
       "table": "AnnouncementReport",
       "column": "reportId",
       "notNull": true
+    },
+    {
+      "table": "ModelFileScanKick_20261017",
+      "column": "id",
+      "notNull": false
+    },
+    {
+      "table": "ModelFileScanKick_20261017",
+      "column": "scanRequestedAt",
+      "notNull": false
     },
     {
       "table": "ChatMember",
@@ -4424,6 +4446,26 @@
     {
       "table": "ScanLabelFlag",
       "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "EntityMetric",
+      "column": "entityType",
+      "notNull": true
+    },
+    {
+      "table": "EntityMetric",
+      "column": "entityId",
+      "notNull": true
+    },
+    {
+      "table": "EntityMetric",
+      "column": "metricType",
+      "notNull": true
+    },
+    {
+      "table": "EntityMetric",
+      "column": "metricValue",
       "notNull": true
     },
     {
@@ -6087,26 +6129,6 @@
       "notNull": true
     },
     {
-      "table": "EntityMetric",
-      "column": "entityType",
-      "notNull": true
-    },
-    {
-      "table": "EntityMetric",
-      "column": "entityId",
-      "notNull": true
-    },
-    {
-      "table": "EntityMetric",
-      "column": "metricType",
-      "notNull": true
-    },
-    {
-      "table": "EntityMetric",
-      "column": "metricValue",
-      "notNull": true
-    },
-    {
       "table": "UserStorageRollup",
       "column": "userId",
       "notNull": true
@@ -6534,6 +6556,56 @@
     {
       "table": "app_listing_moderation_events",
       "column": "created_at",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "itemDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "holderType",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "holderId",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "quantity",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "expiresAt",
+      "notNull": false
+    },
+    {
+      "table": "Item",
+      "column": "data",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "sourceKey",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "Item",
+      "column": "updatedAt",
       "notNull": true
     },
     {
@@ -9942,6 +10014,41 @@
       "notNull": true
     },
     {
+      "table": "BoxTier",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "BoxTier",
+      "column": "boxDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "BoxTier",
+      "column": "key",
+      "notNull": true
+    },
+    {
+      "table": "BoxTier",
+      "column": "name",
+      "notNull": true
+    },
+    {
+      "table": "BoxTier",
+      "column": "weight",
+      "notNull": true
+    },
+    {
+      "table": "BoxTier",
+      "column": "color",
+      "notNull": false
+    },
+    {
+      "table": "BoxTier",
+      "column": "sortOrder",
+      "notNull": true
+    },
+    {
       "table": "CosmeticShopPurchaseClaim",
       "column": "transactionId",
       "notNull": true
@@ -10037,46 +10144,6 @@
       "notNull": true
     },
     {
-      "table": "ScanLabelCopyObject",
-      "column": "key",
-      "notNull": true
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "itemId",
-      "notNull": true
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "imageId",
-      "notNull": true
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "withdrawnAt",
-      "notNull": false
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "withdrawReason",
-      "notNull": false
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "withdrawError",
-      "notNull": false
-    },
-    {
-      "table": "ScanLabelCopyObject",
-      "column": "removedAt",
-      "notNull": false
-    },
-    {
       "table": "AuctionBase",
       "column": "id",
       "notNull": true
@@ -10132,78 +10199,68 @@
       "notNull": false
     },
     {
-      "table": "Appeal",
+      "table": "BoxContent",
       "column": "id",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "userId",
+      "table": "BoxContent",
+      "column": "boxDefinitionId",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "entityType",
+      "table": "BoxContent",
+      "column": "tierId",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "entityId",
+      "table": "BoxContent",
+      "column": "rewardDefinitionId",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "status",
+      "table": "BoxContent",
+      "column": "enabled",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "appealMessage",
+      "table": "ScanLabelCopyObject",
+      "column": "key",
       "notNull": true
     },
     {
-      "table": "Appeal",
+      "table": "ScanLabelCopyObject",
+      "column": "itemId",
+      "notNull": true
+    },
+    {
+      "table": "ScanLabelCopyObject",
+      "column": "imageId",
+      "notNull": true
+    },
+    {
+      "table": "ScanLabelCopyObject",
       "column": "createdAt",
       "notNull": true
     },
     {
-      "table": "Appeal",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "Appeal",
-      "column": "resolvedAt",
+      "table": "ScanLabelCopyObject",
+      "column": "withdrawnAt",
       "notNull": false
     },
     {
-      "table": "Appeal",
-      "column": "resolvedBy",
+      "table": "ScanLabelCopyObject",
+      "column": "withdrawReason",
       "notNull": false
     },
     {
-      "table": "Appeal",
-      "column": "resolvedMessage",
+      "table": "ScanLabelCopyObject",
+      "column": "withdrawError",
       "notNull": false
     },
     {
-      "table": "Appeal",
-      "column": "internalNotes",
-      "notNull": false
-    },
-    {
-      "table": "Appeal",
-      "column": "buzzTransactionId",
-      "notNull": false
-    },
-    {
-      "table": "Appeal",
-      "column": "resolvedReason",
-      "notNull": false
-    },
-    {
-      "table": "Appeal",
-      "column": "entityRemovedAt",
+      "table": "ScanLabelCopyObject",
+      "column": "removedAt",
       "notNull": false
     },
     {
@@ -10477,6 +10534,196 @@
       "notNull": true
     },
     {
+      "table": "BoxOpening",
+      "column": "boxItemId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "boxDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "boxVersion",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "boxSourceKey",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "tierId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "contentId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "rewardDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "rewardType",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "tierWeight",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "eligibleWeight",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "tierRoll",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "tierPoolSize",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "itemRoll",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "rewardStatus",
+      "notNull": true
+    },
+    {
+      "table": "BoxOpening",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "entityType",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "entityId",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "appealMessage",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "Appeal",
+      "column": "resolvedAt",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "resolvedBy",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "resolvedMessage",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "internalNotes",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "buzzTransactionId",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "resolvedReason",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "entityRemovedAt",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "category",
+      "notNull": false
+    },
+    {
+      "table": "Appeal",
+      "column": "context",
+      "notNull": false
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "column": "boxDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "column": "version",
+      "notNull": true
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "column": "snapshot",
+      "notNull": true
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "column": "createdById",
+      "notNull": false
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
       "table": "CommentV2",
       "column": "id",
       "notNull": true
@@ -10580,116 +10827,6 @@
       "table": "License",
       "column": "url",
       "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "appealId",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "imageId",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "imageUrl",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "pHash",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "promptHash",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "nsfwLevel",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "nsfwLevelLocked",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "nsfwLevelReason",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "aiNsfwLevel",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "blockedFor",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "decision",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "resolvedReason",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "decidedAt",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "removalLabel",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "restoredLevel",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "trainingLabelCorrectedAt",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "removalNsfw",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "trainingCopyState",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "trainingObjectKey",
-      "notNull": false
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "column": "ownerHash",
-      "notNull": false
     },
     {
       "table": "ModelMetricDaily",
@@ -10985,6 +11122,116 @@
       "table": "EventCosmeticScoreDaily",
       "column": "modelLikes",
       "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "appealId",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "imageId",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "imageUrl",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "pHash",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "promptHash",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "nsfwLevel",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "nsfwLevelLocked",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "nsfwLevelReason",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "aiNsfwLevel",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "blockedFor",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "decision",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "resolvedReason",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "decidedAt",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "removalLabel",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "restoredLevel",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "trainingLabelCorrectedAt",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "removalNsfw",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "trainingCopyState",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "trainingObjectKey",
+      "notNull": false
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "column": "ownerHash",
+      "notNull": false
     },
     {
       "table": "AppealTrainingObjectDeletion",
@@ -11807,6 +12054,41 @@
       "notNull": true
     },
     {
+      "table": "app_listing_red_media",
+      "column": "app_listing_id",
+      "notNull": true
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "media_split_approved_at",
+      "notNull": false
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "media_split_approved_by",
+      "notNull": false
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "created_at",
+      "notNull": true
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "updated_at",
+      "notNull": true
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "red_icon_id",
+      "notNull": false
+    },
+    {
+      "table": "app_listing_red_media",
+      "column": "red_cover_id",
+      "notNull": false
+    },
+    {
       "table": "ModelEngagement",
       "column": "userId",
       "notNull": true
@@ -11875,6 +12157,31 @@
       "table": "ModelFlag",
       "column": "sfwOnly",
       "notNull": true
+    },
+    {
+      "table": "UserRank",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardRank",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardId",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardTitle",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardCosmetic",
+      "notNull": false
     },
     {
       "table": "ModelPermissionSnapshot",
@@ -12005,31 +12312,6 @@
       "table": "UserLink",
       "column": "type",
       "notNull": true
-    },
-    {
-      "table": "UserRank",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardRank",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardId",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardTitle",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardCosmetic",
-      "notNull": false
     },
     {
       "table": "TagsOnQuestions",
@@ -12279,6 +12561,56 @@
     {
       "table": "ServiceDealFile",
       "column": "repackedAt",
+      "notNull": false
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "vocabVersion",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "specHash",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "payloadSha256",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "payloadBytes",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "objectKey",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "buildStats",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "column": "retiredAt",
       "notNull": false
     },
     {
@@ -12727,6 +13059,71 @@
       "notNull": false
     },
     {
+      "table": "ImageRemovalConfirmation",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "imageId",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "appealId",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "requestedById",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "requestedAt",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "violationType",
+      "notNull": false
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "violationDetails",
+      "notNull": false
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "source",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "reportIds",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "decidedById",
+      "notNull": false
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "decidedAt",
+      "notNull": false
+    },
+    {
+      "table": "ImageRemovalConfirmation",
+      "column": "decisionNote",
+      "notNull": false
+    },
+    {
       "table": "UserReferralCode",
       "column": "id",
       "notNull": true
@@ -13072,6 +13469,21 @@
       "notNull": false
     },
     {
+      "table": "TagsOnImageNew",
+      "column": "imageId",
+      "notNull": true
+    },
+    {
+      "table": "TagsOnImageNew",
+      "column": "tagId",
+      "notNull": true
+    },
+    {
+      "table": "TagsOnImageNew",
+      "column": "attributes",
+      "notNull": true
+    },
+    {
       "table": "temp_paddle_import",
       "column": "record_id",
       "notNull": false
@@ -13150,21 +13562,6 @@
       "table": "CollectionContributor",
       "column": "permissions",
       "notNull": false
-    },
-    {
-      "table": "TagsOnImageNew",
-      "column": "imageId",
-      "notNull": true
-    },
-    {
-      "table": "TagsOnImageNew",
-      "column": "tagId",
-      "notNull": true
-    },
-    {
-      "table": "TagsOnImageNew",
-      "column": "attributes",
-      "notNull": true
     },
     {
       "table": "ComicProjectReport",
@@ -13472,6 +13869,111 @@
       "notNull": false
     },
     {
+      "table": "_gdpr_reaction_snapshot_20261017",
+      "column": "src",
+      "notNull": false
+    },
+    {
+      "table": "_gdpr_reaction_snapshot_20261017",
+      "column": "rid",
+      "notNull": false
+    },
+    {
+      "table": "_gdpr_reaction_snapshot_20261017",
+      "column": "row",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "type",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "name",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "description",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "imageUrl",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "params",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "cosmeticId",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "rarity",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "value",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "flags",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "quantityAvailable",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "version",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "createdById",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "updatedById",
+      "notNull": false
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "ItemDefinition",
+      "column": "sellerId",
+      "notNull": false
+    },
+    {
       "table": "ReferralReward",
       "column": "id",
       "notNull": true
@@ -13554,6 +14056,61 @@
     {
       "table": "ReferralReward",
       "column": "points",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "boxDefinitionId",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "baseVersion",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "proposal",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "appliedVersion",
+      "notNull": false
+    },
+    {
+      "table": "BoxRevision",
+      "column": "submittedById",
+      "notNull": true
+    },
+    {
+      "table": "BoxRevision",
+      "column": "reviewedById",
+      "notNull": false
+    },
+    {
+      "table": "BoxRevision",
+      "column": "reviewedAt",
+      "notNull": false
+    },
+    {
+      "table": "BoxRevision",
+      "column": "note",
+      "notNull": false
+    },
+    {
+      "table": "BoxRevision",
+      "column": "createdAt",
       "notNull": true
     },
     {
@@ -14077,6 +14634,161 @@
       "notNull": true
     },
     {
+      "table": "PostMetric",
+      "column": "postId",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "timeframe",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "likeCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "dislikeCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "laughCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "cryCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "heartCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "commentCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "collectedCount",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "PostMetric",
+      "column": "updatedAt",
+      "notNull": false
+    },
+    {
+      "table": "PostMetric",
+      "column": "ageGroup",
+      "notNull": false
+    },
+    {
+      "table": "PostMetric",
+      "column": "reactionCount",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "cosmeticId",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "addedById",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "availableFrom",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "availableTo",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "availableQuantity",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "meta",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "title",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "description",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "archivedAt",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "unitAmount",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "reviewedById",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "reviewedAt",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "rejectionReason",
+      "notNull": false
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "listed",
+      "notNull": true
+    },
+    {
+      "table": "CosmeticShopItem",
+      "column": "itemDefinitionId",
+      "notNull": false
+    },
+    {
       "table": "QueryDurationLog",
       "column": "id",
       "notNull": true
@@ -14285,156 +14997,6 @@
       "table": "DonationGoal",
       "column": "entityId",
       "notNull": false
-    },
-    {
-      "table": "PostMetric",
-      "column": "postId",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "timeframe",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "likeCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "dislikeCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "laughCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "cryCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "heartCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "commentCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "collectedCount",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "PostMetric",
-      "column": "updatedAt",
-      "notNull": false
-    },
-    {
-      "table": "PostMetric",
-      "column": "ageGroup",
-      "notNull": false
-    },
-    {
-      "table": "PostMetric",
-      "column": "reactionCount",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "cosmeticId",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "addedById",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "availableFrom",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "availableTo",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "availableQuantity",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "meta",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "title",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "description",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "archivedAt",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "unitAmount",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "status",
-      "notNull": true
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "reviewedById",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "reviewedAt",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "rejectionReason",
-      "notNull": false
-    },
-    {
-      "table": "CosmeticShopItem",
-      "column": "listed",
-      "notNull": true
     },
     {
       "table": "UserPaymentConfiguration",
@@ -18157,201 +18719,6 @@
       "notNull": true
     },
     {
-      "table": "Image",
-      "column": "name",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "url",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "hash",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "height",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "width",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "meta",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "tosViolation",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "analysis",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "generationProcess",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "featuredAt",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "hideMeta",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "index",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "mimeType",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "postId",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "scanRequestedAt",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "scannedAt",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "sizeKB",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "nsfw",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "blockedFor",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "ingestion",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "needsReview",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "metadata",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "type",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "scanJobs",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "nsfwLevel",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "nsfwLevelLocked",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "aiNsfwLevel",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "aiModel",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "sortAt",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "pHash",
-      "notNull": false
-    },
-    {
-      "table": "Image",
-      "column": "minor",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "poi",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "acceptableMinor",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "modelRestricted",
-      "notNull": true
-    },
-    {
-      "table": "Image",
-      "column": "flags",
-      "notNull": true
-    },
-    {
       "table": "ImageResource",
       "column": "id",
       "notNull": true
@@ -18657,71 +19024,6 @@
       "notNull": true
     },
     {
-      "table": "ResourceReview",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "modelVersionId",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "rating",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "details",
-      "notNull": false
-    },
-    {
-      "table": "ResourceReview",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "exclude",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "metadata",
-      "notNull": false
-    },
-    {
-      "table": "ResourceReview",
-      "column": "modelId",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "nsfw",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "tosViolation",
-      "notNull": true
-    },
-    {
-      "table": "ResourceReview",
-      "column": "recommended",
-      "notNull": true
-    },
-    {
       "table": "UserStripeConnect",
       "column": "userId",
       "notNull": true
@@ -18744,6 +19046,201 @@
     {
       "table": "UserStripeConnect",
       "column": "chargesEnabled",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "name",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "url",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "hash",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "height",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "width",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "meta",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "tosViolation",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "analysis",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "generationProcess",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "featuredAt",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "hideMeta",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "index",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "mimeType",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "postId",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "scanRequestedAt",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "scannedAt",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "sizeKB",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "nsfw",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "blockedFor",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "ingestion",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "needsReview",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "metadata",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "type",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "scanJobs",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "nsfwLevel",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "nsfwLevelLocked",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "aiNsfwLevel",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "aiModel",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "sortAt",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "pHash",
+      "notNull": false
+    },
+    {
+      "table": "Image",
+      "column": "minor",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "poi",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "acceptableMinor",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "modelRestricted",
+      "notNull": true
+    },
+    {
+      "table": "Image",
+      "column": "flags",
       "notNull": true
     },
     {
@@ -18922,6 +19419,121 @@
       "notNull": true
     },
     {
+      "table": "ResourceReview",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "modelVersionId",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "rating",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "details",
+      "notNull": false
+    },
+    {
+      "table": "ResourceReview",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "exclude",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "metadata",
+      "notNull": false
+    },
+    {
+      "table": "ResourceReview",
+      "column": "modelId",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "nsfw",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "tosViolation",
+      "notNull": true
+    },
+    {
+      "table": "ResourceReview",
+      "column": "recommended",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "userId",
+      "notNull": false
+    },
+    {
+      "table": "BountyEntry",
+      "column": "bountyId",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "locked",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "description",
+      "notNull": false
+    },
+    {
+      "table": "BountyEntry",
+      "column": "nsfwLevel",
+      "notNull": true
+    },
+    {
+      "table": "BountyEntry",
+      "column": "moderatorNsfwLevel",
+      "notNull": false
+    },
+    {
+      "table": "BountyEntry",
+      "column": "moderatorNsfwLevelBasis",
+      "notNull": false
+    },
+    {
       "table": "Post",
       "column": "id",
       "notNull": true
@@ -19028,56 +19640,6 @@
     },
     {
       "table": "Post",
-      "column": "moderatorNsfwLevelBasis",
-      "notNull": false
-    },
-    {
-      "table": "BountyEntry",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "userId",
-      "notNull": false
-    },
-    {
-      "table": "BountyEntry",
-      "column": "bountyId",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "locked",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "description",
-      "notNull": false
-    },
-    {
-      "table": "BountyEntry",
-      "column": "nsfwLevel",
-      "notNull": true
-    },
-    {
-      "table": "BountyEntry",
-      "column": "moderatorNsfwLevel",
-      "notNull": false
-    },
-    {
-      "table": "BountyEntry",
       "column": "moderatorNsfwLevelBasis",
       "notNull": false
     },
@@ -19942,6 +20504,171 @@
       "notNull": false
     },
     {
+      "table": "User",
+      "column": "name",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "email",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "emailVerified",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "image",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "blurNsfw",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "showNsfw",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "username",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "isModerator",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "deletedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "bannedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "customerId",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "subscriptionId",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "autoplayGifs",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "filePreferences",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "leaderboardShowcase",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "profilePictureId",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "meta",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "settings",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "mutedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "muted",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "browsingLevel",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "onboarding",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "publicSettings",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "muteConfirmedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "excludeFromLeaderboards",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "eligibilityChangedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "rewardsEligibility",
+      "notNull": true
+    },
+    {
+      "table": "User",
+      "column": "paddleCustomerId",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "muteExpiresAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "ageVerifiedAt",
+      "notNull": false
+    },
+    {
+      "table": "User",
+      "column": "flags",
+      "notNull": true
+    },
+    {
       "table": "UserRestriction",
       "column": "id",
       "notNull": true
@@ -20154,171 +20881,6 @@
     {
       "table": "UserReport",
       "column": "reportId",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "name",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "email",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "emailVerified",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "image",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "blurNsfw",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "showNsfw",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "username",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "isModerator",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "deletedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "bannedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "customerId",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "subscriptionId",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "autoplayGifs",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "filePreferences",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "leaderboardShowcase",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "profilePictureId",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "meta",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "settings",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "mutedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "muted",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "browsingLevel",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "onboarding",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "publicSettings",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "muteConfirmedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "excludeFromLeaderboards",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "eligibilityChangedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "rewardsEligibility",
-      "notNull": true
-    },
-    {
-      "table": "User",
-      "column": "paddleCustomerId",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "muteExpiresAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "ageVerifiedAt",
-      "notNull": false
-    },
-    {
-      "table": "User",
-      "column": "flags",
       "notNull": true
     }
   ],
@@ -20576,6 +21138,48 @@
       "validated": true
     },
     {
+      "name": "CreatorScoreGrant_grantedById_fkey",
+      "table": "CreatorScoreGrant",
+      "columns": [
+        "grantedById"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "CreatorScoreGrant_revokedById_fkey",
+      "table": "CreatorScoreGrant",
+      "columns": [
+        "revokedById"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "CreatorScoreGrant_userId_fkey",
+      "table": "CreatorScoreGrant",
+      "columns": [
+        "userId"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
       "name": "CollectionItem_addedById_fkey",
       "table": "CollectionItem",
       "columns": [
@@ -20702,48 +21306,6 @@
       "validated": true
     },
     {
-      "name": "CreatorScoreGrant_grantedById_fkey",
-      "table": "CreatorScoreGrant",
-      "columns": [
-        "grantedById"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "NoAction",
-      "validated": true
-    },
-    {
-      "name": "CreatorScoreGrant_revokedById_fkey",
-      "table": "CreatorScoreGrant",
-      "columns": [
-        "revokedById"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "NoAction",
-      "validated": true
-    },
-    {
-      "name": "CreatorScoreGrant_userId_fkey",
-      "table": "CreatorScoreGrant",
-      "columns": [
-        "userId"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "NoAction",
-      "validated": true
-    },
-    {
       "name": "Thread_answerId_fkey",
       "table": "Thread",
       "columns": [
@@ -20753,7 +21315,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20767,7 +21329,7 @@
       "refColumns": [
         "serial_id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20781,7 +21343,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20795,7 +21357,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20809,7 +21371,21 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Thread_challengeId_fkey",
+      "table": "Thread",
+      "columns": [
+        "challengeId"
+      ],
+      "refTable": "Challenge",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20823,7 +21399,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20839,7 +21415,7 @@
         "projectId",
         "position"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20867,7 +21443,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20881,7 +21457,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20895,7 +21471,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20909,7 +21485,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20923,7 +21499,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20951,7 +21527,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20965,7 +21541,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -20979,7 +21555,7 @@
       "refColumns": [
         "id"
       ],
-      "onDelete": "SetNull",
+      "onDelete": "Cascade",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -23050,6 +23626,20 @@
       "validated": true
     },
     {
+      "name": "Item_itemDefinitionId_fkey",
+      "table": "Item",
+      "columns": [
+        "itemDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
       "name": "ScanLabelItem_imageId_fkey",
       "table": "ScanLabelItem",
       "columns": [
@@ -24324,6 +24914,20 @@
       "validated": true
     },
     {
+      "name": "BoxTier_boxDefinitionId_fkey",
+      "table": "BoxTier",
+      "columns": [
+        "boxDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
       "name": "ArticleReport_articleId_fkey",
       "table": "ArticleReport",
       "columns": [
@@ -24408,31 +25012,45 @@
       "validated": true
     },
     {
-      "name": "Appeal_resolvedBy_fkey",
-      "table": "Appeal",
+      "name": "BoxContent_boxDefinitionId_fkey",
+      "table": "BoxContent",
       "columns": [
-        "resolvedBy"
+        "boxDefinitionId"
       ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "Appeal_userId_fkey",
-      "table": "Appeal",
-      "columns": [
-        "userId"
-      ],
-      "refTable": "User",
+      "refTable": "ItemDefinition",
       "refColumns": [
         "id"
       ],
       "onDelete": "Cascade",
-      "onUpdate": "Cascade",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "BoxContent_rewardDefinitionId_fkey",
+      "table": "BoxContent",
+      "columns": [
+        "rewardDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "BoxContent_tierId_fkey",
+      "table": "BoxContent",
+      "columns": [
+        "tierId"
+      ],
+      "refTable": "BoxTier",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "NoAction",
       "validated": true
     },
     {
@@ -24489,6 +25107,48 @@
       ],
       "onDelete": "Cascade",
       "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Appeal_resolvedBy_fkey",
+      "table": "Appeal",
+      "columns": [
+        "resolvedBy"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Appeal_userId_fkey",
+      "table": "Appeal",
+      "columns": [
+        "userId"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "BoxOddsSnapshot_boxDefinitionId_fkey",
+      "table": "BoxOddsSnapshot",
+      "columns": [
+        "boxDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
       "validated": true
     },
     {
@@ -24886,6 +25546,62 @@
       "validated": true
     },
     {
+      "name": "app_listing_red_media_app_listing_id_fkey",
+      "table": "app_listing_red_media",
+      "columns": [
+        "app_listing_id"
+      ],
+      "refTable": "app_listings",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "app_listing_red_media_media_split_approved_by_fkey",
+      "table": "app_listing_red_media",
+      "columns": [
+        "media_split_approved_by"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "app_listing_red_media_red_cover_id_fkey",
+      "table": "app_listing_red_media",
+      "columns": [
+        "red_cover_id"
+      ],
+      "refTable": "Image",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "app_listing_red_media_red_icon_id_fkey",
+      "table": "app_listing_red_media",
+      "columns": [
+        "red_icon_id"
+      ],
+      "refTable": "Image",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
       "name": "ModelEngagement_modelId_fkey",
       "table": "ModelEngagement",
       "columns": [
@@ -25068,6 +25784,20 @@
       "validated": true
     },
     {
+      "name": "ResourceIntentTagIndexSnapshot_vocabVersion_fkey",
+      "table": "ResourceIntentTagIndexSnapshot",
+      "columns": [
+        "vocabVersion"
+      ],
+      "refTable": "ResourceIntentVocabulary",
+      "refColumns": [
+        "vocabVersion"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "Restrict",
+      "validated": true
+    },
+    {
       "name": "ImageReaction_userId_fkey",
       "table": "ImageReaction",
       "columns": [
@@ -25135,6 +25865,20 @@
       ],
       "onDelete": "Cascade",
       "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "ImageRemovalConfirmation_imageId_fkey",
+      "table": "ImageRemovalConfirmation",
+      "columns": [
+        "imageId"
+      ],
+      "refTable": "Image",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
       "validated": true
     },
     {
@@ -25390,6 +26134,34 @@
       "validated": true
     },
     {
+      "name": "ItemDefinition_cosmeticId_fkey",
+      "table": "ItemDefinition",
+      "columns": [
+        "cosmeticId"
+      ],
+      "refTable": "Cosmetic",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
+      "name": "ItemDefinition_sellerId_fkey",
+      "table": "ItemDefinition",
+      "columns": [
+        "sellerId"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
       "name": "ReferralReward_refereeId_fkey",
       "table": "ReferralReward",
       "columns": [
@@ -25415,6 +26187,20 @@
       ],
       "onDelete": "Cascade",
       "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "BoxRevision_boxDefinitionId_fkey",
+      "table": "BoxRevision",
+      "columns": [
+        "boxDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "NoAction",
       "validated": true
     },
     {
@@ -25656,6 +26442,62 @@
       "validated": true
     },
     {
+      "name": "PostMetric_postId_fkey",
+      "table": "PostMetric",
+      "columns": [
+        "postId"
+      ],
+      "refTable": "Post",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "CosmeticShopItem_addedById_fkey",
+      "table": "CosmeticShopItem",
+      "columns": [
+        "addedById"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "CosmeticShopItem_cosmeticId_fkey",
+      "table": "CosmeticShopItem",
+      "columns": [
+        "cosmeticId"
+      ],
+      "refTable": "Cosmetic",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "CosmeticShopItem_itemDefinitionId_fkey",
+      "table": "CosmeticShopItem",
+      "columns": [
+        "itemDefinitionId"
+      ],
+      "refTable": "ItemDefinition",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
+      "onUpdate": "NoAction",
+      "validated": true
+    },
+    {
       "name": "QueryDurationLog_paramsId_fkey",
       "table": "QueryDurationLog",
       "columns": [
@@ -25774,48 +26616,6 @@
         "userId"
       ],
       "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "PostMetric_postId_fkey",
-      "table": "PostMetric",
-      "columns": [
-        "postId"
-      ],
-      "refTable": "Post",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "CosmeticShopItem_addedById_fkey",
-      "table": "CosmeticShopItem",
-      "columns": [
-        "addedById"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "CosmeticShopItem_cosmeticId_fkey",
-      "table": "CosmeticShopItem",
-      "columns": [
-        "cosmeticId"
-      ],
-      "refTable": "Cosmetic",
       "refColumns": [
         "id"
       ],
@@ -27476,34 +28276,6 @@
       "validated": true
     },
     {
-      "name": "Image_postId_fkey",
-      "table": "Image",
-      "columns": [
-        "postId"
-      ],
-      "refTable": "Post",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "Image_userId_fkey",
-      "table": "Image",
-      "columns": [
-        "userId"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
       "name": "ImageResource_modelVersionId_fkey",
       "table": "ImageResource",
       "columns": [
@@ -27574,36 +28346,8 @@
       "validated": true
     },
     {
-      "name": "ResourceReview_modelId_fkey",
-      "table": "ResourceReview",
-      "columns": [
-        "modelId"
-      ],
-      "refTable": "Model",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "ResourceReview_modelVersionId_fkey",
-      "table": "ResourceReview",
-      "columns": [
-        "modelVersionId"
-      ],
-      "refTable": "ModelVersion",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "ResourceReview_userId_fkey",
-      "table": "ResourceReview",
+      "name": "UserStripeConnect_userId_fkey",
+      "table": "UserStripeConnect",
       "columns": [
         "userId"
       ],
@@ -27616,8 +28360,22 @@
       "validated": true
     },
     {
-      "name": "UserStripeConnect_userId_fkey",
-      "table": "UserStripeConnect",
+      "name": "Image_postId_fkey",
+      "table": "Image",
+      "columns": [
+        "postId"
+      ],
+      "refTable": "Post",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Image_userId_fkey",
+      "table": "Image",
       "columns": [
         "userId"
       ],
@@ -27678,6 +28436,76 @@
         "vaeId"
       ],
       "refTable": "ModelVersion",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "ResourceReview_modelId_fkey",
+      "table": "ResourceReview",
+      "columns": [
+        "modelId"
+      ],
+      "refTable": "Model",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "ResourceReview_modelVersionId_fkey",
+      "table": "ResourceReview",
+      "columns": [
+        "modelVersionId"
+      ],
+      "refTable": "ModelVersion",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "ResourceReview_userId_fkey",
+      "table": "ResourceReview",
+      "columns": [
+        "userId"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "BountyEntry_bountyId_fkey",
+      "table": "BountyEntry",
+      "columns": [
+        "bountyId"
+      ],
+      "refTable": "Bounty",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "BountyEntry_userId_fkey",
+      "table": "BountyEntry",
+      "columns": [
+        "userId"
+      ],
+      "refTable": "User",
       "refColumns": [
         "id"
       ],
@@ -27752,34 +28580,6 @@
         "id"
       ],
       "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "BountyEntry_bountyId_fkey",
-      "table": "BountyEntry",
-      "columns": [
-        "bountyId"
-      ],
-      "refTable": "Bounty",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Cascade",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "BountyEntry_userId_fkey",
-      "table": "BountyEntry",
-      "columns": [
-        "userId"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -28262,6 +29062,12 @@
       ]
     },
     {
+      "table": "CreatorScoreGrant",
+      "columns": [
+        "id"
+      ]
+    },
+    {
       "table": "CollectionItem",
       "columns": [
         "id"
@@ -28276,18 +29082,6 @@
         "imageId",
         "modelId",
         "model3dId"
-      ]
-    },
-    {
-      "table": "CreatorScoreGrant",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "ArticleRank",
-      "columns": [
-        "articleId"
       ]
     },
     {
@@ -28414,12 +29208,6 @@
       ]
     },
     {
-      "table": "BountyRank",
-      "columns": [
-        "bountyId"
-      ]
-    },
-    {
       "table": "AdToken",
       "columns": [
         "id"
@@ -28441,6 +29229,12 @@
       "table": "Leaderboard",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "ArticleRank",
+      "columns": [
+        "articleId"
       ]
     },
     {
@@ -28499,12 +29293,6 @@
       "columns": [
         "chapterId",
         "parentChapterId"
-      ]
-    },
-    {
-      "table": "StorylineChapterEdge",
-      "columns": [
-        "chapterId"
       ]
     },
     {
@@ -28579,18 +29367,6 @@
       ]
     },
     {
-      "table": "ResourceIntentVocabulary",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "columns": [
-        "vocabVersion"
-      ]
-    },
-    {
       "table": "ServiceDealTransaction",
       "columns": [
         "id"
@@ -28607,6 +29383,24 @@
       "columns": [
         "dealId",
         "leg"
+      ]
+    },
+    {
+      "table": "BountyRank",
+      "columns": [
+        "bountyId"
+      ]
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "columns": [
+        "vocabVersion"
       ]
     },
     {
@@ -28853,6 +29647,14 @@
       "table": "ScanLabelFlag",
       "columns": [
         "workflowId"
+      ]
+    },
+    {
+      "table": "EntityMetric",
+      "columns": [
+        "entityType",
+        "entityId",
+        "metricType"
       ]
     },
     {
@@ -29182,14 +29984,6 @@
       ]
     },
     {
-      "table": "EntityMetric",
-      "columns": [
-        "entityType",
-        "entityId",
-        "metricType"
-      ]
-    },
-    {
       "table": "UserStorageRollup",
       "columns": [
         "userId"
@@ -29264,6 +30058,18 @@
       "table": "app_listing_moderation_events",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "Item",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "Item",
+      "columns": [
+        "sourceKey"
       ]
     },
     {
@@ -29859,6 +30665,19 @@
       ]
     },
     {
+      "table": "BoxTier",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "BoxTier",
+      "columns": [
+        "boxDefinitionId",
+        "key"
+      ]
+    },
+    {
       "table": "CosmeticShopPurchaseClaim",
       "columns": [
         "transactionId"
@@ -29899,12 +30718,6 @@
       ]
     },
     {
-      "table": "ScanLabelCopyObject",
-      "columns": [
-        "key"
-      ]
-    },
-    {
       "table": "AuctionBase",
       "columns": [
         "id"
@@ -29930,9 +30743,22 @@
       ]
     },
     {
-      "table": "Appeal",
+      "table": "BoxContent",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "BoxContent",
+      "columns": [
+        "boxDefinitionId",
+        "rewardDefinitionId"
+      ]
+    },
+    {
+      "table": "ScanLabelCopyObject",
+      "columns": [
+        "key"
       ]
     },
     {
@@ -29979,6 +30805,25 @@
       ]
     },
     {
+      "table": "BoxOpening",
+      "columns": [
+        "boxItemId"
+      ]
+    },
+    {
+      "table": "Appeal",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "BoxOddsSnapshot",
+      "columns": [
+        "boxDefinitionId",
+        "version"
+      ]
+    },
+    {
       "table": "CommentV2",
       "columns": [
         "id"
@@ -29994,18 +30839,6 @@
       "table": "License",
       "columns": [
         "id"
-      ]
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "AppealDecisionRecord",
-      "columns": [
-        "appealId"
       ]
     },
     {
@@ -30075,6 +30908,18 @@
         "cosmeticId",
         "claimKey",
         "day"
+      ]
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "AppealDecisionRecord",
+      "columns": [
+        "appealId"
       ]
     },
     {
@@ -30268,6 +31113,12 @@
       ]
     },
     {
+      "table": "app_listing_red_media",
+      "columns": [
+        "app_listing_id"
+      ]
+    },
+    {
       "table": "ModelEngagement",
       "columns": [
         "userId",
@@ -30278,6 +31129,12 @@
       "table": "ModelFlag",
       "columns": [
         "modelId"
+      ]
+    },
+    {
+      "table": "UserRank",
+      "columns": [
+        "userId"
       ]
     },
     {
@@ -30303,12 +31160,6 @@
       "table": "UserLink",
       "columns": [
         "id"
-      ]
-    },
-    {
-      "table": "UserRank",
-      "columns": [
-        "userId"
       ]
     },
     {
@@ -30341,6 +31192,12 @@
       "table": "ServiceDealFile",
       "columns": [
         "s3Key"
+      ]
+    },
+    {
+      "table": "ResourceIntentTagIndexSnapshot",
+      "columns": [
+        "id"
       ]
     },
     {
@@ -30402,6 +31259,12 @@
       ]
     },
     {
+      "table": "ImageRemovalConfirmation",
+      "columns": [
+        "id"
+      ]
+    },
+    {
       "table": "UserReferralCode",
       "columns": [
         "id"
@@ -30447,17 +31310,17 @@
       ]
     },
     {
-      "table": "CollectionContributor",
-      "columns": [
-        "userId",
-        "collectionId"
-      ]
-    },
-    {
       "table": "TagsOnImageNew",
       "columns": [
         "imageId",
         "tagId"
+      ]
+    },
+    {
+      "table": "CollectionContributor",
+      "columns": [
+        "userId",
+        "collectionId"
       ]
     },
     {
@@ -30526,6 +31389,18 @@
       ]
     },
     {
+      "table": "ItemDefinition",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "ItemDefinition",
+      "columns": [
+        "cosmeticId"
+      ]
+    },
+    {
       "table": "ReferralReward",
       "columns": [
         "id"
@@ -30536,6 +31411,12 @@
       "columns": [
         "kind",
         "sourceEventId"
+      ]
+    },
+    {
+      "table": "BoxRevision",
+      "columns": [
+        "id"
       ]
     },
     {
@@ -30640,6 +31521,19 @@
       ]
     },
     {
+      "table": "PostMetric",
+      "columns": [
+        "postId",
+        "timeframe"
+      ]
+    },
+    {
+      "table": "CosmeticShopItem",
+      "columns": [
+        "id"
+      ]
+    },
+    {
       "table": "QueryDurationLog",
       "columns": [
         "id"
@@ -30660,19 +31554,6 @@
     },
     {
       "table": "DonationGoal",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "PostMetric",
-      "columns": [
-        "postId",
-        "timeframe"
-      ]
-    },
-    {
-      "table": "CosmeticShopItem",
       "columns": [
         "id"
       ]
@@ -31415,12 +32296,6 @@
       ]
     },
     {
-      "table": "Image",
-      "columns": [
-        "id"
-      ]
-    },
-    {
       "table": "ImageResource",
       "columns": [
         "id"
@@ -31451,6 +32326,30 @@
       ]
     },
     {
+      "table": "UserStripeConnect",
+      "columns": [
+        "connectedAccountId"
+      ]
+    },
+    {
+      "table": "UserStripeConnect",
+      "columns": [
+        "userId"
+      ]
+    },
+    {
+      "table": "Image",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "ModelVersion",
+      "columns": [
+        "id"
+      ]
+    },
+    {
       "table": "ResourceReview",
       "columns": [
         "id"
@@ -31464,19 +32363,7 @@
       ]
     },
     {
-      "table": "UserStripeConnect",
-      "columns": [
-        "connectedAccountId"
-      ]
-    },
-    {
-      "table": "UserStripeConnect",
-      "columns": [
-        "userId"
-      ]
-    },
-    {
-      "table": "ModelVersion",
+      "table": "BountyEntry",
       "columns": [
         "id"
       ]
@@ -31491,12 +32378,6 @@
       "table": "Post",
       "columns": [
         "model3dReviewId"
-      ]
-    },
-    {
-      "table": "BountyEntry",
-      "columns": [
-        "id"
       ]
     },
     {
@@ -31672,39 +32553,6 @@
       ]
     },
     {
-      "table": "UserRestriction",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "UserCosmetic",
-      "columns": [
-        "userId",
-        "cosmeticId",
-        "claimKey"
-      ]
-    },
-    {
-      "table": "UserStrike",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "UserReport",
-      "columns": [
-        "reportId",
-        "userId"
-      ]
-    },
-    {
-      "table": "UserReport",
-      "columns": [
-        "reportId"
-      ]
-    },
-    {
       "table": "User",
       "columns": [
         "id"
@@ -31739,7 +32587,40 @@
       "columns": [
         "username"
       ]
+    },
+    {
+      "table": "UserRestriction",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "UserCosmetic",
+      "columns": [
+        "userId",
+        "cosmeticId",
+        "claimKey"
+      ]
+    },
+    {
+      "table": "UserStrike",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "UserReport",
+      "columns": [
+        "reportId",
+        "userId"
+      ]
+    },
+    {
+      "table": "UserReport",
+      "columns": [
+        "reportId"
+      ]
     }
   ],
-  "capturedAt": "2026-10-16T02:45:53.108Z"
+  "capturedAt": "2026-10-19T17:31:16.592Z"
 }

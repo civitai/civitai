@@ -202,7 +202,10 @@
 
 {#if !compact}
   <Sheet bind:open={csamOpen}>
-    <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
+    <SheetContent
+      side="right"
+      class="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
+    >
       <SheetHeader>
         <SheetTitle>CSAM reports</SheetTitle>
       </SheetHeader>

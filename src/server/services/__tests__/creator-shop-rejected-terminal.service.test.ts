@@ -177,6 +177,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action,
       rejectionReason: 'reopened on appeal',
     });
@@ -202,6 +203,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'reopened on appeal',
     });
@@ -238,6 +240,7 @@ describe('an item that was only sent back for changes still moves', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'one more pass please',
     });

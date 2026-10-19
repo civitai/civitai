@@ -73,12 +73,14 @@ export async function grantMysteryBoxes({
 
   const box = await dbRead
     .selectFrom('ItemDefinition')
-    .select(['id', 'type', 'status'])
+    .select(['id', 'type', 'status', 'sellerId'])
     .where('id', '=', boxId)
     .executeTakeFirst();
   if (!box || box.type !== ITEM_TYPE.box) throw new BoxGrantRefused('No such box.');
   if (box.status !== ITEM_DEFINITION_STATUS.published)
     throw new BoxGrantRefused('Only a published box can be granted.');
+  // Its creator is paid per sale; a granted one would hand out their cosmetics unpaid.
+  if (box.sellerId != null) throw new BoxGrantRefused("A creator's mystery pack can't be granted.");
 
   const users = await dbRead
     .selectFrom('User')

@@ -508,11 +508,13 @@ const LEDGER = [
   'src/pages/api/internal/blocks/build-callback.ts::watchApplyJobAndRecord',
   // Mints rows at `status:'approved'` — a go-live path, not a data migration.
   'src/server/services/blocks/app-listing-backfill.service.ts::backfillAppListings',
-  // All three run `reDeriveContentRatingForModLiveEdit` inside their tx, which can RAISE
-  // `content_rating` — the `listingMatureFilter` axis.
+  // All four run `reDeriveContentRatingForModLiveEdit` inside their tx, which can RAISE
+  // `content_rating` — the `listingMatureFilter` axis. (`setListingRedMedia`'s override write
+  // itself lands outside `app_listings`; the re-derive it triggers is what moves the axis.)
   'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+  'src/server/services/blocks/app-listing-assets.service.ts::setListingRedMedia',
   // A moderator re-rated a listing image: `reDeriveListingRatingInTx` moves `content_rating`
   // — in EITHER direction — on each live listing that uses it.
   'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingsForModeratedImage',
@@ -645,6 +647,7 @@ const CALLER_BUSTS: Record<string, string[]> = {
     'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
     'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
     'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+    'src/server/services/blocks/app-listing-assets.service.ts::setListingRedMedia',
   ].sort(),
   reDeriveListingRatingInTx: [
     'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingsForModeratedImage',

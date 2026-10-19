@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => ({
   // Mutable so a test can inject a blocked / pending scan state (Item 1).
   assetsData: { current: null as unknown },
   assetsError: { current: false },
+  // The moderator preview projection; `undefined` = the placeholder-art fallback.
+  previewData: { current: undefined as unknown },
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -135,7 +137,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // Listing-preview projection — undefined data → the section falls back to the
         // placeholder-art layout preview (these tests assert checklist/scan behaviour).
         getListingPreviewForReview: {
-          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+          useQuery: () => ({ data: mocks.previewData.current, isLoading: false, error: null }),
         },
       },
     },
@@ -143,6 +145,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 const { OffsiteReviewQueue, OffsiteReviewModal } = await import('./OffsiteReviewQueue');
+const { buildListingDetailPreview } = await import('./reviewListingPreview');
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
@@ -150,6 +153,7 @@ beforeEach(() => {
   mocks.rejectMutate.mockClear();
   mocks.assetsData.current = { ...DEFAULT_ASSETS };
   mocks.assetsError.current = false;
+  mocks.previewData.current = undefined;
 });
 
 /**
@@ -202,6 +206,134 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     // The two ENTRY actions present (approve is now gated behind its own click).
     await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — click-to-reveal on civitai.com and the civitai.red overrides', () => {
+  // This host does not show mature content (`canViewNsfw` absent): civitai.com.
+  const card = {
+    id: 'listing-1',
+    slug: 'ci-ext-app',
+    kind: 'offsite',
+    name: 'CI External App',
+    tagline: null,
+    category: 'utility',
+    contentRating: 'g',
+    iconUrl: LOADABLE_IMAGE_DATA_URI,
+    coverUrl: LOADABLE_IMAGE_DATA_URI,
+    creator: null,
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    openCount: null,
+    isBeta: false,
+    restrictedAudience: null,
+    kindData: { kind: 'offsite', externalUrl: 'https://example.com/app' },
+  };
+  const preview = (screenshotLevel: number) => ({
+    card,
+    detail: undefined,
+    media: {
+      icon: { imageId: 10, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      cover: { imageId: 11, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      redIcon: { imageId: 13, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 16 },
+      redCover: null,
+      screenshots: [
+        {
+          imageId: 12,
+          url: LOADABLE_IMAGE_DATA_URI,
+          nsfwLevel: screenshotLevel,
+          caption: null,
+        },
+      ],
+    },
+  });
+
+  test('🔴 the store-layout preview is held behind one reveal by its most mature image', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const reveal = page.getByTestId('apps-listing-preview-reveal');
+    await expect.element(reveal).toBeInTheDocument();
+    // The XXX civitai.red icon is the most mature image here.
+    expect(reveal.element().querySelector('[data-revealed]')?.getAttribute('data-revealed')).toBe(
+      'false'
+    );
+  });
+
+  test('🔴 the media panel shows the civitai.red icon as its own tile, labelled civitai.red only', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-review-listing-red-icon-audience-ci-ext-app'))
+      .toHaveTextContent('civitai.red only');
+  });
+
+  test('🔴 the held-back preview cannot be reached by keyboard: its screenshot tile never opens the full-size viewer until Show', async () => {
+    // The preview's screenshot tile is a button whose viewer is a portal Modal outside the
+    // blur, so Tab + Enter on it showed the XXX media full-size without clicking Show.
+    mocks.previewData.current = {
+      ...preview(1),
+      detail: buildListingDetailPreview(OFFSITE_ROW as never, {
+        screenshots: [{ url: LOADABLE_IMAGE_DATA_URI, caption: null }],
+      }),
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const reveal = page.getByTestId('apps-listing-preview-reveal');
+    const held = () => reveal.element().querySelector('[data-revealed]');
+    await expect.poll(() => held()?.getAttribute('data-revealed')).toBe('false');
+    const tile = page.getByTestId('apps-listing-screenshot-tile');
+    await expect.element(tile).toBeInTheDocument();
+    const tileEl = tile.element() as HTMLElement;
+    expect(held()?.contains(tileEl)).toBe(true);
+
+    // A Tab sweep through the whole review modal never lands inside the held-back preview.
+    let landedInside = 0;
+    let moved = 0;
+    let last: Element | null = null;
+    for (let i = 0; i < 60; i++) {
+      await userEvent.keyboard('{Tab}');
+      if (document.activeElement !== last) moved++;
+      last = document.activeElement;
+      if (held()?.contains(document.activeElement)) landedInside++;
+    }
+    expect(moved).toBeGreaterThan(3); // positive control: the sweep really moved focus
+    expect(landedInside).toBe(0);
+    // Park focus on the body (the sweep may have ended on another image's own Show button,
+    // which would reveal this one too), then try to focus the tile directly and press Enter.
+    (document.activeElement as HTMLElement | null)?.blur();
+    tileEl.focus();
+    expect(document.activeElement).not.toBe(tileEl);
+    await userEvent.keyboard('{Enter}');
+    expect(page.getByTestId('apps-listing-screenshot-viewer').query()).toBeNull();
+    expect(held()?.getAttribute('data-revealed')).toBe('false');
+
+    // After Show the same tile is reachable and opens the viewer.
+    // A DOM click: this file loads no site stylesheet, so the overlay is never laid out the way
+    // Playwright's actionability check wants (`ReviewMediaReveal.browser.test.tsx` clicks it
+    // for real, with the stylesheet).
+    (reveal.getByRole('button', { name: 'Show' }).element() as HTMLElement).click();
+    await expect.poll(() => held()?.getAttribute('data-revealed')).toBe('true');
+    (page.getByTestId('apps-listing-screenshot-tile').element() as HTMLElement).focus();
+    expect(document.activeElement).toBe(page.getByTestId('apps-listing-screenshot-tile').element());
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByTestId('apps-listing-screenshot-viewer')).toBeInTheDocument();
+  });
+
+  test('a Blocked civitai.red icon is named in the blocked-media alert', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      redIconId: 13,
+      redIconNsfwLevel: 16,
+      redIconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-assets-scan-blocked'))
+      .toHaveTextContent(/Blocked media: civitai\.red icon/);
   });
 });
 
