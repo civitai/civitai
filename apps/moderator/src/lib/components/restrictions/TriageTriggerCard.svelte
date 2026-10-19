@@ -13,6 +13,7 @@
     hasNoRecordedMatch,
     highlightSets,
     humanizeCategory,
+    isMissingFromText,
     promptTesterHref,
     sourceLabel,
   } from '$lib/restrictions/trigger-evidence';
@@ -46,6 +47,11 @@
   const origin = $derived(triggerOrigin(trigger));
   const matches = $derived(explainMatches(trigger));
   const highlights = $derived(highlightSets(matches));
+  const testerLink = $derived(
+    trigger.prompt
+      ? promptTesterHref({ prompt: trigger.prompt, negativePrompt: trigger.negativePrompt })
+      : null
+  );
   const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
   const isRemix = $derived(origin.kind === 'remix' || origin.kind === 'legacy-remix');
   const canDiff = $derived(isRemix && !!source?.prompt && !!trigger.prompt);
@@ -194,6 +200,9 @@
                   <p class="m-0 text-xs text-dark-0">
                     <code class="break-all">"{m.text}"</code>
                     {m.field ? `in ${fieldLabel(m.field)}` : ''}
+                    {#if isMissingFromText(m, trigger)}
+                      <span class="text-dark-2">(not found in text)</span>
+                    {/if}
                   </p>
                 {/if}
                 {#if m.gateWord}
@@ -210,20 +219,21 @@
               </div>
             {/each}
           </div>
-        {:else if noRecordedMatch && trigger.prompt}
+        {:else if noRecordedMatch && testerLink}
           <p class="m-0 text-xs text-dark-2">
             Match not recorded.
             <a
-              href={promptTesterHref({
-                prompt: trigger.prompt,
-                negativePrompt: trigger.negativePrompt,
-              })}
+              href={testerLink.href}
+              title={testerLink.prefilled ? undefined : 'Prompt too long to prefill'}
               target="_blank"
               rel="noreferrer"
               class={LINK_CLASS}
             >
               Re-run in the prompt tester ↗
             </a>
+            {#if !testerLink.prefilled}
+              <span>(prompt too long to prefill)</span>
+            {/if}
           </p>
         {/if}
         {#if trigger.time}
@@ -262,8 +272,10 @@
           </div>
         {/if}
         {#if trigger.prompt}
-          <div class="max-h-[32rem] overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <span class="mb-1 block text-xs font-semibold tracking-wide text-dark-2 uppercase">
+          <div class="max-h-[32rem] overflow-auto rounded-md border border-dark-4 bg-dark-7 px-2 pb-2">
+            <span
+              class="sticky top-0 z-10 block bg-dark-7 py-1 text-xs font-semibold tracking-wide text-dark-2 uppercase"
+            >
               Prompt
             </span>
             <HighlightedText text={trigger.prompt} highlight={highlights.prompt} />
@@ -271,11 +283,14 @@
         {/if}
         {#if trigger.negativePrompt}
           <div
-            class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2 {trigger.prompt
-              ? 'mt-2'
-              : ''}"
+            class={[
+              'max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 px-2 pb-2',
+              trigger.prompt && 'mt-2',
+            ]}
           >
-            <span class="mb-1 block text-xs font-semibold tracking-wide text-dark-2 uppercase">
+            <span
+              class="sticky top-0 z-10 block bg-dark-7 py-1 text-xs font-semibold tracking-wide text-dark-2 uppercase"
+            >
               Negative
             </span>
             <HighlightedText

@@ -6,6 +6,9 @@ import {
   humanizeCategory,
   sourceLabel,
   promptTesterHref,
+  prefillInput,
+  isMissingFromText,
+  MAX_PREFILL_URL_LENGTH,
 } from '../trigger-evidence';
 
 describe('sourceLabel', () => {
@@ -41,6 +44,12 @@ describe('explainMatches', () => {
     const out = explainMatches({ category: 'one', matchedWord: 'alpha', matchedText: 'alphas' });
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe('alphas');
+  });
+
+  it('counts a row with only a regex or gate word', () => {
+    expect(explainMatches({ matchedRegex: 'a+' })).toHaveLength(1);
+    expect(explainMatches({ gateWord: 'beta' })).toHaveLength(1);
+    expect(hasNoRecordedMatch({ prompt: 'x', matchedRegex: 'a+' })).toBe(false);
   });
 
   it('returns nothing without a category or text', () => {
@@ -88,14 +97,58 @@ describe('hasNoRecordedMatch', () => {
 
 describe('promptTesterHref', () => {
   it('encodes prompt and negative prompt', () => {
-    const href = promptTesterHref({ prompt: 'a & b', negativePrompt: 'c' });
+    const { href, prefilled } = promptTesterHref({ prompt: 'a & b', negativePrompt: 'c' });
     const url = new URL(href, 'http://x');
+    expect(prefilled).toBe(true);
     expect(url.pathname).toBe('/audit/prompt-tester');
     expect(url.searchParams.get('prompt')).toBe('a & b');
     expect(url.searchParams.get('negativePrompt')).toBe('c');
   });
 
   it('omits an absent negative prompt', () => {
-    expect(promptTesterHref({ prompt: 'a' })).not.toContain('negativePrompt');
+    expect(promptTesterHref({ prompt: 'a' }).href).not.toContain('negativePrompt');
+  });
+
+  it('links without a prefill when the encoded URL would be too long', () => {
+    const { href, prefilled } = promptTesterHref({ prompt: 'é'.repeat(MAX_PREFILL_URL_LENGTH) });
+    expect(prefilled).toBe(false);
+    expect(href).toBe('/audit/prompt-tester');
+  });
+});
+
+describe('prefillInput', () => {
+  it('passes a plain prompt through', () => {
+    expect(prefillInput('a quiet landscape')).toBe('a quiet landscape');
+  });
+
+  it('uses the JSON array form for a negative prompt', () => {
+    expect(JSON.parse(prefillInput('a', 'b'))).toEqual([{ prompt: 'a', negativePrompt: 'b' }]);
+  });
+
+  it('uses the JSON array form when the prompt starts with a bracket', () => {
+    const out = prefillInput('  [alpha:0.5] beta');
+    expect(JSON.parse(out)).toEqual([{ prompt: '  [alpha:0.5] beta' }]);
+  });
+});
+
+describe('isMissingFromText', () => {
+  const texts = { prompt: 'Alpha beta', negativePrompt: 'gamma' };
+
+  it('is false when the text is found, ignoring case', () => {
+    expect(isMissingFromText({ text: 'alpha', field: 'prompt' }, texts)).toBe(false);
+  });
+
+  it('checks only the matched field', () => {
+    expect(isMissingFromText({ text: 'gamma', field: 'prompt' }, texts)).toBe(true);
+    expect(isMissingFromText({ text: 'gamma', field: 'negativePrompt' }, texts)).toBe(false);
+  });
+
+  it('checks both fields when the field is unknown', () => {
+    expect(isMissingFromText({ text: 'gamma' }, texts)).toBe(false);
+    expect(isMissingFromText({ text: 'delta' }, texts)).toBe(true);
+  });
+
+  it('has nothing to find without a text', () => {
+    expect(isMissingFromText({ field: 'prompt' }, texts)).toBe(false);
   });
 });

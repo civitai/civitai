@@ -46,7 +46,11 @@ export const fieldLabel = (field: TriggerField): string =>
 export function explainMatches(trigger: MatchSource): ExplainedMatch[] {
   const raw = trigger.matches?.length
     ? trigger.matches
-    : trigger.category || trigger.matchedWord || trigger.matchedText
+    : trigger.category ||
+        trigger.matchedWord ||
+        trigger.matchedText ||
+        trigger.matchedRegex ||
+        trigger.gateWord
       ? [trigger]
       : [];
   return raw.map((m) => ({
@@ -80,8 +84,34 @@ export function hasNoRecordedMatch(trigger: MatchSource): boolean {
   return !!trigger.prompt && explainMatches(trigger).length === 0;
 }
 
-export function promptTesterHref(input: { prompt: string; negativePrompt?: string }): string {
+/** Past this, the encoded query risks being dropped by proxies, so the link carries no prefill. */
+export const MAX_PREFILL_URL_LENGTH = 6000;
+
+export function promptTesterHref(input: { prompt: string; negativePrompt?: string }): {
+  href: string;
+  prefilled: boolean;
+} {
+  const base = '/audit/prompt-tester';
   const params = new URLSearchParams({ prompt: input.prompt });
   if (input.negativePrompt) params.set('negativePrompt', input.negativePrompt);
-  return `/audit/prompt-tester?${params}`;
+  const query = params.toString();
+  if (query.length > MAX_PREFILL_URL_LENGTH) return { href: base, prefilled: false };
+  return { href: `${base}?${query}`, prefilled: true };
+}
+
+/** The tester reads input starting with `[` as a JSON array, so such a prompt must be sent as one. */
+export function prefillInput(prompt: string, negativePrompt?: string | null): string {
+  if (!negativePrompt && !prompt.trim().startsWith('[')) return prompt;
+  return JSON.stringify([negativePrompt ? { prompt, negativePrompt } : { prompt }], null, 2);
+}
+
+/** True when a match's display text cannot be found in the text of the field it names. */
+export function isMissingFromText(
+  match: Pick<ExplainedMatch, 'text' | 'field'>,
+  texts: { prompt?: string; negativePrompt?: string }
+): boolean {
+  if (!match.text) return false;
+  const needle = match.text.toLowerCase();
+  const fields: TriggerField[] = match.field ? [match.field] : ['prompt', 'negativePrompt'];
+  return !fields.some((f) => (texts[f] ?? '').toLowerCase().includes(needle));
 }
