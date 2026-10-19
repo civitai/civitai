@@ -18,7 +18,8 @@ const mossImageVersionOptions = [
  * Turbo (DMD distillation, no CFG) LoRAs, matched by MODEL so new
  * versions uploaded to the same page are covered without a code change.
  */
-export const mossImageTurboLoraModelIds: readonly number[] = [3006599];
+const MOSS_IMAGE_TURBO_LORA_MODEL_ID = 3006599;
+export const mossImageTurboLoraModelIds: readonly number[] = [MOSS_IMAGE_TURBO_LORA_MODEL_ID];
 
 /** The checkpoint each turbo LoRA version is for, and its recommended steps; an unlisted version gets 8. */
 const mossImageTurboLoraVersions: Record<number, { model: MossImageModel; steps: number }> = {
@@ -32,23 +33,31 @@ const MOSS_IMAGE_TURBO_DEFAULT_STEPS = 8;
  * The version the Turbo toggle adds for each checkpoint. SFT gets the 8-step
  * build rather than the 4-step v2, whose results creators report as weaker.
  */
-const mossImageTurboToggleLoras: Record<MossImageModel, ResourceData> = {
-  sft: {
-    id: 3411385,
-    baseModel: 'MOSS Image',
-    model: { id: 3006599, type: 'LORA' } as ResourceData['model'],
-    strength: 1,
-  },
-  base: {
-    id: 3413516,
-    baseModel: 'MOSS Image Base',
-    model: { id: 3006599, type: 'LORA' } as ResourceData['model'],
-    strength: 1,
-  },
+const mossImageTurboToggleVersionIds: Record<MossImageModel, number> = {
+  sft: 3411385,
+  base: 3413516,
+};
+const mossImageBaseModels: Record<MossImageModel, string> = {
+  sft: 'MOSS Image',
+  base: 'MOSS Image Base',
 };
 
+/** A fresh object each call: state and the server's corrected value must not share one. */
+const mossImageTurboToggleLora = (model: MossImageModel): ResourceData => ({
+  id: mossImageTurboToggleVersionIds[model],
+  baseModel: mossImageBaseModels[model],
+  model: { id: MOSS_IMAGE_TURBO_LORA_MODEL_ID, type: 'LORA' } as ResourceData['model'],
+  strength: 1,
+});
+
+/**
+ * Known versions match by id too: the output schema drops `model.id`, so the
+ * server parse sees only the version id.
+ */
 const isMossImageTurboLora = (resource: unknown) => {
-  const modelId = modelIdOf((resource as { model?: unknown } | null)?.model);
+  const r = resource as { id?: unknown; model?: unknown } | null;
+  if (typeof r?.id === 'number' && r.id in mossImageTurboLoraVersions) return true;
+  const modelId = modelIdOf(r?.model);
   return modelId != null && mossImageTurboLoraModelIds.includes(modelId);
 };
 
@@ -61,9 +70,13 @@ export const hasMossImageTurboLora = (resources: readonly unknown[] | undefined)
 export const mossImageModelOf = (ecosystem: string): MossImageModel =>
   ecosystem === 'MossImage_base' ? 'base' : 'sft';
 
-/** What the Turbo toggle writes: `resources` with and without the turbo LoRA. */
-export type ResourcesTurboMeta = {
+/**
+ * What the Turbo toggle writes: `resources` with and without the turbo LoRA.
+ * `full`: no free slot to turn it on.
+ */
+type ResourcesTurboMeta = {
   enabled: boolean;
+  full: boolean;
   withTurbo: ResourceData[];
   withoutTurbo: ResourceData[];
 };
@@ -80,30 +93,32 @@ const mossImageResources = cachedFactory(function mossImageResources(
 ) {
   const def = resourcesDef({ ecosystem, limit });
   const model = mossImageModelOf(ecosystem);
-  const turboLora = mossImageTurboToggleLoras[model];
+  const toggleVersionId = mossImageTurboToggleVersionIds[model];
   const isOtherCheckpointTurboLora = (r: ResourceData) => {
     const forModel = mossImageTurboLoraVersions[r.id]?.model;
     return forModel != null && forModel !== model;
   };
   return {
     ...def,
-    correct: (value: ResourceData[] | undefined) => {
+    correct: (value: ResourceData[]) => {
       if (!value?.some(isOtherCheckpointTurboLora)) return def.correct(value);
       const swapped = [
         ...value.filter((r) => !isMossImageTurboLora(r)),
         // its turbo LoRA could already be there beside the other one
-        value.find((r) => r.id === turboLora.id) ?? turboLora,
+        value.find((r) => r.id === toggleVersionId) ?? mossImageTurboToggleLora(model),
       ];
       return def.correct(swapped) ?? { value: swapped, reason: 'turbo_lora_checkpoint_swap' };
     },
     meta: (value: ResourceData[] | undefined) => {
       const resources = value ?? [];
       const withoutTurbo = resources.filter((r) => !isMossImageTurboLora(r));
+      const enabled = withoutTurbo.length < resources.length;
       return {
         ...def.meta(resources),
         turbo: {
-          enabled: withoutTurbo.length < resources.length,
-          withTurbo: [...withoutTurbo, turboLora],
+          enabled,
+          full: !enabled && resources.length >= limit,
+          withTurbo: [...withoutTurbo, mossImageTurboToggleLora(model)],
           withoutTurbo,
         } satisfies ResourcesTurboMeta,
       };
