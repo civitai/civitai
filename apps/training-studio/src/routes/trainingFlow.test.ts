@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
 import {
+  MAX_SAMPLE_PROMPTS,
+  addSamplePrompt,
   buildTrainingRuns,
   captionTriggerHit,
   compareFileNames,
@@ -206,6 +208,47 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+});
+
+describe('sample prompts', () => {
+  it('adds an empty row, never example text that would be submitted as a prompt', () => {
+    const next = addSamplePrompt([
+      { id: 0, text: 'ohwx, a photo' },
+      { id: 4, text: 'ohwx, at the beach' },
+    ]);
+    expect(next).toHaveLength(3);
+    expect(next[2]).toEqual({ id: 5, text: '' });
+  });
+
+  it('stops adding at the cap', () => {
+    const full = Array.from({ length: MAX_SAMPLE_PROMPTS }, (_, id) => ({ id, text: `p${id}` }));
+    expect(addSamplePrompt(full)).toBe(full);
+  });
+
+  const submitWith = (prompts: string[]) => {
+    const r = run('sdxl');
+    return buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [r] },
+      [image(1, ['ohwx', '1girl'])],
+      'ohwx',
+      'test',
+      [{ run: r, params: defaultRunParams(r) }],
+      prompts,
+      ['blue'],
+      'tag'
+    )[0]!.prompts;
+  };
+
+  it('submits trimmed prompts and drops blank rows', () => {
+    expect(submitWith(['ohwx, a photo', '', '   ', '  ohwx, at the beach '])).toEqual([
+      'ohwx, a photo',
+      'ohwx, at the beach',
+    ]);
+  });
+
+  it('never submits an empty prompt list when every row is blank', () => {
+    expect(submitWith(['', '  '])).toEqual(['', '  ']);
   });
 });
 

@@ -10,6 +10,7 @@ import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
 import type * as ZipModule from '~/server/utils/service-deal-zip';
+import type * as ScanModule from '~/server/services/creator-service-deal-file-scan';
 import {
   buildZip,
   JPEG_BYTES,
@@ -106,6 +107,25 @@ vi.mock('~/server/utils/service-deal-preview', () => ({
   buildEntryScanCopy: preview.entryCopy,
   PreviewRejectedError: class PreviewRejectedError extends Error {},
 }));
+
+/** The malware-scan flag, and which Finals reached the (real, stub) scan. */
+const malwareScan = vi.hoisted(() => ({
+  on: vi.fn(),
+  submitted: [] as number[],
+  refuse: new Set<number>(),
+}));
+vi.mock('~/server/services/creator-service-deal-file-scan', async (importOriginal) => {
+  const original = await importOriginal<typeof ScanModule>();
+  return {
+    ...original,
+    isFinalsMalwareScanOn: malwareScan.on,
+    submitFinalScan: (file: ScanModule.FinalScanTarget) => {
+      if (malwareScan.refuse.has(file.id)) throw new Error('scanner down');
+      malwareScan.submitted.push(file.id);
+      return original.submitFinalScan(file);
+    },
+  };
+});
 
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
@@ -280,6 +300,9 @@ beforeEach(async () => {
     fn.mockReset();
   bucket.objects.clear();
   bucket.zipReads.length = 0;
+  malwareScan.on.mockResolvedValue(true);
+  malwareScan.submitted.length = 0;
+  malwareScan.refuse.clear();
   s3.getPutUrl.mockImplementation(async (key: string) => ({ url: `https://put/${key}` }));
   s3.deleteObject.mockResolvedValue(undefined);
   chat.upsertDealChat.mockResolvedValue({ id: 77 });
@@ -1175,6 +1198,105 @@ describe('copies of scanned images', () => {
         ['Failed', 2],
         ['Failed', 3],
       ]);
+    });
+  });
+});
+
+describe('the finals malware scan flag', () => {
+  /** A delivered deal whose one Final is an image, unpacked and ready for its scans. */
+  async function deliveredImageFinal() {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'a.png', IMAGE_A);
+    await unpack.unpackFinals();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    return { dealId, fileId };
+  }
+
+  it('with it on, hands the Final to the scan, which leaves it waiting', async () => {
+    const { fileId } = await deliveredImageFinal();
+    expect(malwareScan.submitted).toEqual([fileId]);
+    await verdict('Scanned');
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Pending',
+      malwareScanStatus: 'Pending',
+    });
+  });
+
+  it('with it off, skips only the malware step: a clean Final passes and the deal completes', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const { dealId, fileId } = await deliveredImageFinal();
+    expect(malwareScan.submitted).toEqual([]);
+    expect((await fileRow(fileId)).malwareScanStatus).toBe('NotScanned');
+    // The image inside is still scanned, and the Final waits for it.
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    await verdict('Scanned');
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+    // Recorded as skipped, never as passed.
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Passed',
+      malwareScanStatus: 'NotScanned',
+    });
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    expect((await dealStatus(dealId)).status).toBe('Completed');
+  });
+
+  it('with it off, still fails the Final when an image is rejected, and holds the deal', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const { dealId, fileId } = await deliveredImageFinal();
+    await verdict('Blocked');
+    expect(await settle()).toEqual({ finalsFailed: 1, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+    expect(await dealStatus(dealId)).toEqual({
+      status: 'Disputed',
+      disputeReason: 'final_scan_failed',
+    });
+  });
+
+  it('turned on, stops passing a Final whose scan was skipped and hands it to the scan', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const { fileId } = await deliveredImageFinal();
+    await verdict('Scanned');
+    malwareScan.on.mockResolvedValue(true);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Pending',
+      malwareScanStatus: 'Pending',
+    });
+    expect(malwareScan.submitted).toEqual([fileId]);
+  });
+
+  it('turned on, puts a Final back to skipped when handing it to the scan fails, and goes on', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const first = await deliveredImageFinal();
+    const second = await deliveredImageFinal();
+    malwareScan.on.mockResolvedValue(true);
+    malwareScan.refuse.add(first.fileId);
+    await settle();
+    expect((await fileRow(first.fileId)).malwareScanStatus).toBe('NotScanned');
+    expect((await fileRow(second.fileId)).malwareScanStatus).toBe('Pending');
+    expect(malwareScan.submitted).toEqual([second.fileId]);
+    // The next run hands it over again.
+    malwareScan.refuse.clear();
+    await settle();
+    expect(malwareScan.submitted).toEqual([second.fileId, first.fileId]);
+  });
+
+  it('takes a pass on a skipped scan at the verdict entry point only while it is off', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const { fileId } = await deliveredImageFinal();
+    await q(`UPDATE "ServiceDealFileEntry" SET "scanStatus" = 'Passed' WHERE "fileId" = $1`, [
+      fileId,
+    ]);
+    malwareScan.on.mockResolvedValue(true);
+    expect(await files.recordFinalScanResult({ fileId, verdict: 'Passed' })).toEqual({
+      recorded: false,
+      held: false,
+    });
+    malwareScan.on.mockResolvedValue(false);
+    expect(await files.recordFinalScanResult({ fileId, verdict: 'Passed' })).toEqual({
+      recorded: true,
+      held: false,
     });
   });
 });

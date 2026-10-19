@@ -6,7 +6,11 @@ import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
+import {
+  BOX_OPENING_REWARD_STATUS,
+  boxOpenClaimKey,
+  MOD_GRANT_SOURCE_PREFIX,
+} from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
@@ -980,7 +984,11 @@ export async function refundShopPurchase(input: {
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
       return purchase.itemDefinitionId != null
-        ? takeBackBox(trx, { ...input, boxDefinitionId: purchase.itemDefinitionId })
+        ? takeBackBox(trx, {
+            userId: input.userId,
+            sourceKey: input.buzzTransactionId,
+            boxDefinitionId: purchase.itemDefinitionId,
+          })
         : takeBackCosmetics(trx, input);
     });
   } catch (error) {
@@ -1053,14 +1061,19 @@ function takeBackCosmetics(trx: Transaction<DB>, { userId, buzzTransactionId }: 
 /**
  * The held box, or once opened, its reward. The opening stays as the record of the draw, marked
  * refunded; it still counts as drawn, so the box cannot hand that reward to this user again.
+ * `sourceKey` is what granted the box: a purchase's transaction id, or a moderator grant's key.
  */
 async function takeBackBox(
   trx: Transaction<DB>,
-  { userId, buzzTransactionId, boxDefinitionId }: RefundTarget & { boxDefinitionId: number }
+  {
+    userId,
+    sourceKey,
+    boxDefinitionId,
+  }: { userId: number; sourceKey: string; boxDefinitionId: number }
 ) {
   const held = await trx
     .deleteFrom('Item')
-    .where('sourceKey', '=', buzzTransactionId)
+    .where('sourceKey', '=', sourceKey)
     .where('itemDefinitionId', '=', boxDefinitionId)
     .where('holderType', '=', 'user')
     .where('holderId', '=', userId)
@@ -1072,7 +1085,7 @@ async function takeBackBox(
     .set({ rewardStatus: BOX_OPENING_REWARD_STATUS.refunded })
     .where('userId', '=', userId)
     .where('boxDefinitionId', '=', boxDefinitionId)
-    .where('boxSourceKey', '=', buzzTransactionId)
+    .where('boxSourceKey', '=', sourceKey)
     .where('rewardStatus', '=', BOX_OPENING_REWARD_STATUS.granted)
     .returning('boxItemId')
     .executeTakeFirst();
@@ -1084,6 +1097,56 @@ async function takeBackBox(
     .where('claimKey', '=', boxOpenClaimKey(opening.boxItemId))
     .returning(REMOVED_HOLDING)
     .execute();
+}
+
+// TAKE BACK A GRANTED BOX: no purchase to refund, so it is found by sourceKey. No Buzz is returned.
+export async function takeBackGrantedBox(input: {
+  userId: number;
+  sourceKey: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  if (!input.sourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX))
+    return { ok: false, error: 'That box was not granted by a moderator.' };
+
+  let removed: RemovedHolding[];
+  try {
+    removed = await dbWrite.transaction().execute(async (trx) => {
+      await lockItemHolder(trx, input.userId);
+      const held = await trx
+        .selectFrom('Item')
+        .select('itemDefinitionId')
+        .where('sourceKey', '=', input.sourceKey)
+        .where('holderType', '=', 'user')
+        .where('holderId', '=', input.userId)
+        .executeTakeFirst();
+      const opened = held
+        ? undefined
+        : await trx
+            .selectFrom('BoxOpening')
+            .select('boxDefinitionId')
+            .where('boxSourceKey', '=', input.sourceKey)
+            .where('userId', '=', input.userId)
+            .executeTakeFirst();
+      const boxDefinitionId = held?.itemDefinitionId ?? opened?.boxDefinitionId;
+      if (boxDefinitionId === undefined)
+        throw new RefundRefused('Neither the box nor what it gave is on this account.');
+      return takeBackBox(trx, {
+        userId: input.userId,
+        sourceKey: input.sourceKey,
+        boxDefinitionId,
+      });
+    });
+  } catch (error) {
+    if (error instanceof RefundRefused) return { ok: false, error: error.message };
+    if (isItemHolderBusy(error)) return { ok: false, error: ITEM_HOLDER_BUSY_MESSAGE };
+    throw error;
+  }
+
+  await bustUserCosmeticCaches(input.userId);
+  const warning = await refreshRemovedHoldings(removed, 'Taken back');
+
+  await logAction(`takeBackBox:${input.sourceKey}`, input.userId, input.moderatorId);
+  return { ok: true, warning };
 }
 
 // GRANT A COSMETIC (Retool's UnlockCosmetics).

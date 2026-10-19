@@ -136,6 +136,7 @@
         userId={result.identity.id}
         canAct={data.canAct}
         canGrantCosmetics={!!data.grants['user.cosmetics.grant']}
+        canGrantBoxes={!!data.grants['items.boxes.grant']}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'generation'}

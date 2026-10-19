@@ -6,7 +6,9 @@ const USER_HOLDER = 'user';
 
 /**
  * Grants one held item to a user. `sourceKey` names what granted it (a purchase claim's transaction
- * id, a prize key) and is unique, so a retried grant throws instead of making a second row.
+ * id, a prize key, or a moderator grant's `modGrantSourceKey`, which starts with
+ * `MOD_GRANT_SOURCE_PREFIX`; the moderator app writes those rows itself) and is unique, so a retried
+ * grant throws instead of making a second row.
  */
 export function grantItem(
   tx: Prisma.TransactionClient,

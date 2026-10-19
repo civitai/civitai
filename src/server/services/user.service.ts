@@ -149,6 +149,7 @@ import {
   fetchUserCreator,
   getCachedUserCreator,
 } from '~/server/services/user-creator.service';
+import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -1928,7 +1929,7 @@ async function bulkUnpublishModelsForBannedUser({
         UPDATE "Model"
         SET
           status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
-          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb,
+          meta = ${asJsonbObjectSql('meta')} || ${unpublishedMeta}::jsonb,
           -- Raw SQL skips @updatedAt; the creator score re-scores owners from it.
           "updatedAt" = now()
         WHERE id IN (${Prisma.join(modelIds)})
@@ -1940,7 +1941,7 @@ async function bulkUnpublishModelsForBannedUser({
           UPDATE "ModelVersion"
           SET
             status = ${ModelStatus.Unpublished}::"ModelStatus",
-            meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+            meta = ${asJsonbObjectSql('meta')} || ${unpublishedMeta}::jsonb
           WHERE id IN (${Prisma.join(versionIds)})
         `;
 
@@ -3320,9 +3321,6 @@ type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
  * The top level and every nested key share one builder, `asJsonbObject`, so a change to
  * the guard cannot reach one level and miss the other.
  */
-function asJsonbObject(expr: string) {
-  return `(CASE WHEN jsonb_typeof(${expr}) = 'object' THEN ${expr} ELSE '{}'::jsonb END)`;
-}
 const SETTINGS_AS_OBJECT = asJsonbObject('settings');
 
 export async function patchUserSettings(

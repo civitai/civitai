@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertDraftFitsRows,
+  boxChecklist,
   boxParamsForSave,
   BoxRefusal,
   keptContentIds,
+  oddsChanged,
   planContentWrites,
   planTierWrites,
+  tierIdsWithInserted,
   type BoxContentRow,
+  type BoxDraft,
   type BoxTierRow,
   type DraftContent,
   type DraftTier,
+  type RewardInfo,
 } from '../box-builder';
+import { snapshotOfLiveBox } from '../box-odds-snapshot';
 
 const BOX = 9;
 const savedTiers: BoxTierRow[] = [
@@ -131,6 +137,32 @@ describe('planTierWrites', () => {
   });
 });
 
+describe('tierIdsWithInserted', () => {
+  const [common, rare] = asSaved();
+  const withEpic = () =>
+    planTierWrites(
+      BOX,
+      { tiers: [common, rare, { id: null, key: 'epic', name: 'Epic', weight: 5, color: null }] },
+      savedTiers
+    );
+
+  it("adds the inserted tiers' ids to the kept tiers' ids", () => {
+    expect(tierIdsWithInserted(withEpic(), [{ id: 3, key: 'epic' }])).toEqual(
+      new Map([
+        ['common', 1],
+        ['rare', 2],
+        ['epic', 3],
+      ])
+    );
+  });
+
+  it('throws when the insert returned no id for a new tier', () => {
+    expect(() => tierIdsWithInserted(withEpic(), [])).toThrow(
+      'The tier insert returned no id for "epic".'
+    );
+  });
+});
+
 describe('planContentWrites', () => {
   const ids = new Map([
     ['common', 1],
@@ -217,5 +249,202 @@ describe('boxParamsForSave', () => {
       event: null,
       params: { emptyRule: 'keep', art: { red: { closed: 'a.png' } } },
     });
+  });
+});
+
+const reward = (id: number, team: string | null, type = 'cosmetic') =>
+  [id, { type, team }] as [number, Pick<RewardInfo, 'type' | 'team'>];
+
+const checklistDraft = (
+  contents: [rewardDefinitionId: number, tierKey: string, enabled?: boolean][],
+  weights: [number, number] = [3, 1]
+): Pick<BoxDraft, 'name' | 'tiers' | 'contents'> => ({
+  name: 'Box',
+  tiers: [
+    { id: null, key: 'common', name: 'Common', weight: weights[0], color: null },
+    { id: null, key: 'rare', name: 'Rare', weight: weights[1], color: null },
+  ],
+  contents: contents.map(([rewardDefinitionId, tierKey, enabled = true]) => ({
+    id: null,
+    rewardDefinitionId,
+    tierKey,
+    enabled,
+  })),
+});
+
+describe('boxChecklist', () => {
+  const rewards = new Map([
+    reward(1, 'Blue'),
+    reward(2, 'Pink'),
+    reward(3, 'Blue'),
+    reward(4, 'Pink'),
+    reward(5, null),
+  ]);
+
+  it('passes a box with every tier stocked for every team', () => {
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [1, 'common'],
+          [2, 'common'],
+          [3, 'rare'],
+          [4, 'rare'],
+        ]),
+        rewards,
+        ['Blue', 'Pink']
+      )
+    ).toEqual([]);
+  });
+
+  it('names the tier and team left empty', () => {
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [1, 'common'],
+          [2, 'common'],
+          [3, 'rare'],
+        ]),
+        rewards,
+        ['Blue', 'Pink']
+      )
+    ).toEqual(['Rare has nothing for team Pink.']);
+  });
+
+  it('counts a disabled reward as absent', () => {
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [1, 'common'],
+          [2, 'common'],
+          [3, 'rare'],
+          [4, 'rare', false],
+        ]),
+        rewards,
+        ['Blue', 'Pink']
+      )
+    ).toEqual(['Rare has nothing for team Pink.']);
+  });
+
+  it('fills a tier for every team with a reward made for no team', () => {
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [1, 'common'],
+          [2, 'common'],
+          [5, 'rare'],
+        ]),
+        rewards,
+        ['Blue', 'Pink']
+      )
+    ).toEqual([]);
+  });
+
+  it('with no teams, requires every tier to hold a cosmetic made for no team', () => {
+    expect(boxChecklist(checklistDraft([[5, 'common']]), rewards, [])).toEqual([
+      'Rare has nothing in it.',
+    ]);
+  });
+
+  it('refuses a cosmetic made for a team no buyer is on', () => {
+    // A box with no event: its buyers have no team, so a team hat is never drawn.
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [5, 'common'],
+          [1, 'rare'],
+        ]),
+        rewards,
+        []
+      )
+    ).toEqual([
+      "Reward #1 is made for team Blue, but this box's buyers have no team, so nobody can draw it.",
+      'Rare has nothing in it.',
+    ]);
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [1, 'common'],
+          [2, 'common'],
+          [3, 'rare'],
+          [4, 'rare'],
+        ]),
+        rewards,
+        ['Blue']
+      )
+    ).toEqual([
+      "Reward #2 is made for team Pink, which isn't one of this event's teams.",
+      "Reward #4 is made for team Pink, which isn't one of this event's teams.",
+    ]);
+  });
+
+  it('refuses a weight of 0, a box inside a box, and any reward that is not a cosmetic', () => {
+    const odd = new Map([...rewards, reward(7, null, 'box'), reward(8, null, 'buzz')]);
+    expect(
+      boxChecklist(
+        checklistDraft(
+          [
+            [5, 'common'],
+            [7, 'rare'],
+            [8, 'rare'],
+          ],
+          [3, 0]
+        ),
+        odd,
+        []
+      )
+    ).toEqual([
+      'Rare: the weight must be a whole number above 0.',
+      "Reward #7 is a box; a box can't hold a box.",
+      "Reward #8 isn't a cosmetic; boxes hold cosmetics only.",
+      'Rare has nothing in it.',
+    ]);
+  });
+
+  it('refuses a reward listed twice', () => {
+    expect(
+      boxChecklist(
+        checklistDraft([
+          [5, 'common'],
+          [5, 'rare'],
+        ]),
+        rewards,
+        []
+      )
+    ).toContain('Reward #5 is in the box twice.');
+  });
+});
+
+describe('oddsChanged', () => {
+  const live = snapshotOfLiveBox(
+    [
+      { id: 1, key: 'common', name: 'Common', weight: 80, sortOrder: 0 },
+      { id: 2, key: 'rare', name: 'Rare', weight: 20, sortOrder: 1 },
+    ],
+    [
+      { tierId: 1, cosmeticId: 10 },
+      { tierId: 2, cosmeticId: 20 },
+    ]
+  );
+
+  it('is false for the same odds under the same event', () => {
+    expect(
+      oddsChanged({ snapshot: live, event: 'party' }, { snapshot: live, event: 'party' })
+    ).toBe(false);
+  });
+
+  it('is true when a weight changed', () => {
+    const reweighted = {
+      ...live,
+      tiers: live.tiers.map((tier) => (tier.key === 'rare' ? { ...tier, weight: 30 } : tier)),
+    };
+    expect(
+      oddsChanged({ snapshot: live, event: 'party' }, { snapshot: reweighted, event: 'party' })
+    ).toBe(true);
+  });
+
+  it('is true when only the event changed', () => {
+    expect(oddsChanged({ snapshot: live, event: 'party' }, { snapshot: live, event: null })).toBe(
+      true
+    );
   });
 });

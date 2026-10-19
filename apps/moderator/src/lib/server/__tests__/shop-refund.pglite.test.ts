@@ -40,9 +40,11 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { grantCosmetic, refundShopPurchase, removeCosmetic } = await import(
+const { grantCosmetic, refundShopPurchase, removeCosmetic, takeBackGrantedBox } = await import(
   '../user-actions.service'
 );
+const { BoxGrantRefused, grantMysteryBoxes } = await import('../mystery-box-grant.service');
+const { modGrantSourceKey } = await import('@civitai/shared/mystery-box');
 const { grantCosmeticsToUsers } = await import('../cosmetics.service');
 const { ITEM_HOLDER_BUSY_MESSAGE } = await import('../item-holder-lock');
 const { ITEM_HOLDER_LOCK_TIMEOUT } = await import('@civitai/shared/item-holder-lock');
@@ -637,6 +639,269 @@ describe('moderator grants take the item holder lock', () => {
     expect(await holdings()).toEqual([
       { userId: BUYER, cosmeticId: 700, claimKey: 'claimed' },
       { userId: OTHER, cosmeticId: 700, claimKey: 'claimed' },
+    ]);
+  });
+});
+
+describe('grantMysteryBoxes', () => {
+  const grantBoxes = (overrides: Partial<Parameters<typeof grantMysteryBoxes>[0]> = {}) =>
+    grantMysteryBoxes({
+      boxId: 1,
+      userIds: [BUYER, OTHER],
+      count: 2,
+      grantId: 'g1',
+      moderatorId: MOD,
+      ...overrides,
+    });
+  const items = async () =>
+    (
+      await db.query<{ itemDefinitionId: number; holderId: number; sourceKey: string }>(
+        `SELECT "itemDefinitionId", "holderId", "sourceKey" FROM "Item" ORDER BY "sourceKey"`
+      )
+    ).rows;
+  const purchases = async () =>
+    (await db.query(`SELECT 1 FROM "UserCosmeticShopPurchases"`)).rows.length;
+
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (${BUYER}), (${OTHER})`);
+  });
+
+  it('gives each user their boxes, unopened, under their own keys, with no purchase', async () => {
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [BUYER, OTHER],
+      alreadyGrantedUserIds: [],
+      busyUserIds: [],
+      failedUserIds: [],
+    });
+    expect(await items()).toEqual([
+      { itemDefinitionId: 1, holderId: BUYER, sourceKey: `mod-grant-g1-${BUYER}-1` },
+      { itemDefinitionId: 1, holderId: BUYER, sourceKey: `mod-grant-g1-${BUYER}-2` },
+      { itemDefinitionId: 1, holderId: OTHER, sourceKey: `mod-grant-g1-${OTHER}-1` },
+      { itemDefinitionId: 1, holderId: OTHER, sourceKey: `mod-grant-g1-${OTHER}-2` },
+    ]);
+    // The main app reads any purchase of a box as its having gone on sale.
+    expect(await purchases()).toBe(0);
+  });
+
+  it('records the moderator against each user and the box', async () => {
+    await grantBoxes();
+    expect(recordModActivity.mock.calls).toEqual([
+      [{ userId: MOD, entityType: 'user', entityId: BUYER, activity: 'grantBox:1:2:g1' }],
+      [{ userId: MOD, entityType: 'user', entityId: OTHER, activity: 'grantBox:1:2:g1' }],
+      [{ userId: MOD, entityType: 'mysteryBox', entityId: 1, activity: 'grantBox:2x2:g1' }],
+    ]);
+  });
+
+  it('grants nothing more when the same form is submitted again', async () => {
+    await grantBoxes();
+    recordModActivity.mockClear();
+
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [BUYER, OTHER],
+      busyUserIds: [],
+      failedUserIds: [],
+    });
+    expect(await items()).toHaveLength(4);
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('skips a busy user, and granting again with the same form finishes only them', async () => {
+    lockFails.set(BUYER, '55P03');
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [OTHER],
+      alreadyGrantedUserIds: [],
+      busyUserIds: [BUYER],
+      failedUserIds: [],
+    });
+    expect((await items()).map((i) => i.holderId)).toEqual([OTHER, OTHER]);
+
+    lockFails.clear();
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [BUYER],
+      alreadyGrantedUserIds: [OTHER],
+      busyUserIds: [],
+      failedUserIds: [],
+    });
+    expect((await items()).map((i) => i.holderId)).toEqual([BUYER, BUYER, OTHER, OTHER]);
+  });
+
+  it('locks each user in their own transaction before writing their boxes', async () => {
+    await grantBoxes();
+    const begins = statements.flatMap((st, i) => (st.sql === 'begin' ? [i] : []));
+    expect(begins).toHaveLength(2);
+    for (const [n, user] of [BUYER, OTHER].entries()) {
+      const commit = statements.findIndex((st, i) => i > begins[n] && st.sql === 'commit');
+      const own = statements.slice(begins[n] + 1, commit);
+      expect(own.slice(0, 2).map((st) => st.params)).toEqual([
+        [ITEM_HOLDER_LOCK_TIMEOUT],
+        [1229455361, user],
+      ]);
+      expect(own.slice(2).map((st) => st.sql.trim().split(/\s+/)[0].toLowerCase())).toEqual([
+        'select',
+        'select',
+        'insert',
+      ]);
+      expect(own.at(-1)?.params).toEqual(
+        expect.arrayContaining([`mod-grant-g1-${user}-1`, `mod-grant-g1-${user}-2`])
+      );
+    }
+  });
+
+  // Throwing would end the request and lose the form's grant id while earlier users keep their
+  // boxes, so the next attempt would give them a second set.
+  it('reports a user whose grant fails for another reason, and goes on to the rest', async () => {
+    lockFails.set(BUYER, '40P01');
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [OTHER],
+      alreadyGrantedUserIds: [],
+      busyUserIds: [],
+      failedUserIds: [BUYER],
+    });
+    expect((await items()).map((i) => i.holderId)).toEqual([OTHER, OTHER]);
+  });
+
+  it('gives nothing more to a user who already opened what this form gave', async () => {
+    await grantBoxes({ userIds: [BUYER], count: 1 });
+    await db.query(`DELETE FROM "Item"`);
+    await openedBox(modGrantSourceKey('g1', BUYER, 1), 77, 2, HAT);
+
+    await expect(grantBoxes({ userIds: [BUYER], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [BUYER],
+    });
+    expect(await items()).toEqual([]);
+  });
+
+  it('gives nothing more when the same form comes back with a higher count', async () => {
+    await grantBoxes({ userIds: [BUYER], count: 1 });
+    await expect(grantBoxes({ userIds: [BUYER], count: 3 })).resolves.toMatchObject({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [BUYER],
+    });
+    expect(await items()).toHaveLength(1);
+  });
+
+  it('tells apart users whose ids share a prefix', async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (1), (12)`);
+    await expect(grantBoxes({ userIds: [12, 1], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [12, 1],
+      alreadyGrantedUserIds: [],
+    });
+  });
+
+  it("is not stopped by another grant id's boxes, nor by another user's", async () => {
+    await grantBoxes({ userIds: [OTHER], count: 1 });
+    await holdBox(modGrantSourceKey('g2', BUYER, 1));
+    await expect(grantBoxes({ userIds: [BUYER], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [BUYER],
+    });
+  });
+
+  it.each([
+    ['a draft box', { boxId: 5 }, 'Only a published box can be granted.'],
+    ['an archived box', { boxId: 6 }, 'Only a published box can be granted.'],
+    ['a cosmetic', { boxId: 2 }, 'No such box.'],
+    ['no box', { boxId: 999 }, 'No such box.'],
+    ['a user who does not exist', { userIds: [BUYER, 4242] }, "These users don't exist: 4242"],
+    ['no user', { userIds: [] }, 'Name at least one user.'],
+    ['no boxes', { count: 0 }, 'Grant between 1 and 10 boxes each.'],
+    ['too many boxes', { count: 11 }, 'Grant between 1 and 10 boxes each.'],
+    ['a grant id a key cannot carry', { grantId: 'g-1' }, 'Not a grant id: g-1'],
+  ])('refuses %s, writing nothing', async (_, overrides, message) => {
+    await db.exec(`
+      INSERT INTO "ItemDefinition" ("id", "type", "name", "status") VALUES
+        (5, 'box', 'Draft box', 'draft'), (6, 'box', 'Old box', 'archived');
+    `);
+    const refused = grantBoxes(overrides);
+    await expect(refused).rejects.toBeInstanceOf(BoxGrantRefused);
+    await expect(refused).rejects.toThrow(message);
+    expect(await items()).toEqual([]);
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('takeBackGrantedBox', () => {
+  const GRANTED = modGrantSourceKey('g1', BUYER, 1);
+  const takeBack = (sourceKey: string, userId = BUYER) =>
+    takeBackGrantedBox({ userId, sourceKey, moderatorId: MOD });
+
+  it('takes back a held granted box, and only that box', async () => {
+    await holdBox(GRANTED);
+    await holdBox(modGrantSourceKey('g1', BUYER, 2));
+
+    await expect(takeBack(GRANTED)).resolves.toEqual({ ok: true });
+
+    expect(await heldBoxes()).toEqual([modGrantSourceKey('g1', BUYER, 2)]);
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: MOD,
+      entityType: 'user',
+      entityId: BUYER,
+      activity: `takeBackBox:${GRANTED}`,
+    });
+  });
+
+  it('takes back what an opened granted box gave, keeping the opening on record', async () => {
+    await openedBox(GRANTED, 77, 2, HAT);
+    await grant(HAT, 'claimed');
+
+    await expect(takeBack(GRANTED)).resolves.toEqual({ ok: true });
+
+    expect(await holdings()).toEqual([{ userId: BUYER, cosmeticId: HAT, claimKey: 'claimed' }]);
+    expect(await openingStatus(77)).toBe('refunded');
+    expect(bustUserCosmeticCaches).toHaveBeenCalledWith(BUYER);
+  });
+
+  it('refuses a second take-back, changing nothing', async () => {
+    await openedBox(GRANTED, 77, 2, HAT);
+    await takeBack(GRANTED);
+    recordModActivity.mockClear();
+
+    await expect(takeBack(GRANTED)).resolves.toEqual({
+      ok: false,
+      error: 'Neither the box nor what it gave is on this account.',
+    });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('will not take back a bought box: that is a refund', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await holdBox('box-a');
+
+    await expect(takeBack('box-a')).resolves.toEqual({
+      ok: false,
+      error: 'That box was not granted by a moderator.',
+    });
+    expect(await heldBoxes()).toEqual(['box-a']);
+    expect(await isRefunded('box-a')).toBe(false);
+  });
+
+  it('does not reach another user’s granted box', async () => {
+    await holdBox(GRANTED, OTHER);
+
+    await expect(takeBack(GRANTED)).resolves.toMatchObject({ ok: false });
+    expect(await heldBoxes()).toEqual([GRANTED]);
+  });
+
+  it('answers busy and changes nothing when the user’s lock is held', async () => {
+    await holdBox(GRANTED);
+    lockFails.set(BUYER, '55P03');
+
+    await expect(takeBack(GRANTED)).resolves.toEqual({
+      ok: false,
+      error: ITEM_HOLDER_BUSY_MESSAGE,
+    });
+    expect(await heldBoxes()).toEqual([GRANTED]);
+  });
+
+  it('takes the lock before reading which box it is', async () => {
+    await holdBox(GRANTED);
+    await takeBack(GRANTED);
+
+    const begin = statements.findIndex((st) => st.sql === 'begin');
+    expect(statements.slice(begin + 1, begin + 3)).toEqual([
+      LOCK_TIMEOUT,
+      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
     ]);
   });
 });

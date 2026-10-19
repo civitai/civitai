@@ -54,7 +54,13 @@ export function StorefrontSections({
         viaShopUserId={ownerUserId}
       />
     ),
-    services: <ServicesSection ownerUserId={ownerUserId} username={username} />,
+    services: (
+      <ServicesSection
+        ownerUserId={ownerUserId}
+        username={username}
+        shopPublished={shop.settings.enabled === true}
+      />
+    ),
     merch: <MerchSection />,
     models: <ModelsSection shop={shop} username={username} preview={preview} />,
   };
