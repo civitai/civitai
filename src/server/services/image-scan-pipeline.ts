@@ -507,8 +507,9 @@ export type ScanOutcome = {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it. imageScanning never passes `blocked`, so on that path only
- *    `audit.blockedFor` and moderation rules re-block.
+ *    rescan can clear it, unless the owner is banned or the image is under appeal.
+ *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
+ *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
@@ -632,6 +633,24 @@ export async function resolveScanOutcome({
   if (image.needsReview === 'csam') {
     toUpdate.needsReview = 'csam';
     reviewKey = 'csam';
+  }
+
+  // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
+  // never lifts it. Read fresh, not from `image`: the ban can block the row while this scan runs.
+  if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    const [current] = await dbWrite.$queryRaw<
+      { ingestion: ImageIngestionStatus; blockedFor: string | null; ownerBanned: boolean }[]
+    >`
+      SELECT i.ingestion, i."blockedFor", u."bannedAt" IS NOT NULL AS "ownerBanned"
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId"
+      WHERE i.id = ${image.id}
+    `;
+    if (current?.ownerBanned && current.ingestion === ImageIngestionStatus.Blocked) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    }
   }
 
   await dbWrite.$executeRaw`

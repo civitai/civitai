@@ -6741,6 +6741,12 @@ export async function createImage({
     verifiedSourceImageIds
   );
   const metadata = stripBlockProvenanceMetadata(image.metadata);
+  // A ban blocks the owner's media once, when it lands, so a row created after that would stay up.
+  const owner = await dbWrite.user.findUnique({
+    where: { id: image.userId },
+    select: { bannedAt: true },
+  });
+  const ownerBanned = !!owner?.bannedAt;
   const result = await dbWrite.image.create({
     data: {
       ...pickClientImageColumns(image),
@@ -6758,7 +6764,15 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
-      ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
+      ...(ownerBanned
+        ? {
+            ingestion: ImageIngestionStatus.Blocked,
+            blockedFor: BlockedReason.Moderated,
+            nsfwLevel: NsfwLevel.Blocked,
+          }
+        : {
+            ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
+          }),
     },
     select: { id: true },
   });
@@ -6770,7 +6784,7 @@ export async function createImage({
     void fillVideoDimensions({ id: result.id, url: image.url }).catch(() => null);
   }
 
-  if (!skipIngestion) {
+  if (!skipIngestion && !ownerBanned) {
     await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
     await ingestImage({
       image: {
