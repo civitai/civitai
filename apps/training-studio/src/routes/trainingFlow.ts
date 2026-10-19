@@ -461,10 +461,18 @@ export function addSamplePrompt(prompts: SamplePrompt[]): SamplePrompt[] {
   return [...prompts, { id, text: '' }];
 }
 
-/** The sample prompts a run is submitted with: trimmed, blank rows dropped. An added row starts empty,
- *  and an empty sample prompt is not a test image anyone asked for. */
-export function submittedPrompts(texts: string[]): string[] {
+/** The filled sample prompts, trimmed. An added row starts empty, and an empty sample prompt is not a
+ *  test image anyone asked for. */
+export function filledPrompts(texts: string[]): string[] {
   return texts.map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
+/** The sample prompts a run is submitted with: the filled ones, or the rows as they are when none is
+ *  filled. Blank prompts generate no images either way; an all-blank list keeps the shape every
+ *  trainer has always sent rather than an empty array no submit path has been seen to accept. */
+export function submittedPrompts(texts: string[]): string[] {
+  const filled = filledPrompts(texts);
+  return filled.length ? filled : texts;
 }
 
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there

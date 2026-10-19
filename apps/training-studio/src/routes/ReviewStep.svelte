@@ -49,7 +49,7 @@
     runParamsKey,
     runVersion,
     runVersionLabel,
-    submittedPrompts,
+    filledPrompts,
     teLocked,
     withTrigger,
     type LaunchedRun,
@@ -335,8 +335,8 @@
       ? prompts.filter((p) => p.text.trim() && !promptHasTrigger(triggerText, p.text)).length
       : 0
   );
-  // Blank rows are dropped at submit (`submittedPrompts`), so they are not counted as samples.
-  const filledPrompts = $derived(submittedPrompts(prompts.map((p) => p.text)).length);
+  // Blank rows generate no sample image, so they are not counted.
+  const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
   // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
   // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
@@ -662,6 +662,9 @@
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
         <p class="mt-2.5 font-mono text-xs text-dark-2">
+          {#if filledCount === 0}
+            <span class="text-buzz">No sample prompt filled in: no test images will be generated.</span>
+          {/if}
           Applied to every run.
           {#if triggerText}
             Each sample starts with your trigger word "{triggerText}", so the images test what the
@@ -694,7 +697,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Sample prompts</dt>
         <dd class="m-0 font-semibold {promptsMissingTrigger > 0 ? 'text-buzz' : 'text-dark-0'}">
-          {filledPrompts}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
+          {filledCount}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
         </dd>
       </div>
     </dl>

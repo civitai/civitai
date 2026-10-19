@@ -226,19 +226,29 @@ describe('sample prompts', () => {
     expect(addSamplePrompt(full)).toBe(full);
   });
 
-  it('submits trimmed prompts and drops blank rows', () => {
+  const submitWith = (prompts: string[]) => {
     const r = run('sdxl');
-    const [out] = buildTrainingRuns(
+    return buildTrainingRuns(
       { media: 'image', loraType: 'character', runs: [r] },
       [image(1, ['ohwx', '1girl'])],
       'ohwx',
       'test',
       [{ run: r, params: defaultRunParams(r) }],
-      ['ohwx, a photo', '', '   ', '  ohwx, at the beach '],
+      prompts,
       ['blue'],
       'tag'
-    );
-    expect(out!.prompts).toEqual(['ohwx, a photo', 'ohwx, at the beach']);
+    )[0]!.prompts;
+  };
+
+  it('submits trimmed prompts and drops blank rows', () => {
+    expect(submitWith(['ohwx, a photo', '', '   ', '  ohwx, at the beach '])).toEqual([
+      'ohwx, a photo',
+      'ohwx, at the beach',
+    ]);
+  });
+
+  it('never submits an empty prompt list when every row is blank', () => {
+    expect(submitWith(['', '  '])).toEqual(['', '  ']);
   });
 });
 
