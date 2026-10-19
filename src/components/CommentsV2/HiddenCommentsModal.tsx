@@ -69,6 +69,7 @@ function HiddenModelCommentsContent({ modelId }: { modelId: number }) {
             onClick={fetchNextPage}
             loading={isFetchingNextPage}
             label="Load More Comments"
+            color="blue"
             variant="subtle"
             size="md"
           />

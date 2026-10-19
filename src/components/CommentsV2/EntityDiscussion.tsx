@@ -86,6 +86,7 @@ export function EntityDiscussion({ entityType, entityId, userId, limit = 10 }: P
                         onClick={toggleShowMore}
                         loading={isFetchingNextPage}
                         label="Load More Comments"
+                        color="blue"
                         variant="subtle"
                         size="md"
                       />
