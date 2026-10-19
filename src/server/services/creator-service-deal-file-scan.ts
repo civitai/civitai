@@ -1,4 +1,4 @@
-import { isFliptPublic } from '~/server/flipt/tester-segment';
+import { ensureFliptInitialized, getFliptClientSync } from '~/server/flipt/client';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 
 /**
@@ -25,17 +25,33 @@ export async function submitFinalScan(file: FinalScanTarget): Promise<'Pending'>
 }
 
 /**
- * Whether Finals go to the malware scan. Off, or Flipt unreadable, means the step is skipped: the
- * Final's `malwareScanStatus` is recorded as NotScanned, never Passed, and every image inside it is
- * still scanned and still decides the verdict. Read through one synthetic entity, so launch it by
- * setting the flag's `enabled`, not by percentage.
+ * Whether Finals go to the malware scan. Off means the step is skipped: the Final's
+ * `malwareScanStatus` is recorded as NotScanned, never Passed, and every image inside it is still
+ * scanned and still decides the verdict.
+ *
+ * Skipped only on an answer from Flipt: the flag set off, or not created yet. When Flipt cannot be
+ * reached the scan stays on, so an outage never lets a Final through unscanned. `isFlipt` turns both
+ * cases into false, so this asks the client directly. Read through one synthetic entity, so launch it
+ * by setting the flag's `enabled`, not by percentage.
  */
 export async function isFinalsMalwareScanOn() {
-  const fliptKey = getFeatureFliptKey('creatorServicesFinalsMalwareScan');
-  if (!fliptKey) return false;
+  const flagKey = getFeatureFliptKey('creatorServicesFinalsMalwareScan');
+  if (!flagKey) return true;
   try {
-    return await isFliptPublic(fliptKey);
+    await ensureFliptInitialized();
   } catch {
+    return true;
+  }
+  const client = getFliptClientSync();
+  if (!client) return true;
+  try {
+    return client.evaluateBoolean({
+      flagKey,
+      entityId: '0',
+      context: { userId: '0', isModerator: 'false' },
+    }).enabled;
+  } catch {
+    // The client has a config and the flag is not in it.
     return false;
   }
 }

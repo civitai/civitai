@@ -416,6 +416,17 @@ describe('building the archive a buyer downloads', () => {
     );
   });
 
+  it('with the finals malware scan off, records the step as skipped instead', async () => {
+    scanSeam.isFinalsMalwareScanOn.mockResolvedValueOnce(false);
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    await repack.repackFinals();
+    expect(scanSeam.submitFinalScan).not.toHaveBeenCalled();
+    expect(await fileRow(fileId)).toMatchObject({
+      malwareScanStatus: 'NotScanned',
+      scanStatus: 'Pending',
+    });
+  });
+
   it('writes only regular files, in the original order, under tidied names', async () => {
     const items = [
       { name: 'folder/' },

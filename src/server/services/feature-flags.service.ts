@@ -397,7 +397,8 @@ const featureFlags = createFeatureFlags({
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
-  // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step.
+  // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
+  // unreachable keeps it.
   creatorServicesFinalsMalwareScan: {
     availability: [],
     fliptKey: 'creator-services-finals-malware-scan',

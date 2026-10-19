@@ -384,7 +384,18 @@ export async function settleFinals() {
           AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
         ORDER BY "id" LIMIT 50)
       RETURNING "id"`;
-    for (const { id } of skipped) await handOffToScan(id);
+    for (const { id } of skipped)
+      await handOffToScan(id).catch(async (error) => {
+        // Back to skipped, so the next run hands it over again instead of leaving it waiting.
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
+          WHERE "id" = ${id}::int AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+        logUnpack(
+          'malware scan resubmit failed; it will be retried',
+          { fileId: id, error: (error as Error)?.message },
+          'error'
+        );
+      });
     if (skipped.length) logUnpack('skipped malware scans resubmitted', { count: skipped.length });
   }
 

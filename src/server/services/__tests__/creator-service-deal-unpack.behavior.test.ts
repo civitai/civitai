@@ -109,13 +109,18 @@ vi.mock('~/server/utils/service-deal-preview', () => ({
 }));
 
 /** The malware-scan flag, and which Finals reached the (real, stub) scan. */
-const malwareScan = vi.hoisted(() => ({ on: vi.fn(), submitted: [] as number[] }));
+const malwareScan = vi.hoisted(() => ({
+  on: vi.fn(),
+  submitted: [] as number[],
+  refuse: new Set<number>(),
+}));
 vi.mock('~/server/services/creator-service-deal-file-scan', async (importOriginal) => {
   const original = await importOriginal<typeof ScanModule>();
   return {
     ...original,
     isFinalsMalwareScanOn: malwareScan.on,
     submitFinalScan: (file: ScanModule.FinalScanTarget) => {
+      if (malwareScan.refuse.has(file.id)) throw new Error('scanner down');
       malwareScan.submitted.push(file.id);
       return original.submitFinalScan(file);
     },
@@ -297,6 +302,7 @@ beforeEach(async () => {
   bucket.zipReads.length = 0;
   malwareScan.on.mockResolvedValue(true);
   malwareScan.submitted.length = 0;
+  malwareScan.refuse.clear();
   s3.getPutUrl.mockImplementation(async (key: string) => ({ url: `https://put/${key}` }));
   s3.deleteObject.mockResolvedValue(undefined);
   chat.upsertDealChat.mockResolvedValue({ id: 77 });
@@ -1258,6 +1264,22 @@ describe('the finals malware scan flag', () => {
       malwareScanStatus: 'Pending',
     });
     expect(malwareScan.submitted).toEqual([fileId]);
+  });
+
+  it('turned on, puts a Final back to skipped when handing it to the scan fails, and goes on', async () => {
+    malwareScan.on.mockResolvedValue(false);
+    const first = await deliveredImageFinal();
+    const second = await deliveredImageFinal();
+    malwareScan.on.mockResolvedValue(true);
+    malwareScan.refuse.add(first.fileId);
+    await settle();
+    expect((await fileRow(first.fileId)).malwareScanStatus).toBe('NotScanned');
+    expect((await fileRow(second.fileId)).malwareScanStatus).toBe('Pending');
+    expect(malwareScan.submitted).toEqual([second.fileId]);
+    // The next run hands it over again.
+    malwareScan.refuse.clear();
+    await settle();
+    expect(malwareScan.submitted).toEqual([second.fileId, first.fileId]);
   });
 
   it('takes a pass on a skipped scan at the verdict entry point only while it is off', async () => {

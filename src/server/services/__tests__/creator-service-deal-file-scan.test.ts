@@ -1,20 +1,45 @@
-import { describe, expect, it, vi } from 'vitest';
-import { isFliptPublic } from '~/server/flipt/tester-segment';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ensureFliptInitialized, getFliptClientSync } from '~/server/flipt/client';
 import { isFinalsMalwareScanOn } from '~/server/services/creator-service-deal-file-scan';
 
-vi.mock('~/server/flipt/tester-segment', () => ({ isFliptPublic: vi.fn() }));
+vi.mock('~/server/flipt/client', () => ({
+  ensureFliptInitialized: vi.fn(),
+  getFliptClientSync: vi.fn(),
+}));
+
+const evaluateBoolean = vi.fn();
 
 describe('isFinalsMalwareScanOn', () => {
-  it('reads the finals malware scan flag', async () => {
-    vi.mocked(isFliptPublic).mockResolvedValue(true);
+  beforeEach(() => {
+    vi.mocked(ensureFliptInitialized).mockReset().mockResolvedValue(undefined);
+    vi.mocked(getFliptClientSync)
+      .mockReset()
+      .mockReturnValue({ evaluateBoolean } as never);
+    evaluateBoolean.mockReset();
+  });
+
+  it('follows the finals malware scan flag', async () => {
+    evaluateBoolean.mockReturnValue({ enabled: true });
     expect(await isFinalsMalwareScanOn()).toBe(true);
-    expect(isFliptPublic).toHaveBeenLastCalledWith('creator-services-finals-malware-scan');
-    vi.mocked(isFliptPublic).mockResolvedValue(false);
+    expect(evaluateBoolean).toHaveBeenLastCalledWith(
+      expect.objectContaining({ flagKey: 'creator-services-finals-malware-scan' })
+    );
+    evaluateBoolean.mockReturnValue({ enabled: false });
     expect(await isFinalsMalwareScanOn()).toBe(false);
   });
 
-  it('is off when Flipt cannot answer', async () => {
-    vi.mocked(isFliptPublic).mockRejectedValue(new Error('flipt down'));
+  it('is off while the flag has not been created', async () => {
+    evaluateBoolean.mockImplementation(() => {
+      throw new Error('flag not found');
+    });
     expect(await isFinalsMalwareScanOn()).toBe(false);
+  });
+
+  it('stays on when Flipt cannot be reached', async () => {
+    vi.mocked(getFliptClientSync).mockReturnValue(null);
+    expect(await isFinalsMalwareScanOn()).toBe(true);
+    vi.mocked(ensureFliptInitialized).mockRejectedValue(new Error('flipt down'));
+    expect(await isFinalsMalwareScanOn()).toBe(true);
+    expect(evaluateBoolean).not.toHaveBeenCalled();
   });
 });
