@@ -24,7 +24,6 @@ const greenPaths: string[] = [
   '/builds',
   '/challenges',
   '/challenges/winners',
-  '/events',
   '/changelog',
   '/newsroom',
   '/creator-program',
