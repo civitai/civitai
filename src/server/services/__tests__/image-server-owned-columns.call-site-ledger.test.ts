@@ -220,11 +220,6 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: ['pickClientImageColumns(customThumbnail)'],
     serverColumns: [],
   },
-  'src/pages/api/admin/temp/upload-avatar-starters.ts#store': {
-    calls: 1,
-    spreads: [],
-    serverColumns: [],
-  },
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
