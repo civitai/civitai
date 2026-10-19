@@ -472,17 +472,16 @@ describe('PageBlockHost BLOCK_INIT — storageMode is set from the SURFACE', () 
     posts.stop();
   });
 
-  test.each(['page-run', 'private-run', 'review-preview', 'model-slot'] as const)(
-    '🔴 %s does NOT emit storageMode, even when the token lacks apps:storage',
-    async (surface) => {
-      const { posts, init } = await mountAndCaptureInit({
-        ...NO_STORAGE_SCOPES,
-        surface,
-      });
-      expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
-      expect(init.token.scopes).toContain('ai:write');
-      expect(init).not.toHaveProperty('storageMode');
-      posts.stop();
-    }
-  );
+  // One non-dev surface proves the host wiring; the unit test on
+  // `blockInitStorageMode` covers every surface.
+  test('🔴 page-run does NOT emit storageMode, even when the token lacks apps:storage', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      ...NO_STORAGE_SCOPES,
+      surface: 'page-run',
+    });
+    expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
+    expect(init.token.scopes).toContain('ai:write');
+    expect(init).not.toHaveProperty('storageMode');
+    posts.stop();
+  });
 });

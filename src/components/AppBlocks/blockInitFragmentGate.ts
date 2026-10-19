@@ -227,10 +227,9 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
 /**
  * Does BLOCK_INIT on this surface carry `storageMode: 'local-preview'`?
  *
- * In that mode an SDK that reads the field serves the block's document store
- * from a local, in-memory store instead of the real storage routes, so code that
- * has not been reviewed can be exercised against the storage interface while
- * real storage stays closed to it.
+ * ADVISORY: it tells the SDK to serve the block's document store from a local,
+ * in-memory store instead of the real storage routes. It grants nothing and
+ * gates nothing server-side; an SDK that predates it ignores it.
  *
  * Decided by the SURFACE the host mounted, never by the token's scopes or by
  * anything the block sends: a published app whose token lacks `apps:storage`

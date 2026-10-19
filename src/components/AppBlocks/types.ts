@@ -422,13 +422,8 @@ export interface BlockInitPayload {
   maxBrowsingLevel?: number;
   effectiveBrowsingLevel?: number;
   /**
-   * `'local-preview'`: an SDK that reads the field serves the document store
-   * from a local, in-memory store in this frame instead of the real storage
-   * routes, so unreviewed code can use the storage interface while real storage
-   * stays closed to it. Absent: real storage. Older SDKs ignore it.
-   *
-   * Set by the page host per surface (`BLOCK_HOST_LOCAL_PREVIEW_STORAGE`), never
-   * from token scopes or anything the block sends. Optional and ADDED, like
+   * Advisory local-storage hint for the SDK; see
+   * `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`. Optional and ADDED, like
    * `viewer.signedIn`, so it cannot trip the deployed guard's missing-field /
    * wrong-shape rejections documented above.
    */
