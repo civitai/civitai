@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ago, clipList, modelRef, pastAppealsText, shortHash, yearMonth } from '../appeal-row';
+import {
+  ago,
+  appealDecisionHint,
+  clipList,
+  modelRef,
+  pastAppealsText,
+  shortHash,
+  yearMonth,
+} from '../appeal-row';
 
 describe('pastAppealsText', () => {
   it('lists only the non-zero statuses', () => {
@@ -52,5 +60,32 @@ describe('modelRef', () => {
     expect(modelRef(1284311)).toBe('#1\u202f284\u202f311');
     expect(modelRef(8030)).toBe('#8\u202f030');
     expect(modelRef(805)).toBe('#805');
+  });
+});
+
+describe('appealDecisionHint', () => {
+  const LABELLED =
+    'Every decision here is stored as a labelled example for tuning the text-scan prompts.';
+  const SETTLES = 'Ruling here also settles this model in Auto-flagged.';
+
+  it('says a hash appeal on an applied auto-flag also settles it in Auto-flagged', () => {
+    expect(appealDecisionHint({ hash: true, alsoInAutoFlagged: true, textScan: false })).toBe(
+      SETTLES
+    );
+  });
+  it('makes no labelled-example claim for a hash appeal with no text-scan verdict', () => {
+    expect(
+      appealDecisionHint({ hash: true, alsoInAutoFlagged: false, textScan: false })
+    ).toBeUndefined();
+  });
+  it('keeps the labelled-example hint for a text-scan appeal', () => {
+    expect(appealDecisionHint({ hash: false, alsoInAutoFlagged: true, textScan: true })).toBe(
+      LABELLED
+    );
+  });
+  it('joins both when a hash-flagged model also carries a text-scan verdict', () => {
+    expect(appealDecisionHint({ hash: true, alsoInAutoFlagged: true, textScan: true })).toBe(
+      `${SETTLES} ${LABELLED}`
+    );
   });
 });

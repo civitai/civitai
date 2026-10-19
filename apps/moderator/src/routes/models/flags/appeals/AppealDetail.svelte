@@ -63,7 +63,7 @@
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
   import { effectiveSource } from '$lib/minor-flags/appeal-filters';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
-  import { modelUrl, waiting } from '$lib/minor-flags/appeal-row';
+  import { appealDecisionHint, modelUrl, waiting } from '$lib/minor-flags/appeal-row';
   import { fetchModelFlagDetail, flagPromptId } from '$lib/minor-flags/model-detail';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
@@ -129,6 +129,13 @@
   } as const;
 
   const poiOpen = $derived(poiInForce(row));
+  const decisionHint = $derived(
+    appealDecisionHint({
+      hash: matchedByHash,
+      alsoInAutoFlagged: row.alsoInAutoFlagged,
+      textScan: openVerdicts(row.textScanFlags).length > 0,
+    })
+  );
   const canUphold = $derived(flagInForce(row));
 
   // Mirrors `resolveMinorFlagAppeal`'s check; change both together.
@@ -304,7 +311,7 @@
         {buttons}
         {fields}
         {problem}
-        hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+        hint={decisionHint}
       />
     </form>
   {/snippet}

@@ -44,3 +44,23 @@ export const shortHash = (hash: string) =>
 
 /** "2025-11" (UTC), for a dated fact where the day adds nothing. */
 export const yearMonth = (value: Date | string) => new Date(value).toISOString().slice(0, 7);
+
+/** The line under an appeal's decision bar, only saying what the ruling really does. Upholding a hash
+ *  flag confirms it and approving reverts it, so either way it leaves Auto-flagged; nothing records the
+ *  hash match itself as a false positive. Only text-scan verdicts are stamped as labelled examples. */
+export const appealDecisionHint = ({
+  hash,
+  alsoInAutoFlagged,
+  textScan,
+}: {
+  hash: boolean;
+  alsoInAutoFlagged: boolean;
+  textScan: boolean;
+}): string | undefined =>
+  [
+    hash && alsoInAutoFlagged && 'Ruling here also settles this model in Auto-flagged.',
+    textScan &&
+      'Every decision here is stored as a labelled example for tuning the text-scan prompts.',
+  ]
+    .filter(Boolean)
+    .join(' ') || undefined;
