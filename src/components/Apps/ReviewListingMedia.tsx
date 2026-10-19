@@ -1,4 +1,4 @@
-import { Card, Group, Stack, Text } from '@mantine/core';
+import { Badge, Card, Group, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
@@ -8,6 +8,52 @@ import {
 } from '~/components/Apps/appListingScreenshotNav';
 import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import type {
+  ListingReviewImage,
+  ListingReviewMedia,
+} from '~/server/services/blocks/app-listing.service';
+import {
+  LISTING_ASSET_AUDIENCE_LABEL,
+  listingDisplayAssetAudience,
+  type ListingAssetAudience,
+} from '~/shared/utils/listing-media-split';
+import { MATURE_STORE_HOST } from '~/shared/utils/listing-rating-display';
+
+/** Badge colour per audience: red-host-only is the one a moderator must notice. */
+const AUDIENCE_COLOR: Record<ListingAssetAudience, string> = {
+  'com-and-red': 'blue',
+  'red-only': 'red',
+  unrated: 'gray',
+};
+
+/**
+ * Where one listing image shows, as a badge. `rating` is the listing rating it is judged
+ * against; without one, the widest civitai.com rating (`pg13`), so the label says only whether
+ * civitai.com could show the image at all.
+ */
+export function ReviewMediaAudienceBadge({
+  image,
+  redSlot,
+  rating,
+  testId,
+}: {
+  image: Pick<ListingReviewImage, 'nsfwLevel'> | null | undefined;
+  redSlot?: boolean;
+  rating?: string | null;
+  testId: string;
+}) {
+  if (!image) return null;
+  const audience = listingDisplayAssetAudience(
+    { nsfwLevel: image.nsfwLevel, redSlot },
+    rating ?? 'pg13'
+  );
+  return (
+    <Badge size="xs" variant="light" color={AUDIENCE_COLOR[audience]} data-testid={testId}>
+      {LISTING_ASSET_AUDIENCE_LABEL[audience]}
+    </Badge>
+  );
+}
 
 /**
  * The app's STORE LISTING media, on the per-submission review page.
@@ -29,6 +75,12 @@ import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsVi
  * small to assess is the same as not showing it. The size is a per-caller variant rather than
  * a change to the shared constants, which would double the height of every queue row.
  *
+ * CLICK-TO-REVEAL AND AUDIENCES (`reviewMedia`). Given the moderator's per-image facts, an image
+ * rated R, X or XXX is held behind `ReviewMediaReveal` on civitai.com until clicked, every image
+ * carries a badge saying where it shows, and the civitai.red icon / cover overrides get their own
+ * tiles (labelled civitai.red only — civitai.com never shows them, whatever their level). The
+ * off-site / listing-media review modal renders this card too, from its preview read.
+ *
  * ⚠️ IT RENDERS FOR EVERY MODE. This card is outside the pending-only gates, so an approved
  * or rejected submission still shows its store art for a re-check — the larger box must not
  * assume a decision is pending, and nothing here reads `mode`.
@@ -38,12 +90,22 @@ export function ReviewListingMedia({
   name,
   iconUrl,
   coverUrl,
+  reviewMedia,
+  rating,
 }: {
   slug: string;
   /** Display name for the viewer's captions and the thumbnails' accessible names. */
   name: string;
   iconUrl: string | null;
   coverUrl: string | null;
+  /**
+   * The same icon and cover with their levels, plus the civitai.red overrides. With it, an
+   * above-SFW image is held behind a click-to-reveal on civitai.com (`ReviewMediaReveal`) and
+   * every image carries where it shows; without it, the two thumbnails render as before.
+   */
+  reviewMedia?: ListingReviewMedia | null;
+  /** The listing rating the audience badges are judged against (see `ReviewMediaAudienceBadge`). */
+  rating?: string | null;
 }) {
   const [index, setIndex] = useState<number | null>(null);
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
@@ -67,14 +129,24 @@ export function ReviewListingMedia({
             <Text size="xs" c="dimmed">
               Icon
             </Text>
-            <ListingIconThumb
-              size="review"
-              url={iconUrl}
-              name={name}
-              imgTestId={`apps-review-listing-icon-${slug}`}
-              placeholderTestId={`apps-review-listing-icon-placeholder-${slug}`}
-              onOpen={iconUrl ? () => open('icon') : undefined}
-              buttonTestId={`apps-review-listing-icon-button-${slug}`}
+            <ReviewMediaReveal
+              image={reviewMedia?.icon}
+              testId={`apps-review-listing-icon-reveal-${slug}`}
+            >
+              <ListingIconThumb
+                size="review"
+                url={iconUrl}
+                name={name}
+                imgTestId={`apps-review-listing-icon-${slug}`}
+                placeholderTestId={`apps-review-listing-icon-placeholder-${slug}`}
+                onOpen={iconUrl ? () => open('icon') : undefined}
+                buttonTestId={`apps-review-listing-icon-button-${slug}`}
+              />
+            </ReviewMediaReveal>
+            <ReviewMediaAudienceBadge
+              image={reviewMedia?.icon}
+              rating={rating}
+              testId={`apps-review-listing-icon-audience-${slug}`}
             />
             {!iconUrl && (
               <Text size="xs" c="orange" data-testid={`apps-review-listing-no-icon-${slug}`}>
@@ -95,14 +167,24 @@ export function ReviewListingMedia({
             <Text size="xs" c="dimmed">
               Cover
             </Text>
-            <ListingCoverThumb
-              size="review"
-              url={coverUrl}
-              name={name}
-              imgTestId={`apps-review-listing-cover-${slug}`}
-              placeholderTestId={`apps-review-listing-cover-placeholder-${slug}`}
-              onOpen={coverUrl ? () => open('cover') : undefined}
-              buttonTestId={`apps-review-listing-cover-button-${slug}`}
+            <ReviewMediaReveal
+              image={reviewMedia?.cover}
+              testId={`apps-review-listing-cover-reveal-${slug}`}
+            >
+              <ListingCoverThumb
+                size="review"
+                url={coverUrl}
+                name={name}
+                imgTestId={`apps-review-listing-cover-${slug}`}
+                placeholderTestId={`apps-review-listing-cover-placeholder-${slug}`}
+                onOpen={coverUrl ? () => open('cover') : undefined}
+                buttonTestId={`apps-review-listing-cover-button-${slug}`}
+              />
+            </ReviewMediaReveal>
+            <ReviewMediaAudienceBadge
+              image={reviewMedia?.cover}
+              rating={rating}
+              testId={`apps-review-listing-cover-audience-${slug}`}
             />
             {!coverUrl && (
               <Text size="xs" c="orange" data-testid={`apps-review-listing-no-cover-${slug}`}>
@@ -110,6 +192,56 @@ export function ReviewListingMedia({
               </Text>
             )}
           </Stack>
+          {/* The civitai.red overrides, only when set: shown instead of the icon / cover on
+              civitai.red alone, so they are labelled as such whatever their level. */}
+          {reviewMedia?.redIcon && (
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed">
+                {MATURE_STORE_HOST} icon
+              </Text>
+              <ReviewMediaReveal
+                image={reviewMedia.redIcon}
+                testId={`apps-review-listing-red-icon-reveal-${slug}`}
+              >
+                <ListingIconThumb
+                  size="review"
+                  url={reviewMedia.redIcon.url}
+                  name={name}
+                  imgTestId={`apps-review-listing-red-icon-${slug}`}
+                  placeholderTestId={`apps-review-listing-red-icon-placeholder-${slug}`}
+                />
+              </ReviewMediaReveal>
+              <ReviewMediaAudienceBadge
+                image={reviewMedia.redIcon}
+                redSlot
+                testId={`apps-review-listing-red-icon-audience-${slug}`}
+              />
+            </Stack>
+          )}
+          {reviewMedia?.redCover && (
+            <Stack gap={4} style={{ minWidth: 0 }}>
+              <Text size="xs" c="dimmed">
+                {MATURE_STORE_HOST} cover
+              </Text>
+              <ReviewMediaReveal
+                image={reviewMedia.redCover}
+                testId={`apps-review-listing-red-cover-reveal-${slug}`}
+              >
+                <ListingCoverThumb
+                  size="review"
+                  url={reviewMedia.redCover.url}
+                  name={name}
+                  imgTestId={`apps-review-listing-red-cover-${slug}`}
+                  placeholderTestId={`apps-review-listing-red-cover-placeholder-${slug}`}
+                />
+              </ReviewMediaReveal>
+              <ReviewMediaAudienceBadge
+                image={reviewMedia.redCover}
+                redSlot
+                testId={`apps-review-listing-red-cover-audience-${slug}`}
+              />
+            </Stack>
+          )}
         </Group>
       </Stack>
 

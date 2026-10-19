@@ -26,8 +26,27 @@ const snap = (over: Partial<ApprovedAssetSnapshot> = {}): ApprovedAssetSnapshot 
   iconId: null,
   coverId: null,
   screenshots: [],
+  redIconId: null,
+  redCoverId: null,
   ...over,
 });
+
+/**
+ * A `$queryRaw` that answers the split-table probe as "table and override columns present and
+ * readable" and the overrides row as `row` — the two statements `readListingRedSlots` sends.
+ */
+const redSlotsQueryRaw = (
+  row: { red_icon_id: number | null; red_cover_id: number | null } | null
+) =>
+  vi.fn(async (strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (sql.includes('to_regclass'))
+      return [
+        { present: true, can_select: true, can_insert: true, can_update: true, red_slots: true },
+      ];
+    if (sql.includes('red_icon_id, red_cover_id')) return row ? [row] : [];
+    return [];
+  });
 
 describe('normalizeListingScreenshots', () => {
   it('orders by `order` and keeps imageId + caption, dropping the order value itself', () => {
@@ -113,7 +132,7 @@ describe('buildApprovedAssetSnapshot', () => {
       { imageId: 5, order: 0, caption: 'shot' },
     ]);
     const snapshot = await buildApprovedAssetSnapshot(
-      { appListingScreenshot: { findMany } } as never,
+      { appListingScreenshot: { findMany }, $queryRaw: vi.fn(async () => []) } as never,
       'apl_1',
       { iconId: 1, coverId: 2 }
     );
@@ -126,20 +145,82 @@ describe('buildApprovedAssetSnapshot', () => {
 
   it('coerces an undefined icon/cover to null rather than leaking undefined into JSONB', async () => {
     const snapshot = await buildApprovedAssetSnapshot(
-      { appListingScreenshot: { findMany: vi.fn(async () => []) } } as never,
+      {
+        appListingScreenshot: { findMany: vi.fn(async () => []) },
+        $queryRaw: vi.fn(async () => []),
+      } as never,
       'apl_1',
       { iconId: undefined, coverId: undefined }
     );
     expect(snapshot).toEqual(snap());
   });
+
+  it('🔴 records the civitai.red overrides, read through the SAME client', async () => {
+    // Distinct from every other id in the fixture, so a mutant that copies the icon or cover
+    // into an override slot (or swaps the two overrides) cannot produce this snapshot.
+    const queryRaw = redSlotsQueryRaw({ red_icon_id: 41, red_cover_id: 42 });
+    const snapshot = await buildApprovedAssetSnapshot(
+      { appListingScreenshot: { findMany: vi.fn(async () => []) }, $queryRaw: queryRaw } as never,
+      'apl_1',
+      { iconId: 1, coverId: 2 }
+    );
+    expect(snapshot).toEqual(snap({ iconId: 1, coverId: 2, redIconId: 41, redCoverId: 42 }));
+    // Keyed on THIS listing.
+    expect(queryRaw.mock.calls.some((c) => (c as unknown[]).slice(1).includes('apl_1'))).toBe(true);
+  });
+
+  it('records no overrides while the environment cannot read them', async () => {
+    const snapshot = await buildApprovedAssetSnapshot(
+      {
+        appListingScreenshot: { findMany: vi.fn(async () => []) },
+        // The probe says the override columns are not there.
+        $queryRaw: vi.fn(async () => [
+          { present: true, can_select: true, can_insert: true, can_update: true, red_slots: false },
+        ]),
+      } as never,
+      'apl_1',
+      { iconId: 1, coverId: 2 }
+    );
+    expect(snapshot).toEqual(snap({ iconId: 1, coverId: 2 }));
+  });
 });
 
 describe('parseApprovedAssetSnapshot — 🔴 unknown must never round-trip as empty', () => {
-  it('parses a well-formed payload', () => {
+  it('parses a well-formed v1 payload, whose listing had no civitai.red overrides', () => {
+    // v1 was written only before the overrides existed, so "none" is what it records.
     const value = { v: 1, iconId: 1, coverId: null, screenshots: [{ imageId: 9, caption: 'x' }] };
     expect(parseApprovedAssetSnapshot(value)).toEqual(
       snap({ iconId: 1, coverId: null, screenshots: [{ imageId: 9, caption: 'x' }] })
     );
+  });
+
+  it('parses a well-formed v2 payload with its overrides', () => {
+    const value = {
+      v: 2,
+      iconId: 1,
+      coverId: null,
+      screenshots: [{ imageId: 9, caption: 'x' }],
+      redIconId: 41,
+      redCoverId: null,
+    };
+    expect(parseApprovedAssetSnapshot(value)).toEqual(
+      snap({ iconId: 1, screenshots: [{ imageId: 9, caption: 'x' }], redIconId: 41 })
+    );
+  });
+
+  it('🔴 a v1 payload that happens to carry override keys does not read them', () => {
+    // v1 never wrote them; a v1 claiming one is not a shape any build produced, and reading
+    // it would let a payload choose its own baseline overrides.
+    expect(
+      parseApprovedAssetSnapshot({
+        v: 1,
+        iconId: null,
+        coverId: null,
+        screenshots: [],
+        redIconId: 41,
+        redCoverId: 42,
+      })
+    ).toEqual(snap());
   });
 
   it.each([
@@ -149,7 +230,24 @@ describe('parseApprovedAssetSnapshot — 🔴 unknown must never round-trip as e
     ['a number', 7],
     ['an array', [{ v: 1 }]],
     ['no version', { iconId: null, coverId: null, screenshots: [] }],
-    ['a FUTURE version', { v: 2, iconId: null, coverId: null, screenshots: [] }],
+    ['a FUTURE version', { v: 3, iconId: null, coverId: null, screenshots: [] }],
+    // 🔴 v2 must carry BOTH override keys: an absent one is malformed, never a coerced null.
+    [
+      'a v2 missing redCoverId',
+      { v: 2, iconId: null, coverId: null, screenshots: [], redIconId: null },
+    ],
+    [
+      'a v2 missing redIconId',
+      { v: 2, iconId: null, coverId: null, screenshots: [], redCoverId: null },
+    ],
+    [
+      'a v2 with a string redIconId',
+      { v: 2, iconId: null, coverId: null, screenshots: [], redIconId: '4', redCoverId: null },
+    ],
+    [
+      'a v2 with a float redCoverId',
+      { v: 2, iconId: null, coverId: null, screenshots: [], redIconId: null, redCoverId: 4.5 },
+    ],
     ['a string version', { v: '1', iconId: null, coverId: null, screenshots: [] }],
     ['a string iconId', { v: 1, iconId: '1', coverId: null, screenshots: [] }],
     ['a float iconId', { v: 1, iconId: 1.5, coverId: null, screenshots: [] }],
@@ -202,7 +300,7 @@ describe('readRecordedAssetBaseline — 🔴 absent and unreadable are DIFFERENT
   it.each([
     ['an explicit null baseline', null],
     ['a number where a snapshot should be', 7],
-    ['a snapshot from an UNKNOWN future version', { v: 2, iconId: 1, coverId: 2, screenshots: [] }],
+    ['a snapshot from an UNKNOWN future version', { v: 3, iconId: 1, coverId: 2, screenshots: [] }],
     ['a snapshot with a malformed screenshot', { v: 1, iconId: 1, coverId: 2, screenshots: [{}] }],
     ['a snapshot missing `screenshots`', { v: 1, iconId: 1, coverId: 2 }],
   ])('reports UNREADABLE for %s — a baseline was written and cannot be read', (_label, assets) => {
@@ -242,8 +340,19 @@ describe('approvedAssetSnapshotsEqual', () => {
       snap({ ...base, screenshots: [...base.screenshots, { imageId: 4, caption: null }] }),
     ],
     ['every screenshot removed', snap({ ...base, screenshots: [] })],
+    ['a civitai.red icon added', snap({ ...base, redIconId: 41 })],
+    ['a civitai.red cover added', snap({ ...base, redCoverId: 42 })],
   ])('NOT equal when %s', (_label, other) => {
     expect(approvedAssetSnapshotsEqual(base, other)).toBe(false);
+  });
+
+  it('🔴 does not confuse the two civitai.red overrides (a swap of the two is a change)', () => {
+    const withRed = snap({ ...base, redIconId: 41, redCoverId: 42 });
+    expect(approvedAssetSnapshotsEqual(withRed, snap({ ...withRed }))).toBe(true);
+    expect(
+      approvedAssetSnapshotsEqual(withRed, snap({ ...withRed, redIconId: 42, redCoverId: 41 }))
+    ).toBe(false);
+    expect(approvedAssetSnapshotsEqual(withRed, snap({ ...withRed, redCoverId: 99 }))).toBe(false);
   });
 
   it('🔴 does not confuse iconId with coverId (a swap of the two is a change)', () => {

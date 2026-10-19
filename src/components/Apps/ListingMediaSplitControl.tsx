@@ -2,7 +2,7 @@ import { Badge, Group, Radio, Stack, Text } from '@mantine/core';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   LISTING_ASSET_AUDIENCE_LABEL,
-  listingAssetAudience,
+  listingDisplayAssetAudience,
   resolveListingMediaSplitDecision,
   summarizeListingMediaSplit,
   type ListingMediaSplitDecision,
@@ -144,7 +144,7 @@ export function ListingMediaSplitControl({
       {appliesRating && (
         <Stack gap={2} data-testid="apps-media-split-audiences">
           {assets.map((asset, i) => {
-            const audience = listingAssetAudience(asset.nsfwLevel, projected);
+            const audience = listingDisplayAssetAudience(asset, projected);
             return (
               <Group key={`${asset.kind}-${asset.position ?? i}`} gap={6}>
                 <Text size="xs">{listingRatingAssetLabel(asset)}</Text>

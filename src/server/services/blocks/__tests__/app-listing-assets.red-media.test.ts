@@ -1,0 +1,263 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as AppAccess from '~/server/services/blocks/app-access.service';
+import type * as OffsiteListing from '~/server/services/blocks/offsite-listing.service';
+import type * as AppListingService from '~/server/services/blocks/app-listing.service';
+
+const { recordRatingChange, beginListingRevision, bust } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+  beginListingRevision: vi.fn(async (..._a: unknown[]) => ({
+    shadowId: 'apl_rm_shadow',
+    created: true,
+  })),
+  bust: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
+vi.mock('~/server/services/blocks/offsite-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof OffsiteListing>()),
+  beginListingRevision: (...a: unknown[]) => beginListingRevision(...a),
+}));
+vi.mock('~/server/services/blocks/app-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppAccess>()),
+  resolveListingAccess: vi.fn(async () => ({ role: 'owner' })),
+}));
+vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingService>()),
+  bustAppListingCatalogCache: () => bust(),
+}));
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  getListingAssets,
+  setListingRedMedia,
+} from '~/server/services/blocks/app-listing-assets.service';
+import { RED_SLOTS_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/listing-media-split.service';
+import { createSplitDb, type SplitDb } from './listing-media-split.harness';
+
+/**
+ * `setListingRedMedia` — the owner / moderator write of a civitai.red icon / cover override —
+ * and the review read of it (`getListingAssets`). The override table is real SQL (PGlite, both
+ * real migrations); the listing rows and images are the shared Prisma mock.
+ *
+ * Fixture ids are pairwise distinct: listings `apl_rm_live` / `apl_rm_shadow`, images 61 (PG
+ * icon) / 62 (PG cover) / 63 (R override) / 64 (Blocked override), owner 71, moderator 72.
+ */
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const LIVE = 'apl_rm_live';
+const SHADOW = 'apl_rm_shadow';
+const OWNER_ID = 71;
+const owner = { id: OWNER_ID, isModerator: false } as never;
+const mod = { id: 72, isModerator: true } as never;
+const ICON = 61;
+const COVER = 62;
+const R_OVERRIDE = 63;
+const BLOCKED_OVERRIDE = 64;
+
+const LEVELS: Record<number, number> = {
+  [ICON]: NsfwLevel.PG,
+  [COVER]: NsfwLevel.PG,
+  [R_OVERRIDE]: NsfwLevel.R,
+  [BLOCKED_OVERRIDE]: NsfwLevel.R,
+};
+const INGESTION: Record<number, string> = { [BLOCKED_OVERRIDE]: 'Blocked' };
+
+let split: SplitDb;
+beforeAll(async () => {
+  split = await createSplitDb();
+});
+afterAll(() => split.db.close());
+
+async function resetTables(redSlots: boolean) {
+  await split.db.exec(`DROP TABLE IF EXISTS app_listing_red_media`);
+  await split.db.exec(`TRUNCATE app_listings, "Image", "User" CASCADE`);
+  await split.applyMigration();
+  if (redSlots) await split.applyRedSlotsMigration();
+  await split.seed({ listingIds: [LIVE, SHADOW], users: [72] });
+  await split.seedImages(
+    Object.entries(LEVELS).map(([id, nsfwLevel]) => ({
+      id: Number(id),
+      nsfwLevel,
+      ingestion: INGESTION[Number(id)] ?? 'Scanned',
+    }))
+  );
+  split.route(dbMock.dbRead as never);
+  split.route(dbMock.dbWrite as never);
+}
+
+function listing(over: Record<string, unknown> = {}) {
+  return {
+    id: LIVE,
+    kind: 'offsite',
+    slug: 'red-media',
+    name: 'Red Media',
+    category: null,
+    contentRating: 'g',
+    userId: OWNER_ID,
+    iconId: ICON,
+    coverId: COVER,
+    status: 'approved',
+    revisionOfId: null,
+    ...over,
+  };
+}
+
+function wire(rows: Record<string, ReturnType<typeof listing>>) {
+  for (const c of [dbMock.dbRead, dbMock.dbWrite]) {
+    c.appListing.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) => rows[args.where.id] ?? null
+    );
+    c.appListingScreenshot.findMany.mockResolvedValue([]);
+    c.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        nsfwLevel: LEVELS[id] ?? 0,
+        ingestion: INGESTION[id] ?? 'Scanned',
+      }))
+    );
+  }
+  // `loadValidatedImage`: an image the caller owns, a valid icon AND a valid cover (1:1 would
+  // fail the cover's aspect, so the shape follows the id).
+  dbMock.dbRead.image.findUnique.mockImplementation(async (args: { where: { id: number } }) => {
+    const id = args.where.id;
+    if (!(id in LEVELS)) return null;
+    const square = id === R_OVERRIDE || id === BLOCKED_OVERRIDE || id === ICON;
+    return {
+      id,
+      userId: OWNER_ID,
+      url: `img-${id}.png`,
+      type: 'image',
+      width: square ? 512 : 1600,
+      height: square ? 512 : 900,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: INGESTION[id] ?? 'Scanned',
+      nsfwLevel: LEVELS[id],
+    };
+  });
+}
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  await resetTables(true);
+});
+
+describe('setListingRedMedia', () => {
+  it('🔴 an owner’s edit of a LIVE listing opens a revision and lands on it, never on the live row', async () => {
+    wire({
+      [LIVE]: listing(),
+      [SHADOW]: listing({ id: SHADOW, status: 'draft', revisionOfId: LIVE }),
+    });
+    const res = await setListingRedMedia(
+      { listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE },
+      owner
+    );
+    expect(res).toEqual({
+      status: 'attached',
+      slot: 'icon',
+      imageId: R_OVERRIDE,
+      scanPending: undefined,
+    });
+    expect(beginListingRevision).toHaveBeenCalledWith({ listingId: LIVE, userId: OWNER_ID });
+    expect(await split.redSlots(SHADOW)).toEqual({ icon: R_OVERRIDE, cover: null });
+    expect(await split.redSlots(LIVE)).toBeNull();
+  });
+
+  it('🔴 a Blocked image is refused, and nothing is written', async () => {
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    await expect(
+      setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: BLOCKED_OVERRIDE }, owner)
+    ).rejects.toThrow(/rejected during scanning/);
+    expect(await split.redSlots(LIVE)).toBeNull();
+  });
+
+  it('a slot is validated as the asset it stands in for (a square image is no cover)', async () => {
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    await expect(
+      setListingRedMedia({ listingId: LIVE, slot: 'cover', imageId: R_OVERRIDE }, owner)
+    ).rejects.toThrow(/cover must be landscape/);
+  });
+
+  it('clearing a slot writes null and validates no image', async () => {
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    await split.setRedSlots(LIVE, { icon: R_OVERRIDE, cover: null });
+    expect(
+      await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: null }, owner)
+    ).toEqual({ status: 'cleared', slot: 'icon' });
+    expect(await split.redSlots(LIVE)).toEqual({ icon: null, cover: null });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refused before a revision is opened while the override columns are absent', async () => {
+    await resetTables(false);
+    wire({ [LIVE]: listing() });
+    await expect(
+      setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE }, owner)
+    ).rejects.toThrow(RED_SLOTS_UNAVAILABLE_MESSAGE);
+    expect(beginListingRevision).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a moderator’s live edit of an UNSPLIT listing raises its rating by the override, and busts', async () => {
+    wire({ [LIVE]: listing() });
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE }, mod);
+    expect(beginListingRevision).not.toHaveBeenCalled();
+    expect(await split.redSlots(LIVE)).toEqual({ icon: R_OVERRIDE, cover: null });
+    expect(dbMock.dbWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: LIVE },
+      data: { contentRating: 'r' },
+    });
+    expect(recordRatingChange).toHaveBeenCalledWith(
+      expect.objectContaining({ appListingId: LIVE, before: 'g', after: 'r' })
+    );
+    expect(bust).toHaveBeenCalled();
+  });
+
+  it('invariant guard: the same edit of a SPLIT listing leaves its rating alone', async () => {
+    wire({ [LIVE]: listing() });
+    await split.db.query(
+      `INSERT INTO app_listing_red_media (app_listing_id, media_split_approved_at, media_split_approved_by)
+       VALUES ($1, now(), 72)`,
+      [LIVE]
+    );
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE }, mod);
+    expect(await split.redSlots(LIVE)).toEqual({ icon: R_OVERRIDE, cover: null });
+    expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalled();
+    // The split decision survives the override write.
+    expect(await split.stamp(LIVE)).toEqual({ at: expect.any(String), by: 72 });
+  });
+});
+
+describe('getListingAssets — the review read of the overrides', () => {
+  it('🔴 reports each override with its level and scan state, and a Blocked one blocks approve', async () => {
+    wire({ [LIVE]: listing({ status: 'pending' }) });
+    await split.setRedSlots(LIVE, { icon: R_OVERRIDE, cover: BLOCKED_OVERRIDE });
+    const res = await getListingAssets({ listingId: LIVE }, mod);
+    expect(res).toMatchObject({
+      redIconId: R_OVERRIDE,
+      redCoverId: BLOCKED_OVERRIDE,
+      redIconNsfwLevel: NsfwLevel.R,
+      redCoverNsfwLevel: NsfwLevel.R,
+      redIconScanStatus: 'scanned',
+      redCoverScanStatus: 'blocked',
+      redSlotsAvailable: true,
+      hasBlockedAsset: true,
+    });
+  });
+
+  it('positive control: the same listing without overrides blocks nothing', async () => {
+    wire({ [LIVE]: listing({ status: 'pending' }) });
+    const res = await getListingAssets({ listingId: LIVE }, mod);
+    expect(res).toMatchObject({ redIconId: null, redCoverId: null, hasBlockedAsset: false });
+  });
+
+  it('says when the environment cannot read the overrides at all', async () => {
+    await resetTables(false);
+    wire({ [LIVE]: listing({ status: 'pending' }) });
+    expect((await getListingAssets({ listingId: LIVE }, mod)).redSlotsAvailable).toBe(false);
+  });
+});

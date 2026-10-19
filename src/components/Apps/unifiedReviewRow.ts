@@ -2,6 +2,7 @@ import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import {
   BUILD_STEP_LABELS,
   isBuildFailureClassSignal,
@@ -163,6 +164,8 @@ export type UnifiedReviewRow = {
   iconUrl: string | null;
   /** CDN cover URL for the app's store listing (`listingCoverUrl`), or null. */
   coverUrl: string | null;
+  /** The listing media with levels (moderator-only), so the row can blur an above-SFW icon. */
+  reviewMedia: ListingReviewMedia | null;
 };
 
 /** The deploy lifecycle projection carried on an on-site approved review row. */
@@ -257,6 +260,7 @@ export function onsiteRequestToUnifiedRow(
     playCount: req.playCount ?? null,
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
+    reviewMedia: req.reviewMedia ?? null,
   };
 }
 
@@ -297,6 +301,7 @@ export type OffsiteReviewRequest = {
   playCount?: number | null;
   iconUrl?: string | null;
   coverUrl?: string | null;
+  reviewMedia?: ListingReviewMedia | null;
 };
 
 /**
@@ -362,6 +367,7 @@ export function offsiteRequestToUnifiedRow(
     playCount: req.playCount ?? null,
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
+    reviewMedia: req.reviewMedia ?? null,
   };
 }
 
@@ -424,6 +430,14 @@ function combineCodeAndMediaRows(
       playCount: code.playCount ?? media.playCount,
       iconUrl: code.iconUrl ?? media.iconUrl,
       coverUrl: code.coverUrl ?? media.coverUrl,
+      // Each image from the SAME side as its url above, so a row never pairs one side's url
+      // with the other side's level.
+      reviewMedia: {
+        icon: (code.iconUrl != null ? code : media).reviewMedia?.icon ?? null,
+        cover: (code.coverUrl != null ? code : media).reviewMedia?.cover ?? null,
+        redIcon: code.reviewMedia?.redIcon ?? media.reviewMedia?.redIcon ?? null,
+        redCover: code.reviewMedia?.redCover ?? media.reviewMedia?.redCover ?? null,
+      },
     });
   }
 

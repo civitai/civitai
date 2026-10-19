@@ -97,12 +97,17 @@ for (const { rel, full } of PRODUCTION) {
 /** Modules that project listing media, and how. */
 const EXPECTED_PROJECTORS: Record<
   string,
-  'gated' | 'gate' | 'raw: author' | 'gated + raw: moderator' | 'ceiling only: labels'
+  | 'gated'
+  | 'gate'
+  | 'raw: author'
+  | 'gated + raw: moderator'
+  | 'ceiling only: labels'
+  | 'hydrates for the gate'
 > = {
   // The rule itself.
   'server/services/blocks/listing-media-audience.ts': 'gate',
   // Public card, detail, gallery and cover fallback through `projectListingMedia`; the raw
-  // builders only for the moderator review-queue facts (`listingQueueFacts`).
+  // builders only for the moderator review surfaces (`listingQueueFacts`, `listingReviewMedia`).
   'server/services/blocks/app-listing.service.ts': 'gated + raw: moderator',
   // Sub-listing card: its own image and the parent cover/icon fallback.
   'server/services/blocks/app-sub-listing-store.service.ts': 'gated',
@@ -112,6 +117,10 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/app-access.service.ts': 'raw: author',
   // Author/moderator audience labels: reads the civitai.com ceiling, builds no url.
   'shared/utils/listing-media-split.ts': 'ceiling only: labels',
+  // Reads the civitai.red icon / cover overrides WITH the gate's columns (its type), builds no
+  // url; `app-listing.service.ts` gates them in `projectListingMedia`. Its render read is called
+  // only for a red-capable request — pinned behaviourally in `listing-media-red-slots.seam.test.ts`.
+  'server/services/blocks/listing-media-split.service.ts': 'hydrates for the gate',
 };
 
 /** Modules that read a listing image url without the gate's columns — none of them public. */
@@ -119,9 +128,10 @@ const EXPECTED_UNGATED_HYDRATIONS: Record<string, string> = {
   'server/services/blocks/app-access.service.ts': "the owner's own My-apps row",
   'server/services/blocks/app-ownership-transfer.service.ts':
     'the ownership-transfer offer, shown to the two parties of the transfer',
-  'server/services/blocks/offsite-listing.service.ts':
-    "the author's edit prefill and the off-site moderator review queue",
-  'server/services/blocks/publish-request.service.ts': 'the on-site moderator review queue',
+  'server/services/blocks/offsite-listing.service.ts': "the author's edit prefill",
+  // (The two moderator review queues select `{ id, url, nsfwLevel }` now — the level is what
+  // their click-to-reveal blurs by — so the on-site one in `publish-request.service.ts` no longer
+  // matches this detector's url-only shapes. It still shows media as attached, by design.)
 };
 
 describe('listing-media call-site ledger', () => {

@@ -278,6 +278,7 @@ function ReviewDetailTabsViewInner({
               name={appDisplayName(request.manifest, request.slug)}
               iconUrl={request.iconUrl ?? null}
               coverUrl={request.coverUrl ?? null}
+              reviewMedia={request.reviewMedia ?? null}
             />
             <ScreenshotsReviewPanel publishRequestId={request.id} size="review" />
             <ReviewCurationSection selection={selection} />

@@ -3,7 +3,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => ({
   // Mutable so a test can inject a blocked / pending scan state (Item 1).
   assetsData: { current: null as unknown },
   assetsError: { current: false },
+  // The moderator preview projection; `undefined` = the placeholder-art fallback.
+  previewData: { current: undefined as unknown },
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -135,7 +137,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // Listing-preview projection — undefined data → the section falls back to the
         // placeholder-art layout preview (these tests assert checklist/scan behaviour).
         getListingPreviewForReview: {
-          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+          useQuery: () => ({ data: mocks.previewData.current, isLoading: false, error: null }),
         },
       },
     },
@@ -150,6 +152,7 @@ beforeEach(() => {
   mocks.rejectMutate.mockClear();
   mocks.assetsData.current = { ...DEFAULT_ASSETS };
   mocks.assetsError.current = false;
+  mocks.previewData.current = undefined;
 });
 
 /**
@@ -202,6 +205,82 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     // The two ENTRY actions present (approve is now gated behind its own click).
     await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — click-to-reveal on civitai.com and the civitai.red overrides', () => {
+  // This host does not show mature content (`canViewNsfw` absent): civitai.com.
+  const card = {
+    id: 'listing-1',
+    slug: 'ci-ext-app',
+    kind: 'offsite',
+    name: 'CI External App',
+    tagline: null,
+    category: 'utility',
+    contentRating: 'g',
+    iconUrl: LOADABLE_IMAGE_DATA_URI,
+    coverUrl: LOADABLE_IMAGE_DATA_URI,
+    creator: null,
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    openCount: null,
+    isBeta: false,
+    restrictedAudience: null,
+    kindData: { kind: 'offsite', externalUrl: 'https://example.com/app' },
+  };
+  const preview = (screenshotLevel: number) => ({
+    card,
+    detail: undefined,
+    media: {
+      icon: { imageId: 10, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      cover: { imageId: 11, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      redIcon: { imageId: 13, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 16 },
+      redCover: null,
+      screenshots: [
+        {
+          imageId: 12,
+          url: LOADABLE_IMAGE_DATA_URI,
+          nsfwLevel: screenshotLevel,
+          caption: null,
+        },
+      ],
+    },
+  });
+
+  test('🔴 the store-layout preview is held behind one reveal by its most mature image', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const reveal = page.getByTestId('apps-listing-preview-reveal');
+    await expect.element(reveal).toBeInTheDocument();
+    // The XXX civitai.red icon is the most mature image here.
+    expect(reveal.element().querySelector('[data-revealed]')?.getAttribute('data-revealed')).toBe(
+      'false'
+    );
+  });
+
+  test('🔴 the media panel shows the civitai.red icon as its own tile, labelled civitai.red only', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-review-listing-red-icon-audience-ci-ext-app'))
+      .toHaveTextContent('civitai.red only');
+  });
+
+  test('a Blocked civitai.red icon is named in the blocked-media alert', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      redIconId: 13,
+      redIconNsfwLevel: 16,
+      redIconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-assets-scan-blocked'))
+      .toHaveTextContent(/Blocked media: civitai\.red icon/);
   });
 });
 

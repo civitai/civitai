@@ -3,6 +3,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   isComEligibleLevel,
   listingAssetAudience,
+  listingDisplayAssetAudience,
   ratingFloorAssets,
   resolveListingMediaSplitDecision,
   summarizeListingMediaSplit,
@@ -44,6 +45,48 @@ describe('ratingFloorAssets', () => {
 
   it('with a split only the civitai.com-eligible ones do, in order', () => {
     expect(ratingFloorAssets(assets, true).map((a) => a.id)).toEqual(['icon', 'shot-unrated']);
+  });
+
+  // The civitai.red overrides: a PG-13 and an unrated one, so the LEVEL alone would keep both in
+  // a split's floor — only the `redSlot` mark takes them out.
+  const withOverrides = [
+    ...assets,
+    { id: 'red-icon', nsfwLevel: NsfwLevel.PG13, redSlot: true },
+    { id: 'red-cover', nsfwLevel: 0, redSlot: true },
+  ];
+
+  it('🔴 without a split the civitai.red overrides floor it like any other image', () => {
+    expect(ratingFloorAssets(withOverrides, false).map((a) => a.id)).toEqual([
+      'icon',
+      'shot-r',
+      'shot-unrated',
+      'shot-x',
+      'red-icon',
+      'red-cover',
+    ]);
+  });
+
+  it('🔴 with a split no override floors it, whatever its level', () => {
+    expect(ratingFloorAssets(withOverrides, true).map((a) => a.id)).toEqual([
+      'icon',
+      'shot-unrated',
+    ]);
+  });
+});
+
+describe('listingDisplayAssetAudience', () => {
+  it('🔴 an override shows only on civitai.red whatever its level and the listing rating', () => {
+    for (const level of [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.XXX])
+      for (const rating of ['g', 'pg13'])
+        expect(listingDisplayAssetAudience({ nsfwLevel: level, redSlot: true }, rating)).toBe(
+          'red-only'
+        );
+    expect(listingDisplayAssetAudience({ nsfwLevel: 0, redSlot: true }, 'g')).toBe('unrated');
+  });
+
+  it('a listing’s own image is judged as before', () => {
+    expect(listingDisplayAssetAudience({ nsfwLevel: NsfwLevel.PG }, 'g')).toBe('com-and-red');
+    expect(listingDisplayAssetAudience({ nsfwLevel: NsfwLevel.R }, 'g')).toBe('red-only');
   });
 });
 
@@ -89,6 +132,23 @@ describe('summarizeListingMediaSplit', () => {
         { kind: 'cover', nsfwLevel: NsfwLevel.R },
       ])
     ).toMatchObject({ splitChangesFloor: true, faceEligible: false });
+  });
+
+  it('🔴 a civitai.red override — even a SFW one — offers the split, and never counts as the face', () => {
+    expect(
+      summarizeListingMediaSplit([
+        { kind: 'icon', nsfwLevel: NsfwLevel.PG },
+        { kind: 'cover', nsfwLevel: NsfwLevel.PG },
+        { kind: 'red-icon', nsfwLevel: NsfwLevel.PG13, redSlot: true },
+        { kind: 'red-cover', nsfwLevel: NsfwLevel.XXX, redSlot: true },
+      ])
+    ).toEqual({
+      allMediaRating: 'x',
+      comMediaRating: 'g',
+      splitChangesFloor: true,
+      // An XXX override is not the civitai.com face, so it cannot make the split unavailable.
+      faceEligible: true,
+    });
   });
 
   it('all-SFW media: a split would change nothing', () => {

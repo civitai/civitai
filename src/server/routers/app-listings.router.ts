@@ -10,6 +10,7 @@ import {
   reorderListingScreenshotsSchema,
   setListingCoverSchema,
   setListingIconSchema,
+  setListingRedMediaSchema,
   updateListingScreenshotCaptionSchema,
 } from '~/server/schema/blocks/app-listing.schema';
 import {
@@ -567,7 +568,7 @@ export const appListingsRouter = router({
   // -------------------------------------------------------------------------
   // OWNER ASSET MUTATIONS.
   //
-  // 🔴 ALL SIX MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
+  // 🔴 ALL SEVEN MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
   // of these calls `resolveOwnerAssetEditTarget` → `beginListingRevision`, which
   // throws a typed `OffsiteRequestError` (a plain `Error` subclass, NOT a
   // `TRPCError`) — e.g. `INVALID_REVISION` when a moderator delists the listing
@@ -603,6 +604,28 @@ export const appListingsRouter = router({
       );
       try {
         return await setListingCover(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * Set or clear the civitai.red-only icon / cover override (`setListingRedMedia`): the same
+   * owner / revision / moderator rules as `setIcon` / `setCover`.
+   *
+   * 🔴 NOT annotated with `listingMediaCliScope` (yet). The CLI has no command for it; admitting
+   * the scoped token is the authoring follow-on's decision, made on the basis that set's header
+   * states, not copied from the siblings above.
+   */
+  setRedMedia: protectedProcedure
+    .use(enforceAppBlocksAuthorFlag)
+    .input(setListingRedMediaSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setListingRedMedia } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      try {
+        return await setListingRedMedia(input, ctx.user);
       } catch (err) {
         throw mapOffsiteError(err);
       }
