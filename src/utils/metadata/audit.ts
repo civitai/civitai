@@ -199,7 +199,7 @@ export const auditPromptEnriched = (
     first.category !== 'over_length' &&
     first.category !== 'profanity'
   ) {
-    const matches = collectTriggerMatches(prompt, negativePrompt);
+    const matches = collectTriggerMatches(prompt, negativePrompt, first);
     if (matches.length > 0) first.matches = matches;
   }
   return result;
@@ -416,7 +416,8 @@ function compact<T extends object>(value: T): T {
  */
 function collectTriggerMatches(
   rawPrompt: string,
-  rawNegativePrompt?: string
+  rawNegativePrompt: string | undefined,
+  decided: PromptTrigger
 ): PromptTriggerMatch[] {
   const prompt = normalizeText(rawPrompt);
   const negativePrompt = normalizeText(rawNegativePrompt);
@@ -476,6 +477,13 @@ function collectTriggerMatches(
       matchedField: 'prompt',
     });
   }
+
+  // The blocklist is scanned in list order but the verdict takes the first hard word, so the
+  // deciding rule may not be first.
+  const decidingIndex = matches.findIndex(
+    (m) => m.category === decided.category && m.matchedWord === decided.matchedWord
+  );
+  if (decidingIndex > 0) matches.unshift(...matches.splice(decidingIndex, 1));
 
   return matches;
 }

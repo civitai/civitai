@@ -219,6 +219,17 @@ describe('auditPromptEnriched — match evidence', () => {
     });
   });
 
+  it('puts the deciding blocklist word first, ahead of an earlier-listed soft one', () => {
+    const { triggers } = auditPromptEnriched('daughter, rape');
+    const [first] = triggers;
+    expect(first.matchedWord).toBe('rape');
+    expect(first.matches?.[0]).toMatchObject({
+      category: first.category,
+      matchedWord: first.matchedWord,
+    });
+    expect(first.matches?.map((m) => m.matchedWord)).toContain('daughter');
+  });
+
   it('adds no evidence to a prompt that passes', () => {
     expect(auditPromptEnriched('a quiet landscape')).toEqual({
       blockedFor: [],
