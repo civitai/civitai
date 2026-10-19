@@ -189,16 +189,8 @@ export const MODEL_CARDS: ModelCard[] = [
     released: '2026-10-11',
     flag: 'new',
     flagKey: 'moss-image-training',
+    // Base first: OpenMOSS recommends Base for training and SFT for generating.
     versions: [
-      {
-        key: 'mossimage_sft',
-        label: 'SFT',
-        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
-        baseModel: 'MOSS Image',
-        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
-        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
-        isNew: true,
-      },
       {
         key: 'mossimage_base',
         label: 'Base',
@@ -206,6 +198,15 @@ export const MODEL_CARDS: ModelCard[] = [
         baseModel: 'MOSS Image',
         ecosystem: 'mossImage' satisfies MossImageBaseAiToolkitTrainingInput['ecosystem'],
         modelVariant: 'base' satisfies MossImageBaseAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
+      },
+      {
+        key: 'mossimage_sft',
+        label: 'SFT',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+        baseModel: 'MOSS Image',
+        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
         isNew: true,
       },
     ],

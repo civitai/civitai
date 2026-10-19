@@ -78,6 +78,12 @@ describe('trigger words in sample prompts', () => {
   });
 });
 
+describe('default version', () => {
+  it('trains MOSS Image on Base by default (OpenMOSS: SFT to generate, Base to train)', () => {
+    expect(run('mossimage').versionKey).toBe('mossimage_base');
+  });
+});
+
 describe('extra parameter capabilities', () => {
   it('offers everything to an SDXL tag dataset', () => {
     const caps = runExtraCapabilities(run('sdxl'), 'tag');
