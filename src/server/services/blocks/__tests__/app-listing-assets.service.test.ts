@@ -1130,11 +1130,11 @@ describe('screenshot CRUD', () => {
       revisionOfId: 'apl_parent',
     });
     const asked: unknown[] = [];
-    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...v: unknown[]) => {
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) => {
       if (strings.join('').includes('to_regclass')) return [{ present: true }];
       asked.push(v[0]);
       return [{ split: v[0] === 'apl_parent' }];
-    });
+    }) as never);
     try {
       const { getListingAssets } = await import('../app-listing-assets.service');
       const res = await getListingAssets({ listingId: 'apl_shadow' }, mod);
@@ -1147,10 +1147,10 @@ describe('screenshot CRUD', () => {
 
   it('🔴 getAssets surfaces a failed split read instead of reporting "not split"', async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, id: 'apl_1' });
-    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
       if (strings.join('').includes('to_regclass')) return [{ present: true }];
       throw new Error('connection terminated');
-    });
+    }) as never);
     try {
       const { getListingAssets } = await import('../app-listing-assets.service');
       await expect(getListingAssets({ listingId: 'apl_1' }, mod)).rejects.toThrow(
@@ -1259,11 +1259,10 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
     mockDb.appListingScreenshot.count.mockResolvedValue(1);
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
-    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...v: unknown[]) =>
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) =>
       strings.join('').includes('to_regclass')
         ? [{ present: true }]
-        : [{ split: v[0] === 'apl_live' }]
-    );
+        : [{ split: v[0] === 'apl_live' }]) as never);
     try {
       const { addListingScreenshot } = await import('../app-listing-assets.service');
       const res = await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
