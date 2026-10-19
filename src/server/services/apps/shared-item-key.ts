@@ -2,17 +2,17 @@
 // checks one by key: App Store sub-listings (author + hidden) and spend attribution (author).
 // An app's shared items live in the App Blocks document store or in its legacy per-app shared
 // storage (`app_<slug>.shared_kv`). Which one is decided by the app's APPROVED manifest: an app
-// that declares at least one ITEM collection (shared, and `write` other than "none") has moved,
-// and the document store alone is
+// that declares at least one ITEM collection (shared, and a write policy under which viewers
+// author documents: `collectionNeedsPublishScope`) has moved, and the document store alone is
 // authoritative for it (a miss is no item; the legacy store is never read, so a legacy copy left
 // behind by the move cannot bring back an item deleted from the document store). An app that
 // declares none — or an environment without a document store — resolves from the legacy store,
 // exactly as before the document store existed.
 //
-// A `write: "none"` collection never holds an item: no user can write its documents, which exist
-// only for marks and counters (an app commonly keys them by the item's own key, e.g. per-item
-// downvotes). It neither moves an app nor takes part in a lookup, so such a document can neither
-// make a key ambiguous nor answer for an item.
+// Any other shared collection never holds an item. A `write: "none"` one exists only for marks
+// and counters, which an app commonly keys by the item's own key (e.g. per-item downvotes); an
+// owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
+// a document can neither make a key ambiguous nor answer for an item.
 //
 // Accepted trade-off: between a version that declares shared collections going live and the
 // copy of its legacy rows finishing (run right after go-live), an old key does not resolve.
@@ -74,8 +74,13 @@ async function findInDocStore(args: {
   key: string;
 }): Promise<DocStoreResult> {
   const { declaredCollections } = await import('~/server/services/apps/doc-store-access');
+  const { collectionNeedsPublishScope } = await import(
+    '~/shared/constants/block-storage.constants'
+  );
+  // The item collections: the same allowlist that decides which collections need the publish
+  // scope (shared, viewer-authored), so a new write policy is classified in one place.
   const shared = [...declaredCollections(args.appBlockId, args.manifest)]
-    .filter(([, decl]) => decl.visibility === 'shared' && decl.write !== 'none')
+    .filter(([, decl]) => collectionNeedsPublishScope(decl))
     .map(([name]) => name);
   if (shared.length === 0) return { kind: 'not_authoritative' };
 
