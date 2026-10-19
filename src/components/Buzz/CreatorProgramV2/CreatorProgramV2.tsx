@@ -202,7 +202,7 @@ const MembershipLapsedCard = () => {
         <Text size="sm" c="dimmed" maw={360}>
           Your Creator Program membership isn&apos;t active, so you can&apos;t bank more Buzz. Buzz
           you&apos;ve already banked still pays out at the end of the month. To withdraw cash, you
-          need {formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} ready to
+          need ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} ready to
           withdraw and your payment details set up; no membership is needed.
         </Text>
       </div>
