@@ -215,7 +215,8 @@ export function reactorClusters(
       const [a, b] = [root(userIds[0]), root(id)];
       if (a === b) continue;
       parent.set(a, b);
-      widest.set(b, Math.max(breadth, widest.get(a) ?? 0, widest.get(b) ?? 0));
+      // Narrowest first, so the latest merge into a group is its widest link.
+      widest.set(b, breadth);
     }
 
   const groups = new Map<number, typeof shared>();
