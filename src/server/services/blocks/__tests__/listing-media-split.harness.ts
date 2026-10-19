@@ -36,6 +36,14 @@ export type SplitDb = {
   /** Back to the owning role (a no-op when not restricted). */
   unrestrict: () => Promise<void>;
   /**
+   * A raw-SQL client that runs each statement AS its own role holding only `privileges` on
+   * `app_listing_red_media` — so two clients (the app's read and write pools) can hold different
+   * grants on one database. Use on an unrestricted connection; statements run one at a time.
+   */
+  clientAs: (
+    privileges: ('SELECT' | 'INSERT' | 'UPDATE')[]
+  ) => Promise<Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>>;
+  /**
    * Route a mocked Prisma client's raw SQL here when it names the split table or the face read;
    * everything else keeps answering `fallback`.
    */
@@ -104,6 +112,34 @@ export async function createSplitDb(): Promise<SplitDb> {
       restricted = true;
     },
     unrestrict,
+    clientAs: async (privileges) => {
+      const role = `split_test_${privileges.length ? privileges.join('_').toLowerCase() : 'none'}`;
+      await db.exec(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN
+            CREATE ROLE ${role};
+          END IF;
+        END $$;
+        GRANT ALL ON "User", "Image", app_listings TO ${role};
+        REVOKE ALL ON app_listing_red_media FROM ${role};
+      `);
+      if (privileges.length)
+        await db.exec(`GRANT ${privileges.join(', ')} ON app_listing_red_media TO ${role}`);
+      const as =
+        <T>(f: RawFn) =>
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          await db.exec(`SET ROLE ${role}`);
+          try {
+            return (await f(strings, ...values)) as T;
+          } finally {
+            await db.exec(`RESET ROLE`);
+          }
+        };
+      return {
+        $queryRaw: as(rawQuery),
+        $executeRaw: as(rawExecute),
+      } as unknown as Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+    },
     db,
     raw,
     applyMigration: async () => {

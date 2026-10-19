@@ -405,6 +405,18 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
   });
 
+  test('🔴 a split the app cannot read holds the on-site approve and says why', async () => {
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: null };
+    bar(reRated());
+    await expect
+      .element(page.getByTestId('apps-media-split-unknown'))
+      .toHaveTextContent(
+        /cannot read whether this listing’s media is split.*approve is unavailable/
+      );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+  });
+
   test('🔴 an already-split listing keeps its split by default on the on-site approve', async () => {
     mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: true };
     bar(reRated());

@@ -5,7 +5,10 @@ import { randomUUID } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
-import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import {
+  readListingMediaSplit,
+  readListingMediaSplitState,
+} from '~/server/services/blocks/listing-media-split.service';
 import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -1671,8 +1674,11 @@ export type ListingAssetsView = {
   /** True when at least one attached asset is still `pending` a scan — approve is
    *  refused until it lands (surfaced so the mod knows WHY approve is blocked). */
   hasPendingScan: boolean;
-  /** A moderator has granted the live listing (a shadow's parent) a media split. */
-  mediaSplitApproved: boolean;
+  /**
+   * A moderator has granted the live listing (a shadow's parent) a media split; `null` when the
+   * app cannot read the split record on this environment, so nobody can tell.
+   */
+  mediaSplitApproved: boolean | null;
 };
 
 /**
@@ -1742,9 +1748,14 @@ export async function getListingAssets(
     }),
     hasBlockedAsset: allScans.some((s) => s === 'blocked'),
     hasPendingScan: allScans.some((s) => s === 'pending'),
-    // A missing table already reads as false; any other failure surfaces rather than showing a
-    // split listing as unsplit to the moderator about to approve it.
-    mediaSplitApproved: await readListingMediaSplit(dbRead, listing.revisionOfId ?? listing.id),
+    // Read through the WRITE client, the one every approve records or clears the split with, so
+    // the review shows what that approve will act on, whatever the read client's role may do.
+    // `null` when the write role cannot read it: the review then holds approve rather than show a
+    // split listing as unsplit. A failed statement still throws.
+    mediaSplitApproved: await readListingMediaSplitState(
+      dbWrite,
+      listing.revisionOfId ?? listing.id
+    ),
   };
 }
 

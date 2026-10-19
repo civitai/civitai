@@ -735,6 +735,31 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
   });
 
+  test('🔴 a split the app cannot read holds approve and says why, rather than showing "not split"', async () => {
+    // The server reports `null` when the role the approve writes with cannot read the record:
+    // the listing may be split, and any decision sent could end it.
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const unknown = page.getByTestId('apps-media-split-unknown');
+    await expect
+      .element(unknown)
+      .toHaveTextContent(
+        /cannot read whether this listing’s media is split.*approve is unavailable/
+      );
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    expect(page.getByRole('radio', { name: /^Rate by all media/ }).elements()).toHaveLength(0);
+  });
+
+  test('positive control: the same listing read as unsplit offers the choice and approves', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: false };
+    await openApprove();
+    expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeEnabled();
+  });
+
   test('🔴 a listing that is already split keeps it by default, and says how to end it', async () => {
     mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
     await openApprove();

@@ -10,7 +10,8 @@
 -- whether the table exists AND what the connecting role may do with it, so until it is applied
 -- every listing reads unsplit: its rating is floored by all of its media, exactly as before this
 -- table existed. The one thing that fails is a moderator explicitly choosing the split at
--- approve, which is refused with a message saying it is not available yet.
+-- approve, which is refused with a message saying it is not available yet. Once it is applied,
+-- see GRANTS below for what a role without the grant can and cannot do.
 --
 -- ADDITIVE ONLY. One new, empty table; no column, index or row of an existing table changes.
 -- Idempotent (`IF NOT EXISTS`), so a re-run is a no-op.
@@ -33,19 +34,24 @@
 --   2. Run it off-peak.
 --   3. On `canceling statement due to lock timeout`, nothing was applied (one transaction);
 --      wait and re-run.
---   4. GRANTS — two roles, if new tables are not automatically owned by or granted to them in
---      this environment:
---        - the role the app WRITES with (its primary client): SELECT, INSERT, UPDATE;
---        - the role the app's READ client connects as: SELECT.
---      Missing grants are fail-safe but not silent. A role that cannot SELECT the table reads
---      every listing as unsplit (as if the table were absent), so author and store reads keep
---      working — but without the READ client's grant the review modal shows a split listing as
---      unsplit and preselects ending the split. A go-live that would write it — a split, or clearing one, which every approve
---      without a split decision does — is refused up front with a moderator-facing message when
---      the writing role lacks the privileges it needs, and nothing is written or built: a split
---      needs all three; a clear needs SELECT, plus UPDATE when the listing is split. So with the
---      table present and NO grant to the write role, every listing go-live approve is refused
---      until it is granted.
+--   4. GRANTS — if new tables are not automatically owned by or granted to it in this
+--      environment, grant the role the app WRITES with (its primary client) SELECT, INSERT and
+--      UPDATE. That is the only role the app touches this table with: the moderator's review
+--      reads it through the same client the approve writes it with. The read client's role
+--      needs no grant.
+--      What a missing grant does (2026-10-18):
+--        - no SELECT: every listing reads unsplit, as if the table were absent, so the rating
+--          floors and the author and store reads keep working. An approve sent with no split
+--          decision proceeds exactly as before this table existed and issues nothing against
+--          it. An explicit decision (split, or rate by all media) is refused up front with a
+--          moderator-facing message, nothing written or built; the review modal says the split
+--          cannot be read and holds approve, since any decision it sent would be refused.
+--        - SELECT, but not both INSERT and UPDATE: a split is refused. Without UPDATE, a clear
+--          (rate by all media, or an approve with no decision) is refused only when the listing
+--          IS split — a split the app can see and could not end; otherwise it proceeds.
+--      Known, accepted limitation: a split stamp the write role cannot see (written by another
+--      role, or by this one before it lost SELECT) is left in place by an approve with no
+--      decision, and takes effect again if SELECT is later granted.
 --
 -- ROLLBACK (discards every split decision; every listing then reads as unsplit, and the code
 -- does not need rolling back). Dropping the table drops its foreign keys, which locks the same

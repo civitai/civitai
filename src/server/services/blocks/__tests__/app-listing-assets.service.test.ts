@@ -1164,9 +1164,9 @@ describe('screenshot CRUD', () => {
   });
 
   it('🔴 getAssets keeps working for the AUTHOR when the split table is present but unreadable', async () => {
-    // The table exists but was never granted to the role the read client connects as
-    // (PGlite, the real migration, `SET ROLE`). The author's media editor reads through here,
-    // so a permission error must read as "not split", never take the editor down.
+    // The table exists but was never granted to the role the app connects as (PGlite, the real
+    // migration, `SET ROLE`). The author's media editor reads through here, so a permission error
+    // must never take the editor down; the split reads as "cannot tell" (`null`), never "split".
     const { createSplitDb } = await import('./listing-media-split.harness');
     const split = await createSplitDb();
     try {
@@ -1189,7 +1189,7 @@ describe('screenshot CRUD', () => {
       ]);
       const { getListingAssets } = await import('../app-listing-assets.service');
       const res = await getListingAssets({ listingId: 'apl_1' }, owner);
-      expect(res.mediaSplitApproved).toBe(false);
+      expect(res.mediaSplitApproved).toBeNull();
       expect(res.screenshots).toHaveLength(1);
       // Positive control: the same read, granted SELECT, sees the stamp.
       await split.restrictTo(['SELECT']);

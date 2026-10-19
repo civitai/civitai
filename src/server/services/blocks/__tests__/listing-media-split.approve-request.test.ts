@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingAssets from '~/server/services/blocks/app-listing-assets.service';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
@@ -94,6 +95,7 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', async (importOrig
 
 const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
 const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
+const { triggerBuild } = await import('~/server/services/blocks/apps-pipeline.service');
 const { NsfwLevel } = await import('~/server/common/enums');
 const { MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE, MEDIA_SPLIT_UNAVAILABLE_MESSAGE } = await import(
   '~/server/services/blocks/listing-media-split.service'
@@ -272,13 +274,55 @@ describe.each([
       (c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved'
     );
 
-  it('🔴 present but unreadable: an approve with NO decision is refused before anything is committed or flipped', async () => {
+  /** A split stamped by the owning role, which the restricted role may not be able to see. */
+  const stampAsOwner = () =>
+    split.db.query(
+      `INSERT INTO app_listing_red_media (app_listing_id, media_split_approved_at, media_split_approved_by)
+       VALUES ($1, now(), $2)`,
+      [id, MOD]
+    );
+  /** Statements the approve issued against the split table itself (the probe names it only as a string). */
+  const tableStatements = () =>
+    [...db.write.$queryRaw.mock.calls, ...db.write.$executeRaw.mock.calls]
+      .map((c) => Prisma.sql(c[0] as TemplateStringsArray, ...(c.slice(1) as unknown[])).text)
+      .filter((sql) => sql.includes('app_listing_red_media') && !sql.includes('to_regclass'));
+
+  it('🔴 present but unreadable: an approve with NO decision goes live as before, issuing nothing against the table', async () => {
+    // Operator decision (2026-10-18): a role that cannot read the table has nothing to clear
+    // that it can see, so the approve is the one it was before the split existed.
+    await stampAsOwner();
     await split.restrictTo([]);
+    wire(target);
+    await approve();
+    expect(commitFiles).toHaveBeenCalled();
+    expect(triggerBuild).toHaveBeenCalled();
+    expect(stampedRating(target)).toBe('r');
+    expect(tableStatements()).toEqual([]);
+    // The stamp it could not see is left exactly as it was (the accepted limitation).
+    expect(await split.stamp(id)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('🔴 present but unreadable: an EXPLICIT decision is refused before anything is committed or flipped', async () => {
+    await split.restrictTo([]);
+    wire(target);
+    for (const decision of ['split', 'rate-mature'] as const) {
+      await expect(approve(decision)).rejects.toThrow(NOT_WRITABLE);
+      expect(commitFiles).not.toHaveBeenCalled();
+      expect(stampedRating(target)).toBeUndefined();
+      expect(unsuspended()).toBe(false);
+    }
+  });
+
+  it('🔴 read-only and the listing IS split: an approve with NO decision is refused, the stamp kept', async () => {
+    await stampAsOwner();
+    await split.restrictTo(['SELECT']);
     wire(target);
     await expect(approve()).rejects.toThrow(NOT_WRITABLE);
     expect(commitFiles).not.toHaveBeenCalled();
     expect(stampedRating(target)).toBeUndefined();
-    expect(unsuspended()).toBe(false);
+    expect(await split.stamp(id)).toEqual({ at: expect.any(String), by: MOD });
+    // Positive control for `tableStatements`: this approve did read the table.
+    expect(tableStatements().length).toBeGreaterThan(0);
   });
 
   it('🔴 present but read-only: a split is refused as not writable before anything is committed', async () => {

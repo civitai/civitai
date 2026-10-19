@@ -19,6 +19,14 @@ import { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 
 /**
+ * Shown in place of the choice, with approve held, when the server reports the split as
+ * unreadable (`mediaSplitApproved: null`): the app cannot read the record on this environment, so
+ * any decision sent could end a split nobody can see.
+ */
+export const MEDIA_SPLIT_UNREADABLE_COPY =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red, so approve is unavailable: approving could end a split nobody can see. Ask an engineer to grant the app access to the media-split record, then reopen this request.';
+
+/**
  * The moderator's go-live choice for a listing whose media is partly above SFW: rate the listing
  * by all of its media, or split it — a SFW listing on civitai.com whose mature media shows only on
  * civitai.red. `value` is the resolved decision (`resolveListingMediaSplitDecision`); renders
@@ -152,7 +160,7 @@ export function ListingMediaSplitControlForListing({
   listingId: string;
   choice: ListingMediaSplitDecision | null;
   onChoice: (value: ListingMediaSplitDecision) => void;
-  /** `null` while the listing has not loaded (or failed to). */
+  /** `null` while the listing has not loaded (or failed to), or its split cannot be read. */
   onResolved: (value: ListingMediaSplitDecision | null) => void;
   disabled?: boolean;
 }) {
@@ -161,11 +169,19 @@ export function ListingMediaSplitControlForListing({
     { staleTime: 0, refetchOnMount: 'always', retry: false }
   );
   const assets = data ? listingRatingAssetsFromView(data as Partial<ListingAssetLevels>) : [];
-  const currentlySplit = data?.mediaSplitApproved ?? false;
+  const currentlySplit = data?.mediaSplitApproved === true;
+  // A `null` split is unreadable on this environment: report no decision, so approve stays held.
+  const unreadable = data?.mediaSplitApproved === null;
   const resolved = resolveListingMediaSplitDecision({ assets, currentlySplit, choice });
-  const reported = data ? resolved.value : null;
+  const reported = data && !unreadable ? resolved.value : null;
   useEffect(() => onResolved(reported), [reported, onResolved]);
   if (!data) return null;
+  if (unreadable)
+    return (
+      <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+        {MEDIA_SPLIT_UNREADABLE_COPY}
+      </Text>
+    );
   return (
     <ListingMediaSplitControl
       assets={assets}

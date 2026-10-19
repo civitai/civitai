@@ -9,6 +9,7 @@ import {
   MEDIA_SPLIT_NOT_WRITABLE_MESSAGE,
   MEDIA_SPLIT_UNAVAILABLE_MESSAGE,
   readListingMediaSplit,
+  readListingMediaSplitState,
 } from '~/server/services/blocks/listing-media-split.service';
 import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
@@ -42,6 +43,8 @@ describe('with the table ABSENT (migration not applied)', () => {
 
   it('reads every listing as unsplit', async () => {
     expect(await readListingMediaSplit(s.raw, LISTING)).toBe(false);
+    // No table, no split: the review read can tell, so it says unsplit rather than "cannot tell".
+    expect(await readListingMediaSplitState(s.raw, LISTING)).toBe(false);
   });
 
   it('an omitted or rate-mature decision is a no-op that reports unsplit', async () => {
@@ -262,12 +265,66 @@ describe('with the table PRESENT but not granted to the role the app connects as
     expect(await readListingMediaSplit(s.raw, LISTING)).toBe(true);
   });
 
-  it('🔴 unreadable: clearing is refused, saying why, rather than assumed to have nothing to clear', async () => {
+  it('🔴 unreadable: an explicit rate-mature is refused, saying why', async () => {
     await stampAsOwner();
     await s.restrictTo([]);
-    for (const decision of [undefined, 'rate-mature'] as const)
-      await expectNotWritable(decide(decision));
+    await expectNotWritable(decide('rate-mature'));
     expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('🔴 unreadable: NO decision has nothing it can see to clear — it succeeds and leaves the stamp', async () => {
+    // Operator decision (2026-10-18): as before the split existed. The stamp it cannot see stays,
+    // and would take effect again if SELECT were granted (the accepted limitation).
+    await stampAsOwner();
+    await s.restrictTo([]);
+    expect(await decide()).toBe(false);
+    expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('🔴 UPDATE without SELECT: NO decision issues no UPDATE, and never aborts the transaction', async () => {
+    // The clear's WHERE needs SELECT, so issuing it here would fail on the privilege.
+    await stampAsOwner();
+    await s.restrictTo(['UPDATE']);
+    const after = await s.db.transaction(async (tx) => {
+      expect(
+        await applyListingMediaSplitDecision(createTxRaw(tx), {
+          appListingId: LISTING,
+          face,
+          decision: undefined,
+          actorUserId: MOD,
+        })
+      ).toBe(false);
+      return (await tx.query<{ n: number }>(`SELECT 41 + 1 AS n`)).rows[0].n;
+    });
+    expect(after).toBe(42);
+    expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('positive control: the UPDATE-only role really cannot run the clear', async () => {
+    await s.restrictTo(['UPDATE']);
+    await expect(
+      s.db.query(
+        `UPDATE app_listing_red_media SET media_split_approved_at = NULL
+         WHERE app_listing_id = $1 AND media_split_approved_at IS NOT NULL`,
+        [LISTING]
+      )
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('🔴 unreadable: the review read reports "cannot tell", not "unsplit"', async () => {
+    await stampAsOwner();
+    await s.restrictTo([]);
+    expect(await readListingMediaSplitState(s.raw, LISTING)).toBeNull();
+    // ...while the fail-safe read the rating floors use still reads unsplit.
+    expect(await readListingMediaSplit(s.raw, LISTING)).toBe(false);
+  });
+
+  it('positive control: granted SELECT the review read sees the stamp, and an unstamped listing as unsplit', async () => {
+    await stampAsOwner();
+    await s.seed({ listingIds: [OTHER] });
+    await s.restrictTo(['SELECT']);
+    expect(await readListingMediaSplitState(s.raw, LISTING)).toBe(true);
+    expect(await readListingMediaSplitState(s.raw, OTHER)).toBe(false);
   });
 
   it('🔴 read-only and the listing is not split: clearing has nothing to do and succeeds', async () => {
@@ -280,6 +337,8 @@ describe('with the table PRESENT but not granted to the role the app connects as
     await stampAsOwner();
     await s.restrictTo(['SELECT']);
     await expectNotWritable(decide('rate-mature'));
+    // With no decision too: a split this role can see and cannot end is not silently kept.
+    await expectNotWritable(decide());
     expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
   });
 

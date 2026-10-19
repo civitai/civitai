@@ -17,11 +17,14 @@ import {
  * down. So:
  *   - a READ is "no split" unless the table exists AND this role may SELECT it — the rating floor
  *     then reads every asset, exactly as before the split existed, and the author and store reads
- *     that consult it keep working;
- *   - a WRITE that this role cannot perform is refused before anything is written, with a
- *     moderator-facing message ({@link assertListingMediaSplitDecisionApplicable}), never issued
- *     and left to fail. With the table absent, clearing is a no-op and only an explicit grant is
- *     refused ({@link MEDIA_SPLIT_UNAVAILABLE_MESSAGE}).
+ *     that consult it keep working. The moderator's review alone reads the third answer, "cannot
+ *     tell" ({@link readListingMediaSplitState}), so it never shows a split listing as unsplit;
+ *   - an explicit decision (`split`, `rate-mature`) this role cannot carry out is refused before
+ *     anything is written, with a moderator-facing message
+ *     ({@link assertListingMediaSplitDecisionApplicable}), never issued and left to fail. With the
+ *     table absent, clearing is a no-op and only an explicit grant is refused
+ *     ({@link MEDIA_SPLIT_UNAVAILABLE_MESSAGE}). An approve with NO decision on a table this role
+ *     cannot read issues nothing against it and proceeds, as before the split existed.
  *
  * The only module that names the table; `listing-media-split.ledger.test.ts` pins that.
  */
@@ -73,6 +76,25 @@ export async function probeListingMediaSplitTable(
 }
 
 /**
+ * Whether a moderator has granted `appListingId` a media split, as this role can see it: `true` or
+ * `false`, or `null` when the table exists but this role may not read it. An absent table is
+ * `false` — no split can exist without it.
+ *
+ * `null` is for the moderator's review ({@link readListingMediaSplit} is the fail-safe form for
+ * everything else): a split listing must never be shown to the moderator about to approve it as
+ * unsplit, because the review then preselects ending the split.
+ */
+export async function readListingMediaSplitState(
+  db: Pick<RawClient, '$queryRaw'>,
+  appListingId: string
+): Promise<boolean | null> {
+  const access = await probeListingMediaSplitTable(db);
+  if (!access.present) return false;
+  if (!access.select) return null;
+  return readStamped(db, appListingId);
+}
+
+/**
  * Whether a moderator has granted `appListingId` a media split. `false` while the table is absent
  * or this role may not read it (fail-safe: the rating is then floored by all media, as before the
  * split existed). Read as-is by every path that keeps a split a moderator granted (an image
@@ -84,8 +106,7 @@ export async function readListingMediaSplit(
   db: Pick<RawClient, '$queryRaw'>,
   appListingId: string
 ): Promise<boolean> {
-  if (!(await probeListingMediaSplitTable(db)).select) return false;
-  return readStamped(db, appListingId);
+  return (await readListingMediaSplitState(db, appListingId)) === true;
 }
 
 async function readStamped(db: Pick<RawClient, '$queryRaw'>, appListingId: string) {
@@ -120,12 +141,17 @@ const refuse = (message: string) => new TRPCError({ code: 'BAD_REQUEST', message
  * which logs and continues on a listing failure) can refuse up front, before it writes or builds.
  *
  * - `split` needs the table, SELECT + INSERT + UPDATE on it, and a civitai.com-eligible face.
- * - Any other decision CLEARS an earlier split. With the table absent there is nothing to clear.
- *   With it present, this role must be able to read it, and to update it if the listing is
- *   stamped. A role that cannot even read the table is refused rather than treated as "nothing to
- *   clear": a stamp written before a grant was revoked, or by another role, would stay in place
- *   unseen and come back into force the moment SELECT is granted, after a moderator had decided
- *   to rate this listing by all media.
+ * - `rate-mature` CLEARS an earlier split. With the table absent there is nothing to clear. With
+ *   it present, this role must be able to read it, and to update it if the listing is stamped.
+ * - NO decision also clears an earlier split, with one difference: when this role cannot read
+ *   the table it is treated as having nothing to clear, and the approve proceeds exactly as it
+ *   did before the split existed — no statement against the table, no refusal. When it CAN read
+ *   it and the listing is stamped, it must also be able to update it, or it is refused: that is a
+ *   split the moderator can see and this approve would claim to end.
+ *
+ * Known, accepted limitation of the no-decision case: a stamp this role cannot see stays in
+ * place, and takes effect again if SELECT is later granted. A stamp can only exist unseen if it
+ * was written by another role, or by this one before it lost SELECT.
  */
 export async function assertListingMediaSplitDecisionApplicable(
   db: Pick<RawClient, '$queryRaw'>,
@@ -145,7 +171,10 @@ export async function assertListingMediaSplitDecisionApplicable(
     return;
   }
   if (!a.present) return;
-  if (!a.select) throw refuse(MEDIA_SPLIT_NOT_WRITABLE_MESSAGE);
+  if (!a.select) {
+    if (args.decision == null) return;
+    throw refuse(MEDIA_SPLIT_NOT_WRITABLE_MESSAGE);
+  }
   if (!a.update && (await readStamped(db, args.appListingId)))
     throw refuse(MEDIA_SPLIT_NOT_WRITABLE_MESSAGE);
 }
@@ -174,9 +203,11 @@ export async function applyListingMediaSplitDecision(
   const access = await probeListingMediaSplitTable(db);
   await assertListingMediaSplitDecisionApplicable(db, args, access);
   if (args.decision !== 'split') {
-    // Without UPDATE the assertion has established the listing is not stamped: nothing to clear,
-    // and issuing the UPDATE would fail on the privilege even when it matches no row.
-    if (access.update)
+    // Without UPDATE the assertion has established the listing is not stamped; without SELECT
+    // (only reachable with no decision) there is nothing this role can see to clear. Either way
+    // the UPDATE is not issued: its WHERE needs SELECT, its SET needs UPDATE, and a failed
+    // statement aborts the caller's transaction even when it matches no row.
+    if (access.select && access.update)
       await db.$executeRaw`
         UPDATE app_listing_red_media
         SET media_split_approved_at = NULL, media_split_approved_by = NULL, updated_at = now()

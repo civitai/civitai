@@ -2669,7 +2669,10 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // write is refused HERE, before anything is written or built — otherwise the app would deploy
   // with its listing left `draft` (or, on a reset re-approve, `pending` with the block still
   // `suspended`) and only a log line saying why. That covers every decision, not just `split`:
-  // without one the go-live CLEARS any earlier split, which needs the table to be writable too.
+  // `rate-mature` CLEARS any earlier split, which needs the table to be writable too, and so does
+  // no decision when the write role can read the table and the listing is split. With no
+  // decision and a table that role cannot read, nothing is refused and nothing is written to it:
+  // the approve goes ahead as it did before the split existed.
   // With the table absent and no split asked for there is nothing to write, so no listing read.
   {
     const { assertListingMediaSplitDecisionApplicable, probeListingMediaSplitTable } = await import(

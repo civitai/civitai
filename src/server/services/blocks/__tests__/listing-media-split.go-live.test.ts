@@ -289,8 +289,8 @@ describe.each(SITES)('$site', ({ wire, listing, rates }) => {
     expectRating(rates, 'r');
   });
 
-  it('🔴 table present but not writable: any decision is refused, and nothing goes live', async () => {
-    for (const decision of ['split', 'rate-mature', undefined] as const) {
+  it('🔴 table present but unreadable: an EXPLICIT decision is refused, and nothing goes live', async () => {
+    for (const decision of ['split', 'rate-mature'] as const) {
       await resetSplitTable(true);
       await split.restrictTo([]);
       vi.clearAllMocks();
@@ -298,6 +298,14 @@ describe.each(SITES)('$site', ({ wire, listing, rates }) => {
       await expect(approve(decision)).rejects.toThrow(/not permitted to update it/);
       expect(goLiveWrite()).toBeUndefined();
     }
+  });
+
+  it('🔴 table present but unreadable: NO decision goes live exactly as before the split existed', async () => {
+    // Operator decision (2026-10-18): nothing this role can see to clear, so nothing refused.
+    await split.restrictTo([]);
+    wire();
+    await approve();
+    expectRating(rates, 'r');
   });
 });
 
