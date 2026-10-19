@@ -176,38 +176,59 @@ function reportRow(r: UserReportRow) {
 }
 
 /**
- * Reactors linked to EACH OTHER by shared addresses, grouped (connected components over `peers`),
- * biggest first. A ring that boosts a creator need not share an address with the creator itself, and a
- * flat per-account list left the model to assemble the groups, which it did not do.
+ * Reactors linked to EACH OTHER by shared addresses, grouped (connected components), biggest first. A
+ * ring that boosts a creator need not share an address with the creator itself, and a flat per-account
+ * list left the model to assemble the groups, which it did not do.
+ *
+ * Linked only through addresses both accounts list, with a measured breadth, so every link is one the
+ * answer can cite. `peers` is not used: it spans every shared address, and one public VPN exit would
+ * chain strangers into a "ring". `widestLink` is the site-wide account count of the broadest address
+ * holding the group together (merged narrowest first), so a group that rests on a crowded address says so.
  */
 export function reactorClusters(
-  shared: Pick<SharedIpAccount, 'userId' | 'username' | 'withTarget' | 'peers'>[]
+  shared: Pick<SharedIpAccount, 'userId' | 'username' | 'withTarget' | 'addresses'>[]
 ): {
   size: number;
   linkedToCreator: boolean;
+  widestLink: number;
   members: { userId: number; username: string | null }[];
 }[] {
-  const byId = new Map(shared.map((s) => [s.userId, s]));
   const parent = new Map(shared.map((s) => [s.userId, s.userId]));
+  const widest = new Map<number, number>();
   const root = (id: number): number => {
     let r = id;
     while (parent.get(r) !== r) r = parent.get(r)!;
     parent.set(id, r);
     return r;
   };
+
+  const byAddress = new Map<string, { breadth: number; userIds: number[] }>();
   for (const s of shared)
-    for (const p of s.peers) if (byId.has(p.userId)) parent.set(root(s.userId), root(p.userId));
+    for (const a of s.addresses) {
+      if (a.totalAccounts === null) continue;
+      const entry = byAddress.get(a.cluster) ?? { breadth: a.totalAccounts, userIds: [] };
+      entry.userIds.push(s.userId);
+      byAddress.set(a.cluster, entry);
+    }
+  for (const { breadth, userIds } of [...byAddress.values()].sort((a, b) => a.breadth - b.breadth))
+    for (const id of userIds.slice(1)) {
+      const [a, b] = [root(userIds[0]), root(id)];
+      if (a === b) continue;
+      parent.set(a, b);
+      widest.set(b, Math.max(breadth, widest.get(a) ?? 0, widest.get(b) ?? 0));
+    }
 
   const groups = new Map<number, typeof shared>();
   for (const s of shared) groups.set(root(s.userId), [...(groups.get(root(s.userId)) ?? []), s]);
-  return [...groups.values()]
-    .filter((g) => g.length > 1)
-    .map((g) => ({
+  return [...groups.entries()]
+    .filter(([, g]) => g.length > 1)
+    .map(([r, g]) => ({
       size: g.length,
       linkedToCreator: g.some((s) => s.withTarget),
+      widestLink: widest.get(r) ?? 0,
       members: g.map((s) => ({ userId: s.userId, username: s.username })),
     }))
-    .sort((a, b) => b.size - a.size);
+    .sort((a, b) => b.size - a.size || a.widestLink - b.widestLink);
 }
 
 export const TOOLS = [
@@ -353,7 +374,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -655,14 +676,25 @@ export type ToolName = (typeof TOOLS)[number]['name'];
 export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
   TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
 
-/** Every tool a playbook may name, with its inputs, for the playbook editor. */
-export function toolCatalog(): { name: string; description: string; inputs: string[] }[] {
+/**
+ * Every tool a playbook may name, with its inputs and the pages that unlock it, for the playbook editor.
+ * Not filtered to the author: a playbook runs for every moderator, and each gets only the tools `toolsFor`
+ * allows them.
+ */
+export function toolCatalog(): {
+  name: string;
+  description: string;
+  inputs: string[];
+  /** Any one of these pages unlocks it; `null` is every moderator. */
+  needs: string[] | null;
+}[] {
   return TOOLS.map((t) => {
     const parameters = toolSpec(t).function.parameters as { properties?: Record<string, unknown> };
     return {
       name: t.name,
       description: t.description,
       inputs: Object.keys(parameters.properties ?? {}),
+      needs: t.requires,
     };
   });
 }

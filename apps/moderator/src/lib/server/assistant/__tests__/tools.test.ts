@@ -71,7 +71,7 @@ vi.mock('../store', () => ({
 }));
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
-const { addressLabeler } = await import('../turn.service');
+const { addressLabeler, turnTokenBudget } = await import('../turn.service');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -199,32 +199,82 @@ describe('quoted', () => {
 });
 
 describe('reactorClusters', () => {
-  const acct = (userId: number, peers: number[], withTarget = false) => ({
+  // Each address is `name:breadth`; breadth `null` is an address with no measured account count.
+  const acct = (userId: number, addresses: [string, number | null][], withTarget = false) => ({
     userId,
     username: `u${userId}`,
     withTarget,
-    peers: peers.map((p) => ({ userId: p })),
+    addresses: addresses.map(([cluster, totalAccounts]) => ({ cluster, totalAccounts })),
   });
   const members = (...ids: number[]) => ids.map((id) => ({ userId: id, username: `u${id}` }));
 
   it('groups reactors linked to each other, through a chain, whether or not to the creator', () => {
-    // 1-2-3 is a chain (1 never shares with 3 directly); 4-5 a pair touching the creator (99); 6 alone.
+    // 1-2-3 is a chain (1 never shares with 3 directly); 4-5 a pair also on the creator's address; 6
+    // shares only with the creator, who is not in the list.
     const clusters = reactorClusters([
-      acct(1, [2]),
-      acct(2, [1, 3]),
-      acct(3, [2]),
-      acct(4, [5, 99], true),
-      acct(5, [4]),
-      acct(6, [99], true),
-    ] as never);
+      acct(1, [['a', 2]]),
+      acct(2, [
+        ['a', 2],
+        ['b', 3],
+      ]),
+      acct(3, [['b', 3]]),
+      acct(4, [['c', 3]], true),
+      acct(5, [['c', 3]]),
+      acct(6, [['d', 2]], true),
+    ]);
     expect(clusters).toEqual([
-      { size: 3, linkedToCreator: false, members: members(1, 2, 3) },
-      { size: 2, linkedToCreator: true, members: members(4, 5) },
+      { size: 3, linkedToCreator: false, widestLink: 3, members: members(1, 2, 3) },
+      { size: 2, linkedToCreator: true, widestLink: 3, members: members(4, 5) },
     ]);
   });
 
-  it('ignores peers outside the reactor set, so the creator never merges everyone', () => {
-    expect(reactorClusters([acct(1, [99], true), acct(2, [99], true)] as never)).toEqual([]);
+  it('reports the broadest address a group rests on, not the narrowest', () => {
+    // 1-2 share a 2-account address; 3 joins only through a 358-account one.
+    const [cluster] = reactorClusters([
+      acct(1, [['home', 2]]),
+      acct(2, [
+        ['home', 2],
+        ['vpn', 358],
+      ]),
+      acct(3, [['vpn', 358]]),
+    ]);
+    expect(cluster).toEqual({
+      size: 3,
+      linkedToCreator: false,
+      widestLink: 358,
+      members: members(1, 2, 3),
+    });
+  });
+
+  it('does not count a crowded address that a narrower one already links', () => {
+    // The crowded address is listed first, so only merging narrowest first gets this right.
+    const [cluster] = reactorClusters([
+      acct(1, [
+        ['vpn', 358],
+        ['home', 2],
+      ]),
+      acct(2, [
+        ['vpn', 358],
+        ['home', 2],
+      ]),
+    ]);
+    expect(cluster.widestLink).toBe(2);
+  });
+
+  it('never links through an address of unknown breadth', () => {
+    expect(reactorClusters([acct(1, [['x', null]]), acct(2, [['x', null]])])).toEqual([]);
+  });
+});
+
+describe('turnTokenBudget', () => {
+  it('clamps a setting into range, so a tighter budget never comes out looser', () => {
+    expect(turnTokenBudget('3000')).toBe(5_000);
+    expect(turnTokenBudget('40000')).toBe(40_000);
+    expect(turnTokenBudget('99000000')).toBe(2_000_000);
+  });
+
+  it('falls back to the default when unset or not a whole number', () => {
+    for (const raw of [undefined, '', ' ', '60k', '1.5']) expect(turnTokenBudget(raw)).toBe(60_000);
   });
 });
 

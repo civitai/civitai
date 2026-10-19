@@ -10,13 +10,6 @@ import {
   TURN_TOKEN_BUDGET,
   type TurnOutcome,
 } from './loop';
-
-// A setting, not a constant: the pilot's per-question budget is to be set from the real distribution
-// of turns, without a release each time. Anything unusable falls back to the default.
-export function turnTokenBudget(raw = env.ASSISTANT_TURN_TOKEN_BUDGET): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 5_000 && n <= DAILY_TOKEN_CAP ? n : TURN_TOKEN_BUDGET;
-}
 import { systemPrompt } from './prompt';
 import { LOOKUP, toolSpec, toolsFor } from './tools';
 import { redactAddresses } from '../redact-addresses';
@@ -34,6 +27,17 @@ import {
   startTurn,
   tokensToday,
 } from './store';
+
+const MIN_TURN_BUDGET = 5_000;
+
+// A setting, not a constant: the pilot's per-question budget is to be set from the real distribution
+// of turns, without a release each time. Out-of-range values are clamped, so a tighter setting never
+// comes out looser; anything that is not a whole number falls back to the default.
+export function turnTokenBudget(raw = env.ASSISTANT_TURN_TOKEN_BUDGET): number {
+  const n = Number(raw?.trim() || NaN);
+  if (!Number.isInteger(n)) return TURN_TOKEN_BUDGET;
+  return Math.min(Math.max(n, MIN_TURN_BUDGET), DAILY_TOKEN_CAP);
+}
 
 /** Earlier turns replayed to the model as plain prompt/answer pairs; their tool results are not. */
 export const HISTORY_TURNS = 12;

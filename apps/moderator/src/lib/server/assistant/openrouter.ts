@@ -3,7 +3,7 @@ import { openrouterKey } from '../xguard-api';
 
 // The model call, and nothing else. Server-only: the key is read here and never leaves the process.
 
-export const ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
+const ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
 /** Configurable so a model trial needs no release. Every turn records the model it ran on. */
 export const assistantModel = () => env.ASSISTANT_MODEL?.trim() || ASSISTANT_MODEL;
 
