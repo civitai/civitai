@@ -82,15 +82,19 @@ export async function grantCreatorScore({
   amount,
   reason,
   moderatorId,
+  allowLarge = false,
 }: {
   userId: number;
   amount: number;
   reason: string;
   moderatorId: number;
+  /** The caller checked `user.creatorScore.grantLarge`. */
+  allowLarge?: boolean;
 }) {
   const limits = CREATOR_SCORE_GRANT_LIMITS;
-  if (!Number.isInteger(amount) || amount < 1 || amount > limits.maxAmount)
-    throw throwBadRequestError(`Amount must be a whole number from 1 to ${limits.maxAmount}.`);
+  const maxAmount = allowLarge ? limits.largeMaxAmount : limits.maxAmount;
+  if (!Number.isInteger(amount) || amount < 1 || amount > maxAmount)
+    throw throwBadRequestError(`Amount must be a whole number from 1 to ${maxAmount}.`);
   const trimmedReason = reason.trim();
   if (!trimmedReason) throw throwBadRequestError('A reason is required.');
   if (trimmedReason.length > limits.maxReasonLength)

@@ -64,6 +64,10 @@ export const PERMISSIONS = [
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.
   { id: 'user.creatorScore.grant', label: 'Grant or revoke Creator Score' },
+  // Raises the per-grant ceiling for a holder of `user.creatorScore.grant`; useless without it. Apart
+  // because one grant can carry a creator across several tiers. Checked again by the same endpoint
+  // by this literal.
+  { id: 'user.creatorScore.grantLarge', label: 'Grant more than 10,000 Creator Score at once' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },

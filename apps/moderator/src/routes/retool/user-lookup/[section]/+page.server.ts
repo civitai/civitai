@@ -51,6 +51,7 @@ import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
 import { accountEnforcementActions } from '$lib/server/account-actions';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import {
+  CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_REASON_MAX,
   type CreatorScoreGrantResult,
@@ -563,10 +564,13 @@ export const actions: Actions = {
     return { success: true, revoked: input.code };
   }),
 
-  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request, locals }) => {
+    const maxAmount = locals.grants['user.creatorScore.grantLarge']
+      ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+      : CREATOR_SCORE_GRANT_MAX_AMOUNT;
     const input = parseForm(
       userIdSchema.extend({
-        amount: z.coerce.number().int().min(1).max(CREATOR_SCORE_GRANT_MAX_AMOUNT),
+        amount: z.coerce.number().int().min(1).max(maxAmount),
         reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
       }),
       await request.formData()
