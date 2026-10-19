@@ -169,6 +169,7 @@ describe('createUnratedRefetchScheduler', () => {
 
     workflows.push(workflow('wf-2', [image('b')]));
     schedule();
+    expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
     expect(refetch).toHaveBeenCalledTimes(7);
     expect(refetch).toHaveBeenLastCalledWith(['wf-2']);

@@ -61,11 +61,9 @@ export function createUnratedRefetchScheduler({
   const firstSeen = new Map<string, number>();
   const nextAt = new Map<string, number>();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let dueAt = Infinity;
 
   async function run() {
     timer = undefined;
-    dueAt = Infinity;
     const now = Date.now();
     const workflowIds = new Set<string>();
     for (const [id, workflowId] of selectUnratedRefetch(readWorkflows(), firstSeen, now)) {
@@ -90,10 +88,8 @@ export function createUnratedRefetchScheduler({
       }
       earliest = Math.min(earliest, nextAt.get(id) ?? now);
     }
-    if (earliest === Infinity || earliest >= dueAt) return;
     clearTimeout(timer);
-    dueAt = earliest;
-    timer = setTimeout(run, Math.max(earliest - now, 0));
+    timer = earliest === Infinity ? undefined : setTimeout(run, Math.max(earliest - now, 0));
   }
 
   return schedule;
