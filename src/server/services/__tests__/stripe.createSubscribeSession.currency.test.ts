@@ -537,6 +537,24 @@ describe('createSubscribeSession — an upgrade that is not paid', () => {
     expect(mockBindReferralCodeForUser).toHaveBeenCalledWith(USER.id, 'FRIEND1');
   });
 
+  it('still sends the member to the invoice when binding the referral code fails', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+    mockBindReferralCodeForUser.mockRejectedValue(new Error('referral service down'));
+
+    await expect(upgrade({ refCode: 'FRIEND1' })).resolves.toEqual({
+      sessionId: null,
+      url: HOSTED_INVOICE_URL,
+    });
+  });
+
+  it('binds nothing when no referral code was given', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await upgrade();
+
+    expect(mockBindReferralCodeForUser).not.toHaveBeenCalled();
+  });
+
   it('still lands on the success page when the upgrade is paid', async () => {
     mockSubscriptionsUpdate.mockResolvedValue({ id: 'subscription_fixture', pending_update: null });
 
