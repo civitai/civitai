@@ -19,7 +19,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -274,8 +274,7 @@ export function ModelVersionUpsertForm({
   // the control out mid-edit.
   const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
-  const showTurboSection = TURBO_VARIANT_MODEL_TYPES.includes(model?.type as ModelType);
-  const showGenerationSettings = model?.type === ModelType.Checkpoint;
+  const isCheckpointVersion = model?.type === ModelType.Checkpoint;
   // "Over" means a TIMED window that has ended. A permanent gate (endsAt null) never ends, and a version
   // with no gate has nothing to be over — neither should lock the controls.
   const isEarlyAccessOver =
@@ -349,12 +348,15 @@ export function ModelVersionUpsertForm({
   const ecosystemTurboSettings = getEcosystemTurboSettings(
     getBaseModelConfig(baseModel).ecosystemId
   );
+  const showTurboSection =
+    !!ecosystemTurboSettings && TURBO_VARIANT_MODEL_TYPES.includes(model?.type as ModelType);
+  const showTurboLoraPicker = isCheckpointVersion && !!ecosystemTurboSettings;
   // The form keeps only the id; the card needs the resource, picked here or fetched for a stored id.
   const turboLoraId = form.watch('settings.generation.turboLora')?.id;
   const [pickedTurboLora, setPickedTurboLora] = useState<GenerationResource | null>(null);
   const { data: storedTurboLora } = trpc.generation.getResourceDataByIds.useQuery(
     { ids: [turboLoraId ?? 0] },
-    { enabled: showGenerationSettings && !!turboLoraId && pickedTurboLora?.id !== turboLoraId }
+    { enabled: isCheckpointVersion && !!turboLoraId && pickedTurboLora?.id !== turboLoraId }
   );
   const turboLora = !turboLoraId
     ? null
@@ -686,7 +688,9 @@ export function ModelVersionUpsertForm({
     const settings = data.settings
       ? {
           ...data.settings,
-          generation: showGenerationSettings ? data.settings.generation : undefined,
+          generation: showTurboLoraPicker
+            ? { turboLora: data.settings.generation?.turboLora }
+            : undefined,
           turbo: showTurboSection ? data.settings.turbo : undefined,
         }
       : data.settings;
@@ -1208,30 +1212,32 @@ export function ModelVersionUpsertForm({
               {(showClipSkip ||
                 showStrengthInput ||
                 showRecommendedResources ||
-                showGenerationSettings) && (
+                showTurboLoraPicker) && (
                 <Stack gap={4}>
                   <Divider label="Recommended Settings" />
                   <Group gap="xs" className="*:grow">
-                    {showGenerationSettings && (
+                    {showTurboLoraPicker && (
                       <Stack gap="xs" w="100%">
-                        <RecommendedRangeInputs
-                          name="settings.generation.steps"
-                          label="Steps"
-                          min={1}
-                          max={100}
-                        />
-                        <RecommendedRangeInputs
-                          name="settings.generation.cfgScale"
-                          label="CFG scale"
-                          min={0}
-                          max={30}
-                          step={0.5}
-                          decimalScale={1}
-                        />
                         <ResourceSelect
-                          label="Default turbo LoRA"
-                          description="What the generator's Turbo picker starts on with this checkpoint. Leave empty for the ecosystem's default."
-                          buttonLabel="Set a turbo LoRA"
+                          buttonLabel={
+                            <Stack gap={2} align="center" py="xs">
+                              <Group gap={6}>
+                                <IconPlus size={18} />
+                                <Text fw={600}>Default turbo LoRA</Text>
+                              </Group>
+                              <Text size="xs" c="dimmed" ta="center" fw={400}>
+                                What the generator&apos;s Turbo picker starts on with this
+                                checkpoint. Leave empty for the ecosystem&apos;s default.
+                              </Text>
+                            </Stack>
+                          }
+                          buttonProps={{
+                            variant: 'default',
+                            h: 'auto',
+                            leftSection: null,
+                            className: 'border-2 border-dashed border-gray-5 dark:border-dark-3',
+                            styles: { label: { whiteSpace: 'normal' } },
+                          }}
                           value={turboLora}
                           onChange={(resource) => {
                             setPickedTurboLora(resource);
@@ -1317,7 +1323,7 @@ export function ModelVersionUpsertForm({
                     onChange={(e) =>
                       form.setValue(
                         'settings.turbo',
-                        e.currentTarget.checked ? ecosystemTurboSettings : null,
+                        e.currentTarget.checked ? ecosystemTurboSettings ?? null : null,
                         { shouldDirty: true, shouldValidate: true }
                       )
                     }

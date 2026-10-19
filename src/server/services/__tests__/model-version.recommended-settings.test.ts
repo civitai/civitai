@@ -1,0 +1,53 @@
+import { describe, expect, it, vi } from 'vitest';
+
+// The service module is a hub; nothing below reaches a database, so its import graph is cut here.
+vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+
+const { assertRecommendedSettingsForType } = await import(
+  '~/server/services/model-version.service'
+);
+
+const range = { min: 4, max: 12, default: 8 };
+const turbo = { steps: range, cfgScale: { min: 1, max: 1.5, default: 1 } };
+
+describe('assertRecommendedSettingsForType', () => {
+  it('takes a turbo block on a LoRA of an ecosystem with turbo defaults', () => {
+    expect(() =>
+      assertRecommendedSettingsForType({ turbo }, { modelType: 'LORA', baseModel: 'MOSS Image' })
+    ).not.toThrow();
+  });
+
+  it('refuses a turbo block on a checkpoint', () => {
+    expect(() =>
+      assertRecommendedSettingsForType(
+        { turbo },
+        { modelType: 'Checkpoint', baseModel: 'MOSS Image' }
+      )
+    ).toThrow(/LoRA/);
+  });
+
+  // The editor never offers the section outside an opted-in ecosystem; the API must not either.
+  it('refuses a turbo block where the ecosystem has no turbo defaults', () => {
+    expect(() =>
+      assertRecommendedSettingsForType({ turbo }, { modelType: 'LORA', baseModel: 'SDXL 1.0' })
+    ).toThrow(/not supported/);
+  });
+
+  it('refuses a default turbo LoRA on a checkpoint outside such an ecosystem', () => {
+    expect(() =>
+      assertRecommendedSettingsForType(
+        { generation: { turboLora: { id: 1 } } },
+        { modelType: 'Checkpoint', baseModel: 'SDXL 1.0' }
+      )
+    ).toThrow(/not supported/);
+  });
+
+  it('takes a default turbo LoRA on a checkpoint of an opted-in ecosystem', () => {
+    expect(() =>
+      assertRecommendedSettingsForType(
+        { generation: { turboLora: { id: 1 } } },
+        { modelType: 'Checkpoint', baseModel: 'MOSS Image' }
+      )
+    ).not.toThrow();
+  });
+});

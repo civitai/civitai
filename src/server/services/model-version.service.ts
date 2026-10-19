@@ -158,7 +158,11 @@ import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import {
+  getBaseModelConfig,
+  getBaseModelsByGroup,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -532,16 +536,22 @@ function assertOwnerTrainingStatusChange(
 /**
  * The turbo block marks a LoRA as a turbo variant and the generation block is a checkpoint's own
  * recommendation; saved on the wrong type, each would steer the generator from a resource it never
- * reads them on.
+ * reads them on. Turbo is also an ecosystem opt-in: only one with turbo defaults takes a turbo
+ * variant or names a default turbo LoRA.
  */
 export function assertRecommendedSettingsForType(
   settings: ModelVersionUpsertInput['settings'],
-  modelType: ModelType
+  { modelType, baseModel }: { modelType: ModelType; baseModel?: string | null }
 ) {
   if (settings?.turbo && !TURBO_VARIANT_MODEL_TYPES.includes(modelType))
     throw throwBadRequestError('Only LoRA versions can be turbo variants');
   if (settings?.generation && modelType !== 'Checkpoint')
     throw throwBadRequestError('Only checkpoint versions carry recommended generation settings');
+  const namesTurbo = !!settings?.turbo || !!settings?.generation?.turboLora;
+  if (namesTurbo && !getEcosystemTurboSettings(getBaseModelConfig(baseModel ?? '').ecosystemId))
+    throw throwBadRequestError(
+      `Turbo LoRAs are not supported for ${baseModel ?? 'this base model'}`
+    );
 }
 
 export const upsertModelVersion = async ({
@@ -612,7 +622,7 @@ export const upsertModelVersion = async ({
     where: { id: data.modelId },
     select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
-  assertRecommendedSettingsForType(settings, model.type);
+  assertRecommendedSettingsForType(settings, { modelType: model.type, baseModel: data.baseModel });
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit

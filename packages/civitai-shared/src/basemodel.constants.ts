@@ -65,11 +65,12 @@ export type EcosystemSettings = {
     modelLocked?: boolean;
     /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
     engine?: string;
+    /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
     turbo?: {
       /** The LoRA the generator's Turbo picker starts on. */
       lora?: { id: number };
       /** Prefills a LoRA version's turbo block; the generator's fallback for anything it left unset. */
-      settings?: TurboSettings;
+      settings: TurboSettings;
     };
   };
 };
@@ -4488,15 +4489,9 @@ export function getEcosystemDefaults(
   };
 }
 
-/** What an ecosystem without its own turbo numbers prefills and falls back to. */
-const GENERIC_TURBO_SETTINGS: TurboSettings = {
-  steps: { min: 4, max: 12, default: 8 },
-  cfgScale: { min: 1, max: 2, default: 1 },
-};
-
-/** The turbo numbers for an ecosystem: its own, else the generic set, so every ecosystem has one. */
-export function getEcosystemTurboSettings(ecosystemId: number): TurboSettings {
-  return getEcosystemDefaults(ecosystemId)?.turbo?.settings ?? GENERIC_TURBO_SETTINGS;
+/** The turbo numbers for an ecosystem, or undefined where turbo LoRAs are not a thing. */
+export function getEcosystemTurboSettings(ecosystemId: number): TurboSettings | undefined {
+  return getEcosystemDefaults(ecosystemId)?.turbo?.settings;
 }
 
 // =============================================================================
