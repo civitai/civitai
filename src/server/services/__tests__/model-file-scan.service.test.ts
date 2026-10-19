@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -328,6 +328,52 @@ describe('model-file-scan.service', () => {
       expect(mockDeleteFilesForModelVersionCache).not.toHaveBeenCalled();
       expect(mockModelsSearchIndexQueueUpdate).not.toHaveBeenCalled();
       expect(mockDataForModelsCacheRefresh).not.toHaveBeenCalled();
+    });
+
+    // A cached failing answer must not outlive the scan that hit it.
+    describe('busting the orchestrator after a failed scan', () => {
+      beforeEach(() => {
+        const held = new Set<string>();
+        mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+          if (held.has(key)) return false;
+          held.add(key);
+          return true;
+        });
+      });
+
+      afterEach(() => mockSetNxKeepTtlWithEx.mockReset());
+
+      it('busts the version once per window, however many of its files fail', async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+        await applyScanOutcome({ fileId: 2, modelVersionId: 100, failed: true });
+
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledTimes(1);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      });
+
+      it('busts each failing version', async () => {
+        setupFileFound();
+
+        await applyScanOutcome({ fileId: 1, modelVersionId: 100, failed: true });
+        await applyScanOutcome({ fileId: 3, modelVersionId: 101, failed: true });
+
+        expect(mockBustOrchestratorModelCache.mock.calls).toEqual([[100], [101]]);
+      });
+
+      it('keeps the retry bump when the bust throws', async () => {
+        setupFileFound();
+        mockBustOrchestratorModelCache.mockRejectedValueOnce(new Error('orchestrator down'));
+
+        await expect(applyScanOutcome({ fileId: 1, failed: true })).resolves.toBeUndefined();
+
+        expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+          where: { id: 1 },
+          data: { scanRequestedAt: expect.any(Date) },
+        });
+      });
     });
 
     it('advances scannedAt only when a scan actually ran (virusScan present)', async () => {
