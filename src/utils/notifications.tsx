@@ -1,9 +1,7 @@
-import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import type { NotificationData } from '@mantine/notifications';
+import { Button, Group, Stack, Text } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
-  IconBolt,
   IconCheck,
   IconExclamationMark,
   IconInfoCircle,
@@ -95,34 +93,6 @@ export function showInfoNotification({
     message,
     title,
     autoClose,
-  });
-}
-
-export function showBuzzNotification({
-  message,
-  title,
-  ...notificationProps
-}: NotificationData & {
-  message: React.ReactNode;
-}) {
-  showNotification({
-    color: 'yellow.4',
-    message: (
-      <Group gap={4} wrap="nowrap" align="flex-start">
-        {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-        <ThemeIcon color={notificationProps.color ?? 'yellow.4'} variant="transparent">
-          <IconBolt size={18} fill="currentColor" />
-        </ThemeIcon>
-        {message}
-      </Group>
-    ),
-    // Hide title on mobile for smaller notifications
-    title: (
-      <Text className="hide-mobile" inherit>
-        {title}
-      </Text>
-    ),
-    ...notificationProps,
   });
 }
 
