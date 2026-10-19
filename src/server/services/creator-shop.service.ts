@@ -66,6 +66,7 @@ import type {
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
+import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -873,6 +874,16 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.RequestedChanges ||
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
+  // A capped or back-in-review item would stay in a live pack while failing the pack rules, unreviewed.
+  if (
+    !isModerator &&
+    existing.addedById != null &&
+    (availableQuantity != null || (isPublished && backToReview))
+  )
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
 
   const changes: CosmeticShopItemHistoryChange[] = [];
   const recordChange = (
@@ -1036,12 +1047,20 @@ export const archiveCreatorShopItem = async ({
   id: number;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // A creator's mystery pack has its own withdraw, which keeps its review and live count in step.
+  if (!isModerator && existing.itemDefinitionId != null)
+    throw throwBadRequestError('Withdraw a mystery pack instead of archiving its listing');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
   // Archiving is how a rejection used to be laundered: Archived overwrites the
   // status, and restoring re-enters review with the verdict cleared.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  if (!isModerator && existing.cosmeticId != null && existing.addedById != null)
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
@@ -1100,6 +1119,12 @@ export const setCreatorShopItemListed = async ({
   // this a rejected item is one call away from being back in the queue unedited.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  // Delisting is exempt: the item stays in the pack as box-only.
+  if (listed && !isModerator && existing.cosmeticId != null && existing.addedById != null)
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
@@ -1143,6 +1168,8 @@ export const unarchiveCreatorShopItem = async ({
   id: number;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (!isModerator && existing.itemDefinitionId != null)
+    throw throwBadRequestError("A withdrawn mystery pack can't be restored");
   if (existing.status !== CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Only archived items can be restored');
   // `preArchiveStatus` is a leftover from when restoring returned an item to

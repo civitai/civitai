@@ -4,6 +4,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   checkStickerSlugSchema,
+  creatorMysteryPacksEnabled,
   getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
@@ -15,14 +16,17 @@ import {
   getShopItemResellersSchema,
   reorderResoldItemsSchema,
   resoldItemSchema,
+  reviseMysteryPackSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
   submitCreatorShopPackSchema,
+  submitMysteryPackSchema,
   takedownCosmeticShopItemSchema,
   updateCreatorShopPackSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
+  withdrawMysteryPackRevisionSchema,
 } from '~/server/schema/creator-shop.schema';
 import {
   archiveCreatorShopItem,
@@ -56,11 +60,18 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import {
+  reviseMysteryPack,
+  submitMysteryPack,
+  withdrawMysteryPackRevision,
+} from '~/server/services/creator-mystery-pack.service';
+import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
 import {
+  guardedProcedure,
   isFlagProtected,
   moderatorProcedure,
   protectedProcedure,
@@ -81,6 +92,11 @@ const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop
 // hand would otherwise be enough to build or edit one.
 const assertPacksEnabled = (features: FeatureAccess) => {
   if (!features.cosmeticPacks) throw throwAuthorizationError('Packs are not available yet');
+};
+
+const assertMysteryPacksEnabled = (features: FeatureAccess) => {
+  if (!creatorMysteryPacksEnabled(features))
+    throw throwAuthorizationError('Mystery packs are not available yet');
 };
 
 const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => {
@@ -138,6 +154,32 @@ export const creatorShopRouter = router({
           : (input.types ?? Object.values(CosmeticType)).filter((t) => t !== CosmeticType.Sticker),
       })
     ),
+  // #endregion
+  // #region [Mystery packs] guardedProcedure: a muted creator is refused before the service runs.
+  submitMysteryPack: guardedProcedure.input(submitMysteryPackSchema).mutation(({ input, ctx }) => {
+    assertMysteryPacksEnabled(ctx.features);
+    return submitMysteryPack({
+      ...input,
+      userId: ctx.user.id,
+      countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  reviseMysteryPack: guardedProcedure.input(reviseMysteryPackSchema).mutation(({ input, ctx }) => {
+    assertMysteryPacksEnabled(ctx.features);
+    return reviseMysteryPack({
+      ...input,
+      userId: ctx.user.id,
+      countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  withdrawMysteryPackRevision: guardedProcedure
+    .input(withdrawMysteryPackRevisionSchema)
+    .mutation(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return withdrawMysteryPackRevision({ ...input, userId: ctx.user.id });
+    }),
   // #endregion
   updateItem: creatorShopProcedure
     .input(updateCreatorShopItemSchema)

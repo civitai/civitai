@@ -6,6 +6,14 @@ import {
 } from '~/shared/constants/cosmetic-shop.constants';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import {
+  CREATOR_BOX_MAX_CONTENTS,
+  CREATOR_BOX_MAX_TIERS,
+  CREATOR_BOX_MIN_TIERS,
+  CREATOR_BOX_STEEPNESS,
+  type CreatorBoxSteepness,
+} from '@civitai/shared/creator-box-rules';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 /**
  * Creator Shop input contracts. See docs/features/creator-shop.md.
@@ -820,3 +828,53 @@ export const getSimilarCosmeticsSchema = z.object({
   limit: z.number().min(1).max(COSMETIC_SIMILARITY_LIMIT).optional(),
 });
 export type GetSimilarCosmeticsInput = z.infer<typeof getSimilarCosmeticsSchema>;
+
+/**
+ * The one gate for mystery pack procedures; don't check a subset. Packs need `creatorShop` and
+ * `cosmeticPacks`, and the box they make needs `mysteryBox`.
+ */
+export const creatorMysteryPacksEnabled = (
+  features: Pick<
+    FeatureAccess,
+    'creatorShop' | 'cosmeticPacks' | 'mysteryBox' | 'creatorMysteryPacks'
+  >
+) =>
+  features.creatorShop &&
+  features.cosmeticPacks &&
+  features.mysteryBox &&
+  features.creatorMysteryPacks;
+
+/** A mystery pack's contents: cosmetic ids by tier, commonest first. */
+const mysteryPackTiersSchema = z
+  .array(z.array(z.number().int().positive()).min(1).max(CREATOR_BOX_MAX_CONTENTS))
+  .min(CREATOR_BOX_MIN_TIERS)
+  .max(CREATOR_BOX_MAX_TIERS)
+  // Bounded here, before the service loads each item.
+  .refine((tiers) => tiers.flat().length <= CREATOR_BOX_MAX_CONTENTS, {
+    message: `A mystery pack holds at most ${CREATOR_BOX_MAX_CONTENTS} items`,
+  })
+  .refine((tiers) => new Set(tiers.flat()).size === tiers.flat().length, {
+    message: 'A mystery pack cannot contain the same item twice',
+  });
+
+const mysteryPackProposalSchema = z.object({
+  steepness: z.enum(Object.keys(CREATOR_BOX_STEEPNESS) as [CreatorBoxSteepness]),
+  tiers: mysteryPackTiersSchema,
+  price: z.number().int().positive(),
+});
+
+export type SubmitMysteryPackInput = z.infer<typeof submitMysteryPackSchema>;
+export const submitMysteryPackSchema = mysteryPackProposalSchema.extend({
+  name: z.string().min(1).max(255),
+  description: z.string().max(1000).nullish(),
+  imageUrl: z.string().optional(),
+  rightsAffirmed: rightsAffirmedSchema.optional(),
+  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
+  quotedFee: quotedFeeSchema,
+});
+
+export type ReviseMysteryPackInput = z.infer<typeof reviseMysteryPackSchema>;
+export const reviseMysteryPackSchema = mysteryPackProposalSchema.extend({ boxId: z.number() });
+
+export type WithdrawMysteryPackRevisionInput = z.infer<typeof withdrawMysteryPackRevisionSchema>;
+export const withdrawMysteryPackRevisionSchema = z.object({ boxId: z.number() });
