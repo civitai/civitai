@@ -34,10 +34,11 @@
 .credit {
   padding: 0 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
 }
 
-// Each Buzz type in the shade its counter uses, darkened in light mode to stay legible on white.
+// Per-type colour, darkened in light mode to stay legible on white.
 .blue {
   color: var(--mantine-color-blue-7);
 

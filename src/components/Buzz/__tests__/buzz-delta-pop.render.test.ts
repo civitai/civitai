@@ -148,8 +148,8 @@ describe('BuzzDeltaPop', () => {
 
   it('colours a spend split across accounts by the one that paid most of it', () => {
     render(['blue', 'yellow']);
-    record('blue', -5);
     record('yellow', -40);
+    record('blue', -5);
 
     expect(lines()).toEqual([['−45', 'yellow']]);
   });

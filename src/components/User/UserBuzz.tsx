@@ -98,7 +98,7 @@ export function UserBuzz({
           size={textSize}
           fw={600}
           lh={0}
-          // The pop anchors to the digits, not the padded counter, so it lines up under the number.
+          // Anchor the pop to the digits, not the padded counter, or it overhangs by the padding.
           className={clsx(
             classes.buzzText,
             clipText && classes.withGradient,
