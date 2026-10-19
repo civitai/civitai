@@ -157,11 +157,11 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
   });
 
   it("keeps the row's own block reason", async () => {
-    await insertImage(3, BANNED, 'Blocked', 'CSAM');
+    await insertImage(3, BANNED, 'Blocked', 'tos');
 
-    await scan(loaded(3, BANNED, 'Blocked', 'CSAM'));
+    await scan(loaded(3, BANNED, 'Blocked', 'tos'));
 
-    expect((await imageRow(3)).blockedFor).toBe('CSAM');
+    expect((await imageRow(3)).blockedFor).toBe('tos');
   });
 });
 

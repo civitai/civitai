@@ -6764,15 +6764,13 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
-      ...(ownerBanned
-        ? {
-            ingestion: ImageIngestionStatus.Blocked,
-            blockedFor: BlockedReason.Moderated,
-            nsfwLevel: NsfwLevel.Blocked,
-          }
-        : {
-            ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
-          }),
+      ingestion: ownerBanned
+        ? ImageIngestionStatus.Blocked
+        : skipIngestion
+        ? ImageIngestionStatus.PendingManualAssignment
+        : undefined,
+      blockedFor: ownerBanned ? BlockedReason.Moderated : undefined,
+      nsfwLevel: ownerBanned ? NsfwLevel.Blocked : undefined,
     },
     select: { id: true },
   });

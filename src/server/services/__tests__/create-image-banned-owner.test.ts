@@ -43,8 +43,11 @@ describe('createImage for an owner', () => {
 
     await create();
 
-    expect(createdData().ingestion).toBeUndefined();
-    expect(createdData()).not.toHaveProperty('blockedFor');
+    expect(createdData()).toMatchObject({
+      ingestion: undefined,
+      blockedFor: undefined,
+      nsfwLevel: undefined,
+    });
     expect(createImageIngestionRequest).toHaveBeenCalledOnce();
   });
 });
