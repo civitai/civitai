@@ -1,3 +1,4 @@
+import type { OutputUse } from '~/shared/generation/config/types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { showErrorNotification } from '~/utils/notifications';
@@ -28,6 +29,8 @@ type GeneratorPickOptions = {
   ImageSelectModal: React.ComponentType<any>;
   /** Max images the user can pick. Defaults to 1 (single-pick). */
   maxSelections?: number;
+  /** What the picked images are for. Defaults to a comic, which is published. */
+  outputUse?: OutputUse;
 };
 
 /**
@@ -42,6 +45,7 @@ export function openGeneratorImagePicker({
   onLoadingChange,
   ImageSelectModal,
   maxSelections = 1,
+  outputUse = 'post',
 }: GeneratorPickOptions) {
   dialogStore.trigger({
     component: ImageSelectModal,
@@ -49,6 +53,7 @@ export function openGeneratorImagePicker({
       title,
       selectSource: 'generation' as const,
       videoAllowed: false,
+      outputUse,
       importedUrls: [],
       onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
         if (selected.length === 0) return;
@@ -63,9 +68,13 @@ export function openGeneratorImagePicker({
           );
           const failures = results.filter((r) => r.status === 'rejected');
           if (failures.length > 0) {
-            console.error(`Failed to upload ${failures.length}/${items.length} generator image(s) for ${fileNameBase}`);
+            console.error(
+              `Failed to upload ${failures.length}/${items.length} generator image(s) for ${fileNameBase}`
+            );
             showErrorNotification({
-              error: new Error(`${failures.length} of ${items.length} image(s) failed to upload. Please try again.`),
+              error: new Error(
+                `${failures.length} of ${items.length} image(s) failed to upload. Please try again.`
+              ),
               title: 'Upload Failed',
             });
           }

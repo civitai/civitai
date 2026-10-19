@@ -661,10 +661,14 @@ describe('which listings are touched', () => {
 
     expect(ops).toEqual([
       'pool:lookup',
+      // The civitai.red-override lookup's probe (`listListingIdsWithRedSlotImage`), on the pool.
+      'pool:split',
       'tx:lock',
       'tx:listing',
       'tx:listing',
       'tx:shots',
+      // The overrides read under the lock (`loadListingRatingAssets`), inside the transaction.
+      'tx:split',
       'tx:images',
       'tx:reviewed',
       'tx:split',

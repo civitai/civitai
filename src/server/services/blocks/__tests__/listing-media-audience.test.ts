@@ -193,6 +193,81 @@ describe('projectListingMedia', () => {
   });
 });
 
+describe('projectListingMedia — the civitai.red icon / cover overrides', () => {
+  // A `g` listing with a PG icon and cover; the overrides are R (icon) and XXX (cover).
+  const row = {
+    contentRating: 'g',
+    icon: img('own-icon.png', PG),
+    cover: img('own-cover.png', PG),
+    screenshots: [{ caption: 'one', image: img('shot-pg.png', PG) }],
+  };
+  const red = { icon: img('red-icon.png', R), cover: img('red-cover.png', XXX) };
+  const ALL_OPTED = PG | PG13 | R | NsfwLevel.X | XXX;
+  const view = (redCapable: boolean, viewerBrowsingLevel?: number) => ({
+    kind: 'public' as const,
+    audience: { redCapable, viewerBrowsingLevel },
+    red,
+  });
+
+  it('🔴 a red host shows each override to a viewer who opted into its level (XXX included)', () => {
+    expect(projectListingMedia(row, view(true, ALL_OPTED))).toMatchObject({
+      iconUrl: 'edge:red-icon.png@256',
+      coverUrl: 'edge:red-cover.png@1200',
+    });
+  });
+
+  it('🔴 an override the viewer may not see falls back to the listing’s own icon / cover', () => {
+    // R-opted: the R icon shows, the XXX cover does not.
+    expect(projectListingMedia(row, view(true, PG | PG13 | R))).toMatchObject({
+      iconUrl: 'edge:red-icon.png@256',
+      coverUrl: 'edge:own-cover.png@1200',
+    });
+    // Anonymous: neither.
+    expect(projectListingMedia(row, view(true, undefined))).toMatchObject({
+      iconUrl: 'edge:own-icon.png@256',
+      coverUrl: 'edge:own-cover.png@1200',
+    });
+  });
+
+  it('invariant guard: a non-red view never uses an override, even one the caller passed and the viewer could see', () => {
+    // A PG override is inside the non-red ceiling: only the host test keeps it out.
+    const pgRed = { icon: img('red-pg-icon.png', PG), cover: img('red-pg-cover.png', PG) };
+    expect(
+      projectListingMedia(row, {
+        kind: 'public',
+        audience: { redCapable: false, viewerBrowsingLevel: ALL_OPTED },
+        red: pgRed,
+      })
+    ).toMatchObject({ iconUrl: 'edge:own-icon.png@256', coverUrl: 'edge:own-cover.png@1200' });
+  });
+
+  it('invariant guard: a Blocked, flagged or unrated override never renders', () => {
+    for (const bad of [
+      img('red-blocked.png', R, { ingestion: 'Blocked' }),
+      img('red-flagged.png', R, { tosViolation: true }),
+      img('red-unrated.png', 0, { ingestion: 'Pending' }),
+      img('red-blocked-level.png', Blocked),
+    ]) {
+      expect(
+        projectListingMedia(row, { ...view(true, ALL_OPTED), red: { icon: bad, cover: bad } })
+      ).toMatchObject({ iconUrl: 'edge:own-icon.png@256', coverUrl: 'edge:own-cover.png@1200' });
+    }
+  });
+
+  it('a hidden cover override with no visible own cover falls back to the first visible screenshot', () => {
+    expect(projectListingMedia({ ...row, cover: null }, view(true, PG | PG13 | R))).toMatchObject({
+      coverUrl: 'edge:shot-pg.png@1200',
+    });
+  });
+
+  it('the moderator review view ignores the overrides (they are reviewed beside it)', () => {
+    expect(projectListingMedia(row, MODERATOR_REVIEW_MEDIA)).toMatchObject({
+      iconUrl: 'edge:own-icon.png@256',
+      coverUrl: 'edge:own-cover.png@1200',
+    });
+  });
+});
+
 // The select is the contract between the hydration and the decision: a column the classifier reads
 // but the select omits would arrive `undefined` from the database, and every mocked suite would
 // still pass (their rows carry every field whatever is selected). So the READ set is recorded from

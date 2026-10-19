@@ -109,6 +109,7 @@ const INSET_CONSUMERS = [
   // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
+  'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to
   // pay `@mantine/notifications` with a `style` prop, which reached one of the

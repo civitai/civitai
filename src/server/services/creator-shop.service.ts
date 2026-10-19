@@ -8,6 +8,7 @@ import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
+  unequipWithheldCosmetic,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
@@ -18,8 +19,10 @@ import {
   REJECTED_IS_FINAL,
   appendItemHistory,
   buildCosmeticData,
+  changesDisplay,
   creatorGrantRemaining,
   patchCosmeticData,
+  recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
@@ -67,6 +70,7 @@ import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selecto
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
+import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -92,6 +96,7 @@ import {
   PRICE_REVIEW_THRESHOLD,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
+  MYSTERY_PACK_FILTER_VALUE,
   PACK_FILTER_VALUE,
   PACK_SHOP_ITEM_WHERE,
   cosmeticDimensionsLabel,
@@ -874,12 +879,9 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.RequestedChanges ||
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
-  // A capped or back-in-review item would stay in a live pack while failing the pack rules, unreviewed.
-  if (
-    !isModerator &&
-    existing.addedById != null &&
-    (availableQuantity != null || (isPublished && backToReview))
-  )
+  // A capped item would stay in a live pack while failing the pack rules. A repriced one is fine:
+  // the pack keeps the value it was approved at.
+  if (!isModerator && existing.addedById != null && availableQuantity != null)
     await assertNotInLiveMysteryPack({
       cosmeticId: existing.cosmeticId,
       sellerId: existing.addedById,
@@ -958,6 +960,14 @@ export const updateCreatorShopItem = async ({
         }
       : {}),
     ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+    displayApproved:
+      !isModerator && changesDisplay(changes)
+        ? false
+        : recordedDisplayVerdict({
+            status: existing.status,
+            meta,
+            rejectionReason: existing.rejectionReason,
+          }),
   };
   // An edit that moved nothing (e.g. a resubmit with identical values) isn't
   // worth a row in the history.
@@ -972,7 +982,7 @@ export const updateCreatorShopItem = async ({
       })
     : updatedMeta;
 
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       ...(name !== undefined ? { title: name } : {}),
@@ -986,6 +996,8 @@ export const updateCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+  await unequipWithheldCosmetic(existing.cosmeticId);
+  return updated;
 };
 
 /**
@@ -1119,12 +1131,6 @@ export const setCreatorShopItemListed = async ({
   // this a rejected item is one call away from being back in the queue unedited.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
-  // Delisting is exempt: the item stays in the pack as box-only.
-  if (listed && !isModerator && existing.cosmeticId != null && existing.addedById != null)
-    await assertNotInLiveMysteryPack({
-      cosmeticId: existing.cosmeticId,
-      sellerId: existing.addedById,
-    });
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
@@ -1136,6 +1142,14 @@ export const setCreatorShopItemListed = async ({
             rejectionReason: null,
             reviewedById: null,
             reviewedAt: null,
+            meta: {
+              ...(existing.meta as CosmeticShopItemMeta | null),
+              displayApproved: recordedDisplayVerdict({
+                status: existing.status,
+                meta: existing.meta as CosmeticShopItemMeta | null,
+                rejectionReason: existing.rejectionReason,
+              }),
+            } as Prisma.InputJsonValue,
           }
         : {}),
     },
@@ -1201,7 +1215,14 @@ export const unarchiveCreatorShopItem = async ({
       rejectionReason: null,
       reviewedById: null,
       reviewedAt: null,
-      meta: meta as Prisma.InputJsonValue,
+      meta: {
+        ...meta,
+        displayApproved: recordedDisplayVerdict({
+          status: existing.status,
+          meta,
+          rejectionReason: existing.rejectionReason,
+        }),
+      } as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });
@@ -1890,19 +1911,49 @@ export const getCreatorShopReviewQueue = async ({
   // A pack has no cosmetic, so a `cosmetic` relation filter excludes it outright
   // — which is why packs never reached this queue at all. They are matched on
   // their lister instead.
-  const types = cosmeticTypes?.filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE) ?? [];
+  const types =
+    cosmeticTypes?.filter(
+      (t): t is CosmeticType => t !== PACK_FILTER_VALUE && t !== MYSTERY_PACK_FILTER_VALUE
+    ) ?? [];
   const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
+  // Only when asked for, until the review pane can show a pack's contents and odds.
+  const mysteryPacksWanted = !!cosmeticTypes?.includes(MYSTERY_PACK_FILTER_VALUE);
   const singlesWanted = !cosmeticTypes?.length || types.length > 0;
 
+  // A specific status filters to it (including Archived); no status = every
+  // status except Archived (the "All" option in the review queue).
+  const statusWhere: Prisma.CosmeticShopItemWhereInput = status
+    ? { status }
+    : { status: { not: CosmeticShopItemStatus.Archived } };
   const where: Prisma.CosmeticShopItemWhereInput = {
-    // A specific status filters to it (including Archived); no status = every
-    // status except Archived (the "All" option in the review queue).
-    ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
     OR: [
+      ...(mysteryPacksWanted
+        ? [
+            {
+              itemDefinition: { sellerId: userId ?? { not: null } },
+              ...(username
+                ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
+                : {}),
+              // A pack on sale with an edit waiting is in review too.
+              ...(status === CosmeticShopItemStatus.PendingReview
+                ? {
+                    OR: [
+                      statusWhere,
+                      {
+                        status: CosmeticShopItemStatus.Published,
+                        itemDefinition: { revisions: { some: { status: 'pending' } } },
+                      },
+                    ],
+                  }
+                : statusWhere),
+            },
+          ]
+        : []),
       // Only creator-submitted items (exclude official/admin cosmetics).
       ...(singlesWanted
         ? [
             {
+              ...statusWhere,
               cosmetic: {
                 createdById: userId ?? { not: null },
                 ...(types.length ? { type: { in: types } } : {}),
@@ -1918,6 +1969,7 @@ export const getCreatorShopReviewQueue = async ({
       ...(packsWanted
         ? [
             {
+              ...statusWhere,
               ...PACK_SHOP_ITEM_WHERE,
               addedById: userId ?? { not: null },
               ...(username
@@ -1991,7 +2043,9 @@ export const reviewCreatorShopItem = async ({
   id,
   action,
   rejectionReason,
-}: ReviewCreatorShopItemInput & { reviewerId: number }) => {
+  boxRevisionId,
+  stickersEnabled,
+}: ReviewCreatorShopItemInput & { reviewerId: number; stickersEnabled: boolean }) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
     where: { id },
     select: {
@@ -2002,6 +2056,7 @@ export const reviewCreatorShopItem = async ({
       meta: true,
       title: true,
       addedById: true,
+      itemDefinition: { select: { id: true, sellerId: true } },
       cosmetic: {
         // type + data feed creatorGrantRemaining below.
         select: {
@@ -2016,6 +2071,20 @@ export const reviewCreatorShopItem = async ({
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  if (item.itemDefinition?.sellerId != null) {
+    await reviewMysteryPack({
+      boxId: item.itemDefinition.id,
+      reviewerId,
+      action,
+      rejectionReason,
+      stickersEnabled,
+      revisionId: boxRevisionId,
+    });
+    return dbWrite.cosmeticShopItem.findUniqueOrThrow({
+      where: { id },
+      select: creatorShopItemSelect,
+    });
+  }
   // Rejected is deliberately NOT blocked here: this procedure is
   // moderatorProcedure, so a second verdict is the one way back from a mistaken
   // rejection, and it stays out of the creator's hands. Every path a creator can
@@ -2060,7 +2129,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: null,
-            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
           },
           select: creatorShopItemSelect,
         })
@@ -2073,7 +2142,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: rejectionReason ?? null,
-            meta: reviewedMeta({}),
+            meta: reviewedMeta({ displayApproved: false }),
           },
           select: creatorShopItemSelect,
         });
@@ -2098,6 +2167,7 @@ export const reviewCreatorShopItem = async ({
   // D14: an item leaving Published is no longer bundlable, so packs holding it
   // have to come off sale too.
   if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+  if (action !== 'approve') await unequipWithheldCosmetic(item.cosmeticId);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {

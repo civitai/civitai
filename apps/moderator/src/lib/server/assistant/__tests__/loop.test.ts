@@ -1,3 +1,4 @@
+import { error as kitError } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { fitJson, MAX_ROUNDS, runTurn, type AnyTool } from '../loop';
@@ -153,6 +154,16 @@ describe('runTurn', () => {
     expect(out.status).toBe('done');
     expect(out.toolCalls[0].error).toBe('The lookup failed.');
     expect(JSON.stringify(complete.mock.calls)).not.toContain('192.0.2.44');
+  });
+
+  // SvelteKit's `error()` throws an HttpError, which is not an `Error`.
+  it("shows a SvelteKit error's message, not its JSON", async () => {
+    const { run } = turn([], {
+      complete: async () => kitError(500, 'OPENROUTER_API_KEY is not configured'),
+    });
+    const out = await run;
+    expect(out.status).toBe('error');
+    expect(out.error).toBe('OPENROUTER_API_KEY is not configured');
   });
 });
 

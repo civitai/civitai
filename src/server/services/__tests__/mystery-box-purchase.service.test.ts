@@ -487,6 +487,12 @@ describe('buying a mystery box', () => {
       await refused(buy(), 'not available');
     });
 
+    // A creator's pack isn't sold until its sale pays the creator; approval alone doesn't open it.
+    it("a creator's mystery pack, even approved", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: 10 });
+      await refused(buy(), 'not available');
+    });
+
     it('an item definition that is not a box', async () => {
       dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, type: 'cosmetic' });
       await refused(buy(), 'not available');

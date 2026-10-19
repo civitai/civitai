@@ -2,11 +2,22 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as LabelCapture from '~/server/services/text-scan/label-capture';
 
 const { mockResolveEntityAppeal } = vi.hoisted(() => ({ mockResolveEntityAppeal: vi.fn() }));
 vi.mock('~/server/services/report.service', () => ({
   resolveEntityAppeal: mockResolveEntityAppeal,
 }));
+// Label capture runs on real Postgres in label-capture.rulings.behavior.test.ts; here the flag
+// writer runs on the plain client so its own statement can be read.
+vi.mock('~/server/services/text-scan/label-capture', async (importOriginal) => {
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return {
+    ...(await importOriginal<typeof LabelCapture>()),
+    writeTextScanRuling: (_ruling: unknown, write: (tx: unknown) => unknown) =>
+      write(dbMock.dbWrite),
+  };
+});
 // The rollout lives in redis; the row lookup the grant hash does after it stays real.
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),

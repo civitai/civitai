@@ -22,6 +22,7 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     submissionTxId: 'tx-1',
     submissionFee: 500,
     lastApprovedAmount: 1200,
+    displayApproved: false,
     autoChecks: [{ key: 'k', label: 'l', passed: false, detail: 'd' }],
     imageHash: 'deadbeef',
     sellerShare: 40,

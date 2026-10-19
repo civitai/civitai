@@ -22,7 +22,10 @@
 </script>
 
 <Sheet bind:open>
-  <SheetContent side="right" class="w-[92vw] overflow-y-auto sm:max-w-[72rem]">
+  <SheetContent
+    side="right"
+    class="overflow-y-auto data-[side=right]:w-[92vw] data-[side=right]:sm:max-w-[72rem]"
+  >
     <SheetHeader>
       <SheetTitle>{title}</SheetTitle>
     </SheetHeader>

@@ -157,7 +157,7 @@
           {/if}
 
           {#if article.status === 'UnpublishedViolation' && article.metadata?.unpublishedReason}
-            <div class="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
+            <div class="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300 wrap-anywhere">
               <span class="font-semibold">Reason:</span>
               {article.metadata.unpublishedReason === 'other'
                 ? (article.metadata.customMessage ?? '—')

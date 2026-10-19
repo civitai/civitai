@@ -30,6 +30,18 @@ db.$executeRaw.mockImplementation(
 db.$queryRaw.mockImplementation(
   (async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, v)).rows) as never
 );
+// A real transaction: the flag writers record their label under a savepoint, which needs one.
+db.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) => {
+  await holder.db.exec('BEGIN');
+  try {
+    const result = await fn(db);
+    await holder.db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    await holder.db.exec('ROLLBACK');
+    throw error;
+  }
+}) as never);
 db.model.findUnique.mockImplementation(
   (async ({ where }: { where: { id: number } }) =>
     (await holder.db.query(`SELECT * FROM "Model" WHERE id = $1`, [where.id])).rows[0] ??

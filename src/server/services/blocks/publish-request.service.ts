@@ -2031,8 +2031,8 @@ type JoinedListing = {
   kind: string;
   appBlockId: string | null;
   userId: number;
-  icon: { url: string | null } | null;
-  cover: { url: string | null } | null;
+  icon: { id: number; url: string | null; nsfwLevel: number } | null;
+  cover: { id: number; url: string | null; nsfwLevel: number } | null;
   metric: { openCount: number } | null;
 };
 
@@ -2172,11 +2172,19 @@ async function listingFactsForRequests(
       kind: true,
       appBlockId: true,
       userId: true,
-      icon: { select: { url: true } },
-      cover: { select: { url: true } },
+      // `id` + `nsfwLevel` beside the url: the review holds an above-SFW image behind a
+      // click-to-reveal on civitai.com (moderator-only).
+      icon: { select: { id: true, url: true, nsfwLevel: true } },
+      cover: { select: { id: true, url: true, nsfwLevel: true } },
       metric: { select: { openCount: true } },
     },
   })) as JoinedListing[];
+  // The page's civitai.red overrides, in one batched read (never throws: none on failure).
+  const { readListingRedMediaManyForRender } = await import('./listing-media-split.service');
+  const redById = await readListingRedMediaManyForRender(
+    dbRead,
+    rows.map((r) => r.id)
+  );
 
   // Whether an approve re-rates a listing is answered with approveRequest's OWN `where`
   // builders, so this warning and that write cannot disagree about which listing it is.
@@ -2219,7 +2227,7 @@ async function listingFactsForRequests(
     const listing = bySlug.get(req.slug);
     const belongs = listing && listingBelongsToRequest(listing, req);
     out.set(req.id, {
-      ...(belongs ? listingQueueFacts(listing) : NO_LISTING_QUEUE_FACTS),
+      ...(belongs ? listingQueueFacts(listing, redById.get(listing.id)) : NO_LISTING_QUEUE_FACTS),
       appListingId: belongs ? listing.id : null,
       approveRating: approveRatingFor(req),
     });

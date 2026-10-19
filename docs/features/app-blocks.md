@@ -260,6 +260,9 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
+  storageMode?: 'local-preview';       // dev-tunnel frames only; advisory, grants nothing.
+                                       // See BLOCK_HOST_LOCAL_PREVIEW_STORAGE in
+                                       // src/components/AppBlocks/blockInitFragmentGate.ts.
 }
 ```
 

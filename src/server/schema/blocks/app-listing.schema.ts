@@ -291,6 +291,17 @@ export type SetListingIconInput = z.infer<typeof setListingIconSchema>;
 export const setListingCoverSchema = z.object({ listingId, imageId });
 export type SetListingCoverInput = z.infer<typeof setListingCoverSchema>;
 
+/**
+ * Set (`imageId`) or clear (`null`) the civitai.red-only icon or cover override. A separate proc
+ * rather than a flag on `setIcon` / `setCover`, whose CLI-reachable input shapes stay unchanged.
+ */
+export const setListingRedMediaSchema = z.object({
+  listingId,
+  slot: z.enum(['icon', 'cover']),
+  imageId: imageId.nullable(),
+});
+export type SetListingRedMediaInput = z.infer<typeof setListingRedMediaSchema>;
+
 export const addListingScreenshotSchema = z.object({ listingId, imageId, caption });
 export type AddListingScreenshotInput = z.infer<typeof addListingScreenshotSchema>;
 

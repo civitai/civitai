@@ -1,3 +1,4 @@
+import { isHttpError } from '@sveltejs/kit';
 import type { TurnEvent, TurnSource, TurnStatus, TurnToolCall } from '$lib/assistant/types';
 import { unverifiedCitations } from '$lib/assistant/answer';
 import type { ChatMessage, Completion, ToolCall, ToolSpec } from './openrouter';
@@ -137,6 +138,8 @@ export async function runTurn(input: {
       ? 'The turn took too long and was stopped.'
       : e instanceof Error
       ? e.message
+      : isHttpError(e)
+      ? e.body.message
       : String(e);
     return finish('error', null, message);
   }

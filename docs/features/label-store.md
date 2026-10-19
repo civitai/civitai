@@ -41,7 +41,8 @@ change.
 The nightly `appeal-decision-records` job (`sweepLabelStore`) excludes images by the same rule it applies
 to appeal records; scan flags, votes and pipeline predictions also check it when they land. An image is
 excluded when it, or another image sharing its stored file, matches. Deleting an appeal record takes its
-image out too.
+image out too. The same job excludes a `model_text` subject as `removed` once its model is deleted (soft or hard),
+so the owner's text goes and the judgements stay; in batches.
 
 The functions belong to the owner of the site tables; site code that calls them directly connects as
 that owner.
@@ -55,6 +56,15 @@ committing every 25 rows; `backfill()` does it in one transaction, for tests. Bo
 scan flag, vote or pipeline prediction on an image the site already excludes is recorded and excluded at
 once; appeal decisions are refused upstream for such images, and direct `record_*` calls wait for the
 nightly sweep.
+
+Wired today from site code: moderator rulings on text-scan `minor` and `poi` flags on models
+(`src/server/services/text-scan/label-capture.ts`), recorded by the flag writer in the ruling's own
+transaction under a savepoint. Subject `model_text` with `subjectId` = the model id and `contentHash` = the hash of the scanned text
+the ruling covers, with that text as the snapshot while it is unchanged; family `text_scan`, questions
+`text_scan.model.minor` / `text_scan.model.poi`, values `flag` / `clear`; a ruling on the owner's appeal is
+kind `appeal`. The ref is `TextScanRuling:Model:<id>:<label>:<kind>:<value>:<textHash>:<labeller hash>`,
+so a retried ruling records nothing. These questions have no `rule` row yet, so they never become
+trainable.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back

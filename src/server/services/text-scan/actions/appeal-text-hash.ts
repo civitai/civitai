@@ -2,6 +2,11 @@ import { textScanResultTextHash } from '@civitai/shared/rating-review';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import {
+  loadTextScanSubject,
+  writeTextScanRuling,
+} from '~/server/services/text-scan/label-capture';
 import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -11,15 +16,11 @@ import {
   TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
-import { getTextScanProfile } from '~/server/services/text-scan/profiles';
-// `text-scan/profiles` resolves to the registry file; only the barrel registers the profiles.
-import '~/server/services/text-scan/profiles/index';
-import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
-  const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
+  const subject = await loadTextScanSubject(entityType, entityId);
   return subject ? textScanTextHash(subject) : null;
 }
 
@@ -66,7 +67,17 @@ export async function stampModeratorTextScanRuling({
   const textHash = ruledHash ?? (await loadGrantTextHash('Model', modelId, label));
   if (!textHash) return false;
   // The moderator just ruled on the current state, so a pending re-detection is moot.
-  await dbWrite.$executeRaw`
+  await writeTextScanRuling(
+    {
+      modelId,
+      labels: [label],
+      decision: 'appealGranted',
+      via: 'moderator',
+      moderatorId: userId,
+      reason,
+      note,
+    },
+    (tx) => tx.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}::text, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
@@ -82,7 +93,9 @@ export async function stampModeratorTextScanRuling({
       )
     )
     WHERE m.id = ${modelId}
-  `;
+  `,
+    (changed) => changed > 0
+  );
   return true;
 }
 
