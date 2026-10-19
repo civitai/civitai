@@ -53,8 +53,8 @@ importers:
         specifier: 0.2.0-beta.98
         version: 0.2.0-beta.98
       '@civitai/components-chat':
-        specifier: ^0.17.0
-        version: 0.17.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.18.0
+        version: 0.18.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -2335,8 +2335,8 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.17.0':
-    resolution: {integrity: sha512-xeAc2bXlLhtW96QMNFfybhkMtASUPYOsflI9xl/xgR4JWwumBVVbb8CgZbFpEfvakYO0d923hjitNxSnKLiMcA==}
+  '@civitai/components-chat@0.18.0':
+    resolution: {integrity: sha512-Fk7x9DcLI3xvbmzYupi7ejQsezDcfxv6vZ/ua9m85BDannhPviNTrxNKEnH7u9XtyopOfne2/HF1y21OGtXfxw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
@@ -13968,7 +13968,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/components-chat@0.17.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.18.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
       '@civitai/components': 0.13.0(@civitai/sdk@0.11.0)
