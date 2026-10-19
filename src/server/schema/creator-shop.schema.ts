@@ -103,6 +103,8 @@ export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS)
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 /** Review-queue filter value for packs, which have no CosmeticType of their own. */
 export const PACK_FILTER_VALUE = 'Pack' as const;
+/** Review-queue filter value for a creator's mystery pack: a box listing whose box has a seller. */
+export const MYSTERY_PACK_FILTER_VALUE = 'MysteryPack' as const;
 /** A shop type filter: a CosmeticType, or the pack pseudo-type. */
 export type ShopFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
 export const shopFilterTypeSchema = z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)]);
@@ -779,8 +781,16 @@ export const getReviewQueueSchema = z.object({
   userId: z.number().optional(),
   // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
   // It rides in this filter because to a moderator it is one more kind of thing
-  // in the same queue.
-  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)])).optional(),
+  // in the same queue. So does a creator's mystery pack.
+  cosmeticTypes: z
+    .array(
+      z.union([
+        z.enum(CosmeticType),
+        z.literal(PACK_FILTER_VALUE),
+        z.literal(MYSTERY_PACK_FILTER_VALUE),
+      ])
+    )
+    .optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;
@@ -878,3 +888,9 @@ export const reviseMysteryPackSchema = mysteryPackProposalSchema.extend({ boxId:
 
 export type WithdrawMysteryPackRevisionInput = z.infer<typeof withdrawMysteryPackRevisionSchema>;
 export const withdrawMysteryPackRevisionSchema = z.object({ boxId: z.number() });
+
+export type LowerMysteryPackPriceInput = z.infer<typeof lowerMysteryPackPriceSchema>;
+export const lowerMysteryPackPriceSchema = z.object({
+  boxId: z.number(),
+  price: z.number().int().positive(),
+});

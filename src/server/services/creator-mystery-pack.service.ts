@@ -13,6 +13,7 @@ import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '@civitai/shared/mystery-box';
 import { dbWrite } from '~/server/db/client';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type {
+  LowerMysteryPackPriceInput,
   ReviseMysteryPackInput,
   SubmitMysteryPackInput,
   WithdrawMysteryPackRevisionInput,
@@ -54,7 +55,7 @@ const MYSTERY_PACK_LOCK_CLASS = 0x434d0001;
 
 type Tx = Prisma.TransactionClient;
 
-const lockCreator = (tx: Tx, userId: number) =>
+export const lockCreator = (tx: Tx, userId: number) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(${MYSTERY_PACK_LOCK_CLASS}::int, ${userId}::int)`;
 
 /** Reads the primary, not the session: a mute or ban the session hasn't seen must still refuse. */
@@ -105,22 +106,28 @@ type ContentRow = {
   unitAmount: number | null;
 };
 
-/** Values and checks each content by the creator's own listing of it (`addedById`) only. */
-async function checkProposal({
-  creatorId,
-  steepness,
-  tiers,
-  price,
-  stickersEnabled,
-}: {
-  creatorId: number;
-  steepness: CreatorBoxSteepness;
-  tiers: number[][];
-  price: number;
-  stickersEnabled: boolean;
-}): Promise<MysteryPackProposal> {
+/**
+ * Values and checks each content by the creator's own listing of it (`addedById`) only. Returns the
+ * tier weights and each content's value by cosmetic id with the proposal.
+ */
+export async function checkProposal(
+  client: Tx,
+  {
+    creatorId,
+    steepness,
+    tiers,
+    price,
+    stickersEnabled,
+  }: {
+    creatorId: number;
+    steepness: CreatorBoxSteepness;
+    tiers: number[][];
+    price: number;
+    stickersEnabled: boolean;
+  }
+): Promise<{ proposal: MysteryPackProposal; weights: number[]; values: Map<number, number> }> {
   const ids = tiers.flat();
-  const rows = await dbWrite.$queryRaw<ContentRow[]>`
+  const rows = await client.$queryRaw<ContentRow[]>`
     SELECT c.id AS "cosmeticId", c.name, c.type::text AS type, c."createdById", c.data,
       l."addedById", l.status::text AS status, l."archivedAt", l."availableQuantity",
       l."availableFrom", l."availableTo", l.listed, l."unitAmount"
@@ -174,16 +181,19 @@ async function checkProposal({
   );
   if (!layout.ok) throw throwBadRequestError(layout.reason);
 
+  const values = new Map(
+    rows.map((row) => [
+      row.cosmeticId,
+      creatorBoxContentValue(
+        { listed: row.listed!, unitAmount: row.unitAmount! },
+        cosmeticPriceFloor(row.type)
+      ),
+    ])
+  );
   const bounds = creatorBoxPriceBounds(
     tiers.map((tier, t) => ({
       weight: layout.weights[t],
-      values: tier.map((id) => {
-        const row = byId.get(id)!;
-        return creatorBoxContentValue(
-          { listed: row.listed!, unitAmount: row.unitAmount! },
-          cosmeticPriceFloor(row.type)
-        );
-      }),
+      values: tier.map((id) => values.get(id)!),
     })),
     COSMETIC_PRICE_FLOOR_MIN
   );
@@ -192,19 +202,27 @@ async function checkProposal({
 
   const names = CREATOR_BOX_TIERS[tiers.length];
   return {
-    steepness,
-    tiers: tiers.map((cosmeticIds, t) => ({ key: names[t].key, cosmeticIds })),
-    price,
+    proposal: {
+      steepness,
+      tiers: tiers.map((cosmeticIds, t) => ({ key: names[t].key, cosmeticIds })),
+      price,
+    },
+    weights: layout.weights,
+    values,
   };
 }
 
-/** Sent-back, rejected and archived packs don't count as live. */
+/**
+ * Sent-back, rejected and archived packs don't count as live; nor does a box a moderator archived,
+ * whose listing they may have left Published.
+ */
 async function assertUnderLiveLimit(client: Tx, userId: number) {
   const [{ live }] = await client.$queryRaw<{ live: number }[]>`
     SELECT count(*)::int AS live
     FROM "ItemDefinition" d
     JOIN "CosmeticShopItem" s ON s."itemDefinitionId" = d.id
     WHERE d."sellerId" = ${userId} AND d.type = ${ITEM_TYPE.box}
+      AND d.status <> ${ITEM_DEFINITION_STATUS.archived}
       AND s.status IN ('PendingReview', 'Published')`;
   if (live >= MAX_LIVE_MYSTERY_PACKS)
     throw throwBadRequestError(
@@ -235,7 +253,7 @@ export async function submitMysteryPack({
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
   await assertCreatorMayBuild({ userId, countryCode });
-  const proposal = await checkProposal({
+  const { proposal } = await checkProposal(dbWrite, {
     creatorId: userId,
     steepness,
     tiers,
@@ -307,10 +325,12 @@ async function getOwnBox(tx: Tx, boxId: number, userId: number) {
       status: string;
       listingId: number;
       listingStatus: CosmeticShopItemStatus;
+      unitAmount: number;
       meta: CosmeticShopItemMeta | null;
     }[]
   >`
-    SELECT d.id, d.version, d.status, s.id AS "listingId", s.status::text AS "listingStatus", s.meta
+    SELECT d.id, d.version, d.status, s.id AS "listingId", s.status::text AS "listingStatus",
+      s."unitAmount", s.meta
     FROM "ItemDefinition" d
     JOIN "CosmeticShopItem" s ON s."itemDefinitionId" = d.id
     WHERE d.id = ${boxId} AND d.type = ${ITEM_TYPE.box} AND d."sellerId" = ${userId}
@@ -353,7 +373,7 @@ export async function reviseMysteryPack({
   stickersEnabled: boolean;
 }) {
   await assertCreatorMayBuild({ userId, countryCode });
-  const proposal = await checkProposal({
+  const { proposal } = await checkProposal(dbWrite, {
     creatorId: userId,
     steepness,
     tiers,
@@ -436,6 +456,51 @@ export async function withdrawMysteryPackRevision({
       neverSold ? 'Archived' : undefined
     );
     return { boxId, archived: neverSold };
+  });
+}
+
+/**
+ * A cut needs no review: the approved price was within the bounds, so a lower one above the floor is
+ * too. Refused while an edit waits, whose approval would set its own price.
+ */
+export async function lowerMysteryPackPrice({
+  userId,
+  boxId,
+  price,
+}: LowerMysteryPackPriceInput & { userId: number }) {
+  return dbWrite.$transaction(async (tx) => {
+    await lockCreator(tx, userId);
+    const box = await getOwnBox(tx, boxId, userId);
+    if (box.listingStatus !== 'Published')
+      throw throwBadRequestError('Only a mystery pack on sale can be repriced');
+    const [{ pending }] = await tx.$queryRaw<{ pending: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM "BoxRevision" WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'
+      ) AS pending`;
+    if (pending)
+      throw throwBadRequestError(
+        'This mystery pack has an edit waiting for review. Set the price in that edit instead.'
+      );
+    if (price >= box.unitAmount)
+      throw throwBadRequestError(
+        `The new price must be below ${box.unitAmount}. Raising it is an edit, which goes to review.`
+      );
+    if (price < COSMETIC_PRICE_FLOOR_MIN)
+      throw throwBadRequestError(`The price is at least ${COSMETIC_PRICE_FLOOR_MIN}`);
+
+    const meta = appendItemHistory(box.meta ?? { purchases: 0 }, {
+      at: new Date().toISOString(),
+      userId,
+      kind: 'edited',
+      status: box.listingStatus,
+      note: 'Mystery pack price lowered',
+      changes: [{ field: 'price', from: box.unitAmount, to: price }],
+    });
+    await tx.$executeRaw`
+      UPDATE "CosmeticShopItem"
+      SET "unitAmount" = ${price}, meta = ${JSON.stringify(meta)}::jsonb
+      WHERE id = ${box.listingId}`;
+    return { boxId, price };
   });
 }
 
