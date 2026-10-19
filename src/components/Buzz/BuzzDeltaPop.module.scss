@@ -9,6 +9,11 @@
   white-space: nowrap;
   font-size: var(--mantine-font-size-sm);
   font-weight: 800;
+  // The counter's digits sit at line-height 0; a normal line box would push the pop past the header.
+  line-height: 1;
+  margin-top: 2px;
+  // Under a gradient-clipped counter, glyphs would otherwise inherit its transparent fill.
+  -webkit-text-fill-color: currentColor;
   animation: popIn 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -25,19 +30,43 @@
   align-items: baseline;
 }
 
-.debit {
+// A gain shares its account's colour with a spend, so the pill is what tells them apart.
+.credit {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+// Each Buzz type in the shade its counter uses, darkened in light mode to stay legible on white.
+.blue {
+  color: var(--mantine-color-blue-7);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-blue-4);
+  }
+}
+
+.yellow {
+  color: var(--mantine-color-yellow-8);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-yellow-6);
+  }
+}
+
+.green {
+  color: var(--mantine-color-green-8);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-green-5);
+  }
+}
+
+.red {
   color: var(--mantine-color-red-7);
 
   [data-mantine-color-scheme='dark'] & {
     color: var(--mantine-color-red-4);
-  }
-}
-
-.credit {
-  color: var(--mantine-color-yellow-7);
-
-  [data-mantine-color-scheme='dark'] & {
-    color: var(--mantine-color-yellow-4);
   }
 }
 

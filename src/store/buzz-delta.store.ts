@@ -145,7 +145,13 @@ export function recordBuzzUpdate({ accountType, delta }: { accountType: string; 
   useBuzzDeltaStore.getState().record(type as BuzzSpendType, delta);
 }
 
-export type BuzzDeltaSummary = { total: number; count: number; big: boolean };
+export type BuzzDeltaSummary = {
+  total: number;
+  count: number;
+  big: boolean;
+  /** The account that moved the most of `total`, which the pop takes its colour from. */
+  type: BuzzSpendType;
+};
 
 /** The open groups for the given accounts, summed per direction. */
 export function useBuzzDeltaGroups(accountTypes: BuzzSpendType[]) {
@@ -153,17 +159,20 @@ export function useBuzzDeltaGroups(accountTypes: BuzzSpendType[]) {
   const typesKey = accountTypes.join(',');
 
   return useMemo(() => {
-    const result: Partial<Record<BuzzDeltaDirection, BuzzDeltaSummary>> = {};
+    const result: Partial<Record<BuzzDeltaDirection, BuzzDeltaSummary & { top: number }>> = {};
     const wanted = typesKey.split(',');
     for (const group of Object.values(groups)) {
       if (!group || !wanted.includes(group.type)) continue;
       const prev = result[group.direction];
+      const leads = !prev || group.total > prev.top;
       result[group.direction] = {
         total: (prev?.total ?? 0) + group.total,
         count: (prev?.count ?? 0) + group.count,
         big: (prev?.big ?? false) || group.big,
+        type: leads ? group.type : prev.type,
+        top: leads ? group.total : prev.top,
       };
     }
-    return result;
+    return result as Partial<Record<BuzzDeltaDirection, BuzzDeltaSummary>>;
   }, [groups, typesKey]);
 }

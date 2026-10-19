@@ -10,13 +10,24 @@ const EXIT_MS = 600;
 
 type Lines = Partial<Record<BuzzDeltaDirection, BuzzDeltaSummary>>;
 
-function PopLine({ direction, total }: { direction: BuzzDeltaDirection; total: number }) {
+function PopLine({
+  direction,
+  total,
+  type,
+}: {
+  direction: BuzzDeltaDirection;
+  total: number;
+  type: BuzzSpendType;
+}) {
   // Mounting at 0 and then moving to the total is what rolls the digits in.
   const [value, setValue] = useState(0);
   useEffect(() => setValue(total), [total]);
 
   return (
-    <span className={clsx(classes.line, direction === 'debit' ? classes.debit : classes.credit)}>
+    <span
+      data-buzz-type={type}
+      className={clsx(classes.line, classes[type], direction === 'credit' && classes.credit)}
+    >
       {direction === 'debit' ? '−' : '+'}
       <CustomNumberFlow value={value} />
     </span>
@@ -67,10 +78,20 @@ export function BuzzDeltaPop({ accountTypes }: { accountTypes: BuzzSpendType[] }
       )}
     >
       {lines.debit && (
-        <PopLine key={`debit-${epoch}`} direction="debit" total={lines.debit.total} />
+        <PopLine
+          key={`debit-${epoch}`}
+          direction="debit"
+          total={lines.debit.total}
+          type={lines.debit.type}
+        />
       )}
       {lines.credit && (
-        <PopLine key={`credit-${epoch}`} direction="credit" total={lines.credit.total} />
+        <PopLine
+          key={`credit-${epoch}`}
+          direction="credit"
+          total={lines.credit.total}
+          type={lines.credit.type}
+        />
       )}
     </span>
   );
