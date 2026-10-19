@@ -6709,6 +6709,37 @@ export interface Prize {
   voidedAt: Date | null;
 }
 
+export interface CreatorProgramPayoutReview {
+  id: number;
+  period: string;
+  userId: number;
+  status: string;
+  hold: boolean;
+  signals: string[];
+  payoutCents: number;
+  evidence: JsonValue;
+  firstFlaggedAt: Date;
+  lastEvaluatedAt: Date;
+  evaluations: number;
+  decidedAt: Date | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  releasedAt: Date | null;
+  releaseExternalId: string | null;
+}
+
+export interface CreatorProgramPayoutReviewRun {
+  id: number;
+  period: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  creditedCount: number;
+  evaluatedCount: number;
+  flaggedCount: number;
+  error: string | null;
+}
+
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
 
 type Decimal = { valueOf(): string };

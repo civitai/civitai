@@ -2701,6 +2701,35 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorProgramPayoutReview = {
+  id: Generated<number>;
+  period: string;
+  userId: number;
+  status: Generated<string>;
+  hold: Generated<boolean>;
+  signals: string[];
+  payoutCents: number;
+  evidence: Generated<unknown>;
+  firstFlaggedAt: Generated<Timestamp>;
+  lastEvaluatedAt: Generated<Timestamp>;
+  evaluations: Generated<number>;
+  decidedAt: Timestamp | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  releasedAt: Timestamp | null;
+  releaseExternalId: string | null;
+};
+export type CreatorProgramPayoutReviewRun = {
+  id: Generated<number>;
+  period: string;
+  startedAt: Timestamp;
+  finishedAt: Timestamp | null;
+  creditedCount: Generated<number>;
+  evaluatedCount: Generated<number>;
+  flaggedCount: Generated<number>;
+  error: string | null;
+};
 export type CreatorScoreGrant = {
   id: Generated<number>;
   userId: number;
@@ -5984,6 +6013,8 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorProgramPayoutReview: CreatorProgramPayoutReview;
+  CreatorProgramPayoutReviewRun: CreatorProgramPayoutReviewRun;
   CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;

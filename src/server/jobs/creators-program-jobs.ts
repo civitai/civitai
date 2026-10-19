@@ -13,6 +13,10 @@ import {
   getUserCapCache,
   userCashCache,
 } from '~/server/services/creator-program.service';
+import {
+  getSettlementHolds,
+  splitHeldBalances,
+} from '~/server/services/creator-program-prepayout-review/hold';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -196,7 +200,21 @@ export const creatorsProgramSettleCash = createJob(
       accountTypes: ['cashPending'],
     });
 
-    const positiveBalances = balances.filter((b) => b.balance > 0);
+    const period = dayjs(month).format('YYYY-MM');
+    const { heldUserIds, reviewed, tablesExist } = await getSettlementHolds(period);
+    // A missing review alerts but does not stop the batch: only flagged creators are held.
+    if (!reviewed)
+      await logToAxiom({
+        name: 'creator-program-prepayout-review-missing',
+        type: 'error',
+        period,
+        tablesExist,
+        message: 'Settling a batch the pre-payout review did not finish',
+      });
+
+    const { settle: positiveBalances, held } = splitHeldBalances(balances, heldUserIds);
+    if (held.length)
+      await logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
     if (positiveBalances.length === 0) return;
 
     // Settle pending cash transactions from bank with retry

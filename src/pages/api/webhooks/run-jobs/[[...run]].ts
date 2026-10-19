@@ -20,6 +20,7 @@ import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
+import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -242,6 +243,7 @@ export const jobs: Job[] = [
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
   creatorProgramCounterpartyReview,
+  creatorProgramPrepayoutReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
