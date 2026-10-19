@@ -508,6 +508,19 @@ describe('approving an edit to a pack on sale', () => {
     });
   });
 
+  it('keeps a tier colour a moderator set', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await q(`UPDATE "BoxTier" SET color = 'gold' WHERE "boxDefinitionId" = $1 AND key = 'rare'`, [
+      boxId,
+    ]);
+
+    await reprice(boxId, 800);
+    await apply(boxId);
+
+    expect((await contentsOf(boxId)).map((tier) => tier.color)).toEqual([null, 'gold']);
+  });
+
   it('deletes a tier the edit drops', async () => {
     const boxId = await submit([[1, 2, 3], [4, 5], [6]]);
     await apply(boxId);
@@ -842,6 +855,20 @@ describe("a moderator's verdict", () => {
       })
     ).rejects.toThrow("This pack's edit changed since you opened it");
     expect((await revisionsOf(boxId))[0].status).toBe('pending');
+  });
+
+  it('approve naming no edit while one waits is refused', async () => {
+    const boxId = await submit();
+
+    await expect(
+      approve.reviewMysteryPack({
+        boxId,
+        reviewerId: MOD,
+        action: 'approve',
+        stickersEnabled: false,
+      })
+    ).rejects.toThrow("This pack's edit changed since you opened it");
+    expect(await boxRow(boxId)).toEqual({ status: 'draft', version: 1 });
   });
 
   it('approve naming an edit that is gone does not re-publish the live version', async () => {
