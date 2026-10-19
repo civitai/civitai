@@ -32,6 +32,10 @@
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
+  import {
+    CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
+    CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  } from '$lib/creator-score-grant';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -181,7 +185,12 @@
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
       {#if data.grants['user.creatorScore.grant']}
-        <CreatorScoreGrantPanel userId={result.identity.id} />
+        <CreatorScoreGrantPanel
+          userId={result.identity.id}
+          maxAmount={data.grants['user.creatorScore.grantLarge']
+            ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+            : CREATOR_SCORE_GRANT_MAX_AMOUNT}
+        />
       {/if}
     {:else if section === 'reports'}
       <ReportsPanel
