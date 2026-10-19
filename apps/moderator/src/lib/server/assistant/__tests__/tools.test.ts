@@ -292,11 +292,14 @@ describe('reactorClusters', () => {
     // 2 has 13 shared addresses but lists only the crowded one; a narrower link to 1 may be among the rest.
     const {
       clusters: [cluster],
+      unmeasuredLinks,
     } = reactorClusters([
       acct(1, [['vpn', 358]], { peers: [2] }),
       acct(2, [['vpn', 358]], { peers: [1], addressCount: 13 }),
     ]);
     expect(cluster).toMatchObject({ widestLink: 358, complete: false });
+    // Already in one cluster, so not repeated as an unmeasured pair.
+    expect(unmeasuredLinks).toEqual([]);
   });
 
   it('returns pairs linked only past the cap, instead of dropping them', () => {
