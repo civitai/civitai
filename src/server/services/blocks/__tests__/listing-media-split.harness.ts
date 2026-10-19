@@ -12,7 +12,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../packages/civitai-db-schema/prisma/migrations/20261108120000_app_listing_red_media/migration.sql'
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261018192800_app_listing_red_media/migration.sql'
 );
 
 export type SplitDb = {
