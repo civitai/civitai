@@ -1989,6 +1989,62 @@ export type ListingEditScalars = {
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
+
+/**
+ * The edit target's civitai.red icon / cover overrides, for the author's editor. `available:
+ * false` while the environment does not have the slot columns (or this role cannot read them):
+ * the editor then offers no picker, matching `setListingRedMedia`'s refusal.
+ */
+export type ListingEditRedMedia = {
+  available: boolean;
+  icon: ListingEditAsset;
+  cover: ListingEditAsset;
+};
+
+/**
+ * {@link ListingEditRedMedia} of `listingId` — the same edit target whose `assets` the editor is
+ * handed. Read through the WRITE client, like `getListingAssets`' read of the same slots: the
+ * editor re-reads after every slot write, and a slot set on a shadow minted milliseconds ago must
+ * not read back empty off a lagging replica.
+ *
+ * NEVER THROWS, like the store's read of the same slots (`readListingRedMediaManyForRender`): the
+ * editor must not fail to open because of the manual-apply slot table. A failed read reads as
+ * "not available" (no picker), and is logged.
+ */
+export async function loadListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  try {
+    return await readListingEditRedMedia(listingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[offsite-listing] civitai.red slot read for the editor failed; offering no picker: ' +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return { available: false, icon: NO_EDIT_ASSET, cover: NO_EDIT_ASSET };
+  }
+}
+
+const NO_EDIT_ASSET: ListingEditAsset = Object.freeze({ imageId: null, url: null });
+
+async function readListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  const red = await readListingRedSlots(dbWrite, listingId);
+  const ids = [red.redIconId, red.redCoverId].filter((v): v is number => v != null);
+  const images = ids.length
+    ? await dbWrite.image.findMany({ where: { id: { in: ids } }, select: { id: true, url: true } })
+    : [];
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const urlOf = (id: number | null, width: number) => {
+    const url = id == null ? null : images.find((i) => i.id === id)?.url;
+    return url ? getEdgeUrl(url, { width }) : null;
+  };
+  return {
+    available: red.available,
+    // The same preview widths as the regular icon / cover in `loadListingEditView`.
+    icon: { imageId: red.redIconId, url: urlOf(red.redIconId, 256) },
+    cover: { imageId: red.redCoverId, url: urlOf(red.redCoverId, 1200) },
+  };
+}
+
 export type ListingEditScreenshot = {
   id: string;
   imageId: number | null;
@@ -2045,6 +2101,8 @@ export type GetMyListingForEditResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The effective source's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
@@ -2328,6 +2386,7 @@ export async function getMyListingForEdit(opts: {
     shadowId,
     scalars: view.scalars,
     assets: view.assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
     connectClientId: listing.connectClientId,
     connectAllowedScopes,
     connectRequestedScopes: view.connectRequestedScopes,
@@ -2402,6 +2461,8 @@ export type GetMyListingForAppResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The same EFFECTIVE edit target's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
 };
 
 /**
@@ -2610,6 +2671,7 @@ export async function getMyListingForApp(opts: {
     editTargetId: effectiveId,
     editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
     assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
   };
 }
 

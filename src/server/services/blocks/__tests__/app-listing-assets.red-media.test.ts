@@ -35,8 +35,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   getListingAssets,
+  setListingIcon,
   setListingRedMedia,
 } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  getMyListingForApp,
+  getMyListingForEdit,
+  loadListingEditRedMedia,
+} from '~/server/services/blocks/offsite-listing.service';
 import { RED_SLOTS_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/listing-media-split.service';
 import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
@@ -184,6 +190,39 @@ describe('setListingRedMedia', () => {
     expect(await split.redSlots(SHADOW)).toEqual({ icon: R_OVERRIDE, cover: COVER });
   });
 
+  it('invariant guard: on a LIVE listing a slot change takes the SAME review path as an icon change: one revision, opened the same way, holds both', async () => {
+    wire({
+      [LIVE]: listing(),
+      [SHADOW]: listing({ id: SHADOW, status: 'draft', revisionOfId: LIVE }),
+    });
+    await setListingIcon({ listingId: LIVE, imageId: ICON }, owner);
+    const iconRevisionCalls = beginListingRevision.mock.calls.map((c) => c[0]);
+    expect(dbMock.dbWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: SHADOW },
+      data: { iconId: ICON },
+    });
+    beginListingRevision.mockClear();
+
+    await setListingRedMedia({ listingId: LIVE, slot: 'cover', imageId: COVER }, owner);
+    expect(beginListingRevision.mock.calls.map((c) => c[0])).toEqual(iconRevisionCalls);
+    expect(iconRevisionCalls).toEqual([{ listingId: LIVE, userId: OWNER_ID }]);
+    // Both edits sit on the revision; the live listing is untouched until it is approved.
+    expect(await split.redSlots(SHADOW)).toEqual({ icon: null, cover: COVER });
+    expect(await split.redSlots(LIVE)).toBeNull();
+    expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: LIVE } })
+    );
+  });
+
+  it('invariant guard: an accepted collaborator (editor seat) may set and clear a slot, as for the icon', async () => {
+    access.current = { role: 'editor' };
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE }, owner);
+    expect(await split.redSlots(LIVE)).toEqual({ icon: R_OVERRIDE, cover: null });
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: null }, owner);
+    expect(await split.redSlots(LIVE)).toEqual({ icon: null, cover: null });
+  });
+
   it('🔴 a caller with no role on the listing is refused, and nothing is written', async () => {
     access.current = null;
     wire({ [LIVE]: listing({ status: 'draft' }) });
@@ -316,5 +355,99 @@ describe('getListingAssets — the review read of the overrides', () => {
     await resetTables(false);
     wire({ [LIVE]: listing({ status: 'pending' }) });
     expect((await getListingAssets({ listingId: LIVE }, mod)).redSlotsAvailable).toBe(false);
+  });
+});
+
+describe('loadListingEditRedMedia — the editor’s prefill of the overrides', () => {
+  it('🔴 returns each filled slot with its image id and an edge-resolved preview', async () => {
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    dbMock.dbWrite.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, url: `key-${id}` }))
+    );
+    await split.setRedSlots(LIVE, { icon: R_OVERRIDE, cover: null });
+    const res = await loadListingEditRedMedia(LIVE);
+    expect(res.available).toBe(true);
+    expect(res.icon.imageId).toBe(R_OVERRIDE);
+    expect(res.icon.url).toContain(`key-${R_OVERRIDE}`);
+    expect(res.cover).toEqual({ imageId: null, url: null });
+  });
+
+  it('🔴 slot columns absent: not available, so the editor offers no picker', async () => {
+    await resetTables(false);
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    expect(await loadListingEditRedMedia(LIVE)).toEqual({
+      available: false,
+      icon: { imageId: null, url: null },
+      cover: { imageId: null, url: null },
+    });
+  });
+
+  it('a failing read never fails the editor: not available, and logged', async () => {
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('boom'));
+    try {
+      expect((await loadListingEditRedMedia(LIVE)).available).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('the editor reads hand the step the EDIT TARGET’s overrides (`redMedia`)', () => {
+  /** One row serving every `appListing.findUnique` shape the two reads issue. */
+  function editRow(id: string, over: Record<string, unknown> = {}) {
+    return {
+      ...listing({ id, ...over }),
+      appBlockId: 'ab_rm',
+      tagline: null,
+      description: null,
+      externalUrl: null,
+      connectClientId: null,
+      connectRequestedScopes: null,
+      connectScopeJustifications: null,
+      appBlock: { contentRating: null },
+      icon: { url: 'icon-key' },
+      cover: { url: 'cover-key' },
+      screenshots: [],
+    };
+  }
+  function wireEdit(rows: Record<string, ReturnType<typeof editRow>>, shadowOf?: string) {
+    for (const c of [dbMock.dbRead, dbMock.dbWrite]) {
+      c.appListing.findUnique.mockImplementation(
+        async (args: { where: { id?: string; appBlockId?: string } }) =>
+          args.where.appBlockId != null ? rows[LIVE] ?? null : rows[args.where.id ?? ''] ?? null
+      );
+      c.appListing.findFirst.mockImplementation(async () => (shadowOf ? { id: shadowOf } : null));
+      c.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, url: `key-${id}` }))
+      );
+    }
+  }
+
+  it('🔴 getMyListingForApp: the existing revision’s overrides, not the live listing’s', async () => {
+    wireEdit(
+      { [LIVE]: editRow(LIVE), [SHADOW]: editRow(SHADOW, { status: 'draft', revisionOfId: LIVE }) },
+      SHADOW
+    );
+    await split.setRedSlots(LIVE, { icon: PG13_OVERRIDE, cover: null });
+    await split.setRedSlots(SHADOW, { icon: R_OVERRIDE, cover: null });
+    const res = await getMyListingForApp({ appBlockId: 'ab_rm', userId: OWNER_ID });
+    expect(res.editTargetId).toBe(SHADOW);
+    expect(res.redMedia.available).toBe(true);
+    expect(res.redMedia.icon.imageId).toBe(R_OVERRIDE);
+    expect(res.redMedia.icon.url).toContain(`key-${R_OVERRIDE}`);
+    expect(res.redMedia.cover).toEqual({ imageId: null, url: null });
+  });
+
+  it('🔴 getMyListingForEdit: the listing’s own overrides for a draft edited in place', async () => {
+    wireEdit({ [LIVE]: editRow(LIVE, { status: 'draft' }) });
+    await split.setRedSlots(LIVE, { icon: null, cover: COVER });
+    const res = await getMyListingForEdit({ listingId: LIVE, userId: OWNER_ID });
+    expect(res.redMedia.available).toBe(true);
+    expect(res.redMedia.cover.imageId).toBe(COVER);
+    expect(res.redMedia.icon).toEqual({ imageId: null, url: null });
   });
 });

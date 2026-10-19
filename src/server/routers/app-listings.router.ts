@@ -613,8 +613,10 @@ export const appListingsRouter = router({
    * Set or clear the civitai.red-only icon / cover override (`setListingRedMedia`): the same
    * owner / revision / moderator rules as `setIcon` / `setCover`.
    *
+   * Called by the author's listing media editor (`ListingAssetStep`'s civitai.red section).
+   *
    * 🔴 NOT annotated with `listingMediaCliScope` (yet). The CLI has no command for it; admitting
-   * the scoped token is the authoring follow-on's decision, made on the basis that set's header
+   * the scoped token is the CLI follow-on's decision, made on the basis that set's header
    * states, not copied from the siblings above.
    */
   setRedMedia: protectedProcedure

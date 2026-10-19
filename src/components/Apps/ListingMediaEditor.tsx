@@ -395,6 +395,11 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               // — see `resolveOwnerScreenshotTarget`. Do NOT add a client path that
               // mutates a screenshot row outside those procs.
               initial={listing.assets}
+              // The edit target's civitai.red overrides, read with the same payload (so the
+              // same settled-before-mount seed as `initial`). Set through `setRedMedia`, which
+              // takes the same revision path as `setIcon` / `setCover`: an owner's first edit of
+              // a live listing opens the revision that "Submit for review" sends.
+              redMedia={listing.redMedia}
               allowRemove
               onAssetMutated={handleAssetMutated}
               onScanSettled={handleScanSettled}
@@ -413,6 +418,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
                     ? 'live-direct'
                     : 'live-revision',
                   assets: assetsQuery.data,
+                  mediaSplit: assetsQuery.data.mediaSplitApproved === true,
                 }
               }
             />
