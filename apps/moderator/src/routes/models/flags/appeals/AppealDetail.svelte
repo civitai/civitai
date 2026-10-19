@@ -152,7 +152,7 @@
   );
   const reason = $derived(draft.reason || suggested);
   let problem = $state<string | null>(null);
-  let reasonSelect = $state<HTMLSelectElement | null>(null);
+  let reasonSelect = $state<HTMLElement | null>(null);
 
   // One step: the ruling button submits with the reason and note already in the bar, unless they
   // cannot be recorded for that ruling, in which case nothing is sent and the bar says why.

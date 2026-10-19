@@ -137,7 +137,7 @@
   );
   const reason = $derived(draft.reason || suggested);
   let problem = $state<string | null>(null);
-  let reasonSelect = $state<HTMLSelectElement | null>(null);
+  let reasonSelect = $state<HTMLElement | null>(null);
 
   const outcomeOf = (keep: string[]) =>
     keep.length === flags.length ? 'Flagged' : keep.length === 0 ? 'Not flagged' : 'Split';

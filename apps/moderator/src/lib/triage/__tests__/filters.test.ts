@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriedSearchParams, chipHref } from '../filters';
+import { carriedSearchParams, chipHref, splitChips } from '../filters';
 
 const url = (search: string) => new URL(`http://x/models/flags/review${search}`);
 const group = { key: 'label', defaultValue: 'all', active: 'poi', toggle: true };
@@ -38,5 +38,40 @@ describe('carriedSearchParams', () => {
       ['sort', 'new'],
       ['label', 'minor'],
     ]);
+  });
+});
+
+describe('splitChips', () => {
+  const flag = {
+    key: 'flag',
+    values: ['all', 'minor', 'poi', 'unflagged'],
+    more: ['unflagged'],
+    defaultValue: 'all',
+    active: 'all',
+  };
+  const source = {
+    key: 'source',
+    values: ['hash', 'text-scan', 'moderator', 'none'],
+    more: ['moderator', 'none'],
+    defaultValue: 'all',
+    active: 'all',
+    toggle: true,
+  };
+
+  it('keeps the overflow values off the row and lists them under More', () => {
+    const { row, more } = splitChips([flag, source]);
+    expect(row.map((c) => c.value)).toEqual(['all', 'minor', 'poi', 'hash', 'text-scan']);
+    expect(more.map((c) => c.value)).toEqual(['unflagged', 'moderator', 'none']);
+  });
+
+  it('shows an active overflow value on the row, so the filter in force stays visible', () => {
+    const { row, more } = splitChips([flag, { ...source, active: 'none' }]);
+    expect(row.map((c) => c.value)).toContain('none');
+    expect(more.map((c) => c.value)).toEqual(['unflagged', 'moderator']);
+  });
+
+  it('drops the default chip of a toggle group', () => {
+    const { row } = splitChips([{ ...source, values: ['all', ...source.values] }]);
+    expect(row.map((c) => c.value)).not.toContain('all');
   });
 });

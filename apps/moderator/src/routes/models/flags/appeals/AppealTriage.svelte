@@ -64,6 +64,7 @@
         labels: FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_APPEAL_FILTERS.flag,
+        more: ['unflagged'],
       },
       {
         key: 'source',
@@ -73,6 +74,7 @@
         active: f.source,
         defaultValue: DEFAULT_APPEAL_FILTERS.source,
         toggle: true,
+        more: ['moderator', 'none'],
       },
     ] satisfies ChipGroup[];
   });
