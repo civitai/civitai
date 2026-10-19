@@ -4,6 +4,20 @@
  */
 export const boxOpenClaimKey = (boxItemId: bigint | string) => `box-open-${boxItemId}`;
 
+/** Every `Item.sourceKey` a moderator grant writes starts with this; a purchase's never does. */
+export const MOD_GRANT_SOURCE_PREFIX = 'mod-grant-';
+
+/**
+ * The `Item.sourceKey` of the `n`th item (from 1) one moderator grant gives one user. `sourceKey` is
+ * unique, so the key carries the user: one grant to many users shares its `grantId`.
+ */
+export function modGrantSourceKey(grantId: string, userId: number, n: number) {
+  if (!/^[A-Za-z0-9]+$/.test(grantId)) throw new Error(`Not a grant id: ${grantId}`);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error(`Not a user id: ${userId}`);
+  if (!Number.isSafeInteger(n) || n <= 0) throw new Error(`Not an item number: ${n}`);
+  return `${MOD_GRANT_SOURCE_PREFIX}${grantId}-${userId}-${n}`;
+}
+
 /** `BoxOpening.rewardStatus`, which a CHECK holds to these values. */
 export const BOX_OPENING_REWARD_STATUS = { granted: 'granted', refunded: 'refunded' } as const;
 

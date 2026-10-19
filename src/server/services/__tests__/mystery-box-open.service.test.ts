@@ -2,6 +2,7 @@ import type * as Crypto from 'crypto';
 import type * as EventShopItem from '~/server/events/event-shop-item';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as RosterSync from '~/server/events/points/roster-sync';
+import type * as LoadEvents from '~/server/events/load-events';
 import { Prisma } from '@prisma/client';
 import { computeBoxOdds } from '@civitai/shared/box-odds';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,10 +10,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Opening a mystery box: one transaction under the holder's item-holder lock that draws from what the
 // box still has for the holder, grants it, records the draw and removes the box. No money moves.
 
-const { mocks } = vi.hoisted(() => ({
+const { mocks, actual } = vi.hoisted(() => ({
+  actual: {} as { getEventBuyerTeam?: typeof EventShopItem.getEventBuyerTeam },
   mocks: {
     randomInt: vi.fn(),
     getEventBuyerTeam: vi.fn(),
+    loadEvents: vi.fn(),
     syncRoster: vi.fn(),
     refreshStickers: vi.fn(),
   },
@@ -22,9 +25,14 @@ vi.mock('crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof Crypto>()),
   randomInt: mocks.randomInt,
 }));
-vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
-  ...(await importOriginal<typeof EventShopItem>()),
-  getEventBuyerTeam: mocks.getEventBuyerTeam,
+vi.mock('~/server/events/event-shop-item', async (importOriginal) => {
+  const original = await importOriginal<typeof EventShopItem>();
+  actual.getEventBuyerTeam = original.getEventBuyerTeam;
+  return { ...original, getEventBuyerTeam: mocks.getEventBuyerTeam };
+});
+vi.mock('~/server/events/load-events', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoadEvents>()),
+  loadEvents: mocks.loadEvents,
 }));
 vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof RosterSync>()),
@@ -35,6 +43,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   refreshOwnedStickerCache: mocks.refreshStickers,
 }));
 
+import { modGrantSourceKey } from '@civitai/shared/mystery-box';
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
@@ -594,6 +603,54 @@ describe('opening a mystery box', () => {
   it("a held box opens after its definition is archived: the box is the holder's", async () => {
     world.box.status = 'archived';
     await expect(open()).resolves.toMatchObject({ replayed: false });
+  });
+});
+
+// A box a moderator granted has no purchase behind it: no claim, no charge, and its holder may never
+// have joined the event. The open alone places them on a team and draws from it.
+describe('a box a moderator granted', () => {
+  const GRANTED = modGrantSourceKey('g1', HOLDER, 1);
+
+  it('opens with no purchase behind it, placing the holder on a team before the lock', async () => {
+    world.items = [{ ...holderBox(), sourceKey: GRANTED }];
+    world.box.params = { event: 'birthday' };
+    world.contents = [
+      hat(1, COMMON, { event: 'birthday', team: 'red' }),
+      hat(2, COMMON, { event: 'birthday', team: 'blue' }),
+      hat(3, RARE, { event: 'birthday', team: 'red' }),
+    ];
+    // A balanced event: the holder has no team until settled, and a strict read refuses them.
+    let placed: string | undefined;
+    const event = {
+      name: 'birthday',
+      teams: ['red', 'blue'],
+      settleBalancedTeam: vi.fn(async () => {
+        world.log.push('settle');
+        placed = 'blue';
+        return placed;
+      }),
+      getUserTeam: vi.fn(async () => {
+        if (!placed) throw new Error('not on a team');
+        return placed;
+      }),
+    };
+    mocks.loadEvents.mockResolvedValue([event]);
+    mocks.getEventBuyerTeam.mockImplementation(actual.getEventBuyerTeam!);
+
+    const result = await open();
+
+    expect(event.settleBalancedTeam).toHaveBeenCalledWith(HOLDER);
+    expect(event.getUserTeam).toHaveBeenCalledWith(HOLDER, { strict: true });
+    expect(world.log.indexOf('settle')).toBeLessThan(
+      world.log.findIndex((line) => line.startsWith('lock:'))
+    );
+    expect(result).toMatchObject({ cosmeticId: 1002, replayed: false });
+    expect(world.openings.get(BOX_ITEM)).toMatchObject({
+      userId: HOLDER,
+      boxSourceKey: GRANTED,
+      contentId: 2,
+    });
+    expect(world.items).toEqual([]);
   });
 });
 

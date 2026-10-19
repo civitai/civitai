@@ -9,7 +9,7 @@ import type { EventViewer } from '~/server/events/event-access';
 import { getEventBoxCatalogAccess, isEventShopItemData } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup } from '~/server/logging/devalue-fallback-log';
-import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
+import { countHeldItems, ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
 import type { BoxDisplayEntry } from '~/server/services/mystery-box.service';
 import {
   BOX_TIER_ORDER,
@@ -96,8 +96,8 @@ function logOddsPageError(message: string, fields: { boxDefinitionId: number; ve
 /**
  * A published (or archived) box's public odds page, or null when boxes are off, hidden in the
  * visitor's country, or the box's event is closed to them. A box shows once it has gone on sale (a
- * published listing whose window has opened) or anyone holds or has opened one; before that, only
- * to moderators.
+ * published listing whose window has opened, or a purchase from any listing); before that, only to
+ * moderators and to a viewer who holds or has opened one.
  */
 export async function getMysteryBoxOddsPage({
   boxDefinitionId,
@@ -141,9 +141,15 @@ export async function getMysteryBoxOddsPage({
   const now = new Date();
   const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
-  // A held or opened box went on sale when it was bought: purchase is the only grant of a box today.
-  // A grant path that skips the sale (a prize, a mod grant) must make this check ask for a sale.
-  if (!started && !viewer?.isModerator && !(await boxEverHeld(box.id))) return null;
+  // Holding one is no proof of a sale (a moderator can grant a box before it), so a holder sees
+  // the page early only for a box of their own.
+  if (
+    !started &&
+    !viewer?.isModerator &&
+    !(await boxEverSold(box.id)) &&
+    !(viewer?.id && (await viewerHasHeld(box.id, viewer.id)))
+  )
+    return null;
 
   const [tiers, contents, snapshots] = await Promise.all([
     dbRead.boxTier.findMany({
@@ -226,11 +232,32 @@ export async function getMysteryBoxOddsPage({
   };
 }
 
-/** Whether anyone holds, or has opened, one of this box. */
-async function boxEverHeld(boxDefinitionId: number) {
+/**
+ * Whether anyone has bought this box from any of its listings, whatever their status now: a listing
+ * unpublished after its sale is not read as on sale, but the box was sold.
+ */
+async function boxEverSold(boxDefinitionId: number) {
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: { itemDefinitionId: boxDefinitionId },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  if (!listings.length) return false;
+  const purchase = await dbRead.userCosmeticShopPurchases.findFirst({
+    where: { shopItemId: { in: listings.map((listing) => listing.id) } },
+    select: { buzzTransactionId: true },
+  });
+  return !!purchase;
+}
+
+/** Whether this user holds, or has opened, one of this box. */
+async function viewerHasHeld(boxDefinitionId: number, userId: number) {
   const [held, opened] = await Promise.all([
-    dbRead.item.findFirst({ where: { itemDefinitionId: boxDefinitionId }, select: { id: true } }),
-    dbRead.boxOpening.findFirst({ where: { boxDefinitionId }, select: { boxItemId: true } }),
+    countHeldItems(dbRead, { itemDefinitionId: boxDefinitionId, userId }),
+    dbRead.boxOpening.findFirst({
+      where: { boxDefinitionId, userId },
+      select: { boxItemId: true },
+    }),
   ]);
-  return !!held || !!opened;
+  return held > 0 || !!opened;
 }
