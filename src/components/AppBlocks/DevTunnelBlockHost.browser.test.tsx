@@ -85,6 +85,8 @@ describe('/apps/dev/[blockId] client', () => {
     renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.useBlockToken).toHaveBeenCalled();
+    // Marks the mint as a tunnel preview, so the token carries no document-store scopes.
+    expect(m.useBlockToken.mock.calls[0][2]).toEqual({ devTunnel: true });
     expect(m.useBlockToken.mock.calls[0][0]).toMatchObject({
       blockInstanceId: 'page_apb_dev',
       trustTier: 'verified',

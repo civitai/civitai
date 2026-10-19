@@ -92,7 +92,7 @@ export function DevTunnelBlockHost({
     // still under way — so the mid-session escalation keys on this instead.
     terminal,
     refresh,
-  } = useBlockToken(install, context);
+  } = useBlockToken(install, context, { devTunnel: true });
 
   if (error != null) return <>{tokenErrorFallback}</>;
 
