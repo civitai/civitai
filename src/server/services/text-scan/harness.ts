@@ -17,6 +17,7 @@ import { parseTextScanSteps, textScanStepsBySegment } from '~/server/services/te
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import {
   isTextScanWebSearchEntityType,
+  readTextScanCsamMode,
   readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
@@ -30,7 +31,11 @@ import {
 } from '~/server/services/text-scan/model-rules';
 import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
-import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
+import {
+  getTextScanProfile,
+  isTextScanEntityType,
+  resolveTextScanProfileLabels,
+} from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
   composeTextScanMessages,
@@ -40,6 +45,7 @@ import {
   MAX_SEGMENTS_LIMIT,
   MissingTextScanPromptError,
   setTextScanConfig,
+  setTextScanCsamMode,
   setTextScanLabelMode,
   setTextScanRollout,
   setTextScanWebSearchRollout,
@@ -106,6 +112,12 @@ const ruleOverrides = z
  * way production's web-search pass does (same tool, steps, prompts), for entity types that have one.
  */
 const harnessPass = z.enum(['main', 'web-search']).default('main');
+/** Replaces the profile's labels, so a label no profile requests yet can be scanned in the lab. */
+const labelsOverride = z
+  .array(z.enum(TEXT_SCAN_LABELS))
+  .min(1)
+  .refine((labels) => new Set(labels).size === labels.length, 'duplicate label in labels')
+  .optional();
 const entityType = z
   .string()
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
@@ -231,12 +243,24 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       .nullable(),
     allowActive: z.boolean().default(false),
   }),
-  z.object({
-    action: z.literal('putLabelModes'),
-    label: z.enum(TEXT_SCAN_FLAG_LABELS),
-    /** `review` holds the label's detections for a moderator; `auto` removes the field. */
-    mode: z.enum(['auto', 'review']),
-  }),
+  z
+    .object({
+      action: z.literal('putLabelModes'),
+      label: z.enum([...TEXT_SCAN_FLAG_LABELS, 'csam']),
+      /**
+       * poi/minor: `review` holds the label's detections for a moderator; `auto` removes the field.
+       * csam: `review` adds the label to the profiles that list it; `off` removes the field.
+       */
+      mode: z.enum(['auto', 'review', 'off']),
+    })
+    .refine((input) => input.label !== 'csam' || input.mode !== 'auto', {
+      message: 'csam has no auto mode: only off and review',
+      path: ['mode'],
+    })
+    .refine((input) => input.label === 'csam' || input.mode !== 'off', {
+      message: 'poi and minor have no off mode: only auto and review',
+      path: ['mode'],
+    }),
   z.object({
     action: z.literal('scanEntity'),
     entityType,
@@ -254,6 +278,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       entityType,
       entityIds: z.array(z.number().int().positive()).min(1).max(50),
       pass: harnessPass,
+      labels: labelsOverride,
       promptOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
@@ -294,6 +319,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       entityType,
       texts,
       pass: harnessPass,
+      labels: labelsOverride,
       promptOverrides,
       ruleOverrides,
       model: z.string().min(1).optional(),
@@ -319,7 +345,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
 export type TextScanHarnessInput = z.infer<typeof textScanHarnessSchema>;
 export type TextScanHarnessResult = { kind: 'json'; body: unknown } | { kind: 'csv'; body: string };
 
-type ScanEntitySyncInput = Omit<Extract<TextScanHarnessInput, { action: 'scanEntity' }>, 'action'>;
+type ScanEntitySyncInput = Omit<
+  Extract<TextScanHarnessInput, { action: 'scanEntity' }>,
+  'action'
+> & {
+  labels?: TextScanLabel[];
+};
 
 function isTooShort(subject: TextScanSubject, profile: TextScanProfile) {
   return subjectTextLength(subject) < (profile.minChars ?? 1);
@@ -343,15 +374,24 @@ function requirePassSupported(entityType: TextScanEntityType, pass: HarnessPass)
     throwBadRequestError(`${entityType} has no web-search pass`);
 }
 
-/** The labels one pass asks for; the web-search pass narrows to the labels production searches. */
-function labelsForPass(profile: TextScanProfile, pass: HarnessPass) {
-  return pass === 'web-search' ? profile.labels.filter(isSearchLabel) : profile.labels;
+/**
+ * The labels one pass asks for: an override as given, otherwise the profile's as production resolves
+ * them. The web-search pass narrows to the labels production searches.
+ */
+async function labelsForPass(
+  profile: TextScanProfile,
+  pass: HarnessPass,
+  override?: TextScanLabel[]
+) {
+  const labels = override ?? (await resolveTextScanProfileLabels(profile));
+  return pass === 'web-search' ? labels.filter(isSearchLabel) : labels;
 }
 
 type ComposeInput = {
   subject: TextScanSubject;
   profile: TextScanProfile;
   pass?: HarnessPass;
+  labels?: TextScanLabel[];
   promptOverrides?: Record<string, string>;
   ruleOverrides?: ModelRuleOverride[];
   model?: string;
@@ -362,22 +402,23 @@ async function composeSteps({
   subject,
   profile,
   pass = 'main',
+  labels: labelsOverride,
   promptOverrides,
   ruleOverrides,
   model,
   thinking,
 }: ComposeInput) {
+  const labels = await labelsForPass(profile, pass, labelsOverride);
   const [config, active, liveRules] = await Promise.all([
     getTextScanConfig(),
     getActiveTextScanPrompts(),
-    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
   const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
 
-  const labels = labelsForPass(profile, pass);
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
     composed = composeTextScanMessages({
@@ -717,7 +758,9 @@ async function sampleShadow(input: ShadowSampleInput) {
   const since = new Date(Date.now() - input.sinceDays * 86_400_000);
   const shadowKey = textScanEmEntityType(input.entityType, 'shadow');
   const promptIds =
-    input.promptScope === 'active' ? await activePromptIdsJson(profile.labels) : null;
+    input.promptScope === 'active'
+      ? await activePromptIdsJson(await resolveTextScanProfileLabels(profile))
+      : null;
   const rows = await dbRead.$queryRaw<ShadowRow[]>`
     SELECT "entityId", "workflowId", "triggeredLabels", "nsfwLevel", result, "contentHash", "updatedAt"
     FROM "EntityModeration"
@@ -836,20 +879,22 @@ export async function runTextScanHarnessAction(
   switch (input.action) {
     case 'getPrompts': {
       // Primary, not replica: the lab reloads straight after a save and would list the previous version as newest.
-      const [active, config, modes, webSearchModes, labelModes, latestRows] = await Promise.all([
-        getActiveTextScanPrompts(),
-        getTextScanConfig(),
-        readTextScanRollouts(),
-        readTextScanWebSearchRollouts(),
-        readTextScanLabelModes(),
-        dbWrite.$queryRaw<
-          { key: string; id: number; createdAt: Date; createdById: number | null }[]
-        >`
+      const [active, config, modes, webSearchModes, labelModes, csamMode, latestRows] =
+        await Promise.all([
+          getActiveTextScanPrompts(),
+          getTextScanConfig(),
+          readTextScanRollouts(),
+          readTextScanWebSearchRollouts(),
+          readTextScanLabelModes(),
+          readTextScanCsamMode(),
+          dbWrite.$queryRaw<
+            { key: string; id: number; createdAt: Date; createdById: number | null }[]
+          >`
           SELECT DISTINCT ON ("key") "key", id, "createdAt", "createdById"
           FROM "TextScanPrompt"
           ORDER BY "key", id DESC
         `,
-      ]);
+        ]);
       const history = input.history
         ? await dbWrite.textScanPrompt.findMany({
             where: { key: input.history },
@@ -860,7 +905,7 @@ export async function runTextScanHarnessAction(
       const latest = Object.fromEntries(latestRows.map(({ key, ...row }) => [key, row]));
       return {
         kind: 'json',
-        body: { active, config, modes, webSearchModes, labelModes, history, latest },
+        body: { active, config, modes, webSearchModes, labelModes, csamMode, history, latest },
       };
     }
 
@@ -898,7 +943,18 @@ export async function runTextScanHarnessAction(
 
     case 'putLabelModes': {
       const id = requireModeratorId(actor.moderatorId);
-      const labelModes = await setTextScanLabelMode(input.label, input.mode, { moderatorId: id });
+      const { label, mode } = input;
+      if (label === 'csam') {
+        if (mode === 'auto')
+          throw throwBadRequestError('csam has no auto mode: only off and review');
+        return {
+          kind: 'json',
+          body: { csamMode: await setTextScanCsamMode(mode, { moderatorId: id }) },
+        };
+      }
+      if (mode === 'off')
+        throw throwBadRequestError('poi and minor have no off mode: only auto and review');
+      const labelModes = await setTextScanLabelMode(label, mode, { moderatorId: id });
       return { kind: 'json', body: { labelModes } };
     }
 

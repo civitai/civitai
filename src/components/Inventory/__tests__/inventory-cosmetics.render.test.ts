@@ -113,6 +113,7 @@ type Item = {
   name: string;
   data?: unknown;
   equipped?: boolean;
+  withheld?: boolean;
   claimKey?: string;
   equippedToType?: string | null;
   equippedToId?: number | null;
@@ -239,6 +240,23 @@ describe('Inventory equip pages', () => {
     expect(state.update.mock.calls.map(([input]) => input)).toEqual([{ id: VIEWER, [slot]: 7 }]);
   });
 
+  it('offers no equip for an item in review, but still lets a worn one come off', async () => {
+    state.cosmetics = cosmetics({
+      profileDecorations: [
+        item({ id: 1, name: 'Sent back', withheld: true }),
+        item({ id: 2, name: 'Worn before', withheld: true, equipped: true }),
+        item({ id: 3, name: 'Live' }),
+      ],
+    });
+    await render('avatar-decorations');
+
+    expect(all('[data-testid="inventory-equippable"]').map((c) => c.textContent)).toEqual([
+      'Sent backIn review, not equipable',
+      'Worn beforeEquippedUnequip',
+      'LiveEquip',
+    ]);
+  });
+
   it('says so when the viewer owns none, as every card glow page does today', async () => {
     await render('card-glows');
 
@@ -287,6 +305,7 @@ describe('Inventory frames', () => {
         }),
         item({ id: 3, name: 'Spare' }),
         hat(4, 'birthday2026'),
+        item({ id: 5, name: 'Sent back', withheld: true }),
       ],
     });
     await render('frames');
@@ -296,6 +315,7 @@ describe('Inventory frames', () => {
       '/posts/12',
       '/models/3',
       'SpareNot in use',
+      'Sent backIn review, not equipable',
     ]);
   });
 });

@@ -12,7 +12,8 @@
   import { failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
-  type QueueForm = { error?: string; modelId?: number } | null;
+  // `key` names the item a refusal belongs to; `modelId` is the older spelling of the same thing.
+  type QueueForm = { error?: string; modelId?: number; key?: string | number } | null;
   type RowState = {
     id: string;
     selected: boolean;
@@ -225,14 +226,19 @@
   const selectPrompt = $derived(
     `Select ${/^[aeiou]/i.test(itemLabel) ? 'an' : 'a'} ${itemLabel.toLowerCase()} from the queue.`
   );
+  const formError = $derived.by(() => {
+    if (!form?.error) return null;
+    if (form.key !== undefined) return `${itemLabel} #${form.key}: ${form.error}`;
+    return form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error;
+  });
   const firstShown = $derived(offset + 1);
   const lastShown = $derived(offset + rows.length);
 </script>
 
 <svelte:window {onkeydown} />
 
-{#if form?.error && errors.size === 0}
-  <ErrorAlert message={form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error} />
+{#if formError && errors.size === 0}
+  <ErrorAlert message={formError} />
 {/if}
 {@render notice?.({ unpicked: selectedKey === null })}
 

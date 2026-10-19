@@ -64,6 +64,9 @@ export const cosmeticShopItemMeta = z.object({
   // so today's configured value is not what an older item paid.
   submissionFee: z.number().optional(),
   lastApprovedAmount: z.number().optional(),
+  // Whether holders may wear the item while it is not Published: set by every verdict, cleared by a
+  // creator edit to what holders see. Kept here because `history` is capped and loses old verdicts.
+  displayApproved: z.boolean().optional(),
   // Pre-submit artwork validation + image info, surfaced to moderators in the
   // Creator Shop review queue.
   autoChecks: z

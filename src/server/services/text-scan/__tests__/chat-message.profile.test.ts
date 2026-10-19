@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 import {
   CHAT_WINDOW_MAX_CHARS,
   CHAT_WINDOW_MAX_MESSAGES,
@@ -7,7 +8,16 @@ import {
   CHAT_WINDOW_SCAN_ROWS,
   loadChatWindows,
 } from '~/server/services/text-scan/profiles/chat-message.profile';
-import { getTextScanProfile } from '~/server/services/text-scan/profiles';
+import {
+  getTextScanProfile,
+  resolveTextScanProfileLabels,
+} from '~/server/services/text-scan/profiles';
+import { getTextScanCsamMode } from '~/server/services/text-scan/mode';
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanCsamMode: vi.fn(async () => 'off'),
+}));
 
 const NEWEST = {
   id: 30,
@@ -142,8 +152,27 @@ describe('loadChatWindows', () => {
 
   it('is registered as the ChatMessage scam profile', () => {
     expect(getTextScanProfile('ChatMessage')).toMatchObject({
-      labels: ['scam'],
+      labels: ['scam', 'csam'],
       minChars: CHAT_WINDOW_MIN_CHARS,
     });
+  });
+});
+
+describe('csam review: every sender is scanned, scam only for eligible ones', () => {
+  const profile = () => getTextScanProfile('ChatMessage')!;
+
+  beforeEach(() => vi.mocked(getTextScanCsamMode).mockResolvedValue('review'));
+
+  it('loads an older account’s window and asks it for csam only', async () => {
+    dbMock.dbWrite.user.findMany.mockResolvedValue([]);
+    const subject = (await loadChatWindows([30])).get(30)!;
+    expect(subject.fields[0].text).toBe('send the fee\nhello');
+    expect(await resolveTextScanProfileLabels(profile(), subject)).toEqual(['csam']);
+  });
+
+  it('asks a scam-eligible sender for both, with the meta it had before', async () => {
+    const subject = (await loadChatWindows([30])).get(30)!;
+    expect(subject.meta).not.toHaveProperty('scamIneligible');
+    expect(await resolveTextScanProfileLabels(profile(), subject)).toEqual(['scam', 'csam']);
   });
 });

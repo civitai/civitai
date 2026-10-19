@@ -18,12 +18,14 @@ const {
   setTextScanRollout,
   setTextScanWebSearchRollout,
   setTextScanLabelMode,
+  setTextScanCsamMode,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
   textScanTextHash,
 } = await import('~/server/services/text-scan/prompt');
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
+const { TEXT_SCAN_LABELS } = await import('~/server/services/text-scan/types');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { hashContent } = await import('~/server/services/entity-moderation.service');
 
@@ -382,6 +384,68 @@ describe('setTextScanLabelMode', () => {
   });
 });
 
+describe('setTextScanCsamMode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses users who are not active moderators, and any mode but off or review', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 9 })).rejects.toThrow(
+      'not an active moderator'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(setTextScanCsamMode('auto' as never, { moderatorId: 5 })).rejects.toThrow(
+      'csam has no auto mode'
+    );
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no csam prompt row', []],
+    ['a blank csam prompt row', [{ id: 7, key: 'label:csam', content: '  ' }]],
+  ])('refuses review while there is %s, and still allows off', async (_, rows) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(rows as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 5 })).rejects.toThrow('label:csam');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+  });
+
+  it('writes review, removes the field for off, logs both, and this pod sees it at once', async () => {
+    const { getTextScanCsamMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanCsamMode()).toBe('off');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ csam: 'review' } as never);
+    expect(await setTextScanCsamMode('review', { moderatorId: 5 })).toBe('review');
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:label-modes',
+      'csam',
+      'review'
+    );
+    expect(await getTextScanCsamMode()).toBe('review');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'csam');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'label mode updated', label: 'csam', mode: 'review' })
+    );
+    resetTextScanRolloutCache();
+  });
+});
+
 describe('setTextScanLabelMode cache', () => {
   it('drops the cached read, so this pod sees the change at once', async () => {
     const { getTextScanLabelMode, resetTextScanRolloutCache } = await import(
@@ -427,6 +491,13 @@ describe('insertTextScanPrompt', () => {
       insertTextScanPrompt({ key: 'label:hate', content: 'x', createdById: 5 })
     ).rejects.toThrow();
     expect(dbMock.dbWrite.textScanPrompt.create).not.toHaveBeenCalled();
+  });
+
+  it.each(TEXT_SCAN_LABELS)('accepts a prompt for the %s label', async (label) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.textScanPrompt.create.mockResolvedValue({ id: 3, key: `label:${label}` });
+    await insertTextScanPrompt({ key: `label:${label}`, content: 'x', createdById: 5 });
+    expect(dbMock.dbWrite.textScanPrompt.create).toHaveBeenCalled();
   });
 
   it('rejects a createdById that is not an active moderator', async () => {

@@ -17,9 +17,10 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('rated-entity profiles', () => {
   it('registers all six with the spec labels', () => {
-    expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor']);
+    expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor', 'csam']);
+    expect(getTextScanProfile('Post')?.labels).toEqual(['nsfw', 'csam']);
     expect(getTextScanProfile('Bounty')?.labels).toEqual(['nsfw', 'poi']);
-    for (const t of ['Article', 'Post', 'BountyEntry', 'Challenge'])
+    for (const t of ['Article', 'BountyEntry', 'Challenge'])
       expect(getTextScanProfile(t)?.labels).toEqual(['nsfw']);
   });
 

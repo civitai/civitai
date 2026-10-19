@@ -121,6 +121,27 @@ describe('the Models section', () => {
   });
 });
 
+describe('CSAM text holds', () => {
+  it('sits under Text Scan with its own grant and badge, apart from the image CSAM queue', () => {
+    applyGrants({ '/csam/text-holds': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/text-holds')).toBe(true);
+    expect(canAccess(reviewer, '/images/csam')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Text Scan')
+        ?.children?.map((c) => [c.path, c.label, c.countKey])
+    ).toEqual([['/csam/text-holds', 'CSAM holds', 'csamTextHolds']]);
+
+    applyGrants({ '/images/csam': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/text-holds')).toBe(false);
+  });
+
+  it('is grantable on /admin', () => {
+    const textScan = pageAccessState().tree.find((n) => n.key === '/text-scan');
+    expect(textScan?.children.map((c) => c.key)).toContain('/csam/text-holds');
+  });
+});
+
 describe('/admin grantable pages', () => {
   const tree = pageAccessState().tree;
   const keys = (node: { children: { key: string }[] } | undefined) =>
@@ -167,6 +188,7 @@ describe('the text-scan lab', () => {
     ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
+      ['/csam/text-holds', 'CSAM holds'],
       ['/text-scan/prompts', 'Prompts'],
       ['/text-scan/model-rules', 'Model rules'],
     ]);

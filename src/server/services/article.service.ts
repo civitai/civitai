@@ -20,11 +20,11 @@ import type {
   SetArticleOfficialInput,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
-import { articleWhereSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { OFFICIAL_ARTICLE_TAG } from '~/shared/constants/article.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
@@ -61,7 +61,7 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForArticle,
 } from '~/server/services/collection-media-index';
-import { getCategoryTags } from '~/server/services/system-cache';
+import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
@@ -171,7 +171,6 @@ export const getArticles = async ({
   cursor,
   query,
   tags,
-  isOfficial,
   period,
   periodMode,
   sort,
@@ -226,11 +225,6 @@ export const getArticles = async ({
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
-    // Only `true` narrows. An explicit `false` is treated as no filter, matching the
-    // schema comment: nobody browses FOR community articles, and a `false` that filtered
-    // would let a stale url hide every official article from a feed.
-    if (isOfficial) AND.push(Prisma.sql`a."isOfficial" = true`);
-
     if (!!tags?.length) {
       AND.push(
         Prisma.sql`EXISTS (
@@ -691,26 +685,6 @@ export const getCivitaiNews = async () => {
   return { articles, pressMentions };
 };
 
-export const getCivitaiEvents = async () => {
-  const collection = await dbRead.collection.findFirst({
-    where: { name: 'Events', userId: -1 },
-    select: { id: true },
-  });
-  if (!collection) throw new Error('Events collection not found');
-
-  const input = articleWhereSchema.parse({
-    collectionId: collection.id,
-    sort: ArticleSort.Newest,
-  });
-  const events = await getArticles({
-    ...input,
-    limit: 100,
-    sessionUser: undefined,
-    browsingLevel: publicBrowsingLevelsFlag,
-  });
-  return events;
-};
-
 /**
  * Ingestion state of an article that is published for everyone, or null if it is not published at
  * all. Callers apply their own policy to it — the two that exist disagree, deliberately.
@@ -847,7 +821,7 @@ export const getArticleById = async ({
 export const upsertArticle = async ({
   id,
   userId,
-  tags,
+  tags: inputTags,
   attachments,
   coverImage,
   isModerator,
@@ -863,6 +837,8 @@ export const upsertArticle = async ({
   // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
   let writingNeverPublishedDraft = false;
   try {
+    const officialTag = await getOfficialArticleTag();
+    const tags = withoutOfficialArticleTag(inputTags, officialTag);
     await throwOnBlockedUserContent([data.title, data.content], {
       isModerator,
       surface: 'article',
@@ -1022,6 +998,13 @@ export const upsertArticle = async ({
               : undefined,
           },
         });
+        if (article.isOfficial && officialTag)
+          await writeOfficialArticleTag({
+            articleId: article.id,
+            tagId: officialTag.id,
+            isOfficial: true,
+            db: tx,
+          });
 
         if (attachments) {
           await tx.file.createMany({
@@ -1275,6 +1258,14 @@ export const upsertArticle = async ({
         },
       });
       if (!updated) return null;
+      // A tag rewrite above drops the official row like any other; the column restores it.
+      if (officialTag && (tags || data.isOfficial !== undefined))
+        await writeOfficialArticleTag({
+          articleId: updated.id,
+          tagId: officialTag.id,
+          isOfficial: updated.isOfficial,
+          db: tx,
+        });
 
       if (attachments) {
         // Delete any attachments that were removed.
@@ -2747,14 +2738,50 @@ export async function rescanArticleImage({
   }).catch();
 }
 
+/** The seeded `civitai official` tag, or undefined until the row exists. */
+export const getOfficialArticleTag = async () => {
+  const systemTags = await getSystemTags();
+  return systemTags.find((tag) => tag.name === OFFICIAL_ARTICLE_TAG.name);
+};
+
+// Article tags attach by NAME through `connectOrCreate`, so any client can send this string;
+// drop it for every caller.
+const withoutOfficialArticleTag = (
+  tags: UpsertArticleInput['tags'],
+  officialTag: { id: number } | undefined
+) =>
+  tags?.filter(
+    (tag) =>
+      tag.name.toLowerCase().trim() !== OFFICIAL_ARTICLE_TAG.name &&
+      (!officialTag || tag.id !== officialTag.id)
+  ) ?? undefined;
+
+// `tagId` is resolved by the caller before its transaction opens: the lookup is a Redis read.
+// Not `tag.service.addTags`/`disableTags`: neither takes a transaction client, and `disableTags`
+// has no article branch.
+const writeOfficialArticleTag = async ({
+  articleId,
+  tagId,
+  isOfficial,
+  db,
+}: {
+  articleId: number;
+  tagId: number;
+  isOfficial: boolean;
+  db: Pick<Prisma.TransactionClient, 'tagsOnArticle'>;
+}) => {
+  if (isOfficial)
+    await db.tagsOnArticle.createMany({ data: [{ articleId, tagId }], skipDuplicates: true });
+  else await db.tagsOnArticle.deleteMany({ where: { articleId, tagId } });
+};
+
 /**
  * Mark an article as published by Civitai, or take that mark off.
  *
- * Mirrors `setModelOfficial` (model.service.ts) deliberately, down to the moderator check:
- * this is a provenance claim, so the authority has to be a permission the user cannot give
- * themselves. The earlier design put it on an `adminOnly` TAG, which a review killed —
- * article tags attach by NAME through `connectOrCreate`, so the marker was a string any
- * user could type, and the row it creates defaults to not-adminOnly.
+ * Mirrors `setModelOfficial` (model.service.ts), down to the moderator check: this is a
+ * provenance claim, so the authority has to be a permission the user cannot give themselves.
+ * Unlike the model, the `civitai official` tag is derived from the column, never the other
+ * way round (see `withoutOfficialArticleTag`).
  *
  * 🔴 The `isModerator` argument is passed by the caller, so it is only as true as the
  * caller. The router mounts this on `moderatorProcedure`; keep it there. Do not add a
@@ -2770,10 +2797,16 @@ export const setArticleOfficial = async ({
   const article = await dbRead.article.findUnique({ where: { id }, select: { id: true } });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
-  const updated = await dbWrite.article.update({
-    where: { id },
-    data: { isOfficial },
-    select: { id: true, isOfficial: true },
+  const officialTag = await getOfficialArticleTag();
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const row = await tx.article.update({
+      where: { id },
+      data: { isOfficial },
+      select: { id: true, isOfficial: true },
+    });
+    if (officialTag)
+      await writeOfficialArticleTag({ articleId: id, tagId: officialTag.id, isOfficial, db: tx });
+    return row;
   });
 
   // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so

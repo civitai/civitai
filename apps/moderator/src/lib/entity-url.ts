@@ -31,7 +31,7 @@ const ENTITY_PATH: Record<string, string> = {
 // thread resolution yields 'bountyEntry'. Matching case-sensitively silently returned null for one of
 // them, which reads as "no link exists" rather than "the key was spelled differently".
 //
-// Types with no standalone page (comments, bounty entries, questions, answers, reviews, accounts)
+// Types with no standalone page (comments, bounty entries, questions, answers, accounts)
 // have no entry and correctly return null.
 export function entityUrl(
   civitaiUrl: string,
