@@ -8,6 +8,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
   import PlaybookFields from './PlaybookFields.svelte';
+  import ToolList from './ToolList.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -63,6 +64,7 @@
         <Input id="pb-slug" name="slug" maxlength={60} required pattern={'[a-z0-9]+(-[a-z0-9]+)*'} />
       </div>
       <PlaybookFields />
+      <ToolList tools={data.tools} />
       {#if create.error}<ErrorAlert message={create.error} />{/if}
       <Button type="submit" disabled={create.submitting}>Save playbook</Button>
     </form>

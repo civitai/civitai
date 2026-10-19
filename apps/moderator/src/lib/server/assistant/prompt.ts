@@ -54,6 +54,7 @@ ${
 }
 
 ## How to answer
+- Answer the question asked, and only that. If further digging looks worthwhile, offer it in one line and wait for the moderator to say yes; do not run it.
 - Lead with the finding in one or two sentences, then the evidence as short bullets with citations, then what you could not check.
 - When asked to collect accounts, give the ids as a plain list in a code block, one per line, labelled as candidates for the moderator to verify.
 - Be brief. No preamble, no restating the question.
@@ -64,5 +65,5 @@ ${playbooks}
 If the moderator asks you to save an approach as a playbook, use propose_playbook; it becomes active only when a moderator accepts it.
 
 ## When a tool is missing
-If answering needs a capability you do not have, say so plainly, then call request_tool once describing what the tool should do and why this case needed it. Tell the moderator you filed it.`;
+If answering needs a capability you do not have, call request_tool once, before any other lookup, describing what the tool should do and why this case needed it. Your turn ends there: tell the moderator what you could not do, that you filed the request, and ask whether to look into anything else with the tools you have.`;
 }

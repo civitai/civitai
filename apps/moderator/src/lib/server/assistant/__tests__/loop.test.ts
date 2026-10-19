@@ -1,7 +1,7 @@
 import { error as kitError } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { fitJson, MAX_ROUNDS, runTurn, type AnyTool } from '../loop';
+import { BUDGET_NOTICE, fitJson, MAX_ROUNDS, REASONING_NOTE, runTurn, type AnyTool } from '../loop';
 import type { Completion, ToolCall } from '../openrouter';
 import type { ToolResult } from '../tools';
 
@@ -154,6 +154,76 @@ describe('runTurn', () => {
     expect(out.status).toBe('done');
     expect(out.toolCalls[0].error).toBe('The lookup failed.');
     expect(JSON.stringify(complete.mock.calls)).not.toContain('192.0.2.44');
+  });
+
+  it('ends the turn after a filed tool request: no further lookups, and it asks', async () => {
+    lookup.mockClear();
+    const fileRequest = vi.fn(
+      async (): Promise<ToolResult> => ({
+        data: { filed: 1 },
+        rows: 1,
+        truncated: false,
+        sources: [],
+      })
+    );
+    const { run, complete } = turn(
+      [
+        reply(null, [call('request_tool', { need: 'crucible judges' })]),
+        // Would keep digging if allowed to.
+        {
+          ...reply('I filed it. Want me to check anything else?', [call('lookup', { userId: 5 })]),
+        },
+      ],
+      {
+        tools: [
+          ...tools,
+          {
+            name: 'request_tool',
+            input: z.object({ need: z.string() }),
+            run: fileRequest as never,
+          },
+        ],
+      }
+    );
+    const out = await run;
+    expect(out.status).toBe('done');
+    expect(fileRequest).toHaveBeenCalledTimes(1);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledTimes(2);
+    const second = complete.mock.calls[1][0] as {
+      toolChoice: string;
+      messages: { content: string }[];
+    };
+    expect(second.toolChoice).toBe('none');
+    expect(second.messages.at(-1)?.content).toMatch(
+      /^You filed a tool request\. Stop investigating/
+    );
+  });
+
+  it('stops at the per-question budget and says so in the answer, never silently', async () => {
+    lookup.mockClear();
+    const { run, complete } = turn(
+      [reply(null, [call('lookup', { userId: 5 })], 700), reply('what I found so far')],
+      { turnBudget: 500 }
+    );
+    const out = await run;
+    expect(out.status).toBe('done');
+    expect(out.answer).toBe(`what I found so far\n\n${BUDGET_NOTICE}`);
+    expect((complete.mock.calls[1][0] as { toolChoice: string }).toolChoice).toBe('none');
+  });
+
+  it('a question under the budget is answered without the notice', async () => {
+    const { run } = turn([reply(null, [call('lookup', { userId: 5 })], 10), reply('done')], {
+      turnBudget: 500,
+    });
+    expect((await run).answer).toBe('done');
+  });
+
+  it('asks the model to reason briefly, after the question', async () => {
+    const { run, complete } = turn([reply('ok')]);
+    await run;
+    const messages = (complete.mock.calls[0][0] as { messages: { content: string }[] }).messages;
+    expect(messages.at(-1)?.content).toBe(`q${REASONING_NOTE}`);
   });
 
   // SvelteKit's `error()` throws an HttpError, which is not an `Error`.
