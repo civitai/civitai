@@ -16,6 +16,7 @@
   import ContentCounts from '../../retool/user-lookup/ContentCounts.svelte';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import SharedIpAccounts from '$lib/components/SharedIpAccounts.svelte';
+  import DossierPanel from './DossierPanel.svelte';
   import { fetchSharedIpAccounts } from '../../retool/user-lookup/signals';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
@@ -178,6 +179,8 @@
       />
     </div>
   </section>
+
+  <DossierPanel {suspectId} />
 
   <!-- The accounts sharing an address with this one, and the hand-off to Bulk Ban — for bots and
        the people running them. Client-fetched (`/api/shared-ip-accounts`): the shared-IP scan is the

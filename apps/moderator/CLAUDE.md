@@ -5,8 +5,8 @@ for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actio
 `text-dark-2`, placement, comments, the three review agents).
 
 Most of this app arrives by **migration**: from Retool, or from the main Next.js app. That provenance is
-the reason it differs from the standard. Net-new pages (the mystery-box builder under `src/routes/items/`)
-have no source to port from: the fourth review pass and the two migration skills below do not apply to them.
+the reason it differs from the standard. Net-new pages (the mystery-box builder under `src/routes/items/`, the mod assistant
+under `src/routes/assistant/`) have no source to port from: the fourth review pass and the two migration skills below do not apply to them.
 
 ## Deltas
 

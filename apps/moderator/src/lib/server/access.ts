@@ -229,6 +229,16 @@ export const NAVIGATION: NavLink[] = [
   // separate permission (`decisions.rule`), checked in the action.
   { path: '/decisions', label: 'Decisions' },
   { path: '/blocklists', label: 'Blocklists' },
+  // No path of its own, so each child carries its own grant (like Users). `/assistant` covers the
+  // moderator's own chats, the playbooks and the tool requests by prefix; the audit reads every
+  // moderator's conversations, so it is a separate page that nobody holds until granted.
+  {
+    label: 'Assistant',
+    children: [
+      { path: '/assistant', label: 'Mod Assistant' },
+      { path: '/assistant/audit', label: 'Assistant Audit' },
+    ],
+  },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history
   // would hide the numbers their review produces.
@@ -394,6 +404,14 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
     ])
   );
 }
+
+/** The Investigate button: the assistant page AND the right to run it. */
+export const canInvestigate = (locals: App.Locals) =>
+  canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
+
+/** Same grant as User Lookup. */
+export const canSeeAddresses = (locals: App.Locals) =>
+  canAccess(locals.user, '/retool/user-lookup');
 
 // Longest-matching path wins, so a sub-path resolves to the nav entry that owns it; unmatched = denied.
 export function canAccess(user: RoleUser, pathname: string): boolean {

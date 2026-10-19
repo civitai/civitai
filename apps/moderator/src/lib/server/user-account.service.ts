@@ -20,6 +20,7 @@ import { escapeLike } from './like';
 import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
+import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -1407,9 +1408,8 @@ const BUZZ_COLORS: Record<string, string> = {
   green: 'Green',
 };
 
-/** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzLedgerSide`. */
-const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
+/** See `USER_ACCOUNT_TYPES` in `buzz-accounts.ts`. */
+const USER_ACCOUNT_TYPES = new Set<string>(USER_ACCOUNT_TYPE_LIST);
 
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;

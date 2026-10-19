@@ -1,9 +1,21 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
-import { IP_PATTERN } from './clickhouse-filters';
-import { isInt4Id, usersByIds } from './users.service';
+import {
+  CREATES_ONLY,
+  daysWindow,
+  IP_PATTERN,
+  OWN_ACTIVITY_ONLY,
+  PUBLIC_IP_ONLY,
+} from './clickhouse-filters';
+import { clusterSql } from './ip-clusters';
+import {
+  accountStatus,
+  isInstantVerify,
+  isInt4Id,
+  usersByIds,
+  type AccountStatus,
+} from './users.service';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 
 // Given a creator, the accounts pushing engagement at them, plus the addresses those accounts share.
@@ -30,48 +42,12 @@ export type Actor = {
   owners: number | null;
   /** `count / totalGiven`, 0..1. */
   concentration: number | null;
-  status: 'active' | 'banned' | 'deleted' | 'gone';
+  status: AccountStatus;
   strikes: number;
   createdAt: Date | null;
-  /**
-   * Email verified within `INSTANT_VERIFY_SECONDS` of signup — a human opening a mail client does not
-   * do that. Null when either timestamp is missing, which is not the same as false.
-   */
+  /** See `isInstantVerify`. */
   instantVerify: boolean | null;
 };
-
-/** Fast enough that no person is in the loop. Two minutes would still be suspicious and would also
- *  catch a genuinely quick human; this is deliberately at the end where only automation lives. */
-const INSTANT_VERIFY_SECONDS = 120;
-
-const DELETE_TYPES = [
-  'Image_Delete',
-  'Comment_Delete',
-  'CommentV2_Delete',
-  'Review_Delete',
-  'Question_Delete',
-  'Answer_Delete',
-  'BountyEntry_Delete',
-  'Article_Delete',
-] as const;
-
-// A reaction being REMOVED is not one being given: counting both inflates the total past the
-// Postgres-backed figure shown elsewhere, and renders one react-then-unreact account as two events.
-const CREATES_ONLY = `type NOT IN (${DELETE_TYPES.map((t) => `'${t}'`).join(',')})`;
-
-/**
- * Private and carrier-internal space, which correlates everyone and therefore no one.
- *
- * 🔴 THE LIST AND THE COMPOSITION MOVED TO `@civitai/shared/clickhouse-ip-filters` and this is now
- * one call into it. The main Next app's bot-account detector reads the same `userActivities` rows
- * for the same reason and cannot import from `apps/moderator`, so the alternative was a second
- * hand-written copy — which is precisely the divergence `clickhouse-filters.ts` says fails silently.
- * The emitted string is unchanged, including that `ip != ''` comes first: `isIPAddressInRange` RAISES
- * on an empty string, and `userActivities` holds a handful.
- */
-const PUBLIC_IP_ONLY = publicIpOnlySql();
-
-const windowFilter = (days: number) => `time >= now() - INTERVAL ${Math.trunc(days)} DAY`;
 
 /**
  * Every reactor on this creator in the window, scored — not the top N by count.
@@ -120,7 +96,7 @@ async function getReactors(
                count() AS total,
                uniq(ownerId) AS owners
         FROM default.reactions
-        WHERE ${windowFilter(days)}
+        WHERE ${daysWindow(days)}
           AND ${CREATES_ONLY}
           AND userId != 0
         GROUP BY userId
@@ -354,23 +330,14 @@ async function hydrate(actors: Actor[]): Promise<Actor[]> {
       username: user?.username ?? null,
       strikes: strikes.get(a.userId) ?? 0,
       createdAt,
-      instantVerify:
-        createdAt && verified
-          ? verified.getTime() - createdAt.getTime() < INSTANT_VERIFY_SECONDS * 1000
-          : null,
-      status: !user
-        ? ('gone' as const)
-        : user.bannedAt
-        ? ('banned' as const)
-        : user.deletedAt
-        ? ('deleted' as const)
-        : ('active' as const),
+      instantVerify: isInstantVerify(createdAt, verified),
+      status: accountStatus(user),
     };
   });
 }
 
 export type SharedAddress = {
-  /** An exact address, or an IPv6 `/64` — see `clusterExpr`. */
+  /** An exact address, or an IPv6 `/64` — see `clusterSql`. */
   cluster: string;
   /**
    * Every account the site has ever seen on it, from any event. `null` when `userActivities` holds no
@@ -403,26 +370,6 @@ export type SharedIpAccount = {
   /** Everyone else seen on those addresses, creator first. */
   peers: SharedIpPeer[];
 };
-
-/**
- * The clustering expression, in ClickHouse, shared by both queries below.
- *
- * 🔴 IPv6 collapses to `/64` because a residential prefix rotates its suffix per connection: seven
- * addresses differing only in the low 64 bits, carrying the same four accounts, filled the panel on the
- * first run. The grouping has to happen INSIDE the query — done afterwards in JS, the
- * `HAVING uniq(...) > 1` that keeps the panel bounded runs per exact address, and the rotation case it
- * exists to catch (two accounts on one prefix, never on the same suffix) is exactly what it drops.
- *
- * IPv4 stays exact by default — a `/24` merges unrelated subscribers on one ISP block — with
- * `groupIpv4` for a hosting range doing the same rotation. The branch on `:` is load-bearing:
- * `toIPv6` maps IPv4 into `::ffff:0:0/96`, so one unbranched `/64` would collapse every IPv4 address
- * in the table into a single bucket.
- */
-const clusterExpr = (groupIpv4: boolean) => `if(position(ip, ':') > 0,
-      concat(IPv6NumToString(tupleElement(IPv6CIDRToRange(toIPv6OrDefault(ip), 64), 1)), '/64'),
-      ${
-        groupIpv4 ? `concat(IPv4NumToString(bitAnd(toIPv4OrDefault(ip), 4294967040)), '/24')` : 'ip'
-      })`;
 
 /**
  * The side panel: addresses two or more of the listed accounts were seen on, and how many accounts the
@@ -474,12 +421,13 @@ export async function getSharedIps(
     userIds: string[];
     ips: string[];
   }>(`
-    SELECT ${clusterExpr(groupIpv4)} AS cluster,
+    SELECT ${clusterSql('ip', { groupIpv4 })} AS cluster,
            groupUniqArray(targetUserId) AS userIds,
            groupUniqArray(5)(ip) AS ips
     FROM default.userActivities
     WHERE targetUserId IN (${ids.join(',')})
       AND ${PUBLIC_IP_ONLY}
+      AND ${OWN_ACTIVITY_ONLY}
     GROUP BY cluster
     HAVING uniq(targetUserId) > 1
     ORDER BY max(targetUserId = ${targetId}) DESC, uniq(targetUserId) ASC, cluster ASC
@@ -559,10 +507,11 @@ async function accountsPerCluster(ips: string[], groupIpv4: boolean): Promise<Ma
   if (!safe.length) return new Map();
 
   const rows = await getClickhouse().$query<{ cluster: string; total: string }>(`
-    SELECT ${clusterExpr(groupIpv4)} AS cluster, uniqExact(targetUserId) AS total
+    SELECT ${clusterSql('ip', { groupIpv4 })} AS cluster, uniqExact(targetUserId) AS total
     FROM default.userActivities
     WHERE ip IN (${safe.map((ip) => `'${ip}'`).join(',')})
       AND targetUserId > 0
+      AND ${OWN_ACTIVITY_ONLY}
     GROUP BY cluster
   `);
   return new Map(rows.map((r) => [r.cluster, Number(r.total)]));

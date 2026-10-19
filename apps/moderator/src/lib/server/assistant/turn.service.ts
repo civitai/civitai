@@ -1,0 +1,146 @@
+import { createHmac } from 'node:crypto';
+import type { TurnEvent } from '$lib/assistant/types';
+import type { PermissionId } from '$lib/permissions';
+import { ASSISTANT_MODEL, complete } from './openrouter';
+import { DAILY_TOKEN_CAP, runTurn, TURN_DEADLINE_MS, type TurnOutcome } from './loop';
+import { systemPrompt } from './prompt';
+import { LOOKUP, toolSpec, toolsFor } from './tools';
+import { redactAddresses } from '../redact-addresses';
+import type { Playbook } from './store';
+import {
+  finishTurn,
+  DEFAULT_CHAT_TITLE,
+  getChat,
+  getMaskSalt,
+  getPlaybook,
+  hasRunningTurn,
+  listPlaybooks,
+  listTurns,
+  renameChat,
+  startTurn,
+  tokensToday,
+} from './store';
+
+/** Earlier turns replayed to the model as plain prompt/answer pairs; their tool results are not. */
+export const HISTORY_TURNS = 12;
+
+export type TurnRefusal = { status: 404 | 409 | 429; error: string };
+
+export const BUSY = 'Another of your questions is still being answered. Wait for it to finish.';
+
+/**
+ * Everything a turn checks before it may start. Separate from running it so the endpoint can refuse
+ * with a status code before it opens a stream.
+ */
+export async function admitTurn(
+  chatId: number,
+  moderatorId: number
+): Promise<{ ok: true; used: number } | ({ ok: false } & TurnRefusal)> {
+  const chat = await getChat(chatId, moderatorId);
+  if (!chat) return { ok: false, status: 404, error: 'No such chat.' };
+  if (await hasRunningTurn(moderatorId, TURN_DEADLINE_MS * 2))
+    return { ok: false, status: 409, error: BUSY };
+  const used = await tokensToday(moderatorId);
+  if (used >= DAILY_TOKEN_CAP)
+    return {
+      ok: false,
+      status: 429,
+      error: 'You have used today’s assistant allowance. It resets at midnight UTC.',
+    };
+  return { ok: true, used };
+}
+
+export async function executeTurn(input: {
+  chatId: number;
+  moderator: { id: number; username: string | null };
+  prompt: string;
+  playbookSlug: string | null;
+  canAccess: (path: string) => boolean;
+  hasGrant: (permission: PermissionId) => boolean;
+  used: number;
+  emit: (event: TurnEvent) => void;
+}): Promise<TurnOutcome & { turnId: number }> {
+  const [chat, turns, allPlaybooks, chosen, salt] = await Promise.all([
+    getChat(input.chatId, input.moderator.id),
+    listTurns(input.chatId),
+    listPlaybooks(),
+    input.playbookSlug ? getPlaybook(input.playbookSlug) : null,
+    getMaskSalt(input.chatId),
+  ]);
+  // Playbook text can quote addresses; it reaches the model only as this moderator may read it.
+  const shown = (p: Playbook): Playbook =>
+    input.canAccess(LOOKUP)
+      ? p
+      : { ...p, summary: redactAddresses(p.summary), body: redactAddresses(p.body) };
+  const playbooks = allPlaybooks.map(shown);
+  const playbook = chosen && shown(chosen);
+
+  const turnId = await startTurn({
+    chatId: input.chatId,
+    moderatorId: input.moderator.id,
+    prompt: input.prompt,
+    playbookSlug: playbook?.slug ?? null,
+    playbookVersion: playbook?.version ?? null,
+    model: ASSISTANT_MODEL,
+  });
+  input.emit({ type: 'started', turnId });
+  // A chat started from "New chat" is named by its first question, or the list reads as a column of
+  // identical titles.
+  if (chat?.title === DEFAULT_CHAT_TITLE && !turns.length)
+    await renameChat(input.chatId, input.moderator.id, chatTitleFrom(input.prompt));
+
+  const history = turns.slice(-HISTORY_TURNS).map((t) => ({ prompt: t.prompt, answer: t.answer }));
+  const ctx = {
+    moderatorId: input.moderator.id,
+    chatId: input.chatId,
+    turnId,
+    canAccess: input.canAccess,
+    hasGrant: input.hasGrant,
+    mask: addressLabeler(salt),
+    conversation: () => [...history, { prompt: input.prompt, answer: null }],
+  };
+  const tools = toolsFor(ctx);
+
+  // The moderator's playbook rides in the user message at the version they picked, so the audit row
+  // (which records the version) says exactly what the model was told.
+  const prompt = playbook
+    ? `Follow the playbook "${playbook.title}" (${playbook.slug} v${playbook.version}):\n\n${playbook.body}\n\n---\n\n${input.prompt}`
+    : input.prompt;
+
+  const outcome = await runTurn({
+    system: systemPrompt({
+      moderator: input.moderator.username,
+      today: new Date(),
+      playbooks,
+      seed: { userId: chat?.seedUserId ?? null, reportId: chat?.seedReportId ?? null },
+    }),
+    history,
+    prompt,
+    tools,
+    specs: tools.map(toolSpec),
+    ctx,
+    budget: DAILY_TOKEN_CAP - input.used,
+    knownRefs: turns.flatMap((t) => t.sources.map((s) => s.ref)),
+    complete,
+    emit: input.emit,
+  });
+
+  await finishTurn(turnId, outcome);
+  input.emit({
+    type: 'done',
+    turnId,
+    status: outcome.status,
+    answer: outcome.answer,
+    error: outcome.error,
+  });
+  return { ...outcome, turnId };
+}
+
+/** `address 1a2b3c4d`: the same label for the same address all chat long. */
+export const addressLabeler = (salt: string) => (cluster: string) =>
+  `address ${createHmac('sha256', salt).update(cluster).digest('hex').slice(0, 8)}`;
+
+export const chatTitleFrom = (prompt: string) => {
+  const line = prompt.trim().split('\n')[0];
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+};

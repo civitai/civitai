@@ -57,6 +57,7 @@ vi.mock('$lib/server/moderation-memory.service', () => ({
 }));
 
 const { getInflationActors, getSharedIps } = await import('../reactor-lookup.service');
+const { OWN_ACTIVITY_ONLY } = await import('../clickhouse-filters');
 
 beforeEach(() => {
   chQueries.length = 0;
@@ -291,6 +292,17 @@ describe('getSharedIps', () => {
     const [account] = await getSharedIps(twoAccounts, { targetId: TARGET });
 
     expect(account.addresses[0].totalAccounts).toBe(358);
+  });
+
+  it('reads only rows the accounts made themselves, never a moderator action logged against them', async () => {
+    chRows.push(
+      [{ cluster: '203.0.113.7', userIds: ['1', '2'], ips: ['203.0.113.7'] }],
+      [{ cluster: '203.0.113.7', total: '2' }]
+    );
+    await getSharedIps(twoAccounts, { targetId: TARGET });
+
+    expect(chQueries).toHaveLength(2);
+    for (const q of chQueries) expect(q).toContain(OWN_ACTIVITY_ONLY);
   });
 
   it('keys by account, folding one account’s many addresses into one entry', async () => {

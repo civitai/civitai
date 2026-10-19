@@ -19,7 +19,10 @@ vi.mock('$lib/server/mod-activity', () => ({ lastModActivity }));
 const getSuspectImages = vi.fn(async () => null);
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
+vi.mock('$lib/server/access', () => ({
+  canAccess: vi.fn(() => true),
+  canInvestigate: vi.fn(() => false),
+}));
 vi.mock('$lib/server/report-actions', () => ({ reportModerationActions: () => ({}) }));
 vi.mock('$lib/server/account-actions', () => ({ accountEnforcementActions: {} }));
 vi.mock('$lib/server/user-actions.service', () => ({ getTimedMute: vi.fn(async () => null) }));

@@ -1,5 +1,5 @@
 import type { LayoutServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
+import { canAccess, canInvestigate } from '$lib/server/access';
 import { lookupQuerySchema, parseQuery } from '$lib/server/query';
 import { getUserLookup, resolveUserId } from '$lib/server/user-lookup.service';
 
@@ -21,7 +21,15 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   const canSeeChats = canAccess(locals.user, '/retool/chat-audit');
   // Full content width: the panels are multi-column and data-dense (Buzz shows the transaction form
   // and the history together), and the 6xl cap forced them into a single narrow stack.
-  const base = { q, canAct, canStrike, canSeeAbuse, canSeeChats, wide: true };
+  const base = {
+    q,
+    canAct,
+    canStrike,
+    canSeeAbuse,
+    canSeeChats,
+    canInvestigate: canInvestigate(locals),
+    wide: true,
+  };
   if (!q) return { ...base, result: null, notFound: false };
 
   const userId = await resolveUserId(q);
