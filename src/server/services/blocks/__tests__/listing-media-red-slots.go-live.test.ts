@@ -338,3 +338,39 @@ describe.each(SITES.filter((s) => s.goesLive === SHADOW_ID))(
     });
   }
 );
+
+describe('off-site revision apply — the rating is floored by the overrides that END UP live', () => {
+  it('🔴 a revision that staged no overrides keeps the live R override, so without a split it rates R', async () => {
+    // No shadow row: `applyRevisionRedSlots` leaves the parent's R icon live, so the rating
+    // must count it — reading the shadow's (none) would lower a live listing to g under it.
+    await split.setRedSlots(PARENT_ID, { icon: R_OVERRIDE });
+    wireRevision('offsite');
+    await approve();
+    expectRating(true, 'r');
+    expect(await split.redSlots(PARENT_ID)).toEqual({ icon: R_OVERRIDE, cover: null });
+  });
+
+  it('positive control: a revision that CLEARED both overrides (a row of nulls) rates by its own media, g', async () => {
+    await split.setRedSlots(PARENT_ID, { icon: R_OVERRIDE });
+    await split.setRedSlots(SHADOW_ID, { icon: null, cover: null });
+    wireRevision('offsite');
+    await approve();
+    expectRating(true, 'g');
+    expect(await split.redSlots(PARENT_ID)).toEqual({ icon: null, cover: null });
+  });
+
+  it('positive control: the shadow’s staged PG-13 override replaces the live R one, and rates PG-13', async () => {
+    await split.setRedSlots(PARENT_ID, { icon: R_OVERRIDE });
+    await split.setRedSlots(SHADOW_ID, { icon: PG13_OVERRIDE });
+    wireRevision('offsite');
+    await approve();
+    expectRating(true, 'pg13');
+  });
+
+  it('invariant guard: with a split the kept live R override does not floor it', async () => {
+    await split.setRedSlots(PARENT_ID, { icon: R_OVERRIDE });
+    wireRevision('offsite');
+    await approve('split');
+    expectRating(true, 'g');
+  });
+});

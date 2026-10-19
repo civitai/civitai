@@ -2963,6 +2963,10 @@ export type ApproveExternalRequestResult = {
  * value is honoured (a mod may always rate UP). Reads the backing Image levels from
  * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
  * With `mediaSplit` the derive reads only the civitai.com-eligible assets (never an override).
+ *
+ * `redSlotsListingId` names the listing whose civitai.red overrides go live with this approve,
+ * when that is not `appListingId`: a revision that staged no overrides keeps the LIVE listing's
+ * (`applyRevisionRedSlots`), so its approve must be floored by those, not by the shadow's none.
  */
 async function resolveApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -2972,6 +2976,7 @@ async function resolveApprovalContentRating(
     coverId: number | null;
     override?: OffsiteContentRating | null;
     mediaSplit: boolean;
+    redSlotsListingId?: string;
   }
 ): Promise<OffsiteContentRating> {
   const shots = await tx.appListingScreenshot.findMany({
@@ -2985,7 +2990,7 @@ async function resolveApprovalContentRating(
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
   // The civitai.red overrides floor it too, unless the listing is split (`ratingFloorAssets`).
-  const redSlots = await readListingRedSlotAssets(tx, args.appListingId);
+  const redSlots = await readListingRedSlotAssets(tx, args.redSlotsListingId ?? args.appListingId);
   const derived = deriveContentRatingFromAssets(
     ratingFloorAssets(
       [...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...redSlots],
@@ -3852,6 +3857,9 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
         mediaSplit,
+        // The overrides live AFTER step (4b): the shadow's when it staged a row, otherwise the
+        // parent's, which `applyRevisionRedSlots` leaves in place.
+        redSlotsListingId: shadowRedSlots.staged ? shadowId : parentId,
       });
       appliedOffsiteRating = finalRating;
       await tx.appListing.update({
