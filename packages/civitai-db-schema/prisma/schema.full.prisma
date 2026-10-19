@@ -5592,7 +5592,7 @@ model ItemDefinition {
   status            String    @default("draft")
   createdById       Int?
   updatedById       Int?
-  /// A creator box: the user its sales pay. NULL = a platform box, which pays no one. Only a box has one (CHECK).
+  /// A creator box: the creator its sales pay (the creator side of computeCreatorShopSplit, never a reseller). NULL = a platform box, which pays no one. Only a box has one (CHECK).
   sellerId          Int?
   seller            User?     @relation("ItemDefinitionSeller", fields: [sellerId], references: [id], onDelete: Restrict)
   createdAt         DateTime  @default(now())

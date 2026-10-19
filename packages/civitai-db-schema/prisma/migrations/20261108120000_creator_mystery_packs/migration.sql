@@ -1,6 +1,7 @@
 -- Creator mystery packs: a box a creator builds from their own cosmetics, whose sales pay them.
 --
--- 1. "ItemDefinition"."sellerId": the user a box's sales pay. NULL is a platform box, which pays no
+-- 1. "ItemDefinition"."sellerId": the creator a box's sales pay (the creator side of
+--    computeCreatorShopSplit; creator boxes have no reseller). NULL is a platform box, which pays no
 --    one; every existing row stays NULL. Only a box may have one. ON DELETE RESTRICT: accounts are
 --    soft-deleted ("User"."deletedAt"), so a hard delete of a seller is refused rather than leaving a
 --    box whose sales pay no one.
@@ -8,24 +9,58 @@
 --    pending revision per box.
 --
 -- Additive only: a new nullable column, a new table, no rows move. Nothing reads either until the
--- creator mystery pack code ships, so it can be applied before or after that deploy. Runs in one
--- transaction.
+-- creator mystery pack code ships, so it can be applied before or after that deploy.
 --
--- The ALTERs take an ACCESS EXCLUSIVE lock on "ItemDefinition", which every box open reads FOR SHARE.
--- The table is small, so the lock is brief, but waiting for it would queue every open behind it: the
--- lock_timeout makes the migration give up instead. If it times out, run it again.
+-- HOW TO APPLY: `psql -v ON_ERROR_STOP=1 -f migration.sql`, off-peak. Three short transactions, each
+-- safe to run again. If one times out, psql ends the session (releasing its locks); run the whole
+-- file again. In a client that keeps the session open after an error, ROLLBACK before retrying: an
+-- aborted transaction keeps its locks until it is rolled back.
+--
+-- Locks:
+--   - "ItemDefinition" is read FOR SHARE by every box open, and opens give up after 2 s. Step 1 takes
+--     ACCESS EXCLUSIVE on it, which blocks those reads, for a catalog change plus a CHECK scan of a
+--     table of a few hundred rows. lock_timeout is 1 s, below what opens tolerate.
+--   - The foreign key also locks "User" (SHARE ROW EXCLUSIVE, which blocks User writes while held).
+--     Step 2 takes the "User" lock FIRST, so it never waits on "User" while holding "ItemDefinition",
+--     and then holds "ItemDefinition" only in SHARE ROW EXCLUSIVE, which does not block opens' reads.
 
+-- Step 1: the column and the box-only CHECK, no foreign key yet.
 BEGIN;
-
-SET LOCAL lock_timeout = '5s';
+SET LOCAL lock_timeout = '1s';
 
 ALTER TABLE "ItemDefinition"
-  ADD COLUMN IF NOT EXISTS "sellerId" INTEGER REFERENCES "User"("id") ON DELETE RESTRICT;
+  ADD COLUMN IF NOT EXISTS "sellerId" INTEGER,
+  DROP CONSTRAINT IF EXISTS "ItemDefinition_sellerId_box_check",
+  ADD CONSTRAINT "ItemDefinition_sellerId_box_check" CHECK ("sellerId" IS NULL OR "type" = 'box');
 
-ALTER TABLE "ItemDefinition" DROP CONSTRAINT IF EXISTS "ItemDefinition_sellerId_box_check";
-ALTER TABLE "ItemDefinition"
-  ADD CONSTRAINT "ItemDefinition_sellerId_box_check"
-  CHECK ("sellerId" IS NULL OR "type" = 'box');
+COMMIT;
+
+-- Step 2: the foreign key. NOT VALID then VALIDATE: the column is all NULL, so validation is free, and
+-- VALIDATE takes only SHARE UPDATE EXCLUSIVE. Guarded by a catalog check rather than DROP CONSTRAINT
+-- IF EXISTS, which takes ACCESS EXCLUSIVE even when there is nothing to drop.
+BEGIN;
+SET LOCAL lock_timeout = '1s';
+
+LOCK TABLE "User" IN SHARE ROW EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ItemDefinition_sellerId_fkey' AND conrelid = '"ItemDefinition"'::regclass
+  ) THEN
+    ALTER TABLE "ItemDefinition"
+      ADD CONSTRAINT "ItemDefinition_sellerId_fkey"
+      FOREIGN KEY ("sellerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE "ItemDefinition" VALIDATE CONSTRAINT "ItemDefinition_sellerId_fkey";
+
+COMMIT;
+
+-- Step 3: the index and the revisions table. Nothing reads or writes either yet.
+BEGIN;
+SET LOCAL lock_timeout = '1s';
 
 CREATE INDEX IF NOT EXISTS "ItemDefinition_sellerId_idx"
   ON "ItemDefinition" ("sellerId")

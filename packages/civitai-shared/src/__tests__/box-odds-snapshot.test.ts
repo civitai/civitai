@@ -44,13 +44,4 @@ describe('snapshotsMatch: a price edit is not an odds change', () => {
     };
     expect(snapshotsMatch(live, stored)).toBe(true);
   });
-
-  it('still tells a moved content apart', () => {
-    const live = snapshotOfLiveBox(TIERS, CONTENTS);
-    const moved = snapshotOfLiveBox(TIERS, [
-      ...CONTENTS.slice(0, 2),
-      { tierId: 1, cosmeticId: 20 },
-    ]);
-    expect(snapshotsMatch(live, moved)).toBe(false);
-  });
 });

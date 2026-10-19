@@ -3384,7 +3384,7 @@ export type ItemDefinition = {
   createdById: number | null;
   updatedById: number | null;
   /**
-   * A creator box: the user its sales pay. NULL = a platform box, which pays no one. Only a box has one (CHECK).
+   * A creator box: the creator its sales pay (the creator side of computeCreatorShopSplit, never a reseller). NULL = a platform box, which pays no one. Only a box has one (CHECK).
    */
   sellerId: number | null;
   createdAt: Generated<Timestamp>;

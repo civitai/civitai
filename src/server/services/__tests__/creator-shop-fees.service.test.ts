@@ -67,6 +67,9 @@ describe('getCreatorShopFees', () => {
       { submission: 'all of them' },
       { submission: { Sticker: -1, Badge: 1.5 }, pack: Number.NaN },
       { submission: { Sticker: null }, pack: '1000' },
+      { mysteryPack: 'free' },
+      { mysteryPack: -1 },
+      { mysteryPack: 1.5 },
     ]) {
       stored(value);
       const fees = await getCreatorShopFees();
@@ -77,11 +80,16 @@ describe('getCreatorShopFees', () => {
   // A fat-fingered extra digit is the realistic version of this, and the fee is
   // taken before review and never refunded.
   it('falls back rather than serving an absurd fee', async () => {
-    stored({ submission: { Sticker: 1e15 }, pack: CREATOR_SHOP_FEE_MAX + 1 });
+    stored({
+      submission: { Sticker: 1e15 },
+      pack: CREATOR_SHOP_FEE_MAX + 1,
+      mysteryPack: CREATOR_SHOP_FEE_MAX + 1,
+    });
     const fees = await getCreatorShopFees();
 
     expect(fees.submission.Sticker).toBe(DEFAULT_CREATOR_SHOP_FEES.submission.Sticker);
     expect(fees.pack).toBe(DEFAULT_CREATOR_SHOP_FEES.pack);
+    expect(fees.mysteryPack).toBe(DEFAULT_CREATOR_SHOP_FEES.mysteryPack);
   });
 
   it('serves a fee sitting exactly on the ceiling', async () => {
