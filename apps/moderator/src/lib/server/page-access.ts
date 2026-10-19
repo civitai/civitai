@@ -200,9 +200,9 @@ export async function changePageRoles(input: {
       });
     });
   } catch (e) {
-    // Rolled back, so nothing landed. Best-effort: a row left `pending` reads as unconfirmed, which a
-    // reader re-checks against the grant anyway.
-    await setOutcome(ids, 'refused');
+    // Only a conflict is known not to have landed: any other failure, a lost COMMIT acknowledgement
+    // included, may have written the grant, so its rows stay `pending` (unconfirmed).
+    if (e instanceof GrantConflictError) await setOutcome(ids, 'refused');
     throw e;
   }
 

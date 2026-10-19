@@ -78,6 +78,12 @@ export const actions: Actions = {
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
       if (!isEditableGrant(path)) return fail(400, { error: `${path} is not editable.` });
+      // A page loaded before `expect` existed would otherwise save with no compare-and-set at all.
+      if (!(path in expect))
+        return fail(400, {
+          error:
+            'This page is out of date, so nothing was saved. Reload it and re-apply your changes.',
+        });
       // The catalogue is re-read here, so a role deleted between load and save lands on an operator who
       // did nothing wrong. Name it and say the save is intact — "unknown role" reads as a bug in the page.
       const retired = roles.filter((role) => !grantable.includes(role));

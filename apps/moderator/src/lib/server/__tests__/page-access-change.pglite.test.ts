@@ -182,6 +182,14 @@ describe('changePageRoles', () => {
     expect(await historyRows()).toMatchObject([{ path: '/blocklists', outcome: 'refused' }]);
   });
 
+  // Any failure but a conflict may have committed (a lost COMMIT acknowledgement looks the same), so
+  // it must not be recorded as refused.
+  it('leaves a write that failed for another reason unconfirmed, not refused', async () => {
+    race.next = () => main.exec('DROP TABLE "AppPageAccess"');
+    await expect(grantCm()).rejects.not.toBeInstanceOf(GrantConflictError);
+    expect(await historyRows()).toMatchObject([{ path: '/blocklists', outcome: 'pending' }]);
+  });
+
   it('records nothing for a change that changes nothing', async () => {
     const { changed } = await grantCm({
       entries: [{ path: '/blocklists', roles: [HIGH] }],
@@ -256,6 +264,19 @@ describe('/admin save', () => {
     expect(result).toMatchObject({ status: 409 });
     expect(await stored()).toEqual([HIGH, CM]);
     expect(await historyRows()).toEqual([]);
+  });
+
+  it('refuses a save from a page that sent no expected roles', async () => {
+    const form = new FormData();
+    form.set('changes', JSON.stringify({ '/blocklists': [] }));
+    const url = new URL('https://moderator.example.test/admin');
+    const result = await actions.save({
+      request: new Request(url, { method: 'POST', body: form }),
+      locals: { user: { id: 9, roles: ['moderator:admin'] } },
+      url,
+    } as never);
+    expect(result).toMatchObject({ status: 400 });
+    expect(await stored()).toEqual([HIGH]);
   });
 
   it('compares what the page showed: a retired role still stored does not conflict', async () => {
