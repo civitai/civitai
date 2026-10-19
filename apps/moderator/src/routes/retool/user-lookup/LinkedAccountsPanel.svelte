@@ -1,22 +1,28 @@
 <script lang="ts">
-  import type { LinkedAccounts } from '$lib/linked-accounts';
+  import { keepLast } from '$lib/keep-last.svelte';
+  import type { AccountLinks } from '$lib/linked-accounts';
   import LinkedAccountsList from './LinkedAccountsList.svelte';
 
-  let { linked, accountId }: { linked: Promise<LinkedAccounts> | null; accountId: number } = $props();
+  let { links, accountId }: { links: Promise<AccountLinks> | null; accountId: number } = $props();
+
+  // A refetch after an edit elsewhere on the page must not unmount the list: it holds the
+  // moderator's ticks.
+  const last = keepLast(() => links);
 </script>
 
-<div class="mb-4">
-  {#if linked}
-    {#await linked}
-      <p class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-dark-2">
-        Checking linked accounts…
-      </p>
-    {:then result}
-      <LinkedAccountsList {result} {accountId} />
-    {:catch}
-      <p class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-red-300">
-        Could not load linked accounts.
-      </p>
-    {/await}
-  {/if}
-</div>
+{#if last.value}
+  <div class="mb-4">
+    <LinkedAccountsList result={last.value} {accountId} />
+    {#if last.failed}
+      <p class="mt-2 text-xs text-red-300">Refresh failed; showing the last answer.</p>
+    {/if}
+  </div>
+{:else if last.failed}
+  <p class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-red-300">
+    Could not load linked accounts.
+  </p>
+{:else if links}
+  <p class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-dark-2">
+    Checking linked accounts…
+  </p>
+{/if}

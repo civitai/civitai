@@ -21,20 +21,20 @@ vi.mock('../db', () => ({
 }));
 
 const getSharedIpRows = vi.fn(async () => ({ rows: [] as unknown[], truncated: false }));
-const getSharedSocialAccounts = vi.fn(async () => ({
-  accounts: [] as unknown[],
-  truncated: false,
-}));
-vi.mock('../user-signals.service', () => ({ getSharedIpRows, getSharedSocialAccounts }));
-vi.mock('../users.service', () => ({
+const getSharedSocialRows = vi.fn(async () => ({ rows: [] as unknown[], truncated: false }));
+vi.mock('../user-signals.service', () => ({ getSharedIpRows, getSharedSocialRows }));
+vi.mock('../users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../users.service')>()),
   usersByIds: async (ids: number[]) =>
-    new Map(ids.map((id) => [id, { username: `u${id}`, bannedAt: null, muted: false }])),
+    new Map(
+      ids.map((id) => [id, { username: `u${id}`, bannedAt: null, muted: false, deletedAt: null }])
+    ),
 }));
 const strikeCountsByUserIds = vi.fn(async (): Promise<Map<number, number>> => new Map());
 vi.mock('../moderation-memory.service', () => ({ strikeCountsByUserIds }));
 
 const SUBJECT = 100;
-const { getLinkedAccounts } = await import('../linked-accounts.service');
+const { getAccountLinks } = await import('../linked-accounts.service');
 const { parseLinkConfig } = await import('../linked-accounts-config');
 
 const ON = { nearLogin: { windowSeconds: 1000, loginSample: 50 }, buzz: { lookbackDays: 30 } };
@@ -53,19 +53,21 @@ describe('parseLinkConfig', () => {
     expect(parseLinkConfig({})).toEqual({ nearLogin: null, buzz: null });
   });
 
-  it.each(['0', '-5', '1.5', 'ten', '99999999'])('treats %s as not configured', (bad) => {
-    expect(
-      parseLinkConfig({
-        LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: bad,
-        LINKED_ACCOUNTS_LOGIN_SAMPLE: '50',
-        LINKED_ACCOUNTS_BUZZ_LOOKBACK_DAYS: bad,
-      })
-    ).toEqual({ nearLogin: null, buzz: null });
-  });
+  it.each(['0', '-5', '1.5', 'ten', '1e3', '0x10', '99999999'])(
+    'treats %s as not configured',
+    (bad) => {
+      expect(
+        parseLinkConfig({
+          LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: bad,
+          LINKED_ACCOUNTS_LOGIN_SAMPLE: '50',
+          LINKED_ACCOUNTS_BUZZ_LOOKBACK_DAYS: bad,
+        })
+      ).toEqual({ nearLogin: null, buzz: null });
+    }
+  );
 
   it('needs both login settings for the login signal', () => {
-    const only = parseLinkConfig({ LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: '60' });
-    expect(only.nearLogin).toBeNull();
+    expect(parseLinkConfig({ LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: '60' }).nearLogin).toBeNull();
     expect(
       parseLinkConfig({
         LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: '60',
@@ -75,54 +77,43 @@ describe('parseLinkConfig', () => {
   });
 });
 
-describe('getLinkedAccounts', () => {
+describe('getAccountLinks', () => {
   it('reports unconfigured signals as off and never queries them', async () => {
-    const result = await getLinkedAccounts(SUBJECT, { nearLogin: null, buzz: null });
+    const result = await getAccountLinks(SUBJECT, { nearLogin: null, buzz: null });
     expect(result.status).toEqual({ regIp: 'ok', nearLogin: 'off', buzz: 'off', social: 'ok' });
     expect(query).not.toHaveBeenCalled();
   });
 
   it('merges one account found by two signals into one row, ranked above a single-signal one', async () => {
-    ownLogins.mockResolvedValue([{ ip: '1.1.1.1', ts: '5000' }]);
+    ownLogins.mockResolvedValue([{ ip: '1.1.1.1', ts: 5000 }]);
     neighbours.mockResolvedValue([
-      { userId: '7', ip: '1.1.1.1', ts: '5030' },
-      { userId: '8', ip: '1.1.1.1', ts: '5010' },
+      { userId: 8, ips: ['1.1.1.1'], closestSeconds: 10, logins: 1 },
+      { userId: 7, ips: ['1.1.1.1'], closestSeconds: 30, logins: 2 },
     ]);
     counterparties.mockResolvedValue([
-      { other: '9', outCount: '0', inCount: '20', outAmount: '0', inAmount: '9000' },
-      { other: '7', outCount: '3', inCount: '4', outAmount: '30', inAmount: '40' },
+      { other: 7, rank: 2, outCount: 3, inCount: 4, outAmount: 30, inAmount: 40 },
     ]);
 
-    const { accounts } = await getLinkedAccounts(SUBJECT, ON);
+    const { accounts } = await getAccountLinks(SUBJECT, ON);
 
     expect(accounts.map((a) => a.userId)).toEqual([7, 8]);
     expect(accounts[0]).toMatchObject({
-      nearLogin: { closestSeconds: 30, logins: 1 },
+      status: 'active',
+      nearLogin: { closestSeconds: 30, logins: 2 },
       buzz: { rank: 2, inCount: 4, outCount: 3 },
     });
   });
 
-  it('measures the gap against logins on the SAME address only', async () => {
+  it('keeps an address that is not a valid IP out of the neighbour query', async () => {
     ownLogins.mockResolvedValue([
-      { ip: '1.1.1.1', ts: '1000' },
-      { ip: '2.2.2.2', ts: '2000' },
-    ]);
-    neighbours.mockResolvedValue([{ userId: '7', ip: '2.2.2.2', ts: '1010' }]);
-
-    const { accounts } = await getLinkedAccounts(SUBJECT, ON);
-    expect(accounts[0].nearLogin?.closestSeconds).toBe(990);
-  });
-
-  it('keeps an address that fails the IP pattern out of the neighbour query', async () => {
-    ownLogins.mockResolvedValue([
-      { ip: "1.1.1.1') OR 1=1 --", ts: '1000' },
-      { ip: '2.2.2.2', ts: '2000' },
+      { ip: "1.1.1.1') OR 1=1 --", ts: 1000 },
+      { ip: '2.2.2.2', ts: 2000 },
     ]);
 
-    await getLinkedAccounts(SUBJECT, ON);
+    await getAccountLinks(SUBJECT, ON);
     const neighbourSql = query.mock.calls
       .map(([sql]) => sql)
-      .find((sql) => sql.includes('2.2.2.2'));
+      .find((sql) => sql.includes("'2.2.2.2'"));
     expect(neighbourSql).toBeDefined();
     expect(neighbourSql).not.toContain('OR 1=1');
   });
@@ -134,7 +125,7 @@ describe('getLinkedAccounts', () => {
       truncated: false,
     });
 
-    const result = await getLinkedAccounts(SUBJECT, ON);
+    const result = await getAccountLinks(SUBJECT, ON);
     expect(result.status.buzz).toBe('failed');
     expect(result.accounts.map((a) => a.userId)).toEqual([5]);
   });
@@ -146,7 +137,7 @@ describe('getLinkedAccounts', () => {
       truncated: false,
     });
 
-    const { accounts } = await getLinkedAccounts(SUBJECT, ON);
+    const { accounts } = await getAccountLinks(SUBJECT, ON);
     expect(accounts).toMatchObject([{ userId: 5, strikes: null }]);
   });
 });

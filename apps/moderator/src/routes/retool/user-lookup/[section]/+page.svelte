@@ -4,7 +4,7 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
-  import { fetchLinkedAccounts } from '$lib/linked-accounts';
+  import { fetchAccountLinks } from '../account-links';
   import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
   import LinkedAccountsPanel from '../LinkedAccountsPanel.svelte';
@@ -58,8 +58,8 @@
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
-  const linked = $derived(
-    browser && result && section === 'basic' ? fetchLinkedAccounts(result.identity.id, version) : null
+  const links = $derived(
+    browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
   );
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
@@ -96,7 +96,7 @@
         canAct={data.canAct}
         canStrike={data.canStrike}
       />
-      <LinkedAccountsPanel {linked} accountId={result.identity.id} />
+      <LinkedAccountsPanel {links} accountId={result.identity.id} />
       <AddressesPanel {signals} />
       <AccountHistoryPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials

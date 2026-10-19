@@ -75,6 +75,8 @@ export const trainingWorkflowReviewUrl = (workflowId: string) =>
 // they had already diverged on whether user-lookup takes a `section`. When the transitional namespace
 // moves, the copy nobody updated is the one that becomes a dead link.
 export const userLookupUrl = moderatorUserLookupPath;
+export const bulkBanUrl = (ids: number[]) =>
+  `/retool/bulk-ban?ids=${encodeURIComponent(ids.join('\n'))}`;
 export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
 export const imageLookupUrl = moderatorImageLookupPath;
 export const modelLookupUrl = moderatorModelLookupPath;

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 
-// Detection settings live in the deployment's secrets only. There is deliberately no default: an
-// unset or malformed value turns its signal off and the panel says so.
+// No defaults, by design: this repo is public and these values are detection settings. Unset or
+// malformed turns the signal off.
 
 export type LinkConfig = {
   nearLogin: { windowSeconds: number; loginSample: number } | null;
@@ -16,13 +16,13 @@ const MAX = {
 
 type Key = keyof typeof MAX;
 
-// The upper bounds are query-cost guards, not detection settings: every value lands in a ClickHouse
-// query as a number, and an oversized one is a scan.
+// MAX bounds query cost, not detection: each value goes into ClickHouse as a number, and an oversized
+// one is a scan.
 function positiveInt(raw: Record<string, string | undefined>, key: Key): number | null {
   const value = raw[key]?.trim();
   if (!value) return null;
-  const n = Number(value);
-  if (!Number.isInteger(n) || n <= 0 || n > MAX[key]) {
+  const n = /^\d+$/.test(value) ? Number(value) : NaN;
+  if (!(n > 0 && n <= MAX[key])) {
     console.error(`[linked-accounts] ${key} is not a whole number in 1..${MAX[key]}; signal off`);
     return null;
   }

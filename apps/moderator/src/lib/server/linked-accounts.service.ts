@@ -1,29 +1,28 @@
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { usersByIds } from './users.service';
+import { accountStatus, usersByIds } from './users.service';
 import { strikeCountsByUserIds } from './moderation-memory.service';
-import { INTERNAL_IP_RANGE, IP_PATTERN } from './clickhouse-filters';
-import { getSharedIpRows, getSharedSocialAccounts } from './user-signals.service';
+import { PUBLIC_IP_ONLY } from './clickhouse-filters';
+import { clusterSql, ipCluster } from './ip-clusters';
+import { USER_ACCOUNT_TYPES_SQL } from './buzz-accounts';
+import { getSharedIpRows, getSharedSocialRows } from './user-signals.service';
 import { linkConfig, type LinkConfig } from './linked-accounts-config';
 import {
   LINK_SIGNALS,
-  nearestGapSeconds,
-  rankLinkedAccounts,
+  rankAccountLinks,
+  type AccountLinkRow,
+  type AccountLinks,
   type LinkSignal,
-  type LinkedAccountRow,
   type SignalStatus,
 } from '$lib/linked-accounts';
 
-// Everything behind `/api/linked-accounts`: other accounts tied to this one, one row per account with
-// each kind of evidence beside it.
-//
-// The ClickHouse helper interpolates values with NO escaping, so only numbers we control and IPs
-// matched against IP_PATTERN are ever put into a query. Times cross as unix seconds for that reason.
+// The ClickHouse helper does not escape: only controlled numbers and `ipCluster` keys go into a query.
+// Times cross as unix seconds for that reason.
 
-type Evidence = Omit<LinkedAccountRow<Date>, 'username' | 'bannedAt' | 'muted' | 'strikes'>;
+type Evidence = Pick<AccountLinkRow, 'userId' | 'regIp' | 'nearLogin' | 'buzz' | 'social'>;
 type Found = { links: Evidence[]; truncated: boolean };
 
-const NEIGHBOUR_ROWS = 500;
+const NEARBY_ACCOUNTS = 100;
 const BUZZ_COUNTERPARTIES = 50;
 
 async function regIpLinks(userId: number): Promise<Found> {
@@ -41,65 +40,73 @@ async function nearLoginLinks(
   { windowSeconds, loginSample }: NonNullable<LinkConfig['nearLogin']>
 ): Promise<Found> {
   const ch = getClickhouse();
-  const mine = (
-    await ch.$query<{ ip: string; ts: string }>(`
-      SELECT ip, toUnixTimestamp(time) AS ts
-      FROM default.userActivities
-      WHERE targetUserId = ${userId}
-        AND type IN ('Login', 'Registration')
-        AND NOT isIPAddressInRange(ip, '${INTERNAL_IP_RANGE}')
-      ORDER BY time DESC
-      LIMIT ${loginSample}
-    `)
-  )
-    .filter((r) => IP_PATTERN.test(r.ip))
-    .map((r) => ({ ip: r.ip, ts: Number(r.ts) }));
-  if (!mine.length) return { links: [], truncated: false };
+  const mine = await ch.$query<{ ip: string; ts: number }>(`
+    SELECT ip, toUnixTimestamp(time) AS ts
+    FROM default.userActivities
+    WHERE targetUserId = ${userId}
+      AND type IN ('Login', 'Registration')
+      AND ${PUBLIC_IP_ONLY}
+    ORDER BY time DESC
+    LIMIT ${loginSample}
+  `);
 
-  const byIp = new Map<string, number[]>();
-  for (const r of mine) byIp.set(r.ip, [...(byIp.get(r.ip) ?? []), r.ts]);
+  const byCluster = new Map<string, number[]>();
+  for (const r of mine) {
+    const key = ipCluster(r.ip);
+    const ts = Number(r.ts);
+    if (key && Number.isInteger(ts)) byCluster.set(key, [...(byCluster.get(key) ?? []), ts]);
+  }
+  if (!byCluster.size) return { links: [], truncated: false };
 
-  // One time range per login keeps this on the table's `time` sort key; matching on IP alone reads
-  // every row a shared carrier address ever produced.
-  const ranges = mine
-    .map(
-      (r) =>
-        `(ip = '${r.ip}' AND time BETWEEN toDateTime(${r.ts - windowSeconds}) AND toDateTime(${
-          r.ts + windowSeconds
-        }))`
+  const cluster = clusterSql('ip');
+  // One time range per login keeps the read on the table's `time` sort key.
+  const ranges = [...byCluster]
+    .flatMap(([key, times]) =>
+      times.map(
+        (t) =>
+          `(time BETWEEN toDateTime(${t - windowSeconds}) AND toDateTime(${
+            t + windowSeconds
+          }) AND ${cluster} = '${key}')`
+      )
     )
     .join(' OR ');
-  const rows = await ch.$query<{ userId: string; ip: string; ts: string }>(`
-    SELECT targetUserId AS userId, ip, toUnixTimestamp(time) AS ts
+  const ownTimes = `map(${[...byCluster]
+    .map(([key, times]) => `'${key}', [${times.join(', ')}]`)
+    .join(', ')})`;
+
+  const rows = await ch.$query<{
+    userId: number;
+    ips: string[];
+    closestSeconds: number;
+    logins: number;
+  }>(`
+    SELECT targetUserId AS userId,
+      groupUniqArray(10)(${cluster}) AS ips,
+      min(arrayMin(arrayMap(x -> abs(x - toUnixTimestamp(time)), ${ownTimes}[${cluster}]))) AS closestSeconds,
+      count() AS logins
     FROM default.userActivities
-    WHERE ip IN (${[...byIp.keys()].map((ip) => `'${ip}'`).join(', ')})
-      AND (${ranges})
+    WHERE (${ranges})
       AND type IN ('Login', 'Registration')
       AND targetUserId > 0
       AND targetUserId != ${userId}
-    LIMIT ${NEIGHBOUR_ROWS + 1}
+    GROUP BY targetUserId
+    ORDER BY closestSeconds, targetUserId
+    LIMIT ${NEARBY_ACCOUNTS + 1}
   `);
 
-  const links = new Map<number, { ips: Set<string>; closestSeconds: number; logins: number }>();
-  for (const r of rows.slice(0, NEIGHBOUR_ROWS)) {
-    const id = Number(r.userId);
-    const gap = nearestGapSeconds(byIp.get(r.ip) ?? [], Number(r.ts));
-    const link = links.get(id) ?? { ips: new Set(), closestSeconds: Infinity, logins: 0 };
-    link.ips.add(r.ip);
-    link.closestSeconds = Math.min(link.closestSeconds, gap);
-    link.logins += 1;
-    links.set(id, link);
-  }
   return {
-    links: [...links].map(([id, l]) => ({
-      userId: id,
-      nearLogin: { ips: [...l.ips], closestSeconds: l.closestSeconds, logins: l.logins },
+    links: rows.slice(0, NEARBY_ACCOUNTS).map((r) => ({
+      userId: Number(r.userId),
+      nearLogin: {
+        ips: r.ips,
+        closestSeconds: Number(r.closestSeconds),
+        logins: Number(r.logins),
+      },
     })),
-    truncated: rows.length > NEIGHBOUR_ROWS,
+    truncated: rows.length > NEARBY_ACCOUNTS,
   };
 }
 
-// Only counterparties Buzz moved to AND from count as a link: one-way tipping is what fans do.
 async function buzzLinks(
   userId: number,
   { lookbackDays }: NonNullable<LinkConfig['buzz']>
@@ -112,52 +119,63 @@ async function buzzLinks(
   if (!user) return { links: [], truncated: false };
 
   // `buzzTransactions` sorts by date first and has no index on either account, so the date bound is
-  // the whole cost control. An account cannot have moved Buzz before it existed.
+  // the whole cost control.
   const since = Math.max(
     Math.floor(new Date(user.createdAt).getTime() / 1000),
     Math.floor(Date.now() / 1000) - lookbackDays * 86_400
   );
+  // Ranked over every counterparty, filtered after: `rank` is a position among all of them.
   const rows = await getClickhouse().$query<{
-    other: string;
-    outCount: string;
-    inCount: string;
-    outAmount: string;
-    inAmount: string;
+    other: number;
+    rank: number;
+    outCount: number;
+    inCount: number;
+    outAmount: number;
+    inAmount: number;
   }>(`
-    SELECT if(fromAccountId = ${userId}, toAccountId, fromAccountId) AS other,
-      countIf(fromAccountId = ${userId}) AS outCount,
-      countIf(toAccountId = ${userId}) AS inCount,
-      sumIf(amount, fromAccountId = ${userId}) AS outAmount,
-      sumIf(amount, toAccountId = ${userId}) AS inAmount
-    FROM default.buzzTransactions
-    WHERE date >= toDateTime(${since})
-      AND (fromAccountId = ${userId} OR toAccountId = ${userId})
-      AND fromAccountId > 0
-      AND toAccountId > 0
-      AND fromAccountId != toAccountId
-    GROUP BY other
-    ORDER BY outCount + inCount DESC, other
-    LIMIT ${BUZZ_COUNTERPARTIES}
+    SELECT other, rank, outCount, inCount, outAmount, inAmount
+    FROM (
+      SELECT *, row_number() OVER (ORDER BY outCount + inCount DESC, other) AS rank
+      FROM (
+        SELECT if(fromAccountId = ${userId}, toAccountId, fromAccountId) AS other,
+          countIf(fromAccountId = ${userId}) AS outCount,
+          countIf(toAccountId = ${userId}) AS inCount,
+          sumIf(amount, fromAccountId = ${userId}) AS outAmount,
+          sumIf(amount, toAccountId = ${userId}) AS inAmount
+        FROM default.buzzTransactions
+        WHERE date >= toDateTime(${since})
+          AND (fromAccountId = ${userId} OR toAccountId = ${userId})
+          AND fromAccountType IN (${USER_ACCOUNT_TYPES_SQL})
+          AND toAccountType IN (${USER_ACCOUNT_TYPES_SQL})
+          AND fromAccountId > 0
+          AND toAccountId > 0
+          AND fromAccountId != toAccountId
+        GROUP BY other
+      )
+    )
+    WHERE outCount > 0 AND inCount > 0
+    ORDER BY rank
+    LIMIT ${BUZZ_COUNTERPARTIES + 1}
   `);
 
   return {
-    links: rows.flatMap((r, i) => {
-      const buzz = {
-        rank: i + 1,
+    links: rows.slice(0, BUZZ_COUNTERPARTIES).map((r) => ({
+      userId: Number(r.other),
+      buzz: {
+        rank: Number(r.rank),
         inCount: Number(r.inCount),
         outCount: Number(r.outCount),
         inAmount: Number(r.inAmount),
         outAmount: Number(r.outAmount),
-      };
-      return buzz.inCount && buzz.outCount ? [{ userId: Number(r.other), buzz }] : [];
-    }),
-    truncated: rows.length === BUZZ_COUNTERPARTIES,
+      },
+    })),
+    truncated: rows.length > BUZZ_COUNTERPARTIES,
   };
 }
 
 async function socialLinks(userId: number): Promise<Found> {
-  const { accounts, truncated } = await getSharedSocialAccounts(userId);
-  return { links: accounts.map((a) => ({ userId: a.userId, social: { url: a.url } })), truncated };
+  const { rows, truncated } = await getSharedSocialRows(userId);
+  return { links: rows.map((r) => ({ userId: r.userId, social: { url: r.url } })), truncated };
 }
 
 type Outcome = { status: SignalStatus; found: Found };
@@ -173,7 +191,10 @@ async function attempt(signal: LinkSignal, run: (() => Promise<Found>) | null): 
   }
 }
 
-export async function getLinkedAccounts(userId: number, config = linkConfig()) {
+export async function getAccountLinks(
+  userId: number,
+  config = linkConfig()
+): Promise<AccountLinks> {
   const { nearLogin, buzz } = config;
   const outcomes = await Promise.all([
     attempt('regIp', () => regIpLinks(userId)),
@@ -192,8 +213,7 @@ export async function getLinkedAccounts(userId: number, config = linkConfig()) {
       merged.set(link.userId, { ...merged.get(link.userId), ...link });
 
   const ids = [...merged.keys()];
-  // Strikes live in a second database. Losing it must blank the counts, not the whole list, and must
-  // not read as zero.
+  // Strikes are in a second store; if it fails, blank the counts (null), never show 0.
   const [users, strikes] = await Promise.all([
     usersByIds(ids),
     strikeCountsByUserIds(ids).catch((e) => {
@@ -201,19 +221,19 @@ export async function getLinkedAccounts(userId: number, config = linkConfig()) {
       return null;
     }),
   ]);
-  const accounts: LinkedAccountRow<Date>[] = [...merged.values()].map((e) => {
+  const accounts: AccountLinkRow[] = [...merged.values()].map((e) => {
     const u = users.get(e.userId);
     return {
       ...e,
       username: u?.username ?? null,
-      bannedAt: u?.bannedAt ?? null,
+      status: accountStatus(u),
       muted: u?.muted ?? null,
       strikes: strikes ? strikes.get(e.userId) ?? 0 : null,
     };
   });
 
   return {
-    accounts: rankLinkedAccounts(accounts),
+    accounts: rankAccountLinks(accounts),
     status: Object.fromEntries(LINK_SIGNALS.map((s) => [s, by[s].status])) as Record<
       LinkSignal,
       SignalStatus

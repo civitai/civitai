@@ -12,8 +12,8 @@ import {
   softly,
 } from '$lib/server/user-signals.service';
 
-// Split out of the page load because these are the slow half of a lookup, against a ClickHouse table of
-// tens of millions of rows. Identity should render immediately and the investigation data arrive after.
+// Split out of the page load so identity renders first and the ClickHouse-backed investigation data
+// follows.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
@@ -31,8 +31,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       softly('accountEvents', () => getAccountEvents(userId), []),
     ]);
 
-  // Nested per signal rather than flattened: a third shared-signal would otherwise add a third pair of
-  // ad-hoc sibling names (sharedAccounts/truncated, sharedSocials/socialsTruncated, …).
   return json({
     commentBurst,
     ips: { addresses: ips },

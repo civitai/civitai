@@ -1,34 +1,31 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { LINK_CLASS, num, plural } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { bulkBanUrl, userLookupUrl } from '$lib/entity-url';
   import {
     LINK_SIGNALS,
-    bulkBanHref,
-    gapLabel,
-    initialBanSelection,
     isCorroborated,
-    toggleId,
+    type AccountLinks,
     type LinkSignal,
-    type LinkedAccounts,
   } from '$lib/linked-accounts';
+  import { gapLabel, reconcileSelection, toggleId } from './account-links';
   import ListCard from './ListCard.svelte';
 
-  let { result, accountId }: { result: LinkedAccounts; accountId: number } = $props();
+  let { result, accountId }: { result: AccountLinks; accountId: number } = $props();
 
   const LABEL: Record<LinkSignal, string> = {
-    regIp: 'Sign-up IP',
+    regIp: 'Sign-up or subscribe IP',
     nearLogin: 'Logged in nearby',
     buzz: 'Buzz both ways',
     social: 'Same social link',
   };
 
-  let selected = $state(untrack(() => initialBanSelection(result.accounts)));
-  const href = $derived(bulkBanHref(selected));
+  // Nothing pre-selected: each ban is a moderator's decision.
+  let ticked = $state<number[]>([]);
+  const selected = $derived(reconcileSelection(ticked, result.accounts, accountId));
   const offline = $derived(LINK_SIGNALS.filter((s) => result.status[s] !== 'ok'));
   const capped = $derived(LINK_SIGNALS.some((s) => result.truncated[s]));
   const strikesMissing = $derived(result.accounts.some((a) => a.strikes === null));
@@ -39,7 +36,7 @@
   total={result.accounts.length}
   {capped}
   shown={12}
-  hint="Other accounts tied to this one, most evidence first. Each chip is one kind of evidence; a single chip is common between unrelated accounts. Nothing is selected for Bulk Ban until you tick it."
+  hint="Other accounts tied to this one, most evidence first. Nothing is selected for Bulk Ban until you tick it."
   empty="No linked accounts found."
 >
   {#snippet controls()}
@@ -57,12 +54,12 @@
     {/if}
     {#if result.accounts.length}
       <div class="mb-3 flex flex-wrap items-center gap-3">
-        <!-- A new tab, so the investigation stays open behind it. Bulk Ban asks for the reason and confirms. -->
+        <!-- New tab: the investigation stays open behind it. -->
         <Button
           size="xs"
           variant="outline"
-          href={href ?? undefined}
-          disabled={!href}
+          href={selected.length ? bulkBanUrl(selected) : undefined}
+          disabled={!selected.length}
           target="_blank"
           rel="noopener"
         >
@@ -70,9 +67,7 @@
         </Button>
         <label class="flex items-center gap-2 text-xs text-dark-2">
           <Checkbox
-            bind:checked={
-              () => selected.includes(accountId), () => (selected = toggleId(selected, accountId))
-            }
+            bind:checked={() => selected.includes(accountId), () => (ticked = toggleId(ticked, accountId))}
           />
           Include this account
         </label>
@@ -93,7 +88,7 @@
             aria-label="Select {acct.username ?? `#${acct.userId}`} for Bulk Ban"
             class="mt-0.5"
             bind:checked={
-              () => selected.includes(acct.userId), () => (selected = toggleId(selected, acct.userId))
+              () => selected.includes(acct.userId), () => (ticked = toggleId(ticked, acct.userId))
             }
           />
           <div class="min-w-0 flex-1">
@@ -101,7 +96,7 @@
               <a href={userLookupUrl(acct.userId)} class={LINK_CLASS}>
                 {acct.username ?? `#${acct.userId}`}
               </a>
-              {#if acct.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
+              {#if acct.status !== 'active'}<Badge variant="destructive">{acct.status}</Badge>{/if}
               {#if acct.muted}<Badge variant="destructive">muted</Badge>{/if}
               {#if acct.strikes}
                 <Badge variant="destructive">{plural(acct.strikes, 'strike')}</Badge>
@@ -126,7 +121,10 @@
                 </li>
               {/if}
               {#if acct.regIp}
-                <li>Seen on this account's sign-up address: {acct.regIp.ips.join(', ')}</li>
+                <li>
+                  Seen on an address this account registered or subscribed from:
+                  {acct.regIp.ips.join(', ')}
+                </li>
               {/if}
               {#if acct.social}
                 <li>Same link: <span class="break-all">{acct.social.url}</span></li>
@@ -138,4 +136,3 @@
     </ul>
   {/snippet}
 </ListCard>
-

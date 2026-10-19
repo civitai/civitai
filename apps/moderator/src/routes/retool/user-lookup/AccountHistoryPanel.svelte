@@ -7,8 +7,8 @@
   let { signals }: { signals: Promise<Signals> | null } = $props();
 </script>
 
-<div class="mb-4">
-  {#if signals}
+{#if signals}
+  <div class="mb-4">
     {#await signals}
       <p class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-dark-2">
         Loading account history…
@@ -41,5 +41,5 @@
         Could not load account history.
       </p>
     {/await}
-  {/if}
-</div>
+  </div>
+{/if}
