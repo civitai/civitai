@@ -11,7 +11,10 @@
 
 <header class="page-header">
   <h1>#{data.box.id} {data.draft.name}</h1>
-  <a class="text-sm {LINK_CLASS}" href="/items/boxes/{data.box.id}/openings">Openings</a>
+  <span class="flex gap-3 text-sm">
+    <a class={LINK_CLASS} href="/items/boxes/{data.box.id}/flow">New builder (preview)</a>
+    <a class={LINK_CLASS} href="/items/boxes/{data.box.id}/openings">Openings</a>
+  </span>
 </header>
 
 <StatusPanel box={data.box} snapshots={data.snapshots} civitaiUrl={data.civitaiUrl} {dirty} />
