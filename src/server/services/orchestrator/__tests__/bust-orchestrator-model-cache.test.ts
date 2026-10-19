@@ -10,14 +10,19 @@ import { Air } from '@civitai/client';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  bustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache,
+} from '~/server/services/orchestrator/models';
 import { modelVersionAirSelect } from '~/server/utils/resource-air';
 
 /** The global `@civitai/client` stub returns `''` from `Air.stringify`; the AIR is the assertion. */
 function installAirCodec() {
   const air = Air as unknown as Record<string, unknown>;
-  air.stringify = ({ ecosystem, type, source, id, version }: Record<string, string>) =>
-    `urn:air:${ecosystem}:${type}:${source}:${id}@${version}`;
+  air.stringify = ({ ecosystem, type, source, id, version, modelFileId }: Record<string, string>) =>
+    `urn:air:${ecosystem}:${type}:${source}:${id}@${version}${
+      modelFileId ? `+${modelFileId}` : ''
+    }`;
 }
 
 const diffusionModelCheckpoint = {
@@ -104,5 +109,22 @@ describe('bustOrchestratorModelCache', () => {
 
     await expect(bustOrchestratorModelCache(2990235)).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('bustOrchestratorScannedFileCache', () => {
+  it('invalidates the exact AIR a file scan resolves', async () => {
+    await bustOrchestratorScannedFileCache({
+      fileId: 2869903,
+      modelVersionId: 2990235,
+      modelId: 2438778,
+      modelType: 'Checkpoint',
+      baseModel: 'Anima',
+    });
+
+    expect(invalidatedAirs()).toEqual([
+      expect.stringMatching(/:checkpoint:civitai:2438778@2990235\+2869903$/),
+    ]);
+    expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('etag')).toBe('0/ABC');
   });
 });

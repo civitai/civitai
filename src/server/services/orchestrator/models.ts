@@ -13,6 +13,7 @@ import {
   modelVersionToAir,
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
+import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
 
 export async function getModelClient({
   token,
@@ -90,6 +91,26 @@ async function invalidateVersions(versionIds: number[], userId?: number) {
     ),
   ];
 
+  await invalidateAirs(airs, userId);
+}
+
+/** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
+export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+
+  try {
+    await invalidateAirs([modelFileScanAir(file)]);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      fileId: file.fileId,
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateAirs(airs: string[], userId?: number) {
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 
