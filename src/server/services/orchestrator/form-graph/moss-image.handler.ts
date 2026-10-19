@@ -12,7 +12,7 @@ import type { EcosystemData } from './types';
 type MossImageInput = ComfyMossImageSftCreateImageInput | ComfyMossImageBaseCreateImageInput;
 
 export const createMossImageInput = defineHandler<
-  EcosystemData<'MossImage' | 'MossImage_base'>,
+  EcosystemData<'MossImage'>,
   [ImageGenStepTemplate]
 >((data, ctx) => [
   {
@@ -20,7 +20,7 @@ export const createMossImageInput = defineHandler<
     input: removeEmpty<MossImageInput>({
       engine: 'comfy',
       ecosystem: 'mossImage',
-      model: mossImageModelOf(data.ecosystem),
+      model: mossImageModelOf(data.model),
       operation: 'createImage',
       prompt: data.prompt,
       negativePrompt: data.negativePrompt,

@@ -202,8 +202,8 @@ export const MODEL_CARDS: ModelCard[] = [
       {
         key: 'mossimage_base',
         label: 'Base',
-        air: 'urn:air:mossimage_base:checkpoint:civitai:3005406@3409868',
-        baseModel: 'MOSS Image Base',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+        baseModel: 'MOSS Image',
         ecosystem: 'mossImage' satisfies MossImageBaseAiToolkitTrainingInput['ecosystem'],
         modelVariant: 'base' satisfies MossImageBaseAiToolkitTrainingInput['modelVariant'],
         isNew: true,
