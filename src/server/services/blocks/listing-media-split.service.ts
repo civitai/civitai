@@ -4,6 +4,7 @@ import {
   isModerationFlagSet,
   type ListingMediaImage,
 } from '~/server/services/blocks/listing-media-audience';
+import { RED_SLOTS_UNAVAILABLE_MESSAGE } from '~/shared/constants/listing-media-split.constants';
 import {
   isComEligibleLevel,
   type ListingMediaSplitDecision,
@@ -259,10 +260,13 @@ export async function applyListingMediaSplitDecision(
 // icon / cover is used. They live in this table (not on `app_listings`) so a non-red request
 // never reads them: the store reads them only for a red-capable host.
 //
-// Same discipline as the split above: the columns arrive by a SECOND manual migration, so every
-// statement is preceded by the probe ({@link probeListingMediaSplitTable} `redSlots`), and a read
-// the role cannot make reads as "no slots", never as a failed statement. A write the role cannot
-// make is refused with a message before anything is issued.
+// The columns arrive by a SECOND manual migration, so every statement is preceded by the probe
+// ({@link probeListingMediaSplitTable} `redSlots`): while they are absent every read is "no
+// slots" and a write is refused with {@link RED_SLOTS_UNAVAILABLE_MESSAGE} before anything is
+// issued. A read also needs SELECT on the table (as the split's own read does): the read client's
+// role may not have it, and the store then shows the listing's own icon and cover. Writes are not
+// probed for INSERT / UPDATE: the role that writes the table holds all three (the migration's
+// GRANTS note).
 // ---------------------------------------------------------------------------
 
 /** One of the two override slots. */
@@ -285,11 +289,7 @@ const NO_RED_SLOTS_READ: ListingRedSlotsRead = Object.freeze({
   redCoverId: null,
 });
 
-export const RED_SLOTS_UNAVAILABLE_MESSAGE =
-  'A civitai.red-only icon or cover is not available on this environment yet. The listing shows its own icon and cover on every host.';
-
-export const RED_SLOTS_NOT_WRITABLE_MESSAGE =
-  'This environment has the civitai.red icon and cover slots, but the app is not permitted to update them, so this change cannot be saved. Nothing was changed. Ask an engineer to grant the app access to the media-split record.';
+export { RED_SLOTS_UNAVAILABLE_MESSAGE };
 
 const canReadRedSlots = (a: ListingMediaSplitTableAccess) => a.present && a.redSlots && a.select;
 
@@ -489,19 +489,6 @@ export async function readListingRedMediaManyForRender(
 }
 
 /**
- * Set (`imageId`) or clear (`null`) one override slot of `appListingId`, leaving the other slot
- * and any split decision as they are. The caller has already validated the image (owned, the
- * right format, not `Blocked`) and resolved the listing an owner's edit targets (a revision).
- *
- * Refused before anything is issued while the columns are absent
- * ({@link RED_SLOTS_UNAVAILABLE_MESSAGE}) or this role cannot read and write the table
- * ({@link RED_SLOTS_NOT_WRITABLE_MESSAGE}).
- *
- * Takes a KEY SHARE lock on the listing row first, so a moderator's image re-rate of this
- * listing (which locks the row `FOR UPDATE` before reading its media) never reads the slots
- * half-way through this change. Run it inside the caller's transaction for that to hold.
- */
-/**
  * Throws the error {@link writeListingRedSlot} would refuse with, without writing anything — so a
  * caller can refuse before a side effect it would otherwise take first (opening a revision).
  */
@@ -511,10 +498,20 @@ export async function assertListingRedSlotsWritable(db: Pick<RawClient, '$queryR
 
 function assertRedSlotsWritable(access: ListingMediaSplitTableAccess) {
   if (!access.present || !access.redSlots) throw refuse(RED_SLOTS_UNAVAILABLE_MESSAGE);
-  if (!(access.select && access.insert && access.update))
-    throw refuse(RED_SLOTS_NOT_WRITABLE_MESSAGE);
 }
 
+/**
+ * Set (`imageId`) or clear (`null`) one override slot of `appListingId`, leaving the other slot
+ * and any split decision as they are. The caller has already validated the image (owned, the
+ * right format, not `Blocked`) and resolved the listing an owner's edit targets (a revision).
+ *
+ * Refused before anything is issued while the columns are absent
+ * ({@link RED_SLOTS_UNAVAILABLE_MESSAGE}).
+ *
+ * Takes a KEY SHARE lock on the listing row first, so a moderator's image re-rate of this
+ * listing (which locks the row `FOR UPDATE` before reading its media) never reads the slots
+ * half-way through this change. Run it inside the caller's transaction for that to hold.
+ */
 export async function writeListingRedSlot(
   db: RawClient,
   args: { appListingId: string; slot: ListingRedSlot; imageId: number | null }
@@ -544,16 +541,15 @@ export async function writeListingRedSlot(
  * revision that does not touch them leaves them in place when it is applied. Copies only a row
  * with a filled slot, never the split decision (that belongs to the live listing alone).
  *
- * A no-op while the slots cannot be read, or this role may not INSERT: the shadow then carries no
- * slots row, which {@link applyRevisionRedSlots} reads as "nothing staged" and leaves the live
- * slots alone — so a missing grant can never turn into a deletion on apply.
+ * A no-op while the slots cannot be read: the shadow then carries no slots row, which
+ * {@link applyRevisionRedSlots} reads as "nothing staged" and leaves the live slots alone.
  */
 export async function cloneListingRedSlots(
   db: RawClient,
   args: { fromListingId: string; toListingId: string }
 ): Promise<void> {
   const access = await probeListingMediaSplitTable(db);
-  if (!canReadRedSlots(access) || !access.insert) return;
+  if (!canReadRedSlots(access)) return;
   await db.$executeRaw`
     INSERT INTO app_listing_red_media (app_listing_id, red_icon_id, red_cover_id)
     SELECT ${args.toListingId}, red_icon_id, red_cover_id
@@ -572,8 +568,7 @@ export async function cloneListingRedSlots(
  *
  * A shadow with NO slots row staged nothing — {@link cloneListingRedSlots} creates one whenever
  * the live listing had a slot, and setting or clearing a slot on the shadow creates one — so the
- * live slots are left alone. Refused ({@link RED_SLOTS_NOT_WRITABLE_MESSAGE}) when the shadow did
- * stage slots and this role cannot write them, rather than dropping a reviewed change.
+ * live slots are left alone.
  */
 export async function applyRevisionRedSlots(
   db: RawClient,
@@ -583,7 +578,6 @@ export async function applyRevisionRedSlots(
   if (!canReadRedSlots(access)) return;
   const staged = await readSlotRow(db, args.shadowId);
   if (!staged) return;
-  if (!(access.insert && access.update)) throw refuse(RED_SLOTS_NOT_WRITABLE_MESSAGE);
   await db.$executeRaw`
     INSERT INTO app_listing_red_media (app_listing_id, red_icon_id, red_cover_id)
     VALUES (${args.parentId}, ${staged.redIconId}, ${staged.redCoverId})

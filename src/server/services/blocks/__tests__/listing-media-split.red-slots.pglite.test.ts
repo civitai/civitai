@@ -12,7 +12,6 @@ import {
   readListingRedMediaManyForRender,
   readListingRedSlotAssets,
   readListingRedSlots,
-  RED_SLOTS_NOT_WRITABLE_MESSAGE,
   RED_SLOTS_UNAVAILABLE_MESSAGE,
   writeListingRedSlot,
 } from '~/server/services/blocks/listing-media-split.service';
@@ -21,7 +20,9 @@ import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 /**
  * The civitai.red icon / cover OVERRIDE SLOTS against the REAL migrations: with only the first
  * (the split table) applied — the state of an environment between the two manual applies — and
- * with both, and with the table present but not granted to the role the app connects as.
+ * with both, and with the table present but not granted to the role a read connects as (the read
+ * client's role may lack SELECT; the role that writes the table is assumed to hold every grant, so
+ * writes are not probed for privileges).
  *
  * Fixture ids are pairwise distinct and distinct from every constant the code names: listings
  * `apl_red_live` / `apl_red_shadow` / `apl_red_other`, images 31 (PG) / 32 (R) / 33 (XXX) /
@@ -351,7 +352,7 @@ describe('both migrations applied', () => {
   });
 });
 
-describe('both migrations applied, the table NOT granted to the role the app connects as', () => {
+describe('both migrations applied, the table NOT granted to the role a read connects as', () => {
   let s: SplitDb;
   beforeAll(async () => {
     s = await createSplitDb();
@@ -399,56 +400,5 @@ describe('both migrations applied, the table NOT granted to the role the app con
     expect((await readListingRedMediaManyForRender(s.raw, [LIVE])).get(LIVE)?.cover?.id).toBe(
       XXX_IMG
     );
-  });
-
-  it('🔴 a write without INSERT and UPDATE is refused as not writable, and never aborts the transaction', async () => {
-    for (const grants of [[], ['SELECT'], ['SELECT', 'INSERT']] as (
-      | 'SELECT'
-      | 'INSERT'
-      | 'UPDATE'
-    )[][]) {
-      await s.restrictTo(grants);
-      const after = await s.db.transaction(async (tx) => {
-        await expect(
-          writeListingRedSlot(createTxRaw(tx), {
-            appListingId: LIVE,
-            slot: 'icon',
-            imageId: PG_IMG,
-          })
-        ).rejects.toThrow(RED_SLOTS_NOT_WRITABLE_MESSAGE);
-        return (await tx.query<{ n: number }>(`SELECT 40 + 2 AS n`)).rows[0].n;
-      });
-      expect(after).toBe(42);
-    }
-    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
-  });
-
-  it('🔴 without INSERT and UPDATE: a revision that staged overrides is refused at apply rather than dropped', async () => {
-    await s.setRedSlots(SHADOW, { icon: PG13_IMG, cover: null });
-    for (const grants of [['SELECT'], ['SELECT', 'INSERT']] as ('SELECT' | 'INSERT')[][]) {
-      await s.restrictTo(grants);
-      await expect(
-        applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE })
-      ).rejects.toThrow(RED_SLOTS_NOT_WRITABLE_MESSAGE);
-      expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
-    }
-  });
-
-  it('🔴 SELECT-only: the clone is skipped (no shadow row), so the apply leaves the live overrides', async () => {
-    await s.restrictTo(['SELECT']);
-    await cloneListingRedSlots(s.raw, { fromListingId: LIVE, toListingId: SHADOW });
-    expect(await s.redSlots(SHADOW)).toBeNull();
-    await applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE });
-    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
-  });
-
-  it('positive control: with every grant the restricted role sets, clones and applies', async () => {
-    await s.restrictTo(['SELECT', 'INSERT', 'UPDATE']);
-    await writeListingRedSlot(s.raw, { appListingId: LIVE, slot: 'icon', imageId: PG_IMG });
-    await cloneListingRedSlots(s.raw, { fromListingId: LIVE, toListingId: SHADOW });
-    expect(await s.redSlots(SHADOW)).toEqual({ icon: PG_IMG, cover: XXX_IMG });
-    await writeListingRedSlot(s.raw, { appListingId: SHADOW, slot: 'cover', imageId: null });
-    await applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE });
-    expect(await s.redSlots(LIVE)).toEqual({ icon: PG_IMG, cover: null });
   });
 });

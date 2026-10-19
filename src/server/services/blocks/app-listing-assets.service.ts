@@ -1468,7 +1468,7 @@ export type SetListingRedMediaResult =
  * other image; a moderator splitting the listing keeps it out of the rating.
  *
  * Refused up front, before any revision is opened, while the slots are not available on this
- * environment or this role cannot write them.
+ * environment (the slot columns are absent).
  */
 export async function setListingRedMedia(
   args: { listingId: string; slot: ListingRedSlot; imageId: number | null },
