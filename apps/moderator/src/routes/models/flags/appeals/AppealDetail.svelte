@@ -269,6 +269,7 @@
             (page.data.modelFlagTabs ?? []).map((tab: { href: string }) => tab.href)
           )}
           linked
+          tone="amber"
         />
       {/snippet}
     </ModelDetailHeader>

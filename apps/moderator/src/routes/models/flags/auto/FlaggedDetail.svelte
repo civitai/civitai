@@ -177,7 +177,7 @@
         <EnforcementChip applied />
         {#each sources as flag (flag.source)}<FlaggedSourceBadge row={flag} />{/each}
         {#each labels as label (label)}<FlagBadge {label} />{/each}
-        <CrossTabChips chips={alsoIn} linked />
+        <CrossTabChips chips={alsoIn} linked tone="amber" />
         {#if hashFlag?.daysLeft != null}
           <MetaChip tone="amber"
             >{hashFlag.daysLeft === 0

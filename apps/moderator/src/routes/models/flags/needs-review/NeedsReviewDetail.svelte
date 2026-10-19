@@ -117,7 +117,7 @@
         {#if match}<MetaChip tone="blue">hash</MetaChip>{/if}
         {#each labels as label (label)}<FlagBadge {label} />{/each}
         {#if match}<MetaChip tone="amber">different uploader</MetaChip>{/if}
-        <CrossTabChips chips={alsoIn} linked />
+        <CrossTabChips chips={alsoIn} linked tone="amber" />
       {/snippet}
     </ModelDetailHeader>
 
