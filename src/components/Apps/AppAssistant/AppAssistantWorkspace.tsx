@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Center,
-  CloseButton,
   Group,
   Loader,
   Paper,
@@ -18,8 +17,10 @@ import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type {
+  BeforeSendDetail,
   ChatMcpServer,
   CivitaiChat,
+  QueuedMessage,
   ReplyResumeDetail,
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
@@ -61,6 +62,9 @@ const NO_MCP_SERVERS: ChatMcpServer[] = [];
 /** The app's tools are added only once it runs, so a message sent before then would go without them. */
 export const APP_STARTING_HOLD = 'Your app is starting…';
 
+/** How long the page keeps its record of a held message: the chat's own `QUEUE_TIMEOUT_MS` (3 minutes). */
+export const HELD_RECORD_MS = 3 * 60_000;
+
 function EnableCard({
   onEnable,
   pending,
@@ -99,41 +103,22 @@ function EnableCard({
 }
 
 /**
- * A held message comes back to the user if its app has not run by then, and a released one the chat
- * has not taken by then is reported unsent.
+ * How long the app has to run when a failed reply is asked for again (Retry, or the chat by itself),
+ * and the chat as long again to take the ask once it does; past that the ask is given up. On purpose
+ * the same 3 minutes as a held message's wait (`HELD_RECORD_MS`), but its own constant: it bounds the
+ * page's own ask, which the chat knows nothing of.
  */
-export const HELD_TIMEOUT_MS = 3 * 60_000;
+export const RESUME_ASK_TIMEOUT_MS = 3 * 60_000;
 
 /** How long the page waits for its app list when the chat asks for a failed reply by itself. */
 export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
-
-/**
- * A message the page is sending as the user's; `went` once the chat let it through. `wake` makes the
- * release look again at once (`stopRelease` calls it).
- */
-export interface Release {
-  text: string;
-  went: boolean;
-  wake: () => void;
-}
-
-/**
- * Ends the message the page is sending, if any. Its release then resolves as any release ends: kept
- * when the message went or a copy of it is still in the box (the user's to send), otherwise false, and
- * the caller reports it unsent. A copy left in a box hidden by dictation is taken out first.
- */
-export function stopRelease(replaying: { current: Release | null }): void {
-  const release = replaying.current;
-  replaying.current = null;
-  release?.wake();
-}
 
 /**
  * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
  * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
  * copy is taken back out, so the caller can give the message back instead.
  */
-async function sendNotJoined(
+export async function sendNotJoined(
   chat: Pick<CivitaiChat, 'send' | 'compose'>,
   text: string,
   box: () => string,
@@ -143,81 +128,6 @@ async function sendNotJoined(
   const empty = !box();
   await chat.send(text);
   if (empty && !went() && dictating() && box() === text) await chat.compose('');
-}
-
-type ReleaseChat = Pick<
-  CivitaiChat,
-  'send' | 'compose' | 'canSend' | 'addEventListener' | 'removeEventListener'
->;
-
-/**
- * Sends `text` as the user's, once the chat can take it. While the chat holds (it lists a just-added
- * app's tools) or a reply runs, a send goes nowhere; the chat's `can-send-change` says when that ends,
- * and the message is sent then, once. While the chat holds, one send puts it in an EMPTY message box,
- * so the user sees it waiting. A copy in the box is the user's once they change it: nothing more is
- * sent. An untouched copy is cleared once the message went. Resolves false when the message neither
- * went nor is in the box — the user sent something else first, the chat or app changed, or the chat
- * could not take it within `timeoutMs` — so it would otherwise be lost without a word. While the user
- * dictates, the box is hidden and a copy in it would be joined to what they said: none is put in an
- * empty box then, and a copy still there when the wait runs out is cleared and the message reported
- * unsent.
- */
-export async function releaseHeld(
-  chatRef: { current: ReleaseChat | null },
-  replaying: { current: Release | null },
-  box: () => string,
-  dictating: () => boolean,
-  text: string,
-  timeoutMs = HELD_TIMEOUT_MS
-): Promise<boolean> {
-  const chat = chatRef.current;
-  // Set by every reason to look again, so one that comes while a send is out is not missed.
-  let woken = false;
-  let resume: (() => void) | undefined;
-  const wake = () => {
-    woken = true;
-    resume?.();
-  };
-  const release: Release = { text, went: false, wake };
-  replaying.current = release;
-  const live = () => replaying.current === release && !release.went;
-  let parked = false;
-  let expired = false;
-  const timer = setTimeout(() => {
-    expired = true;
-    wake();
-  }, timeoutMs);
-  chat?.addEventListener('can-send-change', wake);
-  try {
-    while (chat && live() && !expired) {
-      woken = false;
-      if (parked && box() !== text) break;
-      if (chat.canSend) {
-        // It goes now, or the chat took it and still kept it back (the page's before-send, a refused
-        // grant): either way there is nothing more to wait for. A copy kept back under dictation is
-        // taken out, and the message reported unsent.
-        await sendNotJoined(chat, text, box, dictating, () => release.went);
-        break;
-      }
-      if (!parked && !box() && !dictating()) {
-        await chat.send(text);
-        if (!live()) break;
-        if (box() === text) parked = true;
-      }
-      if (!woken) await new Promise<void>((resolve) => (resume = resolve));
-      resume = undefined;
-    }
-  } finally {
-    clearTimeout(timer);
-    chat?.removeEventListener('can-send-change', wake);
-  }
-  if (replaying.current === release) replaying.current = null;
-  if (!release.went && parked && box() === text && dictating()) {
-    await chatRef.current?.compose('');
-    return false;
-  }
-  if (release.went && parked && box() === text) await chatRef.current?.compose('');
-  return release.went || parked || box() === text;
 }
 
 type RetryChat = Pick<
@@ -257,11 +167,6 @@ export async function retryWhenReady(
     chat.removeEventListener('can-send-change', wake);
     signal.removeEventListener('abort', wake);
   }
-}
-
-/** What "Put it back" leaves in the message box: the message, ahead of anything typed there since. */
-function putBack(message: string, box: string): string {
-  return box.trim() ? `${message}\n\n${box}` : message;
 }
 
 /** The app the user worked on last, to open on a visit with none open; none when no app says when. */
@@ -321,20 +226,15 @@ export function AppAssistantWorkspace({
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const switcherTitleId = useId();
   const chatRef = useRef<CivitaiChat | null>(null);
-  // A message sent while the open app was paused, held until the app runs again. `started` once the
-  // app was seen starting.
-  type Held = { text: string; app: string; chatId: string | null; started: boolean };
+  // A message sent while the open app was paused: the chat shows it waiting (`queue()`) while the app
+  // resumes, and sends it once released. `started` once the app was seen starting.
+  type Held = { message: QueuedMessage; app: string; chatId: string | null; started: boolean };
   const [held, setHeld] = useState<Held | null>(null);
-  // Messages of the user's that did not go and could not go back into the message box unasked.
-  const [unsent, setUnsent] = useState<{ id: number; text: string }[]>([]);
-  const unsentIds = useRef(0);
-  const unsentId = useId();
-  const offerBack = useCallback(
-    (text: string) => setUnsent((list) => [...list, { id: ++unsentIds.current, text }]),
-    []
-  );
-  const dismissUnsent = (id: number) => setUnsent((list) => list.filter((u) => u.id !== id));
-  const replaying = useRef<Release | null>(null);
+  // A held message let go once its app ran: the chat may still be waiting to send it (listing the
+  // app's tools, or a reply ending), so it is called back if the user moves to another app, the app
+  // stops running or its tools go, or the user leaves the page. (Another chat: the chat itself gives
+  // it back.) Calling back one that already went does nothing.
+  const released = useRef<QueuedMessage | null>(null);
   const boxText = useCallback(() => messageBoxText(chatRef.current), []);
   const dictating = useCallback(() => isDictating(chatRef.current), []);
   const [chatId, setChatId] = useState<string | null>(null);
@@ -610,12 +510,12 @@ export function AppAssistantWorkspace({
       if (resumeAskRef.current === asking) finishResumeAsk(asked);
     });
   }, [resumeAsk, active, chatId, mcpServers, endResumeAsk, finishResumeAsk]);
-  // The app has HELD_TIMEOUT_MS to run, and the chat as long again to take the ask once it does.
+  // The app has RESUME_ASK_TIMEOUT_MS to run, and the chat as long again to take the ask once it does.
   const resuming = !!resumeAsk;
   const waitingOnChat = !!resumeAsk?.asking;
   useEffect(() => {
     if (!resuming) return;
-    const timer = setTimeout(endResumeAsk, HELD_TIMEOUT_MS);
+    const timer = setTimeout(endResumeAsk, RESUME_ASK_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [resuming, waitingOnChat, endResumeAsk]);
   useEffect(() => () => resumeAskRef.current?.stop.abort(), []);
@@ -646,49 +546,36 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // A message that did not go comes back to the user, never over what they have in the box or are
-  // dictating into it.
-  const giveBack = useCallback(
-    (text: string) => {
-      const box = boxText();
-      if (box === text) return;
-      if (box.trim() || dictating()) offerBack(text);
-      else void chatRef.current?.compose(text);
-    },
-    [boxText, dictating, offerBack]
-  );
   // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
-  // user to send instead, so it is never pressed twice.
+  // user to send instead, so it is never pressed twice. The chat puts it in an empty box, or offers it
+  // back beside what the user has there.
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
     const chat = chatRef.current;
-    if (chat)
-      await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
+    if (!chat) return;
+    await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
     if (buildWent.current) return;
-    giveBack(BUILD_IT_MESSAGE);
+    chat.giveBack(BUILD_IT_MESSAGE);
     gate.answered();
   });
+  // The held message comes back to the user (the chat puts it back in the box, or offers it back).
   const giveBackHeld = useCallback(() => {
     const message = heldRef.current;
     heldRef.current = null;
     setHeld(null);
-    if (message) giveBack(message.text);
-  }, [giveBack]);
+    message?.message.cancel();
+  }, []);
   const onBeforeSend = useCallback(
-    (text: string) => {
+    (text: string, queue: BeforeSendDetail['queue']) => {
       gate.answered();
-      setUnsent((list) => list.filter((u) => u.text !== text));
       if (text === BUILD_IT_MESSAGE) buildWent.current = true;
-      const release = replaying.current;
-      if (release?.text === text) release.went = true;
-      // The user sent something else: stop sending the page's message (the release reports it unsent).
-      else stopRelease(replaying);
       const app = live.current.active;
-      // While a message is held the chat holds too, so nothing else reaches here then.
-      if (app?.state !== 'suspended' || heldRef.current) return false;
+      if (app?.state !== 'suspended') return;
+      // The chat shows the message at once, waiting, and holds while the app resumes (so no other
+      // message reaches here meanwhile; one whose wait the chat ended by itself is simply replaced).
       heldRef.current = {
-        text,
+        message: queue(APP_STARTING_HOLD),
         app: app.app,
         chatId: chatIdRef.current,
         started: false,
@@ -701,15 +588,21 @@ export function AppAssistantWorkspace({
         },
         onError: giveBackHeld,
       });
-      return true;
     },
     [gate, giveBackHeld]
   );
-  // A message on its way out belongs to the chat and app it was written in, and to this page.
+  // A released message belongs to the app it was written for, and to this page.
   useEffect(() => {
-    stopRelease(replaying);
-  }, [activeName, chatId]);
-  useEffect(() => () => stopRelease(replaying), []);
+    released.current?.cancel();
+    released.current = null;
+  }, [activeName]);
+  useEffect(
+    () => () => {
+      released.current?.cancel();
+      heldRef.current?.message.cancel();
+    },
+    []
+  );
   useEffect(() => {
     if (!held) return;
     // The app was closed, another opened, or another chat opened meanwhile.
@@ -728,25 +621,33 @@ export function AppAssistantWorkspace({
     }
     // Running, but its tools are not handed to the chat (an address outside the sandbox service).
     if (!mcpServers.length) return giveBackHeld();
+    // Running with its tools handed over: the chat sends it once it can (after listing them).
     heldRef.current = null;
     setHeld(null);
-    void releaseHeld(chatRef, replaying, boxText, dictating, held.text).then((kept) => {
-      if (!kept) offerBack(held.text);
-    });
-  }, [held, active, chatId, mcpServers, giveBackHeld, boxText, dictating, offerBack]);
+    released.current = held.message;
+    held.message.release();
+  }, [held, active, chatId, mcpServers, giveBackHeld]);
+  // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
+  // app's tools, and nothing would wake the app. It comes back to the user instead.
+  const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  useEffect(() => {
+    if (runningWithTools || !released.current) return;
+    released.current.cancel();
+    released.current = null;
+  }, [runningWithTools]);
+  // The chat gives a held message back by itself after QUEUE_TIMEOUT_MS (or on its Edit) and says
+  // nothing, so the page's record of it ends then too: the app's status stops reading "starting" if
+  // the resume never got it going. Cancelling one the chat already gave back does nothing.
   const holding = !!held;
   useEffect(() => {
     if (!holding) return;
-    const timer = setTimeout(giveBackHeld, HELD_TIMEOUT_MS);
+    const timer = setTimeout(giveBackHeld, HELD_RECORD_MS);
     return () => clearTimeout(timer);
   }, [holding, giveBackHeld]);
 
   const onChatChange = useCallback(
     (id: string | null) => {
       gate.answered();
-      // At once, not only in the effect after the next render: the chat can say it can send before then,
-      // and the message would go to the chat just opened.
-      if (id !== chatIdRef.current) stopRelease(replaying);
       chatIdRef.current = id;
       setChatId(id);
     },
@@ -756,13 +657,14 @@ export function AppAssistantWorkspace({
   // A failed reply waiting on its app is not asked for after a message of the user's, nor in another
   // chat: at once, as the chat can say it can send before the next render.
   const onSend = useCallback(
-    (text: string) => {
+    (text: string, queue: BeforeSendDetail['queue']) => {
+      // Before the message may be kept back: a resume ask and a waiting message never both act.
       endResumeAsk();
       // A new turn: the chat's own asks for a reply after it start afresh.
       const chat = `\n${chatIdRef.current}`;
       for (const keys of [autoGaveUp.current, autoWoke.current])
         keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
-      return onBeforeSend(text);
+      onBeforeSend(text, queue);
     },
     [endResumeAsk, onBeforeSend]
   );
@@ -886,36 +788,6 @@ export function AppAssistantWorkspace({
         </Popover>
       )}
       {!switcherOpen && <AppError error={appsError(sandboxes)} />}
-      {unsent.map(({ id, text }) => (
-        <Alert key={id} color="yellow" variant="light" className="shrink-0">
-          <Group justify="space-between" wrap="nowrap" gap="sm">
-            <Text id={`${unsentId}-${id}`} size="sm" className="min-w-0">
-              This message was not sent: “{text}”
-            </Text>
-            <Group wrap="nowrap" gap="xs" className="shrink-0">
-              <Button
-                size="compact-sm"
-                variant="light"
-                className="min-h-11"
-                aria-describedby={`${unsentId}-${id}`}
-                onClick={() => {
-                  void chatRef.current?.compose(putBack(text, boxText()));
-                  dismissUnsent(id);
-                }}
-              >
-                Put it back
-              </Button>
-              <CloseButton
-                className="min-h-11 min-w-11"
-                aria-label="Dismiss"
-                aria-describedby={`${unsentId}-${id}`}
-                onClick={() => dismissUnsent(id)}
-              />
-            </Group>
-          </Group>
-        </Alert>
-      ))}
-
       {session && (
         <SegmentedControl
           className="shrink-0 md:hidden"
@@ -947,7 +819,7 @@ export function AppAssistantWorkspace({
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
-            holdReason={active?.state === 'starting' || held ? APP_STARTING_HOLD : undefined}
+            holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
             beforeToolCall={gate.beforeToolCall}
             onToolResult={gate.onToolResult}
             chatRef={chatRef}

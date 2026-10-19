@@ -2,6 +2,7 @@ import type { FC, MutableRefObject, Ref } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
 import type {
+  BeforeSendDetail,
   ChatMcpServer,
   ChatTool,
   ChatToolGate,
@@ -43,8 +44,8 @@ export interface AppAssistantChatProps {
   onToolResult?: (result: ChatToolResult) => void;
   /** Set to the chat element once it has started. */
   chatRef?: MutableRefObject<CivitaiChat | null>;
-  /** Asked before each message goes out; true keeps it back. */
-  onBeforeSend?: (text: string) => boolean;
+  /** Told before each message goes out; `queue()` keeps it waiting (see `listenBeforeSend`). */
+  onBeforeSend?: (text: string, queue: BeforeSendDetail['queue']) => void;
   /** Asked before the chat asks again for a failed reply (no `before-send`); true keeps it from asking. */
   onReplyResume?: (trigger: ReplyResumeDetail['trigger']) => boolean;
   onChatChange?: (chatId: string | null) => void;

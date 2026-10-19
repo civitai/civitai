@@ -5,10 +5,17 @@ import type {
   ReplyResumeDetail,
 } from '@civitai/components-chat/civitai-chat';
 
-/** Calls `hold` before each message the chat sends; returning true keeps that message from going out. */
-export function listenBeforeSend(el: HTMLElement, hold: (text: string) => boolean): () => void {
+/**
+ * Calls `hold` before each message the chat sends, with the message and its `queue()`: calling
+ * `queue()` (there and then, not later) keeps the message waiting, shown in the chat, until released.
+ */
+export function listenBeforeSend(
+  el: HTMLElement,
+  hold: (text: string, queue: BeforeSendDetail['queue']) => void
+): () => void {
   const listener = (event: Event) => {
-    if (hold((event as CustomEvent<BeforeSendDetail>).detail.text)) event.preventDefault();
+    const { text, queue } = (event as CustomEvent<BeforeSendDetail>).detail;
+    hold(text, queue);
   };
   el.addEventListener('before-send', listener);
   return () => el.removeEventListener('before-send', listener);
