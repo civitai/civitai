@@ -32,6 +32,10 @@
   // callback being ignored (svelte’s `state_referenced_locally`).
   const form = new FormState({ onSuccess: () => onSuccess() });
   let badgeId = $state('');
+  // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
+  const boxGranting = new FormState({ onSuccess: () => onSuccess(), reset: false });
+  // Its own state, so taking one back leaves a half-made grant alone.
+  const boxTakingBack = new FormState({ onSuccess: () => onSuccess() });
 </script>
 
 {#if form.error}
@@ -118,7 +122,8 @@
       grantableBoxes={result.grantableBoxes}
       {userId}
       {canGrantBoxes}
-      onSuccess={() => onSuccess()}
+      granting={boxGranting}
+      takingBack={boxTakingBack}
     />
   {/if}
 {:catch}

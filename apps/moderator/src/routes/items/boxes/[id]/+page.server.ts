@@ -189,7 +189,12 @@ export const actions: Actions = {
       return { scope: 'grant', count: input.count, ...result };
     } catch (e) {
       if (e instanceof BoxGrantRefused) return fail(409, { scope: 'grant', error: e.message });
-      throw e;
+      // A throw would render the error page over the editor's unsaved work.
+      console.error('[mystery-box-grant] grant failed', e);
+      return fail(500, {
+        scope: 'grant',
+        error: 'Granting failed before anyone was given a box. Try again.',
+      });
     }
   }),
   listing: async ({ request, params, locals }) => {

@@ -8,7 +8,7 @@
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import WarningAlert from '$lib/components/WarningAlert.svelte';
-  import { FormState } from '$lib/form-state.svelte';
+  import type { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import { MAX_BOXES_PER_USER, newBoxGrantId } from '$lib/mystery-box';
   import { denied } from '$lib/permissions';
@@ -19,32 +19,24 @@
     grantableBoxes,
     userId,
     canGrantBoxes,
-    onSuccess,
+    granting,
+    takingBack,
   }: {
     grantedBoxes: Account['grantedBoxes'];
     grantableBoxes: Account['grantableBoxes'];
     userId: number;
     canGrantBoxes: boolean;
-    onSuccess: () => void;
+    /** Held by ShopPanel, outside the account load: a write reloads the account, which remounts this
+     *  card, and a warning held here would go with it. */
+    granting: FormState;
+    takingBack: FormState;
   } = $props();
 
-  // Minted in the browser only, and anew once a grant lands, so the next one is a new grant rather
-  // than a repeat of this one.
+  // Minted in the browser, on each mount: a grant that lands reloads the account and remounts this
+  // card, so the next grant is a new one rather than a repeat of the last.
   let grantId = $state('');
   onMount(() => (grantId = newBoxGrantId()));
   let boxId = $state('');
-
-  // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
-  const granting = new FormState({
-    onSuccess: () => {
-      grantId = newBoxGrantId();
-      boxId = '';
-      onSuccess();
-    },
-    reset: false,
-  });
-  // Its own state, so taking one back leaves a half-made grant alone.
-  const takingBack = new FormState({ onSuccess: () => onSuccess() });
 
   const STATE_LABEL = { held: 'unopened', opened: 'opened', takenBack: 'taken back' } as const;
   const boxLabel = (box: { id: number; name: string }) => `#${box.id} ${box.name}`;
@@ -93,7 +85,7 @@
           class="h-8 w-20"
           aria-label="How many boxes"
         />
-        <Button type="submit" size="sm" disabled={!boxId || !grantId || granting.submitting}>
+        <Button type="submit" size="sm" disabled={!chosen || !grantId || granting.submitting}>
           Grant
         </Button>
       </div>

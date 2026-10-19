@@ -38,7 +38,8 @@ export type BoxGrantResult = {
  *
  * `grantId` is minted when the form renders. A user this grant id already reached gets nothing more,
  * whatever `count` is now and whether or not they opened what it gave, so a resubmitted form never
- * grants twice; granting again to the users it skipped finishes the job. One transaction per user under
+ * grants twice; granting again to the users it skipped finishes the job. The exception: once every
+ * box it gave a user is taken back unopened, nothing records it, and the same form grants them again. One transaction per user under
  * their item-holder lock, as the main app's purchases and opens take it; a failure for one user is
  * reported, not thrown, since the users before them already have their boxes.
  */

@@ -78,6 +78,14 @@ describe('grant action', () => {
     expect(grantMysteryBoxes).not.toHaveBeenCalled();
   });
 
+  // A throw renders the error page, which unmounts the box editor and its unsaved work.
+  it('answers any other failure as a 500, never a throw', async () => {
+    vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
+    grantMysteryBoxes.mockRejectedValueOnce(new Error('connection lost'));
+    const result = await actions.grant(grantEvent(GRANTER, fields('11')));
+    expect(result).toMatchObject({ status: 500, data: { scope: 'grant' } });
+  });
+
   it("answers the service's refusal as a 409", async () => {
     grantMysteryBoxes.mockRejectedValueOnce(
       new BoxGrantRefused('Only a published box can be granted.')
