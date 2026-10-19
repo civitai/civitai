@@ -17,7 +17,11 @@ import {
 import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import type { ChatMcpServer, CivitaiChat } from '@civitai/components-chat/civitai-chat';
+import type {
+  ChatMcpServer,
+  CivitaiChat,
+  ReplyResumeDetail,
+} from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
@@ -99,6 +103,9 @@ function EnableCard({
  * has not taken by then is reported unsent.
  */
 export const HELD_TIMEOUT_MS = 3 * 60_000;
+
+/** How long the page waits for its app list when the chat asks for a failed reply by itself. */
+export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * A message the page is sending as the user's; `went` once the chat let it through. `wake` makes the
@@ -449,49 +456,122 @@ export function AppAssistantWorkspace({
 
   // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
   // so a paused app would not be woken and the reply would go on without its tools. The ask is held
-  // instead, the app woken, and the reply asked for once its tools are handed to the chat. `started`
-  // once the app was seen starting; `asking` once it runs with its tools and the ask waits on the chat.
+  // instead, the app woken, and the reply asked for once its tools are handed to the chat.
+  // - `auto`: the chat asked by itself, as the page woke or came back online. The app list did not
+  //   refresh while the page slept, so the page first asks for it again (`checking`) and decides on
+  //   that: running with its tools, the reply is asked for; paused, the app is woken; else none.
+  // - `started` once the app was seen starting; `asking` once it runs with its tools and the ask
+  //   waits on the chat.
   type ResumeAsk = {
     app: string;
     chatId: string | null;
+    key: string;
+    auto: boolean;
+    checking: boolean;
     started: boolean;
     asking: boolean;
     stop: AbortController;
   };
   const [resumeAsk, setResumeAsk] = useState<ResumeAsk | null>(null);
   const resumeAskRef = useRef(resumeAsk);
-  const endResumeAsk = useCallback(() => {
-    resumeAskRef.current?.stop.abort();
+  // Per app and chat. The chat asks by itself again on every wake until it gets through: once the page
+  // gave such an ask up, it keeps the next ones back and does nothing, and it wakes the app by itself
+  // once at most, so it never loops. Retry, which the user presses, is always followed.
+  const autoGaveUp = useRef(new Set<string>());
+  const autoWoke = useRef(new Set<string>());
+  const finishResumeAsk = useCallback((asked: boolean) => {
+    const ask = resumeAskRef.current;
+    ask?.stop.abort();
+    if (ask?.auto && !asked) autoGaveUp.current.add(ask.key);
     resumeAskRef.current = null;
     setResumeAsk(null);
   }, []);
-  const onReplyResume = useCallback(() => {
-    const app = live.current.active;
-    if (app?.state !== 'suspended' && app?.state !== 'starting') return false;
-    if (resumeAskRef.current) return true;
-    resumeAskRef.current = {
-      app: app.app,
-      chatId: chatIdRef.current,
-      started: app.state === 'starting',
-      asking: false,
-      stop: new AbortController(),
-    };
-    setResumeAsk(resumeAskRef.current);
-    if (app.state === 'suspended')
-      resumeRef.current(app.app, {
+  const endResumeAsk = useCallback(() => finishResumeAsk(false), [finishResumeAsk]);
+  const refetchRef = useRef(sandboxes.list.refetch);
+  refetchRef.current = sandboxes.list.refetch;
+  const wakeForAsk = useCallback(
+    (app: string) =>
+      resumeRef.current(app, {
         // Unless the user moved on meanwhile.
         onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
           if (resumeAskRef.current?.app === sandbox.app) setActiveName(sandbox.name);
         },
         onError: endResumeAsk,
-      });
-    return true;
-  }, [endResumeAsk]);
+      }),
+    [endResumeAsk]
+  );
+  /** The chat asked by itself: decide on the app list as it is now, not as it was before the page slept. */
+  const checkAutoAsk = useCallback(
+    async (ask: ResumeAsk) => {
+      // One refresh, bounded; one that fails or runs out gives the ask up.
+      let fresh: Sandbox[] | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          refetchRef.current(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timed out')), APP_LIST_REFRESH_TIMEOUT_MS);
+          }),
+        ]);
+        fresh = result.isError ? undefined : result.data;
+      } catch {
+        fresh = undefined;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (resumeAskRef.current !== ask) return;
+      const app = fresh?.find((s) => s.app === ask.app);
+      const paused = app?.state === 'suspended';
+      // Waking it pauses whichever other app runs: not without the user asking.
+      const pausesAnother = fresh?.some((s) => s.app !== ask.app && s.state !== 'suspended');
+      if (
+        !app ||
+        (app.state !== 'running' && !paused) ||
+        (paused && (pausesAnother || autoWoke.current.has(ask.key)))
+      )
+        return endResumeAsk();
+      resumeAskRef.current = { ...ask, checking: false };
+      setResumeAsk(resumeAskRef.current);
+      if (!paused) return;
+      autoWoke.current.add(ask.key);
+      wakeForAsk(ask.app);
+    },
+    [endResumeAsk, wakeForAsk]
+  );
+  const onReplyResume = useCallback(
+    (trigger: ReplyResumeDetail['trigger']) => {
+      const app = live.current.active;
+      if (!app) return false;
+      if (resumeAskRef.current) return true;
+      const auto = trigger !== 'retry';
+      // Retry: the user pressed it now, so the list is current.
+      if (!auto && app.state !== 'suspended' && app.state !== 'starting') return false;
+      const key = `${app.app}\n${chatIdRef.current}`;
+      if (auto && autoGaveUp.current.has(key)) return true;
+      const ask: ResumeAsk = {
+        app: app.app,
+        chatId: chatIdRef.current,
+        key,
+        auto,
+        checking: auto,
+        started: app.state === 'starting',
+        asking: false,
+        stop: new AbortController(),
+      };
+      resumeAskRef.current = ask;
+      setResumeAsk(ask);
+      if (auto) void checkAutoAsk(ask);
+      else if (app.state === 'suspended') wakeForAsk(app.app);
+      return true;
+    },
+    [checkAutoAsk, wakeForAsk]
+  );
   useEffect(() => {
     if (!resumeAsk) return;
     // The app was closed, another opened, or another chat opened meanwhile.
     if (!active || active.app !== resumeAsk.app || chatId !== resumeAsk.chatId)
       return endResumeAsk();
+    if (resumeAsk.checking) return;
     if (resumeAsk.asking) {
       if (active.state !== 'running' || !mcpServers.length) endResumeAsk();
       return;
@@ -513,16 +593,18 @@ export function AppAssistantWorkspace({
     const asking: ResumeAsk = { ...resumeAsk, asking: true };
     resumeAskRef.current = asking;
     setResumeAsk(asking);
-    void retryWhenReady(chatRef, asking.stop.signal).finally(() => {
-      if (resumeAskRef.current === asking) endResumeAsk();
+    void retryWhenReady(chatRef, asking.stop.signal).then((asked) => {
+      if (resumeAskRef.current === asking) finishResumeAsk(asked);
     });
-  }, [resumeAsk, active, chatId, mcpServers, endResumeAsk]);
+  }, [resumeAsk, active, chatId, mcpServers, endResumeAsk, finishResumeAsk]);
+  // The app has HELD_TIMEOUT_MS to run, and the chat as long again to take the ask once it does.
   const resuming = !!resumeAsk;
+  const waitingOnChat = !!resumeAsk?.asking;
   useEffect(() => {
     if (!resuming) return;
     const timer = setTimeout(endResumeAsk, HELD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [resuming, endResumeAsk]);
+  }, [resuming, waitingOnChat, endResumeAsk]);
   useEffect(() => () => resumeAskRef.current?.stop.abort(), []);
 
   // A preview belongs to the sandbox it was started from; tear it down when that changes or the
@@ -589,8 +671,6 @@ export function AppAssistantWorkspace({
       if (release?.text === text) release.went = true;
       // The user sent something else: stop sending the page's message (the release reports it unsent).
       else stopRelease(replaying);
-      // A failed reply waiting on its app is not asked for again after a message of the user's.
-      endResumeAsk();
       const app = live.current.active;
       // While a message is held the chat holds too, so nothing else reaches here then.
       if (app?.state !== 'suspended' || heldRef.current) return false;
@@ -610,7 +690,7 @@ export function AppAssistantWorkspace({
       });
       return true;
     },
-    [gate, giveBackHeld, endResumeAsk]
+    [gate, giveBackHeld]
   );
   // A message on its way out belongs to the chat and app it was written in, and to this page.
   useEffect(() => {
@@ -653,14 +733,28 @@ export function AppAssistantWorkspace({
       gate.answered();
       // At once, not only in the effect after the next render: the chat can say it can send before then,
       // and the message would go to the chat just opened.
-      if (id !== chatIdRef.current) {
-        stopRelease(replaying);
-        endResumeAsk();
-      }
+      if (id !== chatIdRef.current) stopRelease(replaying);
       chatIdRef.current = id;
       setChatId(id);
     },
-    [gate, endResumeAsk]
+    [gate]
+  );
+
+  // A failed reply waiting on its app is not asked for after a message of the user's, nor in another
+  // chat: at once, as the chat can say it can send before the next render.
+  const onSend = useCallback(
+    (text: string) => {
+      endResumeAsk();
+      return onBeforeSend(text);
+    },
+    [endResumeAsk, onBeforeSend]
+  );
+  const onChatOpened = useCallback(
+    (id: string | null) => {
+      if (id !== chatIdRef.current) endResumeAsk();
+      onChatChange(id);
+    },
+    [endResumeAsk, onChatChange]
   );
 
   const starting = held || (sandboxes.open.isPending && sandboxes.open.variables === active?.app);
@@ -840,9 +934,9 @@ export function AppAssistantWorkspace({
             beforeToolCall={gate.beforeToolCall}
             onToolResult={gate.onToolResult}
             chatRef={chatRef}
-            onBeforeSend={onBeforeSend}
+            onBeforeSend={onSend}
             onReplyResume={onReplyResume}
-            onChatChange={onChatChange}
+            onChatChange={onChatOpened}
           />
         </Paper>
         {session && (

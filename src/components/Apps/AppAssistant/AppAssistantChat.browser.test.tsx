@@ -208,6 +208,33 @@ describe('AppAssistantChat', () => {
     expect(hold.mock.calls.at(-1)).toEqual(['let me go']);
   });
 
+  test('an ask for a failed reply the page holds back is kept from the chat; any other goes on', async () => {
+    const hold = vi.fn((trigger: string) => trigger === 'retry');
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onReplyResume={hold}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    const resume = (trigger: string) => {
+      const event = new CustomEvent('reply-resume', {
+        detail: { trigger },
+        cancelable: true,
+        bubbles: true,
+        composed: true,
+      });
+      chatEl().dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    await vi.waitFor(() => expect(resume('retry')).toBe(true));
+    expect(resume('online')).toBe(false);
+    expect(hold.mock.calls.at(-1)).toEqual(['online']);
+  });
+
   test('tells the page which chat is open, including the one it started on', async () => {
     const onChatChange = vi.fn();
     const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };

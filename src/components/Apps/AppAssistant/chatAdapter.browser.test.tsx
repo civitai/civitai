@@ -258,11 +258,17 @@ test('the real chat’s ask by itself as the page comes back online is kept back
   expect(triggers).toEqual(['online']);
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(asked()).toBe(1);
-  stop();
-  // The page's own ask fires no reply-resume, and counts as the chat's one ask by itself.
+  // The page's own ask fires no reply-resume (the hold, still listening, would keep it back)...
   expect(await chat.retryReply()).toBe(true);
   await vi.waitFor(() => expect(asked()).toBe(2));
   expect(triggers).toEqual(['online']);
+  // ...and counts as the chat's one ask by itself: failed again, coming back online asks nothing.
+  await vi.waitFor(() => expect(chat.canSend).toBe(true));
+  window.dispatchEvent(new Event('online'));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(triggers).toEqual(['online']);
+  expect(asked()).toBe(2);
+  stop();
 });
 
 test('NEGATIVE CONTROL: a reply-resume listener that does not hold lets the real chat ask by itself', async () => {
