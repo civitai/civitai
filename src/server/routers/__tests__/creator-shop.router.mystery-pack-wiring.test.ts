@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CreatorMysteryPackService from '~/server/services/creator-mystery-pack.service';
+import type * as CreatorShopService from '~/server/services/creator-shop.service';
 
 /** Gate and argument wiring of the mystery pack procedures, through `createCaller` so the real procedures run. */
 
@@ -7,10 +8,16 @@ const service = vi.hoisted(() => ({
   submitMysteryPack: vi.fn(async () => ({ boxId: 1, shopItemId: 1 })),
   reviseMysteryPack: vi.fn(async () => ({ boxId: 1, revisionId: 1 })),
   withdrawMysteryPackRevision: vi.fn(async () => ({ boxId: 1, archived: false })),
+  lowerMysteryPackPrice: vi.fn(async () => ({ boxId: 1, price: 500 })),
 }));
 vi.mock('~/server/services/creator-mystery-pack.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorMysteryPackService>()),
   ...service,
+}));
+const shop = vi.hoisted(() => ({ reviewCreatorShopItem: vi.fn(async () => ({ id: 1 })) }));
+vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopService>()),
+  ...shop,
 }));
 
 import { creatorShopRouter } from '../creator-shop.router';
@@ -64,6 +71,8 @@ const calls = {
     caller(features, user).reviseMysteryPack({ ...proposal, boxId: 7 }),
   withdraw: (features: Record<string, boolean>, user?: Partial<typeof creator>) =>
     caller(features, user).withdrawMysteryPackRevision({ boxId: 7 }),
+  lowerPrice: (features: Record<string, boolean>, user?: Partial<typeof creator>) =>
+    caller(features, user).lowerMysteryPackPrice({ boxId: 7, price: 600 }),
 };
 
 beforeEach(() => {
@@ -106,6 +115,35 @@ describe('creator mystery pack procedures', () => {
         stickersEnabled: false,
       })
     );
+  });
+
+  it('hands the price cut the caller as the creator', async () => {
+    await calls.lowerPrice(ALL_ON);
+    expect(service.lowerMysteryPackPrice).toHaveBeenCalledWith({
+      boxId: 7,
+      price: 600,
+      userId: creator.id,
+    });
+  });
+
+  // A pack's approval re-runs the content checks, stickers included.
+  it("hands a moderator's verdict the stickers flag", async () => {
+    for (const stickers of [true, false]) {
+      shop.reviewCreatorShopItem.mockClear();
+      await caller({ ...ALL_ON, stickers }, { isModerator: true }).reviewItem({
+        id: 3,
+        action: 'approve',
+        boxRevisionId: 9,
+      });
+      expect(shop.reviewCreatorShopItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 3,
+          reviewerId: creator.id,
+          boxRevisionId: 9,
+          stickersEnabled: stickers,
+        })
+      );
+    }
   });
 
   // The service loads every item it is handed, so the cap holds before it is called.
