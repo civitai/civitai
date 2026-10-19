@@ -29,6 +29,8 @@ const tx = {
 };
 
 const { recordTextScanModelLabel } = await import('~/server/services/text-scan/label-capture');
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { composeUserText } = await import('~/server/services/text-scan/segment');
 
 const MODEL = 7;
 const OWNER = 42;
@@ -109,6 +111,25 @@ beforeEach(async () => {
     TRUNCATE "Model";
   `);
   await db.pg.query(`INSERT INTO "Model" (id, "userId") VALUES ($1, $2)`, [MODEL, OWNER]);
+});
+
+// The flag carries the scan's hash, computed in TS; the store keys and checks the snapshot by its own
+// SQL hash. A ruling's text is kept only while the two agree.
+describe('the scan and the store hash text alike', () => {
+  it('for multi-byte text across fields', async () => {
+    const subject = {
+      fields: [
+        { heading: 'Name', text: '  Ñandú 😀 model  ' },
+        { heading: 'Description', text: 'naïve café — 日本語\nline two' },
+      ],
+      declared: {},
+    };
+    const [{ h }] = await rows<{ h: string }>(`SELECT label_store.text_hash($1) AS h`, [
+      composeUserText(subject as never),
+    ]);
+
+    expect(h).toBe(textScanTextHash(subject as never));
+  });
 });
 
 describe('recordTextScanModelLabel', () => {

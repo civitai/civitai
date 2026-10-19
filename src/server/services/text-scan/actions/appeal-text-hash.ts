@@ -2,7 +2,11 @@ import { textScanResultTextHash } from '@civitai/shared/rating-review';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
-import { writeTextScanRuling } from '~/server/services/text-scan/label-capture';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import {
+  loadTextScanSubject,
+  writeTextScanRuling,
+} from '~/server/services/text-scan/label-capture';
 import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -12,15 +16,11 @@ import {
   TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
-import { getTextScanProfile } from '~/server/services/text-scan/profiles';
-// `text-scan/profiles` resolves to the registry file; only the barrel registers the profiles.
-import '~/server/services/text-scan/profiles/index';
-import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
-  const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
+  const subject = await loadTextScanSubject(entityType, entityId);
   return subject ? textScanTextHash(subject) : null;
 }
 

@@ -56,10 +56,9 @@ export type TextScanModelRuling = {
   heldDetection?: TextScanVerdict & { textHash: string };
 };
 
-/** The model's text as the scan composes it, or null when it cannot be read. */
-export async function loadTextScanModelText(modelId: number) {
-  const subject = (await getTextScanProfile('Model')?.load([modelId]))?.get(modelId);
-  return subject ? composeUserText(subject) : null;
+/** An entity's scan subject as its profile loads it now, or undefined when it cannot be read. */
+export async function loadTextScanSubject(entityType: string, entityId: number) {
+  return (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
 }
 
 /**
@@ -73,7 +72,10 @@ export async function writeTextScanRuling<T>(
   wrote: (result: T) => boolean
 ): Promise<T> {
   // Read before the transaction, so the decision's row lock is not held across the profile load.
-  const text = await loadTextScanModelText(ruling.modelId).catch(() => null);
+  const text = await loadTextScanSubject('Model', ruling.modelId).then(
+    (subject) => (subject ? composeUserText(subject) : null),
+    () => null
+  );
   return dbWrite.$transaction(async (tx) => {
     const result = await write(tx);
     // Last, as the label statement timeout it sets lasts to the end of the transaction.
