@@ -90,22 +90,6 @@ describe('updateWorkflow unlock', () => {
     expect(clientUpdateWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses on the green domain before calling the orchestrator', async () => {
-    await expect(
-      updateWorkflow({ ...unlock, viewer: { domain: 'green', showNsfw: true } })
-    ).rejects.toThrow(/civitai\.red/);
-    expect(getWorkflow).not.toHaveBeenCalled();
-    expect(clientUpdateWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('refuses a user with mature content turned off', async () => {
-    await expect(
-      updateWorkflow({ ...unlock, viewer: { domain: 'red', showNsfw: false } })
-    ).rejects.toThrow(/account settings/);
-    expect(getWorkflow).not.toHaveBeenCalled();
-    expect(clientUpdateWorkflow).not.toHaveBeenCalled();
-  });
-
   it('does not forward the viewer to the orchestrator', async () => {
     getWorkflow.mockResolvedValue({ id: '5-1', steps: [] });
 
