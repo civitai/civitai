@@ -1,6 +1,6 @@
 import { getBrowsingLevelLabel } from '@civitai/shared';
-import { bytes, plural, shortAge } from '$lib/format';
-import { yearMonth } from '$lib/minor-flags/appeal-row';
+import { bytes, plural } from '$lib/format';
+import { ago, yearMonth } from '$lib/minor-flags/appeal-row';
 
 /** The payload of `<tab>/detail/[modelId]`: what only the open detail pane shows. */
 export type ModelFlagDetail = {
@@ -72,9 +72,7 @@ export const appealOrdinalText = (nth: number) =>
 
 export const versionsText = (count: number, latestPublishedAt: string | null, now = Date.now()) =>
   `${count}, ${
-    latestPublishedAt
-      ? `latest published ${shortAge(latestPublishedAt, now)} ago`
-      : 'none published'
+    latestPublishedAt ? `latest published ${ago(latestPublishedAt, now)}` : 'none published'
   }`;
 
 export const ratingText = (nsfwLevel: number, locked: boolean) =>

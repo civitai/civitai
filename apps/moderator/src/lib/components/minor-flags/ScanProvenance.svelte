@@ -19,5 +19,5 @@
 </script>
 
 text scan{source === 'web search' ? ' with web search' : ''}{#if promptId}{#await detail}{:then d}{#if d.promptVersions[promptId]},
-      prompt v{d.promptVersions[promptId]}{/if}{:catch}{/await}{/if}{#if at},
+      prompt v{d.promptVersions[promptId]}{/if}{:catch}, prompt version unavailable{/await}{/if}{#if at},
   <span title={dateTime(at)}>{ago(at)}</span>{/if}

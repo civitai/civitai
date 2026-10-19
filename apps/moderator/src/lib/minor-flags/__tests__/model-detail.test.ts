@@ -32,7 +32,7 @@ describe('appealOrdinalText', () => {
 
 describe('versionsText', () => {
   it('names the latest publish, or says none is published', () => {
-    expect(versionsText(3, '2026-10-17T10:00:00Z', NOW)).toBe('3, latest published 2d ago');
+    expect(versionsText(3, '2026-10-17T10:00:00Z', NOW)).toBe('3, latest published 2 d ago');
     expect(versionsText(1, null, NOW)).toBe('1, none published');
   });
 });

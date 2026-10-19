@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipList, pastAppealsText, shortHash, yearMonth } from '../appeal-row';
+import { ago, clipList, modelRef, pastAppealsText, shortHash, yearMonth } from '../appeal-row';
 
 describe('pastAppealsText', () => {
   it('lists only the non-zero statuses', () => {
@@ -35,5 +35,22 @@ describe('yearMonth', () => {
   it('formats a date as year and month', () => {
     expect(yearMonth('2025-11-04T10:00:00.000Z')).toBe('2025-11');
     expect(yearMonth(new Date('2024-03-31T12:00:00.000Z'))).toBe('2024-03');
+  });
+});
+
+describe('ago', () => {
+  const now = Date.parse('2026-10-19T12:00:00Z');
+  it('spaces the unit from the number, as the detail meta lines read', () => {
+    expect(ago('2026-10-17T10:00:00Z', now)).toBe('2 d ago');
+    expect(ago('2026-10-19T09:00:00Z', now)).toBe('3 h ago');
+    expect(ago('2026-10-19T11:55:00Z', now)).toBe('5 m ago');
+  });
+});
+
+describe('modelRef', () => {
+  it('groups the digits in threes with narrow no-break spaces', () => {
+    expect(modelRef(1284311)).toBe('#1\u202f284\u202f311');
+    expect(modelRef(8030)).toBe('#8\u202f030');
+    expect(modelRef(805)).toBe('#805');
   });
 });

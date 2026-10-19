@@ -24,7 +24,14 @@ export const clipList = <T>(
   return { shown, more: Math.max(0, total - shown.length) };
 };
 
-export const ago = (value: Date | string) => `${shortAge(value)} ago`;
+/** "2 d ago": the detail panes space the unit; list rows keep the compact `shortAge`. */
+export const ago = (value: Date | string, now = Date.now()) =>
+  `${shortAge(value, now).replace(/^(\d+)/, '$1 ')} ago`;
+
+/** "#1 284 311": a model id grouped in threes, as the design writes it; narrow no-break spaces keep it
+ *  on one line. */
+export const modelRef = (modelId: number) =>
+  `#${String(modelId).replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f')}`;
 export const waiting = (value: Date | string) => shortAge(value);
 
 /** Version-specific and `view=basic`, matching the href the main app builds. */

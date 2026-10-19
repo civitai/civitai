@@ -35,7 +35,7 @@
       <IconExternalLink aria-hidden="true" /> Open on Civitai
     </Button>
     <Button variant="outline" size="sm" class={LINK_BUTTON} href="/reports/model/{modelId}">
-      <IconFlag aria-hidden="true" /> Reports{#await detail}{:then d}&nbsp;({d.openReports}){:catch}{/await}
+      <IconFlag aria-hidden="true" /> Reports{#await detail}{:then d}&nbsp;({d.openReports}){:catch}&nbsp;<span title="Couldn't load the report count">(?)</span>{/await}
     </Button>
     <Button variant="outline" size="sm" class={LINK_BUTTON} href={userLookupUrl(userId)}>
       <IconUser aria-hidden="true" /> Uploader
