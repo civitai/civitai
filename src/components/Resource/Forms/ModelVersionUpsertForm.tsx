@@ -313,9 +313,8 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
-    meta: {
-      metricVisibility: getMetricVisibilityChoices(version?.meta),
-    },
+    // The form holds the schema INPUT (choices, including inherit); Schema is typed as its output.
+    meta: { metricVisibility: getMetricVisibilityChoices(version?.meta) } as Schema['meta'],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -742,9 +741,7 @@ export function ModelVersionUpsertForm({
           ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
           : null,
         recommendedResources: version.recommendedResources ?? [],
-        meta: {
-          metricVisibility: getMetricVisibilityChoices(version.meta),
-        },
+        meta: { metricVisibility: getMetricVisibilityChoices(version.meta) } as Schema['meta'],
       });
       // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
       setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));

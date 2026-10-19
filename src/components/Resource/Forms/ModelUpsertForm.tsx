@@ -187,7 +187,10 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     // returns null (not the default) for every `meta.*` path, so the choices are always seeded.
     meta: {
       ...(initialMeta ?? {}),
-      metricVisibility: getMetricVisibilityChoices(initialMeta),
+      // The form holds the schema INPUT (choices, including inherit); defaultValues is typed as its output.
+      metricVisibility: getMetricVisibilityChoices(
+        initialMeta
+      ) as unknown as ModelMeta['metricVisibility'],
     },
   };
 
