@@ -3935,22 +3935,15 @@ export const comicsRouter = router({
         );
       }
 
-      // We deliberately do NOT gate on `panel.status` or
-      // `metadata.blockedReason` here. Those values are written by the
-      // poll loop and can be stale (or missing entirely on legacy panels
-      // produced before the RequireUnlock state existed). Whether the
-      // workflow needs unlocking is something only the orchestrator
-      // knows; we let it tell us authoritatively below by re-fetching
-      // after the `allowMatureContent: true` write. If the panel was
-      // already clean we'll fall through harmlessly. If it was stuck in
-      // a legacy state, the inline re-derive recovers it.
+      // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
+      // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
       const meta = (panel.metadata as any) ?? {};
       const isSinglePanelBlocked = panel.status !== ComicPanelStatus.AwaitingSelection;
       const candidates: Array<{ key?: string; requiresUnlock?: boolean; blockedReason?: string }> =
         meta.candidateImages ?? [];
 
-      // 1) Lift the mature restriction at the orchestrator. This is what
-      //    actually charges yellow Buzz and re-emits clean URLs.
+      // 1) Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
+      //    workflow's cap leaves nothing to release, so the cap check runs before the write.
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);

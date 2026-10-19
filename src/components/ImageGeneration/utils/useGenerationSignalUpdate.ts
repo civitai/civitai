@@ -187,7 +187,7 @@ export function applyStatusUpdates(
         // A finished workflow keeps its status, but still takes outputs: the orchestrator can
         // finish a workflow before it has rated the last output.
         const finished = COMPLETE_STATUSES.includes(item.status);
-        // The orchestrator can set the cap after submit.
+        // Outside the `!finished` guard on purpose: the orchestrator can set the cap after submit.
         item.nsfwCap = update.nsfwCap ?? item.nsfwCap;
         if (!finished) {
           item.status = update.status;

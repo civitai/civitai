@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
 
-/**
- * The yellow-Buzz unlock is an orchestrator PUT of `allowMatureContent: true`, and the orchestrator
- * charges it without lifting the workflow's `nsfwLevel` cap. When every mature output is rated above
- * that cap, the unlock takes the Buzz and the outputs stay served as the blocked placeholder.
- */
-
 const clientUpdateWorkflow = vi.fn();
 const getWorkflow = vi.fn();
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
@@ -53,7 +47,7 @@ describe('updateWorkflow unlock', () => {
     expect(clientUpdateWorkflow).not.toHaveBeenCalled();
   });
 
-  it('refuses when only a suppressed preprocess output sits within the cap', async () => {
+  it('refuses when only a non-mature output sits within the cap', async () => {
     getWorkflow.mockResolvedValue({
       id: '5-1',
       nsfwLevel: 'pg13',
@@ -66,6 +60,19 @@ describe('updateWorkflow unlock', () => {
 
   it('charges an uncapped workflow', async () => {
     getWorkflow.mockResolvedValue({ id: '5-1', steps: [video('xxx')] });
+
+    await updateWorkflow(unlock);
+    expect(clientUpdateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: '5-1', allowMatureContent: true })
+    );
+  });
+
+  it('leaves a capped workflow with no mature output to the orchestrator', async () => {
+    getWorkflow.mockResolvedValue({
+      id: '5-1',
+      nsfwLevel: 'pg13',
+      steps: [images('imageGen', 'pg')],
+    });
 
     await updateWorkflow(unlock);
     expect(clientUpdateWorkflow).toHaveBeenCalledTimes(1);

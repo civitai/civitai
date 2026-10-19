@@ -69,8 +69,8 @@ describe('applyStatusUpdates', () => {
     expect(second.pages[0].items[0].steps[0].output).toEqual([rated]);
   });
 
-  // The orchestrator can set the cap after submit, so only a refetch knows it; without it the queue
-  // offers a yellow unlock that charges and still serves the blocked placeholder.
+  // Without the refetched cap the queue offers a yellow unlock that charges and still serves the
+  // blocked placeholder.
   it('takes the NSFW cap a refetch reports, so a capped output offers no unlock', () => {
     const matureRated = { ...rated, nsfwLevel: 'r' };
     const data = cache(FINISHED, [matureRated]);
@@ -82,6 +82,15 @@ describe('applyStatusUpdates', () => {
       nsfwEnabled: true,
     } as any);
     expect(workflow.steps[0].output[0].blockedReason).toBe(NSFW_CAPPED);
+  });
+
+  it('takes the cap onto a running workflow and keeps it when a refetch reports none', () => {
+    const data = cache(RUNNING, [unrated]);
+    applyStatusUpdates(data, [{ ...update(RUNNING, [unrated]), nsfwCap: 'pg13' }]);
+    expect(data.pages[0].items[0].nsfwCap).toBe('pg13');
+
+    applyStatusUpdates(data, [update(RUNNING, [unrated])]);
+    expect(data.pages[0].items[0].nsfwCap).toBe('pg13');
   });
 
   it('still applies the whole update to a running workflow', () => {
