@@ -515,12 +515,8 @@ describe('the box row lock', () => {
     expect(boxLock).toBeLessThan(firstBoxWrite);
   });
 
-  it('reads the rows again when a save changed them without a new version', async () => {
-    const boxId = await submit();
-    await apply(boxId);
-    await reprice(boxId, 800);
-    // A builder save that left the odds alone: the version stays, updatedAt moves. Done between
-    // the approval's prep read and its lock, from inside that transaction.
+  /** Runs `sql` inside the approval's transaction, between its prep reads and the box lock. */
+  const approveWithChangeBeforeLock = async (boxId: number, sql: string[]) => {
     const original = dbMock.dbWrite.$transaction.getMockImplementation()!;
     dbMock.dbWrite.$transaction.mockImplementationOnce((async (
       fn: (tx: unknown) => Promise<unknown>
@@ -529,38 +525,54 @@ describe('the box row lock', () => {
         const inner = bridge(tx);
         const queryRaw = inner.$queryRaw;
         inner.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-          if (strings.join('?').includes('FOR NO KEY UPDATE')) {
-            await tx.query(
-              `DELETE FROM "BoxContent" WHERE "boxDefinitionId" = $1 AND "rewardDefinitionId" = (SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 6)`,
-              [boxId]
-            );
-            await tx.query(
-              `INSERT INTO "BoxContent" ("boxDefinitionId", "tierId", "rewardDefinitionId", enabled)
-               SELECT $1, t.id, d.id, false FROM "BoxTier" t, "ItemDefinition" d
-               WHERE t."boxDefinitionId" = $1 AND t.key = 'rare' AND d."cosmeticId" = 6`,
-              [boxId]
-            );
-            await tx.query(
-              `UPDATE "ItemDefinition" SET "updatedAt" = now() + interval '1 second' WHERE id = $1`,
-              [boxId]
-            );
-          }
+          if (strings.join('?').includes('FOR NO KEY UPDATE'))
+            for (const statement of sql) await tx.query(statement, [boxId]);
           return queryRaw(strings, ...values);
         };
         return fn(inner);
       })) as never);
-
     try {
-      await apply(boxId);
+      return await apply(boxId);
     } finally {
       dbMock.dbWrite.$transaction.mockImplementation(original);
     }
+  };
 
-    // Planned from the stale rows, item 6's old content id would match nothing and its new row
-    // would stay disabled.
+  it('reads the rows again when a save changed them without a new version', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await reprice(boxId, 800);
+
+    // A builder save that left the odds alone: item 6's content re-created disabled, the version
+    // kept, updatedAt moved.
+    await approveWithChangeBeforeLock(boxId, [
+      `DELETE FROM "BoxContent" WHERE "boxDefinitionId" = $1 AND "rewardDefinitionId" = (SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 6)`,
+      `INSERT INTO "BoxContent" ("boxDefinitionId", "tierId", "rewardDefinitionId", enabled)
+       SELECT $1, t.id, d.id, false FROM "BoxTier" t, "ItemDefinition" d
+       WHERE t."boxDefinitionId" = $1 AND t.key = 'rare' AND d."cosmeticId" = 6`,
+      `UPDATE "ItemDefinition" SET "updatedAt" = now() + interval '1 second' WHERE id = $1`,
+    ]);
+
+    // Planned from the old rows, item 6's new row isn't kept and is deleted.
     expect((await contentsOf(boxId)).find((tier) => tier.key === 'rare')?.cosmeticIds).toEqual([
       5, 6,
     ]);
+  });
+
+  it('marks the edit stale when the version moved while it was prepared', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await reprice(boxId, 800);
+
+    await expect(
+      approveWithChangeBeforeLock(boxId, [
+        `UPDATE "ItemDefinition" SET version = version + 1 WHERE id = $1`,
+      ])
+    ).rejects.toThrow('The creator has to edit it again');
+
+    expect((await revisionsOf(boxId)).at(-1)).toMatchObject({ status: 'stale' });
+    expect(await listingOf(boxId)).toMatchObject({ unitAmount: 500 });
+    expect(await snapshotsOf(boxId)).toHaveLength(1);
   });
 });
 

@@ -702,6 +702,28 @@ describe('lowering the price', () => {
     expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'approved' })]);
   });
 
+  it("holds the creator's lock while it writes, so it can't race an edit", async () => {
+    const boxId = await onSaleAt800();
+    await holder.db.exec(`
+      CREATE TABLE "SeenLock" (n int);
+      CREATE FUNCTION see_lock() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO "SeenLock" SELECT count(*) FROM pg_locks
+        WHERE locktype = 'advisory' AND classid = x'434d0001'::int::oid AND objid = ${CREATOR} AND objsubid = 2;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER see_lock BEFORE UPDATE ON "CosmeticShopItem" FOR EACH ROW EXECUTE FUNCTION see_lock();
+    `);
+    try {
+      await lower(boxId, 600);
+      expect(await q(`SELECT n FROM "SeenLock"`)).toEqual([{ n: 1 }]);
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER see_lock ON "CosmeticShopItem"; DROP FUNCTION see_lock; DROP TABLE "SeenLock";`
+      );
+    }
+  });
+
   it('refuses a price that is not lower, or under the floor', async () => {
     const boxId = await onSaleAt800();
 
