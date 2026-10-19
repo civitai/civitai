@@ -124,6 +124,21 @@ export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
   !!changes?.some((change) => DISPLAYED_FIELDS.has(change.field));
 
 /**
+ * Whether a moderator, not the creator, is why holders can't show this item: the last verdict sent
+ * it back and nothing anyone sees has been edited since. An item withheld by its creator's own
+ * edit, or too old to tell, reads as false.
+ */
+export const withheldByModerator = (meta: CosmeticShopItemMeta | null) => {
+  const history = meta?.history ?? [];
+  const index = lastReviewIndex(history);
+  return (
+    index >= 0 &&
+    ['request-changes', 'revert'].includes(history[index].action ?? '') &&
+    !history.slice(index + 1).some((entry) => changesDisplay(entry.changes))
+  );
+};
+
+/**
  * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
  * and nothing anyone sees has changed since. Not status alone: relisting, restoring and a large
  * price edit send an approved, unchanged item back to review.

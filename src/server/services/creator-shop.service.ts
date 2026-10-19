@@ -27,6 +27,7 @@ import {
   recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
+  withheldByModerator,
 } from '~/server/services/creator-shop.data';
 import { refundWithdrawnShopItem } from '~/server/services/creator-shop-withdrawn-refund.service';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -1078,9 +1079,10 @@ const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; ti
     });
 };
 
-// The verdict or archive has landed whatever happens here; `sweepWithdrawnShopRefunds` retries it.
+// The verdict or archive has landed whatever happens here; `sweepWithdrawnShopRefunds` finishes it.
+// Bounded, so the request does not wait on an item with hundreds of sales.
 const startWithdrawnRefund = (shopItemId: number) =>
-  refundWithdrawnShopItem(shopItemId).catch((error) =>
+  refundWithdrawnShopItem(shopItemId, { limit: 25 }).catch((error) =>
     logToAxiom({
       level: 'error',
       name: 'creator-shop-withdrawn-refund',
@@ -1114,7 +1116,8 @@ export const archiveCreatorShopItem = async ({
       sellerId: existing.addedById,
     });
   // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
-  // are refunded. The creator keeps the payouts: no moderator ruled against the item.
+  // are refunded. The platform carries it only when a moderator's verdict withheld the item;
+  // otherwise the creator's payouts are reversed too.
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const withheld =
@@ -1135,7 +1138,7 @@ export const archiveCreatorShopItem = async ({
               ...meta,
               withdrawnRefund: {
                 trigger: 'archive',
-                clawback: false,
+                clawback: !withheldByModerator(meta),
                 userId,
                 at: now.toISOString(),
               },

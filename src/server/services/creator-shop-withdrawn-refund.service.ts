@@ -6,8 +6,8 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import {
   getMultiAccountTransactionsByPrefix,
   getTransactionByExternalId,
-  refundTransaction,
 } from '~/server/services/buzz.service';
+import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
 import { revokeCosmeticsFromUsers } from '~/server/services/cosmetic.service';
 import { appendItemHistory } from '~/server/services/creator-shop.data';
 import { createNotification } from '~/server/services/notification.service';
@@ -31,8 +31,6 @@ const DESCRIPTION = 'Refund: Creator Shop item withdrawn';
 const MONEY_RETRIES = 3;
 const MONEY_RETRY_DELAY_MS = 1000;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export const withdrawnRefundIdFor = (transactionId: string) => `refund-${transactionId}`;
 
 type LedgerRow = {
   transactionId: string;
@@ -67,9 +65,27 @@ export function classifyPurchaseLedger(
   return { debits, payouts, other };
 }
 
+type PayoutFailure = { transactionId: string; amount: number; error: string };
 type PurchaseOutcome =
-  | { status: 'refunded'; refunded: number; clawedBack: number }
+  | {
+      status: 'refunded';
+      refunded: number;
+      clawedBack: number;
+      payoutFailures: PayoutFailure[];
+    }
   | { status: 'failed'; error: string };
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** Refunds one transaction unless its `refund-<id>` is already on the ledger. */
+async function refundOnce(transactionId: string) {
+  if (await getTransactionByExternalId(`refund-${transactionId}`)) return;
+  await withRetries(
+    () => refundTransactionOnce(transactionId, DESCRIPTION),
+    MONEY_RETRIES,
+    MONEY_RETRY_DELAY_MS
+  );
+}
 
 async function reversePurchase(
   purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
@@ -79,7 +95,7 @@ async function reversePurchase(
   try {
     rows = await getMultiAccountTransactionsByPrefix(purchase.buzzTransactionId);
   } catch (error) {
-    return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
+    return { status: 'failed', error: messageOf(error) };
   }
   const { debits, payouts, other } = classifyPurchaseLedger(purchase, rows);
   if (other.length)
@@ -94,22 +110,31 @@ async function reversePurchase(
       error: `debits ${paid} do not match the price ${purchase.unitAmount}`,
     };
 
-  let clawedBack = 0;
-  for (const t of [...debits, ...(clawback ? payouts : [])]) {
+  // The buyer first: until every debit is back the purchase stays owed and the job retries it.
+  for (const t of debits) {
     try {
-      const done = await getTransactionByExternalId(withdrawnRefundIdFor(t.transactionId));
-      if (!done)
-        await withRetries(
-          () => refundTransaction(t.transactionId, DESCRIPTION),
-          MONEY_RETRIES,
-          MONEY_RETRY_DELAY_MS
-        );
+      await refundOnce(t.transactionId);
     } catch (error) {
-      return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
+      return { status: 'failed', error: messageOf(error) };
     }
-    if (payouts.includes(t)) clawedBack += t.amount;
   }
-  return { status: 'refunded', refunded: paid, clawedBack };
+  // A payout that won't come back does not hold the buyer's refund: it is logged for a person to
+  // finish, as a takedown does.
+  let clawedBack = 0;
+  const payoutFailures: PayoutFailure[] = [];
+  for (const t of clawback ? payouts : []) {
+    try {
+      await refundOnce(t.transactionId);
+      clawedBack += t.amount;
+    } catch (error) {
+      payoutFailures.push({
+        transactionId: t.transactionId,
+        amount: t.amount,
+        error: messageOf(error),
+      });
+    }
+  }
+  return { status: 'refunded', refunded: paid, clawedBack, payoutFailures };
 }
 
 const logRefund = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
@@ -120,16 +145,20 @@ const logRefund = (level: 'info' | 'error', message: string, data: Record<string
 /**
  * Runs the refund for one item. Serialised per item, so two verdicts landing together, or a
  * verdict and the job, refund once. Returns null when another run holds the item; the job picks
- * up whatever that run leaves.
+ * up whatever that run leaves. `limit` caps the purchases one run takes, oldest first, so a
+ * request does not wait on an item with hundreds of sales.
  */
-export async function refundWithdrawnShopItem(shopItemId: number) {
+export async function refundWithdrawnShopItem(
+  shopItemId: number,
+  { limit }: { limit?: number } = {}
+) {
   return withDistributedLock(
     { key: `creator-shop-withdrawn-refund:${shopItemId}`, ttl: 60, autoRenew: true, maxRetries: 0 },
-    () => runWithdrawnRefund(shopItemId)
+    () => runWithdrawnRefund(shopItemId, limit)
   );
 }
 
-async function runWithdrawnRefund(shopItemId: number) {
+async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   const item = await dbWrite.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
@@ -158,22 +187,40 @@ async function runWithdrawnRefund(shopItemId: number) {
       ...(creatorId ? { userId: { not: creatorId } } : {}),
     },
     select: { userId: true, buzzTransactionId: true, unitAmount: true },
+    orderBy: { purchasedAt: 'asc' },
+    take: limit,
   });
 
   const refunded: typeof purchases = [];
   const failures: { buzzTransactionId: string; userId: number; error: string }[] = [];
+  const payoutFailures: (PayoutFailure & { buzzTransactionId: string })[] = [];
   let refundedValue = 0;
   let clawedBack = 0;
+  let revoked = 0;
   for (const purchase of purchases) {
     const outcome =
       purchase.unitAmount === 0
-        ? ({ status: 'refunded', refunded: 0, clawedBack: 0 } as const)
+        ? ({ status: 'refunded', refunded: 0, clawedBack: 0, payoutFailures: [] } as const)
         : await reversePurchase(purchase, marker.clawback);
     if (outcome.status === 'failed') {
       failures.push({ ...purchase, error: outcome.error });
       await logRefund('error', 'Purchase refund failed', { shopItemId, ...purchase, ...outcome });
       continue;
     }
+    for (const failure of outcome.payoutFailures) {
+      payoutFailures.push({ ...failure, buzzTransactionId: purchase.buzzTransactionId });
+      await logRefund('error', 'Payout clawback failed', { shopItemId, ...purchase, ...failure });
+    }
+    // Taken back before the purchase is marked, so a run that dies in between is retried and a
+    // refunded buyer never keeps it. Scoped to this purchase: a holding obtained any other way was
+    // not paid for here.
+    revoked += (
+      await revokeCosmeticsFromUsers({
+        userIds: [purchase.userId],
+        cosmeticIds: [item.cosmeticId],
+        claimKeys: [purchase.buzzTransactionId],
+      })
+    ).revoked;
     const { count } = await dbWrite.userCosmeticShopPurchases.updateMany({
       where: { buzzTransactionId: purchase.buzzTransactionId, refunded: false },
       data: { refunded: true },
@@ -184,15 +231,7 @@ async function runWithdrawnRefund(shopItemId: number) {
     clawedBack += outcome.clawedBack;
   }
 
-  let revoked = 0;
   if (refunded.length) {
-    // Scoped to the refunded purchases: a holding obtained any other way was not paid for here.
-    ({ revoked } = await revokeCosmeticsFromUsers({
-      userIds: refunded.map((p) => p.userId),
-      cosmeticIds: [item.cosmeticId],
-      claimKeys: refunded.map((p) => p.buzzTransactionId),
-    }));
-
     for (const userId of new Set(refunded.map((p) => p.userId)))
       await createNotification({
         type: 'cosmetic-shop-item-refunded',
@@ -231,9 +270,14 @@ async function runWithdrawnRefund(shopItemId: number) {
     clawedBack,
     revokedFrom: revoked,
     failures,
+    payoutFailures,
   };
   if (purchases.length)
-    await logRefund(failures.length ? 'error' : 'info', 'Withdrawn refund finished', summary);
+    await logRefund(
+      failures.length || payoutFailures.length ? 'error' : 'info',
+      'Withdrawn refund finished',
+      summary
+    );
   return { purchases: purchases.length, refunded: refunded.length, failures: failures.length };
 }
 
@@ -256,7 +300,9 @@ export async function sweepWithdrawnShopRefunds({ limit = 50 }: { limit?: number
           AND p."purchasedAt" <= ((i.meta->'withdrawnRefund'->>'at')::timestamptz AT TIME ZONE 'UTC')
           AND p."userId" IS DISTINCT FROM COALESCE(c."createdById", i."addedById")
       )
-    ORDER BY i.id
+    -- Newest first: an item whose purchases can never be reversed is logged on every run and
+    -- must not hold the window against items still being worked through.
+    ORDER BY (i.meta->'withdrawnRefund'->>'at') DESC
     LIMIT ${limit}
   `;
 

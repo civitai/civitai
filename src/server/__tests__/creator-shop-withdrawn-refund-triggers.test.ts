@@ -58,6 +58,7 @@ beforeEach(() => {
 describe('a verdict', () => {
   it('reject marks the item for a refund with clawback and starts it', async () => {
     stored = listing('Published', { displayApproved: true });
+    const before = Date.now();
 
     await reviewCreatorShopItem({
       reviewerId: MOD,
@@ -66,13 +67,31 @@ describe('a verdict', () => {
       stickersEnabled: false,
     });
 
-    expect(storedMeta().withdrawnRefund).toEqual({
+    const written = storedMeta().withdrawnRefund!;
+    expect(written).toEqual({
       trigger: 'reject',
       clawback: true,
       userId: MOD,
       at: expect.any(String),
     });
-    expect(refund.refundWithdrawnShopItem).toHaveBeenCalledWith(42);
+    // The cut-off for which purchases are owed: the verdict's own time.
+    expect(Date.parse(written.at)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(written.at)).toBeLessThanOrEqual(Date.now());
+    expect(refund.refundWithdrawnShopItem.mock.calls).toEqual([[42, { limit: 25 }]]);
+  });
+
+  it('reject of a listing with no cosmetic of its own refunds nothing', async () => {
+    stored = { ...listing('Published', { displayApproved: true }), cosmeticId: null };
+
+    await reviewCreatorShopItem({
+      reviewerId: MOD,
+      id: 42,
+      action: 'reject',
+      stickersEnabled: false,
+    });
+
+    expect(storedMeta().withdrawnRefund).toBeUndefined();
+    expect(refund.refundWithdrawnShopItem).not.toHaveBeenCalled();
   });
 
   it.each(['approve', 'request-changes', 'revert'] as const)(
@@ -100,18 +119,75 @@ describe('a verdict', () => {
 });
 
 describe('archiving', () => {
-  it('a withheld item refunds its buyers, the platform paying', async () => {
-    stored = listing('RequestedChanges', { displayApproved: false });
+  const history = (...entries: { kind: string; action?: string; field?: string }[]) =>
+    entries.map(({ kind, action, field }, i) => ({
+      at: `2026-10-0${i + 1}T00:00:00.000Z`,
+      userId: kind === 'reviewed' ? MOD : CREATOR,
+      kind,
+      ...(action ? { action } : {}),
+      ...(field ? { changes: [{ field, from: 'a', to: 'b' }] } : {}),
+    })) as CosmeticShopItemMeta['history'];
+
+  it('an item a moderator sent back refunds its buyers, the platform paying', async () => {
+    stored = listing('RequestedChanges', {
+      displayApproved: false,
+      history: history(
+        { kind: 'submitted' },
+        { kind: 'reviewed', action: 'approve' },
+        { kind: 'reviewed', action: 'request-changes' }
+      ),
+    });
+    const before = Date.now();
 
     await archiveCreatorShopItem({ userId: CREATOR, id: 42 });
 
-    expect(storedMeta().withdrawnRefund).toEqual({
+    const written = storedMeta().withdrawnRefund!;
+    expect(written).toEqual({
       trigger: 'archive',
       clawback: false,
       userId: CREATOR,
       at: expect.any(String),
     });
-    expect(refund.refundWithdrawnShopItem).toHaveBeenCalledWith(42);
+    expect(Date.parse(written.at)).toBeGreaterThanOrEqual(before);
+    expect(refund.refundWithdrawnShopItem.mock.calls).toEqual([[42, { limit: 25 }]]);
+  });
+
+  // The creator can make their own item unwearable by editing what holders see. Archiving it then
+  // must not have the platform pay their buyers back while they keep what the sales paid them.
+  it.each([
+    [
+      'its creator edited what holders see after approval',
+      history(
+        { kind: 'submitted' },
+        { kind: 'reviewed', action: 'approve' },
+        { kind: 'edited', field: 'artwork' }
+      ),
+    ],
+    [
+      'its creator edited it after a moderator sent it back',
+      history(
+        { kind: 'submitted' },
+        { kind: 'reviewed', action: 'request-changes' },
+        { kind: 'edited', field: 'name' }
+      ),
+    ],
+    ['nothing records who withheld it', undefined],
+  ])('an item withheld because %s refunds its buyers and reverses the payouts', async (_, h) => {
+    stored = listing('PendingReview', { displayApproved: false, ...(h ? { history: h } : {}) });
+
+    await archiveCreatorShopItem({ userId: CREATOR, id: 42 });
+
+    expect(storedMeta().withdrawnRefund).toMatchObject({ trigger: 'archive', clawback: true });
+    expect(refund.refundWithdrawnShopItem).toHaveBeenCalledTimes(1);
+  });
+
+  it('a withheld listing with no cosmetic of its own refunds nothing', async () => {
+    stored = { ...listing('RequestedChanges', { displayApproved: false }), cosmeticId: null };
+
+    await archiveCreatorShopItem({ userId: CREATOR, id: 42 });
+
+    expect(storedMeta().withdrawnRefund).toBeUndefined();
+    expect(refund.refundWithdrawnShopItem).not.toHaveBeenCalled();
   });
 
   it.each([
