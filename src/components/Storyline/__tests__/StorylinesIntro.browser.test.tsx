@@ -122,4 +122,13 @@ describe('StorylinesIntro', () => {
       .toHaveAttribute('href', '/user/civbot/posts');
     expect(page.getByTestId('login-redirect').elements()).toHaveLength(0);
   });
+
+  test('the button is described by where a storyline starts: a published post', async () => {
+    mocks.user = { username: 'civbot' };
+    renderWithProviders(<StorylinesIntro />);
+
+    await expect
+      .element(page.getByRole('link', { name: 'Start a storyline' }))
+      .toHaveAccessibleDescription(/published post.*Make this chapter 1 of a storyline/);
+  });
 });
