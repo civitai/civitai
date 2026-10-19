@@ -1,13 +1,7 @@
 import { cachedFactory, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { SDXL_FULL_AR, SEED, resourcesDef, sliderDef, type ResourceData } from '../defs';
-import {
-  familyScope,
-  makeTextBlock,
-  modelIdOf,
-  perModelScope,
-  type FamilyExt,
-} from '../shared';
+import { familyScope, makeTextBlock, modelIdOf, perModelScope, type FamilyExt } from '../shared';
 
 /** Neither variant is distilled (both are CFG models), so SFT exposes steps, CFG and negative prompt too. */
 
