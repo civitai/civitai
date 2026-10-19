@@ -23,10 +23,17 @@ const queryFor = async (type: string) => {
     lastSentDate: new Date('2026-01-01'),
     clickhouse: undefined,
   });
-  return typeof q === 'string' ? q : undefined;
+  // Collapsed so DERIVES_RECIPIENTS' literal spaces and `LEFT ` lookbehinds survive a line break.
+  return typeof q === 'string' ? q.replace(/\s+/g, ' ') : undefined;
 };
 
-const OPT_OUT_CLAUSE = 'NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"';
+/**
+ * A pattern rather than a literal substring. Matched literally it was an assertion about SQL
+ * FORMATTING: the same correct clause passed on one line and failed split across two, while a wrong
+ * clause written on one line passed. Both verdicts were then silent about polarity, which is the
+ * only thing this file checks.
+ */
+const OPT_OUT_CLAUSE = /NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+"UserNotificationSettings"/;
 
 /** Types that render a toggle and ignore it. Pinned empty — see the guard below. */
 const KNOWN_INERT: string[] = [];
@@ -48,11 +55,11 @@ describe('notification settings polarity', () => {
         expect(query, `${type} is optIn, so it must derive recipients by joining`).toMatch(
           DERIVES_RECIPIENTS
         );
-        expect(query, `${type} is optIn, so a row must not also mean opted-out`).not.toContain(
+        expect(query, `${type} is optIn, so a row must not also mean opted-out`).not.toMatch(
           OPT_OUT_CLAUSE
         );
       } else if (query?.includes('"UserNotificationSettings"')) {
-        expect(query, `${type} is not optIn, so it must gate on NOT EXISTS`).toContain(
+        expect(query, `${type} is not optIn, so it must gate on NOT EXISTS`).toMatch(
           OPT_OUT_CLAUSE
         );
         // ...and must not ALSO derive recipients from the table, which would make a row mean both.
@@ -80,7 +87,7 @@ describe('notification settings polarity', () => {
       const query = await queryFor(type);
       // No query means the event path, where create.ts applies the filter.
       if (!query) continue;
-      if (!query.includes(OPT_OUT_CLAUSE)) inert.push(type);
+      if (!OPT_OUT_CLAUSE.test(query)) inert.push(type);
     }
 
     // Joined rather than compared as an array: vitest truncates a long array in
@@ -110,7 +117,7 @@ describe('notification settings polarity', () => {
     // — the shape it must reject, which is what the real defect looked like.
     const clauseless = `SELECT 'x' "key", u.id "userId" FROM "User" u`;
 
-    expect(clauseless.includes(OPT_OUT_CLAUSE)).toBe(false);
+    expect(OPT_OUT_CLAUSE.test(clauseless)).toBe(false);
   });
 
   it('actually reaches the async processors', async () => {
@@ -152,7 +159,7 @@ describe('notification settings polarity', () => {
       'new-3d-model-comment-nested',
     ]) {
       expect(notificationProcessors[type].optIn).toBeFalsy();
-      expect(await queryFor(type)).toContain(OPT_OUT_CLAUSE);
+      expect(await queryFor(type)).toMatch(OPT_OUT_CLAUSE);
     }
   });
 
