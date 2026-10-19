@@ -109,8 +109,9 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
 }
 
 /**
- * Takes the label store's subjects of excluded images out of training, by the rule the records use.
- * Inert until the label store migration is applied.
+ * Takes the label store's subjects of excluded images out of training, by the rule the records use,
+ * and drops the stored text of models deleted since they were judged. Inert until the label store
+ * migration is applied.
  */
 export async function sweepLabelStore() {
   const [{ present }] = await dbWrite.$queryRaw<{ present: boolean }[]>`
@@ -159,7 +160,29 @@ export async function sweepLabelStore() {
     )
     SELECT coalesce(sum(label_store.exclude('image', "subjectId", 'safety')), 0)::int AS excluded FROM hit
   `;
-  return excluded;
+  return excluded + (await sweepRemovedModelText());
+}
+
+// A model's judged text is its owner's, and may name a real person: once the model is deleted, the
+// store keeps the judgements and drops the text ('removed'). Bounded per run; the next run continues.
+async function sweepRemovedModelText() {
+  const [{ removed }] = await dbWrite.$queryRaw<{ removed: number }[]>`
+    WITH gone AS (
+      SELECT DISTINCT s."subjectId"
+      FROM label_store.subject s
+      WHERE s."subjectType" = 'model_text' AND s."excludedAt" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "Model" m
+          WHERE m.id = CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
+              THEN s."subjectId"::int END
+            AND m."deletedAt" IS NULL
+        )
+      LIMIT ${BATCH}
+    )
+    SELECT coalesce(sum(label_store.exclude('model_text', "subjectId", 'removed')), 0)::int AS removed
+    FROM gone
+  `;
+  return removed;
 }
 
 const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
