@@ -146,8 +146,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
   comment on a live entity.
 
   **Purging today's orphans in prod: approved 2026-10-16** — procedure under _Orphan purge_
-  below; run by hand after the FK-flip migration is applied. Written as migration
-  `20261101130000_purge_orphaned_comment_threads` (data only, hand-applied).
+  below; migration `20261101130000_purge_orphaned_comment_threads` (data only) applied by
+  hand in prod 2026-10-19, after the FK flip.
 
 Decided 2026-10-16:
 
@@ -157,7 +157,12 @@ Decided 2026-10-16:
   model, backfill consequence above.
 - **Purge and FK flip** — approved; sections below.
 
-### Orphan purge — procedure (approved 2026-10-16)
+### Orphan purge — procedure (approved 2026-10-16, applied 2026-10-19)
+
+Applied in prod 2026-10-19: the replica shows zero orphan roots and zero dead-parent threads, and
+`Thread` dropped by ~334K rows. The `archive` schema is owned by the applying role, so the
+read-only role needs a `GRANT USAGE` on it before step 6's archive-side counts can be read from
+the replica. The procedure below stays for the record and for restore.
 
 One-off, by hand on the primary, as migration `20261101130000_purge_orphaned_comment_threads`
 (data only; the Prisma schema does not change). Run with autocommit, one step at a time: the

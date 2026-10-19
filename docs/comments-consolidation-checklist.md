@@ -52,11 +52,12 @@ Decisions & prerequisites:
       tree in one statement — verified on Postgres 18.6
 - [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
       `replyToId` index, 59 s without — index added to the DDL
-- [ ] **(review)** Prod purge of today's orphans — approved 2026-10-16; procedure written up in
+- [x] **(review)** Prod purge of today's orphans — approved 2026-10-16; procedure written up in
       the plan (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue`
-      deletes, batched thread deletes, rollback traps); written as migration
-      `20261101130000_purge_orphaned_comment_threads` on `chore/purge-orphaned-comment-threads`.
-      Tick when applied in prod and step 6 reports zero set rows left
+      deletes, batched thread deletes, rollback traps); migration
+      `20261101130000_purge_orphaned_comment_threads` applied in prod 2026-10-19 — the replica
+      shows zero orphan roots and zero dead-parent threads, `Thread` down by ~334K rows, and the
+      ten `archive` tables in place
 - [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
       hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
       by the backfill
@@ -74,8 +75,7 @@ Decisions & prerequisites:
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id, flip order, the ltree infra sign-off, the purge apply and the
-baseline recapture.
+`ComicChapter` surrogate id, flip order, the ltree infra sign-off and the baseline recapture.
 
 ## Phase 1 — Schema (expand)
 
