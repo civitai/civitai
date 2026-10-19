@@ -1,9 +1,6 @@
 export type GetPaidCard = 'bank' | 'extract' | 'estimatedEarnings' | 'withdraw';
 
-/**
- * The "Get Paid" cards an onboarded creator sees beside the membership-lapsed notice. A lapsed
- * member keeps seeing what they banked: the monthly payout does not check membership.
- */
+/** A lapsed member still sees estimated earnings and withdraw: the monthly payout does not check membership. */
 export function getPaidCards({
   phase,
   membershipLapsed,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getPaidCards } from '~/components/Buzz/CreatorProgramV2/getPaidCards';
 
 describe('getPaidCards', () => {
-  it.each(['bank', 'extraction', undefined])(
+  it.each(['bank', 'extraction'])(
     'shows a lapsed member their banked balance and the withdraw card (phase %s)',
     (phase) => {
       const cards = getPaidCards({ phase, membershipLapsed: true });
@@ -11,6 +11,20 @@ describe('getPaidCards', () => {
       expect(cards).toContain('withdraw');
     }
   );
+
+  it('shows a lapsed member with no phase their banked balance and the withdraw card', () => {
+    expect(getPaidCards({ phase: undefined, membershipLapsed: true })).toEqual([
+      'estimatedEarnings',
+      'withdraw',
+    ]);
+  });
+
+  it('shows an active member with no phase their banked balance and the withdraw card', () => {
+    expect(getPaidCards({ phase: undefined, membershipLapsed: false })).toEqual([
+      'estimatedEarnings',
+      'withdraw',
+    ]);
+  });
 
   it('does not offer a lapsed member banking more Buzz', () => {
     expect(getPaidCards({ phase: 'bank', membershipLapsed: true })).toEqual([

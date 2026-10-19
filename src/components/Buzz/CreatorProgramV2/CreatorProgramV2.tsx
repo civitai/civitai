@@ -139,9 +139,6 @@ export const CreatorProgramV2 = () => {
     return null;
   }
 
-  // Onboarded but their membership lapsed — keep the flag, but gate the
-  // earning actions and tell them to renew (withdrawing already-earned cash
-  // stays available).
   const membershipLapsed = hasOnboardedInProgram && !!requirements?.membershipLapsed;
 
   return (
