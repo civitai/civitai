@@ -64,7 +64,6 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 });
 
 import { getModelHandler } from '~/server/controllers/model.controller';
-import { modelDetailPublicCacheKey } from '~/server/utils/model-detail-cache-key';
 
 const MODEL_ID = 4101;
 const OWNER_ID = 4102;
@@ -261,6 +260,14 @@ function getById(viewer: ViewerKey, cache: boolean, input: Record<string, unknow
 
 const ALL_VIEWERS = Object.keys(VIEWERS) as ViewerKey[];
 
+/** Every cache read or write that touched a model-row key. */
+function modelRowCacheCalls() {
+  const r = redisMock.redis;
+  return [r.packed.get, r.packed.set, r.setNxKeepTtlWithEx]
+    .flatMap((fn) => fn.mock.calls.map(([key]) => String(key)))
+    .filter((key) => key.includes('model-detail-public'));
+}
+
 describe('model.getById with the shared model-row cache', () => {
   it('serves every viewer the payload the uncached handler builds, from one cached entry', async () => {
     const uncached = Object.fromEntries(
@@ -332,20 +339,11 @@ describe('model.getById with the shared model-row cache', () => {
 
   it('with the flag off, never reads or writes the cache', async () => {
     for (const viewer of ALL_VIEWERS) await getById(viewer, false);
-
-    expect(redisMock.redis.packed.get).not.toHaveBeenCalledWith(
-      modelDetailPublicCacheKey(MODEL_ID),
-      expect.anything()
-    );
-    expect(redisMock.redis.packed.get).not.toHaveBeenCalledWith(
-      modelDetailPublicCacheKey(MODEL_ID)
-    );
-    expect(redisMock.redis.packed.set).not.toHaveBeenCalledWith(
-      modelDetailPublicCacheKey(MODEL_ID),
-      expect.anything(),
-      expect.anything(),
-      expect.anything()
-    );
+    expect(modelRowCacheCalls()).toEqual([]);
     expect(dbMock.dbRead.model.findFirst).toHaveBeenCalledTimes(ALL_VIEWERS.length);
+
+    // Positive control: the same probe sees the cache once the flag is on.
+    await getById('anon', true);
+    expect(modelRowCacheCalls().length).toBeGreaterThan(0);
   });
 });

@@ -446,9 +446,10 @@ export async function fetchThroughCacheWithDeadline<T>(
     );
     if (cached !== timedOut) return cached as T;
     abandoned = true;
-  } catch (error) {
-    // The origin fetch ran inside the cache call and failed: that is a real error, not a cache one.
-    if (origin) throw error;
+  } catch {
+    // A cache-side failure falls through to the origin. If it was this call's own origin fetch that
+    // failed, `origin` is that rejected promise, so returning it rethrows the real error without a
+    // second origin read.
   }
   return origin ?? fetchFn();
 }
