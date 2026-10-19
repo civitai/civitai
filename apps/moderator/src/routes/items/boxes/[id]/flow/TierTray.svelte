@@ -1,11 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { IconArrowDown, IconArrowUp, IconX } from '@tabler/icons-svelte';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import * as Collapsible from '@civitai/ui/components/ui/collapsible/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { num, plural } from '$lib/format';
   import type { FlowReward } from '$lib/box-design';
@@ -16,6 +16,7 @@
     handPlacedCount,
     moveRewards,
     newTier,
+    percent,
     placeByBands,
     removeRewards,
     type PriceBands,
@@ -23,7 +24,8 @@
     type TierPreset,
   } from '$lib/box-flow';
   import type { BoxDraft } from '$lib/mystery-box';
-  import { FALLBACK_TIER_COLOR, percent, teamColor } from './teams';
+  import Chip from './Chip.svelte';
+  import { FALLBACK_TIER_COLOR, teamColor } from './teams';
 
   let {
     draft = $bindable(),
@@ -38,7 +40,7 @@
     odds: TeamOdds[];
     bands: PriceBands;
     preset: TierPreset;
-    /** A tier to scroll to and flash, set by the checklist's Fix buttons. */
+    /** One-shot: the tray scrolls to it, flashes it, then clears it. */
     focusTier: string | null;
   } = $props();
 
@@ -51,17 +53,23 @@
   const placedByHand = $derived(handPlacedCount(draft, rewards, bands));
   const reference = $derived(odds[0]);
 
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const key = focusTier;
     if (!key || !root) return;
-    root.querySelector(`[data-tier="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    flashed = key;
-    focusTier = null;
-    const timer = setTimeout(() => (flashed = null), 1600);
-    return () => clearTimeout(timer);
+    // Clearing `focusTier` re-runs this effect; the timer lives outside it so that re-run cannot cancel the flash.
+    untrack(() => {
+      root!.querySelector(`[data-tier="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      flashed = key;
+      focusTier = null;
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => (flashed = null), 1600);
+    });
   });
+  $effect(() => () => clearTimeout(flashTimer));
 
   function choose(next: TierPreset) {
+    if (next === preset) return;
     if (next === 'price') Object.assign(draft, applyPricePreset(draft, rewards, bands));
     else if (next === 'one') Object.assign(draft, applyOneTier(draft));
     preset = next;
@@ -75,12 +83,12 @@
   };
 
   function addTier() {
-    const tier = newTier(draft.tiers, newName);
-    if (typeof tier === 'string') {
-      newError = tier;
+    const made = newTier(draft.tiers, newName);
+    if ('error' in made) {
+      newError = made.error;
       return;
     }
-    draft.tiers.push(tier);
+    draft.tiers.push(made.tier);
     newName = '';
     newError = null;
     preset = 'custom';
@@ -96,22 +104,26 @@
 </script>
 
 <div bind:this={root} class="space-y-3">
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h2 class="mb-1 text-base font-semibold text-white">Tiers</h2>
     <p class="mb-3 text-xs text-dark-2">
       In draw order. A tier's chance is its weight over the weights of the tiers that have something for the buyer. Nothing is saved until you press Save.
     </p>
     <div class="mb-3 grid grid-cols-3 gap-1.5">
-      <Toggle variant="outline" pressed={preset === 'price'} onPressedChange={() => choose('price')}>By shelf price</Toggle>
-      <Toggle variant="outline" pressed={preset === 'one'} onPressedChange={() => choose('one')}>One tier</Toggle>
-      <Toggle variant="outline" pressed={preset === 'custom'} onPressedChange={() => choose('custom')}>Custom</Toggle>
+      <Chip size="default" pressed={preset === 'price'} onclick={() => choose('price')}>By shelf price</Chip>
+      <Chip size="default" pressed={preset === 'one'} onclick={() => choose('one')}>One tier</Chip>
+      <Chip size="default" pressed={preset === 'custom'} onclick={() => choose('custom')}>Custom</Chip>
     </div>
     {#if preset === 'price'}
-      <div class="mb-3 grid grid-cols-[auto_1fr_auto_1fr] items-center gap-x-2 gap-y-1 text-xs text-dark-2">
-        <label for="band-uncommon">Uncommon up to</label>
-        <Input id="band-uncommon" type="number" min="1" inputmode="numeric" value={bands.uncommon} oninput={(e) => setBand('uncommon', e.currentTarget.value)} />
-        <label for="band-rare">Rare up to</label>
-        <Input id="band-rare" type="number" min="1" inputmode="numeric" value={bands.rare} oninput={(e) => setBand('rare', e.currentTarget.value)} />
+      <div class="mb-3 grid grid-cols-2 gap-2 text-xs text-dark-2">
+        <label>
+          Uncommon up to
+          <Input id="band-uncommon" class="mt-1" type="number" min="1" inputmode="numeric" value={bands.uncommon} onchange={(e) => setBand('uncommon', e.currentTarget.value)} />
+        </label>
+        <label>
+          Rare up to
+          <Input id="band-rare" class="mt-1" type="number" min="1" inputmode="numeric" value={bands.rare} onchange={(e) => setBand('rare', e.currentTarget.value)} />
+        </label>
       </div>
       <p class="mb-3 text-xs text-dark-2">
         Cheaper on the shelf draws more often; above the Rare line is Legendary. An item with no shelf price is never placed for you.
@@ -208,7 +220,7 @@
                 </Select.Root>
                 <span class="col-span-2 flex flex-wrap items-center gap-1.5 text-xs text-dark-2">
                   {group.shelf === null ? 'no price' : `${num(group.shelf)} Buzz`}
-                  {#each group.rows as row (row.rewardDefinitionId)}
+                  {#each group.rows as row, i (`${row.rewardDefinitionId}:${i}`)}
                     {@const team = rewards.get(row.rewardDefinitionId)?.team ?? null}
                     <button
                       type="button"

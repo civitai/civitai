@@ -1,12 +1,25 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import { EMPTY_FILTERS } from '$lib/box-design';
+  import { DEFAULT_BANDS, isPriceTiering } from '$lib/box-flow';
   import { LINK_CLASS } from '$lib/format';
   import BoxFlow from './BoxFlow.svelte';
-  import type { FlowStep } from './steps';
+  import type { FlowUi } from './ui-state';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
-  let step = $state<FlowStep>('basics');
-  let dirty = $state(false);
+
+  // An event box starts on its own event's cosmetics.
+  let ui = $state<FlowUi>(
+    untrack(() => ({
+      step: 'basics',
+      bands: { ...DEFAULT_BANDS },
+      preset: isPriceTiering(data.draft.tiers) ? 'price' : 'custom',
+      itemsTab: 'catalog',
+      filters: { ...EMPTY_FILTERS, event: data.draft.event },
+      hideInBox: false,
+    }))
+  );
 </script>
 
 <header class="page-header">
@@ -17,8 +30,7 @@
   </span>
 </header>
 
-<!-- Remounts on every write to the box (each stamps updatedAt), so the working copy restarts from the
-     rows the server wrote, with their new ids. The step lives out here so it survives that. -->
+<!-- Remounts BoxFlow on every write so its working copy restarts from the server's rows (new ids). `ui` lives here to survive that. -->
 {#key `${data.box.version}:${data.box.updatedAt}`}
   <BoxFlow
     box={data.box}
@@ -28,8 +40,8 @@
     snapshots={data.snapshots}
     listings={data.listings}
     civitaiUrl={data.civitaiUrl}
-    bind:step
-    bind:dirty
-    onpublished={() => (step = 'sell')}
+    canDefine={data.canDefine}
+    bind:ui
+    onpublished={() => (ui.step = 'sell')}
   />
 {/key}

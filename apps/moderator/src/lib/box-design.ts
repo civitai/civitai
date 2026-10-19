@@ -1,9 +1,9 @@
 import type { RewardInfo } from '$lib/mystery-box';
 
 /**
- * An event ships one cosmetic per team, each named "<design> - <team>". Strips that suffix so the four
- * rows read as one design. `cosmeticDesignSql` in the item-definitions service is this rule in SQL;
- * a test pins them to the same answers.
+ * Strips the " - <team>" suffix an event's per-team cosmetics carry, so they read as one design.
+ * `designSql` in item-definitions.service.ts is the SQL twin; item-catalog.pglite.test.ts pins both to
+ * the same answers.
  */
 export const designName = (name: string, team: string | null | undefined): string => {
   if (typeof team !== 'string') return name;
@@ -11,30 +11,36 @@ export const designName = (name: string, team: string | null | undefined): strin
   return name.length > suffix.length && name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
 };
 
-/** A reward as the builder flow shows it: the shelf price steers tier placement, the design name groups team variants. */
-export type FlowReward = RewardInfo & { shelf: number | null; design: string };
+/** The catalog's own key for a design; a reward carries the same one so the tray and the catalog agree on which design is which. */
+export const designKeyOf = (event: string | null, type: string, design: string) => `${event ?? ''}|${type}|${design}`;
 
-/** One cosmetic of a catalog design. `definitionId` is null until the cosmetic has an item definition. */
+export type FlowReward = RewardInfo & { shelf: number | null; design: string; designKey: string };
+
 export type CatalogVariant = {
   cosmeticId: number;
+  /** null until the cosmetic has an item definition. */
   definitionId: number | null;
   name: string;
   team: string | null;
   url: string | null;
+  shelf: number | null;
 };
 
-/** A design in the catalog: every team variant of one cosmetic design, or one team-less cosmetic. */
 export type CatalogDesign = {
   key: string;
   name: string;
   type: string;
   event: string | null;
+  /** The lowest shelf price among its variants. */
   shelf: number | null;
   variants: CatalogVariant[];
 };
 
-export const isDefined = (design: CatalogDesign) =>
-  design.variants.every((variant) => variant.definitionId !== null);
+export type CatalogResult = { designs: CatalogDesign[]; total: number };
+
+export type CosmeticEvent = { event: string; teams: string[] };
+
+export const isDefined = (design: CatalogDesign) => design.variants.every((variant) => variant.definitionId !== null);
 
 export function rewardOfVariant(design: CatalogDesign, variant: CatalogVariant): FlowReward | null {
   if (variant.definitionId === null) return null;
@@ -45,12 +51,16 @@ export function rewardOfVariant(design: CatalogDesign, variant: CatalogVariant):
     cosmeticId: variant.cosmeticId,
     team: variant.team,
     imageUrl: variant.url,
-    shelf: design.shelf,
+    shelf: variant.shelf,
     design: design.name,
+    designKey: design.key,
   };
 }
 
-/** What the catalog panel asks for. `event` is '' for any, NO_EVENT for cosmetics of no event. */
+export const CATALOG_PAGE = 48;
+export const CATALOG_MAX = 480;
+
+/** `CatalogFilters.event`: '' is any event, NO_EVENT is cosmetics of no event. */
 export const NO_EVENT = '__none';
 export type ShelfBand = '' | 'uncommon' | 'rare' | 'legendary' | 'none';
 export type CatalogFilters = {
@@ -62,7 +72,6 @@ export type CatalogFilters = {
   needsDefinition: boolean;
   limit: number;
 };
-export const CATALOG_PAGE = 48;
 export const EMPTY_FILTERS: CatalogFilters = {
   q: '',
   event: '',
@@ -73,11 +82,8 @@ export const EMPTY_FILTERS: CatalogFilters = {
   limit: CATALOG_PAGE,
 };
 
-/** The query string for `/catalog`; `bands` are the price lines the tier preset uses, so a band filter and a preset agree. */
-export function catalogParams(
-  filters: CatalogFilters,
-  bands: { uncommon: number; rare: number }
-): URLSearchParams {
+/** `bands` must be the tier preset's, so a band filter matches what the preset would place there. */
+export function catalogParams(filters: CatalogFilters, bands: { uncommon: number; rare: number }): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.q.trim()) params.set('q', filters.q.trim());
   if (filters.event === NO_EVENT) params.set('noEvent', '1');

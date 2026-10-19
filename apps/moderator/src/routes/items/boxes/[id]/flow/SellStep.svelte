@@ -1,4 +1,5 @@
 <script lang="ts">
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
   import { num } from '$lib/format';
   import type { TeamOdds } from '$lib/box-flow';
   import { ITEM_DEFINITION_STATUS } from '$lib/mystery-box';
@@ -21,14 +22,10 @@
 
 <div class="max-w-3xl space-y-4">
   {#if published && listings.length === 0}
-    <div class="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-200" role="status">
-      The box is published, but it has no listing yet, so nobody can buy it. Create the listing below; if that fails, the form keeps what you typed and the button turns into Retry.
-    </div>
+    <WarningAlert message="The box is published, but it has no listing yet, so nobody can buy it. Create the listing below; if that fails, the form keeps what you typed and the button turns into Retry." />
   {/if}
   {#if dirty}
-    <div class="rounded-xl border border-dark-4 p-3 text-xs text-amber-300">
-      You have unsaved box changes. The listing saves on its own, and the box does not change until you save it on the Publish step.
-    </div>
+    <WarningAlert message="You have unsaved box changes. The listing saves on its own, and the box does not change until you save it on the Publish step." />
   {/if}
   {#if averages.some((value) => value > 0)}
     <p class="text-sm text-dark-2">

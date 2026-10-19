@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { teamsDiffer, type TeamOdds } from '$lib/box-flow';
-  import { FALLBACK_TIER_COLOR, percent, teamColor } from './teams';
+  import { percent, teamsDiffer, type TeamOdds } from '$lib/box-flow';
+  import { FALLBACK_TIER_COLOR, teamColor } from './teams';
 
   let { odds, designs, problems }: { odds: TeamOdds[]; designs: number; problems: number } = $props();
 
@@ -33,6 +33,6 @@
         {shown.team} ›
       </Button>
     {/if}
-    {designs} · {#if problems}<span class="text-amber-300">{problems} to fix</span>{:else}<span class="text-green-400">ready</span>{/if}
+    {designs} {designs === 1 ? 'design' : 'designs'} · {#if problems}<span class="text-amber-300">{problems} to fix</span>{:else}<span class="text-green-400">ready</span>{/if}
   </span>
 </div>

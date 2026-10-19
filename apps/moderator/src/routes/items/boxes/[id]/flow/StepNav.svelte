@@ -15,7 +15,7 @@
       <span class="grid size-[18px] flex-none place-items-center rounded-full text-[11px] {step === key ? 'bg-blue-5 text-white' : 'bg-dark-5'}">{i + 1}</span>
       <span class="truncate">{label}</span>
       {#if key === 'publish' && problems}
-        <span class="size-2 flex-none rounded-full bg-red-400" title="{problems} to fix"></span>
+        <span class="size-2 flex-none rounded-full bg-red-400" aria-hidden="true"></span><span class="sr-only">{problems} to fix</span>
       {/if}
     </button>
   {/each}

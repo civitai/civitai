@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { teamsDiffer, type TeamOdds } from '$lib/box-flow';
+  import { percent, teamsDiffer, type TeamOdds } from '$lib/box-flow';
   import { num } from '$lib/format';
-  import { FALLBACK_TIER_COLOR, percent, teamColor } from './teams';
+  import { FALLBACK_TIER_COLOR, teamColor } from './teams';
 
   let { odds }: { odds: TeamOdds[] } = $props();
 
@@ -62,7 +62,7 @@
           </tr>
         {/each}
         <tr class="border-t border-dark-4 text-dark-2">
-          <td class="py-2">Average draw, shelf value</td>
+          <td class="py-2">Average draw, shelf value{#if odds[0].unpriced}<span class="block text-xs">{odds[0].unpriced} unpriced {odds[0].unpriced === 1 ? 'item' : 'items'} left out</span>{/if}</td>
           {#each columns as entry (entry.team ?? '')}
             <td class="px-2 py-2 text-right">{num(Math.round(entry.avgShelf))} Buzz</td>
           {/each}

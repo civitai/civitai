@@ -17,7 +17,6 @@
     teams: string[];
     filling: boolean;
     fillError: string | null;
-    /** Puts every priced design of the box's event into the price tiers. */
     onfill: () => void;
   } = $props();
 </script>

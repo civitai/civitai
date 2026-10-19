@@ -52,7 +52,7 @@
       {/if}
     </p>
     <ul>
-      {#each problems as problem, i (i)}
+      {#each problems as problem, i (`${i}:${problem.message}`)}
         <li class="grid grid-cols-[22px_1fr_auto] items-start gap-2 border-t border-dark-4 py-2 first:border-t-0">
           <span class="mt-0.5 grid size-5 place-items-center rounded-full bg-red-500/15 text-xs text-red-300" aria-hidden="true">!</span>
           <span class="text-sm text-red-300">{problem.message}</span>

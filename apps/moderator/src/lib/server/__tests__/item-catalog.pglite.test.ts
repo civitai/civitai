@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { designName } from '$lib/box-design';
+import { catalogParams, designName, EMPTY_FILTERS } from '$lib/box-design';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -22,6 +22,7 @@ vi.mock('../db', () => ({
 const { searchCosmeticCatalog, createCosmeticDefinitions, readRewards, withShelfPrices } = await import(
   '../item-definitions.service'
 );
+const { catalogQuerySchema } = await import('../catalog-query');
 type Query = Parameters<typeof searchCosmeticCatalog>[0];
 
 const MIGRATIONS = [
@@ -95,7 +96,7 @@ beforeEach(async () => {
       (9, 'Odd - Team',   'Badge',             '{"team":7}');
     INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", "status", "archivedAt") VALUES
       (1, 500,  'Published', NULL),
-      (2, 500,  'Published', NULL),
+      (2, 900,  'Published', NULL),
       (3, 3000, 'Published', NULL),
       (4, 3000, 'Published', NULL),
       (6, 700,  'Published', NULL),
@@ -103,7 +104,6 @@ beforeEach(async () => {
       (5, 100,  'Published', now());
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
-  // The caps and the badge have definitions; the crowns and the rest do not.
   await createCosmeticDefinitions({ selector: { cosmeticIds: [1, 2, 6] }, userId: 5 });
 });
 
@@ -115,7 +115,32 @@ afterEach(async () => {
 const search = (over: Partial<Query> = {}) => searchCosmeticCatalog({ ...ANY, ...over });
 const names = async (over: Partial<Query> = {}) => (await search(over)).designs.map((d) => d.name);
 
+describe('the catalog request', () => {
+  it('is read by the route exactly as the panel writes it', () => {
+    const filters = { ...EMPTY_FILTERS, q: 'cap', event: 'party', types: ['Badge', 'Sticker'], team: 'Pink', band: 'rare' as const, needsDefinition: true, limit: 96 };
+    const parsed = catalogQuerySchema.parse(Object.fromEntries(catalogParams(filters, { uncommon: 500, rare: 1500 })));
+    expect(parsed).toEqual({ q: 'cap', event: 'party', noEvent: false, types: ['Badge', 'Sticker'], team: 'Pink', minShelf: 501, maxShelf: 1500, noShelf: false, needsDefinition: true, limit: 96 });
+    const none = catalogQuerySchema.parse(Object.fromEntries(catalogParams({ ...EMPTY_FILTERS, event: '__none', band: 'none' }, { uncommon: 500, rare: 1500 })));
+    expect(none).toMatchObject({ noEvent: true, noShelf: true, event: '' });
+  });
+});
+
 describe('the cosmetic catalog', () => {
+  it('returns every variant of a design whose name matches, and prices each variant itself', async () => {
+    const { designs } = await search({ event: 'party', q: 'pink' });
+    const cap = designs.find((d) => d.name === 'Cap')!;
+    expect(cap.variants.map((v) => [v.team, v.shelf])).toEqual([['Blue', 500], ['Pink', 900]]);
+    expect(cap.shelf).toBe(500);
+  });
+
+  it('keys a design the same way a box reward does', async () => {
+    const { designs } = await search({ event: 'party', q: 'cap' });
+    const cap = designs.find((d) => d.name === 'Cap')!;
+    const [{ id }] = (await db.query<{ id: number }>(`SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 1`)).rows;
+    const [reward] = await withShelfPrices([...(await readRewards(dbHandle.current as never, [id])).values()]);
+    expect(reward.designKey).toBe(cap.key);
+  });
+
   it('reads a team-variant set as one design, with its variants in team order', async () => {
     const { designs, total } = await search({ event: 'party', q: 'cap' });
     expect(total).toBe(2);
@@ -130,9 +155,8 @@ describe('the cosmetic catalog', () => {
     for (const design of designs)
       for (const variant of design.variants)
         expect(design.name, variant.name).toBe(designName(variant.name, variant.team));
-    // "Old Cap - Blue" is made for Pink, so nothing is stripped and it stays its own design.
+    // Made for Pink, so "Old Cap - Blue" keeps its suffix.
     expect(designs.map((d) => d.name)).toContain('Old Cap - Blue');
-    // A team that is not a string counts as no team.
     expect(designs.find((d) => d.name === 'Odd - Team')!.variants[0].team).toBeNull();
   });
 
@@ -162,7 +186,6 @@ describe('the cosmetic catalog', () => {
     expect((await names({ event: 'party' })).sort()).toEqual(['Cap', 'Confetti', 'Crown', 'Old Cap - Blue']);
     expect((await names({ noEvent: true })).sort()).toEqual(['100% Fan', 'Gold Badge', 'Odd - Team']);
     expect(await names({ types: ['Badge'] })).toEqual(['100% Fan', 'Gold Badge', 'Odd - Team']);
-    // A team filter keeps designs made for that team, and designs made for no team at all.
     expect((await names({ event: 'party', team: 'Pink' })).sort()).toEqual(['Cap', 'Confetti', 'Crown', 'Old Cap - Blue']);
     expect((await names({ event: 'party', team: 'Green' })).sort()).toEqual(['Confetti']);
     expect((await names({ minShelf: 501, maxShelf: 3000 })).sort()).toEqual(['Crown', 'Gold Badge']);
