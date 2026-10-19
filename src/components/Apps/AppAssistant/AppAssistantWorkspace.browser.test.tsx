@@ -1481,6 +1481,52 @@ describe('AppAssistantWorkspace auto-resume', () => {
         expect(m.resume).not.toHaveBeenCalled();
       });
 
+      test('🟡 after the user’s next message, the chat asking by itself for a later reply wakes the app again', async () => {
+        const screen = await openRunningB();
+        m.service = pausedWhileAsleep();
+        m.failed = true;
+        m.pageWakes('visible');
+        await vi.waitFor(() => expect(m.resume).toHaveBeenCalledTimes(1));
+        runsB(screen);
+        await vi.waitFor(() => expect(m.retried).toEqual(['retryReply']));
+        // A new turn, whose reply fails; the app is paused again while the page sleeps.
+        await userSends('and a timer');
+        expect(m.delivered).toEqual(['and a timer']);
+        m.failed = true;
+        m.autoResumed = false;
+        m.autoCancelled = false;
+        m.service = pausedWhileAsleep();
+        m.pageWakes('visible');
+        await vi.waitFor(() => expect(m.resume).toHaveBeenCalledTimes(2));
+        runsB(screen);
+        await vi.waitFor(() => expect(m.retried).toEqual(['retryReply', 'retryReply']));
+      });
+
+      test('🟡 an app gone from the refreshed list (deleted elsewhere) gives the ask up, and is not made again', async () => {
+        const screen = await openPaused();
+        m.service = [m.list[0]];
+        m.failed = true;
+        m.pageWakes('visible');
+        await vi.waitFor(() => expect(m.refetches).toBe(1));
+        await settle(100);
+        screen.rerender(<Workspace />);
+        await settle(50);
+        expect(m.resume).not.toHaveBeenCalled();
+        expect(m.open).not.toHaveBeenCalled();
+        expect(m.retryReply).not.toHaveBeenCalled();
+      });
+
+      test('🟢 Retry pressed while a refresh that then fails runs is followed on the list the page has', async () => {
+        await openPaused();
+        m.refetchFails = true;
+        m.failed = true;
+        m.pageWakes('visible');
+        // Before the refresh answers.
+        expect(m.resumeReply('retry')).toBe(false);
+        await vi.waitFor(() => expect(m.refetches).toBe(1));
+        await vi.waitFor(() => expect(m.resume.mock.calls).toEqual([['app-bbbb']]));
+      });
+
       test('🟡 the chat asking by itself wakes an app once for a chat, however often the page wakes', async () => {
         const screen = await openRunningB();
         m.service = pausedWhileAsleep();
@@ -1600,6 +1646,22 @@ describe('AppAssistantWorkspace auto-resume', () => {
       vi.useRealTimers();
       setListing(false);
       await vi.waitFor(() => expect(m.retried).toEqual(['retryReply']));
+    });
+
+    test('🟡 a chat that never takes the ask once the app runs ends it after HELD_TIMEOUT_MS again, so Retry goes on', async () => {
+      const screen = await wakesPaused();
+      // The deadline restarted once the app ran clears the first one, so clearTimeout is faked too.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      setListing(true);
+      runsB(screen);
+      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS + 1000);
+      vi.useRealTimers();
+      // Given up: the listing ending asks nothing, and the user's Retry is no longer kept back.
+      setListing(false);
+      await settle(100);
+      expect(m.retryReply).not.toHaveBeenCalled();
+      expect(m.resumeReply('retry')).toBe(true);
+      expect(m.retried).toEqual(['retry']);
     });
 
     test('🟡 an app paused again once it had started ends it', async () => {

@@ -474,9 +474,10 @@ export function AppAssistantWorkspace({
   };
   const [resumeAsk, setResumeAsk] = useState<ResumeAsk | null>(null);
   const resumeAskRef = useRef(resumeAsk);
-  // Per app and chat. The chat asks by itself again on every wake until it gets through: once the page
-  // gave such an ask up, it keeps the next ones back and does nothing, and it wakes the app by itself
-  // once at most, so it never loops. Retry, which the user presses, is always followed.
+  // Per app and chat, until the user's next message there (a new turn). The chat asks by itself again
+  // on every wake until it gets through: once the page gave such an ask up, it keeps the next ones back
+  // and does nothing, and it wakes the app by itself once at most, so it never loops. Retry, which the
+  // user presses, is always followed.
   const autoGaveUp = useRef(new Set<string>());
   const autoWoke = useRef(new Set<string>());
   const finishResumeAsk = useCallback((asked: boolean) => {
@@ -522,6 +523,8 @@ export function AppAssistantWorkspace({
       // Ended meanwhile (or the page went away), or taken over by Retry, which is followed as is.
       const now = resumeAskRef.current;
       if (!now || now.stop !== ask.stop || ask.stop.signal.aborted) return;
+      // Retry, pressed by the user, falls back to the list the page has when the refresh failed.
+      if (!fresh && !now.auto) fresh = live.current.apps;
       const app = fresh?.find((s) => s.app === ask.app);
       const paused = app?.state === 'suspended';
       // Waking it pauses whichever other app runs: not without the user asking.
@@ -757,7 +760,8 @@ export function AppAssistantWorkspace({
       endResumeAsk();
       // A new turn: the chat's own asks for a reply after it start afresh.
       const chat = `\n${chatIdRef.current}`;
-      autoGaveUp.current.forEach((key) => key.endsWith(chat) && autoGaveUp.current.delete(key));
+      for (const keys of [autoGaveUp.current, autoWoke.current])
+        keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
       return onBeforeSend(text);
     },
     [endResumeAsk, onBeforeSend]
