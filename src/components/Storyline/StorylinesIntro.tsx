@@ -39,6 +39,7 @@ export function StorylinesIntro() {
     radius: 'xl',
     leftSection: <IconPlus size={16} />,
     children: 'Start a storyline',
+    'aria-describedby': 'storylines-intro-start-hint',
     className: 'flex-1 sm:flex-none',
   } as const;
 
@@ -100,8 +101,10 @@ export function StorylinesIntro() {
           Got it
         </Button>
       </Group>
-      <Text size="xs" c="dimmed" mt="xs" visibleFrom="sm">
-        Start a storyline opens your posts; any post you made can become chapter 1.
+      <Text size="xs" c="dimmed" mt="xs" id="storylines-intro-start-hint">
+        Start a storyline opens your posts. Open a published post of yours, then use its three-dot
+        menu and choose &ldquo;Make this chapter 1 of a storyline&rdquo;, or use the switch on the
+        post&rsquo;s edit page.
       </Text>
     </Card>
   );
