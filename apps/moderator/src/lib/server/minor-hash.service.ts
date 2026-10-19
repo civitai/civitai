@@ -1132,6 +1132,14 @@ export async function getNeedsReviewCount({
   return result.rows[0]?.count ?? 0;
 }
 
+/** Whether the model carries the minor flag now, whatever applied it. */
+export async function getModelMinor(modelId: number) {
+  const result = await sql<{ minor: boolean }>`
+    SELECT m.minor FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbRead);
+  return result.rows[0]?.minor ?? false;
+}
+
 /** Models with a held detection: the detections part of the Needs review badge. Rides
  *  `Model_textScanRedetected_idx`. */
 export async function getHeldDetectionModelCount() {

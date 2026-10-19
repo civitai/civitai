@@ -8,7 +8,9 @@ const {
   getNeedsReviewCount,
   getMinorQueueCounts,
   getHeldDetectionModelCount,
+  getModelMinor,
 } = vi.hoisted(() => ({
+  getModelMinor: vi.fn(),
   resolveRedetection: vi.fn(),
   setModelMinorFlag: vi.fn(),
   dismissMinorHashMatch: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getNeedsReviewCount,
   getMinorQueueCounts,
   getHeldDetectionModelCount,
+  getModelMinor,
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
@@ -76,6 +79,7 @@ beforeEach(() => {
   getNeedsReviewCount.mockResolvedValue(4);
   getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
   getHeldDetectionModelCount.mockResolvedValue(3);
+  getModelMinor.mockResolvedValue(false);
 });
 
 describe('held detections', () => {
@@ -128,6 +132,15 @@ describe('file matches', () => {
     expect(dismissMinorHashMatch).toHaveBeenCalledWith(42);
   });
 
+  it('refuses to set minor on a model already flagged minor some other way', async () => {
+    getModelMinor.mockResolvedValue(true);
+    expect(await decide([match], 'minor:file-match')).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/already flagged minor/) },
+    });
+    expect(setModelMinorFlag).not.toHaveBeenCalled();
+  });
+
   it('refuses a real-person file match', async () => {
     expect(await decide([{ ...match, label: 'poi' }], '')).toMatchObject({ status: 400 });
     expect(dismissMinorHashMatch).not.toHaveBeenCalled();
@@ -135,11 +148,37 @@ describe('file matches', () => {
 });
 
 describe('a model with a held minor detection and a file match', () => {
-  it('rules the detection before set-minor, with the one reason', async () => {
-    await decide([held, match], 'minor:redetected,minor:file-match', kept);
-    expect(resolveRedetection.mock.invocationCallOrder[0]).toBeLessThan(
-      setModelMinorFlag.mock.invocationCallOrder[0]
-    );
+  // A fake main app: keeping the held minor detection applies the minor flag (with no hash snapshot).
+  const keepAppliesMinor = () => {
+    let minor = false;
+    resolveRedetection.mockImplementation(async () => {
+      minor = true;
+      return { ok: true, resolved: 'kept' };
+    });
+    getModelMinor.mockImplementation(async () => minor);
+  };
+
+  it('flags both by keeping the detection alone: set-minor would snapshot the flagged state', async () => {
+    keepAppliesMinor();
+    expect(await decide([held, match], 'minor:redetected,minor:file-match', kept)).toMatchObject({
+      success: true,
+      modelId: 42,
+      resolved: 'kept',
+    });
+    expect(resolveRedetection).toHaveBeenCalledWith(42, 'minor', true, 'h-1', expect.anything());
+    expect(setModelMinorFlag).not.toHaveBeenCalled();
+  });
+
+  it('still sets minor for the match when keeping the detection failed', async () => {
+    resolveRedetection.mockResolvedValue({ ok: false, error: 'Reload the queue.' });
+    expect(await decide([held, match], 'minor:redetected,minor:file-match', kept)).toMatchObject({
+      status: 400,
+      data: {
+        error: 'Minor (held detection) not ruled: Reload the queue. Minor (file match) kept.',
+        partial: true,
+      },
+    });
+    expect(setModelMinorFlag).toHaveBeenCalledWith(42);
   });
 
   it('names what landed when the match fails after the detection was ruled', async () => {

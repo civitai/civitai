@@ -31,7 +31,10 @@ Notes on the tabs:
   `minor-flag/rule` with the text hash the moderator was shown and a `flagReview` reason; the main app refuses a
   stale hash.
 - Needs review rules a held detection through `resolve-redetection` and a file match through `set-minor` or
-  `dismiss`. A model with both is one row; the detection is ruled first, then the match. A row's time is when the
+  `dismiss`. A model with both is one row; the detection is ruled first, then the match. Flagging both keeps the
+  detection only: its minor flag settles the match (the model leaves the queue as minor), and `set-minor` on a
+  model that is already minor would snapshot the flagged settings as the ones a revert restores. For the same
+  reason "Flag as minor" on a match whose model is already minor for another reason is refused. A row's time is when the
   scan held the detection or, for a match, when the shared file was uploaded (no match timestamp is stored), and
   the list sorts oldest first.
 - Each row and detail header says which other tabs the model waits in ("also in Appeals", "also in

@@ -25,6 +25,7 @@ import {
   getFlaggedCount,
   getFlaggedModels,
   getModelFlagDetail,
+  getModelMinor,
   getNeedsReviewCount,
   getNeedsReviewModels,
   type MinorSearch,
@@ -403,15 +404,16 @@ const decideAction =
     // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
     // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
     // it escape would hide the flags already ruled. A Needs review row lists its held detections before
-    // its file match, so a kept minor detection lands before set-minor makes it a moderator's flag.
-    const outcomes = [];
+    // its file match, so a kept minor detection lands first and settles the match (`flagFileMatch`).
+    const outcomes: { flag: PlannedFlagRef; result: RuleResult }[] = [];
     for (const [i, flag] of plan.entries()) {
-      const result = await ruleFlag(modelId, flag, flag.keep, reasons[i]).catch(
-        (err: unknown): { ok: false; error: string } => {
-          console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
-          return { ok: false, error: err instanceof Error ? err.message : 'Action failed.' };
-        }
-      );
+      const result = await (flag.source === 'file-match' && flag.keep
+        ? flagFileMatch(modelId, outcomes)
+        : ruleFlag(modelId, flag, flag.keep, reasons[i])
+      ).catch((err: unknown): { ok: false; error: string } => {
+        console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
+        return { ok: false, error: err instanceof Error ? err.message : 'Action failed.' };
+      });
       outcomes.push({ flag, result });
     }
 
@@ -437,6 +439,35 @@ const decideAction =
       resolved: resolved.every((r) => r === 'closed') ? 'closed' : resolved[0],
     };
   };
+
+type PlannedFlagRef = FlagRef & { keep: boolean };
+type RuleResult = { ok: true; resolved: string } | { ok: false; error: string };
+const MATCH_KEPT: FlagRef = { label: 'minor', source: 'file-match', textHash: null };
+
+/**
+ * Flags a file match as minor. set-minor snapshots the model's current settings for a later revert
+ * when it finds no snapshot, and a minor flag applied by a held detection writes none, so set-minor on
+ * an already-minor model would record the FLAGGED settings as the ones to restore. A minor flag this
+ * decision just applied (a kept minor detection) already settles the match, which leaves the queue
+ * with it (the queue lists only models that are not minor); a model minor for any other reason is
+ * refused.
+ */
+async function flagFileMatch(
+  modelId: number,
+  earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
+): Promise<RuleResult> {
+  if (!(await getModelMinor(modelId))) return ruleFlag(modelId, MATCH_KEPT, true, null);
+  const appliedHere = earlier.some(
+    (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === 'minor'
+  );
+  return appliedHere
+    ? { ok: true, resolved: 'kept' }
+    : {
+        ok: false,
+        error:
+          'This model is already flagged minor, so the match needs no flag. Dismiss it or reload the queue.',
+      };
+}
 
 /** Keep or lift an applied flag from Auto-flagged; or decide every flag on the row. */
 export const flaggedActions: Actions = {
