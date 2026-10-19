@@ -313,7 +313,25 @@ export function planSync(
     }
   }
 
-  return [...steps, ...deactivations];
+  // A default whose live replacement is not synced (tiered, or on an unsynced product) never
+  // moves, and Stripe refuses to archive it, so it is skipped instead of failing every run.
+  const movingDefaults = new Set(
+    steps.flatMap((st) => (st.kind === 'setDefaultPrice' ? [st.liveProductId] : []))
+  );
+  const stuckDefaults = new Map(
+    sandbox.products
+      .filter((p) => p.default_price && !movingDefaults.has(p.metadata?.[LIVE_ID_KEY]))
+      .map((p) => [idOf(p.default_price as string | Stripe.Price), p.id])
+  );
+  const runnable = deactivations.map((st): PlanStep => {
+    const sandboxId = 'sandboxId' in st ? st.sandboxId : undefined;
+    const product = sandboxId && stuckDefaults.get(sandboxId);
+    return product && 'liveId' in st
+      ? { kind: 'skip', liveId: st.liveId, reason: `still the default of sandbox ${product}` }
+      : st;
+  });
+
+  return [...steps, ...runnable];
 }
 
 export type IdMap = { products: Record<string, string>; prices: Record<string, string> };

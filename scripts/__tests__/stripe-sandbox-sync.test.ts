@@ -287,6 +287,22 @@ describe('planSync + applyPlan', () => {
     expect(planSync(liveCatalogue(), sb.cat)).toEqual([]);
   });
 
+  it('skips archiving a sandbox default whose live replacement is not synced, instead of failing', async () => {
+    const sb = fakeSandbox();
+    const ids = await sync(liveCatalogue(), sb);
+
+    const live = liveCatalogue();
+    live.prices[0] = { ...live.prices[0], active: false };
+    live.prices.push(
+      price({ id: 'price_gold_tiered', product: 'prod_gold', billing_scheme: 'tiered' })
+    );
+    live.products[0] = { ...live.products[0], default_price: 'price_gold_tiered' };
+
+    await sync(live, sb);
+    expect(sb.cat.products[0].default_price).toBe(ids.prices.price_gold_m);
+    expect(planSync(live, sb.cat).map((s) => s.kind)).toEqual(['skip', 'skip']);
+  });
+
   it('matches by live_id, not by id, so a sandbox with unrelated objects gets its own copies', async () => {
     const sb = fakeSandbox();
     sb.cat.products.push(product({ id: 'prod_gold', name: 'Gold' }));
