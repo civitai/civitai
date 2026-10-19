@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { getQueryKey } from '@trpc/react-query';
 import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
@@ -92,7 +93,19 @@ export function createUnratedRefetchScheduler({
     timer = earliest === Infinity ? undefined : setTimeout(run, Math.max(earliest - now, 0));
   }
 
-  return schedule;
+  /** Starts a workflow's outputs over at the first interval, with a fresh give-up window. */
+  function restart(workflowId: string) {
+    for (const workflow of readWorkflows())
+      if (workflow.id === workflowId)
+        for (const step of workflow.steps ?? [])
+          for (const { id } of step.output ?? []) {
+            if (!id) continue;
+            firstSeen.delete(id);
+            nextAt.delete(id);
+          }
+  }
+
+  return Object.assign(schedule, { restart });
 }
 
 /** Every workflow in every cached generator list, across filters and pages. */
@@ -115,7 +128,10 @@ export const scheduleUnratedRefetch = createUnratedRefetchScheduler({
 
 /** Returns the unwatch; a workflow stays watched until every watcher has unwatched. */
 export function watchUnratedRefetch(workflowId: string) {
-  onScreen.set(workflowId, (onScreen.get(workflowId) ?? 0) + 1);
+  const watchers = onScreen.get(workflowId) ?? 0;
+  onScreen.set(workflowId, watchers + 1);
+  // Its rating may have landed while nothing re-read it, even past the give-up window.
+  if (!watchers) scheduleUnratedRefetch.restart(workflowId);
   scheduleUnratedRefetch();
   return () => {
     const count = (onScreen.get(workflowId) ?? 0) - 1;
@@ -124,10 +140,23 @@ export function watchUnratedRefetch(workflowId: string) {
   };
 }
 
-/** The feed shows no tile for an output held for its rating, so it watches the workflow instead. */
-export function watchHeldOutputs(workflows: Array<{ id: string; pendingRatingOutput: unknown[] }>) {
+type HoldingWorkflow = { id: string; pendingRatingOutput: unknown[] };
+
+export function watchHeldOutputs(workflows: HoldingWorkflow[]) {
   const unwatch = workflows
     .filter((workflow) => workflow.pendingRatingOutput.length)
     .map((workflow) => watchUnratedRefetch(workflow.id));
   return () => unwatch.forEach((fn) => fn());
+}
+
+/**
+ * For lists with no tile for an output held for its rating (the feed, the media pickers): watches
+ * the workflows holding one while the list is mounted.
+ */
+export function useWatchHeldOutputs(workflows: HoldingWorkflow[]) {
+  // Keyed by the held ids: re-watching on every cache write would restart their backoff.
+  const held = workflows.filter((workflow) => workflow.pendingRatingOutput.length);
+  const key = held.map(({ id }) => id).join(',');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => watchHeldOutputs(held), [key]);
 }

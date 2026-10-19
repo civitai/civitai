@@ -327,11 +327,25 @@ describe('the generator re-reads only what is on screen', () => {
 
   it('keeps re-reading while a second copy of the card is still on screen', async () => {
     cache('twice');
-    watchUnratedRefetch('twice');
+    const unwatch = watchUnratedRefetch('twice');
     watchUnratedRefetch('twice')();
     await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    unwatch();
 
     expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['twice']);
+  });
+
+  it('re-reads a card that comes back after longer than the give-up window', async () => {
+    cache('away');
+    watchUnratedRefetch('away')();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS * 2);
+    vi.mocked(updateWorkflowsStatus).mockClear();
+
+    const unwatch = watchUnratedRefetch('away');
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    unwatch();
+
+    expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['away']);
   });
 
   it('re-reads the workflows the feed is holding back an output for', async () => {

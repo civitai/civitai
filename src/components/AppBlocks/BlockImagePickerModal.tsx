@@ -23,6 +23,7 @@ import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/Brow
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useWatchHeldOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -505,6 +506,7 @@ function GeneratedGrid({ toDate, ...selection }: GridSelection & { toDate: Date 
       { tags: [WORKFLOW_TAGS.IMAGE], ...(toDate ? { toDate } : {}) },
       { enabled: true, ignoreFilters: true }
     );
+  useWatchHeldOutputs(data);
 
   const images = useMemo(
     () =>
