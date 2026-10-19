@@ -16,7 +16,8 @@ export type AccountLinkRow = {
   /** `null` when the strike store could not be read. */
   strikes: number | null;
   regIp?: { ips: string[] };
-  nearLogin?: { ips: string[]; closestSeconds: number; logins: number };
+  /** `ips` is a sample of at most 10; `addresses` is the full count. */
+  nearLogin?: { ips: string[]; addresses: number; closestSeconds: number; logins: number };
   /** `rank` is this counterparty's position among all of the account's Buzz counterparties. */
   buzz?: { rank: number; inCount: number; outCount: number; inAmount: number; outAmount: number };
   social?: { url: string };

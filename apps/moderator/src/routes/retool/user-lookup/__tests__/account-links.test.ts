@@ -14,7 +14,7 @@ const row = (userId: number, extra: Partial<AccountLinkRow> = {}): AccountLinkRo
 
 const strong = row(1, {
   status: 'banned',
-  nearLogin: { ips: ['1.1.1.1'], closestSeconds: 5, logins: 3 },
+  nearLogin: { ips: ['1.1.1.1'], addresses: 1, closestSeconds: 5, logins: 3 },
   buzz: { rank: 1, inCount: 9, outCount: 9, inAmount: 900, outAmount: 900 },
 });
 

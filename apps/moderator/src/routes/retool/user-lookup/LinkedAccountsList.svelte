@@ -2,6 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { LINK_CLASS, num, plural } from '$lib/format';
   import { bulkBanUrl, userLookupUrl } from '$lib/entity-url';
@@ -65,12 +66,15 @@
         >
           Check {plural(selected.length, 'selected account')} in Bulk Ban
         </Button>
-        <label class="flex items-center gap-2 text-xs text-dark-2">
+        <div class="flex items-center gap-2">
           <Checkbox
+            id="linked-include-subject"
             bind:checked={() => selected.includes(accountId), () => (ticked = toggleId(ticked, accountId))}
           />
-          Include this account
-        </label>
+          <Label for="linked-include-subject" class="text-xs font-normal text-dark-2">
+            Include this account
+          </Label>
+        </div>
       </div>
     {/if}
   {/snippet}
@@ -109,7 +113,7 @@
               {#if acct.nearLogin}
                 <li>
                   Logged in {gapLabel(acct.nearLogin.closestSeconds)} apart at closest, on
-                  {plural(acct.nearLogin.ips.length, 'shared address', 'shared addresses')}
+                  {plural(acct.nearLogin.addresses, 'shared address', 'shared addresses')}
                   ({plural(acct.nearLogin.logins, 'login')})
                 </li>
               {/if}

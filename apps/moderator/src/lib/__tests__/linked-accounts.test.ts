@@ -10,7 +10,7 @@ const row = (userId: number, extra: Partial<AccountLinkRow> = {}): AccountLinkRo
   ...extra,
 });
 
-const nearOnly = { nearLogin: { ips: ['1.1.1.1'], closestSeconds: 5, logins: 1 } };
+const nearOnly = { nearLogin: { ips: ['1.1.1.1'], addresses: 1, closestSeconds: 5, logins: 1 } };
 const buzz = { buzz: { rank: 1, inCount: 3, outCount: 2, inAmount: 300, outAmount: 200 } };
 
 describe('rankAccountLinks', () => {

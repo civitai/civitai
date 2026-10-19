@@ -13,7 +13,9 @@
 {#if last.value}
   <div class="mb-4">
     <LinkedAccountsList result={last.value} {accountId} />
-    {#if last.failed}
+    {#if last.loading}
+      <p class="mt-2 text-xs text-dark-2">Refreshing…</p>
+    {:else if last.failed}
       <p class="mt-2 text-xs text-red-300">Refresh failed; showing the last answer.</p>
     {/if}
   </div>

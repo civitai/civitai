@@ -10,7 +10,8 @@ export type LinkConfig = {
 
 const MAX = {
   LINKED_ACCOUNTS_LOGIN_WINDOW_SECONDS: 86_400,
-  LINKED_ACCOUNTS_LOGIN_SAMPLE: 1_000,
+  // Each sampled login adds ~265 bytes of SQL; ClickHouse refuses a query over 256 KiB.
+  LINKED_ACCOUNTS_LOGIN_SAMPLE: 500,
   LINKED_ACCOUNTS_BUZZ_LOOKBACK_DAYS: 3_650,
 } as const;
 

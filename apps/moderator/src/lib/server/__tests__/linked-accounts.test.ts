@@ -87,8 +87,8 @@ describe('getAccountLinks', () => {
   it('merges one account found by two signals into one row, ranked above a single-signal one', async () => {
     ownLogins.mockResolvedValue([{ ip: '1.1.1.1', ts: 5000 }]);
     neighbours.mockResolvedValue([
-      { userId: 8, ips: ['1.1.1.1'], closestSeconds: 10, logins: 1 },
-      { userId: 7, ips: ['1.1.1.1'], closestSeconds: 30, logins: 2 },
+      { userId: 8, ips: ['1.1.1.1'], addresses: 1, closestSeconds: 10, logins: 1 },
+      { userId: 7, ips: ['1.1.1.1'], addresses: 1, closestSeconds: 30, logins: 2 },
     ]);
     counterparties.mockResolvedValue([
       { other: 7, rank: 2, outCount: 3, inCount: 4, outAmount: 30, inAmount: 40 },
@@ -116,6 +116,14 @@ describe('getAccountLinks', () => {
       .find((sql) => sql.includes("'2.2.2.2'"));
     expect(neighbourSql).toBeDefined();
     expect(neighbourSql).not.toContain('OR 1=1');
+  });
+
+  it('never matches on the catch-all IPv6 bucket every mapped address falls into', async () => {
+    ownLogins.mockResolvedValue([{ ip: '::ffff:7f00:1', ts: 1000 }]);
+
+    const { status } = await getAccountLinks(SUBJECT, ON);
+    expect(status.nearLogin).toBe('ok');
+    expect(query.mock.calls.some(([sql]) => sql.includes("'::/64'"))).toBe(false);
   });
 
   it('still returns the other signals when one fails', async () => {

@@ -54,7 +54,9 @@ async function nearLoginLinks(
   for (const r of mine) {
     const key = ipCluster(r.ip);
     const ts = Number(r.ts);
-    if (key && Number.isInteger(ts)) byCluster.set(key, [...(byCluster.get(key) ?? []), ts]);
+    // `clusterSql` puts every mapped or unparseable IPv6 row in `::/64`; as a key it links to all of them.
+    if (key && key !== '::/64' && Number.isInteger(ts))
+      byCluster.set(key, [...(byCluster.get(key) ?? []), ts]);
   }
   if (!byCluster.size) return { links: [], truncated: false };
 
@@ -77,11 +79,13 @@ async function nearLoginLinks(
   const rows = await ch.$query<{
     userId: number;
     ips: string[];
+    addresses: number;
     closestSeconds: number;
     logins: number;
   }>(`
     SELECT targetUserId AS userId,
       groupUniqArray(10)(${cluster}) AS ips,
+      uniqExact(${cluster}) AS addresses,
       min(arrayMin(arrayMap(x -> abs(x - toUnixTimestamp(time)), ${ownTimes}[${cluster}]))) AS closestSeconds,
       count() AS logins
     FROM default.userActivities
@@ -99,6 +103,7 @@ async function nearLoginLinks(
       userId: Number(r.userId),
       nearLogin: {
         ips: r.ips,
+        addresses: Number(r.addresses),
         closestSeconds: Number(r.closestSeconds),
         logins: Number(r.logins),
       },
