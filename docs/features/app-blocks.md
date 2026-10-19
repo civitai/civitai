@@ -260,6 +260,11 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
+  storageMode?: 'local-preview';       // dev-tunnel frames only. In this mode an SDK that
+                                       // reads the field serves the document store from a
+                                       // local in-memory store instead of the real storage
+                                       // routes. Set per surface by the page host, never from
+                                       // token scopes; absent on every other surface.
 }
 ```
 

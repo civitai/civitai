@@ -507,3 +507,15 @@ describe('IframeHost REQUEST_TOKEN → TOKEN_REFRESH_RESPONSE.requestId', () => 
     posts.stop();
   });
 });
+
+describe('IframeHost BLOCK_INIT — never carries storageMode', () => {
+  // INVARIANT GUARD, not regression coverage: the model slot never emitted this
+  // field. It pins that the local-preview signal stays a page-host, per-surface
+  // decision and does not leak into the model slot.
+  test('the model slot omits storageMode, with a token that has no storage scope', async () => {
+    const { posts, init } = await mountAndCaptureInit(signedInContext());
+    expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
+    expect(init).not.toHaveProperty('storageMode');
+    posts.stop();
+  });
+});

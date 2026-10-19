@@ -103,6 +103,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 // eslint-disable-next-line import/first
 import type { BlockInitPayload } from '~/components/AppBlocks/types';
+// eslint-disable-next-line import/first
+import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
 
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 
@@ -166,7 +168,7 @@ const baseProps = {
   appName: 'Lanternfish Studio',
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
-  surface: 'page-run' as const,
+  surface: 'page-run' as BlockHostSurface,
   // Required. These suites cover the DEFAULT (host-veil) presentation;
   // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
   bootSkeleton: false,
@@ -447,4 +449,40 @@ describe('PageBlockHost REQUEST_TOKEN → TOKEN_REFRESH_RESPONSE.requestId', () 
     ).toEqual(['req-thistle-8806', 'req-cobweb-2371']);
     posts.stop();
   });
+});
+
+describe('PageBlockHost BLOCK_INIT — storageMode is set from the SURFACE', () => {
+  // Negative cases use a token with NO storage scope: the input a scope-derived
+  // signal would key on, so such a signal would wrongly fire there.
+  const NO_STORAGE_SCOPES = { declaredScopes: ['ai:write'] };
+
+  test('🔴 dev-tunnel emits storageMode: "local-preview"', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      ...NO_STORAGE_SCOPES,
+      surface: 'dev-tunnel',
+    });
+    expect(init.storageMode).toBe('local-preview');
+    posts.stop();
+  });
+
+  test('dev-tunnel emits it even when the token DOES carry a storage scope', async () => {
+    const { posts, init } = await mountAndCaptureInit({ surface: 'dev-tunnel' });
+    expect(init.token.scopes).toContain('apps:storage:read');
+    expect(init.storageMode).toBe('local-preview');
+    posts.stop();
+  });
+
+  test.each(['page-run', 'private-run', 'review-preview', 'model-slot'] as const)(
+    '🔴 %s does NOT emit storageMode, even when the token lacks apps:storage',
+    async (surface) => {
+      const { posts, init } = await mountAndCaptureInit({
+        ...NO_STORAGE_SCOPES,
+        surface,
+      });
+      expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
+      expect(init.token.scopes).toContain('ai:write');
+      expect(init).not.toHaveProperty('storageMode');
+      posts.stop();
+    }
+  );
 });

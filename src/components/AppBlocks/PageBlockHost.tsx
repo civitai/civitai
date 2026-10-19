@@ -10,6 +10,7 @@ import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   blockInitFragmentEnabled,
+  blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
   type BlockHostSurface,
@@ -1377,8 +1378,11 @@ export function PageBlockHost({
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
+      // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
+      ...blockInitStorageMode(surface),
     }),
     [
+      surface,
       appId,
       blockId,
       blockInstanceId,

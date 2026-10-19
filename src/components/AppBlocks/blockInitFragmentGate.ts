@@ -225,6 +225,43 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
 };
 
 /**
+ * Does BLOCK_INIT on this surface carry `storageMode: 'local-preview'`?
+ *
+ * In that mode an SDK that reads the field serves the block's document store
+ * from a local, in-memory store instead of the real storage routes, so code that
+ * has not been reviewed can be exercised against the storage interface while
+ * real storage stays closed to it.
+ *
+ * Decided by the SURFACE the host mounted, never by the token's scopes or by
+ * anything the block sends: a published app whose token lacks `apps:storage`
+ * must keep reaching the real routes and seeing `insufficient_scope`, and a
+ * scope-derived signal would silently move it onto a local store.
+ *
+ * `dev-tunnel` covers every frame on that surface, App Assistant's live preview
+ * included. `IframeHost` does not read this record, so `model-slot` never emits
+ * the field. Total, like the records above, so a new surface must decide.
+ */
+export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': false,
+  'dev-tunnel': true,
+  'review-preview': false,
+  'private-run': false,
+};
+
+/**
+ * The `storageMode` fragment of a BLOCK_INIT payload for this surface: the key is
+ * present only where {@link BLOCK_HOST_LOCAL_PREVIEW_STORAGE} says so, and
+ * ABSENT (not `undefined`, which postMessage would still deliver as a key)
+ * everywhere else.
+ */
+export function blockInitStorageMode(surface: BlockHostSurface): {
+  storageMode?: 'local-preview';
+} {
+  return BLOCK_HOST_LOCAL_PREVIEW_STORAGE[surface] ? { storageMode: 'local-preview' } : {};
+}
+
+/**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`
  * (whichever the surface knows — the model slot has a `blockId`, the page host
  * has both).
