@@ -43,6 +43,10 @@ Notes on the tabs:
   Auto-flagged", "also in Needs review"). In the header the chip links to the model in that tab when the viewer
   holds it. With an open appeal, confirming an applied flag is disabled (the main app refuses it) while reverting
   proceeds and closes the appeal; a held detection under appeal is locked both ways.
+- Appeals filter by flag (All, Minor, Real person) and source (Hash, Text scan, Moderator). An appeal whose
+  model is no longer flagged, or whose flag has no recorded source, has no chip of its own: it lists under All
+  and its row says "no longer flagged" or "no flag record". Old `?flag=unflagged` and `?source=none` links open
+  All.
 - Search takes a model id, a user id, a username or part of a model name, and runs 300 ms after typing stops
   (Enter runs it at once). Selection is mirrored in `?item=`.
 - Writes go through the main app's `/api/mod/minor-flag/*` endpoints (`confirm`, `revert`, `set-minor`,

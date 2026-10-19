@@ -385,21 +385,11 @@ const flagSourceSql = sql`COALESCE(
 
 const appealSourcePredicate = (source: AppealSource) => {
   if (source === 'all') return sql`TRUE`;
-  if (source === 'none')
-    return sql`(${flagSourceSql} IS NULL OR ${flagSourceSql} NOT IN (${sql.join(
-      Object.values(SNAPSHOT_SOURCE)
-    )}))`;
   return sql`${flagSourceSql} = ${SNAPSHOT_SOURCE[source]}`;
 };
 
 const appealFlagPredicate = (flag: AppealFlag) =>
-  flag === 'minor'
-    ? sql`m.minor`
-    : flag === 'poi'
-    ? sql`m.poi`
-    : flag === 'unflagged'
-    ? sql`(NOT m.minor AND NOT m.poi)`
-    : sql`TRUE`;
+  flag === 'minor' ? sql`m.minor` : flag === 'poi' ? sql`m.poi` : sql`TRUE`;
 
 const flaggedAtSql = sql`(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz`;
 

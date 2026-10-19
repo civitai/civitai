@@ -43,6 +43,22 @@ describe('Model Flag Appeals', () => {
     }
   );
 
+  it.each(['?flag=unflagged', '?source=none', '?flag=unflagged&source=none'])(
+    'falls back to All for the retired filter %s',
+    async (query) => {
+      const data = await (
+        load as unknown as (e: { url: URL }) => Promise<{ appealFilters: unknown }>
+      )({
+        url: new URL(`http://x/models/flags/appeals${query}`),
+      });
+      const all = { source: 'all', flag: 'all', sort: 'oldest' };
+      expect(data.appealFilters).toEqual(all);
+      expect(getMinorFlagAppealsForReview).toHaveBeenCalledWith(
+        expect.objectContaining({ filters: all })
+      );
+    }
+  );
+
   it('no longer carries the detection verdict actions', () => {
     expect(Object.keys(actions!).sort()).toEqual(['overturnAppeal', 'splitAppeal', 'upholdAppeal']);
   });

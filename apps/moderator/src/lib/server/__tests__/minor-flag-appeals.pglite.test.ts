@@ -198,7 +198,6 @@ describe('source filter', () => {
     ['text-scan', [3, 7]],
     ['hash', [2]],
     ['moderator', [1, 5]],
-    ['none', [4, 6]],
   ] as const)('%s', async (source, expected) => {
     expect(await ids({ source })).toEqual(expected);
   });
@@ -208,7 +207,7 @@ describe('text-scan real-person flag with no snapshot', () => {
   it('reads as a text-scan source in the row, the filter and the counts', async () => {
     const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
     expect(items.find((i) => i.modelId === 7)?.flagSource).toBe('text-scan');
-    expect(await ids({ source: 'none' })).not.toContain(7);
+    expect(await ids({ source: 'text-scan' })).toContain(7);
   });
 });
 
@@ -217,13 +216,12 @@ describe('flag filter', () => {
     ['all', [1, 2, 3, 4, 5, 6, 7]],
     ['minor', [1, 2, 6]],
     ['poi', [2, 3, 7]],
-    ['unflagged', [4, 5]],
   ] as const)('%s', async (flag, expected) => {
     expect(await ids({ flag })).toEqual(expected);
   });
 
   it('combines with the source filter', async () => {
-    expect(await ids({ source: 'moderator', flag: 'unflagged' })).toEqual([5]);
+    expect(await ids({ source: 'moderator', flag: 'minor' })).toEqual([1]);
     expect(await ids({ source: 'text-scan', flag: 'minor' })).toEqual([]);
   });
 });
@@ -294,8 +292,8 @@ describe('facet groups', () => {
   it('yields counts that match what each filter returns', async () => {
     const groups = await getMinorFlagAppealGroups({});
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
-    expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2, none: 2 });
-    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3, unflagged: 2 });
+    expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2 });
+    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3 });
   });
 
   it('honours the search', async () => {

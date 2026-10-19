@@ -54,7 +54,7 @@
   const total = $derived(data.facets?.source[data.appealFilters.source]);
 
   // Flag first, with "All" clearing it; the source chips sit after it and switch themselves off.
-  const CHIP_SOURCES = ['hash', 'text-scan', 'moderator', 'none'] as const satisfies readonly AppealSource[];
+  const CHIP_SOURCES = ['hash', 'text-scan', 'moderator'] as const satisfies readonly AppealSource[];
   const chipGroups = $derived.by(() => {
     const f = data.appealFilters;
     return [
@@ -65,7 +65,6 @@
         labels: FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_APPEAL_FILTERS.flag,
-        more: ['unflagged'],
       },
       {
         key: 'source',
@@ -75,7 +74,6 @@
         active: f.source,
         defaultValue: DEFAULT_APPEAL_FILTERS.source,
         toggle: true,
-        more: ['moderator', 'none'],
       },
     ] satisfies ChipGroup[];
   });
