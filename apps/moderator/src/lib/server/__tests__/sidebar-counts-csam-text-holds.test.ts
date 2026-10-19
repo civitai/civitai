@@ -34,6 +34,7 @@ vi.mock('../minor-hash.service', () => ({
   getRedetectedCount: async () => 5,
 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
+vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
 vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
