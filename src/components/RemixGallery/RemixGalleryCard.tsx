@@ -179,26 +179,33 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // where it is false this query can only return nothing. The mutations that add
   // an entry here (approving, submitting) invalidate the whole placement router,
   // so `hasEntries` refetches, flips, and this runs.
-  //
-  // ⚠️ A disabled query keeps its cached page and is skipped by invalidation. That
-  // is harmless today only because every remix mutation invalidates the WHOLE
-  // router: when the last entry goes, this query is still enabled at that moment
-  // and refetches empty alongside the visibility. Invalidating the visibility
-  // alone would leave the removed entry drawn.
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.placement.getRemixGallery.useInfiniteQuery(
-      { imageId, browsingLevel },
-      {
-        enabled: enabled && !!visibility?.hasEntries,
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
-    );
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage: morePages,
+    isFetchingNextPage,
+  } = trpc.placement.getRemixGallery.useInfiniteQuery(
+    { imageId, browsingLevel },
+    {
+      enabled: enabled && !!visibility?.hasEntries,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
 
   if (!enabled || !visibility?.render) return null;
 
-  const items: RemixGalleryItem[] = dedupeGalleryItems(
-    data?.pages.flatMap((page) => page.items) ?? []
-  );
+  // 🔴 Drawn through `hasEntries`, never straight off `data`. Once it is false the
+  // query above is disabled, and a disabled query keeps its cached page and is
+  // skipped by invalidation — so when the last entry goes, `data` can still hold
+  // it. Today every remix mutation also refetches this page, but that is a
+  // property of each caller's invalidation, and one that narrowed it would leave
+  // a removed entry on screen, still clickable.
+  const listable = !!visibility.hasEntries;
+  const hasNextPage = listable && !!morePages;
+  const items: RemixGalleryItem[] = listable
+    ? dedupeGalleryItems(data?.pages.flatMap((page) => page.items) ?? [])
+    : [];
   // Trimming only applies while more entries are waiting. On the last page the
   // remainder is everything that is left, and dropping it would make entries
   // the owner was paid for permanently unreachable.

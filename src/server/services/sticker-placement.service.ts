@@ -528,6 +528,12 @@ export type StickerPlacementView = {
   isPending: boolean;
   /** Whether this placement carries a note the viewer may read. */
   hasComment: boolean;
+  /**
+   * Kept off this image by a moderator flag, so it is not in the approved count.
+   * Set only on a moderator's combined listing — the one listing that shows such
+   * rows — and absent everywhere else, so no other payload changes shape.
+   */
+  keptOff?: true;
 };
 
 /**
@@ -816,7 +822,9 @@ function countApprovedPlacements(
 function toStickerPlacementViews(
   parsed: ReturnType<typeof parseRows<StickerPlacementRow>>,
   keptOff: Set<number>,
-  viewerId?: number
+  viewerId?: number,
+  /** Rows to list but mark as kept off — a moderator's view of what `keptOff` hides. */
+  markedKeptOff: Set<number> = new Set()
 ): StickerPlacementView[] {
   return parsed.flatMap(({ row, data }) => {
     if (!data || keptOff.has(row.id)) return [];
@@ -840,6 +848,7 @@ function toStickerPlacementViews(
         data: { ...data, comment: undefined, commentHidden: undefined },
         isPending: row.status === 'pending',
         hasComment: !!visibleStickerComment(data, isParty),
+        ...(markedKeptOff.has(row.id) ? { keptOff: true as const } : {}),
       },
     ];
   });
@@ -920,11 +929,11 @@ export async function getStickerPlacementsAndCounts({
   return {
     // A moderator's listing skips the kept-off filter so they can act on what
     // it hides; their COUNT does not, exactly as the separate procedures behave.
-    placements: toStickerPlacementViews(
-      parsed,
-      isModerator ? new Set<number>() : keptOff,
-      viewerId
-    ),
+    // Those rows are marked, so removing one does not take it off a count that
+    // never included it.
+    placements: isModerator
+      ? toStickerPlacementViews(parsed, new Set<number>(), viewerId, keptOff)
+      : toStickerPlacementViews(parsed, keptOff, viewerId),
     counts: countApprovedPlacements(rows, keptOff),
   };
 }

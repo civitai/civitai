@@ -10,6 +10,7 @@ import {
 } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { getQueryKey } from '@trpc/react-query';
 import { queryClient, trpc } from '~/utils/trpc';
 
 /**
@@ -235,6 +236,13 @@ describe('removing a placement', () => {
     session.user = { id: 7 };
     await renderSurface();
     const callsBefore = requests.length;
+    // A count-only entry for the same images, as an earlier signed-out view of them leaves behind.
+    const countOnlyKey = getQueryKey(
+      trpc.placement.getStickerPlacementCounts,
+      { imageIds: [1120, 1121] },
+      'query'
+    );
+    queryClient.setQueryData(countOnlyKey, { 1120: 5, 1121: 6 });
 
     await act(async () => {
       await forget?.(placementOf(1120).id);
@@ -242,6 +250,8 @@ describe('removing a placement', () => {
     await settle();
 
     expect(seen.get(1120)).toEqual({ count: countOf(1120) - 1, placementIds: [] });
+    // That entry loses the same one, for the removed row's image only.
+    expect(queryClient.getQueryData(countOnlyKey)).toEqual({ 1120: 4, 1121: 6 });
     // A neighbour in the same chunk, and one in the other chunk, are untouched.
     expect(seen.get(1121)).toEqual({
       count: countOf(1121),

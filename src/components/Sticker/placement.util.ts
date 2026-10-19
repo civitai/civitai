@@ -39,6 +39,8 @@ export type PlacedSticker = {
    * with the hover card instead.
    */
   hasComment: boolean;
+  /** On a moderator's listing only: kept off this image, so not in its count. */
+  keptOff?: true;
 };
 
 /** What `getStickerPlacementsAndCounts` returns: the listing and the approved counts. */
@@ -193,7 +195,8 @@ export function dropPlacementFromList(
 
   return {
     placements: placements.filter((placement) => placement.id !== placementId),
-    countedOn: hit.isPending ? undefined : hit.imageId,
+    // Neither a pending row nor a kept-off one is in the approved count.
+    countedOn: hit.isPending || hit.keptOff ? undefined : hit.imageId,
   };
 }
 
@@ -259,19 +262,10 @@ export function useForgetStickerPlacement() {
     async (placementId: number) => {
       let countedOn: number | undefined;
 
-      queryClient.setQueriesData<PlacedSticker[]>(
-        { queryKey: getQueryKey(trpc.placement.getStickerPlacements), exact: false },
-        (placements) => {
-          const result = dropPlacementFromList(placements, placementId);
-          // Assigned only on the chunk that held the row; every other chunk
-          // returns `undefined`, which skips the write and leaves this alone.
-          if (result.countedOn !== undefined) countedOn = result.countedOn;
-          return result.placements;
-        }
-      );
-
-      // The combined call is where current surfaces hold their placements, and
-      // its counts with them, so each entry that held the row loses both at once.
+      // The combined call is the only place the client holds placements, and it
+      // holds their counts with them, so each entry that held the row loses both
+      // at once. Assigned only on an entry that held the row; every other entry
+      // returns `undefined`, which skips the write and leaves it alone.
       queryClient.setQueriesData<StickerPlacementBundle>(
         { queryKey: getQueryKey(trpc.placement.getStickerPlacementsAndCounts), exact: false },
         (bundle) => {
@@ -280,6 +274,9 @@ export function useForgetStickerPlacement() {
           return result.bundle;
         }
       );
+
+      // A count-only entry for the same image (an earlier signed-out view of it)
+      // is a separate cache entry with the same number in it.
 
       if (countedOn !== undefined)
         queryClient.setQueriesData<Record<number, number>>(

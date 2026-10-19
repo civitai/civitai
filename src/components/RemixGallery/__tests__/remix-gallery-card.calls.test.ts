@@ -137,6 +137,18 @@ async function invalidatePlacements() {
   });
 }
 
+/** Only the visibility query, leaving the gallery page's cached data untouched. */
+async function invalidateVisibilityOnly() {
+  await act(async () => {
+    await queryClient.invalidateQueries({
+      predicate: ({ queryKey }) =>
+        Array.isArray(queryKey[0]) &&
+        queryKey[0][0] === 'placement' &&
+        queryKey[0][1] === 'getRemixGalleryVisibility',
+    });
+  });
+}
+
 const count = (path: string) => requests.filter((request) => request === path).length;
 
 /** Polls a condition the render must reach, bounded so a regression fails rather than hangs. */
@@ -178,21 +190,25 @@ describe('the remix gallery card on an image view', () => {
     expect(container.textContent).not.toContain('Get your remix seen here');
   });
 
-  // INVARIANT GUARD on the real removal path. Once `hasEntries` is false the gallery query is
-  // disabled, and a disabled query keeps its cached page — so this holds only because a removal
-  // invalidates the whole router, refetching the page while it is still enabled.
+  // 🔴 Once `hasEntries` is false the gallery query is disabled, and a disabled query keeps its
+  // cached page and is skipped by invalidation. Only the VISIBILITY is invalidated here — the
+  // narrowest refresh a caller could make — so the page is never refetched and still holds the
+  // entry; the card must stop drawing it on `hasEntries` alone.
   it('drops the last entry from the grid as soon as it is removed', async () => {
     hasEntries = true;
     await renderCard();
     await until(() => entries().length > 0);
     expect(entries()).toEqual([String(ENTRY_IMAGE)]);
+    const pagesBefore = count('placement.getRemixGallery');
 
     hasEntries = false;
-    await invalidatePlacements();
+    await invalidateVisibilityOnly();
     await until(() => container.textContent?.includes('Get your remix seen here') ?? false);
 
     expect(entries()).toEqual([]);
     expect(container.textContent).toContain('Get your remix seen here');
+    // The control: the page really was not refetched, so the cache still held the entry.
+    expect(count('placement.getRemixGallery')).toBe(pagesBefore);
   });
 
   // The other direction, and the positive control for the first test's window: the same harness

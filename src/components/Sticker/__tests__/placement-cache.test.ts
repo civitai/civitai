@@ -108,6 +108,20 @@ describe('dropping a removed placement out of a cached combined response', () =>
     expect(result.countedOn).toBeUndefined();
   });
 
+  // A moderator's listing carries rows kept off the image, which the approved count never
+  // included; removing one must not take a sticker off the badge.
+  it('leaves the count alone for a kept-off row on a moderator’s listing', () => {
+    const KEPT_OFF = { ...placement(5004, 8100), keptOff: true as const };
+    const result = dropPlacementFromBundle(
+      { placements: [APPROVED, KEPT_OFF], counts: { 8100: 4 } },
+      KEPT_OFF.id
+    );
+
+    expect(result.bundle?.placements.map((p) => p.id)).toEqual([APPROVED.id]);
+    expect(result.bundle?.counts).toEqual({ 8100: 4 });
+    expect(result.countedOn).toBeUndefined();
+  });
+
   it('writes nothing to an entry that did not hold the row', () => {
     expect(dropPlacementFromBundle(bundle, 9999)).toEqual({
       bundle: undefined,
