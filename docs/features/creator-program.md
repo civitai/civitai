@@ -181,6 +181,8 @@ Tiered: e.g., 200,000 buzz = 0% on first 100k + 5% on next 100k = 5,000 fee.
 
 **Minimum withdrawal:** $50 (`MIN_WITHDRAWAL_AMOUNT = 5000` in cents)
 
+**Membership is only a banking gate.** `bankBuzz` requires an active membership; `extractBuzz`, the distribution job and `withdrawCash` do not. A member who lapses mid-month is still paid for what they banked and can withdraw once $50 is ready and payment setup is done.
+
 ## Jobs
 
 **`src/server/jobs/creators-program-jobs.ts`**
@@ -305,6 +307,8 @@ Bitwise flags on `User.onboarding`:
 | `CompensationPoolCard` | Same file | Unified pool value and size |
 | `EstimatedEarningsCard` | Same file | Per-type banked breakdown + value estimate |
 | `WithdrawCashCard` | Same file | Cash withdrawal interface |
+| `MembershipLapsedCard` | Same file | Notice for an onboarded member whose membership lapsed: banking is closed, banked Buzz still pays out at month end, withdrawing needs $50 ready plus payment setup |
+| `getPaidCards` | `src/components/Buzz/CreatorProgramV2/getPaidCards.ts` | Which Bank / Extract / Estimated Earnings / Withdraw cards render for a phase and lapse state; only Bank is hidden when lapsed |
 | `BankableBuzzMeter` | `src/components/Buzz/CreatorProgramV2/BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 
 ### Hooks (`CreatorProgram.util.ts`)
