@@ -5,8 +5,13 @@ import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
+import { getModel } from '~/server/services/model.service';
 import { fetchThroughCacheWithDeadline } from '~/server/utils/cache-helpers';
-import { modelDetailPublicCacheKey } from '~/server/utils/model-detail-cache-key';
+import {
+  bustModelDetailPublicCache,
+  modelDetailPublicCacheKey,
+} from '~/server/utils/model-detail-cache-key';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 /**
  * A shared cache for the model row `model.getById` starts from, behind the
@@ -36,7 +41,12 @@ import { modelDetailPublicCacheKey } from '~/server/utils/model-detail-cache-key
  * moderators-first rollout exercises the cached path.
  */
 
-/** How stale the row can be when a write path does not bust it. */
+/**
+ * How long the row is served before a read refreshes it, when a write path does not bust it. The
+ * entry itself lives twice this (`fetchThroughCache` keeps it for stale-while-refresh), so a request
+ * that loses the refresh lock can be served it for up to 2x this while another request refreshes:
+ * normally milliseconds, longer only while the refresh itself is slow.
+ */
 export const MODEL_DETAIL_PUBLIC_CACHE_TTL = CacheTTL.xs;
 
 /**
@@ -48,8 +58,9 @@ export const MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS = 500;
 
 const CACHE_NAME = REDIS_KEYS.CACHES.MODEL_DETAIL_PUBLIC;
 
+// The same read `getModel` makes, on the client the lag check already chose.
 function readModelWithDetails(db: typeof dbRead, id: number) {
-  return db.model.findFirst({ where: { id }, select: modelWithDetailsSelect });
+  return getModel({ id, select: modelWithDetailsSelect, db });
 }
 
 export type ModelWithDetailsRow = NonNullable<Awaited<ReturnType<typeof readModelWithDetails>>>;
@@ -74,6 +85,9 @@ function toCached(row: ModelWithDetailsRow | null): CachedModelRow | null {
   };
 }
 
+// Returns objects no other request holds: `getModelHandler` edits file metadata in place
+// (`excludeTrainingData`), and on the cache's fail-open path concurrent requests on one process can
+// be handed the same origin result. Versions, files and file metadata are copied for that reason.
 function fromCached(row: CachedModelRow | null): ModelWithDetailsRow | null {
   if (!row) return null;
   return {
@@ -81,6 +95,13 @@ function fromCached(row: CachedModelRow | null): ModelWithDetailsRow | null {
     modelVersions: row.modelVersions.map((version) => ({
       ...version,
       licensingFee: version.licensingFee == null ? null : new Prisma.Decimal(version.licensingFee),
+      files: version.files.map((file) => ({
+        ...file,
+        metadata:
+          file.metadata && typeof file.metadata === 'object' && !Array.isArray(file.metadata)
+            ? { ...file.metadata }
+            : file.metadata,
+      })),
     })),
   };
 }
@@ -108,14 +129,31 @@ export async function getModelWithDetailsCached({
     },
     { ttl: MODEL_DETAIL_PUBLIC_CACHE_TTL, deadlineMs: MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS }
   );
-  (missed ? cacheMissCounter : cacheHitCounter).inc({
+  if (missed) {
+    // A write can land while this read is in flight: its delete then precedes our refill, and the
+    // replica we read may predate it. Writers set the lag mark before deleting
+    // (`preventReplicationLag`), so a mark seen now means what we stored may be the old row: drop it
+    // and read the primary, as the lag-window path above does. Bounded like the cache read; a slow
+    // answer is taken as "no write", the case it almost always is.
+    const after = await withTimeoutFallback(
+      getDbWithoutLag('model', id),
+      MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS,
+      dbRead
+    );
+    if (after !== dbRead) {
+      cacheMissCounter.inc({ cache_name: CACHE_NAME, cache_type: 'fetchThroughCache' });
+      await bustModelDetailPublicCache(id);
+      return readModelWithDetails(after, id);
+    }
+  }
+
+  const row = fromCached(cached);
+  // The owner is known only once the row is read; their view is a fresh read, counted as a miss so
+  // the hit ratio reflects rows actually served from the cache.
+  const ownerRefresh = !!row && viewerId !== undefined && row.user.id === viewerId && !missed;
+  (missed || ownerRefresh ? cacheMissCounter : cacheHitCounter).inc({
     cache_name: CACHE_NAME,
     cache_type: 'fetchThroughCache',
   });
-
-  const row = fromCached(cached);
-  if (row && viewerId !== undefined && row.user.id === viewerId && !missed) {
-    return readModelWithDetails(dbRead, id);
-  }
-  return row;
+  return ownerRefresh ? readModelWithDetails(dbRead, id) : row;
 }

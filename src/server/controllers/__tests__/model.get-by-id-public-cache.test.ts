@@ -329,6 +329,21 @@ describe('model.getById with the shared model-row cache', () => {
     });
   });
 
+  it('keeps training data for one request when a concurrent one strips it during a cache outage', async () => {
+    // With the cache unreadable, concurrent requests for one model share a single database read.
+    redisMock.redis.packed.get.mockRejectedValue(new Error('cache unavailable') as never);
+
+    const [stripped, full] = await Promise.all([
+      getById('moderator', true, { excludeTrainingData: true }),
+      getById('moderator', true),
+    ]);
+    expect(dbMock.dbRead.model.findFirst).toHaveBeenCalledTimes(1);
+    expect(stripped.modelVersions[0].files[0].metadata).not.toHaveProperty('trainingResults');
+    expect(full.modelVersions[0].files[0].metadata).toHaveProperty('trainingResults', {
+      epochs: 5011,
+    });
+  });
+
   it('gives the owner their own latest row, never the cached one', async () => {
     await getById('anon', true); // caches 'Cached Model'
     dbMock.dbRead.model.findFirst.mockImplementation((async () => modelRow('Renamed')) as never);

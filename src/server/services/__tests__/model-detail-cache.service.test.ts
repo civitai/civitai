@@ -18,6 +18,7 @@ import {
   MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS,
   getModelWithDetailsCached,
 } from '~/server/services/model-detail-cache.service';
+import { modelDetailPublicCacheKey } from '~/server/utils/model-detail-cache-key';
 
 /**
  * The shared model-row cache on its own: freshness, failure handling and the cases that skip it.
@@ -32,7 +33,7 @@ const row = (name: string) => ({
   id: MODEL_ID,
   name,
   user: { id: OWNER_ID },
-  modelVersions: [{ id: 1, licensingFee: new Prisma.Decimal('3.25') }],
+  modelVersions: [{ id: 1, licensingFee: new Prisma.Decimal('3.25'), files: [] }],
 });
 
 const replicaRead = dbMock.dbRead.model.findFirst;
@@ -72,10 +73,10 @@ describe('getModelWithDetailsCached', () => {
     expect(await nameOf()).toBe('from-replica');
     replicaRead.mockResolvedValue(row('after-ttl') as never);
 
-    vi.setSystemTime(Date.now() + 59_000);
+    vi.setSystemTime(Date.now() + 59_900);
     expect(await nameOf()).toBe('from-replica');
 
-    vi.setSystemTime(Date.now() + 2_000);
+    vi.setSystemTime(Date.now() + 200);
     expect(await nameOf()).toBe('after-ttl');
     expect(replicaRead).toHaveBeenCalledTimes(2);
   });
@@ -108,12 +109,32 @@ describe('getModelWithDetailsCached', () => {
     expect(await nameOf()).toBe('from-replica');
   });
 
+  it('drops what it just cached when a write landed while it was reading', async () => {
+    // The lag check passes before the read; the write's lag mark is there by the time it finishes.
+    getDbWithoutLag.mockResolvedValueOnce(dbRead).mockResolvedValue(dbWrite);
+
+    expect(await nameOf()).toBe('from-primary');
+    expect(store.peek(modelDetailPublicCacheKey(MODEL_ID))).toBeNull();
+
+    // Once the window has passed, the next read caches again.
+    getDbWithoutLag.mockResolvedValue(dbRead);
+    expect(await nameOf()).toBe('from-replica');
+    expect(store.peek(modelDetailPublicCacheKey(MODEL_ID))).not.toBeNull();
+  });
+
   it("gives the model's owner a fresh read instead of the cached row", async () => {
     await nameOf();
     replicaRead.mockResolvedValue(row('owner-fresh') as never);
 
     expect(await nameOf(OWNER_ID)).toBe('owner-fresh');
     expect(await nameOf(OWNER_ID + 1)).toBe('from-replica');
+  });
+
+  it('returns the database row when writing it to the cache fails', async () => {
+    redisMock.redis.packed.set.mockRejectedValue(new Error('cache unavailable') as never);
+
+    expect(await nameOf()).toBe('from-replica');
+    expect(replicaRead).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the database when the cache read fails', async () => {
@@ -164,6 +185,8 @@ describe('getModelWithDetailsCached', () => {
     expect(replicaRead).toHaveBeenCalledTimes(1);
   });
 
+  // A deliberate constant pin: the stall test above times itself off the constant, so it cannot
+  // notice the deadline growing back towards the Redis socket timeout it exists to undercut.
   it('pins the cache deadline at 500 ms or less', () => {
     expect(MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS).toBeGreaterThan(0);
     expect(MODEL_DETAIL_PUBLIC_CACHE_DEADLINE_MS).toBeLessThanOrEqual(500);

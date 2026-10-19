@@ -277,11 +277,14 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
   user,
   select,
+  db: dbOverride,
 }: GetByIdInput & {
   user?: SessionUser;
   select: TSelect;
+  /** The client to read with, for a caller that has already made the lag-routing decision. */
+  db?: typeof dbRead;
 }) => {
-  const db = await getDbWithoutLag('model', id);
+  const db = dbOverride ?? (await getDbWithoutLag('model', id));
   const result = await db.model.findFirst({
     where: {
       id,

@@ -119,5 +119,7 @@ describe('bustPublicModelResponseCache', () => {
     // Every delete fails, the model-row one included.
     mockRedisDel.mockRejectedValue(new Error('redis down'));
     await expect(bustPublicModelResponseCache(123)).resolves.toBeUndefined();
+    // A failed model-row delete does not stop the public API keys from being attempted.
+    expect(mockRedisDel).toHaveBeenCalledWith(keysFor(123));
   });
 });

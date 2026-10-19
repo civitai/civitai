@@ -67,6 +67,11 @@ export async function getKyselyWithoutLag(type?: LaggingType, id?: number | stri
 // model-row cache (`bustModelDetailPublicCache`) is dropped: one hook covers every such writer,
 // including the ones that never call the model-level cache busts. It runs even when lag tracking is
 // off (`REPLICATION_LAG_DELAY <= 0`), because the cache does not depend on it.
+//
+// 🔴 The bust runs AFTER the lag mark, never alongside it. A reader that refills the cache re-checks
+// the lag mark after storing (`getModelWithDetailsCached`); with the mark already set before the
+// delete, any refill that lands after the delete sees it and drops what it stored, so a read that
+// raced the write cannot keep the old row cached for a full TTL.
 async function bustModelCaches(type: LaggingType, ids: (number | string)[]) {
   if (type !== 'model') return;
   const modelIds = ids.map(Number).filter((id) => Number.isInteger(id));
@@ -75,7 +80,8 @@ async function bustModelCaches(type: LaggingType, ids: (number | string)[]) {
 
 export async function preventReplicationLag(type: LaggingType, id?: number | string) {
   if (id === undefined || id === null) return;
-  await Promise.all([lagTracker.markFresh(lagKey(type, id)), bustModelCaches(type, [id])]);
+  await lagTracker.markFresh(lagKey(type, id));
+  await bustModelCaches(type, [id]);
 }
 
 // Batch variant: routes the whole batch to dbWrite when ANY id has the lag flag.
@@ -90,9 +96,9 @@ export async function getDbWithoutLagBatch(type: LaggingType, ids: (number | str
 
 export async function preventReplicationLagBatch(type: LaggingType, ids: (number | string)[]) {
   if (ids.length === 0) return;
+  if (env.REPLICATION_LAG_DELAY > 0)
+    await Promise.all(ids.map((id) => lagTracker.markFresh(lagKey(type, id))));
   await bustModelCaches(type, ids);
-  if (env.REPLICATION_LAG_DELAY <= 0) return;
-  await Promise.all(ids.map((id) => lagTracker.markFresh(lagKey(type, id))));
 }
 
 // Readers route via getDbWithoutLag('model', modelId) for model-page queries AND

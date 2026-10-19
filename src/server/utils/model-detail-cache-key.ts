@@ -26,8 +26,10 @@ export function modelDetailPublicCacheKey(modelId: number): RedisKeyTemplateCach
 /**
  * Drops the cached model row so the next `model.getById` reads the database. Best-effort: a Redis
  * error is swallowed so it never fails the write that called it; the entry then ages out on its
- * TTL. Deletes the key rather than marking it stale, so no reader can be served the row from
- * before the write once this has returned.
+ * TTL. Deletes the key rather than marking it stale, so a request arriving after this returns is
+ * not served the pre-write entry. A read already in flight can still refill it with the old row;
+ * that is closed only for writers that set the model's lag mark first, and only while lag tracking
+ * is on (`REPLICATION_LAG_DELAY > 0`; see `db-lag-helpers`). The TTL bounds the rest.
  */
 export async function bustModelDetailPublicCache(modelIds: number | number[]) {
   const ids = Array.isArray(modelIds) ? modelIds : [modelIds];

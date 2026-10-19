@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as AuctionService from '~/server/services/auction.service';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 
 /**
- * The model write paths that drop the shared model-row cache explicitly, because they neither mark
- * the model in the replication-lag helpers nor reach `bustMvCache`. Each runs the real service
- * function and the real `bustPublicModelResponseCache`; only I/O is stubbed. The assertion is on
- * the key that reaches the cache client, so a path that stopped busting, or busted another model,
- * goes red. (Scaffold copied from `restore-model-updated-at.service.test.ts`.)
+ * Model write paths that drop the shared model-row cache. The first group busts explicitly, because
+ * those paths neither mark the model in the replication-lag helpers nor reach `bustMvCache`; the
+ * second runs real writers that reach it through the lag helpers and `bustPublicModelResponseCache`.
+ * Each runs the real service function, the real lag helpers and the real bust; only I/O is stubbed.
+ * The assertion is on the key that reaches the cache client, so a path that stopped busting, or
+ * busted another model, goes red.
+ *
+ * Scaffold copied from `restore-model-updated-at.service.test.ts`, hand-listed mocks included: an
+ * `importOriginal` spread of these modules loads the graph the scaffold exists to keep out.
  */
 
 const MODEL_ID = 5821;
@@ -73,13 +78,20 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
+vi.mock('~/server/services/auction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuctionService>()),
+  deleteBidsForModel: vi.fn(),
+}));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+import { env } from '~/env/server';
 import {
+  deleteModelById,
   permaDeleteModelById,
   restoreModelById,
   toggleLockComments,
   toggleLockModel,
+  updateModelById,
 } from '~/server/services/model.service';
 import { modelDetailPublicCacheKey } from '~/server/utils/model-detail-cache-key';
 
@@ -92,7 +104,11 @@ beforeEach(() => {
   redisMock.redis.del.mockResolvedValue(1 as never);
   mockDbWrite.$queryRaw.mockResolvedValue([{ userId: OWNER_USER_ID }] as never);
   mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
-  mockDbWrite.model.update.mockResolvedValue({ id: MODEL_ID, userId: OWNER_USER_ID } as never);
+  mockDbWrite.model.update.mockResolvedValue({
+    id: MODEL_ID,
+    userId: OWNER_USER_ID,
+    modelVersions: [],
+  } as never);
   mockDbWrite.modelFile.findMany.mockResolvedValue([] as never);
   mockDbWrite.model.findUnique.mockResolvedValue({
     id: MODEL_ID,
@@ -104,7 +120,16 @@ beforeEach(() => {
   mockDbWrite.model.delete.mockResolvedValue({ id: MODEL_ID, userId: OWNER_USER_ID } as never);
 });
 
-describe('explicit model-row cache busts', () => {
+const modelRowKeysDeleted = () => [
+  ...new Set(deletedKeys().filter((k) => String(k).includes('model-detail-public'))),
+];
+
+describe('model-row cache busts on model writes', () => {
+  // The model-row bust must not sit behind the public API's environment gate, which is off here.
+  it('runs with the public API response cache disabled', () => {
+    expect(env.IS_DATAPACKET).toBeFalsy();
+  });
+
   it.each([
     ['restoreModelById', () => restoreModelById({ id: MODEL_ID })],
     [
@@ -113,9 +138,10 @@ describe('explicit model-row cache busts', () => {
     ],
     ['toggleLockModel', () => toggleLockModel({ id: MODEL_ID, locked: true })],
     ['toggleLockComments', () => toggleLockComments({ id: MODEL_ID, locked: true })],
-  ])('%s drops the cached row for that model', async (_, write) => {
+    ['updateModelById', () => updateModelById({ id: MODEL_ID, data: { name: 'renamed' } })],
+    ['deleteModelById', () => deleteModelById({ id: MODEL_ID, userId: OWNER_USER_ID } as never)],
+  ])('%s drops the cached row for that model, and only that model', async (_, write) => {
     await write();
-    expect(deletedKeys()).toContain(KEY);
-    expect(deletedKeys().filter((k) => String(k).includes('model-detail-public'))).toEqual([KEY]);
+    expect(modelRowKeysDeleted()).toEqual([KEY]);
   });
 });
