@@ -16,7 +16,7 @@ const fontFamilies = [
   '"sans-serif"',
   '"Apple Color Emoji"',
   '"Segoe UI Emoji"',
-]
+];
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
@@ -27,7 +27,7 @@ module.exports = {
   },
   theme: {
     fontFamily: {
-      body: fontFamilies
+      body: fontFamilies,
     },
     screens: breakpoints,
     extend: {
@@ -271,8 +271,20 @@ module.exports = {
             scrollbarWidth: 'thin',
           },
           '.transform-3d': {
-            transform: 'translate3d(0, 0, 0)'
+            transform: 'translate3d(0, 0, 0)',
           },
+          // Safe-area padding by role, over the variables globals.css derives (see its notes on
+          // which bottom inset a bar pays versus page content). Use these rather than the raw
+          // `var(--safe-area-inset-*)` so a change to how the inset is resolved lands once.
+          '.pt-safe': { paddingTop: 'var(--safe-area-inset-top)' },
+          '.px-safe': {
+            paddingLeft: 'var(--safe-area-inset-left)',
+            paddingRight: 'var(--safe-area-inset-right)',
+          },
+          // A bar that is the viewport's bottom edge: pays unless the ad bar below it does.
+          '.pb-safe-bar': { paddingBottom: 'var(--safe-area-inset-bottom-unpaid)' },
+          // Page content on a route with no footer or ad bar under it.
+          '.pb-safe-page': { paddingBottom: 'var(--safe-area-inset-bottom-page)' },
         }),
         addVariant('not-first', ({ modifySelectors, separator }) => {
           modifySelectors(({ className }) => {

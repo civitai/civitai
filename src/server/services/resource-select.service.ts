@@ -144,6 +144,7 @@ export function buildFilter({
     filterTypes,
     filterBaseModels,
     filterLoaded,
+    filterTurbo,
     tagName,
     hidePaid,
   } = input;
@@ -200,6 +201,7 @@ export function buildFilter({
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
     // Any version resident, not the one the card happens to show — Meili matches a nested array.
     filterLoaded && eq('versions.generatorLoaded', true),
+    filterTurbo && eq('versions.turbo', true),
     tagName ? eq('tags.name', tagName) : null,
     modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
@@ -303,6 +305,7 @@ export async function getResourceSelectModels(
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
     !filterLoaded &&
+    !input.filterTurbo &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the

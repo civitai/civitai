@@ -167,3 +167,27 @@ describe('getResourceSelectModels — the official pin re-applies the filter', (
     expect(result.items.map((m: { id: number }) => m.id)).toContain(1);
   });
 });
+
+// The pin bypasses `buildFilter`, so with the turbo clause on it would put non-turbo official models
+// at the top of a turbo-only list. A facet filter turns the pin off like the others.
+describe('getResourceSelectModels — the official pin stays off under the turbo filter', () => {
+  beforeEach(() => {
+    searchWithSignal.mockReset();
+    searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
+    fetchThroughCache.mockReset();
+    fetchThroughCache.mockResolvedValue([{ id: 1, type: 'LORA' }]);
+    getModelSearchIndexRecords.mockReset();
+    getModelSearchIndexRecords.mockResolvedValue([]);
+  });
+
+  it('never looks the official ids up when filterTurbo is set', async () => {
+    await getResourceSelectModels({ ...baseInput, filterTurbo: true }, { user: undefined });
+    expect(fetchThroughCache).not.toHaveBeenCalled();
+    expect(getModelSearchIndexRecords).not.toHaveBeenCalled();
+  });
+
+  it('still pins on the plain browse, so the control above is not vacuous', async () => {
+    await getResourceSelectModels({ ...baseInput }, { user: undefined });
+    expect(fetchThroughCache).toHaveBeenCalled();
+  });
+});

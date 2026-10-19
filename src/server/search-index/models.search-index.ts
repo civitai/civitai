@@ -514,6 +514,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             ...x,
             // Keeps the column's name but holds readiness — the loaded-only filter reads this.
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
+            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
+            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
             pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
