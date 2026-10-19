@@ -62,8 +62,10 @@ export const CAP_DEFINITIONS: CapDefinition[] = [
 ];
 
 export const MIN_BANK_AMOUNT = 10000;
-export const MIN_WITHDRAWAL_AMOUNT = 5000;
-export { CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE } from '@civitai/buzz';
+export {
+  CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE,
+  CREATOR_PROGRAM_MIN_WITHDRAWAL_AMOUNT as MIN_WITHDRAWAL_AMOUNT,
+} from '@civitai/buzz';
 
 type WithdrawalFee = {
   type: 'fixed' | 'percent';
