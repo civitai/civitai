@@ -1,7 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
-  import { FLAG_REVIEW_RULING_CHOICES, HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
@@ -23,7 +22,7 @@
     FLAGGED_SOURCE_LABELS,
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
-  import { submitDecisionForm } from '$lib/triage/decision-form';
+  import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
@@ -41,9 +40,6 @@
 
   let current = $state<string | null>(null);
   const ruling = rulingDraft<Verdict>(() => current);
-
-  // The `data-triage-action` of each hash row's two forms, in key order.
-  const HASH_ACTIONS = ['keepFlag', 'liftFlag'] as const;
 
   const parseKey = (raw: string) => (/^\d+:(minor|poi):(hash|redetected|text-scan)$/.test(raw) ? raw : null);
 
@@ -93,17 +89,9 @@
     defaultValue: DEFAULT_FLAGGED_FILTERS.sort,
   } satisfies ChipGroup);
 
-  const ondecision = (row: FlaggedRow, index: number) => {
-    if (row.source !== 'hash') {
-      const choices: readonly { verdict: Verdict }[] =
-        row.source === 'text-scan' ? FLAG_REVIEW_RULING_CHOICES : HELD_DETECTION_RULING_CHOICES;
-      const verdict = choices[index]?.verdict;
-      if (verdict) ruling.choose(verdict);
-      return;
-    }
-    // A hash flag has no reason to write, so the key submits straight away.
-    submitDecisionForm(HASH_ACTIONS, flaggedDecisionEnabled(row), index);
-  };
+  // A decision key presses its button: a hash row's submits straight away, and a reasoned row's
+  // submits with the reason already in the bar, or says what is missing.
+  const ondecision = (_row: FlaggedRow, index: number) => pressDecisionKey(index);
 </script>
 
 {#snippet listHeader()}

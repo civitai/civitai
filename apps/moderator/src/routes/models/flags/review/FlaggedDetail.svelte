@@ -2,7 +2,6 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
@@ -14,7 +13,7 @@
   import ScannedTextCard from '$lib/components/minor-flags/ScannedTextCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import { chooseVerdict, type RulingDraft } from '$lib/components/RulingForm.svelte';
+  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
@@ -33,7 +32,12 @@
     scanVerdictText,
   } from '$lib/minor-flags/text-scan-verdicts';
   import { FLAG_REVIEW_RULING_CHOICES, HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
-  import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
+  import { resolutionReasonsFor } from '@civitai/shared/resolution-reasons';
+  import {
+    decisionReasonOptions,
+    decisionReasonProblem,
+    suggestedReason,
+  } from '$lib/triage/decision-reasons';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
   import type { Outcome } from '$lib/triage/queue';
   import type { RulingChoice } from '$lib/ruling-choices';
@@ -80,7 +84,7 @@
     { action: 'keepFlag', label: 'Keep flag', outcome: 'Flag kept' },
     { action: 'liftFlag', label: 'Lift flag', outcome: 'Flag lifted' },
   ] as const;
-  // Re-detections and text-scan flags rule with an inline reason; hash flags submit straight away.
+  // Re-detections and text-scan flags rule with a reason picked in the bar; hash flags have none.
   const reasoned = $derived(row.source !== 'hash');
   const choices: readonly RulingChoice<Verdict>[] = $derived(
     row.source === 'text-scan' ? FLAG_REVIEW_RULING_CHOICES : HELD_DETECTION_RULING_CHOICES
@@ -89,34 +93,64 @@
     verdict === 'Kept'
       ? ({ action: 'keepFlag', label: 'Keep flag' } as const)
       : ({ action: 'liftFlag', label: 'Lift flag' } as const);
-  const reasonError = (verdict: Verdict) =>
+  const reasonsFor = (verdict: Verdict) =>
     row.source === 'text-scan'
-      ? resolutionReasonError(
+      ? resolutionReasonsFor('flagReview', verdict as ResolutionVerdict<'flagReview'>, [row.label])
+      : resolutionReasonsFor('heldDetection', verdict as ResolutionVerdict<'heldDetection'>, [
+          row.label,
+        ]);
+  const problemFor = (verdict: Verdict) =>
+    row.source === 'text-scan'
+      ? decisionReasonProblem(
           'flagReview',
           verdict as ResolutionVerdict<'flagReview'>,
-          draft.reason,
+          decisionFor(verdict).label,
+          reason,
           draft.note,
           [row.label]
         )
-      : resolutionReasonError(
+      : decisionReasonProblem(
           'heldDetection',
           verdict as ResolutionVerdict<'heldDetection'>,
-          draft.reason,
+          decisionFor(verdict).label,
+          reason,
           draft.note,
           [row.label]
         );
   const scanEntry = $derived(row.scanEntry);
   const latest = $derived(row.latestScan?.[row.label] ?? null);
   const labelName = $derived(row.label === 'poi' ? 'real person' : 'minor');
-  const FIELDS_GRID = 'grid gap-2 sm:grid-cols-[minmax(14rem,22rem)_1fr_auto]';
 
-  const chosen = $derived(choices.find((c) => c.verdict === draft.verdict));
-  const unrecordable = $derived(
-    chosen
-      ? (!enabled[chosen.verdict === 'Kept' ? 0 : 1] ? APPEAL_FIRST : reasonError(chosen.verdict))
-      : null
+  const reasonOptions = $derived(
+    decisionReasonOptions(
+      choices.map((c) => ({ label: decisionFor(c.verdict).label, reasons: reasonsFor(c.verdict) }))
+    )
   );
-  const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
+  // Confirming the flag takes one key when its decision has a single specific reason.
+  const suggested = $derived(enabled[0] && choices[0] ? suggestedReason(reasonsFor(choices[0].verdict)) : '');
+  const reason = $derived(draft.reason || suggested);
+  let problem = $state<string | null>(null);
+  let reasonSelect = $state<HTMLSelectElement | null>(null);
+
+  // One step: the decision button submits with the reason and note already in the bar, unless they
+  // cannot be recorded for that decision, in which case nothing is sent and the bar says why.
+  const decide: SubmitFunction = (input) => {
+    const index = choices.findIndex((c) => c.verdict === input.formData.get('status'));
+    const refusal =
+      index < 0
+        ? 'Pick a decision.'
+        : !enabled[index]
+          ? APPEAL_FIRST
+          : problemFor(choices[index].verdict);
+    if (refusal) {
+      input.cancel();
+      problem = refusal;
+      if (refusal !== APPEAL_FIRST) reasonSelect?.focus();
+      return;
+    }
+    problem = null;
+    return submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))(input);
+  };
 </script>
 
 {#snippet appealNotice()}
@@ -138,87 +172,66 @@
   {#if row.textHash}<input type="hidden" name="textHash" value={row.textHash} />{/if}
 {/snippet}
 
-{#snippet buttons()}
-  {#if reasoned}
-    {#each choices as c, i (c.verdict)}
-      {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
+{#snippet reasonedButtons()}
+  {#each choices as c, i (c.verdict)}
+    {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
+    <TriageKeyButton
+      type="submit"
+      key={i + 1}
+      primary={i === 0}
+      name="status"
+      value={c.verdict}
+      formaction={actionHref(decisionFor(c.verdict).action)}
+      disabled={!!unavailable}
+      title={unavailable ?? undefined}
+    >
+      {decisionFor(c.verdict).label}
+    </TriageKeyButton>
+  {/each}
+{/snippet}
+
+{#snippet hashButtons()}
+  {#each DECISIONS as choice, i (choice.action)}
+    {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
+    <form
+      method="POST"
+      action={actionHref(choice.action)}
+      data-triage-action={choice.action}
+      use:enhance={submit(choice.outcome)}
+    >
+      {@render verdictFields()}
       <TriageKeyButton
+        type="submit"
         key={i + 1}
         primary={i === 0}
-        pressed={draft.verdict === c.verdict}
         disabled={!!unavailable}
         title={unavailable ?? undefined}
-        onclick={() => choose(c.verdict)}
       >
-        {decisionFor(c.verdict).label}
+        {choice.label}
       </TriageKeyButton>
-    {/each}
-  {:else}
-    {#each DECISIONS as choice, i (choice.action)}
-      {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
-      <form
-        method="POST"
-        action={actionHref(choice.action)}
-        data-triage-action={choice.action}
-        use:enhance={submit(choice.outcome)}
-      >
-        {@render verdictFields()}
-        <TriageKeyButton
-          type="submit"
-          key={i + 1}
-          primary={i === 0}
-          disabled={!!unavailable}
-          title={unavailable ?? undefined}
-        >
-          {choice.label}
-        </TriageKeyButton>
-      </form>
-    {/each}
-  {/if}
+    </form>
+  {/each}
 {/snippet}
 
 {#snippet fields()}
-  {#if chosen}
-    <form
-      method="POST"
-      action={actionHref(decisionFor(chosen.verdict).action)}
-      use:enhance={submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))}
-      class={FIELDS_GRID}
-    >
-      {@render verdictFields()}
-      <input type="hidden" name="status" value={chosen.verdict} />
-      {#if row.source === 'text-scan'}
-        <InlineReasonFields
-          subject="flagReview"
-          verdict={chosen.verdict as ResolutionVerdict<'flagReview'>}
-          labels={[row.label]}
-          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-        />
-      {:else}
-        <InlineReasonFields
-          subject="heldDetection"
-          verdict={chosen.verdict as ResolutionVerdict<'heldDetection'>}
-          labels={[row.label]}
-          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-        />
-      {/if}
-      <Button
-        type="submit"
-        size="lg"
-        variant={chosen.variant}
-        class="h-10"
-        disabled={!!unrecordable}
-      >
-        {chosen.confirmLabel}
-      </Button>
-    </form>
-  {:else}
-    <div class={FIELDS_GRID}>
-      <InlineReasonFields subject={row.source === 'text-scan' ? 'flagReview' : 'heldDetection'} verdict={null} />
-    </div>
-  {/if}
+  <InlineReasonFields
+    options={reasonOptions}
+    bind:reason={
+      () => reason,
+      (next) => {
+        draft = { ...draft, reason: next };
+        problem = null;
+      }
+    }
+    bind:note={
+      () => draft.note,
+      (next) => {
+        draft = { ...draft, note: next };
+        problem = null;
+      }
+    }
+    bind:select={reasonSelect}
+  />
 {/snippet}
 
 <TriageDetailFrame {verdict} {error}>
@@ -367,14 +380,19 @@
   {/snippet}
   {#snippet actions()}
     {#if reasoned}
-      <TriageDecisionBar
-        {buttons}
-        {fields}
-        hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
-      />
+      <!-- One form, one button per decision: each button posts its own action and status. -->
+      <form method="POST" action={actionHref('keepFlag')} use:enhance={decide} class="w-full">
+        {@render verdictFields()}
+        <TriageDecisionBar
+          buttons={reasonedButtons}
+          {fields}
+          {problem}
+          hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+        />
+      </form>
     {:else}
       <!-- No reason form: the main app's confirm and revert endpoints record none yet. -->
-      <TriageDecisionBar {buttons} />
+      <TriageDecisionBar buttons={hashButtons} />
     {/if}
   {/snippet}
 </TriageDetailFrame>

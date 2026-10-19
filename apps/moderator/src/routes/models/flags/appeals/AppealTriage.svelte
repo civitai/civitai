@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageFilterChips, {
     type ChipGroup,
@@ -18,6 +17,7 @@
     SOURCE_LABELS,
     appealFilterParams,
   } from '$lib/minor-flags/appeal-filters';
+  import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
@@ -123,10 +123,7 @@
   queueLabel="Appeal queue"
   itemLabel="Appeal"
   decisionEnabled={(row) => [flagInForce(row), true]}
-  ondecision={(_row, index) => {
-    const verdict = FLAG_APPEAL_RULING_CHOICES[index]?.verdict;
-    if (verdict) ruling.choose(verdict);
-  }}
+  ondecision={(_row, index) => pressDecisionKey(index)}
   bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}
@@ -163,7 +160,6 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
-      choose={ruling.choose}
       bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}

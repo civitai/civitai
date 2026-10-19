@@ -18,3 +18,12 @@ export const submitDecisionForm = (
   const selector = decisionFormSelector(actions, enabled, index);
   if (selector) document.querySelector<HTMLFormElement>(selector)?.requestSubmit();
 };
+
+/** Presses the button for a decision key in the open item's action bar. A disabled button ignores
+ *  the click, and a submit button's click runs the form's own checks first. */
+export const pressDecisionKey = (index: number) =>
+  document
+    .querySelector<HTMLButtonElement>(
+      `[data-triage-actions] button[data-triage-key="${index + 1}"]`
+    )
+    ?.click();
