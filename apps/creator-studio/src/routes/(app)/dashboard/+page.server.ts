@@ -10,9 +10,10 @@ import { loadStorageUsage } from '$lib/server/storage';
 import { summarizeStorage } from '$lib/analytics/storage';
 
 // Headline content activity (userId-keyed ClickHouse) + buzz earnings (A1 Part 1, buzzTransactions) + cash
-// balances and this month's banked Buzz (buzz service — authoritative, matches the Buzz dashboard) + top-earning model (A1 Part 2, the
-// owner-stamped resourceCompensations). Each degrades independently so one slow or failed source doesn't blank the
-// others. `*Prev` = the previous 30 days, for the period-over-period delta chips. Layout resolved user + membership.
+// balances and this month's banked Buzz (buzz service — authoritative, matches the Buzz dashboard) + top-earning
+// model (A1 Part 2, the owner-stamped resourceCompensations). Each degrades independently so one slow or failed
+// source doesn't blank the others. `*Prev` = the previous 30 days, for the period-over-period delta chips. Layout
+// resolved user + membership.
 export const load: PageServerLoad = async ({ locals, cookies }) => {
   const userId = locals.user.id;
   const range = presetRange(30);
@@ -30,8 +31,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
         .then((u) => (u.ready ? { total: summarizeStorage(u.rows).total, media: u.media } : null))
         .catch(() => null),
     ]);
-  // Applied at render, not in the queries: the payloads carry every currency, so a toggle re-runs this load
-  // but hits the same cached results.
+  // Applied at render, not in the queries: the earnings payloads carry every currency, so a toggle re-runs this
+  // load but hits the same cached results. `banked` is already the bankable sum and ignores the filter.
   return {
     content,
     contentPrev,

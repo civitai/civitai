@@ -22,7 +22,8 @@
     IconTrophy,
     IconDatabase,
   } from '@tabler/icons-svelte';
-  import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import { centsToUsd, currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import { MIN_WITHDRAWAL_AMOUNT } from '$lib/creator-program';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import {
     BANKABLE_CURRENCIES,
@@ -275,7 +276,7 @@
     {#each stats as stat (stat.label)}
       <StatCard label={stat.label} icon={stat.icon} color={stat.color}>
         {#if stat.value != null}
-          <div class="mt-1 flex items-baseline gap-2">
+          <div class="mt-1 flex flex-wrap items-baseline gap-x-2">
             <p class="text-xl font-semibold text-white">
               {#if stat.buzz != null}<CurrencyDisplay amount={stat.buzz} />{:else}{stat.value}{/if}
             </p>
@@ -296,7 +297,7 @@
             <span class="shrink-0 text-dark-4">· 30d</span>
           </p>
         {:else}
-          <p class="mt-2 flex items-center gap-1 text-xs text-dark-3">
+          <p class="mt-2 flex items-center gap-1 text-xs text-dark-2">
             {#if stat.label === 'Buzz earned'}
               {#each buzzLegend as c (c)}
                 <span class="inline-block h-2 w-2 rounded-full" style="background:{c}"></span>
@@ -311,7 +312,7 @@
   {#if data.membership.isCreatorProgramMember && !data.membership.isMember}
     <p class="mt-3 text-sm text-dark-2">
       Your membership isn't active, so you can't bank more Buzz. Buzz you've already banked still pays
-      out at the end of the month. To withdraw cash, you need $50 ready to withdraw and your payment
+      out at the end of the month. To withdraw cash, you need ${centsToUsd(MIN_WITHDRAWAL_AMOUNT)} ready to withdraw and your payment
       details set up; no membership is needed.
     </p>
   {/if}
