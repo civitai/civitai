@@ -66,6 +66,7 @@ import type {
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
+import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -873,6 +874,10 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.RequestedChanges ||
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
+  // A box draw ignores stock, and an item back in review is no longer on sale: either would leave a
+  // mystery pack selling an item that no longer meets its rules, with no review of the pack.
+  if (!isModerator && (availableQuantity != null || (isPublished && backToReview)))
+    await assertNotInLiveMysteryPack(existing.cosmeticId);
 
   const changes: CosmeticShopItemHistoryChange[] = [];
   const recordChange = (
@@ -1042,6 +1047,8 @@ export const archiveCreatorShopItem = async ({
   // status, and restoring re-enters review with the verdict cleared.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  if (!isModerator && existing.cosmeticId != null)
+    await assertNotInLiveMysteryPack(existing.cosmeticId);
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
@@ -1100,6 +1107,9 @@ export const setCreatorShopItemListed = async ({
   // this a rejected item is one call away from being back in the queue unedited.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  // Re-listing sends the item back to review. Delisting doesn't: it stays in a pack as box-only.
+  if (listed && !isModerator && existing.cosmeticId != null)
+    await assertNotInLiveMysteryPack(existing.cosmeticId);
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },

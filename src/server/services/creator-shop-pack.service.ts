@@ -177,7 +177,7 @@ const coverTilesFrom = (members: ResolvedMember[]) =>
     .filter((url): url is string => !!url)
     .slice(0, COVER_TILE_COUNT);
 
-const buildRightsAffirmation = (userId: number) => ({
+export const buildRightsAffirmation = (userId: number) => ({
   userId,
   affirmedAt: new Date().toISOString(),
   version: RIGHTS_AFFIRMATION_VERSION,
