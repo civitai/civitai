@@ -548,7 +548,7 @@ const nothingAfterCommit: AfterCommit = () => undefined;
 /**
  * Moderation of one shared write — every string leaf and object key of `data` and, when the app
  * chose it, the document key — in the app's shared-data moderation mode
- * (`resolveSharedDataModerationMode`, which the legacy shared-storage surface follows too):
+ * (`resolveSharedDataModerationMode`):
  *
  * - `off`: nothing is scanned or recorded.
  * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
@@ -660,8 +660,8 @@ function isOurFault(err: unknown): boolean {
 
 /**
  * A shared document write spends the shared write budget: reserved before the write and any
- * inline (enforce-mode) moderation scan, and given back only if the write does not land. `fn` calls `landed()` the
- * moment the store has committed, so a failure after that (presenting the result) spends the
+ * inline moderation scan, and given back only if the write does not land. `fn` calls `landed()`
+ * the moment the store has committed, so a failure after that (presenting the result) spends the
  * token like any landed write.
  */
 async function withSharedWriteBudget<T>(
@@ -825,8 +825,7 @@ async function run(
       await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
       // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
-      // store does not say whether this one did, so the key is scanned on every such increment
-      // (enforce: before it; shadow: after it).
+      // store does not say whether this one did, so the key is scanned on every such increment.
       const afterCommit =
         user && decl.write === 'none'
           ? await moderate(access, user, 'counter', route.key, { key: route.key })

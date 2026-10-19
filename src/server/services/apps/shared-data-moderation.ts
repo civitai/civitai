@@ -327,7 +327,8 @@ export function blockingHit(
  * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
  * enforced until that flag flips. Otherwise enforcing a `data` scan would enforce the pattern list on
  * `data` while the same row's title is only recorded. The flag is read only when a pattern hit exists.
- * Shared by the legacy shared-storage router and the document store, so the two cannot diverge.
+ * Shared by the legacy shared-storage router and the document store, so the two cannot diverge on
+ * which hit refuses a write.
  */
 export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
   const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
