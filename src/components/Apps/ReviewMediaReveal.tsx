@@ -56,9 +56,16 @@ export function ReviewMediaReveal({
           explain={explain}
         >
           {(shown) => (
+            // 🔴 `inert` WHILE HIDDEN, NOT JUST A BLUR. `filter` and `pointerEvents` stop the eye
+            // and the mouse, not the keyboard: a focusable child (a screenshot tile, a lightbox
+            // button) stayed reachable by Tab, and Enter opened its full-size viewer — a portal
+            // outside this blur — so the reveal could be bypassed without clicking Show. `inert`
+            // removes the subtree from focus, pointer targeting and the accessibility tree
+            // (which is why there is no `aria-hidden`). React 18 has no `inert` prop, so it is
+            // set as a plain attribute: '' = present.
             <div
               data-revealed={shown ? 'true' : 'false'}
-              aria-hidden={shown ? undefined : true}
+              {...(shown ? {} : { inert: '' })}
               style={shown ? undefined : { filter: 'blur(24px)', pointerEvents: 'none' }}
             >
               {children}

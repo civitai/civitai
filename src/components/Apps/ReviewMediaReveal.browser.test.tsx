@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvider';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as TrpcModule from '~/utils/trpc';
@@ -132,6 +132,51 @@ describe('ReviewMediaReveal', () => {
     await expect.element(page.getByTestId('media')).toBeVisible();
     expect(page.getByTestId('reveal').query()).toBeNull();
     expect(page.getByText('This image is rated').query()).toBeNull();
+  });
+
+  test('🔴 while held back, nothing inside can be reached by keyboard; after Show it can', async () => {
+    // A focusable child stayed reachable by Tab under the blur, and Enter opened its
+    // full-size viewer: the reveal was bypassable without clicking Show.
+    const onOpen = vi.fn();
+    renderWithProviders(
+      <div>
+        <button type="button">before</button>
+        <ReviewMediaReveal image={{ imageId: 206, nsfwLevel: R }} testId="reveal">
+          <button type="button" data-testid="inner" onClick={onOpen}>
+            open-full-size
+          </button>
+        </ReviewMediaReveal>
+        <button type="button">after</button>
+      </div>
+    );
+    await expect.element(page.getByText('This image is rated')).toBeVisible();
+    const inner = page.getByTestId('inner').element() as HTMLButtonElement;
+    const held = page.getByTestId('reveal').element().querySelector('[data-revealed]');
+
+    // A Tab sweep from before the block to past it never lands inside the held-back subtree.
+    (page.getByRole('button', { name: 'before' }).element() as HTMLElement).focus();
+    const focused: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await userEvent.keyboard('{Tab}');
+      const active = document.activeElement as HTMLElement | null;
+      expect(held?.contains(active)).toBe(false);
+      focused.push(active?.textContent?.trim() ?? '');
+    }
+    // Positive control on the sweep itself: it did move, through the Show button, past the block.
+    expect(focused).toContain('after');
+    expect(focused).toContain('Show');
+    // Nor can it be focused directly, so Enter has nothing to activate.
+    inner.focus();
+    expect(document.activeElement).not.toBe(inner);
+    await userEvent.keyboard('{Enter}');
+    expect(onOpen).not.toHaveBeenCalled();
+
+    await page.getByRole('button', { name: 'Show' }).click();
+    await expect.poll(revealedState).toBe('true');
+    inner.focus();
+    expect(document.activeElement).toBe(inner);
+    await userEvent.keyboard('{Enter}');
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   test('`explain: false` blurs without the overlay (a thumbnail too small for it)', async () => {
