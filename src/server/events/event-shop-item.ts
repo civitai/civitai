@@ -1,3 +1,4 @@
+import { cosmeticEventOf } from '@civitai/shared/mystery-box';
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, canReadEvent, getEventAccess } from '~/server/events/event-access';
 import { loadEvents as loadRegisteredEvents } from '~/server/events/load-events';
@@ -25,9 +26,7 @@ type EventItemData = { event: string; team?: unknown };
 const loadEvents = () => loadRegisteredEvents() as Promise<readonly ShopEvent[]>;
 
 export function isEventShopItemData(data: unknown): data is EventItemData {
-  return (
-    !!data && typeof data === 'object' && typeof (data as { event?: unknown }).event === 'string'
-  );
+  return !!data && typeof data === 'object' && cosmeticEventOf(data) !== undefined;
 }
 
 /** Whether a cosmetic's `data` makes it one of this event's shop items. */
