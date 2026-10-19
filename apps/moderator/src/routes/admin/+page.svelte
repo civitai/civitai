@@ -8,6 +8,7 @@
   import { permissionByKey } from '$lib/permissions';
   import type { AccessNode } from '$lib/server/access';
   import type { ActionData, PageData } from './$types';
+  import ChangeHistory from './ChangeHistory.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -148,6 +149,10 @@
     )
   );
   const dirty = $derived(Object.keys(changes).length);
+  // What each changed path held at load, so the save refuses rather than reverts a change made since.
+  const expected = $derived(
+    Object.fromEntries(Object.keys(changes).map((key) => [key, data.granted[key] ?? []]))
+  );
 
   function revert() {
     editedSinceAnswer = true;
@@ -350,6 +355,7 @@
   <Button variant="outline" size="sm" disabled={!dirty} onclick={revert}>Revert</Button>
   <form method="POST" action="?/save" use:enhance>
     <input type="hidden" name="changes" value={JSON.stringify(changes)} />
+    <input type="hidden" name="expect" value={JSON.stringify(expected)} />
     <Button type="submit" size="sm" disabled={!dirty}>Save</Button>
   </form>
 </div>
@@ -411,3 +417,5 @@
     {dirty} unsaved change{dirty === 1 ? '' : 's'} — including any made outside the current filter.
   </p>
 {/if}
+
+<ChangeHistory changes={data.changes} historyError={data.historyError} />
