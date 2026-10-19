@@ -17,7 +17,11 @@ import {
 import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import type { ChatMcpServer, CivitaiChat } from '@civitai/components-chat/civitai-chat';
+import type {
+  ChatMcpServer,
+  CivitaiChat,
+  ReplyResumeDetail,
+} from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
@@ -99,6 +103,9 @@ function EnableCard({
  * has not taken by then is reported unsent.
  */
 export const HELD_TIMEOUT_MS = 3 * 60_000;
+
+/** How long the page waits for its app list when the chat asks for a failed reply by itself. */
+export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * A message the page is sending as the user's; `went` once the chat let it through. `wake` makes the
@@ -211,6 +218,45 @@ export async function releaseHeld(
   }
   if (release.went && parked && box() === text) await chatRef.current?.compose('');
   return release.went || parked || box() === text;
+}
+
+type RetryChat = Pick<
+  CivitaiChat,
+  'canSend' | 'retryReply' | 'updateComplete' | 'addEventListener' | 'removeEventListener'
+>;
+
+/**
+ * Asks the chat for its failed reply again (`retryReply()`), once, as soon as it can send: tools just
+ * handed to it start listing in its next update, and `canSend` reads true until then, so this waits for
+ * that update first. Asks nothing once `signal` aborts or the chat goes; whether it asked.
+ */
+export async function retryWhenReady(
+  chatRef: { current: RetryChat | null },
+  signal: AbortSignal
+): Promise<boolean> {
+  const chat = chatRef.current;
+  if (!chat || signal.aborted) return false;
+  let woken = false;
+  let resume: (() => void) | undefined;
+  const wake = () => {
+    woken = true;
+    resume?.();
+  };
+  chat.addEventListener('can-send-change', wake);
+  signal.addEventListener('abort', wake);
+  try {
+    await chat.updateComplete;
+    while (!signal.aborted && chatRef.current === chat) {
+      woken = false;
+      if (chat.canSend) return await chat.retryReply();
+      if (!woken) await new Promise<void>((resolve) => (resume = resolve));
+      resume = undefined;
+    }
+    return false;
+  } finally {
+    chat.removeEventListener('can-send-change', wake);
+    signal.removeEventListener('abort', wake);
+  }
 }
 
 /** What "Put it back" leaves in the message box: the message, ahead of anything typed there since. */
@@ -408,6 +454,172 @@ export function AppAssistantWorkspace({
     [mcpUrl, tokens]
   );
 
+  // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
+  // so a paused app would not be woken and the reply would go on without its tools. The ask is held
+  // instead, the app woken, and the reply asked for once its tools are handed to the chat.
+  // - `auto`: the chat asked by itself, as the page woke or came back online. The app list did not
+  //   refresh while the page slept, so the page first asks for it again (`checking`) and decides on
+  //   that: running with its tools, the reply is asked for; paused, the app is woken; else none.
+  // - `started` once the app was seen starting; `asking` once it runs with its tools and the ask
+  //   waits on the chat.
+  type ResumeAsk = {
+    app: string;
+    chatId: string | null;
+    key: string;
+    auto: boolean;
+    checking: boolean;
+    started: boolean;
+    asking: boolean;
+    stop: AbortController;
+  };
+  const [resumeAsk, setResumeAsk] = useState<ResumeAsk | null>(null);
+  const resumeAskRef = useRef(resumeAsk);
+  // Per app and chat, until the user's next message there (a new turn). The chat asks by itself again
+  // on every wake until it gets through: once the page gave such an ask up, it keeps the next ones back
+  // and does nothing, and it wakes the app by itself once at most, so it never loops. Retry, which the
+  // user presses, is always followed.
+  const autoGaveUp = useRef(new Set<string>());
+  const autoWoke = useRef(new Set<string>());
+  const finishResumeAsk = useCallback((asked: boolean) => {
+    const ask = resumeAskRef.current;
+    ask?.stop.abort();
+    if (ask?.auto && !asked) autoGaveUp.current.add(ask.key);
+    resumeAskRef.current = null;
+    setResumeAsk(null);
+  }, []);
+  const endResumeAsk = useCallback(() => finishResumeAsk(false), [finishResumeAsk]);
+  const refetchRef = useRef(sandboxes.list.refetch);
+  refetchRef.current = sandboxes.list.refetch;
+  const wakeForAsk = useCallback(
+    (app: string) =>
+      resumeRef.current(app, {
+        // Unless the user moved on meanwhile.
+        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+          if (resumeAskRef.current?.app === sandbox.app) setActiveName(sandbox.name);
+        },
+        onError: endResumeAsk,
+      }),
+    [endResumeAsk]
+  );
+  /** The chat asked by itself: decide on the app list as it is now, not as it was before the page slept. */
+  const checkAutoAsk = useCallback(
+    async (ask: ResumeAsk) => {
+      // One refresh, bounded; one that fails or runs out gives the ask up.
+      let fresh: Sandbox[] | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          refetchRef.current(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timed out')), APP_LIST_REFRESH_TIMEOUT_MS);
+          }),
+        ]);
+        fresh = result.isError ? undefined : result.data;
+      } catch {
+        fresh = undefined;
+      } finally {
+        clearTimeout(timer);
+      }
+      // Ended meanwhile (or the page went away), or taken over by Retry, which is followed as is.
+      const now = resumeAskRef.current;
+      if (!now || now.stop !== ask.stop || ask.stop.signal.aborted) return;
+      // Retry, pressed by the user, falls back to the list the page has when the refresh failed.
+      if (!fresh && !now.auto) fresh = live.current.apps;
+      const app = fresh?.find((s) => s.app === ask.app);
+      const paused = app?.state === 'suspended';
+      // Waking it pauses whichever other app runs: not without the user asking.
+      const pausesAnother = fresh?.some((s) => s.app !== ask.app && s.state !== 'suspended');
+      if (
+        !app ||
+        (app.state !== 'running' && !paused && (now.auto || app.state !== 'starting')) ||
+        (paused && now.auto && (pausesAnother || autoWoke.current.has(ask.key)))
+      )
+        return endResumeAsk();
+      resumeAskRef.current = { ...now, checking: false };
+      setResumeAsk(resumeAskRef.current);
+      if (!paused) return;
+      if (now.auto) autoWoke.current.add(ask.key);
+      wakeForAsk(ask.app);
+    },
+    [endResumeAsk, wakeForAsk]
+  );
+  const onReplyResume = useCallback(
+    (trigger: ReplyResumeDetail['trigger']) => {
+      const app = live.current.active;
+      if (!app) return false;
+      const auto = trigger !== 'retry';
+      const current = resumeAskRef.current;
+      if (current) {
+        // Retry pressed while the page refreshes the list for the chat's own ask: it is the user's.
+        if (!auto && current.auto) {
+          resumeAskRef.current = { ...current, auto: false };
+          setResumeAsk(resumeAskRef.current);
+        }
+        return true;
+      }
+      // Retry: the user pressed it now, so the list is current.
+      if (!auto && app.state !== 'suspended' && app.state !== 'starting') return false;
+      const key = `${app.app}\n${chatIdRef.current}`;
+      if (auto && autoGaveUp.current.has(key)) return true;
+      const ask: ResumeAsk = {
+        app: app.app,
+        chatId: chatIdRef.current,
+        key,
+        auto,
+        checking: auto,
+        started: app.state === 'starting',
+        asking: false,
+        stop: new AbortController(),
+      };
+      resumeAskRef.current = ask;
+      setResumeAsk(ask);
+      if (auto) void checkAutoAsk(ask);
+      else if (app.state === 'suspended') wakeForAsk(app.app);
+      return true;
+    },
+    [checkAutoAsk, wakeForAsk]
+  );
+  useEffect(() => {
+    if (!resumeAsk) return;
+    // The app was closed, another opened, or another chat opened meanwhile.
+    if (!active || active.app !== resumeAsk.app || chatId !== resumeAsk.chatId)
+      return endResumeAsk();
+    if (resumeAsk.checking) return;
+    if (resumeAsk.asking) {
+      if (active.state !== 'running' || !mcpServers.length) endResumeAsk();
+      return;
+    }
+    // Paused again once it had started.
+    if (active.state === 'suspended') {
+      if (resumeAsk.started) endResumeAsk();
+      return;
+    }
+    if (active.state === 'starting') {
+      if (!resumeAsk.started) {
+        resumeAskRef.current = { ...resumeAsk, started: true };
+        setResumeAsk(resumeAskRef.current);
+      }
+      return;
+    }
+    // Running, but its tools are not handed to the chat: asking would go on without them.
+    if (!mcpServers.length) return endResumeAsk();
+    const asking: ResumeAsk = { ...resumeAsk, asking: true };
+    resumeAskRef.current = asking;
+    setResumeAsk(asking);
+    void retryWhenReady(chatRef, asking.stop.signal).then((asked) => {
+      if (resumeAskRef.current === asking) finishResumeAsk(asked);
+    });
+  }, [resumeAsk, active, chatId, mcpServers, endResumeAsk, finishResumeAsk]);
+  // The app has HELD_TIMEOUT_MS to run, and the chat as long again to take the ask once it does.
+  const resuming = !!resumeAsk;
+  const waitingOnChat = !!resumeAsk?.asking;
+  useEffect(() => {
+    if (!resuming) return;
+    const timer = setTimeout(endResumeAsk, HELD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [resuming, waitingOnChat, endResumeAsk]);
+  useEffect(() => () => resumeAskRef.current?.stop.abort(), []);
+
   // A preview belongs to the sandbox it was started from; tear it down when that changes or the
   // page goes away. The tunnel also expires on its own.
   useEffect(() => {
@@ -539,6 +751,27 @@ export function AppAssistantWorkspace({
       setChatId(id);
     },
     [gate]
+  );
+
+  // A failed reply waiting on its app is not asked for after a message of the user's, nor in another
+  // chat: at once, as the chat can say it can send before the next render.
+  const onSend = useCallback(
+    (text: string) => {
+      endResumeAsk();
+      // A new turn: the chat's own asks for a reply after it start afresh.
+      const chat = `\n${chatIdRef.current}`;
+      for (const keys of [autoGaveUp.current, autoWoke.current])
+        keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
+      return onBeforeSend(text);
+    },
+    [endResumeAsk, onBeforeSend]
+  );
+  const onChatOpened = useCallback(
+    (id: string | null) => {
+      if (id !== chatIdRef.current) endResumeAsk();
+      onChatChange(id);
+    },
+    [endResumeAsk, onChatChange]
   );
 
   const starting = held || (sandboxes.open.isPending && sandboxes.open.variables === active?.app);
@@ -718,8 +951,9 @@ export function AppAssistantWorkspace({
             beforeToolCall={gate.beforeToolCall}
             onToolResult={gate.onToolResult}
             chatRef={chatRef}
-            onBeforeSend={onBeforeSend}
-            onChatChange={onChatChange}
+            onBeforeSend={onSend}
+            onReplyResume={onReplyResume}
+            onChatChange={onChatOpened}
           />
         </Paper>
         {session && (
