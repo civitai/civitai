@@ -149,7 +149,7 @@ describe('T11 — the republish gate and the civitai.red overrides', () => {
     expect(await republish()).toEqual({ appListingId: LIVE, status: 'approved' });
   });
 
-  it('🔴 a listing unpublished before the overrides existed (v1) republishes immediately when it still has none', async () => {
+  it('invariant guard: a listing unpublished before the overrides existed (v1) republishes immediately when it still has none', async () => {
     recordedBefore = {
       status: 'approved',
       assets: {

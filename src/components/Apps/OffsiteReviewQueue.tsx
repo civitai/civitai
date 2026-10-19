@@ -57,6 +57,7 @@ import {
   driftPanelState,
   identicalAssetsNotice,
   listingAssetSnapshot,
+  proposedWithUnstagedRedSlots,
   revisionApplyScope,
   screenshotDriftSummary,
   uncomparedApplyFieldsSentence,
@@ -97,8 +98,8 @@ import {
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  listingRatingAssetLabel,
   listingRatingAssetsFromView,
-  MATURE_STORE_HOST,
   summarizeListingRating,
 } from '~/shared/utils/listing-rating-display';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -627,8 +628,12 @@ export function OffsiteReviewModalBody({
       assetsData?.coverScanStatus === status ? 'cover' : null,
       (assetsData?.screenshots ?? []).some((s) => s.scanStatus === status) ? 'screenshots' : null,
       // The civitai.red overrides are held to the same go-live scan gate.
-      assetsData?.redIconScanStatus === status ? `${MATURE_STORE_HOST} icon` : null,
-      assetsData?.redCoverScanStatus === status ? `${MATURE_STORE_HOST} cover` : null,
+      assetsData?.redIconScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })
+        : null,
+      assetsData?.redCoverScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })
+        : null,
     ].filter((v): v is string => v != null);
   const blockedScanKinds = scanKinds('blocked');
   const pendingScanKinds = scanKinds('pending');
@@ -1199,7 +1204,13 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
   // `listingRevisionDrift`.
   const applyScope = revisionApplyScope(request.kind);
   const drift =
-    live && proposed ? computeListingRevisionDrift(live, proposed, { applyScope }) : null;
+    live && proposed
+      ? computeListingRevisionDrift(
+          live,
+          proposedWithUnstagedRedSlots(proposed, live, shadowAssetsQuery.data),
+          { applyScope }
+        )
+      : null;
   // 🔴 `retry: false` on both queries means an error is TERMINAL. Without this the
   // panel sat on an indefinite "Comparing with the live listing…" spinner — a mod
   // next to the destructive-replace case would see a spinner, not "could not load".
@@ -1323,7 +1334,7 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
             {(drift.redIcon !== 'same' || live?.redIconId != null) && (
               <Group gap={6}>
                 <Text size="xs" c="dimmed">
-                  {MATURE_STORE_HOST} icon
+                  {listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
                 </Text>
                 <Badge
                   size="sm"
@@ -1338,7 +1349,7 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
             {(drift.redCover !== 'same' || live?.redCoverId != null) && (
               <Group gap={6}>
                 <Text size="xs" c="dimmed">
-                  {MATURE_STORE_HOST} cover
+                  {listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
                 </Text>
                 <Badge
                   size="sm"

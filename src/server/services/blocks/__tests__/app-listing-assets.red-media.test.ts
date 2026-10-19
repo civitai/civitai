@@ -4,7 +4,9 @@ import type * as AppAccess from '~/server/services/blocks/app-access.service';
 import type * as OffsiteListing from '~/server/services/blocks/offsite-listing.service';
 import type * as AppListingService from '~/server/services/blocks/app-listing.service';
 
-const { recordRatingChange, beginListingRevision, bust } = vi.hoisted(() => ({
+const { recordRatingChange, beginListingRevision, bust, access } = vi.hoisted(() => ({
+  /** What `resolveListingAccess` answers for the caller: an owner unless a test says otherwise. */
+  access: { current: { role: 'owner' } as { role: string } | null },
   recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
   beginListingRevision: vi.fn(async (..._a: unknown[]) => ({
     shadowId: 'apl_rm_shadow',
@@ -22,7 +24,7 @@ vi.mock('~/server/services/blocks/offsite-listing.service', async (importOrigina
 }));
 vi.mock('~/server/services/blocks/app-access.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppAccess>()),
-  resolveListingAccess: vi.fn(async () => ({ role: 'owner' })),
+  resolveListingAccess: vi.fn(async () => access.current),
 }));
 vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppListingService>()),
@@ -58,12 +60,14 @@ const ICON = 61;
 const COVER = 62;
 const R_OVERRIDE = 63;
 const BLOCKED_OVERRIDE = 64;
+const PG13_OVERRIDE = 65;
 
 const LEVELS: Record<number, number> = {
   [ICON]: NsfwLevel.PG,
   [COVER]: NsfwLevel.PG,
   [R_OVERRIDE]: NsfwLevel.R,
   [BLOCKED_OVERRIDE]: NsfwLevel.R,
+  [PG13_OVERRIDE]: NsfwLevel.PG13,
 };
 const INGESTION: Record<number, string> = { [BLOCKED_OVERRIDE]: 'Blocked' };
 
@@ -126,7 +130,8 @@ function wire(rows: Record<string, ReturnType<typeof listing>>) {
   dbMock.dbRead.image.findUnique.mockImplementation(async (args: { where: { id: number } }) => {
     const id = args.where.id;
     if (!(id in LEVELS)) return null;
-    const square = id === R_OVERRIDE || id === BLOCKED_OVERRIDE || id === ICON;
+    const square =
+      id === R_OVERRIDE || id === BLOCKED_OVERRIDE || id === PG13_OVERRIDE || id === ICON;
     return {
       id,
       userId: OWNER_ID,
@@ -144,6 +149,7 @@ function wire(rows: Record<string, ReturnType<typeof listing>>) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  access.current = { role: 'owner' };
   await resetTables(true);
 });
 
@@ -165,6 +171,25 @@ describe('setListingRedMedia', () => {
     });
     expect(beginListingRevision).toHaveBeenCalledWith({ listingId: LIVE, userId: OWNER_ID });
     expect(await split.redSlots(SHADOW)).toEqual({ icon: R_OVERRIDE, cover: null });
+    expect(await split.redSlots(LIVE)).toBeNull();
+  });
+
+  it('🔴 setting ONE override on a revision keeps the other live one (the revision starts from the live overrides)', async () => {
+    wire({
+      [LIVE]: listing(),
+      [SHADOW]: listing({ id: SHADOW, status: 'draft', revisionOfId: LIVE }),
+    });
+    await split.setRedSlots(LIVE, { icon: R_OVERRIDE, cover: null });
+    await setListingRedMedia({ listingId: LIVE, slot: 'cover', imageId: COVER }, owner);
+    expect(await split.redSlots(SHADOW)).toEqual({ icon: R_OVERRIDE, cover: COVER });
+  });
+
+  it('🔴 a caller with no role on the listing is refused, and nothing is written', async () => {
+    access.current = null;
+    wire({ [LIVE]: listing({ status: 'draft' }) });
+    await expect(
+      setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: R_OVERRIDE }, owner)
+    ).rejects.toThrow(/You do not own this listing/);
     expect(await split.redSlots(LIVE)).toBeNull();
   });
 
@@ -217,6 +242,24 @@ describe('setListingRedMedia', () => {
     expect(bust).toHaveBeenCalled();
   });
 
+  it('🔴 a PG-13 override raises an unsplit live listing to PG-13 — and never a split one', async () => {
+    // PG-13 is civitai.com-eligible by LEVEL: only the override mark keeps it out of a split.
+    wire({ [LIVE]: listing() });
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: PG13_OVERRIDE }, mod);
+    expect(dbMock.dbWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: LIVE },
+      data: { contentRating: 'pg13' },
+    });
+    vi.clearAllMocks();
+    await split.db.query(
+      `UPDATE app_listing_red_media SET media_split_approved_at = now(), media_split_approved_by = 72
+       WHERE app_listing_id = $1`,
+      [LIVE]
+    );
+    await setListingRedMedia({ listingId: LIVE, slot: 'icon', imageId: PG13_OVERRIDE }, mod);
+    expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('invariant guard: the same edit of a SPLIT listing leaves its rating alone', async () => {
     wire({ [LIVE]: listing() });
     await split.db.query(
@@ -252,7 +295,21 @@ describe('getListingAssets — the review read of the overrides', () => {
   it('positive control: the same listing without overrides blocks nothing', async () => {
     wire({ [LIVE]: listing({ status: 'pending' }) });
     const res = await getListingAssets({ listingId: LIVE }, mod);
-    expect(res).toMatchObject({ redIconId: null, redCoverId: null, hasBlockedAsset: false });
+    expect(res).toMatchObject({
+      redIconId: null,
+      redCoverId: null,
+      hasBlockedAsset: false,
+      redSlotsStaged: false,
+    });
+  });
+
+  it('says whether the listing has an overrides row at all (a revision that staged none)', async () => {
+    wire({ [LIVE]: listing({ status: 'pending' }) });
+    await split.setRedSlots(LIVE, { icon: null, cover: null });
+    expect(await getListingAssets({ listingId: LIVE }, mod)).toMatchObject({
+      redIconId: null,
+      redSlotsStaged: true,
+    });
   });
 
   it('says when the environment cannot read the overrides at all', async () => {

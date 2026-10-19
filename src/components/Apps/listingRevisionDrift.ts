@@ -200,6 +200,8 @@ export type ListingAssetsLike = {
   coverId: number | null;
   redIconId?: number | null;
   redCoverId?: number | null;
+  /** The listing has an overrides row (`getListingAssets`); absent on an older payload. */
+  redSlotsStaged?: boolean;
   screenshots: { imageId: number | null; order: number; caption?: string | null }[];
 };
 
@@ -228,6 +230,20 @@ export function listingAssetSnapshot(
     // reported change.
     screenshotCaptions: rows.map((s) => (s.caption == null || s.caption === '' ? null : s.caption)),
   };
+}
+
+/**
+ * The REVISION's snapshot as the apply will treat it: a revision with no overrides row
+ * (`redSlotsStaged: false`) staged no change to them, and `applyRevisionRedSlots` leaves the live
+ * ones as they are — so its overrides read as the live listing's, not as "both removed".
+ */
+export function proposedWithUnstagedRedSlots(
+  proposed: ListingAssetSnapshot,
+  live: ListingAssetSnapshot,
+  shadow: Pick<ListingAssetsLike, 'redSlotsStaged'> | null | undefined
+): ListingAssetSnapshot {
+  if (shadow?.redSlotsStaged !== false) return proposed;
+  return { ...proposed, redIconId: live.redIconId, redCoverId: live.redCoverId };
 }
 
 /** Slot-level comparison: null↔null is `same`, null→value is `added`, value→null is

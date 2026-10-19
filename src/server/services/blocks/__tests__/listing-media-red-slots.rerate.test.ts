@@ -109,6 +109,49 @@ describe('a moderator re-rates an image a live listing shows only as its civitai
   });
 });
 
+describe('the override mark reaches the re-rate floor', () => {
+  const splitIt = () =>
+    split.db.query(
+      `UPDATE app_listing_red_media SET media_split_approved_at = now(), media_split_approved_by = $2
+       WHERE app_listing_id = $1`,
+      [LIVE, MOD]
+    );
+
+  it('🔴 a PG-13 override — civitai.com-eligible by level — raises an unsplit listing, never a split one', async () => {
+    await split.seedImages([{ id: OVERRIDE, nsfwLevel: NsfwLevel.PG13 }]);
+    expect(await rerate()).toEqual([{ appListingId: LIVE, before: 'g', after: 'pg13' }]);
+    vi.clearAllMocks();
+    await splitIt();
+    expect(await rerate()).toEqual([]);
+    expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the "before" side keeps the mark: lowering an override a split never counted lowers nothing', async () => {
+    // An on-site app declared g, rated pg13 by something else, split. Its override is re-rated
+    // PG-13 → PG. The override never floored this split listing, so it cannot "explain" the
+    // stored pg13 and the rating must stay — reading the override's previous level WITHOUT its
+    // mark would let it explain pg13 and drop the listing to g.
+    await split.seedImages([{ id: OVERRIDE, nsfwLevel: NsfwLevel.PG }]);
+    await splitIt();
+    dbMock.dbWrite.appListing.findUnique.mockResolvedValue({
+      slug: 'rerate',
+      kind: 'onsite',
+      contentRating: 'pg13',
+      appBlock: { contentRating: 'g' },
+      iconId: OWN,
+      coverId: OWN,
+    });
+    expect(
+      await reDeriveListingRatingsForModeratedImage({
+        imageId: OVERRIDE,
+        previousNsfwLevel: NsfwLevel.PG13,
+        actorUserId: MOD,
+      })
+    ).toEqual([]);
+    expect(dbMock.dbWrite.appListing.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('the rating-history cause reads the overrides too', () => {
   it('🔴 a raise that lands on what the override derives is a store-media change', async () => {
     dbMock.dbWrite.appListingModerationEvent.create.mockResolvedValue({});

@@ -270,11 +270,17 @@ export type ListingRedSlot = 'icon' | 'cover';
 
 export type ListingRedSlotIds = { redIconId: number | null; redCoverId: number | null };
 
-/** A listing's slots as this role reads them; `available: false` = the columns cannot be read. */
-export type ListingRedSlotsRead = ListingRedSlotIds & { available: boolean };
+/**
+ * A listing's slots as this role reads them; `available: false` = the columns cannot be read.
+ * `staged` = the listing HAS an overrides row. For a revision that is the difference between
+ * "staged no change" (no row: the apply leaves the live overrides alone) and "staged both slots
+ * empty" (a row of nulls: the apply clears them) — `applyRevisionRedSlots`.
+ */
+export type ListingRedSlotsRead = ListingRedSlotIds & { available: boolean; staged: boolean };
 
 const NO_RED_SLOTS_READ: ListingRedSlotsRead = Object.freeze({
   available: false,
+  staged: false,
   redIconId: null,
   redCoverId: null,
 });
@@ -318,23 +324,29 @@ export async function readListingRedSlots(
   const row = await readSlotRow(db, appListingId);
   return {
     available: true,
+    staged: row != null,
     redIconId: row?.redIconId ?? null,
     redCoverId: row?.redCoverId ?? null,
   };
 }
 
-/** One filled override slot with its image's current level and scan state (absent image: null). */
+/**
+ * One filled override slot with its image's current level and scan state (absent image: null),
+ * marked `redSlot` — the mark `ratingFloorAssets` reads, so every rating floor can take these
+ * rows as they come.
+ */
 export type ListingRedSlotAsset = {
   slot: ListingRedSlot;
   imageId: number;
   nsfwLevel: number | null;
   ingestion: string | null;
+  redSlot: true;
 };
 
 /**
  * The FILLED override slots of `appListingId` with each image's level and scan state — what the
- * rating floors and the go-live scan gate read. Empty while the slots cannot be read. Fed to the
- * floor marked as red slots (`ratingFloorAssets`): without a moderator's split they floor the
+ * rating floors read, every one of them through this function. Empty while the slots cannot be
+ * read. Marked as red slots (`ratingFloorAssets`): without a moderator's split they floor the
  * rating like any other image; with one, never.
  */
 export async function readListingRedSlotAssets(
@@ -363,7 +375,13 @@ export async function readListingRedSlotAssets(
     const imageId = asImageId(r.image_id);
     if (imageId == null || (r.slot !== 'icon' && r.slot !== 'cover')) return [];
     return [
-      { slot: r.slot, imageId, nsfwLevel: r.nsfw_level ?? null, ingestion: r.ingestion ?? null },
+      {
+        slot: r.slot,
+        imageId,
+        nsfwLevel: r.nsfw_level ?? null,
+        ingestion: r.ingestion ?? null,
+        redSlot: true as const,
+      },
     ];
   });
 }

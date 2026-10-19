@@ -7,6 +7,7 @@ import {
   driftPanelState,
   identicalAssetsNotice,
   listingAssetSnapshot,
+  proposedWithUnstagedRedSlots,
   revisionApplyScope,
   screenshotDriftSummary,
   uncomparedApplyFieldsSentence,
@@ -116,6 +117,22 @@ describe('the civitai.red icon / cover overrides', () => {
       ONSITE
     );
     expect(drift).toMatchObject({ redIcon: 'changed', redCover: 'changed' });
+  });
+
+  it('🔴 a revision that staged no overrides row reads as the live overrides, not as "removed"', () => {
+    const live = snap({ redIconId: 70, redCoverId: 80 });
+    const proposed = proposedWithUnstagedRedSlots(snap(), live, { redSlotsStaged: false });
+    expect(proposed).toMatchObject({ redIconId: 70, redCoverId: 80 });
+    expect(computeListingRevisionDrift(live, proposed, ONSITE)).toMatchObject({
+      redIcon: 'same',
+      redCover: 'same',
+    });
+    // A row that IS staged (both cleared) is what it says, and so is an older payload.
+    expect(proposedWithUnstagedRedSlots(snap(), live, { redSlotsStaged: true })).toMatchObject({
+      redIconId: null,
+      redCoverId: null,
+    });
+    expect(proposedWithUnstagedRedSlots(snap(), live, {})).toMatchObject({ redIconId: null });
   });
 
   it('positive control: identical overrides on both sides are no change', () => {

@@ -1,4 +1,4 @@
-import { Badge, Card, Group, Stack, Text } from '@mantine/core';
+import { Card, Group, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
@@ -9,28 +9,19 @@ import {
 import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
 import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ListingReviewImage,
   ListingReviewMedia,
 } from '~/server/services/blocks/app-listing.service';
-import {
-  LISTING_ASSET_AUDIENCE_LABEL,
-  listingDisplayAssetAudience,
-  type ListingAssetAudience,
-} from '~/shared/utils/listing-media-split';
-import { MATURE_STORE_HOST } from '~/shared/utils/listing-rating-display';
-
-/** Badge colour per audience: red-host-only is the one a moderator must notice. */
-const AUDIENCE_COLOR: Record<ListingAssetAudience, string> = {
-  'com-and-red': 'blue',
-  'red-only': 'red',
-  unrated: 'gray',
-};
+import { ListingAudienceBadge } from '~/components/Apps/ListingAudienceBadge';
+import { listingRatingAssetLabel } from '~/shared/utils/listing-rating-display';
 
 /**
- * Where one listing image shows, as a badge. `rating` is the listing rating it is judged
- * against; without one, the widest civitai.com rating (`pg13`), so the label says only whether
- * civitai.com could show the image at all.
+ * Where one listing image shows, as a badge (`ListingAudienceBadge`). `rating` is the listing
+ * rating it is judged against; without one, the widest civitai.com rating (`pg13`), so the label
+ * says only whether civitai.com could show the image at all.
  */
 export function ReviewMediaAudienceBadge({
   image,
@@ -44,14 +35,12 @@ export function ReviewMediaAudienceBadge({
   testId: string;
 }) {
   if (!image) return null;
-  const audience = listingDisplayAssetAudience(
-    { nsfwLevel: image.nsfwLevel, redSlot },
-    rating ?? 'pg13'
-  );
   return (
-    <Badge size="xs" variant="light" color={AUDIENCE_COLOR[audience]} data-testid={testId}>
-      {LISTING_ASSET_AUDIENCE_LABEL[audience]}
-    </Badge>
+    <ListingAudienceBadge
+      asset={{ nsfwLevel: image.nsfwLevel, redSlot }}
+      rating={rating ?? 'pg13'}
+      testId={testId}
+    />
   );
 }
 
@@ -109,7 +98,19 @@ export function ReviewListingMedia({
 }) {
   const [index, setIndex] = useState<number | null>(null);
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
-  const row = { name, iconUrl, coverUrl };
+  const features = useFeatureFlags();
+  // 🔴 THE LIGHTBOX NEVER SHOWS AN IMAGE THE REVEAL IS HOLDING BACK. The viewer below is a
+  // separate full-size surface the reveal does not wrap, and it navigates between the two images
+  // — so opening the SFW icon and pressing ← would otherwise show a blurred mature cover
+  // full-size. Such an image is left out of the viewer (and its thumbnail opens nothing); it is
+  // judged at review size behind its reveal.
+  const viewable = (image: ListingReviewImage | null | undefined) =>
+    !image || !reviewMediaNeedsReveal(features?.canViewNsfw, image.nsfwLevel);
+  const row = {
+    name,
+    iconUrl: viewable(reviewMedia?.icon) ? iconUrl : null,
+    coverUrl: viewable(reviewMedia?.cover) ? coverUrl : null,
+  };
 
   const open = (which: 'icon' | 'cover') => {
     const next = listingMediaIndex(row, which);
@@ -139,7 +140,7 @@ export function ReviewListingMedia({
                 name={name}
                 imgTestId={`apps-review-listing-icon-${slug}`}
                 placeholderTestId={`apps-review-listing-icon-placeholder-${slug}`}
-                onOpen={iconUrl ? () => open('icon') : undefined}
+                onOpen={row.iconUrl ? () => open('icon') : undefined}
                 buttonTestId={`apps-review-listing-icon-button-${slug}`}
               />
             </ReviewMediaReveal>
@@ -177,7 +178,7 @@ export function ReviewListingMedia({
                 name={name}
                 imgTestId={`apps-review-listing-cover-${slug}`}
                 placeholderTestId={`apps-review-listing-cover-placeholder-${slug}`}
-                onOpen={coverUrl ? () => open('cover') : undefined}
+                onOpen={row.coverUrl ? () => open('cover') : undefined}
                 buttonTestId={`apps-review-listing-cover-button-${slug}`}
               />
             </ReviewMediaReveal>
@@ -197,7 +198,7 @@ export function ReviewListingMedia({
           {reviewMedia?.redIcon && (
             <Stack gap={4}>
               <Text size="xs" c="dimmed">
-                {MATURE_STORE_HOST} icon
+                {listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
               </Text>
               <ReviewMediaReveal
                 image={reviewMedia.redIcon}
@@ -221,7 +222,7 @@ export function ReviewListingMedia({
           {reviewMedia?.redCover && (
             <Stack gap={4} style={{ minWidth: 0 }}>
               <Text size="xs" c="dimmed">
-                {MATURE_STORE_HOST} cover
+                {listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
               </Text>
               <ReviewMediaReveal
                 image={reviewMedia.redCover}

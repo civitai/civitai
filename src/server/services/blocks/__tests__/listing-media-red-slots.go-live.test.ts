@@ -198,7 +198,15 @@ beforeEach(async () => {
   for (const c of [mockRead, mockWrite]) {
     c.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
     c.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
-    c.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    // The shadow delete really deletes it in PGlite too, so its overrides row CASCADES away
+    // as it does in production — an apply that ran after the delete would find nothing staged.
+    c.appListing.deleteMany
+      .mockReset()
+      .mockImplementation(async (args: { where: { id?: string } }) => {
+        if (args?.where?.id)
+          await split.db.query(`DELETE FROM app_listings WHERE id = $1`, [args.where.id]);
+        return { count: 1 };
+      });
     c.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
   }
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
@@ -235,14 +243,45 @@ const SITES = [
 ];
 
 describe.each(SITES)('$site', ({ wire, goesLive, rates }) => {
-  it('🔴 without a split, an R civitai.red icon floors the listing to R', async () => {
-    await split.setRedSlots(goesLive, { icon: R_OVERRIDE });
-    wire();
-    await approve();
-    expectRating(rates, 'r');
-  });
+  it(
+    rates
+      ? '🔴 without a split, an R civitai.red icon floors the listing to R'
+      : 'invariant guard: the assets-only apply writes no rating, an R override or not',
+    async () => {
+      await split.setRedSlots(goesLive, { icon: R_OVERRIDE });
+      wire();
+      await approve();
+      expectRating(rates, 'r');
+    }
+  );
 
-  it('invariant guard: with a split, the override never floors the rating', async () => {
+  it(
+    rates
+      ? '🔴 a SFW override floors it too without a split: a PG-13 civitai.red icon rates the listing PG-13'
+      : 'invariant guard: the assets-only apply writes no rating for a PG-13 override either',
+    async () => {
+      await split.setRedSlots(goesLive, { icon: PG13_OVERRIDE });
+      wire();
+      await approve();
+      expectRating(rates, 'pg13');
+    }
+  );
+
+  it(
+    rates
+      ? '🔴 with a split, an override never floors the rating — even a PG-13 one civitai.com could show'
+      : 'invariant guard: with a split, the assets-only apply writes no rating for a PG-13 override',
+    async () => {
+      // PG-13 is civitai.com-eligible by LEVEL, so only the override mark keeps it out of a
+      // split's floor; an R override would be dropped by the level check alone.
+      await split.setRedSlots(goesLive, { icon: PG13_OVERRIDE });
+      wire();
+      await approve('split');
+      expectRating(rates, 'g');
+    }
+  );
+
+  it('invariant guard: with a split, an R override never floors the rating', async () => {
     await split.setRedSlots(goesLive, { icon: R_OVERRIDE });
     wire();
     await approve('split');
@@ -288,7 +327,7 @@ describe.each(SITES.filter((s) => s.goesLive === SHADOW_ID))(
       expect(await split.redSlots(PARENT_ID)).toEqual({ icon: null, cover: PG13_OVERRIDE });
     });
 
-    it('🔴 T10: a revision that staged no overrides leaves the live ones in place', async () => {
+    it('invariant guard (T10): a revision that staged no overrides leaves the live ones in place', async () => {
       await split.setRedSlots(PARENT_ID, { icon: R_OVERRIDE, cover: PG13_OVERRIDE });
       wire();
       await approve('split');

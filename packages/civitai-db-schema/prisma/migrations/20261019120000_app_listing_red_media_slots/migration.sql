@@ -31,12 +31,24 @@
 --     transaction holds "Image", this aborts instead of stalling every writer queued behind it.
 --   - The two `CREATE INDEX` statements build over that same small table, inside the
 --     transaction (CONCURRENTLY cannot run in one, and is not needed at this size).
+--   - The order matters for the wait: ACCESS EXCLUSIVE on `app_listing_red_media` is taken
+--     FIRST, so while this waits (up to 3s) for "Image", civitai.red store reads and approvals
+--     that read `app_listing_red_media` wait too. civitai.com's store never reads it.
+--   - SHARE ROW EXCLUSIVE also conflicts with a VACUUM of "Image": an ordinary autovacuum is
+--     cancelled (and starts over later); an anti-wraparound one is not, so this would time out
+--     on every attempt while it runs.
 -- So:
 --   1. First check for long-running write transactions, e.g.
 --        SELECT pid, now() - xact_start AS age, state, left(query, 80)
 --          FROM pg_stat_activity
 --         WHERE xact_start < now() - interval '5 seconds' AND state <> 'idle'
 --         ORDER BY xact_start;
+--      and for a vacuum or any other strong lock on "Image" (ordinary writes hold
+--      RowExclusiveLock, which check 1 already covers by age):
+--        SELECT l.pid, l.mode, l.granted, a.backend_type, left(a.query, 80)
+--          FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+--         WHERE l.relation = '"Image"'::regclass
+--           AND l.mode NOT IN ('AccessShareLock', 'RowShareLock', 'RowExclusiveLock');
 --   2. Run it off-peak.
 --   3. On `canceling statement due to lock timeout`, nothing was applied (one transaction);
 --      wait and re-run.
@@ -53,9 +65,10 @@
 --   - the role the app WRITES with (SELECT, INSERT, UPDATE, as before): setting or clearing a
 --     slot, carrying the slots onto and back from a revision, and the review reading them;
 --   - the role the app's READ client connects as (SELECT): the civitai.red store pages read the
---     slots through it. Without it they show the listing's own icon and cover on civitai.red
---     too (nothing breaks); the review still shows the slots, because it reads through the
---     write client.
+--     slots through it, and so do the moderator queue rows and the per-submission review page.
+--     Without it the store shows the listing's own icon and cover on civitai.red too (nothing
+--     breaks) and those two moderator surfaces show no override tile; the review modal, its
+--     preview and the approve itself still see the slots, because they use the write client.
 --
 -- ROLLBACK (discards every civitai.red icon and cover; every listing then shows its own icon
 -- and cover on every host, and the code does not need rolling back). Dropping the columns drops

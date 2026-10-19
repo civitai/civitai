@@ -4,15 +4,15 @@ import {
   useBrowsingLevelContext,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
+import { reviewGuardLevel, reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Click-to-reveal for listing media on the MODERATOR review surfaces: on a host that cannot show
- * mature content (civitai.com), an image rated R, X or XXX is blurred, with the site's own
- * "This image is rated … / Show" overlay, until the moderator clicks Show. Everywhere else the
- * children render as they are.
+ * mature content (civitai.com), an image rated above PG-13 (R, X, XXX, or Blocked) is blurred,
+ * with the site's own "This image is rated … / Show" overlay, until the moderator clicks Show.
+ * Everywhere else the children render as they are.
  *
  * 🔴 BUILT ON `ImageGuard2`, NOT BESIDE IT — the same overlay, the same per-image reveal state
  * (revealing an image here reveals every copy of it on the page). One thing differs: the guard
@@ -42,7 +42,14 @@ export function ReviewMediaReveal({
   return (
     <BrowsingModeOverrideCtx.Provider value={{ ...ctx, blurLevels: nsfwBrowsingLevelsFlag }}>
       <div style={{ position: 'relative' }} data-testid={testId}>
-        <ImageGuard2 image={{ id: image.imageId, nsfwLevel: image.nsfwLevel }} explain={explain}>
+        {/* The guard's own "is this mature" test reads a level as ONE rung, so it is handed
+            the image's most severe bit (`reviewGuardLevel`): a composite carrying R (PG | R) is
+            held back here, and the guard must agree, or it would show what this wrapper decided
+            to blur. */}
+        <ImageGuard2
+          image={{ id: image.imageId, nsfwLevel: reviewGuardLevel(image.nsfwLevel) }}
+          explain={explain}
+        >
           {(shown) => (
             <div
               data-revealed={shown ? 'true' : 'false'}

@@ -84,6 +84,7 @@ describe('only the split table applied — the override columns are ABSENT', () 
   it('every read is "no overrides", and none of them throws', async () => {
     expect(await readListingRedSlots(s.raw, LIVE)).toEqual({
       available: false,
+      staged: false,
       redIconId: null,
       redCoverId: null,
     });
@@ -148,11 +149,14 @@ describe('both migrations applied', () => {
     await writeListingRedSlot(s.raw, { appListingId: LIVE, slot: 'cover', imageId: XXX_IMG });
     expect(await readListingRedSlots(s.raw, LIVE)).toEqual({
       available: true,
+      staged: true,
       redIconId: R_IMG,
       redCoverId: XXX_IMG,
     });
+    // No row: nothing staged (the revision-apply's "leave the live overrides alone" signal).
     expect(await readListingRedSlots(s.raw, OTHER)).toEqual({
       available: true,
+      staged: false,
       redIconId: null,
       redCoverId: null,
     });
@@ -182,8 +186,14 @@ describe('both migrations applied', () => {
   it('the floor read returns each filled slot with its image level and scan state', async () => {
     await s.setRedSlots(LIVE, { icon: R_IMG, cover: XXX_IMG });
     expect(await readListingRedSlotAssets(s.raw, LIVE)).toEqual([
-      { slot: 'icon', imageId: R_IMG, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
-      { slot: 'cover', imageId: XXX_IMG, nsfwLevel: NsfwLevel.XXX, ingestion: 'Scanned' },
+      { slot: 'icon', imageId: R_IMG, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned', redSlot: true },
+      {
+        slot: 'cover',
+        imageId: XXX_IMG,
+        nsfwLevel: NsfwLevel.XXX,
+        ingestion: 'Scanned',
+        redSlot: true,
+      },
     ]);
     expect(await readListingRedSlotAssets(s.raw, OTHER)).toEqual([]);
   });
@@ -367,11 +377,20 @@ describe('both migrations applied, the table NOT granted to the role the app con
     await s.restrictTo([]);
     expect(await readListingRedSlots(s.raw, LIVE)).toEqual({
       available: false,
+      staged: false,
       redIconId: null,
       redCoverId: null,
     });
     expect(await readListingRedSlotAssets(s.raw, LIVE)).toEqual([]);
-    expect((await readListingRedMediaManyForRender(s.raw, [LIVE])).size).toBe(0);
+    // The render read's catch-all would also turn a permission error into "no overrides", so
+    // pin that it never got that far: the PROBE answered, nothing failed and nothing was logged.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect((await readListingRedMediaManyForRender(s.raw, [LIVE])).size).toBe(0);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('positive control: with SELECT granted the same reads see the overrides', async () => {
@@ -383,7 +402,11 @@ describe('both migrations applied, the table NOT granted to the role the app con
   });
 
   it('🔴 a write without INSERT and UPDATE is refused as not writable, and never aborts the transaction', async () => {
-    for (const grants of [[], ['SELECT']] as ('SELECT' | 'INSERT' | 'UPDATE')[][]) {
+    for (const grants of [[], ['SELECT'], ['SELECT', 'INSERT']] as (
+      | 'SELECT'
+      | 'INSERT'
+      | 'UPDATE'
+    )[][]) {
       await s.restrictTo(grants);
       const after = await s.db.transaction(async (tx) => {
         await expect(
@@ -400,13 +423,15 @@ describe('both migrations applied, the table NOT granted to the role the app con
     expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
   });
 
-  it('🔴 SELECT-only: a revision that staged overrides is refused at apply rather than dropped', async () => {
+  it('🔴 without INSERT and UPDATE: a revision that staged overrides is refused at apply rather than dropped', async () => {
     await s.setRedSlots(SHADOW, { icon: PG13_IMG, cover: null });
-    await s.restrictTo(['SELECT']);
-    await expect(
-      applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE })
-    ).rejects.toThrow(RED_SLOTS_NOT_WRITABLE_MESSAGE);
-    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
+    for (const grants of [['SELECT'], ['SELECT', 'INSERT']] as ('SELECT' | 'INSERT')[][]) {
+      await s.restrictTo(grants);
+      await expect(
+        applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE })
+      ).rejects.toThrow(RED_SLOTS_NOT_WRITABLE_MESSAGE);
+      expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
+    }
   });
 
   it('🔴 SELECT-only: the clone is skipped (no shadow row), so the apply leaves the live overrides', async () => {

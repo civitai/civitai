@@ -2923,10 +2923,7 @@ async function resolveApprovalContentRating(
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
   // The civitai.red overrides floor it too, unless the listing is split (`ratingFloorAssets`).
-  const redSlots = (await readListingRedSlotAssets(tx, args.appListingId)).map((a) => ({
-    nsfwLevel: a.nsfwLevel,
-    redSlot: true,
-  }));
+  const redSlots = await readListingRedSlotAssets(tx, args.appListingId);
   const derived = deriveContentRatingFromAssets(
     ratingFloorAssets(
       [...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...redSlots],

@@ -11,10 +11,12 @@ import {
   readListingRedSlotAssets,
   readListingRedSlots,
   assertListingRedSlotsWritable,
+  cloneListingRedSlots,
   writeListingRedSlot,
   type ListingRedSlot,
 } from '~/server/services/blocks/listing-media-split.service';
 import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
+import { listingRatingAssetLabel } from '~/shared/utils/listing-rating-display';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -845,10 +847,11 @@ export type ListingScanAssets = {
   screenshotImageIds: number[];
   /**
    * The civitai.red icon / cover overrides (`readListingRedSlots`), held to the same gate: a
-   * listing may not go live while either is still scanning or `Blocked`. Absent = none.
+   * listing may not go live while either is still scanning or `Blocked`. REQUIRED, not optional,
+   * so a new go-live site cannot leave them out without saying `null` on purpose.
    */
-  redIconId?: number | null;
-  redCoverId?: number | null;
+  redIconId: number | null;
+  redCoverId: number | null;
 };
 
 /** A minimal image reader — `dbRead` / `dbWrite` / an interactive `tx` all satisfy it. */
@@ -881,8 +884,22 @@ export async function assertAssetsScanClean(
     ...(assets.iconId != null ? [{ kind: 'icon', id: assets.iconId }] : []),
     ...(assets.coverId != null ? [{ kind: 'cover', id: assets.coverId }] : []),
     ...assets.screenshotImageIds.map((id) => ({ kind: 'screenshot', id })),
-    ...(assets.redIconId != null ? [{ kind: 'civitai.red icon', id: assets.redIconId }] : []),
-    ...(assets.redCoverId != null ? [{ kind: 'civitai.red cover', id: assets.redCoverId }] : []),
+    ...(assets.redIconId != null
+      ? [
+          {
+            kind: listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null }),
+            id: assets.redIconId,
+          },
+        ]
+      : []),
+    ...(assets.redCoverId != null
+      ? [
+          {
+            kind: listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null }),
+            id: assets.redCoverId,
+          },
+        ]
+      : []),
   ];
   if (tagged.length === 0) return;
 
@@ -982,20 +999,6 @@ export async function assertListingAssetsScanCleanInTx(
  * in-tx caller passes its `tx`; a non-transactional caller may pass `dbWrite` (a
  * `PrismaClient` is structurally a `TransactionClient` for these reads).
  */
-/**
- * A listing's civitai.red icon / cover overrides as rating-floor assets, marked `redSlot` so a
- * split leaves them out (`ratingFloorAssets`). Every floor in this module reads them this way.
- */
-async function redSlotFloorAssets(
-  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  appListingId: string
-): Promise<{ nsfwLevel: number | null; redSlot: true }[]> {
-  return (await readListingRedSlotAssets(db, appListingId)).map((a) => ({
-    nsfwLevel: a.nsfwLevel,
-    redSlot: true as const,
-  }));
-}
-
 export async function resolveListingRatingFloorInTx(
   db: Prisma.TransactionClient,
   appListingId: string,
@@ -1014,7 +1017,7 @@ export async function resolveListingRatingFloorInTx(
   const imageIds = [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
     (v): v is number => v != null
   );
-  const red = await redSlotFloorAssets(db, appListingId);
+  const red = await readListingRedSlotAssets(db, appListingId);
   if (imageIds.length === 0 && red.length === 0) return declaredRating;
   const images = imageIds.length
     ? await db.image.findMany({
@@ -1269,7 +1272,7 @@ async function reDeriveContentRatingForModLiveEdit(
     ratingFloorAssets(
       [
         ...images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
-        ...(await redSlotFloorAssets(tx, listing.id)),
+        ...(await readListingRedSlotAssets(tx, listing.id)),
       ],
       await readListingMediaSplit(tx, listing.id)
     )
@@ -1489,6 +1492,14 @@ export async function setListingRedMedia(
     scanPending = validated.scanPending;
   }
   const raised = await dbWrite.$transaction(async (tx) => {
+    // 🔴 On a revision, start from the live overrides first (a no-op when the revision already
+    // carries them, as `beginListingRevision` normally arranges). Otherwise writing ONE slot
+    // would create the revision's row with the OTHER slot empty, and approving would clear it.
+    if (listing.revisionOfId != null)
+      await cloneListingRedSlots(tx, {
+        fromListingId: listing.revisionOfId,
+        toListingId: listing.id,
+      });
     await writeListingRedSlot(tx, { appListingId: listing.id, slot: args.slot, imageId });
     return reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
@@ -1782,6 +1793,12 @@ export type ListingAssetsView = {
   redIconScanStatus: AssetScanStatus | null;
   redCoverScanStatus: AssetScanStatus | null;
   redSlotsAvailable: boolean;
+  /**
+   * This listing has an overrides row. On a revision, `false` means it staged no change to the
+   * overrides — approving leaves the live ones as they are (`applyRevisionRedSlots`) — which the
+   * drift panel must not read as "both cleared".
+   */
+  redSlotsStaged: boolean;
 };
 
 /**
@@ -1884,6 +1901,7 @@ export async function getListingAssets(
     redIconScanStatus,
     redCoverScanStatus,
     redSlotsAvailable: red.available,
+    redSlotsStaged: red.staged,
   };
 }
 

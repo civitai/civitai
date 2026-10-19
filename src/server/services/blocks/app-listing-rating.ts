@@ -117,9 +117,7 @@ export async function loadListingRatingAssets(
     where: { appListingId, imageId: { not: null } },
     select: { imageId: true },
   });
-  const redSlots: ListingRatingAsset[] = (await readListingRedSlotAssets(db, appListingId)).map(
-    (a) => ({ imageId: a.imageId, nsfwLevel: a.nsfwLevel, ingestion: a.ingestion, redSlot: true })
-  );
+  const redSlots: ListingRatingAsset[] = await readListingRedSlotAssets(db, appListingId);
   const imageIds = [
     ...new Set(
       [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(

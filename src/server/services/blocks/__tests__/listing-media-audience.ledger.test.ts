@@ -66,17 +66,33 @@ const GATE_CALL =
  * url without calling the gate. Only the behaviour suites catch that shape; the projector half of
  * this ledger narrows where it could live.
  */
-const UNGATED_PRISMA_MEDIA = /\b(?:icon|cover)\s*:\s*\{\s*select\s*:\s*\{\s*url\s*:\s*true\s*\}/;
+/**
+ * An icon/cover relation whose literal `select` reads `url` but not `ingestion` — i.e. NOT the
+ * gate's column set. Judged by what the select OMITS rather than by matching `{ url: true }`
+ * exactly, so adding a column or two (say the `nsfwLevel` a moderator reveal reads) does not
+ * walk a url-only read past this detector. A select built from `listingMediaImageSelect` (spread,
+ * not a literal `url: true`) is the gated shape and is not matched.
+ */
+const MEDIA_RELATION_SELECT = /\b(?:icon|cover)\s*:\s*\{\s*select\s*:\s*\{([^{}]*)\}/g;
+function hasUngatedPrismaMedia(code: string): boolean {
+  for (const m of code.matchAll(MEDIA_RELATION_SELECT)) {
+    if (/\burl\s*:\s*true\b/.test(m[1]) && !/\bingestion\s*:\s*true\b/.test(m[1])) return true;
+  }
+  return false;
+}
 const UNGATED_SCREENSHOT_MEDIA =
   /\bscreenshots\s*:\s*\{[\s\S]{0,600}?\bimage\s*:\s*\{\s*select\s*:\s*\{\s*url\s*:\s*true\s*\}/;
 const RAW_JOIN = /JOIN\s+"Image"\s+(\w+)\s+ON\s+\1\.id\s*=\s*\w+\.(?:cover_id|icon_id)/g;
+
+/** A module that reads app listings (the Prisma delegate/relation, or the raw table). */
+const LISTING_SCOPE = /\bappListing\b|\bapp_listings\b/;
 
 function isProjector(code: string): boolean {
   return MEDIA_MODULE_IMPORT.test(code) || MEDIA_CALL.test(code);
 }
 
 function isUngatedHydration(code: string): boolean {
-  if (UNGATED_PRISMA_MEDIA.test(code) || UNGATED_SCREENSHOT_MEDIA.test(code)) return true;
+  if (hasUngatedPrismaMedia(code) || UNGATED_SCREENSHOT_MEDIA.test(code)) return true;
   // A raw join counts as GATED only when the same source also reads that alias's level; otherwise
   // its url can reach a response raw. EVERY join is checked, not only the first.
   for (const m of code.matchAll(RAW_JOIN)) {
@@ -128,10 +144,11 @@ const EXPECTED_UNGATED_HYDRATIONS: Record<string, string> = {
   'server/services/blocks/app-access.service.ts': "the owner's own My-apps row",
   'server/services/blocks/app-ownership-transfer.service.ts':
     'the ownership-transfer offer, shown to the two parties of the transfer',
-  'server/services/blocks/offsite-listing.service.ts': "the author's edit prefill",
-  // (The two moderator review queues select `{ id, url, nsfwLevel }` now — the level is what
-  // their click-to-reveal blurs by — so the on-site one in `publish-request.service.ts` no longer
-  // matches this detector's url-only shapes. It still shows media as attached, by design.)
+  'server/services/blocks/offsite-listing.service.ts':
+    "the author's edit prefill and the off-site moderator review queue",
+  // Both moderator queues read `{ id, url, nsfwLevel }`: shown as attached, the level only drives
+  // their click-to-reveal on civitai.com.
+  'server/services/blocks/publish-request.service.ts': 'the on-site moderator review queue',
 };
 
 describe('listing-media call-site ledger', () => {
@@ -164,8 +181,18 @@ describe('listing-media call-site ledger', () => {
     expect(
       isUngatedHydration(`pc.url AS parent_cover_url\n LEFT JOIN "Image" pc ON pc.id = al.cover_id`)
     ).toBe(true);
+    // A url read that gained a column or two is still not the gate's set.
+    expect(isUngatedHydration(`icon: { select: { id: true, url: true, nsfwLevel: true } },`)).toBe(
+      true
+    );
     // The gated shapes.
     expect(isUngatedHydration(`icon: { select: listingMediaImageSelect },`)).toBe(false);
+    expect(isUngatedHydration(`icon: { select: { ...listingMediaImageSelect, id: true } },`)).toBe(
+      false
+    );
+    expect(
+      isUngatedHydration(`cover: { select: { url: true, nsfwLevel: true, ingestion: true } },`)
+    ).toBe(false);
     expect(
       isUngatedHydration(`pc."nsfwLevel" AS l\n LEFT JOIN "Image" pc ON pc.id = al.cover_id`)
     ).toBe(false);
@@ -216,8 +243,10 @@ describe('listing-media call-site ledger', () => {
   });
 
   it('has exactly the ledgered ungated hydrations — no more, no fewer', () => {
+    // Scoped to modules that touch app listings at all: a `cover`/`icon` relation elsewhere (a
+    // creator announcement's cover, say) is not listing media and not this ledger's business.
     const found = [...CODE.entries()]
-      .filter(([, code]) => isUngatedHydration(code))
+      .filter(([, code]) => LISTING_SCOPE.test(code) && isUngatedHydration(code))
       .map(([rel]) => rel)
       .sort();
     expect(found).toEqual(Object.keys(EXPECTED_UNGATED_HYDRATIONS).sort());

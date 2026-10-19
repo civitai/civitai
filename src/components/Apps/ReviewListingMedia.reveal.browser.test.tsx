@@ -95,6 +95,37 @@ describe('ReviewListingMedia with review media', () => {
     expect(revealed('apps-review-listing-red-cover-reveal-app')).toBe('false');
   });
 
+  test('🔴 the lightbox never offers an image the reveal is holding back', async () => {
+    // The R cover is held back: its thumbnail opens nothing, so the viewer (a full-size surface
+    // the reveal does not wrap) cannot be navigated to it from the SFW icon either.
+    renderWithProviders(
+      <ReviewListingMedia
+        slug="app"
+        name="App"
+        iconUrl={MEDIA.icon.url}
+        coverUrl={MEDIA.cover.url}
+        reviewMedia={MEDIA}
+        rating="g"
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-listing-icon-button-app')).toBeVisible();
+    expect(page.getByTestId('apps-review-listing-cover-button-app').query()).toBeNull();
+  });
+
+  test('positive control: a SFW cover keeps its lightbox button', async () => {
+    renderWithProviders(
+      <ReviewListingMedia
+        slug="app"
+        name="App"
+        iconUrl={MEDIA.icon.url}
+        coverUrl={MEDIA.cover.url}
+        reviewMedia={{ ...MEDIA, cover: { ...MEDIA.cover, nsfwLevel: 2 } }}
+        rating="g"
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-listing-cover-button-app')).toBeVisible();
+  });
+
   test('without review media it renders the two thumbnails exactly as before', async () => {
     renderWithProviders(
       <ReviewListingMedia

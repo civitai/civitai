@@ -92,7 +92,27 @@ describe('ReviewMediaReveal', () => {
     expect(revealedState()).toBe('false');
   });
 
-  test('a PG-13 image is shown as it is (only R, X and XXX are held back)', async () => {
+  test('🔴 a composite level carrying R is held back too — the guard agrees with the wrapper', async () => {
+    renderWithProviders(
+      <ReviewMediaReveal image={{ imageId: 204, nsfwLevel: 1 | R }} testId="reveal">
+        <Media label="pg-and-r-image" />
+      </ReviewMediaReveal>
+    );
+    await expect.element(page.getByText('This image is rated')).toBeVisible();
+    expect(revealedState()).toBe('false');
+  });
+
+  test('🔴 a Blocked-level image is held back too', async () => {
+    renderWithProviders(
+      <ReviewMediaReveal image={{ imageId: 205, nsfwLevel: 32 }} testId="reveal">
+        <Media label="blocked-image" />
+      </ReviewMediaReveal>
+    );
+    await expect.element(page.getByText('This image is rated')).toBeVisible();
+    expect(revealedState()).toBe('false');
+  });
+
+  test('a PG-13 image is shown as it is (only levels above PG-13 are held back)', async () => {
     renderWithProviders(
       <ReviewMediaReveal image={{ imageId: 203, nsfwLevel: PG13 }} testId="reveal">
         <Media label="pg13-image" />

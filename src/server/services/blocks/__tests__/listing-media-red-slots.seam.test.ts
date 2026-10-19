@@ -276,6 +276,9 @@ describe('T9 — a non-red request never reads an override (I2), and never shows
 describe('fail-safe while the environment cannot serve overrides', () => {
   it('🔴 columns absent: a red host shows the listing’s own media, and nothing throws', async () => {
     const t = await createSplitDb();
+    // The render read's catch-all would turn a "column does not exist" into "no overrides" as
+    // well, so pin that it never got that far: the PROBE answered, and nothing was logged.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       await t.applyMigration();
       t.route(dbMock.dbRead as never);
@@ -283,7 +286,9 @@ describe('fail-safe while the environment cannot serve overrides', () => {
       expect(c).toEqual(
         expect.objectContaining({ iconUrl: 'edge:a.png@256', coverUrl: 'edge:a.png@1200' })
       );
+      expect(warn).not.toHaveBeenCalled();
     } finally {
+      warn.mockRestore();
       await t.db.close();
     }
   });
@@ -300,7 +305,14 @@ describe('fail-safe while the environment cannot serve overrides', () => {
         return routed(strings, ...values);
       }
     );
-    expect((await detail(true, R_VIEWER)).iconUrl).toBe('edge:a.png@256');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect((await detail(true, R_VIEWER)).iconUrl).toBe('edge:a.png@256');
+      // Positive control for the "nothing was logged" assertion above: a real failure IS logged.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
