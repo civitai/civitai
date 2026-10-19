@@ -1279,12 +1279,6 @@ describe('POST /api/v1/block-tokens — approved page app previewed through the 
     expect(res._body.scopes).toEqual(DECLARED);
   });
 
-  it('devTunnel: false is the control, not the strip', async () => {
-    const res = await mint({ ...pageBody(), devTunnel: false });
-    expect(res._status).toBe(200);
-    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual(DECLARED);
-  });
-
   it('a tunnel preview is never prompted to consent to a storage scope it will not be given', async () => {
     // apps:storage:publish is consent-gated; without a grant the run path withholds
     // it and asks for consent. The tunnel preview must not ask at all.

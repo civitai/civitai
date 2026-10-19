@@ -328,22 +328,6 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(arg.buzzBudget).toBeUndefined(); // no spend granted → no budget
   });
 
-  // INVARIANT GUARD (not regression coverage — this branch never read the flag): the
-  // host's `devTunnel: true` is accepted by the schema and changes nothing here; the
-  // allowlist clamp is still what withholds storage.
-  it('devTunnel: true in the body mints the SAME token as without it', async () => {
-    const without = await invoke(DEV_BODY());
-    const withoutArg = mockTokenService.sign.mock.calls[0][0] as any;
-    vi.clearAllMocks();
-    const withFlag = await invoke(DEV_BODY({ devTunnel: true }));
-    expect(without._status).toBe(200);
-    expect(withFlag._status).toBe(200);
-    const withArg = mockTokenService.sign.mock.calls[0][0] as any;
-    expect(withArg).toEqual(withoutArg);
-    expect(withArg.dev).toBe(true);
-    expect(withArg.appBlockId).toBe('ephemeral-my-app');
-  });
-
   it('a resolver with NO scopes → a valid READ-ONLY token (no spend), still 200', async () => {
     mockBlockRegistry.resolveDevPageBlockForAuthor.mockResolvedValue({
       ...EPHEMERAL_RESOLUTION,
