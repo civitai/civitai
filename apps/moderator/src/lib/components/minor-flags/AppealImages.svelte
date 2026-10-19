@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
@@ -14,9 +15,14 @@
         target="_blank"
         rel="noreferrer"
         aria-label="Open image {i + 1} of {images.length} full size"
-        class="block h-[180px] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
+        class="relative block h-[180px] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
         <EdgeMedia src={image.url} type="image" width={450} class="size-full object-cover" />
+        <span
+          class="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-white"
+        >
+          {getBrowsingLevelLabel(image.nsfwLevel)}
+        </span>
       </a>
     {/each}
   </div>

@@ -4,7 +4,7 @@
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import { dateTime, num } from '$lib/format';
+  import { bytes, dateTime } from '$lib/format';
   import { effectiveSource } from '$lib/minor-flags/appeal-filters';
   import { ago, modelUrl, shortHash, yearMonth } from '$lib/minor-flags/appeal-row';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
@@ -15,7 +15,13 @@
       Pick<MinorFlagAppealRow, 'flagSource' | 'flagConfirmedFrom'> &
         Pick<
           MinorHashReviewRow,
-          'modelVersionId' | 'hash' | 'minorModelId' | 'minorModelName' | 'minorModelVersionId'
+          | 'modelVersionId'
+          | 'hash'
+          | 'fileName'
+          | 'fileSizeKB'
+          | 'minorModelId'
+          | 'minorModelName'
+          | 'minorModelVersionId'
         >
     >;
 
@@ -77,16 +83,14 @@
         {@const seedName = row.minorModelName ?? m?.minorModelName ?? null}
         {@const seedVersion = row.minorModelVersionId ?? m?.minorModelVersionId ?? null}
         {@const hash = row.hash ?? m?.hash ?? null}
+        {@const fileName = row.fileName ?? m?.fileName ?? null}
+        {@const fileSizeKB = row.fileSizeKB ?? m?.fileSizeKB ?? null}
         <div class="space-y-2">
           <div class="grid grid-cols-2 gap-3">
             <div class="flex min-w-0 flex-col gap-1.5">
               {@render cover(d.modelCoverUrl, d.modelCoverType)}
               {@render heading(row.modelName, 'this model', modelUrl(civitaiUrl, modelId, ownVersion))}
-              <span class="text-[11px] text-dark-1">
-                {row.username ?? `user #${row.userId}`} · {num(d.uploaderModelCount)}
-                {d.uploaderModelCount === 1 ? 'model' : 'models'}{#if d.uploaderJoinedAt}
-                  · joined {yearMonth(d.uploaderJoinedAt)}{/if}
-              </span>
+              <span class="text-[11px] text-dark-1">{row.username ?? `user #${row.userId}`}</span>
               {#if d.modelCreatedAt}
                 <span class="text-[11px] text-dark-2" title={dateTime(d.modelCreatedAt)}>
                   uploaded {ago(d.modelCreatedAt)}
@@ -141,6 +145,8 @@
           {#if hash && seedId}
             <p class="m-0 flex items-center gap-2 text-xs text-dark-0" title={hash}>
               <IconFileCheck size={13} class="shrink-0 text-emerald-400" />
+              {#if fileName}{fileName} ·{/if}
+              {#if fileSizeKB != null}{bytes(fileSizeKB)} ·{/if}
               SHA256 {shortHash(hash)} identical in both
             </p>
           {/if}

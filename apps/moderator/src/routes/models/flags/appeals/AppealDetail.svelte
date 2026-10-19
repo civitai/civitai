@@ -44,6 +44,7 @@
 </script>
 
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
@@ -58,7 +59,10 @@
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import { modelUrl, waiting } from '$lib/minor-flags/appeal-row';
-  import { flagInForce, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
+  import { fetchModelFlagDetail, flagPromptId } from '$lib/minor-flags/model-detail';
+  import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
+  import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
@@ -91,6 +95,25 @@
   } = $props();
 
   const modelHref = $derived(modelUrl(civitaiUrl, row.modelId));
+
+  // Derived, never an effect: the shell keys the detail per row, so a late response cannot land on
+  // another one. Primitives first, so a reload that hands back an equal row keeps the request.
+  const modelId = $derived(row.modelId);
+  const promptKey = $derived(
+    openVerdicts(row.textScanFlags)
+      .map(({ label, flag }) => flagPromptId(flag.promptIds, label))
+      .filter((id): id is number => id !== null)
+      .join(',')
+  );
+  const detail = $derived(
+    browser
+      ? fetchModelFlagDetail(
+          MODEL_FLAGS_APPEALS_PATH,
+          modelId,
+          promptKey ? promptKey.split(',').map(Number) : []
+        )
+      : SSR_PENDING
+  );
 
   // The decision keys, in key order; the labels say what the ruling does to the flag.
   const DECISION_LABEL = {
@@ -219,6 +242,7 @@
       modelName={row.modelName}
       userId={row.userId}
       {civitaiUrl}
+      {detail}
     >
       {#snippet chips()}
         <MetaChip tone="amber" solid>appeal</MetaChip>
@@ -227,11 +251,15 @@
       {/snippet}
     </ModelDetailHeader>
 
-    <PreviewImagesCard images={row.coverImages} allHref={modelHref} />
+    <PreviewImagesCard images={row.coverImages} allHref={modelHref} {detail} />
 
     <div class="grid gap-4 lg:grid-cols-[380px_1fr]">
-      <OwnerSaysCard message={row.appealMessage} appealedAt={row.appealCreatedAt} />
-      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} />
+      <OwnerSaysCard
+        message={row.appealMessage}
+        appealedAt={row.appealCreatedAt}
+        nthThisYear={row.appealNthThisYear}
+      />
+      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} {detail} />
     </div>
 
     <PriorRulingsCard
@@ -245,8 +273,8 @@
     />
 
     <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard {row} />
-      <UploaderCard {row} />
+      <ModelFactsCard {row} {detail} />
+      <UploaderCard {row} {detail} />
     </div>
   {/snippet}
   {#snippet actions()}

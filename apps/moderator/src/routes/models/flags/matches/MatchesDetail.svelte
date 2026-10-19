@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
@@ -13,6 +14,9 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { dateTime } from '$lib/format';
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
+  import { fetchModelFlagDetail } from '$lib/minor-flags/model-detail';
+  import { MODEL_FLAGS_MATCHES_PATH } from '$lib/minor-flags/paths';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import type { MinorHashReviewRow } from '$lib/server/minor-hash.service';
   import type { Outcome } from '$lib/triage/queue';
 
@@ -35,6 +39,12 @@
     formActions: readonly [string, string];
   } = $props();
 
+  // Derived, never an effect: the shell keys the detail per row.
+  const modelId = $derived(row.modelId);
+  const detail = $derived(
+    browser ? fetchModelFlagDetail(MODEL_FLAGS_MATCHES_PATH, modelId) : SSR_PENDING
+  );
+
   const DECISIONS = [
     { label: 'Flag as minor', outcome: 'Flagged as minor' },
     { label: 'Dismiss match', outcome: 'Dismissed' },
@@ -48,6 +58,7 @@
       modelName={row.modelName}
       userId={row.userId}
       {civitaiUrl}
+      {detail}
     >
       {#snippet chips()}
         <MetaChip>file match</MetaChip>
@@ -56,7 +67,11 @@
       {/snippet}
     </ModelDetailHeader>
 
-    <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
+    <PreviewImagesCard
+      images={row.coverImages}
+      allHref={modelUrl(civitaiUrl, row.modelId)}
+      {detail}
+    />
 
     <div class="grid gap-4 lg:grid-cols-[1fr_400px]">
       <TriageCard dense title="Why it is here">
@@ -76,8 +91,8 @@
     </div>
 
     <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard {row} />
-      <UploaderCard {row} />
+      <ModelFactsCard {row} {detail} />
+      <UploaderCard {row} {detail} />
     </div>
   {/snippet}
   {#snippet actions()}

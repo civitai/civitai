@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
@@ -10,6 +11,7 @@
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
+  import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import ScannedNamesCard from '$lib/components/minor-flags/ScannedNamesCard.svelte';
   import ScannedTextCard from '$lib/components/minor-flags/ScannedTextCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
@@ -23,7 +25,14 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
   import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
-  import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
+  import {
+    fetchModelFlagDetail,
+    flagPromptId,
+    flagScanSource,
+    textSinceFlag,
+  } from '$lib/minor-flags/model-detail';
+  import { MODEL_FLAGS_APPEALS_PATH, MODEL_FLAGS_REVIEW_PATH } from '$lib/minor-flags/paths';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import {
     detectionCopy,
     detectionKind,
@@ -79,6 +88,19 @@
     redetection ? detectionSections(detectionKind(redetection), row.rulings) : null
   );
   const flagged = $derived(row.label === 'poi' ? row.poi : row.minor);
+
+  // Derived, never an effect: the shell keys the detail per row. Primitives first, so a reload that
+  // hands back an equal row keeps the request.
+  const modelId = $derived(row.modelId);
+  const promptId = $derived(
+    flagPromptId((row.scanEntry ?? row.redetected)?.promptIds, row.label)
+  );
+  const detail = $derived(
+    browser
+      ? fetchModelFlagDetail(MODEL_FLAGS_REVIEW_PATH, modelId, promptId ? [promptId] : [])
+      : SSR_PENDING
+  );
+  const since = $derived(textSinceFlag(row.textHash, row.scanRows));
 
   const DECISIONS = [
     { action: 'keepFlag', label: 'Keep flag', outcome: 'Flag kept' },
@@ -240,6 +262,7 @@
       modelName={row.modelName}
       userId={row.userId}
       {civitaiUrl}
+      {detail}
     >
       {#snippet chips()}
         <FlaggedSourceBadge {row} />
@@ -253,7 +276,11 @@
       {/snippet}
     </ModelDetailHeader>
 
-    <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
+    <PreviewImagesCard
+      images={row.coverImages}
+      allHref={modelUrl(civitaiUrl, row.modelId)}
+      {detail}
+    />
 
     {#if redetection && copy && sections}
       <div
@@ -267,7 +294,7 @@
           explanation={copy.explanation}
         />
         {#if redetection.names?.length}
-          <ScannedNamesCard names={redetection.names} textHash={redetection.textHash} />
+          <ScannedNamesCard names={redetection.names} textHash={redetection.textHash} {since} />
         {/if}
       </div>
       {#if blocked}{@render appealNotice()}{/if}
@@ -286,8 +313,12 @@
           <div class="space-y-3">
             <FlagVerdictBlock label={row.label} reason={scanEntry?.reason}>
               {#snippet provenance()}
-                {@const at = scanEntry?.at ?? row.flaggedAt}
-                text scan{#if at}, <span title={dateTime(at)}>{ago(at)}</span>{/if}
+                <ScanProvenance
+                  at={scanEntry?.at ?? row.flaggedAt}
+                  source={flagScanSource(scanEntry?.workflowId, row.scanRows)}
+                  {promptId}
+                  {detail}
+                />
               {/snippet}
               {#if latest && latestScanDisagrees(row.latestScan, row.label)}
                 {@const later = scanVerdictProvenance(latest)}
@@ -304,7 +335,7 @@
           </div>
         </TriageCard>
         {#if scanEntry?.names?.length || row.textHash}
-          <ScannedNamesCard names={scanEntry?.names ?? []} textHash={row.textHash} />
+          <ScannedNamesCard names={scanEntry?.names ?? []} textHash={row.textHash} {since} />
         {/if}
       </div>
       <PriorRulingsCard
@@ -355,8 +386,8 @@
     {/if}
 
     <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard {row} />
-      <UploaderCard {row} />
+      <ModelFactsCard {row} {detail} />
+      <UploaderCard {row} {detail} />
     </div>
   {/snippet}
   {#snippet actions()}

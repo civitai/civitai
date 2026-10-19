@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageFilterChips, {
     type ChipGroup,
@@ -148,6 +149,7 @@
     >
       {#snippet badges()}
         <AppealTags {row} />
+        {#if row.alsoInFlagged}<MetaChip tone="blue">also in Flagged</MetaChip>{/if}
       {/snippet}
     </TriageRow>
   {/snippet}

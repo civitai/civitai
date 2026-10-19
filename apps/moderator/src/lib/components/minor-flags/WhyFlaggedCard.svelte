@@ -2,11 +2,17 @@
   import { browser } from '$app/environment';
   import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
+  import {
+    flagPromptId,
+    flagScanSource,
+    type ModelFlagDetail,
+  } from '$lib/minor-flags/model-detail';
   import {
     latestScanDisagrees,
     openVerdicts,
@@ -20,7 +26,13 @@
     row,
     civitaiUrl,
     canUphold,
-  }: { row: MinorFlagAppealRow; civitaiUrl: string; canUphold: boolean } = $props();
+    detail,
+  }: {
+    row: MinorFlagAppealRow;
+    civitaiUrl: string;
+    canUphold: boolean;
+    detail: Promise<ModelFlagDetail>;
+  } = $props();
 
   const verdicts = $derived(openVerdicts(row.textScanFlags));
   const scan = $derived(row.latestScan);
@@ -58,7 +70,12 @@
     {#each verdicts as { label, flag } (label)}
       <FlagVerdictBlock {label} reason={flag.reason}>
         {#snippet provenance()}
-          text scan{#if flag.at}, <span title={dateTime(flag.at)}>{ago(flag.at)}</span>{/if}
+          <ScanProvenance
+            at={flag.at}
+            source={flagScanSource(flag.workflowId, row.scanRows)}
+            promptId={flagPromptId(flag.promptIds, label)}
+            {detail}
+          />
         {/snippet}
         {#if flag.names?.length}
           <div class="flex flex-wrap gap-1.5 pt-1">

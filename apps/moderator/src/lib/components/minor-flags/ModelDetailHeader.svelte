@@ -5,18 +5,22 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { modelUrl } from '$lib/minor-flags/appeal-row';
+  import type { ModelFlagDetail } from '$lib/minor-flags/model-detail';
 
   let {
     modelId,
     modelName,
     userId,
     civitaiUrl,
+    detail,
     chips,
   }: {
     modelId: number;
     modelName: string;
     userId: number;
     civitaiUrl: string;
+    /** Carries the open-report count for the Reports link. */
+    detail: Promise<ModelFlagDetail>;
     chips: Snippet;
   } = $props();
 
@@ -31,7 +35,7 @@
       <IconExternalLink aria-hidden="true" /> Open on Civitai
     </Button>
     <Button variant="outline" size="sm" class={LINK_BUTTON} href="/reports/model/{modelId}">
-      <IconFlag aria-hidden="true" /> Reports
+      <IconFlag aria-hidden="true" /> Reports{#await detail}{:then d}&nbsp;({d.openReports}){:catch}{/await}
     </Button>
     <Button variant="outline" size="sm" class={LINK_BUTTON} href={userLookupUrl(userId)}>
       <IconUser aria-hidden="true" /> Uploader
