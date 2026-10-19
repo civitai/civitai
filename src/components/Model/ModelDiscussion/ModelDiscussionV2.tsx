@@ -1,12 +1,5 @@
-import {
-  Button,
-  Group,
-  LoadingOverlay,
-  Paper,
-  Stack,
-  Text,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { IconMessageCancel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -24,7 +17,6 @@ export function ModelDiscussionV2({
   limit: initialLimit = 8,
   onlyHidden,
 }: Props) {
-  const colorScheme = useComputedColorScheme('dark');
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? initialLimit / 2 : initialLimit;
   const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
@@ -78,14 +70,7 @@ export function ModelDiscussionV2({
             </div>
             <Stack gap={8} align="center">
               {hasNextPage && (
-                <Button
-                  onClick={() => fetchNextPage()}
-                  loading={isFetchingNextPage}
-                  color="gray"
-                  variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                >
-                  {isFetchingNextPage ? 'Loading more...' : 'Load more'}
-                </Button>
+                <LoadMoreButton onClick={fetchNextPage} loading={isFetchingNextPage} />
               )}
               {countLabel && (
                 <Text size="xs" c="dimmed">
