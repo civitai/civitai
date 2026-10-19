@@ -4,9 +4,12 @@ import {
   useBrowsingLevelContext,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { reviewGuardLevel, reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
+import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  getHighestBrowsingLevelBit,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Click-to-reveal for listing media on the MODERATOR review surfaces: on a host that cannot show
@@ -43,11 +46,11 @@ export function ReviewMediaReveal({
     <BrowsingModeOverrideCtx.Provider value={{ ...ctx, blurLevels: nsfwBrowsingLevelsFlag }}>
       <div style={{ position: 'relative' }} data-testid={testId}>
         {/* The guard's own "is this mature" test reads a level as ONE rung, so it is handed
-            the image's most severe bit (`reviewGuardLevel`): a composite carrying R (PG | R) is
-            held back here, and the guard must agree, or it would show what this wrapper decided
-            to blur. */}
+            the image's most severe bit (`getHighestBrowsingLevelBit`, what the site labels a
+            composite by): a composite carrying R (PG | R) is held back here, and the guard must
+            agree, or it would show what this wrapper decided to blur. */}
         <ImageGuard2
-          image={{ id: image.imageId, nsfwLevel: reviewGuardLevel(image.nsfwLevel) }}
+          image={{ id: image.imageId, nsfwLevel: getHighestBrowsingLevelBit(image.nsfwLevel) }}
           explain={explain}
         >
           {(shown) => (

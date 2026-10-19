@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   mostMatureReviewImage,
-  reviewGuardLevel,
   reviewMediaNeedsReveal,
 } from '~/components/Apps/reviewMediaRevealRule';
 
@@ -11,7 +10,6 @@ describe('reviewMediaNeedsReveal — which review images are held behind the cli
     ['R', NsfwLevel.R, true],
     ['X', NsfwLevel.X, true],
     ['XXX', NsfwLevel.XXX, true],
-    // 🔴 Blocked is outside SFW too: held back, not shown because it is not R/X/XXX.
     ['Blocked', NsfwLevel.Blocked, true],
     // A composite carrying a mature bit is mature.
     ['PG | R', NsfwLevel.PG | NsfwLevel.R, true],
@@ -31,19 +29,6 @@ describe('reviewMediaNeedsReveal — which review images are held behind the cli
   });
 });
 
-describe('reviewGuardLevel — the one rung ImageGuard2 is handed', () => {
-  it.each([
-    ['R', NsfwLevel.R, NsfwLevel.R],
-    ['XXX', NsfwLevel.XXX, NsfwLevel.XXX],
-    ['PG | R', NsfwLevel.PG | NsfwLevel.R, NsfwLevel.R],
-    ['R | X', NsfwLevel.R | NsfwLevel.X, NsfwLevel.X],
-    ['Blocked', NsfwLevel.Blocked, NsfwLevel.Blocked],
-    ['PG | Blocked', NsfwLevel.PG | NsfwLevel.Blocked, NsfwLevel.Blocked],
-  ])('%s → %s', (_label, level, rung) => {
-    expect(reviewGuardLevel(level)).toBe(rung);
-  });
-});
-
 describe('mostMatureReviewImage', () => {
   it('picks the highest level, skipping absent images', () => {
     const a = { imageId: 1, nsfwLevel: NsfwLevel.PG13 };
@@ -53,7 +38,7 @@ describe('mostMatureReviewImage', () => {
     expect(mostMatureReviewImage([null, undefined])).toBeNull();
   });
 
-  it('🔴 a Blocked-level image holds the block (it needs the reveal most of all)', () => {
+  it('invariant guard: a Blocked-level image holds the block (it needs the reveal most of all)', () => {
     const xxx = { imageId: 4, nsfwLevel: NsfwLevel.XXX };
     const blocked = { imageId: 5, nsfwLevel: NsfwLevel.Blocked };
     const picked = mostMatureReviewImage([xxx, blocked]);
