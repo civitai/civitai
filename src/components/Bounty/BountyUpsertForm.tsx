@@ -42,7 +42,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
-  InputDatePicker,
+  InputDateTimePicker,
   InputMultiFileUpload,
   InputMultiSelect,
   InputNumber,
@@ -57,7 +57,11 @@ import {
 } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
+import {
+  getMinBountyExpiresAt,
+  getMinBountyStartsAt,
+  upsertBountyInputSchema,
+} from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
 import {
   BountyEntryMode,
@@ -67,7 +71,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import type { BountyGetById } from '~/types/router';
-import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
+import { fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -86,6 +90,8 @@ import { stringToDate } from '~/utils/zod-helpers';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
+const sortedBaseModels = [...activeBaseModels].sort((a, b) => a.localeCompare(b));
+
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
     'Only you will be the supporter of this bounty. This is great if you are offering a good reward for a really specific resource that you want tailored for your specific needs. The number of entries might be limited if the reward you are offering is not enticing enough.',
@@ -102,13 +108,22 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
   .extend({
+    // Picker values are "display UTC" dates: local fields hold the UTC wall time.
     startsAt: stringToDate(
-      z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future')
+      z
+        .date()
+        .refine(
+          (date) => fromDisplayUTC(date) >= getMinBountyStartsAt(),
+          'Start time cannot be in the past'
+        )
     ),
     expiresAt: stringToDate(
       z
         .date()
-        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
+        .refine(
+          (date) => fromDisplayUTC(date) >= getMinBountyExpiresAt(),
+          'Expiration must be at least a day from now'
+        )
     ),
   })
   .refine((data) => data.poi !== true, {
@@ -170,10 +185,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         bounty?.minBenefactorUnitAmount ?? constants.bounties.minCreateAmount,
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
-      expiresAt: bounty
-        ? dateWithoutTimezone(bounty.expiresAt)
-        : dayjs().add(7, 'day').startOf('day').toDate(),
-      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : dayjs().startOf('day').toDate(),
+      expiresAt: toDisplayUTC(
+        bounty ? bounty.expiresAt : dayjs.utc().startOf('hour').add(7, 'day').toDate()
+      ),
+      startsAt: toDisplayUTC(bounty ? bounty.startsAt : dayjs.utc().startOf('hour').toDate()),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -273,8 +288,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           ...bounty,
           ...rest,
           buzzType: mainBuzzType as 'green' | 'yellow',
-          startsAt: stripTime(startsAt),
-          expiresAt: stripTime(expiresAt),
+          startsAt: fromDisplayUTC(startsAt).toISOString(),
+          expiresAt: fromDisplayUTC(expiresAt).toISOString(),
           images: filteredImages,
         });
 
@@ -407,7 +422,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           label="Base model"
                           placeholder="Please select a base model"
                           withAsterisk
-                          data={[...activeBaseModels]}
+                          data={sortedBaseModels}
+                          searchable
                         />
                       )}
                     </Group>
@@ -556,26 +572,29 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 {!alreadyStarted && (
                   <Stack>
                     <Group gap="md" grow>
-                      <InputDatePicker
+                      <InputDateTimePicker
                         className={classes.fluid}
                         name="startsAt"
-                        label="Start Date"
-                        placeholder="Select a start date"
+                        label="Start Date (UTC)"
+                        placeholder="Select a start date and time"
                         leftSection={<IconCalendar size={16} />}
+                        valueFormat="lll"
                         minDate={minStartDate}
                         maxDate={maxStartDate}
+                        timeInputProps={{ step: 3600 }}
                         clearable={false}
                         withAsterisk
                       />
-                      <InputDatePicker
+                      <InputDateTimePicker
                         className={classes.fluid}
                         name="expiresAt"
-                        label="Deadline"
-                        placeholder="Select an end date"
+                        label="Deadline (UTC)"
+                        placeholder="Select an end date and time"
                         leftSection={<IconCalendarDue size={16} />}
+                        valueFormat="lll"
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
-                        // dateParser={(dateString) => new Date(Date.parse(dateString))}
+                        timeInputProps={{ step: 3600 }}
                         clearable={false}
                         withAsterisk
                       />
@@ -584,7 +603,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       <Text fw={590}>
                         With the selected dates, your bounty will expire{' '}
                         <Text fw="bold" c="red.5" span>
-                          <DaysFromNow date={stripTime(expiresAt)} inUtc />
+                          <DaysFromNow date={fromDisplayUTC(new Date(expiresAt))} />
                         </Text>
                         . All times are in{' '}
                         <Text fw="bold" c="red.5" span>

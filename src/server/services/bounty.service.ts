@@ -40,7 +40,7 @@ import {
   updateEntityImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
-import { decreaseDate, startOfDay } from '~/utils/date-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
@@ -202,8 +202,8 @@ export const createBounty = async ({
   tags,
   unitAmount,
   currency,
-  startsAt: incomingStartsAt,
-  expiresAt: incomingExpiresAt,
+  startsAt,
+  expiresAt,
   buzzType,
   addLockedProperties,
   blurbUses,
@@ -233,9 +233,6 @@ export const createBounty = async ({
   if (buzzType === 'green' && data.nsfw) {
     throw new Error('When using Green Buzz, you are not allowed to create NSFW content');
   }
-
-  const startsAt = startOfDay(incomingStartsAt, { utc: true });
-  const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   // Green buzz can never be spent on NSFW, so the flag is locked for the bounty's lifetime.
   const lockedProperties = uniq([
@@ -363,8 +360,8 @@ export const updateBountyById = async ({
   ownRights,
   tags,
   details,
-  startsAt: incomingStartsAt,
-  expiresAt: incomingExpiresAt,
+  startsAt,
+  expiresAt,
   images,
   userId,
   entryLimit,
@@ -383,10 +380,6 @@ export const updateBountyById = async ({
    */
   blurbUses?: BlurbUse[];
 }) => {
-  // Convert dates to UTC for storing
-  const startsAt = startOfDay(incomingStartsAt, { utc: true });
-  const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
-
   let imagesToIngest: IngestImageInput[] = [];
 
   const bounty = await dbWrite.$transaction(

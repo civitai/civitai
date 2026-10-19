@@ -246,6 +246,16 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data.nsfw).toBe(false);
     expect(data).not.toHaveProperty('lockedProperties');
   });
+
+  it('stores the edited start and expiry times as given instead of snapping them to midnight', async () => {
+    const startsAt = new Date('2030-03-04T13:00:00.000Z');
+    const expiresAt = new Date('2030-03-20T17:00:00.000Z');
+
+    await upsert({ startsAt: startsAt.toISOString(), expiresAt: expiresAt.toISOString() });
+
+    expect(updateData().startsAt).toEqual(startsAt);
+    expect(updateData().expiresAt).toEqual(expiresAt);
+  });
 });
 
 describe('upsertBounty — create path', () => {
@@ -288,7 +298,25 @@ describe('upsertBounty — create path', () => {
   it('rejects a past start date as a bad request, not a server error', async () => {
     await expect(
       create({ startsAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Start date must be in the future' });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Start time cannot be in the past' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('stores the start and expiry times as given instead of snapping them to midnight', async () => {
+    const hour = 60 * 60 * 1000;
+    const startsAt = new Date(Math.floor((Date.now() + 5 * hour) / hour) * hour + 15 * 60 * 1000);
+    const expiresAt = new Date(startsAt.getTime() + 3 * 24 * hour + 7 * hour);
+
+    await create({ startsAt: startsAt.toISOString(), expiresAt: expiresAt.toISOString() });
+
+    expect(createData().startsAt).toEqual(startsAt);
+    expect(createData().expiresAt).toEqual(expiresAt);
+  });
+
+  it('refuses an expiration less than a day from now', async () => {
+    await expect(
+      create({ expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
   });
 
@@ -299,7 +327,10 @@ describe('upsertBounty — create path', () => {
         startsAt: new Date(Date.now() + 10 * day).toISOString(),
         expiresAt: new Date(Date.now() + 2 * day).toISOString(),
       })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Expiration date must come after the start date' });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Expiration date must come after the start date',
+    });
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
   });
 
