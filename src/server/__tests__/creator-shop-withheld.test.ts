@@ -18,9 +18,12 @@ const { isListingDisplayable } = await import('~/server/services/creator-shop.da
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
-const { reviewCreatorShopItem, updateCreatorShopItem } = await import(
-  '~/server/services/creator-shop.service'
-);
+const {
+  reviewCreatorShopItem,
+  setCreatorShopItemListed,
+  unarchiveCreatorShopItem,
+  updateCreatorShopItem,
+} = await import('~/server/services/creator-shop.service');
 const { cosmeticEntityCaches, userCosmeticCache } = await import('~/server/redis/caches');
 
 const CREATOR = 11;
@@ -362,6 +365,36 @@ describe('a verdict outlives the capped history', () => {
     ]);
 
     expect(storedListing.meta).toMatchObject({ displayApproved: false });
+    await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
+      IN_REVIEW
+    );
+  });
+
+  const legacySentBack: Listing = {
+    status: 'RequestedChanges',
+    rejectionReason: 'Off-brand',
+    lastApprovedAmount: 500,
+  };
+  it.each([
+    [
+      'relisting it',
+      () => setCreatorShopItemListed({ id: 42, userId: CREATOR, listed: true }),
+      legacySentBack,
+    ],
+    [
+      'a moderator restoring it',
+      () => unarchiveCreatorShopItem({ id: 42, userId: MOD, isModerator: true }),
+      { ...legacySentBack, status: 'Archived' },
+    ],
+  ])('%s clears the reason but keeps a sent-back item withheld', async (_, act, listing) => {
+    storedListing = listingRow(listing);
+    dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
+      { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
+    ]);
+
+    await act();
+
+    expect(storedListing).toMatchObject({ status: 'PendingReview', rejectionReason: null });
     await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
       IN_REVIEW
     );

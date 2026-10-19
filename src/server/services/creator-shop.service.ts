@@ -21,8 +21,8 @@ import {
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
-  isListingDisplayable,
   patchCosmeticData,
+  recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
@@ -960,13 +960,10 @@ export const updateCreatorShopItem = async ({
         }
       : {}),
     ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
-    // Seeded from the history before this edit lands, so a later trim of the capped log can't
-    // forget a verdict.
     displayApproved:
       !isModerator && changesDisplay(changes)
         ? false
-        : meta.displayApproved ??
-          isListingDisplayable({
+        : recordedDisplayVerdict({
             status: existing.status,
             meta,
             rejectionReason: existing.rejectionReason,
@@ -1145,6 +1142,14 @@ export const setCreatorShopItemListed = async ({
             rejectionReason: null,
             reviewedById: null,
             reviewedAt: null,
+            meta: {
+              ...(existing.meta as CosmeticShopItemMeta | null),
+              displayApproved: recordedDisplayVerdict({
+                status: existing.status,
+                meta: existing.meta as CosmeticShopItemMeta | null,
+                rejectionReason: existing.rejectionReason,
+              }),
+            } as Prisma.InputJsonValue,
           }
         : {}),
     },
@@ -1210,7 +1215,14 @@ export const unarchiveCreatorShopItem = async ({
       rejectionReason: null,
       reviewedById: null,
       reviewedAt: null,
-      meta: meta as Prisma.InputJsonValue,
+      meta: {
+        ...meta,
+        displayApproved: recordedDisplayVerdict({
+          status: existing.status,
+          meta,
+          rejectionReason: existing.rejectionReason,
+        }),
+      } as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });

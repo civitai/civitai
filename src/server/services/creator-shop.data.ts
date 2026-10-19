@@ -151,6 +151,13 @@ export const isListingDisplayable = ({
 };
 
 /**
+ * The display verdict to store on a write that clears `rejectionReason` or adds history. Read from
+ * the state before the write, since the fallback above depends on both.
+ */
+export const recordedDisplayVerdict = (listing: Parameters<typeof isListingDisplayable>[0]) =>
+  listing.meta?.displayApproved ?? isListingDisplayable(listing);
+
+/**
  * Resolves the `Cosmetic.data` write for an edit. Replaced artwork rebuilds the
  * blob; an offsets- or slug-only edit patches the existing one. Returns
  * undefined when nothing in `data` changed, so the caller can skip the write.
