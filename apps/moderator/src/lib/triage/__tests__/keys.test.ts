@@ -16,11 +16,11 @@ const key = (k: string, over: Partial<Parameters<typeof triageKeyAction>[0]> = {
 
 describe('triageKeyAction', () => {
   it.each([
-    ['j', 'next'],
-    ['J', 'next'],
+    ['j', 'previous'],
+    ['J', 'previous'],
     ['ArrowDown', null],
-    ['k', 'previous'],
-    ['K', 'previous'],
+    ['k', 'next'],
+    ['K', 'next'],
     ['ArrowUp', null],
     ['1', { decision: 0 }],
     ['2', { decision: 1 }],
@@ -38,7 +38,7 @@ describe('triageKeyAction', () => {
     const decisionEnabled = [false, true];
     expect(key('1', { decisionEnabled })).toBeNull();
     expect(key('2', { decisionEnabled })).toEqual({ decision: 1 });
-    expect(key('j', { decisionEnabled })).toBe('next');
+    expect(key('j', { decisionEnabled })).toBe('previous');
   });
 
   it('ignores handled and composing events', () => {

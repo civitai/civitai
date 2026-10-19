@@ -15,8 +15,8 @@ export type TriageKeyEvent = {
 export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
   if (e.typing || e.defaultPrevented || e.isComposing) return null;
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
-  if (e.key === 'j' || e.key === 'J') return 'next';
-  if (e.key === 'k' || e.key === 'K') return 'previous';
+  if (e.key === 'j' || e.key === 'J') return 'previous';
+  if (e.key === 'k' || e.key === 'K') return 'next';
   if (/^[1-9]$/.test(e.key)) {
     const index = Number(e.key) - 1;
     return e.decisionEnabled[index] ? { decision: index } : null;
