@@ -14,6 +14,7 @@ export type ModeratorGrantId =
   | 'user.membership.code'
   | 'user.creatorScore.grant'
   | 'user.creatorScore.grantLarge'
+  | 'user.creatorProgram.ban'
   | 'creatorServices.resolveDispute'
   | 'image.removal.confirm'
   | 'labelStore.submitPrediction';

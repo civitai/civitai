@@ -68,6 +68,9 @@ export const PERMISSIONS = [
   // because one grant can carry a creator across several tiers. Checked again by the same endpoint
   // by this literal.
   { id: 'user.creatorScore.grantLarge', label: 'Grant more than 10,000 Creator Score at once' },
+  // Ends a creator's Buzz earnings from the program. Checked by the main app's
+  // `/api/mod/user/creator-program-ban` by this literal (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.creatorProgram.ban', label: 'Ban or unban an account from the Creator Program' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
