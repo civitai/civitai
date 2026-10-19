@@ -135,6 +135,11 @@ describe('SubListingReviewQueue click-to-reveal', () => {
     expect(
       page.getByTestId(reveal).element().querySelector('[data-revealed]')?.hasAttribute('inert')
     ).toBe(false);
+
+    // The same control hides it again.
+    await expect.element(toggle).toHaveAccessibleName('Hide content');
+    await userEvent.click(toggle);
+    await expect.poll(() => revealed(reveal)).toBe('false');
   });
 
   test('a PG item image renders as it is, with no reveal', async () => {

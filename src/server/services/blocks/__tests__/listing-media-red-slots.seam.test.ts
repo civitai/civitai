@@ -53,10 +53,16 @@ vi.mock('~/server/utils/cache-helpers', async () => {
 });
 
 // The listing page's SSR scope read (`resolveListingPageSocialImage`); everything else real.
-const { storeScope } = vi.hoisted(() => ({ storeScope: { current: 'full' as string } }));
+const { storeScope, scopeCalls } = vi.hoisted(() => ({
+  storeScope: { current: 'full' as string },
+  scopeCalls: [] as unknown[],
+}));
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
-  resolveStoreVisibilityScope: vi.fn(async () => storeScope.current),
+  resolveStoreVisibilityScope: vi.fn(async (opts: unknown) => {
+    scopeCalls.push(opts);
+    return storeScope.current;
+  }),
 }));
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 
@@ -177,6 +183,7 @@ function namesOverrideTable(strings: TemplateStringsArray, values: unknown[]) {
 beforeEach(async () => {
   vi.clearAllMocks();
   storeScope.current = 'full';
+  scopeCalls.length = 0;
   cacheStore.clear();
   redStatements.dbRead = 0;
   redStatements.dbWrite = 0;
@@ -403,6 +410,76 @@ describe('P3 — the page’s social image is per host and never mature', () => 
     expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
+  it('🔴 the level travels with the image: a PG-13 cover on a pg13 listing carries PG-13', async () => {
+    row = { ...listingRow({ contentRating: 'pg13', cover: OWN_PG13 }) };
+    expect(await social(false)).toEqual({ url: 'edge:c.png@1200', nsfwLevel: PG13 });
+  });
+
+  it('🔴 a mature, Blocked or unrated civitai.red ICON override falls back to the own icon', async () => {
+    row = { ...listingRow({ cover: null }), screenshots: [] };
+    for (const icon of [21, 24, 25]) {
+      await split.setRedSlots(LISTING_ID, { icon });
+      expect(await social(true), `red icon ${icon}`).toEqual({
+        url: 'edge:a.png@256',
+        nsfwLevel: PG,
+      });
+    }
+  });
+
+  it('with no cover that passes, the first screenshot that passes is the image', async () => {
+    const SHOT_PG = img(14, 's.png', PG);
+    row = {
+      ...listingRow({ cover: null }),
+      screenshots: [
+        { caption: 'pg13', image: OWN_PG13 },
+        { caption: 'pg', image: SHOT_PG },
+      ],
+    };
+    expect(await social(false)).toEqual({ url: 'edge:s.png@1200', nsfwLevel: PG });
+  });
+
+  // The og image follows the page's OWN choice order — it is what an anonymous viewer of this
+  // host sees as the cover, else the icon. Pinned as a relationship, so a change to the page's
+  // cover fallback cannot leave the preview on the old order.
+  it('the og image is exactly what an anonymous viewer of the host sees as the cover, else the icon', async () => {
+    const SHOT_PG = img(14, 's.png', PG);
+    const cases: { label: string; set: () => Promise<void> }[] = [
+      { label: 'own media', set: async () => void (row = listingRow()) },
+      {
+        label: 'R cover, PG screenshot',
+        set: async () =>
+          void (row = {
+            ...listingRow({ cover: OWN_R }),
+            screenshots: [{ caption: 'pg', image: SHOT_PG }],
+          }),
+      },
+      {
+        label: 'red cover override',
+        set: async () => {
+          row = listingRow();
+          await split.setRedSlots(LISTING_ID, { cover: 23 });
+        },
+      },
+      {
+        label: 'no cover, red icon override',
+        set: async () => {
+          row = { ...listingRow({ cover: null }), screenshots: [] };
+          await split.setRedSlots(LISTING_ID, { icon: 23 });
+        },
+      },
+    ];
+    for (const c of cases) {
+      await split.db.exec(`TRUNCATE app_listing_red_media`);
+      await c.set();
+      for (const redCapable of [false, true]) {
+        const page = await detail(redCapable, undefined);
+        expect((await social(redCapable))?.url ?? null, `${c.label} / red=${redCapable}`).toBe(
+          page.coverUrl ?? page.iconUrl
+        );
+      }
+    }
+  });
+
   it('a listing with no image that passes yields none', async () => {
     row = { ...listingRow({ cover: OWN_R }), icon: OWN_R, screenshots: [] };
     expect(await social(false)).toBeNull();
@@ -411,13 +488,39 @@ describe('P3 — the page’s social image is per host and never mature', () => 
 });
 
 describe('P3 — the listing page SSR wiring', () => {
-  const page = (host: string, isClient = false) =>
-    resolveListingPageSocialImage({ slug: 'red-seam', host, user: null, isClient });
+  const VIEWER = { id: 77, username: 'viewer' } as never;
+  // The page's resolver arguments, in the shape `createServerSideProps` hands them over.
+  const page = (
+    host: string | undefined,
+    isClient = false,
+    params: Record<string, unknown> = { slug: 'red-seam' }
+  ) =>
+    resolveListingPageSocialImage({
+      ctx: { params: params as Record<string, string>, req: { headers: { host } } },
+      session: { user: VIEWER },
+      isClient,
+    });
 
   it('🔴 the request host decides: the override on civitai.red, the own cover on civitai.com', async () => {
     await split.setRedSlots(LISTING_ID, { cover: 23 });
     expect(await page('civitai.red')).toEqual({ url: 'edge:rp.png@1200', nsfwLevel: PG });
     expect(await page('civitai.com')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('the store scope is resolved for the request’s own session user', async () => {
+    await page('civitai.com');
+    expect(scopeCalls).toEqual([{ user: VIEWER }]);
+  });
+
+  it('no slug (or an array slug), no read', async () => {
+    expect(await page('civitai.com', false, {})).toBeNull();
+    expect(await page('civitai.com', false, { slug: ['a', 'b'] })).toBeNull();
+    expect(dbMock.dbRead.appListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a request with no host is not red-capable', async () => {
+    await split.setRedSlots(LISTING_ID, { cover: 23 });
+    expect(await page(undefined)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('a client-side navigation reads nothing', async () => {

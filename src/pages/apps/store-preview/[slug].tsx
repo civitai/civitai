@@ -40,23 +40,15 @@ type PageProps = { socialImage: ListingSocialImage | null };
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
-  resolver: async ({ ctx, features, session, isClient }) => {
-    const access = resolveAppsPageAccess({ features });
+  resolver: async (args) => {
+    const access = resolveAppsPageAccess({ features: args.features });
     if ('notFound' in access) return access;
     const { resolveListingPageSocialImage } = await import(
       '~/server/services/blocks/listing-page-social-image'
     );
-    const slug = ctx.params?.slug;
-    return {
-      props: {
-        socialImage: await resolveListingPageSocialImage({
-          slug: typeof slug === 'string' ? slug : null,
-          host: ctx.req.headers.host,
-          user: session?.user,
-          isClient,
-        }),
-      },
-    };
+    // The resolver's own arguments, as they are: host, slug and session are read (and tested)
+    // in the helper.
+    return { props: { socialImage: await resolveListingPageSocialImage(args) } };
   },
 });
 

@@ -3,6 +3,20 @@ import type { ListingSocialImage } from '~/server/services/blocks/listing-media-
 import { isRedCapableHost } from '~/server/utils/server-domain';
 
 /**
+ * The subset of a `createServerSideProps` resolver's arguments this reads — the page hands its
+ * resolver arguments over as they are, so the request's host, route slug and session are taken
+ * here, where they are tested, rather than re-plumbed in the page.
+ */
+export type ListingPageSsrArgs = {
+  ctx: {
+    params?: Record<string, string | string[] | undefined>;
+    req: { headers: { host?: string | null } };
+  };
+  session?: { user?: SessionUser } | null;
+  isClient: boolean;
+};
+
+/**
  * The `og:image` a listing detail page renders server-side, for the page's SSR resolver.
  *
  * Only a full server render needs one: a client-side navigation (`isClient`) never reaches an
@@ -12,23 +26,23 @@ import { isRedCapableHost } from '~/server/utils/server-domain';
  *
  * A failure is "no image", never an error page: a social preview is cosmetic.
  */
-export async function resolveListingPageSocialImage(args: {
-  slug: string | null | undefined;
-  host: string | null | undefined;
-  user: SessionUser | null | undefined;
-  isClient: boolean;
-}): Promise<ListingSocialImage | null> {
-  if (args.isClient || !args.slug) return null;
+export async function resolveListingPageSocialImage({
+  ctx,
+  session,
+  isClient,
+}: ListingPageSsrArgs): Promise<ListingSocialImage | null> {
+  const slug = ctx.params?.slug;
+  if (isClient || typeof slug !== 'string' || !slug) return null;
   try {
     const [{ resolveStoreVisibilityScope }, { getListingSocialImage }] = await Promise.all([
       import('~/server/services/app-blocks-flag'),
       import('~/server/services/blocks/app-listing.service'),
     ]);
-    const scope = await resolveStoreVisibilityScope({ user: args.user ?? undefined });
+    const scope = await resolveStoreVisibilityScope({ user: session?.user ?? undefined });
     if (scope === 'none') return null;
     return await getListingSocialImage(
-      { slug: args.slug },
-      { redCapable: isRedCapableHost(args.host), scope, floor: 'public' }
+      { slug },
+      { redCapable: isRedCapableHost(ctx.req.headers.host), scope, floor: 'public' }
     );
   } catch {
     return null;
