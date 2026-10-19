@@ -451,6 +451,22 @@ export interface SamplePrompt {
   text: string;
 }
 
+export const MAX_SAMPLE_PROMPTS = 6;
+
+/** The list with one more, empty, prompt row (an id past every existing one), or unchanged at the cap.
+ *  Empty, not example text: whatever the row holds is submitted unless the user rewrites it. */
+export function addSamplePrompt(prompts: SamplePrompt[]): SamplePrompt[] {
+  if (prompts.length >= MAX_SAMPLE_PROMPTS) return prompts;
+  const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
+  return [...prompts, { id, text: '' }];
+}
+
+/** The sample prompts a run is submitted with: trimmed, blank rows dropped. An added row starts empty,
+ *  and an empty sample prompt is not a test image anyone asked for. */
+export function submittedPrompts(texts: string[]): string[] {
+  return texts.map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
  *  is no trigger, so callers can use it directly as "nothing to warn about". */
 export function promptHasTrigger(trigger: string, text: string): boolean {
@@ -566,7 +582,7 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
-      prompts,
+      prompts: submittedPrompts(prompts),
       currencies,
       meta: {
         name: name.trim() || t || selection.loraType,

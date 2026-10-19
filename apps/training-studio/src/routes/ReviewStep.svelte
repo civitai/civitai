@@ -35,8 +35,10 @@
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
+    addSamplePrompt,
     defaultRunParams,
     isCustom,
+    MAX_SAMPLE_PROMPTS,
     PARAM_HELP,
     PARAM_LABELS,
     paramDeviations,
@@ -47,6 +49,7 @@
     runParamsKey,
     runVersion,
     runVersionLabel,
+    submittedPrompts,
     teLocked,
     withTrigger,
     type LaunchedRun,
@@ -318,8 +321,7 @@
     if (clamped !== n) p[field] = clamped;
   }
   function addPrompt() {
-    const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
-    if (prompts.length < 6) prompts = [...prompts, { id, text: 'new scene' }];
+    prompts = addSamplePrompt(prompts);
   }
   function removePrompt(i: number) {
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
@@ -329,8 +331,12 @@
   }
   const triggerText = $derived(trigger.trim());
   const promptsMissingTrigger = $derived(
-    triggerText ? prompts.filter((p) => !promptHasTrigger(triggerText, p.text)).length : 0
+    triggerText
+      ? prompts.filter((p) => p.text.trim() && !promptHasTrigger(triggerText, p.text)).length
+      : 0
   );
+  // Blank rows are dropped at submit (`submittedPrompts`), so they are not counted as samples.
+  const filledPrompts = $derived(submittedPrompts(prompts.map((p) => p.text)).length);
   // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
   // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
@@ -622,10 +628,16 @@
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <div class="flex flex-col gap-2">
           {#each prompts as p, i (p.id)}
-            {@const missing = triggerText !== '' && !promptHasTrigger(triggerText, p.text)}
+            {@const missing =
+              triggerText !== '' && p.text.trim() !== '' && !promptHasTrigger(triggerText, p.text)}
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-2">
-                <Input bind:value={prompts[i]!.text} aria-invalid={missing} class="flex-1" />
+                <Input
+                  bind:value={prompts[i]!.text}
+                  placeholder="Describe a test scene, e.g. standing in a forest at dusk"
+                  aria-invalid={missing}
+                  class="flex-1"
+                />
                 {#if prompts.length > 1}
                   <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
                 {/if}
@@ -646,7 +658,7 @@
             </div>
           {/each}
         </div>
-        {#if prompts.length < 6}
+        {#if prompts.length < MAX_SAMPLE_PROMPTS}
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
         <p class="mt-2.5 font-mono text-xs text-dark-2">
@@ -682,7 +694,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Sample prompts</dt>
         <dd class="m-0 font-semibold {promptsMissingTrigger > 0 ? 'text-buzz' : 'text-dark-0'}">
-          {prompts.length}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
+          {filledPrompts}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
         </dd>
       </div>
     </dl>
