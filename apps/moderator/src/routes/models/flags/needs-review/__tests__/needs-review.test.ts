@@ -174,7 +174,7 @@ describe('a model with a held minor detection and a file match', () => {
     expect(await decide([held, match], 'minor:redetected,minor:file-match', kept)).toMatchObject({
       status: 400,
       data: {
-        error: 'Minor (held detection) not ruled: Reload the queue. Minor (file match) kept.',
+        error: 'Minor (held detection) not ruled: Reload the queue. Minor (file match) flagged.',
         partial: true,
       },
     });
@@ -187,11 +187,23 @@ describe('a model with a held minor detection and a file match', () => {
     expect(await decide([held, match], '', dismissed)).toMatchObject({
       status: 400,
       data: {
-        error: 'Minor (file match) not ruled: Gone. Minor (held detection) reverted.',
+        error: 'Minor (file match) not ruled: Gone. Minor (held detection) dismissed.',
         partial: true,
       },
     });
   });
+});
+
+it('reports the lead that was applied, not "already flagged", when another lead found nothing to do', async () => {
+  resolveRedetection
+    .mockResolvedValueOnce({ ok: true, resolved: 'closed' })
+    .mockResolvedValueOnce({ ok: true, resolved: 'kept' });
+  expect(
+    await decide([held, heldPoi], 'minor:redetected,poi:redetected', {
+      resolvedReason: 'other',
+      internalNotes: 'x',
+    })
+  ).toMatchObject({ success: true, resolved: 'kept' });
 });
 
 describe('permissions', () => {

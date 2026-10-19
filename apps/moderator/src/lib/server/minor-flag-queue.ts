@@ -427,7 +427,7 @@ const decideAction =
             '$1.'
           )
         ),
-        ...done.map((o) => `${flagName(o.flag)} ${o.flag.keep ? 'kept' : 'reverted'}.`),
+        ...done.map((o) => `${flagName(o.flag)} ${doneVerb(o.flag)}.`),
       ].join(' ');
       return refusal(message, done.length > 0);
     }
@@ -435,10 +435,22 @@ const decideAction =
     return {
       success: true,
       modelId,
-      // "closed" means the main app found nothing left to do; say so only when that holds for all.
-      resolved: resolved.every((r) => r === 'closed') ? 'closed' : resolved[0],
+      // "closed" means the main app found nothing left to do; say so only when that holds for all,
+      // and otherwise report a lead that was actually ruled.
+      resolved: resolved.find((r) => r !== 'closed') ?? 'closed',
     };
   };
+
+/** What happened to a ruled flag: an applied flag is kept or reverted; a Needs review lead, which had
+ *  nothing applied, is flagged or dismissed. */
+const doneVerb = (flag: PlannedFlagRef) =>
+  flag.source === 'redetected' || flag.source === 'file-match'
+    ? flag.keep
+      ? 'flagged'
+      : 'dismissed'
+    : flag.keep
+    ? 'kept'
+    : 'reverted';
 
 type PlannedFlagRef = FlagRef & { keep: boolean };
 type RuleResult = { ok: true; resolved: string } | { ok: false; error: string };
