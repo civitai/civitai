@@ -77,13 +77,11 @@
 --     PostgreSQL refuses without ALL THREE even when no row conflicts. Without them:
 --       · no SELECT: every listing reads as having no override (as before this file); setting
 --         or clearing a slot fails with a permission error;
---       · SELECT but no INSERT: setting or clearing a slot fails with a permission error, so no
---         revision can stage one; opening a revision still works (the code skips carrying the
---         overrides onto it rather than fail the open), and approving it leaves the live
---         overrides as they are;
---       · SELECT and INSERT but no UPDATE: setting or clearing a slot fails with a permission
---         error, and so does APPROVING A REVISION of a listing that has overrides (opening it
---         carried them onto the revision; applying them back is an upsert).
+--       · SELECT but no INSERT, or no UPDATE: setting or clearing a slot fails with a
+--         permission error, so no revision can stage one; opening a revision still works (the
+--         code skips carrying the overrides onto it, rather than fail the open or stage a row
+--         the approve could not apply back), and approving it leaves the live overrides as they
+--         are.
 --   - <app_read_role>, the role the app's READ client connects as — SELECT: the civitai.red
 --     store pages, both moderator queues' rows and the per-submission review page read the
 --     slots through it, as does the approve's early (replica) scan check. Without it nothing

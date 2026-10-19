@@ -268,7 +268,8 @@ export async function applyListingMediaSplitDecision(
 // slot write and a revision apply are not probed for INSERT / UPDATE: the role that writes the
 // table must hold all three (the migration's GRANTS step). The one exception is the clone a
 // revision open runs ({@link cloneListingRedSlots}): it runs for every listing, so without INSERT
-// it is skipped rather than allowed to fail the open.
+// and UPDATE it is skipped rather than allowed to fail the open, or to stage a row the approve
+// could not apply.
 // ---------------------------------------------------------------------------
 
 /** One of the two override slots. */
@@ -545,20 +546,23 @@ export async function writeListingRedSlot(
  * revision that does not touch them leaves them in place when it is applied. Copies only a row
  * with a filled slot, never the split decision (that belongs to the live listing alone).
  *
- * A no-op while the slots cannot be read, or this role may not INSERT into the table: the shadow
- * then carries no slots row, which {@link applyRevisionRedSlots} reads as "nothing staged" and
- * leaves the live slots alone.
+ * A no-op while the slots cannot be read, or this role may not both INSERT into and UPDATE the
+ * table: the shadow then carries no slots row, which {@link applyRevisionRedSlots} reads as
+ * "nothing staged" and leaves the live slots alone.
  *
- * 🔴 THE INSERT PROBE IS LOAD-BEARING. This runs on EVERY revision open, not only for a listing
- * with overrides, and PostgreSQL checks INSERT privilege before it looks for rows: without the
- * grant even the zero-row `INSERT … SELECT` below raises "permission denied" and fails the open.
+ * 🔴 BOTH PROBES ARE LOAD-BEARING. INSERT: this runs on EVERY revision open, not only for a
+ * listing with overrides, and PostgreSQL checks INSERT privilege before it looks for rows, so
+ * without the grant even the zero-row `INSERT … SELECT` below raises "permission denied" and
+ * fails the open. UPDATE: a staged row is applied back on approve by an upsert
+ * (`ON CONFLICT … DO UPDATE`), which PostgreSQL refuses without UPDATE even when no row
+ * conflicts. Staging a row this role cannot apply would fail that approve, so it stages none.
  */
 export async function cloneListingRedSlots(
   db: RawClient,
   args: { fromListingId: string; toListingId: string }
 ): Promise<void> {
   const access = await probeListingMediaSplitTable(db);
-  if (!canReadRedSlots(access) || !access.insert) return;
+  if (!canReadRedSlots(access) || !access.insert || !access.update) return;
   await db.$executeRaw`
     INSERT INTO app_listing_red_media (app_listing_id, red_icon_id, red_cover_id)
     SELECT ${args.toListingId}, red_icon_id, red_cover_id

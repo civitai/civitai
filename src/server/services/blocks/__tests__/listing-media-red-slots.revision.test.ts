@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 const { seq } = vi.hoisted(() => ({ seq: { n: 0 } }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -8,6 +9,13 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingScreenshotId: () => `apls_rv_${++seq.n}`,
   newUlid: () => `ULIDRV${++seq.n}`,
 }));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: vi.fn(async () => undefined),
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -15,7 +23,10 @@ import {
   applyRevisionRedSlots,
   writeListingRedSlot,
 } from '~/server/services/blocks/listing-media-split.service';
-import { beginListingRevision } from '~/server/services/blocks/offsite-listing.service';
+import {
+  approveExternalRequest,
+  beginListingRevision,
+} from '~/server/services/blocks/offsite-listing.service';
 import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
 /**
@@ -143,10 +154,92 @@ describe('T10b — a write role that may only SELECT the overrides table', () =>
     expect(await split.redSlots(SHADOW)).toBeNull();
   });
 
-  it('positive control: with INSERT the same open carries the overrides', async () => {
-    await split.restrictTo(['SELECT', 'INSERT']);
+  it('positive control: with INSERT and UPDATE the same open carries the overrides', async () => {
+    await split.restrictTo(['SELECT', 'INSERT', 'UPDATE']);
     await beginListingRevision({ listingId: PARENT, userId: OWNER });
     expect(tableStatements('$executeRaw')).toHaveLength(1);
     expect(await split.redSlots(SHADOW)).toEqual({ icon: RED_ICON, cover: OLD_RED_COVER });
+  });
+});
+
+const REQUEST = 'alpr_rv_approve';
+
+/** Wire the moderator's approve of the revision `beginListingRevision` just opened. */
+function wireRevisionApprove() {
+  const parent = { id: PARENT, slug: 'red-revision', status: 'approved', kind: 'offsite' };
+  const shadow = {
+    id: SHADOW,
+    status: 'draft',
+    revisionOfId: PARENT,
+    externalUrl: 'https://cool.app',
+    iconId: 1,
+    coverId: 2,
+    connectClientId: null,
+    connectRequestedScopes: null,
+    connectScopeJustifications: null,
+    connectClient: null,
+    userId: OWNER,
+    name: 'Red Revision',
+    tagline: null,
+    description: null,
+    category: null,
+    contentRating: 'g',
+    slug: 'red-revision-rev',
+    kind: 'offsite',
+  };
+  dbMock.dbRead.appListingPublishRequest.findUnique.mockResolvedValue({
+    id: REQUEST,
+    status: 'pending',
+    kind: 'offsite',
+    slug: 'red-revision',
+    appListingId: SHADOW,
+  });
+  for (const c of [dbMock.dbRead, dbMock.dbWrite]) {
+    c.appListing.findUnique
+      .mockReset()
+      .mockImplementation(async (a: { where: { id: string } }) =>
+        a.where.id === PARENT
+          ? { ...parent, contentRating: 'r' }
+          : a.where.id === SHADOW
+          ? shadow
+          : null
+      );
+    c.image.findMany
+      .mockReset()
+      .mockImplementation(async (a: { where?: { id?: { in?: number[] } } }) =>
+        (a?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: NsfwLevel.PG,
+        }))
+      );
+    c.appListingScreenshot.findMany.mockReset().mockResolvedValue([{ imageId: 3 }]);
+    c.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+    c.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    c.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    c.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  }
+}
+
+describe('T10c — a write role that may SELECT and INSERT the overrides table, but not UPDATE it', () => {
+  afterEach(() => split.unrestrict());
+
+  it('🔴 a revision of a listing with overrides opens AND approves, and the live overrides stay as they were', async () => {
+    // The approve applies a staged row back with an upsert (`ON CONFLICT … DO UPDATE`), which
+    // PostgreSQL refuses without UPDATE even when no row conflicts. So the open must not stage a
+    // row this role cannot apply: before it checked UPDATE too, the clone ran here and the
+    // approve failed with "permission denied".
+    await split.restrictTo(['SELECT', 'INSERT']);
+    expect(await beginListingRevision({ listingId: PARENT, userId: OWNER })).toEqual({
+      shadowId: SHADOW,
+      created: true,
+    });
+    wireRevisionApprove();
+    await expect(
+      approveExternalRequest({ publishRequestId: REQUEST, reviewerUserId: 8 })
+    ).resolves.toMatchObject({ listingId: PARENT });
+    expect(await split.redSlots(PARENT)).toEqual({ icon: RED_ICON, cover: OLD_RED_COVER });
+    // The open staged nothing (the shadow delete is mocked, so a staged row would still be here).
+    expect(await split.redSlots(SHADOW)).toBeNull();
   });
 });

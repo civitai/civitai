@@ -23,7 +23,7 @@ import { createSplitDb, type SplitDb } from './listing-media-split.harness';
  * with both, and with the table present but not granted to the role a read connects as (the read
  * client's role may lack SELECT; the role that writes the table must hold every grant, so an
  * owner's slot write and a revision apply are not probed for privileges — the clone every revision
- * open runs is, and is skipped without INSERT).
+ * open runs is, and is skipped without INSERT and UPDATE).
  *
  * Fixture ids are pairwise distinct and distinct from every constant the code names: listings
  * `apl_red_live` / `apl_red_shadow` / `apl_red_other`, images 31 (PG) / 32 (R) / 33 (XXX) /
@@ -414,8 +414,18 @@ describe('both migrations applied, the table NOT granted to the role a read conn
     expect(await s.redSlots(SHADOW)).toBeNull();
   });
 
-  it('positive control: with INSERT the same clone copies the overrides', async () => {
+  it('🔴 SELECT and INSERT without UPDATE: the clone stages nothing, so the apply keeps the live overrides', async () => {
+    // The apply is an upsert (`ON CONFLICT … DO UPDATE`), which PostgreSQL refuses without
+    // UPDATE even when no row conflicts — so a row the clone staged here could never be applied.
     await s.restrictTo(['SELECT', 'INSERT']);
+    await cloneListingRedSlots(s.raw, { fromListingId: LIVE, toListingId: SHADOW });
+    await applyRevisionRedSlots(s.raw, { shadowId: SHADOW, parentId: LIVE });
+    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: XXX_IMG });
+    expect(await s.redSlots(SHADOW)).toBeNull();
+  });
+
+  it('positive control: with INSERT and UPDATE the same clone copies the overrides', async () => {
+    await s.restrictTo(['SELECT', 'INSERT', 'UPDATE']);
     await cloneListingRedSlots(s.raw, { fromListingId: LIVE, toListingId: SHADOW });
     expect(await s.redSlots(SHADOW)).toEqual({ icon: R_IMG, cover: XXX_IMG });
   });
