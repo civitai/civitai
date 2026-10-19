@@ -42,11 +42,15 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-19 — `CREATE EXTENSION ltree` is installed on prod** (1.3, schema `public`; verified
+  on the replica). The Phase 0 infra sign-off is done; dev, CI and local still need it before the
+  migration runs there.
 - **2026-10-19 — the v3 service, backfill and app-level writes use Kysely, not the Prisma
   client** (decision 8). The Prisma-only constraints on `path` (blocker 5) fall away; the DDL,
   triggers and ltree sign-off are unchanged.
-- **2026-10-16 — `rootId`/`depth` move from `GENERATED ALWAYS` columns into the
-  `commentv3_set_path` trigger** (blocker 6; schema-review notes under _Target data model_).
+- **2026-10-19 — `rootId`/`depth` stay `GENERATED ALWAYS` columns, as in Koen's draft.** The
+  2026-10-16 review had moved them into the `commentv3_set_path` trigger; reverted, with an
+  explicit `NOT NULL` on both (blocker 6; schema-review notes under _Target data model_).
 - **2026-10-16 — an entity hard-delete removes its `CommentTopic` through a per-entity
   `AFTER DELETE` trigger**, and comments, reactions, report links and mutes cascade from it
   (_Entity deletion — decided_).
@@ -89,7 +93,7 @@ zero since 2026-10-19.
 | Threads per entity                                        | review 3.65M, image 1.06M, post 164K, bounty + bountyEntry 31K, article 18K, comic 462, model 456, question/answer 456, challenge 352, model3d (+ review) 149, clubPost 53, crucible 11, appListing 1. No thread carries two entity FKs; no `imageId` dangles.                                                 |
 | Dead columns                                              | `CommentV2.metadata` is non-null on 20,141 rows and every value is `{"oldId": n}`, an import marker nothing reads — drop. `nsfw` is true on 11 v2 rows and 1 v1 row — drop.                                                                                                                                    |
 | `ThreadMute`                                              | 225 rows in prod — the feature is live, not dev-only                                                                                                                                                                                                                                                           |
-| ltree                                                     | available on prod (1.3), not installed — infra sign-off still needed                                                                                                                                                                                                                                           |
+| ltree                                                     | installed on prod 2026-10-19 (1.3, schema `public`)                                                                                                                                                                                                                                                            |
 | Reply-count EXPLAIN                                       | not possible until the table exists; at this volume the risk is low                                                                                                                                                                                                                                            |
 
 Found in passing: comic chapter threads double-counted — `comics.router.ts` incremented
@@ -127,11 +131,20 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
    on 6.13). The v3 code is Kysely, so no delegate write exists; the schema still declares
    `@default(dbgenerated())` because it costs nothing and protects a later Prisma caller.
    Postgres checks NOT NULL after BEFORE triggers run, so the DDL stands.
-6. **Generated columns have a reverted precedent.** `20240118214315_muted_at` added a
-   `GENERATED ALWAYS … STORED` column and `20240119204734_muted_at_trigger` replaced it with a
-   trigger the next day. Prisma and Kysely both type the column writable; only Postgres refuses the
-   write. Set `rootId`/`depth` from `commentv3_set_path` instead — same integrity, one fewer column
-   kind.
+6. **Generated columns — kept, after a one-day detour.** The 2026-10-16 review moved
+   `rootId`/`depth` into `commentv3_set_path`, citing `20240118214315_muted_at` (a
+   `GENERATED ALWAYS … STORED` column that `20240119204734_muted_at_trigger` replaced the next day)
+   and the fact that Prisma and Kysely type a generated column as writable. Reverted 2026-10-19:
+   the `muted` precedent does not apply — it was reverted because the app writes `muted` directly,
+   and `rootId`/`depth` have no legitimate writer — and under decision 8 the Kysely type override
+   declares both columns select-only, which closes the type gap. A generated column is the only
+   form Postgres itself refuses to let any writer desync from `path`, and it follows `path` under
+   an UPDATE, which the INSERT-only trigger would not. Declare both `NOT NULL` explicitly (Postgres
+   does not infer it for a generated column, and the drift tool compares nullability). `nlevel`,
+   `subltree` and the ltree I/O functions are IMMUTABLE, as the expression requires (checked in
+   prod's `pg_proc` on 2026-10-19, once the extension was installed, and the expression evaluated
+   on the replica); the exact DDL still has to run once on an ltree-enabled database — Phase 1
+   applies it on dev first.
 7. **Crucible is a comment surface** (`Thread.crucibleId`, #5780, after this plan was written):
    add `'crucible'` to `CommentEntityType`, the backfill, the topic copy and the flip order.
 8. **`CommentTopic` has no FK to its entity**, so it accumulates orphans exactly as `Thread` does
@@ -355,7 +368,7 @@ resolution chain, no second table on the read path. The DDL is authoritative (lt
 `Unsupported(...)` in Prisma — see the notes below):
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS ltree;  -- needs infra sign-off on prod
+CREATE EXTENSION IF NOT EXISTS ltree;  -- installed on prod 2026-10-19; dev, CI and local still need it
 
 CREATE TYPE "CommentEntityType" AS ENUM (
   'model', 'image', 'post', 'article', 'review', 'bounty', 'bountyEntry',
@@ -384,11 +397,11 @@ CREATE TABLE "CommentV3" (
   "parentId"      integer,                 -- NULL = top-level
   "replyToId"     integer,                 -- display-only "@user" when the depth clamp re-parented the reply
 
-  -- '<rootId>.<...>.<parentId>.<id>'; path, rootId and depth are all filled by the BEFORE INSERT
-  -- trigger (not GENERATED columns — see the viability review, blocker 6)
+  -- '<rootId>.<...>.<parentId>.<id>'; filled by the BEFORE INSERT trigger. rootId and depth are
+  -- GENERATED from it; NOT NULL is explicit because Postgres does not infer it (blocker 6)
   "path"          ltree               NOT NULL,
-  "rootId"        integer             NOT NULL,
-  "depth"         integer             NOT NULL,  -- 0 = top-level
+  "rootId"        integer             GENERATED ALWAYS AS ((subltree(path, 0, 1)::text)::integer) STORED NOT NULL,
+  "depth"         integer             GENERATED ALWAYS AS (nlevel(path) - 1) STORED NOT NULL,  -- 0 = top-level
 
   "userId"        integer             NOT NULL,
   "content"       text                NOT NULL,
@@ -415,9 +428,9 @@ CREATE TABLE "CommentV3" (
   CONSTRAINT commentv3_reaction_count_nonneg CHECK ("reactionCount" >= 0)
 );
 
--- The one tree trigger: path = parent.path || own id, with rootId and depth derived from it, so
--- no writer — Prisma service, backfill, dual-write, moderator Kysely — can corrupt the tree.
--- Lock checks, entity checks and the topic upsert live in the service.
+-- The one tree trigger: path = parent.path || own id. rootId and depth are GENERATED from
+-- path, so no writer — Kysely service, backfill, dual-write, moderator app — can corrupt the
+-- tree. Lock checks, entity checks and the topic upsert live in the service.
 CREATE FUNCTION commentv3_set_path() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW."parentId" IS NULL THEN
@@ -425,8 +438,6 @@ BEGIN
   ELSE
     SELECT p.path || NEW.id::text INTO NEW.path FROM "CommentV3" p WHERE p.id = NEW."parentId";
   END IF;
-  NEW."rootId" := (subltree(NEW.path, 0, 1)::text)::integer;
-  NEW.depth    := nlevel(NEW.path) - 1;
   RETURN NEW;
 END $$;
 
@@ -440,13 +451,11 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   A first draft carried `path Int[]` + GIN; a review pass dropped it because `rootId`/`depth`
   covered the hot paths and every writer would have had to maintain the array. Koen's version
   inverts the risk: `path` (ltree) is set by one `BEFORE INSERT` trigger, and `rootId`/`depth`
-  are derived from it in the same trigger — so no writer population (Prisma service, backfill,
-  dual-write, moderator Kysely) can compute them wrong. Tree integrity moves from N application
-  code paths into the database. (Koen's draft had `rootId`/`depth` as `GENERATED ALWAYS` columns;
-  the 2026-10-16 review moved them into the trigger — the repo's one generated column was
-  reverted to a trigger the day after it shipped, and neither Prisma nor Kysely types a generated
-  column as read-only.) The GiST index buys subtree reads, ancestry checks, and the subtree-scoped
-  lock below.
+  are **GENERATED from it** — so no writer population (Kysely service, backfill, dual-write,
+  moderator app) can compute them wrong, and an UPDATE of `path` cannot leave them stale. Tree
+  integrity moves from N application code paths into the database. (The 2026-10-16 review
+  briefly moved `rootId`/`depth` into the trigger; reverted 2026-10-19 — blocker 6.) The GiST
+  index buys subtree reads, ancestry checks, and the subtree-scoped lock below.
 - **No `childCount` — reply counts are queried.** With `(parentId, hidden, ...)` indexes, a
   capped per-parent reply count for a page of comments is one index-only `GROUP BY`. That
   re-introduces the per-page count query the plan once celebrated killing, at index-only cost —
@@ -465,14 +474,14 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
 - **`locked` is subtree-scoped**: it refuses new replies anywhere under the row — one ancestor
   check via `path` (`@>` on the GiST index) at write time. Stronger and simpler than v1's
   one-level propagation; note it in the moderation section.
-- **ltree operational constraints**: `CREATE EXTENSION ltree` needs infra sign-off on prod and
-  has to exist on every database the migration runs against (prod, dev, the CI Postgres service,
-  local docker-compose). The schema declares the column as
+- **ltree operational constraints**: `CREATE EXTENSION ltree` is installed on prod (2026-10-19,
+  1.3 in `public`) and has to exist on every other database the migration runs against (dev, the
+  CI Postgres service, local docker-compose). The schema declares the column as
   `Unsupported("ltree") @default(dbgenerated())` for type generation only (decision 8: no Prisma
   delegate touches the table); the generated Kysely type for it is overridden to a string, and
   path operations (`@>`, `<@`, `nlevel`, `subltree`) are `sql` fragments in the query builder.
-  The trigger-set `rootId`/`depth` integers are ordinary typed columns and are what the hot
-  queries use — a performance split, not a client workaround. The schema-drift tool skips
+  The generated `rootId`/`depth` integers are ordinary typed columns (select-only in the same
+  override) and are what the hot queries use — a performance split, not a client workaround. The schema-drift tool skips
   `Unsupported` fields silently (its type regex rejects them), so `path`'s nullability is not
   drift-checked. Debezium emits the column as a string.
 - **`clubPost` is NOT in the enum** (it was in Koen's draft) — clubs are dead code and their
@@ -698,8 +707,8 @@ The new model makes both real:
 - **Stored depth gets a hard cap** (20, as `CHECK (nlevel(path) <= 21)`): the write path clamps a
   reply that would exceed it to be a _sibling_ (parent = ancestor at cap−1, one `subltree` on the
   parent's path), recording who was actually answered in `replyToId` for the "@user" display.
-  Clients never send tree fields — the `BEFORE INSERT` trigger derives `path`, `rootId` and
-  `depth` from `parentId`. The backfill applies the same clamp to the 692 migrated comments that
+  Clients never send tree fields — the `BEFORE INSERT` trigger derives `path` from `parentId`,
+  and `rootId`/`depth` are generated from `path`. The backfill applies the same clamp to the 692 migrated comments that
   sit deeper than 20 (approved 2026-10-16).
 
 ## Deletion semantics — decided (D6)
@@ -829,16 +838,17 @@ lists (`Model.threads Thread[]` etc.) — verify they are truly 1:1 in prod befo
 `AppListing.serialId` — note `Thread.appListingId` already references that surrogate, not the TEXT
 ULID) because its Thread key is composite `(projectId, position)`.
 
-**Phase 1 — schema.** `CREATE EXTENSION ltree` (infra sign-off), then the DDL above: new tables
+**Phase 1 — schema.** `CREATE EXTENSION ltree` (on prod since 2026-10-19; dev, CI and local as
+needed), then the DDL above: new tables
 (`CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report`, `CommentMute`,
 `CommentTopicMute`), indexes, `CHECK` constraints, the `commentv3_set_path` tree trigger, plus the count triggers
 (`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
 `CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). The tables are
 declared in `schema.full.prisma` so the Kysely `DB` types are generated (decision 8): `path` as
-`Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` as plain required ints the
-trigger fills — confirm `db:check-generated` stays clean with that shape (the repo's enum,
-interface and kysely generators were run on it 2026-10-16 and passed), and override `path` from
-`unknown` to `string` in the Kysely types. Two more DB-level items found in the sweep:
+`Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` as `Int @default(dbgenerated())`
+— confirm `db:check-generated` stays clean with that shape (the repo's enum, interface and kysely
+generators passed on the plain-int shape 2026-10-16; re-run with the generated columns), and in
+the Kysely types override `path` from `unknown` to `string` and `rootId`/`depth` to select-only. Two more DB-level items found in the sweep:
 
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on

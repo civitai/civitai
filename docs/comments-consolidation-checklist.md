@@ -35,7 +35,8 @@ Prod measurements (read-only replica, taken 2026-10-16 — figures in the plan d
       both stay out
 - [ ] EXPLAIN the capped per-parent reply-count `GROUP BY` at prod scale (replaces stored
       `childCount`; must be index-only on `(parentId, hidden, …)`) — needs the table to exist
-- [ ] Infra sign-off: `CREATE EXTENSION ltree` on prod (available 1.3, not installed)
+- [x] Infra sign-off: `CREATE EXTENSION ltree` on prod — installed 2026-10-19 (1.3, schema
+      `public`, verified on the replica)
 - [x] `ThreadMute` row count — 225 in prod (the orphaned ones went with the purge); the comment /
       section split is a Phase 3 parity input
 - [x] **(review)** v2 depth distribution — 692 comments deeper than 20, max 247
@@ -78,19 +79,22 @@ Decisions & prerequisites:
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id, flip order and the ltree infra sign-off.
+`ComicChapter` surrogate id and flip order.
 
 ## Phase 1 — Schema (expand)
 
-- [ ] `CREATE EXTENSION ltree` applied to prod (signed off in Phase 0)
-- [ ] DDL from the plan doc: `CommentV3` (ltree `path`, trigger-set `rootId`/`depth`, `replyToId`,
+- [x] `CREATE EXTENSION ltree` applied to prod (2026-10-19, in Phase 0)
+- [ ] ltree present on dev cnpg, the CI Postgres service (`lint.yml`) and local docker-compose
+      before the migration runs there
+- [ ] DDL from the plan doc: `CommentV3` (ltree `path`, generated `rootId`/`depth`, `replyToId`,
       `deletedAt`, FK to `CommentTopic`, `parentId ON DELETE RESTRICT`, CHECKs), `CommentTopic`,
       `CommentV3Reaction`, `CommentV3Report`; `CommentEntityType` includes `crucible` **(review)**
 - [ ] `CommentMute` (`@@id([userId, commentId])`, FK to `CommentV3` CASCADE, `@@index([commentId])`)
       and `CommentTopicMute` (`@@id([userId, entityType, entityId])`) — two tables, because a
       nullable PK column is illegal in Postgres
-- [ ] `commentv3_set_path` BEFORE INSERT trigger (fills `path`, `rootId` and `depth`; no
-      GENERATED columns — the repo's one precedent was reverted to a trigger the next day) **(review)**
+- [ ] `commentv3_set_path` BEFORE INSERT trigger fills `path`; `rootId`/`depth` are
+      `GENERATED ALWAYS … STORED NOT NULL` from it, as in Koen's draft (a 2026-10-16 move into the
+      trigger was reverted 2026-10-19 — plan blocker 6) **(review)**
 - [ ] Index set from the plan doc (top ×3, entity, replies ×2 with `hidden` second,
       `(rootId, depth)`, GiST `path`, `(userId, id DESC)`, `legacyV1Id` unique partial,
       **`replyToId` partial — without it every hard-delete scans the table (review, benchmarked)**)
@@ -102,9 +106,9 @@ decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured
 - [ ] **(review)** `commentv3_delete_topic` AFTER DELETE trigger on each of the 13 entity tables
       (`comicChapter` via its surrogate id), so an entity hard-delete cascades its comments
 - [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
-      `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` plain required `Int`;
-      `db:check-generated` clean with it; `path` overridden from `unknown` to `string` in the
-      Kysely `DB` types **(review)**
+      `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
+      `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
+      to `string` and `rootId`/`depth` to select-only **(review)**
 - [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`
       (**deploy regenerated client first**, then apply enum migration — expand/contract rule) —
       only if comments have not yet cut over to text-scan (`text-scan/clavata-cutover.ts`)
