@@ -1154,43 +1154,6 @@ export async function getHeldDetectionModelCount() {
   return result.rows[0]?.count ?? 0;
 }
 
-/** Text-scan flags waiting on a ruling, both labels. No index serves the predicate, so this scans
- *  "Model"; callers on a hot path bound it. */
-export async function getTextScanFlaggedCount({
-  search,
-  flag = 'all',
-}: { search?: MinorSearch; flag?: FlaggedFlag } = {}) {
-  const result = await sql<{ count: number }>`
-    SELECT count(*)::int AS count
-    FROM "Model" m
-    ${redetectedLabelsJoin}
-    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE ${textScanFlaggedPredicate}
-      AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
-      AND ${searchPredicate(search, userRefs)}
-  `.execute(dbRead);
-  return result.rows[0]?.count ?? 0;
-}
-
-/** Labels waiting on a ruling. With no arguments it is the whole queue, which the tab badge shows;
- *  given the list's search and flag filter it is that list's total, over the same predicates. */
-export async function getRedetectedCount({
-  search,
-  flag = 'all',
-}: { search?: MinorSearch; flag?: FlaggedFlag } = {}) {
-  const result = await sql<{ count: number }>`
-    SELECT count(*)::int AS count
-    FROM "Model" m
-    ${redetectedLabelsJoin}
-    ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE ${redetectedIndexPredicate}
-      AND l.entry ? 'redetected'
-      AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
-      AND ${searchPredicate(search, userRefs)}
-  `.execute(dbRead);
-  return result.rows[0]?.count ?? 0;
-}
-
 export type MinorHashMatchDetail = {
   modelCoverUrl: string | null;
   modelCoverType: string | null;

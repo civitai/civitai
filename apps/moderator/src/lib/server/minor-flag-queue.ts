@@ -58,6 +58,7 @@ import {
   type FlaggedFilters,
 } from '$lib/minor-flags/flagged-filters';
 import { MAX_INT4 } from '$lib/server/users.service';
+import { bounded } from '$lib/server/bounded';
 import {
   confirmMinorFlag,
   dismissMinorHashMatch,
@@ -114,20 +115,9 @@ function parsePaging(url: URL) {
  */
 const TOTAL_BUDGET_MS = 1_000;
 
-const withinBudget = <T>(work: () => Promise<T>, what: string): Promise<T | undefined> => {
-  let budget: number | undefined;
-  return Promise.race([
-    work(),
-    new Promise<undefined>((resolve) => {
-      budget = setTimeout(resolve, TOTAL_BUDGET_MS);
-    }),
-  ])
-    .catch((err) => {
-      console.error(`${what} failed`, err);
-      return undefined;
-    })
-    .finally(() => clearTimeout(budget));
-};
+const withinBudget = async <T>(work: () => Promise<T>, what: string) =>
+  (await bounded(work, TOTAL_BUDGET_MS, (err) => console.error(`${what} failed`, err))) ??
+  undefined;
 
 /** Needs review's "of N". With file matches in the list it comes from the cached file-match counts,
  *  so it is offered only for the unsearched, unfiltered-by-label queue; held detections alone are

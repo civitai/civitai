@@ -26,8 +26,6 @@ const {
   getHeldDetectionModelCount,
   getNeedsReviewCount,
   getNeedsReviewModels,
-  getRedetectedCount,
-  getTextScanFlaggedCount,
   reviewDaysLeft,
 } = await import('../minor-hash.service');
 
@@ -198,7 +196,6 @@ describe('Needs review: held detections', () => {
     // Unescaped, `_` would match the space in "model 1".
     expect(await ids('l_1')).toEqual([]);
     expect(await needsReviewCount({ search: { text: 'pony' } })).toBe(1);
-    expect(await getRedetectedCount({ search: { text: 'pony' } })).toBe(2);
   });
 
   it('filters by label', async () => {
@@ -288,9 +285,9 @@ describe('Needs review: held detections', () => {
   });
 });
 
-describe('getRedetectedCount', () => {
-  it('counts every label waiting, ignoring search and paging', async () => {
-    expect(await getRedetectedCount()).toBe(0);
+describe('getHeldDetectionModelCount', () => {
+  it('counts models with a held detection, ignoring search and paging', async () => {
+    expect(await getHeldDetectionModelCount()).toBe(0);
     await seedModel(1, 1, {
       minor: { appealGranted: grant, redetected: redetected('2026-10-02T00:00:00Z') },
     });
@@ -300,13 +297,12 @@ describe('getRedetectedCount', () => {
     });
     await seedModel(3, 1, { minor: { appealGranted: grant } });
     await seedModel(5, 1, null);
-    expect(await getRedetectedCount()).toBe(3);
-    // Needs review's badge counts models: 2 carries two held labels.
+    // Models, not labels: 2 carries two held labels.
     expect(await getHeldDetectionModelCount()).toBe(2);
   });
 });
 
-describe("getRedetectedCount with the list's filters", () => {
+describe("the Needs review count under the list's filters", () => {
   beforeEach(async () => {
     await seedModel(1, 1, {
       minor: { appealGranted: grant, redetected: redetected('2026-10-02T00:00:00Z') },
@@ -317,14 +313,18 @@ describe("getRedetectedCount with the list's filters", () => {
     });
   });
 
-  it('counts under the flag filter and search, matching the list', async () => {
-    expect(await getRedetectedCount({ flag: 'poi' })).toBe(1);
-    expect(await getRedetectedCount({ flag: 'minor' })).toBe(2);
-    expect(await getRedetectedCount({ search: { text: 'OTHER' } })).toBe(2);
-    expect(await getRedetectedCount({ search: { modelOrUserId: 1 } })).toBe(1);
+  it('counts models under the flag filter and search, matching the list', async () => {
+    const count = (
+      flag: 'all' | 'minor' | 'poi',
+      search?: { text: string } | { modelOrUserId: number }
+    ) => needsReviewCount({ search, filters: { source: 'all', flag, sort: 'oldest' } });
+    expect(await count('poi')).toBe(1);
+    expect(await count('minor')).toBe(2);
+    expect(await count('all', { text: 'OTHER' })).toBe(1);
+    expect(await count('all', { modelOrUserId: 1 })).toBe(1);
     const filters = { source: 'all', flag: 'minor', sort: 'oldest' } as const;
     const search = { text: 'owner' };
-    expect(await getRedetectedCount({ flag: 'minor', search })).toBe(
+    expect(await count('minor', search)).toBe(
       (await needsReview({ limit: 10, search, filters })).items.length
     );
   });
@@ -660,7 +660,7 @@ describe('text-scan auto-flags', () => {
   describe('a minor flag the hash sweep owns', () => {
     const textScan = async () => ({
       keys: await keys({ filters: onlyTextScan }),
-      count: await getTextScanFlaggedCount(),
+      count: await getFlaggedCount({ source: 'text-scan' }),
     });
 
     it('is not relisted once its snapshot is past the review window', async () => {
@@ -675,7 +675,7 @@ describe('text-scan auto-flags', () => {
       );
       const { keys: listed, count } = await textScan();
       expect(listed).not.toContain('40:minor:text-scan');
-      expect(count).toBe(3);
+      expect(count).toBe(2);
     });
 
     it('is not relisted once a moderator confirmed it', async () => {
@@ -690,7 +690,7 @@ describe('text-scan auto-flags', () => {
       );
       const { keys: listed, count } = await textScan();
       expect(listed).not.toContain('41:minor:text-scan');
-      expect(count).toBe(3);
+      expect(count).toBe(2);
     });
 
     it('still lists the poi row of a model whose minor flag the hash sweep owns', async () => {
@@ -706,7 +706,7 @@ describe('text-scan auto-flags', () => {
       const { keys: listed, count } = await textScan();
       expect(listed).toContain('42:poi:text-scan');
       expect(listed).not.toContain('42:minor:text-scan');
-      expect(count).toBe(4);
+      expect(count).toBe(3);
     });
 
     it('lists a text-scan minor flag whose snapshot the text scan wrote, in the list, the count and the chip', async () => {
@@ -722,7 +722,7 @@ describe('text-scan auto-flags', () => {
       );
       const { keys: listed, count } = await textScan();
       expect(listed).toContain('44:minor:text-scan');
-      expect(count).toBe(4);
+      expect(count).toBe(3);
       expect(await getFlaggedCount({ search: { modelOrUserId: 44 } })).toBe(1);
       await seed(
         45,
@@ -750,7 +750,7 @@ describe('text-scan auto-flags', () => {
       await seed(43, 1, { minor: true }, { textScanFlags: { minor: entry(daysAgo(3)) } });
       const { keys: listed, count } = await textScan();
       expect(listed).toContain('43:minor:text-scan');
-      expect(count).toBe(4);
+      expect(count).toBe(3);
     });
   });
 
@@ -811,10 +811,12 @@ describe('text-scan auto-flags', () => {
   });
 
   it('counts the same population the list shows', async () => {
-    expect(await getTextScanFlaggedCount()).toBe(3);
-    expect(await getTextScanFlaggedCount({ flag: 'poi' })).toBe(2);
-    expect(await getTextScanFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
-    expect(await getTextScanFlaggedCount({ search: { text: 'other' } })).toBe(1);
+    const textScan = (q: Parameters<typeof getFlaggedCount>[0] = {}) =>
+      getFlaggedCount({ source: 'text-scan', ...q });
+    expect(await textScan()).toBe(2);
+    expect(await textScan({ flag: 'poi' })).toBe(2);
+    expect(await textScan({ search: { modelOrUserId: 1 } })).toBe(1);
+    expect(await textScan({ search: { text: 'other' } })).toBe(1);
     // Models, not labels: 30 and 31 each carry two flags and count once.
     expect(await getFlaggedCount()).toBe(2);
     expect(await getFlaggedCount({ source: 'text-scan' })).toBe(2);
