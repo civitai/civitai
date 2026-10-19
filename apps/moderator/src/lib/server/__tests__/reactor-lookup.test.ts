@@ -65,7 +65,7 @@ beforeEach(() => {
 });
 
 const runReactors = (days: number, minCount = 5) =>
-  getInflationActors(2832460, { category: 'reactions', days, minCount });
+  getInflationActors(1000001, { category: 'reactions', days, minCount });
 
 describe('getReactors', () => {
   it('counts reactions GIVEN, never reactions withdrawn', async () => {
@@ -95,12 +95,12 @@ describe('getReactors', () => {
     await runReactors(3);
 
     const q = chQueries[0];
-    expect(q).toContain('countIf(ownerId = 2832460) AS count');
+    expect(q).toContain('countIf(ownerId = 1000001) AS count');
     expect(q).toContain('count() AS total');
     expect(q).toContain('uniq(ownerId) AS owners');
     // Filtering the pass to the target makes `total` equal `count`, every row 100%, and the ranking
     // it feeds meaningless.
-    expect(q).not.toMatch(/WHERE[^]*ownerId = 2832460/);
+    expect(q).not.toMatch(/WHERE[^]*ownerId = 1000001/);
   });
 
   it('applies the volume floor, and reports how many accounts it removed', async () => {
@@ -192,7 +192,7 @@ describe('getReactors', () => {
         reactors: '1400',
       },
     ]);
-    const report = await getInflationActors(2832460, {
+    const report = await getInflationActors(1000001, {
       category: 'reactions',
       days: 3,
       minCount: 5,
@@ -205,7 +205,7 @@ describe('getReactors', () => {
 
 describe('getStickerPlacers', () => {
   it('reads every placer and applies the floor and the cap in JS', async () => {
-    const report = await getInflationActors(2832460, {
+    const report = await getInflationActors(1000001, {
       category: 'stickers',
       days: 3,
       minCount: 5,
@@ -227,7 +227,7 @@ describe('getStickerPlacers', () => {
 
 describe('getSharedIps', () => {
   const twoAccounts = [1, 2];
-  const TARGET = 2832460;
+  const TARGET = 1000001;
 
   it('groups and filters by the /64 cluster inside the query', async () => {
     chRows.push([], []);
@@ -297,16 +297,20 @@ describe('getSharedIps', () => {
     chRows.push(
       // The rotation case: one pair, six addresses. Address-keyed, this is six near-identical rows.
       [
-        { cluster: '88.7.201.83', userIds: ['7717426', String(TARGET)], ips: ['88.7.201.83'] },
-        { cluster: '88.7.202.107', userIds: ['7717426', String(TARGET)], ips: ['88.7.202.107'] },
-        { cluster: '88.4.144.13', userIds: ['7717426', String(TARGET)], ips: ['88.4.144.13'] },
+        { cluster: '198.51.100.83', userIds: ['1000002', String(TARGET)], ips: ['198.51.100.83'] },
+        {
+          cluster: '198.51.100.107',
+          userIds: ['1000002', String(TARGET)],
+          ips: ['198.51.100.107'],
+        },
+        { cluster: '198.51.100.13', userIds: ['1000002', String(TARGET)], ips: ['198.51.100.13'] },
       ],
-      [{ cluster: '88.7.201.83', total: '2' }]
+      [{ cluster: '198.51.100.83', total: '2' }]
     );
-    const accounts = await getSharedIps([7717426], { targetId: TARGET });
+    const accounts = await getSharedIps([1000002], { targetId: TARGET });
 
     expect(accounts).toHaveLength(1);
-    expect(accounts[0].userId).toBe(7717426);
+    expect(accounts[0].userId).toBe(1000002);
     expect(accounts[0].addresses).toHaveLength(3);
     // The creator gets no entry of its own — it is a member of every finding, so its entry would be
     // a copy of the whole panel.
@@ -374,7 +378,7 @@ describe('PUBLIC_IP_ONLY', () => {
 
 describe('getCollectionAdders', () => {
   it('passes the image set as a subquery, never as a materialised id list', async () => {
-    await getInflationActors(2832460, { category: 'collections', days: 3, minCount: 5 });
+    await getInflationActors(1000001, { category: 'collections', days: 3, minCount: 5 });
 
     const grouped = pgQueries.find((q) => q.includes('"CollectionItem"'));
     // The cap is 20k images. Fetched into JS and pasted back, that is 20k bind parameters and an
@@ -384,7 +388,7 @@ describe('getCollectionAdders', () => {
   });
 
   it('excludes the creator collecting their own work', async () => {
-    await getInflationActors(2832460, { category: 'collections', days: 3, minCount: 5 });
+    await getInflationActors(1000001, { category: 'collections', days: 3, minCount: 5 });
 
     // Left in, it takes the top row and pushes the rows worth reading off the end of the limit.
     expect(pgQueries.find((q) => q.includes('"CollectionItem"'))).toContain('"addedById" !=');
@@ -392,16 +396,16 @@ describe('getCollectionAdders', () => {
 });
 
 describe('getSharedIps per-account budget', () => {
-  const TARGET = 2832460;
-  const HOARDER = 7717426;
-  const QUIET = 9983152;
+  const TARGET = 1000001;
+  const HOARDER = 1000002;
+  const QUIET = 1000003;
 
   // One rotating connection produces far more clusters than everyone else combined: measured on
-  // eileen33bits, 29 of 31 belonged to a single reactor.
+  // one confirmed case, 29 of 31 belonged to a single reactor.
   const rotation = Array.from({ length: 400 }, (_, i) => ({
-    cluster: `88.7.${Math.floor(i / 256)}.${i % 256}`,
+    cluster: `198.18.${Math.floor(i / 256)}.${i % 256}`,
     userIds: [String(HOARDER), String(TARGET)],
-    ips: [`88.7.${Math.floor(i / 256)}.${i % 256}`],
+    ips: [`198.18.${Math.floor(i / 256)}.${i % 256}`],
   }));
   const quiet = {
     cluster: '203.0.113.7',

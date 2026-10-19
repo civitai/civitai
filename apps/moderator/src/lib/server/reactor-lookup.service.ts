@@ -10,7 +10,7 @@ import { strikeCountsByUserIds } from './moderation-memory.service';
 //
 // 🔴 `concentration` — an actor's share of their OWN activity landing on this target — is the product
 // here, not a column on it. Raw count does not separate a ring from an audience: measured on
-// eileen33bits, the confirmed sock sat sixth by count among thirteen accounts in one 380-410 band, and
+// one confirmed case, the sock sat sixth by count among thirteen accounts in one 380-410 band, and
 // nothing but "100%, one creator" told them apart.
 
 export type Category = 'reactions' | 'stickers' | 'collections';
@@ -77,7 +77,7 @@ const windowFilter = (days: number) => `time >= now() - INTERVAL ${Math.trunc(da
  * Every reactor on this creator in the window, scored — not the top N by count.
  *
  * 🔴 The cap must be applied AFTER scoring. Ranking by raw count and cutting at 100 drops exactly what
- * the page is for: on eileen33bits over 3 days, a 100%-on-one-creator account with 31 reactions sat at
+ * the page is for: on one confirmed case over 3 days, a 100%-on-one-creator account with 31 reactions sat at
  * rank 151 by count and never reached the page at all, while thirteen ordinary accounts above it
  * carried 380-410 each.
  *
@@ -435,7 +435,7 @@ const clusterExpr = (groupIpv4: boolean) => `if(position(ip, ':') > 0,
  * 🔴 **Deliberately NOT bounded by the page's lookback.** The actor list answers "who is inflating this
  * account lately"; an address correlation answers "are these the same person", which is not a question
  * about recent activity. Windowing it to 3 days loses exactly the evidence the tool exists to surface:
- * on eileen33bits, the sock and the target share 88.4.147.16 and 88.5.53.35, last used in MARCH — five
+ * on one confirmed case, the sock and the target shared two addresses last used in MARCH — five
  * months outside the default window, and invisible at every lookback the page offers.
  *
  * `userActivities` rather than `reactions`, for all three categories. It is where registration and
@@ -446,7 +446,7 @@ const clusterExpr = (groupIpv4: boolean) => `if(position(ip, ':') > 0,
  */
 /**
  * 🔴 Clusters are budgeted PER ACCOUNT, not globally, because one rotating connection exhausts a
- * global budget on its own. Measured on eileen33bits: of 31 shared clusters across nine accounts,
+ * global budget on its own. Measured on one confirmed case: of 31 shared clusters across nine accounts,
  * **29 belong to one reactor** — a residential line that changes address constantly. Under the
  * original flat `LIMIT 50` a single such account on a mobile carrier pushes every other account's
  * addresses off the panel, and the panel just renders fewer entries with nothing to say it did.
@@ -463,7 +463,7 @@ export async function getSharedIps(
 ): Promise<SharedIpAccount[]> {
   // 🔴 The target belongs in the correlation set even when it is not in the actor list — it usually
   // is not. A creator appears among their own reactors only through self-reactions, and plenty have
-  // none (measured: 0 for user 5227124 over 3 days, against 168 for 2832460). Leave the target out
+  // none (measured: 0 for one creator over 3 days, against 168 for another). Leave the target out
   // and the panel silently cannot test "this reactor shares an address with the creator they are
   // boosting", which is the strongest thing it has to say.
   const ids = [...new Set([...userIds, targetId])].filter(isInt4Id);
