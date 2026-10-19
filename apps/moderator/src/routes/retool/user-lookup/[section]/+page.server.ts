@@ -1,8 +1,8 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, requiresGrant } from '$lib/server/access';
-import { parseForm, userIdSchema } from '$lib/server/query';
+import { canAccess, denied, requiresGrant } from '$lib/server/access';
+import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -27,10 +27,13 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
+  countReactions,
+  removeReactions,
   purgeAllContent,
   removeSocial,
   resolveRestriction,
   setModerationFlag,
+  takeBackGrantedBox,
   forceLogout,
   refreshSessionCache,
   resetSubscriptionCaches,
@@ -39,6 +42,12 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import {
+  boxGrantFields,
+  BoxGrantRefused,
+  grantMysteryBoxes,
+} from '$lib/server/mystery-box-grant.service';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
 import { accountEnforcementActions } from '$lib/server/account-actions';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import {
@@ -76,6 +85,8 @@ const membershipCodeFail = (message: string) =>
 const creatorScoreFail = (message: string) =>
   fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
+const reactionsFail = (message: string) =>
+  fail(400, { scope: 'reactions' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
@@ -245,10 +256,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Issuing a strike NOTIFIES the user, so it is gated on the enforcement permission rather than the
-  // note permission it sits beside.
+  // Issuing a strike NOTIFIES the user, so it is gated on the `user.strike` action grant — the one every
+  // page that strikes checks — rather than the note permission it sits beside.
   addStrike: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return noteFail(403, 'Not permitted.');
+    if (!locals.grants['user.strike']) return noteFail(403, denied('user.strike'));
     const author = locals.user.username;
     if (!author) return noteFail(400, 'Your account has no username to attribute the strike to.');
 
@@ -324,9 +335,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the same gate.
+  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the strike's grant, as the
+  // report queues' Notify does.
   sendNotification: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return notifyFail('Not permitted.');
+    if (!locals.grants['user.strike']) return notifyFail(denied('user.strike'));
     const input = parseForm(
       userIdSchema.extend({
         message: z.string().trim().min(1).max(1000),
@@ -375,7 +387,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return shopFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   grantCosmetic: requiresGrant('user.cosmetics.grant', async ({ request, locals }) => {
@@ -392,6 +404,49 @@ export const actions: Actions = {
     });
     if (!result.ok) return shopFail(result.error);
     return { success: true };
+  }),
+
+  grantBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({ boxId: int4Id, ...boxGrantFields }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    try {
+      const result = await grantMysteryBoxes({
+        boxId: input.boxId,
+        userIds: [input.userId],
+        count: input.count,
+        grantId: input.grantId,
+        moderatorId: locals.user.id,
+      });
+      if (result.busyUserIds.length) return shopFail(ITEM_HOLDER_BUSY_MESSAGE);
+      if (result.failedUserIds.length)
+        return shopFail('The grant failed. Nothing was given; try again.');
+      if (result.alreadyGrantedUserIds.length)
+        return shopFail('This grant was already made. Reload to grant again.');
+      return { success: true };
+    } catch (e) {
+      if (e instanceof BoxGrantRefused) return shopFail(e.message);
+      throw e;
+    }
+  }),
+
+  takeBackGrantedBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({ sourceKey: z.string().trim().min(1).max(200) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    const result = await takeBackGrantedBox({
+      userId: input.userId,
+      sourceKey: input.sourceKey,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return shopFail(result.error);
+    return { success: true, warning: result.warning };
   }),
 
   removeCosmetic: async ({ request, locals }) => {
@@ -412,7 +467,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return cosmeticsFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   sendBuzz: requiresGrant('user.buzz.send', async ({ request, locals }) => {
@@ -661,6 +716,30 @@ export const actions: Actions = {
     });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
+  }),
+
+  countReactions: requiresGrant('user.removeReactions', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await countReactions(input.userId);
+    if (!result.ok) return reactionsFail(result.error);
+    return { success: true, reactionCounts: result.counts };
+  }),
+
+  // The username confirmation is the endpoint's, as on deleteAccount.
+  removeReactions: requiresGrant('user.removeReactions', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ username: z.string().optional() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await removeReactions(input);
+    if (!result.ok) return reactionsFail(result.error);
+    return {
+      success: true,
+      reactionsRemoved: result.removed,
+      reactionsRemaining: result.remaining,
+    };
   }),
 
   // No mute id any more: the mute lives on the account, so the account id is the whole scope. The old

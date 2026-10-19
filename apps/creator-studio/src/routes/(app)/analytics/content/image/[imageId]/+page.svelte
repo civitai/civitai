@@ -255,11 +255,19 @@
   {/each}
 </div>
 
-<ReactorsPanel
-  endpoint="/analytics/content/image/{image.imageId}/reactors"
-  noun={image.type === 'video' ? 'video' : 'image'}
-/>
-<CollectorsPanel
-  endpoint="/analytics/content/image/{image.imageId}/collectors"
-  noun={image.type === 'video' ? 'video' : 'image'}
-/>
+{#if image.audienceHidden}
+  <p class="cs-panel mt-4 p-4 text-sm text-dark-2">
+    Who reacted and who collected aren't shown for a removed {image.type === 'video'
+      ? 'video'
+      : 'image'}.
+  </p>
+{:else}
+  <ReactorsPanel
+    endpoint="/analytics/content/image/{image.imageId}/reactors"
+    noun={image.type === 'video' ? 'video' : 'image'}
+  />
+  <CollectorsPanel
+    endpoint="/analytics/content/image/{image.imageId}/collectors"
+    noun={image.type === 'video' ? 'video' : 'image'}
+  />
+{/if}

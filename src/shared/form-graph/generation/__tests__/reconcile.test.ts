@@ -30,6 +30,7 @@ const CTX: GenerationCtx = {
 const SD15_MODEL = { id: 128713, baseModel: 'SD 1.5' };
 const LTXV23_MODEL = { id: 2749948, baseModel: 'LTXV 2.3' };
 const FLUX2_KLEIN_4B_MODEL = { id: 2612557, baseModel: 'Flux.2 Klein 4B' };
+const MOSS_IMAGE_BASE_MODEL = { id: 3409868, baseModel: 'MOSS Image Base' };
 
 describe('deriveSelectorsFromModel', () => {
   it('moves the ecosystem when the workflow survives the switch', () => {
@@ -80,6 +81,12 @@ describe('deriveSelectorsFromModel', () => {
         workflow: 'txt2img',
       })
     ).toEqual({ ecosystem: 'Flux2Klein_4B' });
+    expect(
+      deriveSelectorsFromModel(MOSS_IMAGE_BASE_MODEL, {
+        ecosystem: 'MossImage',
+        workflow: 'txt2img',
+      })
+    ).toEqual({ ecosystem: 'MossImage_base' });
   });
 });
 

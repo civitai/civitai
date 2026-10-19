@@ -90,10 +90,20 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
-  // Bridge the resolved `trpcBatching` flag to the module-scope tRPC terminating
-  // link (which can't read a hook). Runs client-side only; until this fires the
-  // link stays unbatched (dark default), so anon + early-hydration queries never
-  // batch. See `shouldBatch` in `~/utils/trpc`.
+  // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
+  // `~/utils/trpc`).
+  //
+  // With `trpcBatchingFirstCommit` on, it is written while rendering: child
+  // effects run before parent effects and React Query starts a query's fetch
+  // from an effect, so the effect below alone would miss the first commit's
+  // queries. Browser only — on the server this module flag would be shared
+  // across concurrent requests.
+  if (typeof window !== 'undefined' && featureFlags.trpcBatchingFirstCommit) {
+    setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
+  }
+  // With `trpcBatchingFirstCommit` off, this effect is the only writer, so
+  // batching applies only to queries sent after the provider has mounted. With
+  // it on, this writes the value the render already wrote.
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }, [featureFlags.trpcBatching]);

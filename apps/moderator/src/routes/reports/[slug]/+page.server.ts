@@ -7,6 +7,7 @@ import {
   getReportStorylineId,
   setStorylineTakedown,
 } from '$lib/server/storyline-takedown.service';
+import { liftStorylineScanTakedown } from '$lib/server/storyline-scan-lift.service';
 import {
   getReportedServiceOfferings,
   getReportServiceOfferingId,
@@ -21,7 +22,8 @@ import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 // The table queues. Users, models and posts have their own routes (`/reports/user`, `/reports/model`,
 // `/reports/post`), each a queue layout with the open item in the path, and images theirs
 // (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
-// slugs reaches here.
+// slugs reaches here. Articles, chats, collections, bounties and bounty entries share the same layout at
+// `/reports/[queue=entityQueue]`, whose matcher outranks this plain param.
 export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
@@ -186,6 +188,37 @@ export const actions: Actions = {
         : storyline.tosViolation
         ? 'Restored, but its title scan still keeps it down'
         : 'Restored',
+    };
+  },
+
+  /**
+   * Lifts the title scan's takedown for the title the moderator read (the form carries it), so an
+   * edit made since is refused rather than waved through. The report's status is left as it is.
+   */
+  liftStorylineScanTakedown: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+    const reviewedTitle = data.get('reviewedTitle');
+    if (typeof reviewedTitle !== 'string') return fail(400, { error: 'Invalid title.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const lifted = await liftStorylineScanTakedown({
+      storylineId,
+      reviewedTitle,
+      moderatorId: locals.user.id,
+    });
+    if (!lifted.ok) return fail(409, { error: lifted.error });
+    return {
+      success: true,
+      storylineTakedown: lifted.tosViolation
+        ? "Lifted the title scan's takedown; a moderator's takedown keeps it down"
+        : 'Lifted',
     };
   },
 };

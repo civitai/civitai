@@ -65,6 +65,7 @@ function familyOf(ecosystem: string): string {
   if (ecosystem.startsWith('WanVideo')) return 'WanVideo';
   if (ecosystem.startsWith('Flux2Klein')) return 'Flux2Klein';
   if (ecosystem.startsWith('Flux3Klein')) return 'Flux3Klein';
+  if (ecosystem.startsWith('MossImage')) return 'MossImage';
   if (ecosystem === 'Flux1' || ecosystem === 'FluxKrea') return 'Flux';
   return ecosystem;
 }

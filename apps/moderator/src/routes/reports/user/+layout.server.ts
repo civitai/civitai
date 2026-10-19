@@ -1,5 +1,5 @@
 import type { LayoutServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
+import { canAccess, canInvestigate } from '$lib/server/access';
 import { usersByIds } from '$lib/server/users.service';
 import { ReportEntity } from '$lib/reports';
 import { loadReportQueue } from '$lib/server/report-queue-load';
@@ -33,6 +33,7 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
     canAct,
     // Banning is its own grant on top of `/users`, as it is in User Lookup.
     canBan: canAct && !!locals.grants['user.ban'],
+    canInvestigate: canInvestigate(locals),
     // The queue and the selected suspect sit side by side, which needs the full content width.
     // Not `wide`: this page owns its own height so the queue column can be sized against the
     // viewport. Under `wide` the column started 136px down the page and a `100vh` height then

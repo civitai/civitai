@@ -15,14 +15,19 @@ import { TRPCError } from '@trpc/server';
  *   - reportListing carries a rateLimit(20/3600) middleware (report-spam guard).
  */
 
-const { mockReport, mockListReports, mockIsAppBlocksEnabled, mockIsAppBlocksAuthorEnabled, rateLimitCalls } =
-  vi.hoisted(() => ({
-    mockReport: vi.fn(async () => ({ reportId: 'alrp_1' })),
-    mockListReports: vi.fn(async () => ({ items: [], nextCursor: null })),
-    mockIsAppBlocksEnabled: vi.fn(),
-    mockIsAppBlocksAuthorEnabled: vi.fn(),
-    rateLimitCalls: [] as Array<{ limit?: number; period?: number }>,
-  }));
+const {
+  mockReport,
+  mockListReports,
+  mockIsAppBlocksEnabled,
+  mockIsAppBlocksAuthorEnabled,
+  rateLimitCalls,
+} = vi.hoisted(() => ({
+  mockReport: vi.fn(async () => ({ reportId: 'alrp_1' })),
+  mockListReports: vi.fn(async () => ({ items: [], nextCursor: null })),
+  mockIsAppBlocksEnabled: vi.fn(),
+  mockIsAppBlocksAuthorEnabled: vi.fn(),
+  rateLimitCalls: [] as Array<{ limit?: number; period?: number }>,
+}));
 
 vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
   reportListing: mockReport,
@@ -56,7 +61,10 @@ vi.mock('~/server/middleware.trpc', async () => {
     },
   };
 });
-vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }));
+vi.mock('~/server/utils/server-domain', () => ({
+  isHostForColor: () => false,
+  isRedCapableHost: () => false,
+}));
 
 import { appListingsRouter } from '../app-listings.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -128,7 +136,10 @@ describe('reportListing — protectedProcedure', () => {
 
   it('a duplicate report (ALREADY_REPORTED) maps to CONFLICT with the friendly message', async () => {
     mockReport.mockRejectedValueOnce(
-      offsiteModErr('ALREADY_REPORTED', 'You have already reported this app — a moderator is reviewing it.')
+      offsiteModErr(
+        'ALREADY_REPORTED',
+        'You have already reported this app — a moderator is reviewing it.'
+      )
     );
     const caller = appListingsRouter.createCaller(fakeCtx(user) as never);
     await expect(caller.reportListing(reportInput)).rejects.toMatchObject({

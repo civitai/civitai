@@ -226,6 +226,33 @@ async function findChatIds(
   );
 }
 
+/**
+ * Each chat's message count and latest message — Chat Audit's list and the chat report queue's rows, so
+ * the two never disagree about the same chat. (chatId, id) is indexed, so each is an index range.
+ *
+ * System rows are 14% of the table, and 51,245 chats contain nothing else — counting them made an
+ * empty conversation read as "1 messages", and disagreed with the transcript, which leaves them out.
+ */
+export async function chatMessageCounts(
+  chatIds: number[]
+): Promise<Map<number, { messages: number; lastAt: Date | null }>> {
+  if (!chatIds.length) return new Map();
+  const counts = await dbRead
+    .selectFrom('ChatMessage')
+    .select((eb) => [
+      'chatId',
+      eb.fn.countAll<string>().as('messages'),
+      eb.fn.max('createdAt').as('lastAt'),
+    ])
+    .where('chatId', 'in', chatIds)
+    .where('userId', '!=', SYSTEM_USER_ID)
+    .groupBy('chatId')
+    .execute();
+  return new Map(
+    counts.map((c) => [c.chatId, { messages: Number(c.messages), lastAt: c.lastAt ?? null }])
+  );
+}
+
 // Retool's FindChats joined member names with string_agg and split on ',', which corrupts any username
 // containing a comma. A real array avoids inventing a delimiter.
 async function summariseChats(
@@ -259,20 +286,7 @@ async function summariseChats(
     .groupBy('cm.chatId')
     .execute();
 
-  // System rows are 14% of the table, and 51,245 chats contain nothing else — counting them made an
-  // empty conversation read as "1 messages".
-  const counts = await dbRead
-    .selectFrom('ChatMessage')
-    .select((eb) => [
-      'chatId',
-      eb.fn.countAll<string>().as('messages'),
-      eb.fn.max('createdAt').as('lastAt'),
-    ])
-    .where('chatId', 'in', chatIds)
-    .where('userId', '!=', SYSTEM_USER_ID)
-    .groupBy('chatId')
-    .execute();
-  const byChat = new Map(counts.map((c) => [c.chatId, c]));
+  const byChat = await chatMessageCounts(chatIds);
   const excerpts = await chatExcerpts(chatIds, mode, term);
 
   return rows
@@ -282,7 +296,7 @@ async function summariseChats(
       owner: r.owner,
       ownerBannedAt: r.ownerBannedAt,
       members: r.members ?? [],
-      messages: Number(byChat.get(r.chatId)?.messages ?? 0),
+      messages: byChat.get(r.chatId)?.messages ?? 0,
       lastAt: byChat.get(r.chatId)?.lastAt ?? null,
       excerpt: excerpts.get(r.chatId) ?? null,
     }))

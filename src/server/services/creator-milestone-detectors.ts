@@ -90,6 +90,7 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
     FROM "UserCosmeticShopPurchases" p
     JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
     WHERE NOT p.refunded AND p."cosmeticId" IS NULL AND i."addedById" IS NOT NULL
+      AND i."itemDefinitionId" IS NULL
     UNION ALL
     SELECT m."createdById", p."purchasedAt", m."buzzTransactionId" || ':' || m."cosmeticId",
       m."unitAmount"

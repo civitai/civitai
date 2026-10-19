@@ -23,6 +23,7 @@ import {
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
@@ -580,8 +581,10 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
     // the id of the row that was actually RETURNED — never on `input.id`. The
     // resolver takes the post as already-admitted for this viewer and does not
     // re-derive its visibility, so handing it an unvetted id would disclose
-    // whether that post was app-published. Fail-open by construction (`null` on
-    // any error), so it cannot take the post page down.
+    // whether that post was app-published. The chip READ is fail-open (`null` on any
+    // error inside `readPostAppChip`), so a failed read cannot take the post page down.
+    // Its `viewerBrowsingLevel` argument is computed HERE, outside that try: it is a pure
+    // read of `ctx.features` and `ctx.user`, and a throw from it would fail this handler.
     //
     // `host` drives the store's maturity gate and is fail-closed on absence: a
     // missing host refuses a mature app, i.e. under-links rather than over-links.
@@ -589,6 +592,9 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       postId: post.id,
       user: ctx.user,
       host: ctx.req?.headers?.host ?? '',
+      // The chip icon follows the store's listing-media rule, which on a red-capable host
+      // admits the viewer's opted-in levels on top of the non-red ceiling.
+      viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
     return { ...post, publishedWithApp };

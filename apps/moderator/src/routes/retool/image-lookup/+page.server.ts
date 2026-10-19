@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
+import { denied } from '$lib/server/access';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
 import {
@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       postId,
       deletedImageId: null,
       notFound: false,
-      canAct: canAccess(locals.user, '/users'),
+      canAct: !!locals.grants['image.moderate'],
     };
   }
 
@@ -81,7 +81,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     postId: null,
     deletedImageId,
     notFound: !result && !deletedImageId,
-    canAct: canAccess(locals.user, '/users'),
+    canAct: !!locals.grants['image.moderate'],
   };
 };
 
@@ -89,12 +89,12 @@ export const actions: Actions = {
   // Retool's Toggle Minor / Toggle Poi. Same endpoint Bulk Image Manager uses, so the flag write has
   // one implementation and one audit trail; Retool could only ever turn them ON.
   //
-  // Gated on `/users` to match Bulk Image Manager and User Reports, which make the same call: reaching a
-  // lookup page is an investigation permission, setting a flag is not. Gated on this page's own path it
+  // Gated on the `image.moderate` action grant, as Bulk Image Manager and the report queues are for the
+  // same call: reaching a lookup page is an investigation permission, setting a flag is not. Gated on this page's own path it
   // was no gate at all — `hooks.server.ts` has already checked that — so an Image Lookup grant alone
   // conferred a write the other two pages withhold.
   setFlag: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return fail(400, { error: 'Not permitted.' });
+    if (!locals.grants['image.moderate']) return fail(403, { error: denied('image.moderate') });
     const input = parseForm(
       z.object({
         imageId: z.coerce.number().int().positive(),

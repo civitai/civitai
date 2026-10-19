@@ -69,7 +69,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
   const excludedUserIds = await getExcludedUserIdsOrUnfiltered();
 
-  await setCoverImageNsfwLevel();
+  await setCoverImageNsfwLevelOrLog();
 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
@@ -132,6 +132,10 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     log('Leaderboards - Done');
     await updateLegendsBoardResults(excludedUserIds);
     await setLastRun();
+    // The routers cache these boards for a day. Without this, a board read before the job
+    // finished (a late or re-run job) keeps serving that read until clear-leaderboard-cache
+    // runs at midnight: on 2026-10-19 that was an empty board, all day.
+    await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
     logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
@@ -504,8 +508,44 @@ async function imageLeaderboardPopulation(
 type NsfwLevelRow = {
   id: number;
   nsfw: string;
+  metaType: string | null;
 };
-async function setCoverImageNsfwLevel() {
+
+/**
+ * Fails open: the boards only read the levels this writes, so a failure leaves them a day stale, while
+ * throwing here builds no board at all.
+ */
+export async function setCoverImageNsfwLevelOrLog() {
+  try {
+    await setCoverImageNsfwLevel();
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-cover-nsfw-level-failed',
+      message: (e as Error).message,
+    }).catch();
+  }
+}
+
+/**
+ * `jsonb_set` throws on a meta that is not an object, failing its whole chunk. On 2026-10-18 four
+ * array-shaped `Model.meta` rows did that and no board was built for the next day.
+ * SQL NULL counts as malformed on purpose: `meta` is NOT NULL on both tables, so one cannot occur.
+ */
+function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersion') {
+  const isWritable = (row: NsfwLevelRow) => row.metaType === 'object' || row.metaType === 'null';
+  const malformed = rows.filter((row) => !isWritable(row));
+  if (malformed.length)
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-malformed-meta',
+      // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+      error: { table, count: malformed.length, ids: malformed.slice(0, 100).map((row) => row.id) },
+    }).catch();
+  return rows.filter(isWritable);
+}
+
+export async function setCoverImageNsfwLevel() {
   log('Setting cover image nsfw level - version');
   const { rows: versionLevels } = await pgDbReadLong.query<NsfwLevelRow>(`
     -- get version nsfw image level based on post nsfw level
@@ -517,7 +557,7 @@ async function setCoverImageNsfwLevel() {
       WHERE mv.status = 'Published'
       ORDER BY mv.id, mv.index, p.id
     )
-    SELECT level.*
+    SELECT level.*, jsonb_typeof(mv.meta) "metaType"
     FROM model_version_nsfw_level level
     JOIN "ModelVersion" mv ON mv.id = level.id
     WHERE
@@ -526,10 +566,11 @@ async function setCoverImageNsfwLevel() {
         OR (mv.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
-  const tasks = chunk(versionLevels, 500).map((level) => async () => {
-    const levelJson = JSON.stringify(level);
-    log('Setting cover image nsfw level - version');
-    const query = await pgDbWrite.cancellableQuery(`
+  const tasks = chunk(withoutMalformedMeta(versionLevels, 'ModelVersion'), 500).map(
+    (level) => async () => {
+      const levelJson = JSON.stringify(level);
+      log('Setting cover image nsfw level - version');
+      const query = await pgDbWrite.cancellableQuery(`
       -- set version nsfw image level based on post nsfw level
       WITH model_version_nsfw_level AS (
         SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
@@ -538,10 +579,11 @@ async function setCoverImageNsfwLevel() {
       SET
         meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_version_nsfw_level level
-      WHERE level.id = mv.id;
+      WHERE level.id = mv.id AND jsonb_typeof(mv.meta) IN ('object', 'null');
     `);
-    await query.result();
-  });
+      await query.result();
+    }
+  );
   await limitConcurrency(tasks, 2);
 
   log('Setting cover image nsfw level - model');
@@ -554,7 +596,7 @@ async function setCoverImageNsfwLevel() {
       FROM "ModelVersion" mv
       ORDER BY mv."modelId", mv.index
     )
-    SELECT level.*
+    SELECT level.*, jsonb_typeof(m.meta) "metaType"
     FROM model_nsfw_level level
     JOIN "Model" m ON m.id = level.id
     WHERE
@@ -563,10 +605,11 @@ async function setCoverImageNsfwLevel() {
         OR (m.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
-  const modelTasks = chunk(modelLevels, 500).map((level) => async () => {
-    const levelJson = JSON.stringify(level);
-    log('Setting cover image nsfw level - model');
-    const query = await pgDbWrite.cancellableQuery(`
+  const modelTasks = chunk(withoutMalformedMeta(modelLevels, 'Model'), 500).map(
+    (level) => async () => {
+      const levelJson = JSON.stringify(level);
+      log('Setting cover image nsfw level - model');
+      const query = await pgDbWrite.cancellableQuery(`
       -- set model nsfw image level based on version nsfw level
       WITH model_nsfw_level AS (
         SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
@@ -575,10 +618,11 @@ async function setCoverImageNsfwLevel() {
       SET
         meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_nsfw_level level
-      WHERE level.id = m.id;
+      WHERE level.id = m.id AND jsonb_typeof(m.meta) IN ('object', 'null');
     `);
-    await query.result();
-  });
+      await query.result();
+    }
+  );
   await limitConcurrency(modelTasks, 2);
 }
 

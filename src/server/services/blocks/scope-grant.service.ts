@@ -1453,6 +1453,12 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * confirm away as redundant with this grant — they answer different questions
  * ("may this app post as me at all" vs "may it post THIS").
  *
+ * `social:react:self` (set the viewer's public, reward-paying reaction on an image) is
+ * INTENTIONALLY ABSENT as well, and unlike `posts:write:self` there is NO per-action confirm
+ * behind it — so this grant is the ONLY consent the reaction path has. Exempting it would mean
+ * an app could react as the viewer with no prompt at all. Revoking it stops future reactions;
+ * reactions already made stay (decision on civitai-app-starters#669).
+ *
  * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
  * LIE. `partitionByConsent` below signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
  * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
@@ -1464,7 +1470,7 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * visibility/ownership, self-bound subject, rate limits), and removing the scope would
  * not remove those gates' subject matter — it would only break the #3090 page-token fix.
  * The scopes a revoke DOES reach are the gated ones: notably `ai:write:budgeted`,
- * `collections:read:private`, `posts:write:self`.
+ * `collections:read:private`, `posts:write:self`, `social:react:self`.
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed

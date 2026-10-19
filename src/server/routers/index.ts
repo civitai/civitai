@@ -138,6 +138,9 @@ export const appRouter = router({
   creatorShop: lazy(() =>
     import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)
   ),
+  mysteryBox: lazy(() =>
+    import('~/server/routers/mystery-box.router').then((m) => m.mysteryBoxRouter)
+  ),
   creatorService: lazy(() =>
     import('~/server/routers/creator-service.router').then((m) => m.creatorServiceRouter)
   ),

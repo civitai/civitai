@@ -82,11 +82,17 @@ vi.mock('~/components/Metrics', () => ({
 // so the whole component tier went red with nothing naming a broken assertion.
 // A spread cannot go stale the same way: a new export arrives on its own.
 //
-// The two sale hooks are then stubbed back out deliberately. Both route through
-// `trpc.model.getActiveSales.useQuery`, and the `~/utils/trpc` mock above is a
-// deliberately minimal spy that carries only `user.getEngagedModels` — so
-// running the real hooks would reach an undefined namespace. Stubbing them keeps
-// the spread from ever touching it. `undefined` is "no sale", the default state,
+// The two sale hooks are then stubbed back out deliberately, for DIFFERENT
+// reasons. `useModelSaleBadge` — the per-card hook `ModelCard` calls — no longer
+// touches `trpc`: it is a react-query `useQuery` whose queryFn asks
+// `trpcVanilla`, and the spread above keeps `trpcVanilla` REAL. Every card here
+// without a sale fixture has `hasSaleProvider` false, so the real hook would run
+// and send a real `getActiveSales` request from the test, through a client the
+// `trpc` spy cannot see. `useModelSaleBadges` — the provider hook — still goes
+// through `trpc.useQueries`, which the bare spy (only `user.getEngagedModels`)
+// does not carry; the card does not call it, so that stub is a guard for a
+// provider entering this graph, not a fix for a current call. `undefined` is
+// "no sale", the default state,
 // and the sale badge is shadowed here rather than under test — except where a test
 // sets `saleState.sale`, which is the only way the merged-discount branch renders at
 // all. Read inside the factory rather than captured, so each test's value is the

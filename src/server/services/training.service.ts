@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
   AudioCaptioningStepTemplate,
@@ -56,6 +57,7 @@ import {
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
+import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -73,7 +75,15 @@ export type TrainingRequest = {
 
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
-export const isBlobAssetUrl = (url: string) => blobUrlRegex.test(url);
+/**
+ * Where a training checkpoint is copied to. A unique asset key per copy: the same asset name can
+ * come back (a later pick, another run), and a copy must never land on an existing object.
+ */
+export function uniqueAssetKey(modelVersionId: number, assetName: string) {
+  const ext = extname(assetName);
+  const base = assetName.slice(0, assetName.length - ext.length);
+  return `modelVersion/${modelVersionId}/${base}.${generateToken(8)}${ext}`;
+}
 
 export async function moveAssetFromBlob({
   url,
@@ -97,7 +107,7 @@ export async function moveAssetFromBlob({
     url: destinationUri,
     bucket,
     key,
-  } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
   console.log('[moveAssetFromBlob] Got put URL', { bucket, key });
 
   // Download the blob
@@ -148,6 +158,47 @@ export async function moveAssetFromBlob({
     newUrl,
     fileSize,
   };
+}
+
+/**
+ * Has the orchestrator copy a job asset into storage under `modelVersionId`. It copies any job's
+ * asset with the system token, so the caller must already have tied `jobId`/`assetName` to a
+ * checkpoint of the version's own approved run.
+ */
+export async function moveAssetFromJob({
+  jobId,
+  assetName,
+  modelVersionId,
+  submittedAt,
+}: {
+  jobId: string;
+  assetName: string;
+  modelVersionId: number;
+  submittedAt?: Date;
+}) {
+  const { url: destinationUri } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
+
+  const response = await getOrchestratorCaller(submittedAt).copyAsset({
+    payload: { jobId, assetName, destinationUri },
+    queryParams: { wait: true },
+  });
+  if (response.status === 429) throw throwRateLimitError();
+  if (!response.ok)
+    throw throwBadRequestError(
+      "We couldn't reach the training service to transfer your file. Please wait a moment and try again."
+    );
+
+  const job = response.data?.jobs?.[0];
+  if (!job || job.lastEvent?.type !== 'Succeeded')
+    throw throwBadRequestError(
+      "Your training file couldn't be transferred to your model. Please try again or select another file."
+    );
+  if (!job.result?.found)
+    throw throwBadRequestError(
+      "We couldn't find the training file you selected. It may have expired — please try again or select another file."
+    );
+
+  return { newUrl: destinationUri.split('?')[0], fileSize: job.result.fileSize };
 }
 
 export const deleteAssets = async (jobId: string, submittedAt?: Date) => {

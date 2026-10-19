@@ -107,6 +107,41 @@ describe('stampModeratorTextScanRuling', () => {
     expect(flatValues).toEqual(expect.arrayContaining([3, 7]));
   });
 
+  it('carries the moderator reason and note into the ruling, and omits them when not given', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 7,
+        userId: 5,
+        name: 'M',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: true,
+        modelVersions: [],
+      },
+    ]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
+    await stampModeratorTextScanRuling({
+      modelId: 7,
+      userId: 3,
+      label: 'minor',
+      reason: 'Adult character',
+      note: 'checked the sheet',
+    });
+    const [withText, ...withValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    // Reason binds immediately before note, so a swap cannot pass.
+    const at = withValues.indexOf('Adult character');
+    expect(at).toBeGreaterThan(-1);
+    expect(withValues.slice(at, at + 2)).toEqual(['Adult character', 'checked the sheet']);
+    expect(withText.join('?')).toContain('jsonb_strip_nulls');
+
+    await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' });
+    const [, ...bareValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[1]);
+    // Absent fields bind as null, which jsonb_strip_nulls drops, so the ruling carries no key.
+    expect(bareValues.filter((v) => v === null)).toHaveLength(2);
+  });
+
   // The scan skips a model that is not public; a ruling on one its owner unpublished must not.
   it('records a ruling on a model that is not public', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
@@ -131,6 +166,23 @@ describe('stampModeratorTextScanRuling', () => {
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: [7] }, deletedAt: null } })
     );
+  });
+
+  it('stamps the hash it is given without reading the current text', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
+    expect(
+      await stampModeratorTextScanRuling({
+        modelId: 7,
+        userId: 3,
+        label: 'minor',
+        textHash: 'seen-h',
+      })
+    ).toBe(true);
+
+    expect(dbMock.dbWrite.model.findMany).not.toHaveBeenCalled();
+    const [, ...values] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    expect(values).toEqual(expect.arrayContaining(['seen-h']));
   });
 
   it('writes nothing and reports false when the text cannot be read', async () => {

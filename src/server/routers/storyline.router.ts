@@ -4,15 +4,18 @@ import {
   getStorylinesInfiniteSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
+  linkStorylineChapterSchema,
   moderateStorylineTitleSchema,
+  setCanonChapterSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
   storylineChapterReadSchema,
-  storylineChapterSchema,
   storylineCollaboratorSchema,
   storylineIdSchema,
+  storylineLinkTargetsSchema,
+  storylinePathSchema,
   updateStorylineSchema,
 } from '~/server/schema/storyline.schema';
 import {
@@ -27,9 +30,12 @@ import {
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
   getStorylineForkShares,
+  getStorylineGraph,
+  getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
   joinStorylineEarlyAccess,
+  linkStorylineChapter,
   moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
@@ -69,9 +75,18 @@ export const storylineRouter = router({
     })
   ),
 
-  getPath: storylineReadProcedure.input(storylineChapterReadSchema).query(({ input, ctx }) =>
+  getPath: storylineReadProcedure.input(storylinePathSchema).query(({ input, ctx }) =>
     getStorylinePath({
       chapterId: input.chapterId,
+      via: input.via,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  getGraph: storylineReadProcedure.input(getStorylineSchema).query(({ input, ctx }) =>
+    getStorylineGraph({
+      id: input.id,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
     })
@@ -179,13 +194,30 @@ export const storylineRouter = router({
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
 
-  setCanon: storylineWriteProcedure.input(storylineChapterSchema).mutation(({ input, ctx }) =>
+  setCanon: storylineWriteProcedure.input(setCanonChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({
       chapterId: input.chapterId,
+      parentChapterId: input.parentChapterId,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     })
   ),
+
+  linkChapter: storylineWriteProcedure
+    .input(linkStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      linkStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  getLinkTargets: storylineMemberProcedure
+    .input(storylineLinkTargetsSchema)
+    .query(({ input, ctx }) =>
+      getStorylineLinkTargets({
+        parentChapterId: input.parentChapterId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
 
   addCollaborator: storylineWriteProcedure
     .input(storylineCollaboratorSchema)

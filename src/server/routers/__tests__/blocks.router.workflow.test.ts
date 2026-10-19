@@ -7759,6 +7759,65 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         );
       });
 
+      it('a long NON-STRING `mode` is described, not echoed', async () => {
+        const node = { note: 'x'.repeat(1_000) };
+        const mode = new Array(1_000).fill(node);
+        const stringify = JSON.stringify;
+        // Every character JSON.stringify writes during the call, whatever it is called on.
+        let stringified = 0;
+        const spy = vi
+          .spyOn(JSON, 'stringify')
+          .mockImplementation((...args: Parameters<typeof stringify>) => {
+            const out = stringify(...args);
+            stringified += out?.length ?? 0;
+            return out;
+          });
+        let issues;
+        try {
+          issues = await rejectionIssues({
+            kind: 'customComfy',
+            mode,
+            recipe: 'starter-comfy-txt2img',
+            params: { prompt: 'a cat' },
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        // The mode's JSON is ~1 MB; nothing near that is written.
+        expect(stringified).toBeLessThan(100_000);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // More entries than fit in 200 characters is described too, even ones left out of the JSON.
+        const padded = Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`k${i}`, undefined])
+        );
+        const described = await rejectionIssues({
+          kind: 'customComfy',
+          mode: padded,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(described[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // At the limit it is still echoed.
+        const atLimit = ['x'.repeat(200 - '[""]'.length)];
+        const echoed = await rejectionIssues({
+          kind: 'customComfy',
+          mode: atLimit,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(echoed[0].message).toBe(
+          `Invalid \`customComfy\` mode: ${JSON.stringify(
+            atLimit
+          )} — expected "recipe" or "inline".` + ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
       // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
       // after. A genuinely bad value on a DECLARED inline field is raised by that
       // field's own schema, not by the object, so the arm error map must not
@@ -10300,6 +10359,56 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
   }
 
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe('inline media is refused before any quote or charge', () => {
+    // A phone photo inlined as a data URI: over the byte cap AND inline media.
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    const expected =
+      'input.ImageUrl carries inline media (data URI/base64); ' +
+      'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+      "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
+
+    it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+      '%s reports the inline-media message, not the byte cap',
+      async (procedure) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        const body = ptBody({ input: { ImageUrl: photo } });
+
+        const err = await caller()
+          [procedure]({ blockToken: 'tok', body })
+          .then(
+            () => null,
+            (e: unknown) => e as { code: string; message: string }
+          );
+
+        expect(err?.code).toBe('BAD_REQUEST');
+        expect(err?.message).toContain(expected);
+        expect(err?.message).not.toContain('byte limit');
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      }
+    );
+
+    it("refuses it in a kind:'workflow' step on the estimate", async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const body = {
+        kind: 'workflow' as const,
+        steps: [
+          { name: 'gen', $type: PT_TYPE, input: { prompt: 'a cat' } },
+          { $type: PT_TYPE, input: { images: ['https://image.civitai.com/a.jpeg', photo] } },
+        ],
+      };
+
+      await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('steps[1].input.images[1] carries'),
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
 
   describe('🔴 criterion 1 — an UNREGISTERED $type parses and submits', () => {
     it('submits a $type that is not in stepRegistry', async () => {

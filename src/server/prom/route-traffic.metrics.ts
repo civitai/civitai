@@ -39,9 +39,9 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class'> {
         help:
           'Server-rendered HTML responses, counted once per document: route is the page actually ' +
           'rendered (/404 for notFound, /_error for a thrown error); redirects and /_next/data ' +
-          'requests render no document and are not counted. authed is unknown when the settings ' +
-          'bootstrap failed for a request with a session cookie; bot_class is set only where bot ' +
-          'verification runs',
+          'requests for getServerSideProps pages render no document and are not counted. authed ' +
+          'is unknown when the settings bootstrap failed for a request with a session cookie; ' +
+          'bot_class is set only where bot verification runs',
         labelNames: ['route', 'authed', 'bot_class'] as const,
         registers: [instrumentationRegistry],
       })

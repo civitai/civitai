@@ -78,6 +78,16 @@ import {
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
 import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
+import {
+  ListingMediaSplitControl,
+  MEDIA_SPLIT_UNREADABLE_COPY,
+  MEDIA_SPLIT_UNREADABLE_REVISION_COPY,
+} from '~/components/Apps/ListingMediaSplitControl';
+import {
+  ratingFloorAssets,
+  resolveListingMediaSplitDecision,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   nsfwLevelFromContentRating,
@@ -427,6 +437,7 @@ export function OffsiteReviewModalBody({
   // Select shows the derived rating as its default); a non-null value is an explicit
   // override. The server FLOORS an under-rating override at the derived value.
   const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -467,6 +478,7 @@ export function OffsiteReviewModalBody({
     setApprovalNotes('');
     setActionMode('view');
     setRatingOverride(null);
+    setMediaSplitChoice(null);
     onClose();
   }
 
@@ -484,9 +496,30 @@ export function OffsiteReviewModalBody({
   // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
   // assets are more mature than declared. The Select defaults to the derived value;
   // the mod may rate UP (an under-rating is floored server-side).
+  // A split floors the rating by the civitai.com-eligible images only, so the default below
+  // follows the moderator's split choice rather than offering a value that would undo it.
+  const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
+  // Until the listing's media and split state have loaded, an approve would send a decision
+  // nobody has seen — and for a split listing, end its split.
+  // Same condition the asset query is enabled on, so a request it never reads is never blocked.
+  const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
+  // A `null` split is one this environment cannot read. No choice is offered and approve sends NO
+  // decision; any explicit decision would be refused. The server then reads the listing as unsplit:
+  // the approve floors its rating by all of its media (an on-site media revision rewrites no
+  // rating, and its next re-rate floors by all media), and a split stamped earlier stays in the
+  // record, not applied.
+  const splitUnreadable = assetsQuery.data?.mediaSplitApproved === null;
+  const resolvedMediaSplit = resolveListingMediaSplitDecision({
+    assets: ratingAssets,
+    currentlySplit: assetsQuery.data?.mediaSplitApproved === true,
+    choice: mediaSplitChoice,
+  }).value;
+  const mediaSplit: ListingMediaSplitDecision | undefined = splitUnreadable
+    ? undefined
+    : resolvedMediaSplit;
   const ratingSummary = summarizeListingRating({
     declaredRating: request.appListing?.contentRating,
-    assets: listingRatingAssetsFromView(assetsQuery.data ?? {}),
+    assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
   });
   const derivedRating = ratingSummary.derived ?? 'g';
   // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
@@ -880,6 +913,21 @@ export function OffsiteReviewModalBody({
           </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            {assetsQuery.data && !splitUnreadable && (
+              <ListingMediaSplitControl
+                assets={ratingAssets}
+                currentlySplit={assetsQuery.data.mediaSplitApproved === true}
+                value={resolvedMediaSplit}
+                // An on-site media REVISION records the decision but keeps the app's rating
+                // (`applyApprovedRevision` is assets-only), so it must not preview ratings.
+                appliesRating={!(isOnsite && !isOnsiteRepublishReview)}
+                onChange={(v) => {
+                  setMediaSplitChoice(v);
+                  setRatingOverride(null);
+                }}
+                disabled={busy}
+              />
+            )}
             <Select
               label="Final content rating"
               description={
@@ -912,6 +960,20 @@ export function OffsiteReviewModalBody({
               disabled={busy}
               data-testid="apps-offsite-approve-notes"
             />
+            {splitUnreadable && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
+                {isOnsite && !isOnsiteRepublishReview
+                  ? MEDIA_SPLIT_UNREADABLE_REVISION_COPY
+                  : MEDIA_SPLIT_UNREADABLE_COPY}
+              </Text>
+            )}
+            {splitStateUnknown && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+                {assetsQuery.isError
+                  ? 'Could not load the listing’s media, so approve is unavailable. Close and reopen this request to retry.'
+                  : 'Approve is available once the listing’s media has loaded.'}
+              </Text>
+            )}
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
@@ -924,9 +986,10 @@ export function OffsiteReviewModalBody({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
+                    ...(mediaSplit ? { mediaSplit } : {}),
                   })
                 }
-                disabled={busy}
+                disabled={busy || splitStateUnknown}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >

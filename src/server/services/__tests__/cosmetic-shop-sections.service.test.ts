@@ -14,6 +14,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
+  enqueueImageIngestion: vi.fn(),
 }));
 // `importOriginal` keeps the rest of the module real: this suite's import graph
 // reaches prom collectors it never names, and a hand-listed mock silently breaks
@@ -27,7 +28,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
-import { getSectionById, getShopSectionsWithItems } from '../cosmetic-shop.service';
+import {
+  getSectionById,
+  getShopSectionsWithItems,
+  upsertCosmeticShopSection,
+} from '../cosmetic-shop.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
@@ -264,5 +269,45 @@ describe('getSectionById serves the row count too', () => {
       dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mock.calls.at(-1)?.[0].select.items.select
         .shopItem.select._count
     ).toBeUndefined();
+  });
+});
+
+// A mystery box listing has no cosmetic, so the section would render it as a pack, without the box's
+// flag, region and event checks, from an edge-cached read.
+describe('mystery box listings stay out of shop sections', () => {
+  beforeEach(() => {
+    mocks.sectionFindMany.mockReset();
+    mocks.sectionFindMany.mockResolvedValue([sectionRow]);
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it.each([
+    ['anonymous', {}],
+    ['moderator', { isModerator: true, creatorShopEnabled: true }],
+  ])('the pack branch excludes them (%s)', async (_label, flags) => {
+    await getShopSectionsWithItems(flags);
+
+    expect(capturedPackBranch()).toEqual({ cosmeticId: null, itemDefinitionId: null });
+  });
+
+  it('the editor refuses one before writing anything', async () => {
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValueOnce(1);
+
+    await expect(
+      upsertCosmeticShopSection({ id: 5, title: 'Boxes', items: [7, 2671], userId: 1 })
+    ).rejects.toThrow('Mystery box listings cannot be placed in a shop section');
+    expect(dbMock.dbWrite.cosmeticShopItem.count).toHaveBeenLastCalledWith({
+      where: { id: { in: [7, 2671] }, itemDefinitionId: { not: null } },
+    });
+    expect(dbMock.dbWrite.cosmeticShopSection.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.cosmeticShopSectionItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('the editor still saves a section of cosmetics (control)', async () => {
+    dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mockResolvedValue({ id: 5, items: [] });
+
+    await upsertCosmeticShopSection({ id: 5, title: 'Badges', items: [7], userId: 1 });
+
+    expect(dbMock.dbWrite.cosmeticShopSectionItem.deleteMany).toHaveBeenCalled();
   });
 });

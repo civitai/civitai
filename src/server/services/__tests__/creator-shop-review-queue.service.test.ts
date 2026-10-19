@@ -95,4 +95,14 @@ describe('getCreatorShopReviewQueue', () => {
     const { where } = findManyArg();
     expect(mocks.shopItemCount).toHaveBeenCalledWith({ where });
   });
+
+  // A mystery box listing has no cosmetic and a moderator lister, the pack arm's exact shape.
+  it('keeps mystery box listings out of the pack arm', async () => {
+    await getCreatorShopReviewQueue(baseInput);
+    const { where } = findManyArg();
+    const arms = (where.OR ?? []) as Record<string, unknown>[];
+    const packArm = arms.find((arm) => 'cosmeticId' in arm && arm.cosmeticId === null);
+    expect(packArm).toBeDefined();
+    expect(packArm).toMatchObject({ itemDefinitionId: null });
+  });
 });

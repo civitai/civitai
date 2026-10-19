@@ -528,8 +528,11 @@ export async function continueTraining(
   submitOpts: SubmitOptions = {}
 ): Promise<string> {
   const { body } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { wait: 0 } });
-  if (!data?.id) throw new Error(`keep training: submit failed (${describeSubmitError(error)})`);
+  const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
+  if (!data?.id)
+    throw new Error(
+      `keep training: submit failed (${describeSubmitError(error, response?.status)})`
+    );
   return data.id;
 }
 
@@ -541,8 +544,9 @@ export async function continueTrainingWhatIf(
   submitOpts: SubmitOptions = {}
 ): Promise<{ cost: number | null; steps: number | undefined }> {
   const { body, steps } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { whatif: true } });
-  if (!data) throw new Error(`keep training quote failed: ${describeSubmitError(error)}`);
+  const { data, error, response } = await submitWorkflow({ client, body, query: { whatif: true } });
+  if (!data)
+    throw new Error(`keep training quote failed: ${describeSubmitError(error, response?.status)}`);
   return { cost: data.cost?.total ?? null, steps };
 }
 

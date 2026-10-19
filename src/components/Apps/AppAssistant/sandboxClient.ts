@@ -55,6 +55,13 @@ function errorKind(status: number, message: string): SandboxErrorKind {
   }
 }
 
+/** The cap on sandboxes running at once, as opposed to the cap on sandboxes kept. */
+export function isRunningLimit(error: unknown): boolean {
+  return (
+    error instanceof SandboxApiError && error.kind === 'limit' && /running/.test(error.message)
+  );
+}
+
 /** Whether `url` is served by the sandbox service at `baseUrl`, so it may receive the user's token. */
 export function isSandboxServiceUrl(url: string, baseUrl: string): boolean {
   try {

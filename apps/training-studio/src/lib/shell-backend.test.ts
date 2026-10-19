@@ -21,3 +21,12 @@ describe('keep-training requests carry the picked currencies', () => {
     expect(JSON.parse(init.body as string).currencies).toEqual(['blue', 'green']);
   });
 });
+
+describe('keep-training errors', () => {
+  it('surfaces the server message, not the raw JSON body', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ message: 'pricing is down' }, { status: 502 }));
+    await expect(shellBackend.continueQuote('wf-1', 10, 5, [])).rejects.toThrow(
+      /^pricing is down$/
+    );
+  });
+});

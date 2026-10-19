@@ -81,6 +81,21 @@ function capturedValues(): unknown[] {
 }
 
 /** A fully-hydrated onsite listing row (as `listingHydrateSelect` returns). */
+/** A listing image as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgImage(url: string) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
+
 function hydratedRow(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_1',
@@ -96,8 +111,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     externalUrl: null,
     connectClientId: null,
     appBlockId: 'ab_1',
-    icon: { url: 'icon-key' },
-    cover: { url: 'cover-key' },
+    // Scanned, unflagged, PG — what a live listing's media is. The per-image store gate
+    // (`listing-media-audience`) hides anything else, which its own suites cover.
+    icon: scannedPgImage('icon-key'),
+    cover: scannedPgImage('cover-key'),
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
     // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
@@ -127,7 +144,7 @@ function hydratedRow(over: Record<string, unknown> = {}) {
         settings: { apiKey: 'super-secret' },
       },
     },
-    screenshots: [{ caption: 'first shot', image: { url: 'shot-0' } }],
+    screenshots: [{ caption: 'first shot', image: scannedPgImage('shot-0') }],
     ...over,
   };
 }
@@ -731,9 +748,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
   it('the gallery excludes screenshots whose backing Image is gone (null image)', () => {
     const row = hydratedRow({
       screenshots: [
-        { caption: 'a', image: { url: 's0' } },
+        { caption: 'a', image: scannedPgImage('s0') },
         { caption: 'b', image: null },
-        { caption: 'c', image: { url: 's2' } },
+        { caption: 'c', image: scannedPgImage('s2') },
       ],
     });
     const detail = projectListingDetail(row as never);

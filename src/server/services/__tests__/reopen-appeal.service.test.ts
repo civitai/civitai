@@ -38,7 +38,11 @@ describe('reopenAppeal', () => {
   it('never reopens an image appeal', async () => {
     await reopen();
 
-    expect(updateArgs().where).toEqual({ id: 41, entityType: { not: EntityType.Image } });
+    expect(updateArgs().where).toEqual({
+      id: 41,
+      entityType: { not: EntityType.Image },
+      category: null,
+    });
   });
 
   it('clears the prior resolution and reopens as Pending', async () => {

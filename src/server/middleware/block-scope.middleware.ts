@@ -1169,6 +1169,7 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - user:read:self     → claims.sub != 'anon'
  *   - ai:write:budgeted  → claims.buzzBudget > 0
  *   - posts:write:self   → claims.sub != 'anon'
+ *   - social:react:self  → claims.sub != 'anon'
  *
  * 🔴 THE BINDING SWITCH IS SCOPED TO `requiredScope`, NOT TO EVERY SCOPE ON THE
  * TOKEN (#5063), and that is deliberate. A binding answers "is THIS request
@@ -1346,6 +1347,16 @@ export function enforceContextBinding(
         // ran for every scope on the token, so an unwired scope 403'd a models
         // read and a catalog read too. That blast radius is gone; the
         // requirement to wire the case is not.)
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
+      case 'social:react:self': {
+        // A reaction belongs to a USER — there is no anonymous reactor. No REST route declares
+        // this scope today (the write is the session-authed `blocks.setReactionFromApp`), so
+        // this case exists for the `default:` arm's sake: a route that ever does must find a
+        // binding here rather than 403 every request.
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }

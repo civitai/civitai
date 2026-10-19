@@ -16,6 +16,7 @@ import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
   const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
@@ -50,24 +51,33 @@ export async function stampModeratorTextScanRuling({
   modelId,
   userId,
   label,
+  reason,
+  note,
+  textHash: ruledHash,
 }: {
   modelId: number;
   userId: number;
   label: TextScanFlagLabel;
+  reason?: string;
+  note?: string;
+  /** The flagged text the moderator ruled on; skips reading the current text, which may have been edited since. */
+  textHash?: string;
 }) {
-  const textHash = await loadGrantTextHash('Model', modelId, label);
+  const textHash = ruledHash ?? (await loadGrantTextHash('Model', modelId, label));
   if (!textHash) return false;
   // The moderator just ruled on the current state, so a pending re-detection is moot.
   await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}::text, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, (COALESCE(${flagEntryPath(label)}, '{}'::jsonb) - 'redetected')
           || ${carriedRulings(label, ['appealGranted'])}
           || jsonb_build_object(
             'appealGranted', jsonb_build_object(
               'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
-            )
+            ) || jsonb_strip_nulls(jsonb_build_object(
+              'reason', ${reason ?? null}::text, 'note', ${note ?? null}::text
+            ))
           )
       )
     )

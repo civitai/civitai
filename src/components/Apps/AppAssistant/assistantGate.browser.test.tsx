@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   createAssistantGate,
   renderChecklist,
@@ -26,7 +26,105 @@ describe('the set_checklist card', () => {
   });
 
   test('is the view the tool carries', () => {
-    expect(createAssistantGate().tools.set_checklist.render).toBe(renderChecklist);
+    const call = {
+      name: 'set_checklist',
+      input: { items: [{ label: 'Download' }] },
+      state: 'done' as const,
+    };
+    expect((createAssistantGate().tools.set_checklist.render!(call) as HTMLElement).outerHTML).toBe(
+      renderChecklist(call)!.outerHTML
+    );
+  });
+});
+
+describe('Build it under the checklist', () => {
+  const items = [{ label: 'Ask questions' }];
+  const conv = { conversationId: 'c', reply: 1 };
+  const ctx = { signal: new AbortController().signal, conversationId: 'c', files: [] };
+
+  async function shownChecklist(onBuild = vi.fn()) {
+    const gate = createAssistantGate({ onBuild });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    const output = await gate.tools.set_checklist.execute({ items }, ctx);
+    const card = () =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input: { items },
+        state: 'done',
+        output,
+      }) as HTMLElement;
+    return { gate, output, card, onBuild };
+  }
+  const buildButton = (card: HTMLElement) =>
+    [...card.querySelectorAll('button')].find((b) => b.textContent === 'Build it') ?? null;
+
+  test('the card of a checklist that waits for the user offers Build it until the user answers', async () => {
+    const { gate, card, onBuild } = await shownChecklist();
+    const shown = card();
+    document.body.append(shown);
+    const button = buildButton(shown)!;
+    expect(getComputedStyle(button).minHeight).toBe('44px');
+    button.click();
+    expect(onBuild).toHaveBeenCalledTimes(1);
+    // The page decides when it goes: once the message went, or once it put it in the message box.
+    expect(buildButton(shown)).not.toBeNull();
+    gate.answered();
+    expect(buildButton(shown)).toBeNull();
+    expect(buildButton(card())).toBeNull();
+    shown.remove();
+  });
+
+  test('goes when another app opens, and stays when the same one does', async () => {
+    let app: string | null = 'sbx-a';
+    const gate = createAssistantGate({ onBuild: vi.fn(), currentApp: () => app });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    const output = await gate.tools.set_checklist.execute({ items }, ctx);
+    const card = () =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input: { items },
+        state: 'done',
+        output,
+      }) as HTMLElement;
+    const shown = card();
+    gate.appChanged('sbx-a');
+    expect(buildButton(shown)).not.toBeNull();
+    app = 'sbx-b';
+    gate.appChanged('sbx-b');
+    expect(buildButton(shown)).toBeNull();
+    expect(buildButton(card())).toBeNull();
+  });
+
+  test('goes once the next reply starts, or the user answers some other way', async () => {
+    const first = await shownChecklist();
+    first.gate.beforeToolCall('sandbox__read_file', {}, { ...conv, reply: 2 });
+    expect(buildButton(first.card())).toBeNull();
+
+    const second = await shownChecklist();
+    const shown = second.card();
+    expect(buildButton(shown)).not.toBeNull();
+    second.gate.answered();
+    expect(buildButton(shown)).toBeNull();
+    expect(buildButton(second.card())).toBeNull();
+  });
+
+  test('a card from another page load, or an unchanged checklist, offers nothing', async () => {
+    const { output } = await shownChecklist();
+    const other = createAssistantGate({ onBuild: vi.fn() });
+    const restored = other.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input: { items },
+      state: 'done',
+      output: JSON.parse(JSON.stringify(output)),
+    }) as HTMLElement;
+    expect(buildButton(restored)).toBeNull();
+
+    const { gate } = await shownChecklist();
+    const again = await gate.tools.set_checklist.execute(
+      { items: [{ ...items[0], done: true }] },
+      ctx
+    );
+    expect(again).not.toHaveProperty('awaitsUser');
   });
 });
 

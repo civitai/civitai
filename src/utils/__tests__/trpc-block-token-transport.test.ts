@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
-import { setTrpcBatchingEnabled, trpcVanilla } from '~/utils/trpc';
+import {
+  CACHEABLE_PROCEDURES,
+  NEVER_BATCH_PROCEDURES,
+  setTrpcBatchingEnabled,
+  trpcVanilla,
+} from '~/utils/trpc';
 
 /**
  * WIRE-LEVEL coverage for how the browser client sends block-token queries.
@@ -69,6 +74,20 @@ const smallInput = (path: string): Record<string, unknown> => ({
 
 const ALL = [...BLOCK_TOKEN_QUERY_PROCEDURES].sort();
 
+/**
+ * The positive controls' procedure: a real query in NONE of the routing sets, so it takes the
+ * default route (GET; batched in the cohort). Pinned by the test below so it cannot drift into
+ * a set and turn a control red for a reason unrelated to block tokens.
+ */
+const ORDINARY = 'model.getById';
+const ORDINARY_INPUT = { id: 1 };
+
+it('the controls use a procedure in none of the routing sets', () => {
+  expect(BLOCK_TOKEN_QUERY_PROCEDURES.has(ORDINARY)).toBe(false);
+  expect(CACHEABLE_PROCEDURES.has(ORDINARY)).toBe(false);
+  expect(NEVER_BATCH_PROCEDURES.has(ORDINARY)).toBe(false);
+});
+
 describe('block-token queries leave the browser as POST', () => {
   it('covers all eight procedures (the set is not silently empty)', () => {
     expect(ALL).toHaveLength(8);
@@ -89,7 +108,7 @@ describe('block-token queries leave the browser as POST', () => {
     // Same client, same stub, one variable changed (the procedure). Without this, "POST" above
     // is indistinguishable from a client that POSTs everything — which would also de-cache
     // every public query.
-    await callQuery('model.getAll', { limit: 1 });
+    await callQuery(ORDINARY, ORDINARY_INPUT);
 
     expect(sent).toHaveLength(1);
     expect(sent[0].method).toBe('GET');
@@ -116,7 +135,7 @@ describe('block-token queries are never batched', () => {
   it('POSITIVE CONTROL: an ordinary query in the batch cohort IS batched (GET ?batch=1)', async () => {
     // Proves the cohort setup above actually reaches the batch link, so "not batched" for the
     // block-token procedures is a property of those procedures, not of a dead setup.
-    await callQuery('model.getAll', { limit: 1 });
+    await callQuery(ORDINARY, ORDINARY_INPUT);
 
     expect(sent).toHaveLength(1);
     expect(sent[0].method).toBe('GET');

@@ -1,6 +1,6 @@
-# Report queues: claims, skip, escalation — and Processing as "parked"
+# Report queues: parking, presence, second opinions — and later claims and escalation
 
-**Status:** plan, 2026-10-15. Claims, skip, escalation and the parking changes are not built; the page standard (§2) is done (45a3e3ca87). The body reflects every answer in §10. What is still open is listed at the top of §10.
+**Status:** plan, revised 2026-10-16 after mod feedback (below). The page standard (§2) is done (45a3e3ca87). Nothing else is built. Next: Pending-only default, parking, presence, second opinions (§11). Claims, work mode and skip (§3–5) are **deferred**; escalation (§6–7) is **later**, built on the second-opinion table. Open questions are at the top of §10.
 
 Two pieces of work that turned out to be one:
 
@@ -9,8 +9,42 @@ Two pieces of work that turned out to be one:
    need to agree on one shape (§2).
 2. **Splitting `Processing`.** It is used for two things: "a moderator is on this", which it can't
    do (no owner, no expiry, blocks nobody), and "this is waiting on something", chiefly an ownership
-   claim under investigation. The first moves to a live **claim**, with **skip** and **escalation**
-   beside it. The second **stays Processing** — shown as parked, with a note and an age alert (§8).
+   claim under investigation. The second **stays Processing** — shown as parked, with a note and an
+   age alert (§8). The first was going to move to a live **claim**, with **skip** and **escalation**
+   beside it; after asking the mods, it moves to lighter **presence** (§2a) and a **second opinion**
+   (§2b) first, with claims kept on file (§3–5).
+
+---
+
+## Mod feedback, 2026-10-16 — what it changed
+
+Briant asked the mods four questions in the mod channel before building any of this (2026-10-16):
+whether they run into each other, what they do when unsure, whether they leave reports for someone
+more experienced, and whether they can tell who is on a Processing report and why. Three answered —
+Daz, dolirama126 and CHESHIRE.
+
+| Need | Daz | dolirama126 | CHESHIRE | Plan before |
+|---|---|---|---|---|
+| Running into another mod | "Not really" — maybe once, possibly the buttons | "No, not recently" | "A couple times recently" — clicks a report and it says already actioned; "isn't a huge issue". Suggests a blue dot or highlight when a queue was worked recently | Claims + work mode (§3–4) |
+| Unsure how to rule | Processing if it needs evidence; asks in Discord or DMs a mod he knows is on for a second opinion. "From time to time" | On their own queue, leaves it a day or two, then rules themselves | Asks for a second opinion; complex user reports passed on with their own notes on what to look into | Skip (§5), escalation (§6) |
+| Leaving it for someone else | Leaves it, pings if it isn't picked up. "Something we need to become better at" | Own queue: rules in the end. Other queues: picks what to do | Fence-sitters and serious-but-vague ones. Suggests a **tentative decision** the next mod sees | Escalation (§6–7) |
+| Who is on a Processing report, and why | No way to see. Writes a note signed "~Daz" by hand. Some take ages — waiting for a pattern of behaviour | Can't tell. Found Pending/Processing user reports from 2023/2024, some with tens of reports | "Tons" sit in Processing; "there isn't usually a clear indication as to why" | Parking (§8) |
+
+What follows from it:
+
+1. **Parking is wanted by everyone** — all three can't see why something is in Processing, and Daz
+   already does parking by hand. It moves up to straight after the Pending-only default (§11).
+2. **Collisions are rare and minor.** One of three has hit them, and asked for a signal, not a lock.
+   Claims, work mode and skip are **deferred**, not dropped (§3–5 stay as written). In their place,
+   **presence** (§2a): who is looking at an item right now, shown on its row and on the item.
+3. **Handing on happens, informally.** Second opinions go through Discord and pings, and slip.
+   CHESHIRE's "tentative decision" is the shape: a **second opinion** (§2b) — a suggested ruling with
+   a note, visible to the next mod, in a table that escalation later reuses. The senior grant, the
+   Escalated view and automatic escalation (§6–7) wait until second opinions show reports that need
+   a senior and don't get one.
+
+Also raised, outside this plan: reported **collections** are a needle in a haystack to review
+(Kesler42), and dolirama126 found the stale 2023/2024 user reports the overdue alert (§8) is for.
 
 ---
 
@@ -69,7 +103,100 @@ Still open from that list: none beyond Processing. "Apply to all N open reports"
 
 ---
 
-## 3. Claims
+## 2a. Presence — who's looking
+
+CHESHIRE's "blue dot", made specific: show who has an item open, without locking anything.
+
+### Storage: Redis, one sorted set per item
+
+```
+report-viewers:<type>:<entityId>  →  sorted set of "<userId>:<username>", scored by last-seen time
+```
+
+- The open item's page sends a small `fetch` every **30 seconds** (not an `invalidate`, so the queue
+  layout doesn't reload): `ZADD` with the current time, and an `EXPIRE` of 90 seconds on the key.
+- Leaving the item sends one last call that removes you; a closed tab or sleeping machine drops off
+  within ~60 seconds anyway, because readers ignore entries older than that.
+- The queue column reads the page's 50 items in one pipelined `ZRANGEBYSCORE`, and refreshes it on
+  the same 30-second beat, again by `fetch`.
+
+Same reasons as claims for Redis over a table (§3): the reports are in the main database, and the
+entries should expire on their own. No schema change anywhere.
+
+### Showing it
+
+- **On the row:** a small dot in the presence colour and "Daz" (or "Daz +1") on the second line. Your
+  own presence isn't shown to you.
+- **On the open item:** "Daz is also looking at this" above the ruling buttons. Nothing is disabled,
+  and there is no Take over — there's nothing to take.
+- **The "already actioned" error** names who and when — "Ruled Actioned by Daz 40 seconds ago" — so the
+  collision CHESHIRE describes explains itself. The report row has `statusSetBy` and `statusSetAt`.
+
+### Where it applies
+
+The layout queues (§6, "Where it applies" lists them). Not the table queues or `/reports/image`.
+
+---
+
+## 2b. Second opinion — "what do you think?"
+
+For a report a moderator could rule on but wants another pair of eyes on — Daz's Discord pings and
+CHESHIRE's "tentative decision" in one place. Not a hand-off to a senior: anyone can answer.
+
+### Asking
+
+- **Ask for a second opinion…** beside the ruling buttons on the open item. It asks for an optional
+  **suggested ruling** (Actioned, Unactioned, or none) and a **note** — what they're unsure about.
+- The reports stay **Pending**, so they stay in the default queue. Asking doesn't rule, pay reporters
+  or park.
+- One open request per item. The asker can **withdraw** it.
+
+### Showing it
+
+- **On the row:** a "2nd opinion" badge, with the suggestion if there is one ("2nd opinion — leans
+  Actioned").
+- **On the open item:** a banner — *"Daz asks for a second opinion, 2 hours ago, leaning Actioned:
+  'Profile links to a commission site I can't verify.'"*
+- **A view** on the switch above the list: `All · Parked · 2nd opinion` (Escalated joins it later,
+  §7). It shows open requests, oldest first, with a count.
+- **For the asker:** the same view filtered to their own requests, including answered ones, so they
+  see what was decided. That replaces pinging.
+
+### Answering
+
+- **Ruling** on the item answers it — whoever rules, with the normal buttons. Agreeing with the
+  suggestion is just ruling that way; the banner offers the suggested ruling as the first button.
+- **Reply…** adds a note without ruling ("I'd action it — the site is a known scam"), for when the
+  asker should make the call. The request stays open until someone rules or the asker withdraws.
+- The asker can rule on their own item as normal; that closes the request too.
+
+### Storage: the escalation table, built now
+
+The table §6 describes, with a `kind` column, so second opinions and later escalations share it:
+
+```
+ReportHandoff
+  id, entityType, entityId               -- the account or model, as claims are
+  kind                                   -- 'opinion' now; 'escalation' with §6
+  askedBy, askedAt, note
+  suggestedStatus                        -- Actioned | Unactioned | null
+  resolvedBy, resolvedAt, outcome        -- 'ruled' | 'withdrawn' (+ 'sentBack' with §6)
+  resolutionNote
+ReportHandoffReply
+  id, handoffId, userId, createdAt, note
+```
+
+One open row per item (a partial unique index on rows with no `resolvedAt`). A moderator-database
+migration — the only schema change in this round. It's a table, not Redis, for the reasons in §6:
+it has to last and keep who, when and why. The history doubles as training material: what gets
+asked about, and how it was ruled.
+
+---
+
+## 3. Claims — deferred
+
+> **Deferred 2026-10-16** (mod feedback, above): collisions are rare and minor, so presence (§2a)
+> comes first. Kept as written in case presence shows they aren't.
 
 ### What gets claimed
 
@@ -135,7 +262,7 @@ Warn, don't block. A forgotten tab must never lock anyone out.
 
 ---
 
-## 4. Work mode
+## 4. Work mode — deferred, with claims
 
 The same page, not a separate one.
 
@@ -163,7 +290,9 @@ haven't reached. One item at a time gives no lookahead. A small refilling batch 
 
 ---
 
-## 5. Skip — "not for me"
+## 5. Skip — "not for me" — deferred, with claims
+
+> Skip only matters inside a work-mode batch; outside one, moderators already just leave a report.
 
 For "I'm not the right person", "I'm stuck", or "later".
 
@@ -185,7 +314,12 @@ Storage, all Redis:
 
 ---
 
-## 6. Escalate — "needs someone more experienced"
+## 6. Escalate — "needs someone more experienced" — later
+
+> **Later** (mod feedback, above). When it comes, it's `kind = 'escalation'` in the `ReportHandoff`
+> table built for second opinions (§2b), adding the `sentBack` outcome. The table below is that
+> table's original sketch. Build it if second opinions show items that need a senior and sit
+> unanswered. Automatic escalation from skips (§5) waits for skip.
 
 Unlike a skip, this lasts, and others see it. It's what Processing never managed to be.
 
@@ -241,7 +375,7 @@ here (§10 Q10).
 
 ### Where it applies
 
-The layout queues only — `/reports/user`, `/reports/model` and `/reports/post` — not the table queues or `/reports/image` (§10 Q12).
+The layout queues only — `/reports/user`, `/reports/model`, `/reports/post` and the shared `/reports/[queue=entityQueue]` (article, chat, collection, bounty, bounty entry) — not the table queues or `/reports/image` (§10 Q12).
 
 ### Vocabulary
 
@@ -317,7 +451,7 @@ What changes is how it's set and shown.
 
 ### Setting it
 
-- **Any layout queue** (§10 Q23) — user, model and post.
+- **Any layout queue** (§10 Q23) — user, model, post and the shared entity route.
   Anyone who can rule can park (§10 Q21).
 - The Processing button becomes **Park…**: it asks for a note — what is being waited on — and saves the
   note and the status together. The note isn't required, but it's the point (§10 Q22), so the form
@@ -350,7 +484,7 @@ cleared from the Parked view.
 
 1. **It stays, as "parked".** Labelled Parked in the layout queues, set through Park… with a note,
    with the age alert (§8).
-2. **It stops meaning "a moderator is on this".** That's the claim's job (§3).
+2. **It stops meaning "a moderator is on this".** Presence shows that (§2a); claims would later (§3).
 3. **No migration for now** (§10 Q24). Existing Processing reports simply appear as parked; the
    overdue alert surfaces the stale ones for clearing by hand. If there turn out to be too many for
    that, a bulk "Unpark all overdue with no note" is the fallback, and it would need explicit approval
@@ -377,7 +511,7 @@ This step is independent of the rest and can ship first.
 
 Every question in this plan, with its answer. The body above reflects every answer.
 
-**Still open:** Q26 — Processing back on the user queue as Park…. (Q14 is replaced by Q24.)
+**Still open:** Q26, and Q29–Q32 from the mod feedback. (Q14 is replaced by Q24. Q1–Q7 and Q18–Q19 are about claims and skip, now deferred; their answers stand for when those are built.)
 
 Answer on the `@dev:` line under each.
 
@@ -541,6 +675,24 @@ Answer on the `@dev:` line under each.
 
    > Recorded as: the `ReportEscalation` table. Reasons in §6, "Why a table, not an Escalated report status".
 
+### Added after the mod feedback (2026-10-16)
+
+29. Presence: show it on queue rows as well as on the open item? (Proposed: both — a row is where you decide what to open.)
+
+   @dev:
+
+30. Second opinion: can anyone answer, or only someone other than the asker? (Proposed: anyone, asker included — they may just have been waiting for a reply.)
+
+   @dev:
+
+31. Second opinion: should an item with an open request be left out of the default All view, so it isn't ruled by someone who didn't see the banner? (Proposed: no — it stays in, with its badge, since anyone may answer.)
+
+   @dev:
+
+32. Should second opinions also go to the table queues and `/reports/image`? dolirama126's own queue is images, which has no Processing either. (Proposed: layout queues first, as with everything else here.)
+
+   @dev:
+
 ---
 
 ## 11. Order of work
@@ -548,16 +700,20 @@ Answer on the `@dev:` line under each.
 1. **Page standard** — done (45a3e3ca87, §2).
 2. **Pending-only default** — §9 step 4. Every queue, one constant and the two readers it needs
    separating from. Small, and fixes the badge mismatch on its own.
-   ⚠️ Until the Parked view (step 5) exists, parked model reports drop out of the default view and are
+   ⚠️ Until the Parked view (step 3) exists, parked model reports drop out of the default view and are
    reachable only by ticking Processing in the status filter. If that is too hidden for ownership
-   claims, ship this together with step 5.
-3. **Claims + work mode** — Redis claim helpers, renewal endpoint, the view switch, dimmed rows,
-   Take over, the rule-anyway warning. User and model queues together.
-4. **Skip** — including the Skipped view.
-5. **Parking** — Park… with a note, the Parked label and view, the banner, the overdue alert. Small,
-   no schema change, and it can ship first: it's independent of claims.
-6. **Escalation** — the `ReportEscalation` table and migration in the moderator database, the grant,
-   the Escalated view, the banner, Mine, the sidebar count, automatic escalation from skips.
+   claims, ship this together with step 3.
+3. **Parking** (§8) — Park… with a note, the Parked label and view, the banner, the overdue alert.
+   No schema change. Asked for by all three mods.
+4. **Presence** (§2a) — the Redis set, the 30-second beat, the dot on rows, the banner, and the
+   "already actioned by whom" message. No schema change.
+5. **Second opinion** (§2b) — the `ReportHandoff` table and migration in the moderator database, the
+   ask/reply/withdraw actions, the badge, the banner and the view.
 
-Each step ships on its own. Claims are useful without escalation, escalation without work mode, and
-parking without either.
+Then, only if the feedback on 3–5 calls for it:
+
+6. **Escalation** (§6–7) — `kind = 'escalation'`, the grant, the Escalated view, Send back, the
+   sidebar count.
+7. **Claims, work mode and skip** (§3–5) — if presence shows collisions are common after all.
+
+Each step ships on its own.

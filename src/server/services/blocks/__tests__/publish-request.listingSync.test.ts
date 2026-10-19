@@ -33,6 +33,8 @@ import type * as AppListingRating from '~/server/services/blocks/app-listing-rat
 const { db, s3, holder } = vi.hoisted(() => {
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -619,7 +621,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     expect(assets.resolveListingRatingFloorInTx).toHaveBeenCalledWith(
       expect.anything(),
       'apl_draft',
-      'pg'
+      'pg',
+      false
     );
     const transitionCall = db.write.appListing.updateMany.mock.calls.find(
       (c) => 'appBlockId' in (((c[0] as { data?: Record<string, unknown> })?.data ?? {}) as object)

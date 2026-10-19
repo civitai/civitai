@@ -104,13 +104,14 @@
           "posts:write:self",
           "goods:read:self",
           "goods:purchase:self",
-          "apps:store:items:write"
+          "apps:store:items:write",
+          "social:react:self"
         ]
       }
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `apps:storage:publish`, `posts:write:self`, `apps:store:items:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `apps:storage:publish`, `posts:write:self`, `apps:store:items:write`, `social:react:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -468,6 +469,17 @@
                   "description": "RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do not declare it yet. Intended meaning: for a shared collection that viewers write (`write` \"own\" or \"anyone\"; refused with \"owner\" or \"none\"), the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000, shown to the moderator at review. The bounds are provisional and may change before the field is enabled.",
                   "minimum": 1,
                   "maximum": 1000
+                },
+                "ownedModelVersions": {
+                  "type": "array",
+                  "description": "Shared collections with `write` \"own\" only. Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a pointer of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _; 1 to 4 distinct pointers. A pointer names one field of nested objects: it never indexes into an array, and a step through an array or any other non-object finds nothing. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any write budget is spent. Ownership is checked when a document is written, not afterwards: if the model later changes hands or is deleted, documents already stored keep the id.",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$"
+                  }
                 }
               },
               "allOf": [
@@ -484,7 +496,8 @@
                       "counters": false,
                       "marks": false,
                       "showAuthor": false,
-                      "dailyWritesPerAuthor": false
+                      "dailyWritesPerAuthor": false,
+                      "ownedModelVersions": false
                     }
                   }
                 },
@@ -503,6 +516,14 @@
                     "properties": { "write": { "enum": ["owner", "none"] } }
                   },
                   "then": { "properties": { "dailyWritesPerAuthor": false } }
+                },
+                {
+                  "$comment": "ownedModelVersions checks the version against the viewer WRITING the document, so it is declared only where that viewer is always the author: shared collections with write:\"own\" (private collections are refused above).",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
+                  },
+                  "then": { "properties": { "ownedModelVersions": false } }
                 },
                 {
                   "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",

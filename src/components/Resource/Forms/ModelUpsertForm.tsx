@@ -31,6 +31,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
+import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -40,7 +44,6 @@ import {
   InputRTE,
   InputSegmentedControl,
   InputSelect,
-  InputSwitch,
   InputTags,
   InputText,
   useForm,
@@ -181,12 +184,13 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     attestation: !!model?.id,
     availability: model?.availability ?? Availability.Public,
     // A model whose `meta` is null predates the metric-privacy feature. Left null, RHF's `get`
-    // returns null (not the default) for every `meta.*` path and the three switches submit null.
+    // returns null (not the default) for every `meta.*` path, so the choices are always seeded.
     meta: {
       ...(initialMeta ?? {}),
-      hideBuzz: initialMeta?.hideBuzz ?? false,
-      hideDownloads: initialMeta?.hideDownloads ?? false,
-      hideGenerations: initialMeta?.hideGenerations ?? false,
+      // The form holds the schema INPUT (choices, including inherit); defaultValues is typed as its output.
+      metricVisibility: getMetricVisibilityChoices(
+        initialMeta
+      ) as unknown as ModelMeta['metricVisibility'],
     },
   };
 
@@ -205,6 +209,12 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const features = useFeatureFlags();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const userSettings = useCurrentUserSettings();
+  const inheritedMetrics = inheritedMetricPrivacy({
+    level: 'model',
+    userSettings,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+  });
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -497,34 +507,22 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             )}
             <Paper radius="md" p="md" withBorder>
               <Stack gap="xs">
-                <div>
-                  <Text size="sm" fw={600}>
-                    Creator Controls: metric privacy
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Hide these public stats on this model&apos;s page and cards.{' '}
-                    {isActiveCreatorMember
-                      ? 'You and moderators always see your real stats.'
-                      : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
-                  </Text>
-                </div>
-                <InputSwitch
-                  name="meta.hideBuzz"
-                  label="Hide tipped / earned Buzz"
+                <Text size="sm" fw={600}>
+                  Creator Controls: metric privacy
+                </Text>
+                <MetricPrivacyControls
+                  level="model"
+                  inherited={inheritedMetrics}
                   disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideDownloads"
-                  label="Hide download count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideGenerations"
-                  label="Hide generation count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
+                  note={
+                    <>
+                      These stats appear on this model&apos;s page and cards. Set the default for
+                      all your models in Creator Controls.{' '}
+                      {isActiveCreatorMember
+                        ? 'You and moderators always see your real stats.'
+                        : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
+                    </>
+                  }
                 />
               </Stack>
             </Paper>

@@ -6,7 +6,12 @@ import type * as FliptClientModule from '~/server/flipt/client';
 import type * as RateLimitModule from '~/server/utils/shared-storage-rate-limit';
 import { dbMock, redisMock, resetSharedMocks } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
+import type { CombinedDataTransformer } from '@trpc/server';
+import {
+  clientTransformer,
+  unionDeserialize,
+  writeSerialize,
+} from '~/shared/utils/trpc-union-transformer';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
@@ -107,6 +112,7 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', () => ({
 import {
   appendSharedRow,
   appsSharedRouter,
+  measureSharedValue,
   updateSharedRow,
   withdrawSharedRow,
 } from '../apps-shared.router';
@@ -451,31 +457,39 @@ describe('write budget: refusals', () => {
 });
 
 /** The real tRPC handler, so input validation runs exactly as it does for a caller. */
-const client = createTRPCClient<typeof appsSharedRouter>({
-  links: [
-    httpLink({
-      url: 'http://localhost/api/trpc',
-      transformer: clientTransformer,
-      fetch: (input, init) =>
-        fetchRequestHandler({
-          endpoint: '/api/trpc',
-          req: new Request(input as RequestInfo, init as RequestInit),
-          router: appsSharedRouter,
-          createContext: () =>
-            ({
-              acceptableOrigin: true,
-              user: undefined,
-              apiKeyId: null,
-              tokenScope: TokenScope.Full,
-              req: { headers: {} },
-              res: { setHeader: () => undefined },
-              cache: { edgeTTL: 0 },
-              features: {},
-              track: undefined,
-            } as never),
-        }),
-    }),
-  ],
+const clientWith = (transformer: CombinedDataTransformer) =>
+  createTRPCClient<typeof appsSharedRouter>({
+    links: [
+      httpLink({
+        url: 'http://localhost/api/trpc',
+        transformer,
+        fetch: (input, init) => {
+          return fetchRequestHandler({
+            endpoint: '/api/trpc',
+            req: new Request(input as RequestInfo, init as RequestInit),
+            router: appsSharedRouter,
+            createContext: () =>
+              ({
+                acceptableOrigin: true,
+                user: undefined,
+                apiKeyId: null,
+                tokenScope: TokenScope.Full,
+                req: { headers: {} },
+                res: { setHeader: () => undefined },
+                cache: { edgeTTL: 0 },
+                features: {},
+                track: undefined,
+              } as never),
+          });
+        },
+      }),
+    ],
+  });
+const client = clientWith(clientTransformer);
+/** A client that writes its input with devalue; the server's transformer reads either format. */
+const devalueClient = clientWith({
+  input: { serialize: writeSerialize, deserialize: unionDeserialize },
+  output: clientTransformer.output,
 });
 
 /** A tRPC client call's outcome: 'OK' or the error code the client received. */
@@ -607,5 +621,155 @@ describe('SEAM: a write-budget refusal through the real tRPC handler', () => {
       retryAt: new Date(NOW + 223_000).toISOString(),
     });
     expect((err as Error).message).toBe('Too many submissions — retry in 223s');
+  });
+});
+
+describe('shared value size cap: checked before the value is scanned or serialized', () => {
+  const CAP = 64 * 1024;
+  const OVER_CAP = { code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' };
+  const UNSTORABLE = 'value contains a NUL character or an unpaired surrogate';
+  // The checks this replaced, on the string JSON.stringify writes.
+  const stringifiedVerdict = (value: unknown) => {
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, 'utf8') > CAP) return 'over-cap';
+    return /(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/.test(serialized) ? 'unstorable' : 'ok';
+  };
+
+  /**
+   * A value whose JSON is exactly `bytes` UTF-8 bytes. Its multi-byte text makes that 10,000 more
+   * than its length in UTF-16 units, so a measure in the wrong unit lands on the wrong side.
+   */
+  function valueOfBytes(bytes: number) {
+    const base = { title: CLEAN.title, data: { text: 'é日😀'.repeat(2_000), pad: '' } };
+    const pad = bytes - Buffer.byteLength(JSON.stringify(base), 'utf8');
+    return { ...base, data: { ...base.data, pad: 'x'.repeat(pad) } };
+  }
+
+  async function trpcErrorOf(p: Promise<unknown>) {
+    const err = await p.then(
+      () => undefined,
+      (e: unknown) => e as TRPCClientError<typeof appsSharedRouter>
+    );
+    return err && { code: err.data?.code, message: err.message };
+  }
+
+  it('at cap - 1 and cap a value is stored; at cap + 1 it is refused with the size error', async () => {
+    const verdicts: string[] = [];
+    for (const bytes of [CAP - 1, CAP, CAP + 1]) {
+      const value = valueOfBytes(bytes);
+      expect(Buffer.byteLength(JSON.stringify(value), 'utf8')).toBe(bytes);
+      expect(bytes - JSON.stringify(value).length).toBe(10_000);
+      expect(measureSharedValue(value)).toBe(stringifiedVerdict(value));
+      verdicts.push(measureSharedValue(value));
+    }
+    expect(verdicts).toEqual(['ok', 'ok', 'over-cap']);
+
+    await expect(appendSharedRow('tok', valueOfBytes(CAP))).resolves.toMatchObject({
+      key: expect.any(String),
+    });
+    await expect(appendSharedRow('tok', valueOfBytes(CAP + 1))).rejects.toMatchObject(OVER_CAP);
+    await expect(updateSharedRow('tok', 'ROW-1', valueOfBytes(CAP + 1))).rejects.toMatchObject(
+      OVER_CAP
+    );
+    expect(
+      await trpcErrorOf(client.append.mutate({ blockToken: 'tok', value: valueOfBytes(CAP + 1) }))
+    ).toEqual(OVER_CAP);
+    expect(
+      await trpcErrorOf(client.append.mutate({ blockToken: 'tok', value: valueOfBytes(CAP) }))
+    ).toBeUndefined();
+  });
+
+  it('gives the verdict the stringified checks gave for text Postgres cannot store', async () => {
+    const corpus: [unknown, string][] = [
+      [{ title: 'nul \u0000 in title' }, 'unstorable'],
+      [{ title: 't', body: 'lone \ud800 in body' }, 'unstorable'],
+      [{ title: 't', data: { ['\udfff']: 1 } }, 'unstorable'],
+      [{ title: 't', data: [{ s: 'a\\\u0000' }] }, 'unstorable'],
+      [{ title: '😀 paired', body: '日本語 héllo', data: { s: '\\u0000' } }, 'ok'],
+      [{ title: 't', data: { s: '\u0001\u001f' } }, 'ok'],
+    ];
+    for (const [value, expected] of corpus) {
+      expect(measureSharedValue(value)).toBe(expected);
+      expect(stringifiedVerdict(value)).toBe(expected);
+    }
+    expect(
+      await trpcErrorOf(
+        client.append.mutate({ blockToken: 'tok', value: { title: 't', data: { s: 'a\ud800' } } })
+      )
+    ).toEqual({ code: 'BAD_REQUEST', message: expect.stringContaining(UNSTORABLE) });
+  });
+
+  it('refuses a value over the cap with the size error even when it also holds a NUL', async () => {
+    const value = { title: 'nul \u0000 first', data: 'x'.repeat(CAP) };
+    expect(measureSharedValue(value)).toBe('over-cap');
+    await expect(appendSharedRow('tok', value)).rejects.toMatchObject(OVER_CAP);
+    expect(await trpcErrorOf(client.append.mutate({ blockToken: 'tok', value }))).toEqual(OVER_CAP);
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  describe('a value whose JSON is far over the cap', () => {
+    const ITEMS = 20_000;
+    // 5,000 rather than a divisor of the cap, so no chunk ends exactly on it.
+    const chunk = { s: 'x'.repeat(5_000) };
+    const farOver = () => ({ title: CLEAN.title, data: new Array(ITEMS).fill(chunk) });
+
+    it('stops scanning once the measure passes the cap', () => {
+      const meter = { visits: 0, chars: 0, scanned: 0 };
+      expect(measureSharedValue(farOver(), meter)).toBe('over-cap');
+      expect(meter.scanned).toBeLessThanOrEqual(CAP);
+      // The array's items are charged when it opens; only the ~13 chunks inside the cap are opened.
+      expect(meter.visits).toBeLessThan(ITEMS + 100);
+    });
+
+    it('is refused over tRPC with the size error, without serializing it or running moderation', async () => {
+      // Every character JSON.stringify writes during the call, whatever it is called on.
+      const stringify = JSON.stringify;
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
+      let err;
+      try {
+        err = await trpcErrorOf(
+          devalueClient.append.mutate({ blockToken: 'tok', value: farOver() })
+        );
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(err).toEqual(OVER_CAP);
+      // The request body and the error response; the value itself is never written out.
+      expect(stringified).toBeLessThan(400_000);
+      expect(mockAudit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('refuses a value with more entries than fit in the cap, with the size error', async () => {
+    // Every value JSON.stringify writes costs at least two bytes, so ~32,000 written values fit
+    // and more entries than that are refused even when they are left out of the JSON.
+    const numbers = { title: CLEAN.title, data: new Array(32_000).fill(0) };
+    expect(Buffer.byteLength(JSON.stringify(numbers), 'utf8')).toBeLessThanOrEqual(CAP);
+    expect(measureSharedValue(numbers)).toBe('ok');
+    const omitted = {
+      title: CLEAN.title,
+      data: Object.fromEntries(Array.from({ length: 40_000 }, (_, i) => [`k${i}`, undefined])),
+    };
+    expect(JSON.stringify(omitted).length).toBeLessThan(100);
+    expect(measureSharedValue(omitted)).toBe('over-cap');
+    await expect(appendSharedRow('tok', omitted)).rejects.toMatchObject(OVER_CAP);
+  });
+
+  it('refuses a value JSON.stringify cannot write before moderation runs', async () => {
+    const value = { title: CLEAN.title, data: { n: BigInt(1) } };
+    expect(measureSharedValue(value)).toBe('unserializable');
+    await expect(appendSharedRow('tok', value)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'value is not serializable',
+    });
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 });

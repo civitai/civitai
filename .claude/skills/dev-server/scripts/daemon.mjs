@@ -25,7 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
+import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -69,6 +69,7 @@ function loadSkillConfig() {
     distCacheKeep: 4,
     distCacheMaxGb: 40,
     perBranchDistDir: false,
+    worktreeDevFsCache: false,
     killOnBranchSwitch: false,
     autoInstall: true,
     // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
@@ -92,7 +93,7 @@ function loadSkillConfig() {
     prewarmTimeout: 300000,
     testConcurrency: 1,
     typecheckConcurrency: 1,
-    testMaxWorkers: null,
+    testMaxWorkers: DEFAULT_MAX_WORKERS,
     testCacheMode: 'off',
     prodGroups: [],
   };
@@ -150,6 +151,9 @@ function loadSkillConfig() {
         case 'PER_BRANCH_DIST_DIR':
           config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
           break;
+        case 'WORKTREE_DEV_FS_CACHE':
+          config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          break;
         case 'KILL_ON_BRANCH_SWITCH':
           config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
           break;
@@ -191,11 +195,15 @@ function loadSkillConfig() {
         case 'TEST_MAX_WORKERS': {
           // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
           // the queue is built at module scope, so a typo would stop the daemon binding at all.
-          // An empty value means "no cap", which is the default and not an error.
+          // An empty value keeps the default; `none` is the only way to uncap.
           if (!value) break;
+          if (value === 'none') {
+            config.testMaxWorkers = null;
+            break;
+          }
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
-          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1)`);
+          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1 or 'none')`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':
@@ -751,6 +759,11 @@ class DevSession {
     // Set PORT in environment
     envVars.PORT = String(this.port);
     envVars.NEXT_DIST_DIR = this.distDir;
+    applyDevFsCacheDefault(envVars, {
+      worktree: this.worktree,
+      primary: primaryCheckout,
+      worktreeOptIn: skillConfig.worktreeDevFsCache,
+    });
 
     // Merge with current process env (for PATH, etc.)
     const env = { ...process.env, ...envVars };
@@ -761,6 +774,10 @@ class DevSession {
     this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
+    this.addLog(
+      'info',
+      `Turbopack dev FS cache: ${envVars.NEXT_DEV_FS_CACHE === 'false' ? 'off' : 'on'}`
+    );
 
     if (skillConfig.perBranchDistDir) {
       pruneDistDirs(
@@ -1887,6 +1904,17 @@ class AppSession extends AuthHub {
       dbHost: this.dbHost ?? null,
     };
   }
+}
+
+// Turbopack's dev filesystem cache (`.next/dev/cache`, read by next.config.mjs as NEXT_DEV_FS_CACHE)
+// is several GB per checkout, so across many worktrees it fills the disk. Off for worktrees unless
+// the skill .env opts back in; a NEXT_DEV_FS_CACHE from the session's own .env chain wins either
+// way. The primary checkout keeps it.
+function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
+  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
+    envVars.NEXT_DEV_FS_CACHE = 'false';
+  }
+  return envVars;
 }
 
 // Host only, never the credential. A DATABASE_URL is `postgres://user:pass@host:port/db`, so the
@@ -3227,6 +3255,7 @@ export {
   inheritablePort,
   releaseIfOurs,
   describeDatabaseHost,
+  applyDevFsCacheDefault,
   appReservedPorts,
   appSessions,
   checkPath,

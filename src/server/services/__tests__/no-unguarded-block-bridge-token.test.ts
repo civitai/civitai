@@ -197,6 +197,10 @@ const GUARD_CALL_SITE_LEDGER = [
   // the guard through it and nothing else — the same shape as the post preamble above,
   // and router-local for the same reason.
   'authorizeQuotedGrantConsentRequest',
+  // The app-reactions preamble: `setReactionFromApp` and `getReactionsForApp` both reach the
+  // guard through it and nothing else — the post preamble's shape, router-local for the same
+  // reason.
+  'authorizeBlockReactionRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
@@ -256,6 +260,10 @@ const BRIDGE_INPUT_LEDGER = [
   // `authorizeQuotedGrantConsentRequest`, above.
   'previewQuoteGrant',
   'consentQuoteGrant',
+  // The two app-reaction procedures (SET_ENTITY_REACTION / GET_ENTITY_REACTIONS), via
+  // `authorizeBlockReactionRequest`, above.
+  'setReactionFromApp',
+  'getReactionsForApp',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

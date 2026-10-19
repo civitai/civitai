@@ -1242,8 +1242,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               });
             } catch (e: unknown) {
               setZipping(false);
+              // Keep the server's reason (onError above set it), not a generic retry prompt.
               updateNotification({
                 ...notificationFailBase,
+                ...(e instanceof Error && e.message ? { message: e.message } : {}),
               });
             }
           } else {

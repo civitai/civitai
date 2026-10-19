@@ -1,7 +1,13 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 
 /**
- * The ONE projection from an `AppListing`'s media FKs to CDN URLs.
+ * The RAW projection from an `AppListing`'s media FKs to CDN URLs — no visibility decision.
+ *
+ * 🔴 PUBLIC SURFACES DO NOT CALL THESE DIRECTLY. Every public render of listing media goes
+ * through `listing-media-audience.ts`, which decides per image and per request whether the viewer
+ * may see it and only then calls these builders. Direct callers are the author's own "My apps"
+ * read and the moderator review facts, which must show what is attached; the ledger in
+ * `listing-media-audience.ledger.test.ts` pins that list.
  *
  * 🔴 IT IS A MODULE RATHER THAN TWO PRIVATE HELPERS BECAUSE THERE ARE NOW TWO READS.
  * `app_listings.icon_id` / `cover_id` are integer FKs to `Image`, not URLs, so every
@@ -18,6 +24,8 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 export const LISTING_ICON_WIDTH = 256;
 /** Cover render width. Covers are the wide card/hero image. */
 export const LISTING_COVER_WIDTH = 1200;
+/** Gallery screenshot render width — the same class as the cover, which it can stand in for. */
+export const LISTING_SCREENSHOT_WIDTH = 1200;
 
 /** Build a CDN icon URL from an icon `Image` row (or null/absent). */
 export function listingIconUrl(icon: { url: string | null } | null | undefined): string | null {

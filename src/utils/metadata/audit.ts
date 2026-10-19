@@ -22,7 +22,7 @@ import {
 } from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { AuditTimer } from '~/utils/metadata/audit-slow-log';
+import { AuditTimer, type AuditTimerOptions } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -164,11 +164,15 @@ export function isBlankAuditInput(prompt?: string | null, negativePrompt?: strin
  *
  * An empty prompt does not skip the audit when the negative prompt is non-empty: the negative
  * prompt then gets every check it gets beside a non-empty prompt, including the length cap.
+ *
+ * `options.privateInput` keeps the text out of the slow-audit log line (see audit-slow-log.ts); the
+ * result is the same either way.
  */
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean
+  checkProfanity?: boolean,
+  options?: AuditTimerOptions
 ): EnrichedAuditResult => {
   if (isBlankAuditInput(prompt, negativePrompt))
     return { blockedFor: [], triggers: [], success: true };
@@ -202,7 +206,7 @@ export const auditPromptEnriched = (
   // called on every return path below with the (normalized) prompts. The raw text
   // passed to finish() is what was audited; logging it is privacy-gated (see
   // audit-slow-log.ts). See that module's header for the full incident writeup.
-  const timer = new AuditTimer();
+  const timer = new AuditTimer(options);
 
   prompt = timer.time('normalize', () => normalizeText(prompt));
   negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
@@ -335,9 +339,15 @@ export const auditPromptEnriched = (
 export const auditPrompt = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean
+  checkProfanity?: boolean,
+  options?: AuditTimerOptions
 ): { blockedFor: string[]; success: boolean } => {
-  const { blockedFor, success } = auditPromptEnriched(prompt, negativePrompt, checkProfanity);
+  const { blockedFor, success } = auditPromptEnriched(
+    prompt,
+    negativePrompt,
+    checkProfanity,
+    options
+  );
   return { blockedFor, success };
 };
 

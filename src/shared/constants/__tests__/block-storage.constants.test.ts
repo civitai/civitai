@@ -97,6 +97,46 @@ describe('parseManifestStorage', () => {
     });
   });
 
+  it('carries ownedModelVersions pointers through verbatim, in declared order', () => {
+    const pointers = ['/workflow/modelVersionId', '/_meta/v2'];
+    const parsed = parseManifestStorage({
+      storage: {
+        collections: {
+          picks: { visibility: 'shared', write: 'own', ownedModelVersions: pointers },
+        },
+      },
+    });
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.collections.get('picks')?.ownedModelVersions).toEqual(pointers);
+  });
+
+  it('refuses ownedModelVersions on a private collection as a shared-only field', () => {
+    const { errors } = parseManifestStorage({
+      storage: { collections: { drafts: { visibility: 'private', ownedModelVersions: ['/v'] } } },
+    });
+    expect(errors).toEqual([
+      'storage.collections.drafts.ownedModelVersions applies only to shared collections',
+    ]);
+  });
+
+  it('says why ownedModelVersions is refused on a collection the writer may not author', () => {
+    const { errors } = parseManifestStorage({
+      storage: {
+        collections: {
+          plays: {
+            visibility: 'shared',
+            write: 'none',
+            counters: ['plays'],
+            ownedModelVersions: ['/v'],
+          },
+        },
+      },
+    });
+    expect(errors).toEqual([
+      'storage.collections.plays.ownedModelVersions applies only to shared collections with write "own" — the viewer writing a document must be its author',
+    ]);
+  });
+
   it('a lookup of an undeclared `constructor` collection finds nothing', () => {
     const parsed = parseManifestStorage({
       storage: { collections: { prefs: { visibility: 'private' } } },

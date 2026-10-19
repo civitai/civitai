@@ -29,10 +29,17 @@ vi.mock('@civitai/components-chat/civitai-chat/define', () => {
           return this.#app;
         }
         set app(value: unknown) {
-          const self = this as unknown as { mcp?: unknown; systemPrompt?: unknown };
+          const self = this as unknown as {
+            mcp?: unknown;
+            systemPrompt?: unknown;
+            examples?: unknown;
+            placeholder?: unknown;
+          };
           this.atStart = {
             mcp: self.mcp,
             systemPrompt: self.systemPrompt,
+            examples: self.examples,
+            placeholder: self.placeholder,
             configured: m.configureChat.mock.calls.length,
           };
           this.#app = value;
@@ -51,8 +58,16 @@ const tokens = (): AssistantTokenProvider => ({
 
 type ChatEl = HTMLElement & {
   app?: unknown;
-  atStart: { mcp: unknown; systemPrompt: unknown; configured: number } | null;
+  atStart: {
+    mcp: unknown;
+    systemPrompt: unknown;
+    examples: unknown;
+    placeholder: unknown;
+    configured: number;
+  } | null;
   mcp?: unknown;
+  examples?: { title: string; prompt: string }[];
+  placeholder?: string;
   systemPrompt?: (defaults: string) => string;
   holdReason?: string;
   beforeToolCall?: unknown;
@@ -83,7 +98,11 @@ describe('AppAssistantChat', () => {
       <AppAssistantChat tokens={tokens()} tools={{}} instructions={() => ''} mcpServers={[]} />
     );
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
-    expect(m.configureChat).toHaveBeenCalledWith({ maxSteps: 1000, contextBudgetTokens: 64000 });
+    expect(m.configureChat).toHaveBeenCalledWith({
+      name: 'App Assistant',
+      maxSteps: 1000,
+      contextBudgetTokens: 64000,
+    });
     expect(chatEl().mcp).toEqual({
       orchestration: {
         exclude: ['run_step', 'run_workflow', 'transcribe_audio', 'caption_media', 'web_search'],
@@ -95,8 +114,34 @@ describe('AppAssistantChat', () => {
     expect(chatEl().atStart).toEqual({
       mcp: chatEl().mcp,
       systemPrompt: chatEl().systemPrompt,
+      examples: chatEl().examples,
+      placeholder: chatEl().placeholder,
       configured: 1,
     });
+  });
+
+  test('offers app-building examples and hint in place of the chat’s media ones', async () => {
+    const chatRef = { current: null as unknown };
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        chatRef={chatRef as never}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // Not the chat's own examples and hint, which are about making media with tools this page excludes.
+    const examples = chatEl().examples!;
+    expect(examples.length).toBeGreaterThan(0);
+    expect(examples.every((e) => e.title.trim() && e.prompt.trim())).toBe(true);
+    const titles = examples.map((e) => e.title);
+    for (const media of ['Make a picture', 'Make a short video', 'Write a song', 'Say it out loud'])
+      expect(titles).not.toContain(media);
+    expect(chatEl().placeholder?.trim()).toBeTruthy();
+    expect(chatEl().placeholder).not.toMatch(/picture|video|song/i);
+    expect(chatRef.current).toBe(chatEl());
   });
 
   test('passes the hold and the tool gate on, and reports each tool result', async () => {
@@ -134,5 +179,83 @@ describe('AppAssistantChat', () => {
     chatEl().dispatchEvent(new CustomEvent('tool-result', { detail }));
     expect(next.mock.calls).toEqual([[detail]]);
     expect(onToolResult).toHaveBeenCalledTimes(1);
+  });
+
+  test('tells the page of each message before it goes, with the chat’s queue()', async () => {
+    const hold = vi.fn();
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onBeforeSend={hold}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    const queue = () => ({ text: '', release: () => undefined, cancel: () => undefined });
+    const send = (text: string) => {
+      const event = new CustomEvent('before-send', {
+        detail: { text, queue },
+        cancelable: true,
+        bubbles: true,
+        composed: true,
+      });
+      chatEl().dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    await vi.waitFor(() => {
+      send('Add a dark mode');
+      expect(hold).toHaveBeenCalled();
+    });
+    // The page gets the message and the chat's own queue(), and never keeps a message out itself.
+    expect(hold.mock.calls.at(-1)).toEqual(['Add a dark mode', queue]);
+    expect(send('Add a dark mode')).toBe(false);
+  });
+
+  test('an ask for a failed reply the page holds back is kept from the chat; any other goes on', async () => {
+    const hold = vi.fn((trigger: string) => trigger === 'retry');
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onReplyResume={hold}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    const resume = (trigger: string) => {
+      const event = new CustomEvent('reply-resume', {
+        detail: { trigger },
+        cancelable: true,
+        bubbles: true,
+        composed: true,
+      });
+      chatEl().dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    await vi.waitFor(() => expect(resume('retry')).toBe(true));
+    expect(resume('online')).toBe(false);
+    expect(hold.mock.calls.at(-1)).toEqual(['online']);
+  });
+
+  test('tells the page which chat is open, including the one it started on', async () => {
+    const onChatChange = vi.fn();
+    const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };
+    const { rerender } = await renderWithProviders(<AppAssistantChat {...props} />);
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // Already open before the page listens.
+    Object.defineProperty(chatEl(), 'chatId', { value: 'chat-1', configurable: true });
+    await rerender(<AppAssistantChat {...props} onChatChange={onChatChange} />);
+    await vi.waitFor(() => expect(onChatChange).toHaveBeenCalledWith('chat-1'));
+    chatEl().dispatchEvent(
+      new CustomEvent('chat-change', {
+        detail: { chatId: 'chat-2' },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    expect(onChatChange.mock.calls).toEqual([['chat-1'], ['chat-2']]);
   });
 });

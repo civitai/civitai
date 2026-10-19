@@ -98,27 +98,35 @@ export type ExistingShopPurchaseClaim = {
   status: string;
 };
 
+// `v2`: claims began with this prefix, so no key used under it has ledger
+// history from before there was a claim to account for it. Box purchases started
+// with claims, hence `v1`.
+const PURCHASE_PREFIX = {
+  item: 'cosmetic-purchase-v2',
+  pack: 'cosmetic-pack-v2',
+  box: 'item-purchase-v1',
+} as const;
+export type ShopPurchaseKind = keyof typeof PURCHASE_PREFIX;
+
 /**
  * The charge prefix for one purchase intent. With the buyer's key it is the
  * same on every retry, which is what lets a retry find its claim.
  */
 export function shopPurchaseTransactionId(
-  kind: 'item' | 'pack',
+  kind: ShopPurchaseKind,
   userId: number,
   shopItemId: number,
   idempotencyKey: string | undefined
 ) {
-  // `v2`: claims began with this prefix, so no key used under it has ledger
-  // history from before there was a claim to account for it.
-  const prefix = kind === 'pack' ? 'cosmetic-pack-v2' : 'cosmetic-purchase-v2';
-  return `${prefix}-${userId}-${shopItemId}-${idempotencyKey ?? randomUUID()}`;
+  return `${PURCHASE_PREFIX[kind]}-${userId}-${shopItemId}-${idempotencyKey ?? randomUUID()}`;
 }
 
 /** The claim an earlier request with this key made, if any. */
 export async function findShopPurchaseClaim(
-  transactionId: string
+  transactionId: string,
+  db: Prisma.TransactionClient = dbWrite
 ): Promise<ExistingShopPurchaseClaim | null> {
-  return dbWrite.cosmeticShopPurchaseClaim.findUnique({
+  return db.cosmeticShopPurchaseClaim.findUnique({
     where: { transactionId },
     select: { userId: true, shopItemId: true, amount: true, status: true },
   });
@@ -151,7 +159,7 @@ export async function beginShopPurchase({
   idempotencyKey,
   amount,
 }: {
-  kind: 'item' | 'pack';
+  kind: ShopPurchaseKind;
   userId: number;
   shopItemId: number;
   idempotencyKey: string | undefined;
@@ -206,6 +214,27 @@ export function assertClaimUnsettled(
 }
 
 /**
+ * Refuses a purchase whose amount due is not the one its buyer confirmed: the claim's own amount
+ * when resuming one, else the number on the button they pressed. Call before the claim is written,
+ * so a stale price leaves nothing behind for a retry to resume.
+ */
+export function assertConfirmedPrice({
+  existingClaim,
+  expectedAmount,
+  amountDue,
+}: {
+  existingClaim: ExistingShopPurchaseClaim | null;
+  expectedAmount: number | undefined;
+  amountDue: number;
+}) {
+  const confirmed = existingClaim ? existingClaim.amount : expectedAmount;
+  if (confirmed !== undefined && confirmed !== amountDue)
+    throw throwBadRequestError(
+      `The price changed to ${amountDue} Buzz. Check the new price and try again.`
+    );
+}
+
+/**
  * The purchase's own checks, for a request that may be resuming a pending
  * claim. A refusal is then answered as state unknown rather than a 4xx: the
  * earlier attempt may have charged, and a 4xx tells the client to drop the key
@@ -237,7 +266,8 @@ export async function runPurchaseChecks<T>(
 export async function resumeShopPurchase(
   context: ShopChargeContext,
   existing: ExistingShopPurchaseClaim,
-  expectedAmount?: number
+  expectedAmount?: number,
+  db: Prisma.TransactionClient = dbWrite
 ): Promise<ShopPurchaseClaim> {
   assertClaimUnsettled(context, existing);
   const { transactionId } = context;
@@ -250,9 +280,11 @@ export async function resumeShopPurchase(
   // Counted so the request that created the claim cannot release it on a
   // decline while this one may be charging under it (see releaseClaim).
   // `amount`: the claim read earlier, not one released and recreated since at another amount.
-  const { count } = await dbWrite.cosmeticShopPurchaseClaim.updateMany({
+  const { count } = await db.cosmeticShopPurchaseClaim.updateMany({
     where: { transactionId, status: CLAIM.pending, amount: existing.amount },
-    data: { attempts: { increment: 1 } },
+    // `updatedAt` is the claim's last activity, which bounds how long it reserves stock
+    // (countPendingShopPurchaseClaims).
+    data: { attempts: { increment: 1 }, updatedAt: new Date() },
   });
   // Settled or released since the read: nothing is charged from here, and
   // the next retry reads the settled status.
@@ -285,6 +317,54 @@ export async function claimShopPurchase(
   // was declined, so nothing is charged under it.
   if (!existing) throw throwBadRequestError('This purchase could not be started. Try again.');
   return resumeShopPurchase(context, existing, expectedAmount);
+}
+
+/**
+ * claimShopPurchase for a purchase kind whose claims are only ever written inside a transaction
+ * holding the buyer's `lockItemHolder` (mystery boxes). Under that lock nothing else can create a
+ * claim with this prefix, so the caller's read of it (`existing`, under the lock) decides between
+ * creating and resuming, and no unique violation can abort its transaction. The claim commits with
+ * the caller's checks, on the caller's connection: a claim written on a second pooled connection
+ * while waiters hold the rest can stall the pool.
+ */
+export async function claimShopPurchaseUnderLock(
+  tx: Prisma.TransactionClient,
+  context: ShopChargeContext,
+  existing: ExistingShopPurchaseClaim | null,
+  expectedAmount?: number
+): Promise<ShopPurchaseClaim> {
+  const { transactionId, userId, shopItemId, amount } = context;
+  if (existing) return resumeShopPurchase(context, existing, expectedAmount, tx);
+  await tx.cosmeticShopPurchaseClaim.create({
+    data: { transactionId, userId, shopItemId, amount, status: CLAIM.pending },
+  });
+  return { transactionId, amount, resumed: false };
+}
+
+/**
+ * A user's unsettled claims on any of these listings active since `since` (created or resumed),
+ * other than `exceptTransactionId`. Nothing expires a claim whose charge outcome was never known, so
+ * a caller reserving stock against pending claims bounds them by last activity, or one stuck claim
+ * reserves forever. Not by creation: a claim resumed just now is being charged now.
+ */
+export function countPendingShopPurchaseClaims(
+  db: Prisma.TransactionClient,
+  {
+    userId,
+    shopItemIds,
+    exceptTransactionId,
+    since,
+  }: { userId: number; shopItemIds: number[]; exceptTransactionId: string; since: Date }
+) {
+  return db.cosmeticShopPurchaseClaim.count({
+    where: {
+      userId,
+      status: CLAIM.pending,
+      shopItemId: { in: shopItemIds },
+      transactionId: { not: exceptTransactionId },
+      updatedAt: { gte: since },
+    },
+  });
 }
 
 // The buzz client retries every failure by default, including ones where the

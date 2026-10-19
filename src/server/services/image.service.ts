@@ -32,6 +32,7 @@ import {
   type CapturableSearchInput,
 } from '~/server/services/feed-request-capture.service';
 import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   countFeedPrimary,
   feedFliptContext,
@@ -291,6 +292,8 @@ import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
+import { getImageGenerationFields } from '@civitai/db-queries/image';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -1807,6 +1810,7 @@ const getAllImagesUncaptured = async (
     imageId, // used in public API
     username,
     period,
+    jumpTo,
     periodMode,
     tags,
     generation,
@@ -2037,6 +2041,12 @@ const getAllImagesUncaptured = async (
   if (!isModerator) {
     AND.push(
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+    );
+    // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
+    AND.push(
+      userId
+        ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+        : Prisma.sql`(i."blockedFor" IS NULL)`
     );
   }
 
@@ -2326,6 +2336,22 @@ const getAllImagesUncaptured = async (
       Prisma.sql`i."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
     );
   }
+
+  // The month is resolved to the creator's edge image id through ("userId", "createdAt"): a
+  // createdAt bound under ORDER BY id walks every newer row first (54s on an 866k gallery).
+  const jump = resolveJumpTo({ jumpTo, sort, userId: targetUserId });
+  if (jump?.direction === 'before')
+    AND.push(Prisma.sql`i."id" <= (
+      SELECT j.id FROM "Image" j
+      WHERE j."userId" = ${targetUserId} AND j."createdAt" < ${new Date(jump.endMs)}
+      ORDER BY j."createdAt" DESC LIMIT 1
+    )`);
+  else if (jump?.direction === 'after')
+    AND.push(Prisma.sql`i."id" >= (
+      SELECT j.id FROM "Image" j
+      WHERE j."userId" = ${targetUserId} AND j."createdAt" >= ${new Date(jump.startMs)}
+      ORDER BY j."createdAt" ASC LIMIT 1
+    )`);
 
   // Handle cursor & skip conflict
   if (cursor && skip) throw new Error('Cannot use skip with cursor'); // [x]
@@ -3386,6 +3412,15 @@ export const makeMeiliImageSearchFilter = (
 ): MeiliImageFilter => {
   return `${field} ${criteria}`;
 };
+
+/** Applied on every page: a cursor alone would lose the bound when it parses as offset 0. */
+function makeMeiliJumpToFilter(input: { jumpTo?: string; sort?: string; userId?: number }) {
+  const jump = resolveJumpTo(input);
+  if (!jump) return undefined;
+  return jump.direction === 'before'
+    ? makeMeiliImageSearchFilter('sortAtUnix', `< ${jump.endMs}`)
+    : makeMeiliImageSearchFilter('sortAtUnix', `>= ${jump.startMs}`);
+}
 /**
  * Owner carve-out for a `scheduled` request: own content whose publish date is
  * still in the future.
@@ -3942,6 +3977,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     techniques,
     baseModels,
     period,
+    jumpTo,
     isModerator,
     currentUserId,
     excludedUserIds,
@@ -4277,6 +4313,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       )
     );
   }
+  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
+  if (jumpToFilter) filters.push(jumpToFilter);
 
   // nb: this is for dev 08-19
   // if (!isProd) {
@@ -4578,6 +4616,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     techniques,
     baseModels,
     period,
+    jumpTo,
     isModerator,
     currentUserId,
     excludedUserIds,
@@ -4896,6 +4935,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       makeMeiliImageSearchFilter('sortAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
     );
   }
+  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
+  if (jumpToFilter) filters.push(jumpToFilter);
 
   // nb: this is for dev 08-19
   // if (!isProd) {
@@ -7508,7 +7549,8 @@ export async function updateImageNsfwLevel({
       activity: activity ?? 'setNsfwLevel',
     });
     // Knights consensus locks through this branch too, but it is a vote, not a moderator's
-    // decision, so it does not move a store listing's rating.
+    // decision, so it does not move a store listing's rating. The new level still takes effect
+    // in the store: listing media is gated per image on every render (`listing-media-audience`).
     if (activity !== 'setNsfwLevelKono') {
       const { reDeriveListingRatingsForModeratedImage } = await import(
         '~/server/services/blocks/app-listing-rating-rederive.service'
@@ -7991,41 +8033,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      hideMeta: true,
-      generationProcess: true,
-      meta: true,
-      type: true,
-      tools: {
-        orderBy: { tool: { priority: 'asc' } },
-        select: {
-          notes: true,
-          tool: {
-            select: {
-              id: true,
-              name: true,
-              icon: true,
-              domain: true,
-              priority: true,
-            },
-          },
-        },
-      },
-      techniques: {
-        select: {
-          notes: true,
-          technique: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      },
-    },
-  });
+  const image = await getImageGenerationFields(kyselyRead, id);
   if (!image) throw throwNotFoundError();
 
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));

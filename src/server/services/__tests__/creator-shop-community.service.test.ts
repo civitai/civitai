@@ -162,6 +162,12 @@ describe('getCommunityCosmetics', () => {
     });
   });
 
+  it('serves packs without mystery box listings, which have no cosmetic either', async () => {
+    await getCommunityCosmetics({ ...baseInput, packsEnabled: true });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    expect(packBranch(where)).toEqual({ cosmeticId: null, itemDefinitionId: null });
+  });
+
   it('leaves the slug arm out for a search no slug could contain', async () => {
     await getCommunityCosmetics({ ...baseInput, query: 'happy cat' });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];

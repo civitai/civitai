@@ -898,6 +898,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3': baseLicenses['bfl tos'],
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
+  'MOSS Image': baseLicenses['apache 2.0'],
+  'MOSS Image Base': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
@@ -1871,6 +1873,13 @@ export const milestoneNotificationFix = '2025-05-28';
 
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
+
+/** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
+  BanReasonCode.SexualMinor,
+  BanReasonCode.SexualMinorGenerator,
+  BanReasonCode.SexualMinorTraining,
+];
 
 export const banReasonDetails: Record<
   BanReasonCode,

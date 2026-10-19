@@ -346,6 +346,64 @@ describe('flux3-klein.handler', () => {
   });
 });
 
+describe('moss-image.handler', () => {
+  it('SFT pins its whole imageGen payload', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage',
+      prompt: 'a cat',
+      negativePrompt: 'blurry',
+      aspectRatio: '16:9',
+      steps: 40,
+      cfgScale: 4,
+      seed: 42,
+      quantity: 2,
+      resources: [{ id: 111, baseModel: 'MOSS Image', model: { type: 'LORA' }, strength: 0.8 }],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'mossImage',
+      model: 'sft',
+      operation: 'createImage',
+      negativePrompt: 'blurry',
+      width: 1344,
+      height: 768,
+      steps: 40,
+      cfgScale: 4,
+      seed: 42,
+      quantity: 2,
+    });
+    expect((firstInput(steps) as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+  });
+
+  // Turbo (DMD) LoRAs run at 8 steps, CFG 1; the floor sits below that for 4-step distills.
+  it.each([8, 4])('SFT with a turbo LoRA reaches the orchestrator at %i steps', async (n) => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage',
+      prompt: 'a cat',
+      steps: n,
+      cfgScale: 1,
+      resources: [{ id: 111, baseModel: 'MOSS Image', model: { type: 'LORA' }, strength: 1 }],
+    });
+    expect(firstInput(steps)).toMatchObject({ model: 'sft', steps: n, cfgScale: 1 });
+  });
+
+  it('the Base ecosystem selects the base model and keeps the graph defaults', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage_base',
+      prompt: 'a cat',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      ecosystem: 'mossImage',
+      model: 'base',
+      steps: 25,
+      cfgScale: 3,
+    });
+  });
+});
+
 describe('the dispatcher itself', () => {
   // A new family added without a case arm must not fall through to whatever the switch
   // ends on. This string is the only thing standing between that and a silent mis-route.

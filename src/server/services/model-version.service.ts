@@ -134,6 +134,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertFileTypeChangeAllowed } from '~/server/utils/model-file-replace';
 import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
@@ -158,6 +159,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1269,7 +1271,7 @@ export const updateModelVersionPaidAccess = async ({
   if (rightsAffirmation)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
-      SET meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify({ rightsAffirmation })}::jsonb
+      SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
       WHERE id = ${id}
     `;
 
@@ -3381,26 +3383,44 @@ export const mergeVersions = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
-      // 1. Remap file types and metadata if provided
+      // 1. Remap file types and metadata if provided. Only files of the versions being merged, of
+      // the caller's own model, re-checked here in the transaction that writes them.
       if (fileTypeMappings?.length) {
+        const mergedVersionIds = [targetVersionId, ...sourceVersionIds];
+        const inMerge = {
+          modelVersionId: { in: mergedVersionIds },
+          modelVersion: { modelId, model: { userId } },
+        } satisfies Prisma.ModelFileWhereInput;
+        const files = await tx.modelFile.findMany({
+          where: { id: { in: fileTypeMappings.map((m) => m.fileId) }, ...inMerge },
+          select: {
+            id: true,
+            type: true,
+            metadata: true,
+            modelVersion: { select: { uploadType: true, trainingStatus: true } },
+          },
+        });
+        const fileById = new Map(files.map((f) => [f.id, f]));
+
         for (const mapping of fileTypeMappings) {
+          const file = fileById.get(mapping.fileId);
+          if (!file) throw throwBadRequestError('A file to update is not part of this merge.');
+          assertFileTypeChangeAllowed(file, mapping.type);
+
           const updateData: Record<string, unknown> = {};
           if (mapping.type) updateData.type = mapping.type;
-          if (mapping.metadata) {
-            const existing = await tx.modelFile.findUnique({
-              where: { id: mapping.fileId },
-              select: { metadata: true },
-            });
+          if (mapping.metadata)
             updateData.metadata = {
-              ...((existing?.metadata as Record<string, unknown>) ?? {}),
+              ...((file.metadata as Record<string, unknown>) ?? {}),
               ...mapping.metadata,
             };
-          }
           if (Object.keys(updateData).length > 0) {
-            await tx.modelFile.update({
-              where: { id: mapping.fileId },
+            const { count } = await tx.modelFile.updateMany({
+              where: { id: mapping.fileId, ...inMerge },
               data: updateData,
             });
+            if (count !== 1)
+              throw throwBadRequestError('A file to update is not part of this merge.');
           }
         }
       }

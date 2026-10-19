@@ -917,6 +917,14 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
     expect((write?.arg as string[]).filter((a) => a.startsWith('insight'))).toEqual([]);
   });
 
+  it('gives the ranking-rules write the same export the live-index apply route writes', async () => {
+    const { modelsRankingRules } = await import('~/server/search-index/ranking-rules');
+    const received = await runSetup();
+    const write = received.find((r) => r.method === 'updateRankingRules');
+    expect(write, 'no rankingRules write reached the engine').toBeDefined();
+    expect(write?.arg).toBe(modelsRankingRules);
+  });
+
   it('🔴 gives the displayed write the frozen export ITSELF, withholding sortMetrics', async () => {
     // The Creator Controls privacy boundary, finally asserted at the engine rather than at the
     // call site's source text. This subsumes the no-local ban in

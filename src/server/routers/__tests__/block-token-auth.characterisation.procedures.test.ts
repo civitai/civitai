@@ -75,6 +75,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksPostCreationEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksTrainingKindEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksConfirmedStepEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
+  isAppBlocksAppReactionsEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
 }));
 /**
  * POSITIVE ANCHORS. A cell that is not refused must say how far it got, not only what it did
@@ -187,6 +188,7 @@ const ALL_SCOPES = [
   'buzz:read:self',
   'user:read:self',
   'posts:write:self',
+  'social:react:self',
   'models:read:self',
   'apps:storage:read',
   'apps:storage:write',
@@ -217,11 +219,13 @@ const SESSION_BOUND = new Set([
   'blocks.consentQuoteGrant',
   'blocks.consentTrainingQuote',
   'blocks.createPostFromApp',
+  'blocks.getReactionsForApp',
   'blocks.persistAppUploadImage',
   'blocks.previewPostFromApp',
   'blocks.previewQuoteGrant',
   'blocks.previewTrainingQuote',
   'blocks.publishGenerationOutputs',
+  'blocks.setReactionFromApp',
 ]);
 
 async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
@@ -265,6 +269,8 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.getMyBuzzTransactions': {},
   'blocks.getMyDailyCompensation': { date: '2026-01-01' },
   'blocks.getMyViewer': {},
+  // No tickets: the read answers the id as `unavailable` rather than refusing the call.
+  'blocks.getReactionsForApp': { entityType: 'image', ids: [1] },
   'blocks.listMyWorkflows': {},
   'blocks.persistAppUploadImage': { url: '00000000-0000-4000-8000-000000000000' },
   'blocks.pollWorkflow': { workflowId: 'wf_1' },
@@ -274,6 +280,13 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.previewTrainingQuote': { quoteId: QUOTE_ID },
   'blocks.publishGenerationOutputs': { workflowId: 'wf_1' },
   'blocks.queryAppWorkflows': {},
+  // No ticket, so a token that passes every auth step stops at the provenance guard.
+  'blocks.setReactionFromApp': {
+    entityType: 'image',
+    entityId: 1,
+    reaction: 'Heart',
+    reacted: true,
+  },
   'blocks.submitWorkflow': { body: WORKFLOW_BODY, idempotencyKey: 'idem_char' },
   'blocks.updateUserSettings': { settings: { a: 1 } },
   'apps.storage.get': { key: 'k' },
@@ -1039,6 +1052,46 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
+  'blocks.getReactionsForApp': {
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks social:react:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'reacting requires a signed-in viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
   'blocks.listMyWorkflows': {
     'valid token': OK([], ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
@@ -1373,6 +1426,51 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+  },
+  'blocks.setReactionFromApp': {
+    // The ticket-less valid token stops at the PROVENANCE guard, after every identity gate.
+    'valid token': E(
+      'FORBIDDEN',
+      'reaction ticket is missing, expired or not issued to this app and viewer',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks social:react:self scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'reacting requires a signed-in viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    // Charged by the shared site-reaction middleware, which this table does not spy (it is
+    // skipped under test), so no bucket here refuses it and the cell is the valid-token one.
+    'rate limited': E(
+      'FORBIDDEN',
+      'reaction ticket is missing, expired or not issued to this app and viewer',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
     ),
   },
   'blocks.submitWorkflow': {

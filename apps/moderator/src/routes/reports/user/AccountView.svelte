@@ -3,16 +3,18 @@
   import type { LayoutData } from './$types';
   import type { AccountData } from './account.server';
   import { FormState } from '$lib/form-state.svelte';
-  import { hasOpenReport, nextItemId, reportsForItem } from '$lib/report-queue';
+  import { hasOpenReport, reportsForItem, advanceAfterRuling, itemHref, QUEUE_NAV } from '$lib/report-queue';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { userLookupUrl, userReportUrl } from '$lib/entity-url';
-  import { clearPaging } from '$lib/paging';
   import UserCard from '$lib/components/user-card/UserCard.svelte';
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
+  import ReadOnlyNotice from '$lib/components/report-queue/ReadOnlyNotice.svelte';
   import SuspectPanel from './SuspectPanel.svelte';
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import AccountActions from './AccountActions.svelte';
+  import InvestigateButton from '$lib/components/InvestigateButton.svelte';
+  import type { ReportActionGrants } from '$lib/report-queue';
 
   // The open account, rendered the same by the bare queue (its first account) and by
   // `[userId]/[[tab]]`. Every form holds its own result (`FormState`), so the page's `form` is not read.
@@ -21,12 +23,18 @@
     items,
     canAct,
     canBan,
+    canInvestigate,
+    can,
     civitaiUrl,
   }: {
     account: AccountData | null;
     items: LayoutData['items'];
+    /** Mute, ban and profile text — the `/users` page. Ruling needs only the queue. */
     canAct: boolean;
     canBan: boolean;
+    /** Open a mod assistant chat on this account and its newest open report. */
+    canInvestigate: boolean;
+    can: ReportActionGrants;
     civitaiUrl: string;
   } = $props();
 
@@ -37,25 +45,20 @@
   // Ruling on a report changes what the queue shows, and the queue comes from `load`, so this one
   // does want the reload. `onSettled` clears the marker on refusal too — a refused report that stays
   // marked reads as still working.
-  let formerIndex = -1;
+  // Once the account has nothing left to rule, the queue moves on to the next one.
+  const moveOn = advanceAfterRuling({
+    items: () => items,
+    currentId: () => account?.suspectId,
+    hasOpen: () => hasOpenReport(openReports),
+    open: (id) => goto(itemHref(userReportUrl(id, page.params.tab), page.url.search), QUEUE_NAV),
+  });
   const reportForm = new FormState({
     reload: true,
     onSubmit: ({ formData }) => {
       pendingId = Number(formData.get('id')) || null;
-      formerIndex = items.findIndex((r) => r.entityId === account?.suspectId);
+      moveOn.capture();
     },
-    // Once the account has nothing left to rule, the queue moves on to the next one, as ruling a
-    // report always moved it on to the next row. Read after the reload: the list is the new one.
-    onSuccess: () => {
-      if (!account || hasOpenReport(openReports)) return;
-      const next = nextItemId(items, formerIndex, account.suspectId);
-      if (next == null) return;
-      const params = new URLSearchParams(page.url.search);
-      params.delete('report');
-      clearPaging(params);
-      const query = params.size ? `?${params}` : '';
-      goto(`${userReportUrl(next, page.params.tab)}${query}`, { noScroll: true, keepFocus: true });
-    },
+    onSuccess: () => moveOn.advance(),
     onSettled: () => (pendingId = null),
   });
 
@@ -79,16 +82,17 @@
        site links. A heading above it repeated the username and both links. It sits across both
        columns because that state decides what every tab's evidence and every action means. -->
   {#if account.details}
-    <UserCard card={account.details.card} lookupLink openReports={false} />
+    <UserCard card={account.details.card} lookupLink openReports={false}>
+      {#snippet actions()}
+        {#if canInvestigate && account}
+          <InvestigateButton userId={account.suspectId} reportId={openReports[0]?.id ?? null} />
+        {/if}
+      {/snippet}
+    </UserCard>
   {:else}
     <h2 class="m-0 text-lg font-semibold">Account #{account.suspectId}</h2>
   {/if}
-  {#if !canAct}
-    <p class="m-0 text-xs text-muted-foreground">
-      Read-only: ruling on a report or acting on an account needs access to the Users page
-      (`/users`), granted on `/admin`.
-    </p>
-  {/if}
+  <ReadOnlyNotice {can} images={!!account.details} owner={!!account.details} />
 
   <ReportDetailColumns>
     {#snippet evidence()}
@@ -103,7 +107,7 @@
             models={account.models}
             filters={account.filters}
             accountHistory={account.accountHistory}
-            {canAct}
+            {can}
             {civitaiUrl}
           />
         {/key}
@@ -121,7 +125,7 @@
       {#key account.suspectId}
         <ReportList
           reports={openReports}
-          canRule={canAct}
+          canRule
           action="?/actionReport"
           onSubmit={reportForm.enhance}
           busyId={pendingId}
@@ -139,10 +143,12 @@
           {/snippet}
         </ReportList>
 
-        {#if canAct && account.details}
+        {#if (canAct || can.strike) && account.details}
           <AccountActions
             suspectId={account.suspectId}
             {canBan}
+            canStrike={can.strike}
+            canEnforce={canAct}
             account={{
               username: account.details.card.identity.username,
               bannedAt: account.details.card.identity.bannedAt,

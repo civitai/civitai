@@ -32,6 +32,8 @@ export const PERMISSIONS = [
   { id: 'user.buzz.bank', label: 'See bank transactions in Buzz history' },
   { id: 'user.moderator.toggle', label: 'Activate or deactivate moderator' },
   { id: 'user.cosmetics.grant', label: 'Grant cosmetics' },
+  // Apart from cosmetics: a box is a paid product, and one bulk grant reaches many users.
+  { id: 'items.boxes.grant', label: 'Grant mystery boxes, and take granted ones back' },
   // Three destructive actions on User Lookup that were gated on the `/users` PAGE grant, so
   // granting a role the new-signups list handed it mass comment deletion, ban and purge in the same
   // tick — a page grant standing in for a permission, which is the weld this app's CLAUDE.md records
@@ -50,6 +52,10 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Same kind of right, narrower blast radius: the account stays, its reactions go. Checked again by
+  // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
+  // (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.removeReactions', label: 'Remove all of an account’s reactions (erasure request)' },
   // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
@@ -61,6 +67,13 @@ export const PERMISSIONS = [
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
+  // Both were the `/users` PAGE grant until 2026-10-16, so opening the new-signups list conferred them
+  // and every report queue withheld them from a Reports-only moderator — the weld this file's header
+  // describes. One id per kind of harm, not per page: the same strike, notification and image writes run
+  // from User Lookup, every report queue, Image Lookup and Bulk Image Manager, and a gate on one of
+  // those pages alone would leave the others as a way round it. Granted by hand on `/admin` at launch.
+  { id: 'user.strike', label: 'Strike or notify an account' },
+  { id: 'image.moderate', label: 'Remove, restore or flag images' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.
@@ -112,6 +125,11 @@ export const PERMISSIONS = [
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
   },
+  // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
+  { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
+  // Page access is `/assistant`; this is the right to run turns (model spend), so a role can see the
+  // page and audit without running them.
+  { id: 'assistant.use', label: 'Ask the mod assistant and edit its playbooks' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

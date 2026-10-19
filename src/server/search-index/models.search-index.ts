@@ -21,6 +21,7 @@ import {
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
+import { modelsRankingRules } from '~/server/search-index/ranking-rules';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
@@ -113,17 +114,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 
-  const rankingRules = [
-    'sort',
-    'attribute',
-    'metrics.thumbsUpCount:desc',
-    'words',
-    'proximity',
-    'exactness',
-  ];
-
-  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
-    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+  if (JSON.stringify(modelsRankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(modelsRankingRules);
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 

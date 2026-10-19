@@ -622,15 +622,16 @@ export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   labelNames: ['trigger', 'client'] as const,
 });
 
-// The self-heal watchdog's OWN observation of the wedge: the in-process count of cluster command
-// SLOW-SETTLES in its sliding window (the deadline-hit trigger's input), sampled + published each
-// watchdog tick. This is DISTINCT from redis_command_duration_seconds — it is exactly what the
-// watchdog evaluates against REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD, so a rising series that
+// The self-heal watchdog's OWN observation of the wedge: the deadline-hit trigger's in-process input
+// over its sliding window, sampled + published each watchdog tick — cluster command SLOW-SETTLES
+// (vs REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD), or sys backstop timeouts with no success in
+// the window (vs REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD). This is DISTINCT from
+// redis_command_duration_seconds — it is exactly what the watchdog evaluates, so a rising series that
 // crosses the threshold is the leading indicator of an imminent self-heal reconnect. Added after
 // the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
 export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
   name: 'redis_selfheal_deadline_hits_window',
-  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  help: "The self-heal watchdog's in-process count over its sliding window, by client (cluster: slow settles; sys: command timeouts, 0 while any sys command succeeded in the window); the deadline-hit trigger fires when this crosses the threshold",
   labelNames: ['client'] as const,
 });
 

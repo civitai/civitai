@@ -160,7 +160,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
-    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+    epochArchive: (workflowId, kind) =>
+      call((client) => orch.createEpochArchive(client, workflowId, kind)),
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
     continueQuote: (workflowId, fromEpoch, addEpochs, currencies) =>

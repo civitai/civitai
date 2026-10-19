@@ -1,18 +1,27 @@
-import type { FC, Ref } from 'react';
+import type { FC, MutableRefObject, Ref } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
 import type {
+  BeforeSendDetail,
   ChatMcpServer,
   ChatTool,
   ChatToolGate,
   ChatToolResult,
   CivitaiChat,
+  ReplyResumeDetail,
 } from '@civitai/components-chat/civitai-chat';
 import {
   APP_ASSISTANT_CHAT_CONFIG,
+  APP_ASSISTANT_EXAMPLES,
   APP_ASSISTANT_MCP,
+  APP_ASSISTANT_PLACEHOLDER,
 } from '~/components/Apps/AppAssistant/assistantChatConfig';
 import { buildAssistantSystemPrompt } from '~/components/Apps/AppAssistant/assistantInstructions';
+import {
+  listenBeforeSend,
+  listenChatChange,
+  listenReplyResume,
+} from '~/components/Apps/AppAssistant/chatAdapter';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
@@ -33,6 +42,13 @@ export interface AppAssistantChatProps {
   holdReason?: string;
   beforeToolCall?: ChatToolGate;
   onToolResult?: (result: ChatToolResult) => void;
+  /** Set to the chat element once it has started. */
+  chatRef?: MutableRefObject<CivitaiChat | null>;
+  /** Told before each message goes out; `queue()` keeps it waiting (see `listenBeforeSend`). */
+  onBeforeSend?: (text: string, queue: BeforeSendDetail['queue']) => void;
+  /** Asked before the chat asks again for a failed reply (no `before-send`); true keeps it from asking. */
+  onReplyResume?: (trigger: ReplyResumeDetail['trigger']) => boolean;
+  onChatChange?: (chatId: string | null) => void;
 }
 
 export function AppAssistantChat({
@@ -43,6 +59,10 @@ export function AppAssistantChat({
   holdReason,
   beforeToolCall,
   onToolResult,
+  chatRef,
+  onBeforeSend,
+  onReplyResume,
+  onChatChange,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
@@ -70,15 +90,19 @@ export function AppAssistantChat({
       const el = ref.current as CivitaiChat;
       el.mcp = APP_ASSISTANT_MCP;
       el.systemPrompt = buildAssistantSystemPrompt;
+      el.examples = APP_ASSISTANT_EXAMPLES;
+      el.placeholder = APP_ASSISTANT_PLACEHOLDER;
       el.app = app;
+      if (chatRef) chatRef.current = el;
       setReady(true);
     })().catch(() => {
       if (!cancelled) setError('The assistant could not start. Reload the page to try again.');
     });
     return () => {
       cancelled = true;
+      if (chatRef) chatRef.current = null;
     };
-  }, [tokens]);
+  }, [tokens, chatRef]);
 
   useEffect(() => {
     if (!ready || !ref.current) return;
@@ -106,6 +130,27 @@ export function AppAssistantChat({
     el.addEventListener('tool-result', listener);
     return () => el.removeEventListener('tool-result', listener);
   }, [ready, onToolResult]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el || !onBeforeSend) return;
+    return listenBeforeSend(el, onBeforeSend);
+  }, [ready, onBeforeSend]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el || !onReplyResume) return;
+    return listenReplyResume(el, onReplyResume);
+  }, [ready, onReplyResume]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el || !onChatChange) return;
+    // The chat it opened on start can be announced before this listens.
+    const opened = (el as CivitaiChat).chatId;
+    if (opened) onChatChange(opened);
+    return listenChatChange(el, onChatChange);
+  }, [ready, onChatChange]);
 
   if (error)
     return (

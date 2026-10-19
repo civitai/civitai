@@ -37,6 +37,7 @@ import {
   StorylineStageOverlay,
   StorylineToolbarChip,
 } from '~/components/Storyline/StorylineDetail';
+import { StorylineChapterRail } from '~/components/Storyline/StorylineChapterRail';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import {
   getStorylineStep,
@@ -490,7 +491,16 @@ export function ImageDetail2() {
                             />
                           </ReactionSettingsProvider>
                         </div>
-                        <CarouselIndicators {...carouselNavigation} />
+                        {storyline.active ? (
+                          <StorylineChapterRail
+                            storyline={storyline}
+                            images={images}
+                            index={carouselNavigation.index}
+                            navigate={carouselNavigation.navigate}
+                          />
+                        ) : (
+                          <CarouselIndicators {...carouselNavigation} />
+                        )}
                         {/* {viewportHeight >= 1050 && (
                       <AdUnitImageDetailBanner />
                     )} */}

@@ -62,6 +62,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const make = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),

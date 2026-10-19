@@ -431,19 +431,24 @@ export async function refundAppealFee(appeal: {
 
 export async function notifyAppealResolved(input: {
   appeal: { id: number; userId: number };
+  entityType?: string;
   entityId: number;
   status: 'Approved' | 'Rejected';
   resolvedMessage?: string;
+  /** Read by the main app's `entity-appeal-resolved` copy, e.g. a site appeal's `category`. */
+  details?: Record<string, unknown>;
 }): Promise<void> {
+  const entityType = input.entityType ?? 'Image';
   try {
     await getNotifications().createNotification({
       userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
       // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
-      key: `entity-appeal-resolved:Image:${input.entityId}:${input.appeal.id}`,
+      key: `entity-appeal-resolved:${entityType}:${input.entityId}:${input.appeal.id}`,
       details: {
-        entityType: 'Image',
+        ...input.details,
+        entityType,
         entityId: input.entityId,
         status: input.status,
         resolvedMessage: input.resolvedMessage ?? '',

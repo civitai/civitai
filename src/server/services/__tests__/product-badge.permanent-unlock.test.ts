@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@civitai/client', () => ({ submitWorkflow: vi.fn(), PutObjectCommand: class {} }));
-vi.mock('@aws-sdk/client-s3', () => ({ PutObjectCommand: class {} }));
+// `default` mirrors the named export: the package is pre-bundled for CJS interop, so consumers
+// resolve through `default`.
+vi.mock('@aws-sdk/client-s3', () => {
+  const PutObjectCommand = class {};
+  return { PutObjectCommand, default: { PutObjectCommand } };
+});
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 vi.mock('~/server/services/cosmetic-phash.service', () => ({
   queueCosmeticPerceptualHash: vi.fn(),

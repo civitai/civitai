@@ -15,6 +15,7 @@ import type { PoiMinorResult } from '~/server/services/text-scan/actions/model-p
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
   return SearchIndexUpdate.queueUpdate({
@@ -46,7 +47,7 @@ export async function applyBountyPoi({
         "lockedProperties" = ARRAY(
           SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['poi']::text[])
         ),
-        meta = COALESCE(b.meta, '{}'::jsonb) || jsonb_build_object(
+        meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(b.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
             'poi', ${entry}::jsonb || jsonb_build_object(
               'at', now(),

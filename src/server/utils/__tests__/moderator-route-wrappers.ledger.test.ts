@@ -186,6 +186,7 @@ const FULL_CREDENTIAL = 'full credential';
 const OUTSIDE_WRAPPERS: Record<string, string> = {
   'media/ingest/[mediaId]': FULL_CREDENTIAL,
   'testing/model3d-seed': FULL_CREDENTIAL,
+  'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
   'service-deals/files/[fileId]/download':

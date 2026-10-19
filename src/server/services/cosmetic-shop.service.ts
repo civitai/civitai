@@ -34,7 +34,11 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import {
+  computeCreatorShopSplit,
+  PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
+} from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import {
@@ -70,6 +74,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
@@ -81,6 +86,12 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
+import {
+  countShopItemSaleAfterGrant,
+  setShopItemSaleCount,
+} from '~/server/services/cosmetic-shop-sale-count';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
+import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -130,7 +141,8 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
 
-  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
+  // Mystery box listings have their own builder; here a NULL cosmetic would read as a pack.
+  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = { itemDefinitionId: null };
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
   if (input.name) {
@@ -539,6 +551,12 @@ export const upsertCosmeticShopSection = async ({
   // resale — a creator who never marked their item sellable-by-others hasn't
   // consented to official-shop placement.
   if (items?.length) {
+    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+    const boxes = await dbWrite.cosmeticShopItem.count({
+      where: { id: { in: items }, itemDefinitionId: { not: null } },
+    });
+    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
     const ineligible = await dbWrite.cosmeticShopItem.findMany({
       where: {
         id: { in: items },
@@ -733,7 +751,9 @@ export const getShopSectionsWithItems = async ({
               ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
                 ? [
                     {
-                      cosmeticId: null,
+                      // Not a mystery box listing: those are sold only through their own surface,
+                      // which applies the box's flag, region and event checks.
+                      ...PACK_SHOP_ITEM_WHERE,
                       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
                   ]
@@ -936,12 +956,18 @@ export const purchaseCosmeticShopItem = async ({
   expectedUnitAmount,
   stickersEnabled,
   packsEnabled,
+  expectedVersion,
+  mysteryBoxEnabled,
+  countryCode,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   isModerator?: boolean;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
   packsEnabled?: boolean;
+  mysteryBoxEnabled?: boolean;
+  /** The buyer's country (`getRegion`), for the mystery box region block. */
+  countryCode?: string | null;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -950,6 +976,7 @@ export const purchaseCosmeticShopItem = async ({
       status: true,
       listed: true,
       cosmeticId: true,
+      itemDefinitionId: true,
       availableQuantity: true,
       availableFrom: true,
       availableTo: true,
@@ -979,6 +1006,22 @@ export const purchaseCosmeticShopItem = async ({
   if (!shopItem) {
     throw throwBadRequestError('Cosmetic not found');
   }
+
+  // A box listing has no cosmetic either, so it branches off before anything below reads that as
+  // a pack.
+  if (shopItem.itemDefinitionId != null)
+    return purchaseMysteryBox({
+      userId,
+      isModerator,
+      shopItem: { ...shopItem, itemDefinitionId: shopItem.itemDefinitionId, meta: shopItemMeta },
+      idempotencyKey,
+      expectedUnitAmount,
+      expectedVersion,
+      payWith,
+      buzzType,
+      mysteryBoxEnabled,
+      countryCode,
+    });
 
   const isPack = shopItem.cosmeticId == null || !shopItem.cosmetic;
   // Random, not a timestamp, without a key. This id is both the purchase row's
@@ -1081,18 +1124,8 @@ export const purchaseCosmeticShopItem = async ({
       shopItem.availableQuantity !== null &&
       shopItem._count.purchases >= shopItem.availableQuantity
     ) {
-      if (shopItemMeta.purchases !== shopItem._count.purchases) {
-        // Update meta with new amount:
-        await dbWrite.cosmeticShopItem.update({
-          where: { id: shopItemId },
-          data: {
-            meta: {
-              ...shopItemMeta,
-              purchases: shopItem._count.purchases,
-            },
-          },
-        });
-      }
+      if (shopItemMeta.purchases !== shopItem._count.purchases)
+        await setShopItemSaleCount(dbWrite, shopItemId, shopItem._count.purchases);
       throw throwBadRequestError(`This ${noun} is out of stock`);
     }
 
@@ -1141,15 +1174,15 @@ export const purchaseCosmeticShopItem = async ({
   // as state unknown: if a different purchase granted it meanwhile, resuming
   // could charge again for something they already hold, so that claim is
   // settled by hand instead.
-  await runPurchaseChecks(pendingClaim, async () => {
-    // Stickers are deliberately absent: they are spent rather than worn, so a
-    // repeat purchase is another batch of uses rather than a mistake.
-    const onlySupportsSinglePurchase =
-      singleCosmetic.type == CosmeticType.Badge ||
-      singleCosmetic.type == CosmeticType.NamePlate ||
-      singleCosmetic.type == CosmeticType.ProfileBackground ||
-      singleCosmetic.type == CosmeticType.ProfileDecoration;
+  // Stickers are deliberately absent: they are spent rather than worn, so a
+  // repeat purchase is another batch of uses rather than a mistake.
+  const onlySupportsSinglePurchase =
+    singleCosmetic.type == CosmeticType.Badge ||
+    singleCosmetic.type == CosmeticType.NamePlate ||
+    singleCosmetic.type == CosmeticType.ProfileBackground ||
+    singleCosmetic.type == CosmeticType.ProfileDecoration;
 
+  await runPurchaseChecks(pendingClaim, async () => {
     if (onlySupportsSinglePurchase) {
       // Confirm the user doesn't own it already:
       const userCosmetic = await dbWrite.userCosmetic.findFirst({
@@ -1185,12 +1218,11 @@ export const purchaseCosmeticShopItem = async ({
   // instead; an uncharged one must also still be at today's price.
   await runPurchaseChecks(pendingClaim, async () => {
     if (chargedBefore) return;
-    const confirmed = existingClaim ? existingClaim.amount : expectedUnitAmount;
-    if (confirmed !== undefined && confirmed !== shopItem.unitAmount) {
-      throw throwBadRequestError(
-        `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
-      );
-    }
+    assertConfirmedPrice({
+      existingClaim,
+      expectedAmount: expectedUnitAmount,
+      amountDue: shopItem.unitAmount,
+    });
   });
 
   const meta = shopItemMeta;
@@ -1260,6 +1292,17 @@ export const purchaseCosmeticShopItem = async ({
   try {
     const data = await dbWrite.$transaction(async (tx) => {
       await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
+
+      // The ownership check above ran before the charge and outside this lock, so a mystery box
+      // open may have granted the cosmetic since. Throwing here refunds the charge.
+      if (onlySupportsSinglePurchase) {
+        const owned = await tx.userCosmetic.findFirst({
+          where: { userId, cosmeticId: singleCosmeticId },
+          select: { userId: true },
+        });
+        if (owned) throw new Error('cosmetic granted to the buyer while the purchase was charging');
+      }
 
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({
@@ -1282,17 +1325,6 @@ export const purchaseCosmeticShopItem = async ({
           // Consumables grant a finite balance; everything else stays NULL,
           // which reads as unlimited.
           remaining: stickerUsesFromCosmeticData(singleCosmetic.data),
-        },
-      });
-
-      // Update the cosmetic with the new amount:
-      await dbWrite.cosmeticShopItem.update({
-        where: { id: shopItemId },
-        data: {
-          meta: {
-            ...(shopItemMeta ?? {}),
-            purchases: (shopItemMeta?.purchases ?? 0) + 1,
-          },
         },
       });
 
@@ -1443,6 +1475,9 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
+
+    // After the payouts: a wait on the listing row must not delay paying the creators.
+    await countShopItemSaleAfterGrant(shopItemId);
 
     return data;
   } catch (error) {

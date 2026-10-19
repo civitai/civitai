@@ -62,7 +62,7 @@ describe('assetScanStatusFromIngestion — the one mapping', () => {
 /** A two-model reader whose calls are recorded, so query COUNT is assertable. */
 function reader(
   shots: { appListingId: string; imageId: number | null }[],
-  images: { id: number; ingestion: string | null }[]
+  images: { id: number; ingestion: string | null; nsfwLevel?: number }[]
 ) {
   const screenshotFindMany = vi.fn(async (args: { where: { appListingId: { in: string[] } } }) =>
     shots.filter((s) => args.where.appListingId.in.includes(s.appListingId) && s.imageId != null)
@@ -85,16 +85,17 @@ describe('loadListingAssetScansBatch', () => {
     const { db } = reader(
       [{ appListingId: 'a', imageId: 30 }],
       [
-        { id: 10, ingestion: 'Blocked' },
-        { id: 20, ingestion: 'Pending' },
-        { id: 30, ingestion: 'Scanned' },
+        { id: 10, ingestion: 'Blocked', nsfwLevel: 1 },
+        { id: 20, ingestion: 'Pending', nsfwLevel: 2 },
+        { id: 30, ingestion: 'Scanned', nsfwLevel: 4 },
       ]
     );
     const out = await loadListingAssetScansBatch([{ id: 'a', iconId: 10, coverId: 20 }], db);
+    // Each slot carries ITS image's level, for the civitai.com media problems.
     expect(out.get('a')).toEqual([
-      { kind: 'icon', status: 'blocked' },
-      { kind: 'cover', status: 'pending' },
-      { kind: 'screenshot', status: 'scanned' },
+      { kind: 'icon', status: 'blocked', nsfwLevel: 1 },
+      { kind: 'cover', status: 'pending', nsfwLevel: 2 },
+      { kind: 'screenshot', status: 'scanned', nsfwLevel: 4 },
     ]);
   });
 
@@ -107,21 +108,21 @@ describe('loadListingAssetScansBatch', () => {
     const { db } = reader(
       [],
       [
-        { id: 10, ingestion: 'Blocked' },
-        { id: 20, ingestion: 'Scanned' },
+        { id: 10, ingestion: 'Blocked', nsfwLevel: 8 },
+        { id: 20, ingestion: 'Scanned', nsfwLevel: 2 },
       ]
     );
     const out = await loadListingAssetScansBatch([{ id: 'a', iconId: 10, coverId: 20 }], db);
     expect(out.get('a')).toEqual([
-      { kind: 'icon', status: 'blocked' },
-      { kind: 'cover', status: 'scanned' },
+      { kind: 'icon', status: 'blocked', nsfwLevel: 8 },
+      { kind: 'cover', status: 'scanned', nsfwLevel: 2 },
     ]);
   });
 
   it("a null icon/cover contributes no entry — presence is the completeness gate's job", async () => {
-    const { db } = reader([], [{ id: 20, ingestion: 'Scanned' }]);
+    const { db } = reader([], [{ id: 20, ingestion: 'Scanned', nsfwLevel: 1 }]);
     const out = await loadListingAssetScansBatch([{ id: 'a', iconId: null, coverId: 20 }], db);
-    expect(out.get('a')).toEqual([{ kind: 'cover', status: 'scanned' }]);
+    expect(out.get('a')).toEqual([{ kind: 'cover', status: 'scanned', nsfwLevel: 1 }]);
   });
 
   it('an asset whose Image row is missing contributes no entry', async () => {
@@ -167,7 +168,7 @@ describe('loadListingAssetScansBatch', () => {
 
   /** A repeated image id across listings is queried ONCE (the id set is deduped). */
   it('deduplicates image ids across listings', async () => {
-    const { db, imageFindMany } = reader([], [{ id: 10, ingestion: 'Blocked' }]);
+    const { db, imageFindMany } = reader([], [{ id: 10, ingestion: 'Blocked', nsfwLevel: 16 }]);
     const out = await loadListingAssetScansBatch(
       [
         { id: 'a', iconId: 10, coverId: 10 },
@@ -178,10 +179,10 @@ describe('loadListingAssetScansBatch', () => {
     expect(imageFindMany.mock.calls[0][0].where.id.in).toEqual([10]);
     // …and the shared id still produces an entry per SLOT it occupies.
     expect(out.get('a')).toEqual([
-      { kind: 'icon', status: 'blocked' },
-      { kind: 'cover', status: 'blocked' },
+      { kind: 'icon', status: 'blocked', nsfwLevel: 16 },
+      { kind: 'cover', status: 'blocked', nsfwLevel: 16 },
     ]);
-    expect(out.get('b')).toEqual([{ kind: 'icon', status: 'blocked' }]);
+    expect(out.get('b')).toEqual([{ kind: 'icon', status: 'blocked', nsfwLevel: 16 }]);
   });
 
   /**
