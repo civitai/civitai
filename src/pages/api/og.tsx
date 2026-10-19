@@ -6,7 +6,11 @@ import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { ArticleIngestionStatus, Availability } from '~/shared/utils/prisma/enums';
+import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
+import { getChallengeDetail } from '~/server/services/challenge.service';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -260,6 +264,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
       where: {
         id,
         publishedAt: { not: null },
+        status: ArticleStatus.Published,
         tosViolation: false,
         ingestion: ArticleIngestionStatus.Scanned,
       },
@@ -306,8 +311,13 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
 }
 
 async function fetchPostData(id: number): Promise<EntityData | null> {
+  // The post page's anonymous rule: getPostDetail's visibility, and its SSR 404 on Private.
   const post = await dbRead.post.findFirst({
-    where: { id, publishedAt: { not: null } },
+    where: {
+      id,
+      availability: { not: Availability.Private },
+      ...getPostDetailVisibility(undefined),
+    },
     select: {
       title: true,
       detail: true,
@@ -363,20 +373,24 @@ async function fetchPostData(id: number): Promise<EntityData | null> {
 }
 
 async function fetchImageData(id: number): Promise<EntityData | null> {
-  const image = await dbRead.image.findFirst({
-    where: { id, tosViolation: false, needsReview: null, ingestion: 'Scanned' },
-    select: {
-      ...ogImageSelect,
-      user: { select: { username: true } },
-      post: {
-        select: {
-          title: true,
-          modelVersion: { select: { model: { select: { name: true } } } },
+  const [visible, image] = await Promise.all([
+    // The image page's anonymous rule. Any failure hides the card rather than showing it.
+    assertImageVisibleToViewer({ id }).catch(() => null),
+    dbRead.image.findFirst({
+      where: { id, tosViolation: false, needsReview: null, ingestion: 'Scanned' },
+      select: {
+        ...ogImageSelect,
+        user: { select: { username: true } },
+        post: {
+          select: {
+            title: true,
+            modelVersion: { select: { model: { select: { name: true } } } },
+          },
         },
       },
-    },
-  });
-  if (!image) return null;
+    }),
+  ]);
+  if (!visible || !image) return null;
 
   const modelName = image.post?.modelVersion?.model?.name;
   const postTitle = image.post?.title;
@@ -472,27 +486,23 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
   };
 }
 
-async function fetchChallengeData(id: number): Promise<EntityData | null> {
-  const challenge = await dbRead.challenge.findFirst({
-    where: { id },
-    select: {
-      title: true,
-      theme: true,
-      invitation: true,
-      description: true,
-      coverImage: { select: ogImageSelect },
-      prizePool: true,
-      collection: { select: { _count: { select: { items: true } } } },
-      winners: { select: { id: true } },
-    },
-  });
+async function fetchChallengeData(id: number, req: NextApiRequest): Promise<EntityData | null> {
+  // The challenge page's read, as an anonymous viewer on this request's host.
+  const features = await getFeatureFlagsAsync({ req });
+  if (!features.challengePlatform) return null;
+  const challenge = await getChallengeDetail(
+    id,
+    undefined,
+    features.isGreen,
+    false,
+    features.userChallenges
+  );
   if (!challenge) return null;
 
-  const entryCount = challenge.collection?._count?.items ?? 0;
-  const winnerCount = challenge.winners?.length ?? 0;
+  const winnerCount = challenge.winners.length;
 
   const stats: StatItem[] = [
-    { value: formatStat(entryCount), label: 'Entries' },
+    { value: formatStat(challenge.entryCount), label: 'Entries' },
     ...(winnerCount > 0 ? [{ value: String(winnerCount), label: 'Winners' }] : []),
     ...(challenge.prizePool > 0
       ? [{ value: formatStat(challenge.prizePool), label: 'Buzz Prize' }]
@@ -538,7 +548,10 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
 const REVOCABLE_TYPES = new Set(['hub', 'bounty']);
 const SHORT_CACHE = 'public, max-age=300, s-maxage=300';
 
-const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
+const dataFetchers: Record<
+  string,
+  (id: number, req: NextApiRequest) => Promise<EntityData | null>
+> = {
   model: fetchModelData,
   post: fetchPostData,
   image: fetchImageData,
@@ -1048,7 +1061,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const fetcher = dataFetchers[type];
-    const data = await fetcher(id);
+    const data = await fetcher(id, req);
 
     // Prefetch the cover image ourselves with a bounded timeout and embed it as
     // a data URI, so satori does NOT fetch the remote CF URL internally (which it
