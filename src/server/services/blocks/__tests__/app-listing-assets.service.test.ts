@@ -1145,6 +1145,22 @@ describe('screenshot CRUD', () => {
     }
   });
 
+  it('🔴 getAssets surfaces a failed split read instead of reporting "not split"', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, id: 'apl_1' });
+    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join('').includes('to_regclass')) return [{ present: true }];
+      throw new Error('connection terminated');
+    });
+    try {
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      await expect(getListingAssets({ listingId: 'apl_1' }, mod)).rejects.toThrow(
+        'connection terminated'
+      );
+    } finally {
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
   it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([

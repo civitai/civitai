@@ -18,8 +18,8 @@ describe('isComEligibleLevel — which images still floor a split listing', () =
     ['X', NsfwLevel.X, false],
     ['XXX', NsfwLevel.XXX, false],
     ['Blocked', NsfwLevel.Blocked, false],
-    // A composite reads by its most severe bit, exactly as the rating derive does.
-    ['PG | R', NsfwLevel.PG | NsfwLevel.R, false],
+    // 🔴 A composite civitai.com could show stays in the floor, so its R bit floors the rating.
+    ['PG | R', NsfwLevel.PG | NsfwLevel.R, true],
   ])('%s → %s', (_label, level, eligible) => {
     expect(isComEligibleLevel(level)).toBe(eligible);
   });

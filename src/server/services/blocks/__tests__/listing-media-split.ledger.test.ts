@@ -51,8 +51,10 @@ describe('app_listing_red_media — the one module that names it', () => {
     const code = PRODUCTION.find((f) => f.rel === SERVICE)!.code;
     // Every top-level declaration, exported or not, so a helper cannot hide inside its neighbour.
     const functions = code
-      .split(/\n(?=(?:export )?(?:async )?function |(?:export )?const \w+ = )/)
-      .map((chunk) => chunk.replace(/^(?:export )?(?:async )?(?:function |const )/, ''));
+      .split(/\n(?=(?:export )?(?:async )?function |(?:export )?(?:const|let|class) )/)
+      .map((chunk) =>
+        chunk.replace(/^(?:export )?(?:async )?(?:function |const |let |class )/, '')
+      );
     const touching = functions.filter((fn) => /\bapp_listing_red_media\b(?!')/.test(fn));
     expect(touching.map((fn) => fn.slice(0, fn.indexOf('('))).sort()).toEqual([
       'applyListingMediaSplitDecision',

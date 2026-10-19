@@ -387,10 +387,12 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     );
   });
 
-  test('while the levels are loading it says it is checking, and approve stays available', async () => {
+  test('🔴 while the levels are loading it says it is checking, and approve waits for them', async () => {
     bar(reRated());
     await expect.element(page.getByTestId('apps-onsite-rating-checking')).toBeInTheDocument();
     await approveVisibleWithoutAlert();
+    // Approving now would send a split decision nobody has seen.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
   });
 
   test('a failed asset read is said out loud rather than read as "nothing to warn about"', async () => {
@@ -399,6 +401,20 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     await expect.element(page.getByTestId('apps-onsite-rating-unchecked')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-rating-mismatch').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-onsite-rating-checking').elements()).toHaveLength(0);
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+  });
+
+  test('🔴 an already-split listing keeps its split by default on the on-site approve', async () => {
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: true };
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
   });
 
   test('🔴 the media split: the warning follows the choice and approve sends it', async () => {

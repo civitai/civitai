@@ -271,9 +271,14 @@ describe('approveRequest — the go-live re-checks the face the up-front check s
     db.write.appListing.findFirst
       .mockResolvedValueOnce(first as never)
       .mockResolvedValueOnce(swapped as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await approve('split');
     expect(await split.stamp(DRAFT)).toBeNull();
     expect(stampedRating('draft')).toBeUndefined();
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+      MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE
+    );
+    warn.mockRestore();
   });
 });
 

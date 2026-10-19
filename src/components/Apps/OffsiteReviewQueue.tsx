@@ -495,6 +495,9 @@ export function OffsiteReviewModalBody({
   // A split floors the rating by the civitai.com-eligible images only, so the default below
   // follows the moderator's split choice rather than offering a value that would undo it.
   const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
+  // Until the listing's media and split state have loaded, an approve would send a decision
+  // nobody has seen — and for a split listing, end its split.
+  const splitStateUnknown = request.appListingId != null && !assetsQuery.data;
   const mediaSplit = resolveListingMediaSplitDecision({
     assets: ratingAssets,
     currentlySplit: assetsQuery.data?.mediaSplitApproved ?? false,
@@ -940,6 +943,11 @@ export function OffsiteReviewModalBody({
               disabled={busy}
               data-testid="apps-offsite-approve-notes"
             />
+            {splitStateUnknown && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+                Approve is available once the listing’s media has loaded.
+              </Text>
+            )}
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
@@ -955,7 +963,7 @@ export function OffsiteReviewModalBody({
                     mediaSplit,
                   })
                 }
-                disabled={busy}
+                disabled={busy || splitStateUnknown}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >

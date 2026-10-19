@@ -6,7 +6,6 @@ import {
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import {
   deriveContentRatingFromAssets,
-  getHighestBrowsingLevelBit,
   sfwBrowsingLevelsFlag,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
@@ -29,12 +28,12 @@ export {
  */
 
 /**
- * Whether an image at `nsfwLevel` still floors a split listing: unrated, or rated within SFW.
- * Read by the same highest bit `deriveContentRatingFromAssets` reads, so an image leaves a split
- * floor exactly when it alone would derive a mature rating.
+ * Whether an image at `nsfwLevel` still floors a split listing: whenever civitai.com could show it
+ * (the gate's own level comparison against SFW). An image the store might show there is never left
+ * out of the floor; one that also carries a mature bit then derives a mature rating, as it should.
  */
 export function isComEligibleLevel(nsfwLevel: number | null | undefined): boolean {
-  return (getHighestBrowsingLevelBit(nsfwLevel ?? 0) & ~sfwBrowsingLevelsFlag) === 0;
+  return isLevelWithinCeiling(nsfwLevel ?? 0, sfwBrowsingLevelsFlag);
 }
 
 /** The assets that floor a listing's `content_rating`: all of them, or with a split only the eligible ones. */

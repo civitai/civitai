@@ -72,7 +72,9 @@ export function ReviewActionBar({
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
-  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision>('rate-mature');
+  // `null` until the listing's media has loaded: approving then would send a decision nobody saw.
+  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision | null>(null);
+  const splitStateUnknown = request.approveRating != null && mediaSplit == null;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
@@ -207,10 +209,10 @@ export function ReviewActionBar({
               approveMut.mutate({
                 publishRequestId: request.id,
                 approvalNotes: approvalNotes.trim() || undefined,
-                mediaSplit: request.approveRating ? mediaSplit : undefined,
+                mediaSplit: request.approveRating ? mediaSplit ?? undefined : undefined,
               })
             }
-            disabled={busy}
+            disabled={busy || splitStateUnknown}
             loading={approveMut.isPending}
           >
             Approve + build

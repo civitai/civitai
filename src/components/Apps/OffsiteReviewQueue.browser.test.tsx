@@ -645,6 +645,15 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     expect(shot.element().textContent).toBe('civitai.red only');
   });
 
+  test('🔴 approve waits until the listing’s media and split state have loaded', async () => {
+    mocks.assetsData.current = undefined;
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-media-split-unknown')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+  });
+
   test('a cover above SFW makes the split unavailable', async () => {
     mocks.assetsData.current = { ...DEFAULT_ASSETS, coverNsfwLevel: 4 };
     await openApprove();

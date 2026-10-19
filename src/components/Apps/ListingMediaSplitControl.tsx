@@ -114,7 +114,8 @@ export function ListingMediaSplitControl({
 
 /**
  * {@link ListingMediaSplitControl} for a listing read by id (the on-site approve bar). Reports the
- * resolved decision through `onResolved`, since the default depends on the listing it reads.
+ * resolved decision through `onResolved`, since the default depends on the listing it reads, and
+ * `null` until it has read it.
  */
 export function ListingMediaSplitControlForListing({
   listingId,
@@ -126,7 +127,8 @@ export function ListingMediaSplitControlForListing({
   listingId: string;
   choice: ListingMediaSplitDecision | null;
   onChoice: (value: ListingMediaSplitDecision) => void;
-  onResolved: (value: ListingMediaSplitDecision) => void;
+  /** `null` while the listing has not loaded (or failed to). */
+  onResolved: (value: ListingMediaSplitDecision | null) => void;
   disabled?: boolean;
 }) {
   const { data } = trpc.appListings.getAssets.useQuery(
@@ -136,7 +138,8 @@ export function ListingMediaSplitControlForListing({
   const assets = data ? listingRatingAssetsFromView(data as Partial<ListingAssetLevels>) : [];
   const currentlySplit = data?.mediaSplitApproved ?? false;
   const resolved = resolveListingMediaSplitDecision({ assets, currentlySplit, choice });
-  useEffect(() => onResolved(resolved.value), [resolved.value, onResolved]);
+  const reported = data ? resolved.value : null;
+  useEffect(() => onResolved(reported), [reported, onResolved]);
   if (!data) return null;
   return (
     <ListingMediaSplitControl

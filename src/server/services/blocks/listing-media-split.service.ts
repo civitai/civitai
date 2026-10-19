@@ -37,7 +37,13 @@ export async function isListingMediaSplitTableAvailable(
   return Array.isArray(rows) && rows[0]?.present === true;
 }
 
-/** Whether a moderator has granted `appListingId` a media split. `false` while the table is absent. */
+/**
+ * Whether a moderator has granted `appListingId` a media split. `false` while the table is absent.
+ * Read as-is by the paths that keep a LIVE listing live (an image re-rate, a moderator's live edit,
+ * the history classifier): a SFW-slot image raised later falls back on civitai.com and is flagged,
+ * and the listing stays listed. A go-live no moderator decides uses
+ * {@link readListingMediaSplitForGoLive} instead.
+ */
 export async function readListingMediaSplit(
   db: Pick<RawClient, '$queryRaw'>,
   appListingId: string
@@ -98,7 +104,9 @@ export async function readListingMediaSplitForGoLive(
 /**
  * Record a moderator's go-live decision on `appListingId` and return whether the listing is
  * split afterwards. `split` stamps the decision with its actor; `rate-mature` and an omitted
- * decision both clear any earlier stamp (default-closed).
+ * decision both clear any earlier stamp (default-closed). The review UI always sends an explicit
+ * value, preselecting `split` only for a listing that is already split, so re-approving it stamps
+ * the moderator who kept it.
  *
  * `face` is the icon and cover going live — for a revision, the shadow's, while `appListingId`
  * is the live listing. A split is refused while either is rated above SFW, since civitai.com
