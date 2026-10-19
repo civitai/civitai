@@ -501,16 +501,19 @@ export function OffsiteReviewModalBody({
   // Until the listing's media and split state have loaded, an approve would send a decision
   // nobody has seen — and for a split listing, end its split.
   // Same condition the asset query is enabled on, so a request it never reads is never blocked.
-  // A `null` split is one this environment cannot read: approving would send a decision about a
-  // split nobody can see, and for a split listing, end it.
+  const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
+  // A `null` split is one this environment cannot read. No choice is offered and approve sends NO
+  // decision, which the server carries out as it did before the split existed (an existing split
+  // is left as it is); any explicit decision would be refused.
   const splitUnreadable = assetsQuery.data?.mediaSplitApproved === null;
-  const splitStateUnknown =
-    !!features?.appBlocks && !!request.appListingId && (!assetsQuery.data || splitUnreadable);
-  const mediaSplit = resolveListingMediaSplitDecision({
+  const resolvedMediaSplit = resolveListingMediaSplitDecision({
     assets: ratingAssets,
     currentlySplit: assetsQuery.data?.mediaSplitApproved === true,
     choice: mediaSplitChoice,
   }).value;
+  const mediaSplit: ListingMediaSplitDecision | undefined = splitUnreadable
+    ? undefined
+    : resolvedMediaSplit;
   const ratingSummary = summarizeListingRating({
     declaredRating: request.appListing?.contentRating,
     assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
@@ -911,7 +914,7 @@ export function OffsiteReviewModalBody({
               <ListingMediaSplitControl
                 assets={ratingAssets}
                 currentlySplit={assetsQuery.data.mediaSplitApproved === true}
-                value={mediaSplit}
+                value={resolvedMediaSplit}
                 // An on-site media REVISION records the decision but keeps the app's rating
                 // (`applyApprovedRevision` is assets-only), so it must not preview ratings.
                 appliesRating={!(isOnsite && !isOnsiteRepublishReview)}
@@ -954,11 +957,14 @@ export function OffsiteReviewModalBody({
               disabled={busy}
               data-testid="apps-offsite-approve-notes"
             />
+            {splitUnreadable && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
+                {MEDIA_SPLIT_UNREADABLE_COPY}
+              </Text>
+            )}
             {splitStateUnknown && (
               <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
-                {splitUnreadable
-                  ? MEDIA_SPLIT_UNREADABLE_COPY
-                  : assetsQuery.isError
+                {assetsQuery.isError
                   ? 'Could not load the listing’s media, so approve is unavailable. Close and reopen this request to retry.'
                   : 'Approve is available once the listing’s media has loaded.'}
               </Text>
@@ -975,7 +981,7 @@ export function OffsiteReviewModalBody({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
-                    mediaSplit,
+                    ...(mediaSplit ? { mediaSplit } : {}),
                   })
                 }
                 disabled={busy || splitStateUnknown}

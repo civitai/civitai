@@ -152,6 +152,31 @@ beforeEach(() => {
   mocks.assetsError.current = false;
 });
 
+/**
+ * The approve flow when the server reports the split as unreadable (`mediaSplitApproved: null`,
+ * the write role cannot read the record). The operator's rule (2026-10-18): approve proceeds with
+ * NO split decision, exactly as before the split existed — so no choice is offered and none is
+ * sent (an explicit one would be refused). Returns the mutation input.
+ */
+async function expectUnreadableApproveSendsNoDecision() {
+  await expect
+    .element(page.getByTestId('apps-media-split-unreadable'))
+    .toHaveTextContent(
+      /cannot read whether this listing’s media is split.*without a split decision.*existing split is left as it is.*Split choices are unavailable until the database grant/
+    );
+  expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+  expect(page.getByRole('radio', { name: /^Rate by all media/ }).elements()).toHaveLength(0);
+  expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
+  const confirm = page.getByTestId('apps-offsite-approve-confirm');
+  await expect.element(confirm).toBeEnabled();
+  await confirm.click();
+  expect(mocks.approveMutate).toHaveBeenCalledTimes(1);
+  const vars = mocks.approveMutate.mock.calls[0][0];
+  expect(vars).toEqual(expect.objectContaining({ publishRequestId: expect.any(String) }));
+  expect(vars).not.toHaveProperty('mediaSplit');
+  return vars;
+}
+
 describe('OffsiteReviewQueue — kind-aware review row', () => {
   test('renders a pending off-site row', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
@@ -467,6 +492,14 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
     await expect.element(mismatch).toHaveTextContent('must not exceed the app’s rating');
   });
 
+  test('🔴 an on-site media revision whose split the app cannot read approves with no decision', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const vars = await expectUnreadableApproveSendsNoDecision();
+    expect(vars).toEqual(expect.objectContaining({ publishRequestId: 'lmr-1' }));
+  });
+
   test('🔴 the split choice previews no rating: the revision apply records it but rates nothing', async () => {
     // `applyApprovedRevision`'s on-site branch is assets-only — it writes the split stamp and
     // never `contentRating`. Fixture ratings are distinct (all media R, civitai.com media G), so
@@ -735,29 +768,25 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
   });
 
-  test('🔴 a split the app cannot read holds approve and says why, rather than showing "not split"', async () => {
-    // The server reports `null` when the role the approve writes with cannot read the record:
-    // the listing may be split, and any decision sent could end it.
+  test('🔴 a split the app cannot read: no choice, a note, and approve proceeds with no decision', async () => {
     mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
     await page.getByTestId('apps-offsite-approve-open').click();
-    const unknown = page.getByTestId('apps-media-split-unknown');
-    await expect
-      .element(unknown)
-      .toHaveTextContent(
-        /cannot read whether this listing’s media is split.*approve is unavailable/
-      );
-    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
-    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
-    expect(page.getByRole('radio', { name: /^Rate by all media/ }).elements()).toHaveLength(0);
+    const vars = await expectUnreadableApproveSendsNoDecision();
+    // Rated by all media (the screenshot's R), as before the split existed.
+    expect(vars).toEqual(expect.objectContaining({ contentRating: 'r' }));
   });
 
   test('positive control: the same listing read as unsplit offers the choice and approves', async () => {
     mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: false };
     await openApprove();
-    expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
-    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeEnabled();
+    expect(page.getByTestId('apps-media-split-unreadable').elements()).toHaveLength(0);
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'rate-mature' })
+    );
   });
 
   test('🔴 a listing that is already split keeps it by default, and says how to end it', async () => {

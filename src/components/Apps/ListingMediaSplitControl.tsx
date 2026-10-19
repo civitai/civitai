@@ -19,12 +19,23 @@ import { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 
 /**
- * Shown in place of the choice, with approve held, when the server reports the split as
- * unreadable (`mediaSplitApproved: null`): the app cannot read the record on this environment, so
- * any decision sent could end a split nobody can see.
+ * Shown in place of the choice when the server reports the split as unreadable
+ * (`mediaSplitApproved: null`): the app cannot read the record on this environment. Approve stays
+ * available and sends NO split decision, which the server carries out exactly as it did before the
+ * split existed — nothing issued against the record, an existing split left as it is. Any explicit
+ * decision would be refused, so none is offered.
  */
 export const MEDIA_SPLIT_UNREADABLE_COPY =
-  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red, so approve is unavailable: approving could end a split nobody can see. Ask an engineer to grant the app access to the media-split record, then reopen this request.';
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing without a split decision: any existing split is left as it is. Split choices are unavailable until the database grant for the media-split record is fixed.';
+
+/**
+ * Reported by {@link ListingMediaSplitControlForListing} when the listing has loaded but its split
+ * cannot be read: approve may proceed, sending no split decision.
+ */
+export const MEDIA_SPLIT_NO_DECISION = 'no-decision' as const;
+export type ListingMediaSplitResolution =
+  | ListingMediaSplitDecision
+  | typeof MEDIA_SPLIT_NO_DECISION;
 
 /**
  * The moderator's go-live choice for a listing whose media is partly above SFW: rate the listing
@@ -147,8 +158,9 @@ export function ListingMediaSplitControl({
 
 /**
  * {@link ListingMediaSplitControl} for a listing read by id (the on-site approve bar). Reports the
- * resolved decision through `onResolved`, since the default depends on the listing it reads, and
- * `null` until it has read it.
+ * resolved decision through `onResolved`, since the default depends on the listing it reads:
+ * `null` until it has read it (approve held), {@link MEDIA_SPLIT_NO_DECISION} when it has but the
+ * split cannot be read (approve proceeds without a decision).
  */
 export function ListingMediaSplitControlForListing({
   listingId,
@@ -160,8 +172,11 @@ export function ListingMediaSplitControlForListing({
   listingId: string;
   choice: ListingMediaSplitDecision | null;
   onChoice: (value: ListingMediaSplitDecision) => void;
-  /** `null` while the listing has not loaded (or failed to), or its split cannot be read. */
-  onResolved: (value: ListingMediaSplitDecision | null) => void;
+  /**
+   * `null` while the listing has not loaded (or failed to); {@link MEDIA_SPLIT_NO_DECISION} when it
+   * has but its split cannot be read.
+   */
+  onResolved: (value: ListingMediaSplitResolution | null) => void;
   disabled?: boolean;
 }) {
   const { data } = trpc.appListings.getAssets.useQuery(
@@ -170,15 +185,19 @@ export function ListingMediaSplitControlForListing({
   );
   const assets = data ? listingRatingAssetsFromView(data as Partial<ListingAssetLevels>) : [];
   const currentlySplit = data?.mediaSplitApproved === true;
-  // A `null` split is unreadable on this environment: report no decision, so approve stays held.
+  // A `null` split is unreadable on this environment: approve proceeds, sending no decision.
   const unreadable = data?.mediaSplitApproved === null;
   const resolved = resolveListingMediaSplitDecision({ assets, currentlySplit, choice });
-  const reported = data && !unreadable ? resolved.value : null;
+  const reported: ListingMediaSplitResolution | null = !data
+    ? null
+    : unreadable
+    ? MEDIA_SPLIT_NO_DECISION
+    : resolved.value;
   useEffect(() => onResolved(reported), [reported, onResolved]);
   if (!data) return null;
   if (unreadable)
     return (
-      <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+      <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
         {MEDIA_SPLIT_UNREADABLE_COPY}
       </Text>
     );

@@ -44,8 +44,9 @@
 --          floors and the author and store reads keep working. An approve sent with no split
 --          decision proceeds exactly as before this table existed and issues nothing against
 --          it. An explicit decision (split, or rate by all media) is refused up front with a
---          moderator-facing message, nothing written or built; the review modal says the split
---          cannot be read and holds approve, since any decision it sent would be refused.
+--          moderator-facing message, nothing written or built. Both review surfaces say the split
+--          cannot be read, offer no split choice, and approve with no decision, so a moderator's
+--          approve proceeds as before (an existing split is left as it is).
 --        - SELECT, but not both INSERT and UPDATE: a split is refused. Without UPDATE, a clear
 --          (rate by all media, or an approve with no decision) is refused only when the listing
 --          IS split — a split the app can see and could not end; otherwise it proceeds.

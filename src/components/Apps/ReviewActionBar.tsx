@@ -1,7 +1,11 @@
 import { Box, Button, Group, Stack, Textarea } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { ListingMediaSplitControlForListing } from '~/components/Apps/ListingMediaSplitControl';
+import {
+  ListingMediaSplitControlForListing,
+  MEDIA_SPLIT_NO_DECISION,
+  type ListingMediaSplitResolution,
+} from '~/components/Apps/ListingMediaSplitControl';
 import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
@@ -73,8 +77,14 @@ export function ReviewActionBar({
   const [rejectionReason, setRejectionReason] = useState('');
   const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
   // `null` until the listing's media has loaded: approving then would send a decision nobody saw.
-  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision | null>(null);
+  // `MEDIA_SPLIT_NO_DECISION` once it has but the split cannot be read: approve proceeds and sends
+  // no decision, which the server carries out as it did before the split existed.
+  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitResolution | null>(null);
   const splitStateUnknown = request.approveRating != null && mediaSplit == null;
+  const mediaSplitDecision =
+    request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
+      ? mediaSplit
+      : undefined;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
@@ -209,7 +219,7 @@ export function ReviewActionBar({
               approveMut.mutate({
                 publishRequestId: request.id,
                 approvalNotes: approvalNotes.trim() || undefined,
-                mediaSplit: request.approveRating ? mediaSplit ?? undefined : undefined,
+                ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
               })
             }
             disabled={busy || splitStateUnknown}

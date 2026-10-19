@@ -1750,8 +1750,9 @@ export async function getListingAssets(
     hasPendingScan: allScans.some((s) => s === 'pending'),
     // Read through the WRITE client, the one every approve records or clears the split with, so
     // the review shows what that approve will act on, whatever the read client's role may do.
-    // `null` when the write role cannot read it: the review then holds approve rather than show a
-    // split listing as unsplit. A failed statement still throws.
+    // `null` when the write role cannot read it: rather than show a split listing as unsplit, the
+    // review then offers no split choice and approves with no decision, which leaves any split as
+    // it is. A failed statement still throws.
     mediaSplitApproved: await readListingMediaSplitState(
       dbWrite,
       listing.revisionOfId ?? listing.id

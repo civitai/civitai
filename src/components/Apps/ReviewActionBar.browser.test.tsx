@@ -405,16 +405,25 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
   });
 
-  test('🔴 a split the app cannot read holds the on-site approve and says why', async () => {
+  test('🔴 a split the app cannot read: no choice, a note, and the on-site approve sends no decision', async () => {
+    // `null` = the write role cannot read the record. The operator's rule (2026-10-18): approve
+    // proceeds with NO split decision, exactly as before the split existed.
     mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: null };
     bar(reRated());
     await expect
-      .element(page.getByTestId('apps-media-split-unknown'))
+      .element(page.getByTestId('apps-media-split-unreadable'))
       .toHaveTextContent(
-        /cannot read whether this listing’s media is split.*approve is unavailable/
+        /cannot read whether this listing’s media is split.*without a split decision.*existing split is left as it is.*Split choices are unavailable until the database grant/
       );
-    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
     expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const [name, vars] = mocks.mutate.mock.calls[0];
+    expect(name).toBe('approve');
+    expect(vars).toEqual({ publishRequestId: 'req-1', approvalNotes: undefined });
+    expect(vars).not.toHaveProperty('mediaSplit');
   });
 
   test('🔴 an already-split listing keeps its split by default on the on-site approve', async () => {
