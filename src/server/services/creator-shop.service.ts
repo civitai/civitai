@@ -981,7 +981,11 @@ export const updateCreatorShopItem = async ({
       where: { id },
       select: { status: true, meta: true },
     });
-    if (current?.status !== existing.status || !isEqual(current.meta, existing.meta))
+    // Every sale bumps `purchases` in SQL (countShopItemSale): carried from the locked row, not
+    // compared, so a sale mid-edit is neither a conflict nor rolled back by this write.
+    const { purchases, ...currentMeta } = (current?.meta ?? {}) as CosmeticShopItemMeta;
+    const { purchases: _readPurchases, ...readMeta } = meta;
+    if (current?.status !== existing.status || !isEqual(currentMeta, readMeta))
       throw throwConflictError(
         'This item changed while you were editing it. Reload and try again.'
       );
@@ -1005,7 +1009,10 @@ export const updateCreatorShopItem = async ({
         status,
         // Clear the prior verdict whenever it re-enters the review queue.
         ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
-        meta: nextMeta as Prisma.InputJsonValue,
+        meta: {
+          ...nextMeta,
+          ...(purchases !== undefined ? { purchases } : {}),
+        } as Prisma.InputJsonValue,
       },
       select: creatorShopItemSelect,
     });

@@ -541,4 +541,18 @@ describe('a verdict landing while a creator edit is in flight', () => {
     });
     expect(outcome).toMatch(/changed while you were editing/);
   });
+
+  it('a sale landing mid-edit is kept, and does not refuse the edit', async () => {
+    storedListing = listingRow(LIVE);
+    // The edit reads the item at no sales; a buyer's sale bumps the counter right after.
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementationOnce(() => {
+      const beforeSale = storedListing;
+      storedListing = { ...storedListing, meta: { ...storedListing.meta, purchases: 1 } };
+      return beforeSale;
+    });
+
+    await updateCreatorShopItem({ id: 42, userId: CREATOR, price: 520 });
+
+    expect(storedListing).toMatchObject({ unitAmount: 520, meta: { purchases: 1 } });
+  });
 });
