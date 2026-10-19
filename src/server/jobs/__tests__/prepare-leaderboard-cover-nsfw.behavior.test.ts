@@ -33,17 +33,29 @@ vi.mock('~/server/db/pgDb', () => {
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/jobs/apply-discord-roles', () => ({ applyDiscordLeaderboardRoles: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
+vi.mock('~/server/services/metric-excluded-users.service', () => ({
+  getMetricExcludedUserIdsOrThrow: vi.fn(async () => []),
+}));
 vi.mock('~/server/services/leaderboard.service', () => ({
   getUnpopulatedLeaderboards: vi.fn(),
   isLeaderboardPopulated: vi.fn(),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { logToAxiom } from '~/server/logging/client';
-import { setCoverImageNsfwLevel, setCoverImageNsfwLevelOrLog } from '../prepare-leaderboard';
+import {
+  leaderboardJobs,
+  setCoverImageNsfwLevel,
+  setCoverImageNsfwLevelOrLog,
+} from '../prepare-leaderboard';
 
 const q = (sql: string, params?: unknown[]) => holder.db.query(sql, params);
 const modelMeta = async (id: number) =>
   (await q(`SELECT meta FROM "Model" WHERE id = $1`, [id])).rows[0] as { meta: unknown };
+const versionMeta = async (id: number) =>
+  (await q(`SELECT meta FROM "ModelVersion" WHERE id = $1`, [id])).rows[0] as { meta: unknown };
+const malformedLogs = () =>
+  vi.mocked(logToAxiom).mock.calls.filter(([e]) => e.name === 'leaderboard-malformed-meta');
 
 /** A Published model whose first version's post carries `level`, with the model's meta as given. */
 async function model(id: number, meta: string, level = 4) {
@@ -93,12 +105,27 @@ describe('setCoverImageNsfwLevel with a model whose meta is not an object', () =
     expect((await modelMeta(1)).meta).toEqual({ imageNsfwLevel: 4 });
     expect((await modelMeta(3)).meta).toEqual({ imageNsfwLevel: 4 });
     expect((await modelMeta(2)).meta).toEqual([null, { a: 1 }]);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'leaderboard-malformed-meta',
-        error: expect.objectContaining({ table: 'Model', ids: [2] }),
-      })
-    );
+    expect(malformedLogs()).toEqual([
+      [expect.objectContaining({ error: expect.objectContaining({ table: 'Model', ids: [2] }) })],
+    ]);
+  });
+
+  it('does the same for a version whose meta is not an object', async () => {
+    await model(1, '{}');
+    await model(2, '{}');
+    await q(`UPDATE "ModelVersion" SET meta = '[null, {"a": 1}]'::jsonb WHERE id = 2`);
+
+    await setCoverImageNsfwLevel();
+
+    expect((await versionMeta(1)).meta).toEqual({ imageNsfwLevel: 4 });
+    expect((await versionMeta(2)).meta).toEqual([null, { a: 1 }]);
+    expect(malformedLogs()).toEqual([
+      [
+        expect.objectContaining({
+          error: expect.objectContaining({ table: 'ModelVersion', ids: [2] }),
+        }),
+      ],
+    ]);
   });
 
   it('skips a model whose meta became an array after it was read', async () => {
@@ -113,6 +140,21 @@ describe('setCoverImageNsfwLevel with a model whose meta is not an object', () =
 
     expect((await modelMeta(1)).meta).toEqual({ imageNsfwLevel: 4 });
     expect((await modelMeta(2)).meta).toEqual([null, { b: 1 }]);
+  });
+});
+
+describe('the prepare-leaderboard job', () => {
+  it('still reads the boards when the cover level step throws', async () => {
+    await q(`ALTER TABLE "Post" RENAME TO "PostGone"`);
+    try {
+      dbMock.dbWrite.leaderboard.findMany.mockResolvedValue([] as never);
+      const job = leaderboardJobs.find((j) => j.name === 'prepare-leaderboard')!;
+      // What happens after the boards are read is not this test's subject.
+      await job.run({}).result.catch(() => undefined);
+      expect(dbMock.dbWrite.leaderboard.findMany).toHaveBeenCalled();
+    } finally {
+      await q(`ALTER TABLE "PostGone" RENAME TO "Post"`);
+    }
   });
 });
 
