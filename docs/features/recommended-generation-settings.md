@@ -54,8 +54,10 @@
   entry has no turbo LoRAs: the editor shows neither the Turbo section nor the
   default turbo LoRA picker, and the server refuses both. With it, the editor
   prefills the turbo block from `settings` and the graph falls back to it for
-  anything a turbo LoRA left unset. Only ecosystems with a `lora` show the
-  generator picker; today that is MOSS alone (Z-Image, Flux Draft and Krea 2 Turbo
+  anything a turbo LoRA left unset. `settings` is normally one of the shared
+  `TURBO_PRESETS`, since distillation recipes recur across ecosystems. Opted in
+  today: MOSS Image and Anima, both on the 8-step preset. Only ecosystems with a
+  `lora` show the generator picker; today that is MOSS alone (Z-Image, Flux Draft and Krea 2 Turbo
   are distilled checkpoints or ecosystems, not LoRAs). Changing the default is a
   constants change and a deploy.
 - **Per-checkpoint override:** `settings.generation.turboLora.id`, picked in the
