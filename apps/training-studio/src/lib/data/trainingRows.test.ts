@@ -210,7 +210,9 @@ describe('namedDownloadUrl', () => {
         'my-char-flux-dev-epoch-03.safetensors'
       )
     );
-    expect(u.pathname).toBe('/v2/consumer/blobs/K1.safetensors');
+    expect(u.toString()).toMatch(
+      /^https:\/\/orch\.example\/v2\/consumer\/blobs\/K1\.safetensors\?sig=abc%2B&exp=2026-11-01T00:00:00Z&/
+    );
     expect(u.searchParams.get('sig')).toBe('abc+');
     expect(u.searchParams.get('exp')).toBe('2026-11-01T00:00:00Z');
     expect(u.searchParams.get('filename')).toBe('my-char-flux-dev-epoch-03.safetensors');

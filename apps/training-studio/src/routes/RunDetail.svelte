@@ -335,8 +335,11 @@
     archiving = kind;
     archiveError = '';
     archiveParts = [];
+    // A /[id]→/[id'] navigation reuses this component; a result for the run we left must not land here.
+    const runId = d.workflowId;
     try {
-      const parts = await backend().epochArchive(d.workflowId, kind);
+      const parts = await backend().epochArchive(runId, kind);
+      if (runId !== d.workflowId) return;
       if (parts.length === 1) {
         const a = document.createElement('a');
         a.href = parts[0].url;
@@ -348,13 +351,14 @@
         archiveParts = parts;
       }
     } catch (e) {
-      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+      if (runId === d.workflowId)
+        archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
     } finally {
-      archiving = null;
+      if (runId === d.workflowId) archiving = null;
     }
   }
 
-  // Every file this run downloads is named `<run>-<base>-epoch-NN…`, not by its opaque blob id.
+  // Epoch weights download as `<run>-<base>-epoch-NN…`, not by their opaque blob id.
   const fileStem = $derived(runFileStem(d.name, d.base));
   const maxEpoch = $derived(Math.max(0, ...d.epochs.map((e) => e.number)));
   const weightsHref = (e: TrainingDetailEpoch) =>
@@ -542,6 +546,7 @@
     // The quote itself blanks via debouncedQuote (workflowIdKey is part of its key).
     quoteError = '';
     downloadError = '';
+    archiving = null;
     archiveError = '';
     archiveParts = [];
     showLineage = false;

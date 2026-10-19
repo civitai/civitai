@@ -636,15 +636,14 @@ export function epochWeightsFileName(
  *  orchestrator's signature covers only the path, so the added `filename`/`download` params pass
  *  through to its Content-Disposition; an orchestrator that ignores them still serves the file. */
 export function namedDownloadUrl(url: string, fileName: string): string {
-  let u: URL;
   try {
-    u = new URL(url);
+    new URL(url);
   } catch {
     return url;
   }
-  u.searchParams.set('filename', fileName);
-  u.searchParams.set('download', 'true');
-  return u.toString();
+  // Appended, not rebuilt through URLSearchParams, so the signed query keeps its exact encoding.
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}filename=${encodeURIComponent(fileName)}&download=true`;
 }
 
 export type ArchiveKind = 'weights' | 'samples';
@@ -687,7 +686,7 @@ export function epochArchiveParts(w: Workflow, kind: ArchiveKind): ArchivePart[]
   const maxEpoch = epochs.at(-1)?.epochNumber ?? 0;
   const tag = (e: TrainingEpochOutput) => epochTag(e.epochNumber ?? 0, maxEpoch);
 
-  const entries: { blobId: string; fileName: string }[] = [];
+  const entries: ArchivePart['entries'] = [];
   const seen = new Set<string>();
   const add = (blobId: string, fileName: string) => {
     if (seen.has(blobId)) return;
