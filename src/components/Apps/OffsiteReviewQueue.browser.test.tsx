@@ -653,7 +653,9 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
     await page.getByTestId('apps-offsite-approve-open').click();
-    await expect.element(page.getByTestId('apps-media-split-unknown')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-media-split-unknown'))
+      .toHaveTextContent('Approve is available once the listing’s media has loaded.');
     await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
   });
 
@@ -669,7 +671,7 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
   });
 
-  test('🔴 a request with no listing to read is never blocked on it', async () => {
+  test('invariant guard: a request with no listing to read is never blocked on it', async () => {
     mocks.assetsData.current = undefined;
     renderWithProviders(
       <OffsiteReviewModal
