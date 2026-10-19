@@ -97,8 +97,10 @@ and flip order.
 - [ ] `commentv3_set_path` BEFORE INSERT trigger fills `path`; `rootId`/`depth` are
       `GENERATED ALWAYS … STORED NOT NULL` from it, as in Koen's draft (a 2026-10-16 move into the
       trigger was reverted 2026-10-19 — plan blocker 6) **(review)**
-- [ ] Index set from the plan doc (top ×3, entity, replies ×2 with `hidden` second,
-      `(rootId, depth)`, GiST `path`, `(userId, id DESC)`, `legacyV1Id` unique partial,
+- [ ] Index set from the plan doc (top ×3 — **Newest leads on `createdAt`, `id` is the tiebreak,
+      because v1 rows take new ids (review, 2026-10-19)** — entity, replies ×2 with `hidden` second
+      and the newest one on `(createdAt, id)`, `(rootId, depth)`, GiST `path`, `(userId, id DESC)`,
+      `legacyV1Id` unique partial,
       **`replyToId` partial — without it every hard-delete scans the table (review, benchmarked)**)
 - [ ] Shared sequence `comment_shared_id_seq`: seed past `max(CommentV2.id, Comment.id)`, re-point
       `Comment` and `CommentV2` id defaults at it
@@ -133,7 +135,8 @@ the raw-SQL writers never reach the services, a one-for-one delete mirror would 
 `parentId ON DELETE RESTRICT`, and an app-level copy leaves a read-then-insert window for the
 backfill to race.
 
-- [ ] `AFTER INSERT/UPDATE/DELETE` mirror triggers on `Comment` (via `legacyV1Id`) and `CommentV2`:
+- [ ] `AFTER INSERT/UPDATE/DELETE` mirror triggers on `Comment` (via `legacyV1Id`; a new v1 row
+      keeps its id as the V3 id, `legacyV1Id` = that id) and `CommentV2`:
       insert copies any missing ancestor chain first (`Thread.commentId → CommentV2.threadId`);
       delete applies D6 (tombstone if the v3 row has children, else hard-delete)
 - [ ] `commentv3_thread_entity(thread)` SQL function — one `Thread` → `(entityType, entityId)`
@@ -148,7 +151,8 @@ backfill to race.
       (model → v1 comments, v1 parent → replies, `Thread` → `CommentV2`, account deletion)
 - [ ] v3 service module on `kyselyRead`/`kyselyWrite` (`src/server/db/kyselyDb.ts`), `path`
       operations as `sql` fragments, transactions through the Kysely client (D8); `test:lint-rules`
-      run on every transaction change
+      run on every transaction change; Newest/Oldest keyset cursor is the `(createdAt, id)` pair
+      compared as a row value, for top-level pages and reply pages alike
 - [ ] `toggleLockCommentsThread` sets `Thread.locked` + `CommentTopic.locked` together
 - [ ] `toggleThreadMute` → `CommentMute`, `toggleSectionMute` → `CommentTopicMute` (both v2 controls
       from PR #4524; the section control gains the ability to mute a comment-less entity)
@@ -166,15 +170,16 @@ CommentV3; the live edge is being maintained.
 
 Runs under live dual-write, so every copy job uses skip-existing semantics
 (`ON CONFLICT (id) DO NOTHING` for v2, `ON CONFLICT ("legacyV1Id") DO NOTHING` for v1 — v1 rows
-take new ids, so `id` never conflicts **(review)**; a mirrored row is always at least as fresh as
-the copy):
+take new ids, so `id` never conflicts **(review)**; a v1 row the mirror already copied keeps the
+id the mirror gave it; a mirrored row is always at least as fresh as the copy):
 
 - [ ] v2 comment copy job: `threadId → (entityType, entityId)` via root chain; `parentId` = thread's
       `commentId`; **inserted in depth order** so the path trigger finds each parent (`rootId`/
       `depth` come from the trigger, not the backfill); rows deeper than 20 **clamped** to a
       depth-20 sibling with `replyToId` set **(review)**; ids + timestamps preserved; nullable
       `hidden`/`locked` → false; idempotent + batched + resumable
-- [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, ids from shared sequence
+- [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, new ids from the shared sequence
+      for pre-existing rows; `createdAt` verbatim (the Newest sort reads it, not `id`)
 - [ ] Topic copy: one `CommentTopic` per entity-bearing Thread (locked carried, count recomputed
       from `CommentV2` rows, not copied from `Thread.commentCount`)
 - [ ] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;

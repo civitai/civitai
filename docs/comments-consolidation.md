@@ -42,6 +42,10 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-19 — Newest/Oldest sort on `(createdAt, id)`, not `id`.** The v1 backfill under
+  dual-write makes id order diverge from creation order; the two "newest" indexes lead on
+  `createdAt` and the keyset cursor is the pair (_ID strategy_, _Indexes_). Also: a v1 row
+  written during dual-write keeps its id in V3.
 - **2026-10-19 — no `ComicChapter` surrogate-id migration.** `ComicChapter.id` has existed since
   2026-03-04; comic chapters key on it, and one `commentv3_thread_entity` function resolves
   `Thread` rows for both the mirror and the backfill (keying note above _Phase 1_).
@@ -657,13 +661,15 @@ topic alone — the entity still exists.
 -- filtered on hidden: hidden rows are rare, a residual filter is cheap, and the same index then
 -- serves the moderator hidden-comments view (which would otherwise have no index at all).
 -- Tombstoned rows stay in — they render as "[deleted]" placeholders.
-CREATE INDEX commentv3_top_newest    ON "CommentV3" ("entityType", "entityId", "id" DESC)                       WHERE "parentId" IS NULL;
+-- Newest/Oldest lead with createdAt, not id: once v1 rows take new ids from the shared sequence,
+-- id order is no longer creation order (ID strategy below). id is the keyset tiebreak.
+CREATE INDEX commentv3_top_newest    ON "CommentV3" ("entityType", "entityId", "createdAt" DESC, "id" DESC)     WHERE "parentId" IS NULL;
 CREATE INDEX commentv3_top_reactions ON "CommentV3" ("entityType", "entityId", "reactionCount" DESC, "id" DESC) WHERE "parentId" IS NULL;
 CREATE INDEX commentv3_top_pinned    ON "CommentV3" ("entityType", "entityId", "pinnedAt" DESC)                 WHERE "pinnedAt" IS NOT NULL;
 -- Entity-wide reads at any depth (hidden counts, moderation)
 CREATE INDEX commentv3_entity ON "CommentV3" ("entityType", "entityId");
 -- Reply pages and capped reply counts under one parent (hidden second so count branches don't cross)
-CREATE INDEX commentv3_replies_newest    ON "CommentV3" ("parentId", "hidden", "id");
+CREATE INDEX commentv3_replies_newest    ON "CommentV3" ("parentId", "hidden", "createdAt", "id");
 CREATE INDEX commentv3_replies_reactions ON "CommentV3" ("parentId", "hidden", "reactionCount" DESC, "id" DESC);
 -- Auto-expand a page of roots
 CREATE INDEX commentv3_root_depth ON "CommentV3" ("rootId", "depth");
@@ -684,9 +690,9 @@ Every interaction is one index-backed query on one table:
 
 | Interaction                                              | Query                                                                                                                                                                                                      |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First page of an entity's comments                       | `WHERE entityType/entityId AND parentId IS NULL ORDER BY <sort> LIMIT n` (keyset cursor, same 3 sort modes as today)                                                                                       |
+| First page of an entity's comments                       | `WHERE entityType/entityId AND parentId IS NULL ORDER BY <sort> LIMIT n` (keyset cursor, same 3 sort modes as today; Newest/Oldest on the `(createdAt, id)` pair compared as a row value)                  |
 | Does this comment have replies? / "Show N replies"       | one capped `GROUP BY parentId` over the page's ids on the `(parentId, hidden, …)` index — index-only, replaces the childless-comment bookkeeping in `reply-threads.ts` (Phase 0 EXPLAINs it at prod scale) |
-| Load more replies under a comment                        | `WHERE parentId = ? AND id > cursor ORDER BY id LIMIT k` (MostReactions replies get their own index)                                                                                                       |
+| Load more replies under a comment                        | `WHERE parentId = ? AND (createdAt, id) > cursor ORDER BY createdAt, id LIMIT k` (MostReactions replies get their own index)                                                                               |
 | Auto-expand replies d levels deep for a page of roots    | `WHERE rootId = ANY(pageIds) AND depth <= d AND NOT hidden` — **no recursive CTE**; the existing budget selector (`selectReplyThreadsWithinBudget`) ports over                                             |
 | Drill into / re-root on a deep comment                   | subtree via `path <@ comment.path` on the GiST index, or `parentId = commentId` page-by-page                                                                                                               |
 | Is any ancestor locked? (write-time check)               | `WHERE path @> new.path AND locked` — one GiST lookup                                                                                                                                                      |
@@ -816,7 +822,18 @@ Plan:
   the same id on both sides by construction.
 - **Legacy v1 rows get new ids**, with the original id in `legacyV1Id` (unique). The notification
   detail-fetcher's `version !== 2` branch resolves via `legacyV1Id` — that shim is permanent (old
-  notification rows never go away) but tiny.
+  notification rows never go away) but tiny. A v1 row written _during_ dual-write already holds an
+  id that is unique across all three tables (it came from the shared sequence), so the mirror
+  keeps it as the V3 id and sets `legacyV1Id` to the same value; only pre-existing v1 rows are
+  re-numbered, by the backfill.
+- **Ids are identities, not timestamps** (added 2026-10-19). Today v2 sorts Newest by `id DESC`.
+  That stops being creation order the moment the v1 backfill runs under dual-write: a comment
+  posted on a model during the backfill takes a sequence id _below_ the ids handed to older
+  comments copied after it, and would sort as older than them for good. So V3 sorts Newest and
+  Oldest on `(createdAt, id)` — `id` only as the tiebreak — with the two "newest" indexes leading
+  on `createdAt` (_Indexes_) and the keyset cursor a row-value pair. MostReactions keeps
+  `(reactionCount DESC, id DESC)`; there `id` is an arbitrary tiebreak and nothing reads it as
+  time. The backfill copies `createdAt` verbatim, so backfill order does not matter either.
 - ClickHouse tracking starts sending `entityType` + new comment id explicitly on every event;
   `model.metrics.ts`'s dependence on `entityId = modelId` for `type='Model'` is preserved during
   transition and re-pointed in Phase 5.
@@ -925,7 +942,9 @@ Idempotent, batched copy jobs:
   `createdAt`/`updatedAt` preserved; nullable `hidden`/`locked` coalesce to false; `replyToId`
   stays null for every other migrated row.
 - v1 comments: direct copy with `entityType='model'`, `legacyV1Id` set, new ids from the shared
-  sequence.
+  sequence for pre-existing rows (rows the mirror already copied keep the id it gave them — the
+  `legacyV1Id` conflict no-ops). `createdAt` is copied verbatim and is what the Newest sort reads,
+  so the order the backfill hands out ids in does not matter (_ID strategy_).
 - Topics: one `CommentTopic` per entity-bearing Thread, copying `locked`; `commentCount` recomputed
   by trigger-equivalent count. **The counted set must match today's trigger exactly — all rows,
   including hidden and self-authored** — because `challenge.service.ts` and `getCommentCount` read
