@@ -35,6 +35,8 @@ describe('unpublishPostAsModerator', () => {
     for (const key of ['unpublishedAt', 'unpublishedBy', 'prevPublishedAt', 'unpublishedReason'])
       expect(sql).toContain(key);
     expect(sql).toContain('"publishedAt" IS NOT NULL');
+    // A post with NULL metadata would otherwise get no stamps and could not be restored.
+    expect(sql).toContain('COALESCE("metadata"');
     expect(call.slice(1)).toEqual(expect.arrayContaining([7, 'csam-text-hold', 55]));
   });
 

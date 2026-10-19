@@ -21,7 +21,7 @@ import { withSignals } from '~/server/signals/wrapper';
 import { decideDmRouting } from '~/server/utils/chat';
 import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { truncateAuditValue } from '~/server/common/chat-audit.constants';
+import { truncateAuditValue, type ChatAuditRow } from '~/server/common/chat-audit.constants';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   throwOnBlockedLinkDomain,
@@ -727,18 +727,6 @@ export const createMessage = async ({
   return resp;
 };
 
-type ChatDeleteAudit = {
-  type: 'delete';
-  chatId: number;
-  messageId: number;
-  actorId: number;
-  subjectId: number;
-  actorRole: 'owner' | 'moderator';
-  oldValue: string;
-  newValue: string;
-  truncated: boolean;
-};
-
 /**
  * Hides a message from everyone in the chat and retains the row: the delete is recorded, so a report
  * filed against the thread afterwards still resolves to what was actually said. Authors delete their
@@ -752,8 +740,8 @@ export const deleteChatMessage = async ({
 }: {
   messageId: number;
   actorId: number;
-  isModerator: boolean;
-  audit: (event: ChatDeleteAudit) => Promise<unknown>;
+  isModerator?: boolean;
+  audit: (event: ChatAuditRow) => Promise<unknown>;
 }) => {
   const existing = await dbWrite.chatMessage.findFirst({
     where: { id: messageId },

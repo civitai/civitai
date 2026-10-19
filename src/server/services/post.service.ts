@@ -1043,7 +1043,7 @@ export async function unpublishPostAsModerator({
   const rows = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
     UPDATE "Post"
     SET
-      "metadata" = "metadata" || jsonb_build_object(
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
         'unpublishedAt', ${unpublishedAt}::text,
         'unpublishedBy', ${userId}::int,
         'unpublishedReason', ${reason}::text,
