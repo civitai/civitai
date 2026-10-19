@@ -1,4 +1,6 @@
+import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
+  GrantedBox as GrantedBoxRow,
   UserReview,
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
@@ -118,6 +120,8 @@ export type ShopPurchase = {
 
 export type AvailableCosmetic = { id: number; name: string };
 
+export type GrantedBox = Jsonified<GrantedBoxRow>;
+
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
@@ -131,6 +135,8 @@ export type Account = {
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
+  grantedBoxes: Capped<GrantedBox>;
+  grantableBoxes: GrantableBox[];
 };
 
 /** `version` is part of the URL so bumping it rebuilds the derived promise — a Buzz send has to move

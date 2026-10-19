@@ -2,6 +2,7 @@
   import BoxEditor from './BoxEditor.svelte';
   import ListingPanel from './ListingPanel.svelte';
   import StatusPanel from './StatusPanel.svelte';
+  import GrantPanel from './GrantPanel.svelte';
   import { LINK_CLASS } from '$lib/format';
   import type { PageData } from './$types';
 
@@ -32,3 +33,8 @@
 {/key}
 
 <ListingPanel boxStatus={data.box.status} listings={data.listings} />
+
+<!-- A grant id belongs to one box's form: its keys do not name the box. -->
+{#key data.box.id}
+  <GrantPanel boxStatus={data.box.status} canGrant={!!data.grants['items.boxes.grant']} />
+{/key}

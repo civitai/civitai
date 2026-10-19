@@ -14,6 +14,23 @@ export {
   type RewardInfo,
 } from '@civitai/shared/box-builder';
 
+export const MAX_BOXES_PER_USER = 10;
+export const MAX_GRANT_USERS = 500;
+
+/**
+ * A fresh id for one box-grant form. Resubmitting the same form reuses it, so the second grants
+ * nothing (`modGrantSourceKey`). Alphanumeric, as the key requires.
+ */
+export function newBoxGrantId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Entries are not validated. */
+export const parseUserIdList = (value: string) => [
+  ...new Set(value.split(/[\s,]+/).filter(Boolean)),
+];
+
 /**
  * Base odds (nothing owned) for one team, through the draw's own `computeBoxOdds`. Ids are positions
  * in the draft, so unsaved rows preview too. Null when the weights can't be computed.

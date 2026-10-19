@@ -32,6 +32,19 @@ export { BoxRefusal } from '@civitai/shared/box-builder';
 
 export type Trx = Transaction<DB>;
 
+// Same published-only rule as grantMysteryBoxes.
+export type GrantableBox = { id: number; name: string };
+
+export function listGrantableBoxes(): Promise<GrantableBox[]> {
+  return dbRead
+    .selectFrom('ItemDefinition')
+    .select(['id', 'name'])
+    .where('type', '=', ITEM_TYPE.box)
+    .where('status', '=', ITEM_DEFINITION_STATUS.published)
+    .orderBy('id', 'desc')
+    .execute();
+}
+
 export async function listBoxes() {
   return dbRead
     .selectFrom('ItemDefinition as d')
