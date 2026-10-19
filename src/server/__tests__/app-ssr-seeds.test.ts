@@ -1,5 +1,5 @@
 /**
- * Every SSR seed `_app.getInitialProps` computes must reach `pageProps`.
+ * The SSR seeds `_app.getInitialProps` computes must reach `pageProps`.
  *
  * A seed is only useful if it gets from the server render to the `AppProvider` query it primes.
  * One that is computed but left out of the returned `pageProps` fails silently: the provider is
@@ -9,8 +9,9 @@
  * signed-in page load.
  *
  * So this pins the relationship, not a value: one fixture in which every bootstrap member is
- * present and distinct, and a ledger of every seed key `MyApp` hands to `AppProvider` (or a
- * sibling provider), each asserted present. Adding a seed means adding it to the ledger.
+ * present and distinct, and a ledger of the seed keys `MyApp` hands to `AppProvider` (or a
+ * sibling provider), each asserted present. The ledger is hand-kept: a NEW seed is covered only
+ * once it is added to `SEED_PROPS`.
  *
  * Mocks mirror `app-settings-bootstrap.test.ts`, which owns the cookie/degraded behaviour.
  */
@@ -91,7 +92,7 @@ const fullBootstrap = {
 };
 
 /**
- * Every pageProps key `MyApp` passes into a query seed. Each one is derived from data the
+ * The pageProps keys `MyApp` passes into a query seed, as of this writing — add new seeds here. Each one is derived from data the
  * bootstrap above already carries, so with this fixture every one of them must be defined.
  */
 const SEED_PROPS = [

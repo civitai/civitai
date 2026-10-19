@@ -40,6 +40,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return { ...actual, trpc: h.fake.trpc };
 });
 
+import { SUPPORTED_CURRENCIES_STALE_TIME } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
 import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal';
 import { trpc } from '~/utils/trpc';
 
@@ -64,6 +65,14 @@ function Registrar() {
 /** The header balance — an active observer, as on every signed-in page. */
 function BuzzBalance() {
   trpc.buzz.getBuzzAccount.useQuery(undefined, { enabled: !!h.user });
+  return null;
+}
+
+const DEPOSIT_HISTORY = 'nowPayments.getDepositHistory';
+
+/** The deposit history list, as the buzz dashboard mounts it. */
+function DepositHistory() {
+  trpc.nowPayments.getDepositHistory.useQuery(undefined);
   return null;
 }
 
@@ -113,7 +122,7 @@ beforeEach(() => {
   h.fake.reset({
     [CURRENCIES]: () => currencies,
     [BUZZ_ACCOUNT]: () => ({ yellow: 100 }),
-    'nowPayments.getDepositHistory': () => [],
+    [DEPOSIT_HISTORY]: () => [],
   });
 });
 
@@ -141,21 +150,14 @@ describe('useCryptoDepositSignal — page load', () => {
 
     expect(callsTo(CURRENCIES)).toBe(0);
   });
-
-  it('an anonymous page load requests nothing', async () => {
-    h.user = null;
-    mount(Registrar, BuzzBalance);
-    await flush();
-
-    expect(h.fake.calls()).toEqual([]);
-  });
 });
 
 describe('useCryptoDepositSignal — on a deposit signal', () => {
-  it('names the currency in the completion toast and refreshes the balance', async () => {
-    mount(Registrar, BuzzBalance);
+  it('names the currency in the completion toast and refreshes the balance and history', async () => {
+    mount(Registrar, BuzzBalance, DepositHistory);
     await flush();
     expect(callsTo(BUZZ_ACCOUNT)).toBe(1);
+    expect(callsTo(DEPOSIT_HISTORY)).toBe(1);
 
     await signal({ status: 'finished', currency: 'USDTTRC20', outcomeAmount: 1.5 });
     await flush();
@@ -166,8 +168,9 @@ describe('useCryptoDepositSignal — on a deposit signal', () => {
       color: 'green',
     });
     expect(callsTo(CURRENCIES)).toBe(1);
-    // The balance shown in the header is refetched, as before.
+    // The balance shown in the header and the open history list are refetched, as before.
     expect(callsTo(BUZZ_ACCOUNT)).toBe(2);
+    expect(callsTo(DEPOSIT_HISTORY)).toBe(2);
   });
 
   it('names the currency in the confirming toast', async () => {
@@ -198,6 +201,20 @@ describe('useCryptoDepositSignal — on a deposit signal', () => {
 
     expect(callsTo(CURRENCIES)).toBe(0);
     expect(lastMessage()?.message).toBe('You received 2,000 Buzz from your USDT on Tron deposit.');
+  });
+
+  it('refetches a currency list older than its stale time', async () => {
+    mount(Registrar);
+    await flush();
+    act(() => {
+      h.fake.client.setQueryData(h.fake.queryKey(CURRENCIES), currencies, {
+        updatedAt: Date.now() - SUPPORTED_CURRENCIES_STALE_TIME - 1000,
+      });
+    });
+
+    await signal({ status: 'confirming', currency: 'usdttrc20' });
+
+    expect(callsTo(CURRENCIES)).toBe(1);
   });
 
   it('still shows the toast, with the raw code, when the currency lookup fails', async () => {

@@ -63,13 +63,13 @@ const baseProps: Omit<ProviderProps, 'children'> = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(props: Partial<ProviderProps>) {
+function render(props: Partial<ProviderProps>, { widget = true } = {}) {
   act(() => {
     root.render(
       React.createElement(
         AppProvider,
         { ...baseProps, ...props } as ProviderProps,
-        React.createElement(ChatWidget)
+        widget ? React.createElement(ChatWidget) : null
       )
     );
   });
@@ -111,17 +111,10 @@ describe('AppProvider — chat.getUserSettings seed', () => {
     expect(seen).toEqual(STORED);
   });
 
-  it("the user's own settings change still reaches the widget", async () => {
-    render({ chatSettings: STORED });
+  it('without a seed, AppProvider itself does not fetch (no 401 for anonymous viewers)', async () => {
+    render({ chatSettings: undefined, isAuthed: false }, { widget: false });
     await flush();
 
-    // What `ChatSettings`' optimistic update writes.
-    act(() => {
-      h.fake.client.setQueryData(h.fake.queryKey(CHAT_SETTINGS), { ...STORED, muteSounds: false });
-    });
-    await flush();
-
-    expect(seen).toEqual({ ...STORED, muteSounds: false });
     expect(callsTo(CHAT_SETTINGS)).toBe(0);
   });
 

@@ -661,7 +661,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings,
       browsingSettingsAddons,
       liveNow,
-      // Every seed computed above must be returned here; `app-ssr-seeds.test.ts` pins the set.
+      // Every seed computed above must be returned here; `app-ssr-seeds.test.ts` pins the ones it lists.
       chatSettings,
       flags,
       userFeatureFlags,
