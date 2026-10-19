@@ -121,9 +121,10 @@ describe('AppProvider — chat.getUserSettings seed', () => {
   it('without a seed (anonymous or degraded render) the widget fetches for itself', async () => {
     // Positive control for every zero above: the same transport does see this request.
     render({ chatSettings: undefined });
-    await flush();
 
+    // Awaited, not flushed once: the result reaches the widget on React Query's own notify
+    // schedule, which a single `setTimeout(0)` races.
+    await vi.waitFor(() => expect(seen).toEqual(FROM_SERVER));
     expect(callsTo(CHAT_SETTINGS)).toBe(1);
-    expect(seen).toEqual(FROM_SERVER);
   });
 });
