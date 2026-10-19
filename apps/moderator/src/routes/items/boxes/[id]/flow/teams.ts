@@ -7,4 +7,5 @@ const TEAM_COLORS: Record<string, string> = {
   Yellow: '#fcc419',
 };
 
-export const teamColor = (team: string | null) => (team ? (TEAM_COLORS[team] ?? FALLBACK_TIER_COLOR) : FALLBACK_TIER_COLOR);
+export const teamColor = (team: string | null) =>
+  team ? TEAM_COLORS[team] ?? FALLBACK_TIER_COLOR : FALLBACK_TIER_COLOR;

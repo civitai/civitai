@@ -2,7 +2,10 @@ import { z } from 'zod';
 import { CATALOG_MAX, CATALOG_PAGE } from '$lib/box-design';
 import { COSMETIC_TYPES, type CatalogQuery } from './item-definitions.service';
 
-const flag = z.string().optional().transform((value) => value === '1');
+const flag = z
+  .string()
+  .optional()
+  .transform((value) => value === '1');
 const shelf = z.coerce.number().int().min(0).max(2_147_483_647).nullable().catch(null);
 
 /** Every param falls back to its unfiltered value instead of failing the request. */

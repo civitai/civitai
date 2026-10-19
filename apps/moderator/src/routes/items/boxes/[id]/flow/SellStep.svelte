@@ -18,6 +18,7 @@
   const averages = $derived(odds.map((entry) => Math.round(entry.avgShelf)));
   const low = $derived(Math.min(...averages));
   const high = $derived(Math.max(...averages));
+  const unpriced = $derived(Math.max(...odds.map((entry) => entry.unpriced)));
 </script>
 
 <div class="max-w-3xl space-y-4">
@@ -30,6 +31,9 @@
   {#if averages.some((value) => value > 0)}
     <p class="text-sm text-dark-2">
       An average draw is worth about <b class="text-white">{num(low)}{high === low ? '' : ` to ${num(high)}`} Buzz</b> at shelf prices. Information to price by, not a promise to buyers.
+      {#if unpriced}
+        <span class="text-amber-300">{unpriced} {unpriced === 1 ? 'item has' : 'items have'} no shelf price and {unpriced === 1 ? 'is' : 'are'} left out of this average.</span>
+      {/if}
     </p>
   {/if}
   <ListingPanel {boxStatus} {listings} defaultTitle={boxName} />

@@ -32,7 +32,13 @@ export const PRICE_TIERS = [
 export type PriceTierKey = (typeof PRICE_TIERS)[number]['key'];
 
 export const bandOf = (shelf: number | null, bands: PriceBands): PriceTierKey | null =>
-  shelf === null ? null : shelf <= bands.uncommon ? 'uncommon' : shelf <= bands.rare ? 'rare' : 'legendary';
+  shelf === null
+    ? null
+    : shelf <= bands.uncommon
+    ? 'uncommon'
+    : shelf <= bands.rare
+    ? 'rare'
+    : 'legendary';
 
 /** A design's variants are priced separately; the design is placed by the lowest, as the catalog shows it. */
 function designShelves(contents: DraftContent[], rewards: Rewards) {
@@ -42,21 +48,35 @@ function designShelves(contents: DraftContent[], rewards: Rewards) {
     if (!reward) continue;
     const seen = shelves.get(reward.designKey);
     const price = reward.shelf;
-    shelves.set(reward.designKey, seen === undefined || seen === null ? price : price === null ? seen : Math.min(seen, price));
+    shelves.set(
+      reward.designKey,
+      seen === undefined || seen === null ? price : price === null ? seen : Math.min(seen, price)
+    );
   }
   return shelves;
 }
 
-function bandKeyOf(content: DraftContent, rewards: Rewards, shelves: Map<string, number | null>, bands: PriceBands) {
+function bandKeyOf(
+  content: DraftContent,
+  rewards: Rewards,
+  shelves: Map<string, number | null>,
+  bands: PriceBands
+) {
   const designKey = rewards.get(content.rewardDefinitionId)?.designKey;
   return bandOf((designKey === undefined ? null : shelves.get(designKey)) ?? null, bands);
 }
 
-export function placeByBands({ tiers, contents }: Tiering, rewards: Rewards, bands: PriceBands): DraftContent[] {
+export function placeByBands(
+  { tiers, contents }: Tiering,
+  rewards: Rewards,
+  bands: PriceBands
+): DraftContent[] {
   const shelves = designShelves(contents, rewards);
   return contents.map((content) => {
     const key = bandKeyOf(content, rewards, shelves, bands);
-    return key && key !== content.tierKey && tiers.some((tier) => tier.key === key) ? { ...content, tierKey: key } : content;
+    return key && key !== content.tierKey && tiers.some((tier) => tier.key === key)
+      ? { ...content, tierKey: key }
+      : content;
   });
 }
 
@@ -67,20 +87,30 @@ export function handPlacedCount({ tiers, contents }: Tiering, rewards: Rewards, 
   for (const content of contents) {
     const key = bandKeyOf(content, rewards, shelves, bands);
     if (key !== null && key !== content.tierKey && tiers.some((tier) => tier.key === key))
-      designs.add(rewards.get(content.rewardDefinitionId)?.designKey ?? `#${content.rewardDefinitionId}`);
+      designs.add(
+        rewards.get(content.rewardDefinitionId)?.designKey ?? `#${content.rewardDefinitionId}`
+      );
   }
   return designs.size;
 }
 
 /** A tier the box already has keeps its id, name, weight and colour; only a missing one is made from the preset. */
-export function applyPricePreset({ tiers, contents }: Tiering, rewards: Rewards, bands: PriceBands): Tiering {
-  const next: DraftTier[] = PRICE_TIERS.map((preset) => tiers.find((tier) => tier.key === preset.key) ?? { id: null, ...preset });
+export function applyPricePreset(
+  { tiers, contents }: Tiering,
+  rewards: Rewards,
+  bands: PriceBands
+): Tiering {
+  const next: DraftTier[] = PRICE_TIERS.map(
+    (preset) => tiers.find((tier) => tier.key === preset.key) ?? { id: null, ...preset }
+  );
   const shelves = designShelves(contents, rewards);
   return {
     tiers: next,
     contents: contents.map((content) => {
       const key = bandKeyOf(content, rewards, shelves, bands);
-      const kept = next.some((tier) => tier.key === content.tierKey) ? content.tierKey : PRICE_TIERS[0].key;
+      const kept = next.some((tier) => tier.key === content.tierKey)
+        ? content.tierKey
+        : PRICE_TIERS[0].key;
       const tierKey = key ?? kept;
       return tierKey === content.tierKey ? content : { ...content, tierKey };
     }),
@@ -111,8 +141,17 @@ export function newTier(tiers: DraftTier[], name: string): { tier: DraftTier } |
     .slice(0, 32)
     .replace(/-+$/, '');
   if (!TIER_KEY_PATTERN.test(key)) return { error: 'Use letters or digits in the name.' };
-  if (tiers.some((tier) => tier.key === key)) return { error: 'This box already has a tier with that name.' };
-  return { tier: { id: null, key, name: trimmed, weight: 10, color: TIER_COLORS[tiers.length % TIER_COLORS.length] } };
+  if (tiers.some((tier) => tier.key === key))
+    return { error: 'This box already has a tier with that name.' };
+  return {
+    tier: {
+      id: null,
+      key,
+      name: trimmed,
+      weight: 10,
+      color: TIER_COLORS[tiers.length % TIER_COLORS.length],
+    },
+  };
 }
 
 /** One design in one tier: the rows of its team variants. */
@@ -160,7 +199,9 @@ export function presenceOf(design: CatalogDesign, byReward: ReadonlyMap<number, 
 export const definitionIds = (designs: CatalogDesign[]) =>
   new Set(
     designs.flatMap((design) =>
-      design.variants.flatMap((variant) => (variant.definitionId === null ? [] : [variant.definitionId]))
+      design.variants.flatMap((variant) =>
+        variant.definitionId === null ? [] : [variant.definitionId]
+      )
     )
   );
 
@@ -180,7 +221,11 @@ export function addDesigns(contents: DraftContent[], designs: CatalogDesign[], t
   return { contents: [...contents, ...added], rewards };
 }
 
-export function moveRewards(contents: DraftContent[], rewardIds: ReadonlySet<number>, tierKey: string) {
+export function moveRewards(
+  contents: DraftContent[],
+  rewardIds: ReadonlySet<number>,
+  tierKey: string
+) {
   let moved = 0;
   const next = contents.map((content) => {
     if (!rewardIds.has(content.rewardDefinitionId) || content.tierKey === tierKey) return content;
@@ -197,17 +242,29 @@ export const removeRewards = (contents: DraftContent[], rewardIds: ReadonlySet<n
 export function placeDesigns(contents: DraftContent[], designs: CatalogDesign[], tierKey: string) {
   const moved = moveRewards(contents, definitionIds(designs), tierKey);
   const added = addDesigns(moved.contents, designs, tierKey);
-  return { contents: added.contents, rewards: added.rewards, added: added.contents.length - contents.length, moved: moved.moved };
+  return {
+    contents: added.contents,
+    rewards: added.rewards,
+    added: added.contents.length - contents.length,
+    moved: moved.moved,
+  };
 }
 
 /** The price tiers, every priced and defined design placed by band, and what was left out. */
-export function fillByPrice(draft: Tiering, rewards: Rewards, designs: CatalogDesign[], bands: PriceBands) {
+export function fillByPrice(
+  draft: Tiering,
+  rewards: Rewards,
+  designs: CatalogDesign[],
+  bands: PriceBands
+) {
   const base = applyPricePreset(draft, rewards, bands);
   let contents = base.contents;
   const newRewards: FlowReward[] = [];
   let added = 0;
   for (const tier of PRICE_TIERS) {
-    const picks = designs.filter((design) => isDefined(design) && bandOf(design.shelf, bands) === tier.key);
+    const picks = designs.filter(
+      (design) => isDefined(design) && bandOf(design.shelf, bands) === tier.key
+    );
     const result = addDesigns(contents, picks, tier.key);
     added += result.contents.length - contents.length;
     contents = result.contents;
@@ -234,23 +291,39 @@ export type TierOdds = {
   count: number;
 };
 /** `unpriced` items have no shelf price and are left out of `avgShelf`. */
-export type TeamOdds = { team: string | null; tiers: TierOdds[]; avgShelf: number; unpriced: number };
+export type TeamOdds = {
+  team: string | null;
+  tiers: TierOdds[];
+  avgShelf: number;
+  unpriced: number;
+};
 
 /** Base odds (nothing owned) per team via `previewOdds`. `avgShelf` is information, not a price rule. */
 export function oddsByTeam(draft: Tiering, rewards: Rewards, teams: readonly string[]): TeamOdds[] {
   return (teams.length ? teams : [null]).map((team) => {
     const odds = previewOdds(draft, rewards, team);
-    let avgShelf = 0;
+    let priced = 0;
+    let pricedValue = 0;
     let unpriced = 0;
     const tiers = draft.tiers.map((tier, index): TierOdds => {
       const found = odds?.tiers.find((entry) => entry.tierId === index);
-      if (!found) return { tierKey: tier.key, name: tier.name, color: tier.color, eligible: false, share: 0, each: 0, count: 0 };
+      if (!found)
+        return {
+          tierKey: tier.key,
+          name: tier.name,
+          color: tier.color,
+          eligible: false,
+          share: 0,
+          each: 0,
+          count: 0,
+        };
       const prices = found.contentIds.flatMap((contentId) => {
         const shelf = rewards.get(draft.contents[contentId].rewardDefinitionId)?.shelf ?? null;
         return shelf === null ? [] : [shelf];
       });
       unpriced += found.contentIds.length - prices.length;
-      if (prices.length) avgShelf += found.probability * (prices.reduce((sum, value) => sum + value, 0) / prices.length);
+      priced += found.itemProbability * prices.length;
+      pricedValue += found.itemProbability * prices.reduce((sum, value) => sum + value, 0);
       return {
         tierKey: tier.key,
         name: tier.name,
@@ -261,7 +334,7 @@ export function oddsByTeam(draft: Tiering, rewards: Rewards, teams: readonly str
         count: found.contentIds.length,
       };
     });
-    return { team, tiers, avgShelf, unpriced };
+    return { team, tiers, avgShelf: priced > 0 ? pricedValue / priced : 0, unpriced };
   });
 }
 
@@ -296,19 +369,27 @@ export function flowChecklist(
   passed.push(
     draft.event
       ? { message: `Event ${draft.event}: buyers are on ${teams.join(', ') || 'no team yet'}.` }
-      : { message: 'No event: buyers have no team, so they draw only cosmetics made for no team.', info: true }
+      : {
+          message: 'No event: buyers have no team, so they draw only cosmetics made for no team.',
+          info: true,
+        }
   );
 
   const tierProblems = problems.length;
-  if (!draft.tiers.length) problems.push({ message: 'The box needs at least one tier.', fix: { step: 'items' } });
+  if (!draft.tiers.length)
+    problems.push({ message: 'The box needs at least one tier.', fix: { step: 'items' } });
   const keys = new Set<string>();
   let totalWeight = 0;
   for (const tier of draft.tiers) {
     const label = tier.name.trim() || tier.key || 'A tier';
     const fix: FixTarget = { step: 'items', tierKey: tier.key };
     if (!TIER_KEY_PATTERN.test(tier.key))
-      problems.push({ message: `${label}: the key must be 1-32 lowercase letters, digits or dashes.`, fix });
-    else if (keys.has(tier.key)) problems.push({ message: `Two tiers share the key "${tier.key}".`, fix });
+      problems.push({
+        message: `${label}: the key must be 1-32 lowercase letters, digits or dashes.`,
+        fix,
+      });
+    else if (keys.has(tier.key))
+      problems.push({ message: `Two tiers share the key "${tier.key}".`, fix });
     keys.add(tier.key);
     if (!tier.name.trim()) problems.push({ message: `Tier "${tier.key}" needs a name.`, fix });
     if (!Number.isSafeInteger(tier.weight) || tier.weight <= 0)
@@ -316,18 +397,27 @@ export function flowChecklist(
     else totalWeight += tier.weight;
   }
   if (totalWeight > MAX_BOX_WEIGHT)
-    problems.push({ message: `The weights add up to ${totalWeight}; the most is ${MAX_BOX_WEIGHT}.`, fix: { step: 'items' } });
+    problems.push({
+      message: `The weights add up to ${totalWeight}; the most is ${MAX_BOX_WEIGHT}.`,
+      fix: { step: 'items' },
+    });
   if (draft.tiers.length && problems.length === tierProblems)
-    passed.push({ message: `${draft.tiers.length} tier${draft.tiers.length > 1 ? 's' : ''}, weights add up to ${totalWeight}.` });
+    passed.push({
+      message: `${draft.tiers.length} tier${
+        draft.tiers.length > 1 ? 's' : ''
+      }, weights add up to ${totalWeight}.`,
+    });
 
   const seen = new Set<number>();
   const enabled: { tierKey: string; team: string | null }[] = [];
   for (const content of draft.contents) {
     const name = nameOf(content.rewardDefinitionId);
     const fix: FixTarget = { step: 'items', tierKey: content.tierKey };
-    if (seen.has(content.rewardDefinitionId)) problems.push({ message: `${name} is in the box twice.`, fix });
+    if (seen.has(content.rewardDefinitionId))
+      problems.push({ message: `${name} is in the box twice.`, fix });
     seen.add(content.rewardDefinitionId);
-    if (!keys.has(content.tierKey)) problems.push({ message: `${name} is in a tier the box doesn't have.`, fix });
+    if (!keys.has(content.tierKey))
+      problems.push({ message: `${name} is in a tier the box doesn't have.`, fix });
     if (!content.enabled) continue;
     const reward = rewards.get(content.rewardDefinitionId);
     if (!reward) {
@@ -355,19 +445,28 @@ export function flowChecklist(
   const before = problems.length;
   for (const team of teams.length ? teams : [undefined]) {
     const inTier = new Set(
-      enabled.filter((content) => isForTeam(content.team ?? undefined, team)).map((content) => content.tierKey)
+      enabled
+        .filter((content) => isForTeam(content.team ?? undefined, team))
+        .map((content) => content.tierKey)
     );
     for (const tier of draft.tiers)
       if (!inTier.has(tier.key))
         problems.push({
-          message: `${tier.name || tier.key} has nothing for ${team === undefined ? 'a buyer with no team' : `team ${team}`}.`,
+          message: `${tier.name || tier.key} has nothing for ${
+            team === undefined ? 'a buyer with no team' : `team ${team}`
+          }.`,
           fix: { step: 'items', tierKey: tier.key },
         });
   }
   if (draft.tiers.length && problems.length === before)
-    passed.push({ message: `Every tier holds something for ${teams.length ? 'every team' : 'a buyer with no team'}.` });
+    passed.push({
+      message: `Every tier holds something for ${
+        teams.length ? 'every team' : 'a buyer with no team'
+      }.`,
+    });
   passed.push({ message: 'Only cosmetics can be picked, and no box can go in a box.', info: true });
 
-  if (!problems.length) for (const message of boxChecklist(draft, rewards, teams)) problems.push({ message });
+  if (!problems.length)
+    for (const message of boxChecklist(draft, rewards, teams)) problems.push({ message });
   return { problems, passed };
 }

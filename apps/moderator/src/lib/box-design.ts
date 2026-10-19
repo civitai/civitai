@@ -8,11 +8,14 @@ import type { RewardInfo } from '$lib/mystery-box';
 export const designName = (name: string, team: string | null | undefined): string => {
   if (typeof team !== 'string') return name;
   const suffix = ` - ${team}`;
-  return name.length > suffix.length && name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
+  return name.length > suffix.length && name.endsWith(suffix)
+    ? name.slice(0, -suffix.length)
+    : name;
 };
 
 /** The catalog's own key for a design; a reward carries the same one so the tray and the catalog agree on which design is which. */
-export const designKeyOf = (event: string | null, type: string, design: string) => `${event ?? ''}|${type}|${design}`;
+export const designKeyOf = (event: string | null, type: string, design: string) =>
+  `${event ?? ''}|${type}|${design}`;
 
 export type FlowReward = RewardInfo & { shelf: number | null; design: string; designKey: string };
 
@@ -40,7 +43,8 @@ export type CatalogResult = { designs: CatalogDesign[]; total: number };
 
 export type CosmeticEvent = { event: string; teams: string[] };
 
-export const isDefined = (design: CatalogDesign) => design.variants.every((variant) => variant.definitionId !== null);
+export const isDefined = (design: CatalogDesign) =>
+  design.variants.every((variant) => variant.definitionId !== null);
 
 export function rewardOfVariant(design: CatalogDesign, variant: CatalogVariant): FlowReward | null {
   if (variant.definitionId === null) return null;
@@ -83,7 +87,10 @@ export const EMPTY_FILTERS: CatalogFilters = {
 };
 
 /** `bands` must be the tier preset's, so a band filter matches what the preset would place there. */
-export function catalogParams(filters: CatalogFilters, bands: { uncommon: number; rare: number }): URLSearchParams {
+export function catalogParams(
+  filters: CatalogFilters,
+  bands: { uncommon: number; rare: number }
+): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.q.trim()) params.set('q', filters.q.trim());
   if (filters.event === NO_EVENT) params.set('noEvent', '1');

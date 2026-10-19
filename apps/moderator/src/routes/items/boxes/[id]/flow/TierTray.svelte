@@ -75,11 +75,14 @@
     preset = next;
   }
 
+  let bandText = $state<Record<keyof PriceBands, string | number>>(untrack(() => ({ uncommon: bands.uncommon, rare: bands.rare })));
   const setBand = (line: keyof PriceBands, raw: string) => {
     const value = Math.floor(Number(raw));
-    if (!(value > 0)) return;
-    bands[line] = value;
-    if (preset === 'price') draft.contents = placeByBands(draft, rewards, bands);
+    if (value > 0) {
+      bands[line] = value;
+      if (preset === 'price') draft.contents = placeByBands(draft, rewards, bands);
+    }
+    bandText[line] = bands[line];
   };
 
   function addTier() {
@@ -118,11 +121,11 @@
       <div class="mb-3 grid grid-cols-2 gap-2 text-xs text-dark-2">
         <label>
           Uncommon up to
-          <Input id="band-uncommon" class="mt-1" type="number" min="1" inputmode="numeric" value={bands.uncommon} onchange={(e) => setBand('uncommon', e.currentTarget.value)} />
+          <Input id="band-uncommon" class="mt-1" type="number" min="1" inputmode="numeric" bind:value={bandText.uncommon} onchange={(e) => setBand('uncommon', e.currentTarget.value)} />
         </label>
         <label>
           Rare up to
-          <Input id="band-rare" class="mt-1" type="number" min="1" inputmode="numeric" value={bands.rare} onchange={(e) => setBand('rare', e.currentTarget.value)} />
+          <Input id="band-rare" class="mt-1" type="number" min="1" inputmode="numeric" bind:value={bandText.rare} onchange={(e) => setBand('rare', e.currentTarget.value)} />
         </label>
       </div>
       <p class="mb-3 text-xs text-dark-2">
@@ -164,8 +167,7 @@
               step="1"
               inputmode="numeric"
               aria-label="{tier.name || tier.key} weight"
-              value={tier.weight}
-              oninput={(e) => (tier.weight = Math.max(0, Math.floor(Number(e.currentTarget.value)) || 0))}
+              bind:value={() => tier.weight, (value) => (tier.weight = Math.max(0, Math.floor(Number(value)) || 0))}
             />
           </label>
         </div>

@@ -19,9 +19,8 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { searchCosmeticCatalog, createCosmeticDefinitions, readRewards, withShelfPrices } = await import(
-  '../item-definitions.service'
-);
+const { searchCosmeticCatalog, createCosmeticDefinitions, readRewards, withShelfPrices } =
+  await import('../item-definitions.service');
 const { catalogQuerySchema } = await import('../catalog-query');
 type Query = Parameters<typeof searchCosmeticCatalog>[0];
 
@@ -117,10 +116,39 @@ const names = async (over: Partial<Query> = {}) => (await search(over)).designs.
 
 describe('the catalog request', () => {
   it('is read by the route exactly as the panel writes it', () => {
-    const filters = { ...EMPTY_FILTERS, q: 'cap', event: 'party', types: ['Badge', 'Sticker'], team: 'Pink', band: 'rare' as const, needsDefinition: true, limit: 96 };
-    const parsed = catalogQuerySchema.parse(Object.fromEntries(catalogParams(filters, { uncommon: 500, rare: 1500 })));
-    expect(parsed).toEqual({ q: 'cap', event: 'party', noEvent: false, types: ['Badge', 'Sticker'], team: 'Pink', minShelf: 501, maxShelf: 1500, noShelf: false, needsDefinition: true, limit: 96 });
-    const none = catalogQuerySchema.parse(Object.fromEntries(catalogParams({ ...EMPTY_FILTERS, event: '__none', band: 'none' }, { uncommon: 500, rare: 1500 })));
+    const filters = {
+      ...EMPTY_FILTERS,
+      q: 'cap',
+      event: 'party',
+      types: ['Badge', 'Sticker'],
+      team: 'Pink',
+      band: 'rare' as const,
+      needsDefinition: true,
+      limit: 96,
+    };
+    const parsed = catalogQuerySchema.parse(
+      Object.fromEntries(catalogParams(filters, { uncommon: 500, rare: 1500 }))
+    );
+    expect(parsed).toEqual({
+      q: 'cap',
+      event: 'party',
+      noEvent: false,
+      types: ['Badge', 'Sticker'],
+      team: 'Pink',
+      minShelf: 501,
+      maxShelf: 1500,
+      noShelf: false,
+      needsDefinition: true,
+      limit: 96,
+    });
+    const none = catalogQuerySchema.parse(
+      Object.fromEntries(
+        catalogParams(
+          { ...EMPTY_FILTERS, event: '__none', band: 'none' },
+          { uncommon: 500, rare: 1500 }
+        )
+      )
+    );
     expect(none).toMatchObject({ noEvent: true, noShelf: true, event: '' });
   });
 });
@@ -129,15 +157,22 @@ describe('the cosmetic catalog', () => {
   it('returns every variant of a design whose name matches, and prices each variant itself', async () => {
     const { designs } = await search({ event: 'party', q: 'pink' });
     const cap = designs.find((d) => d.name === 'Cap')!;
-    expect(cap.variants.map((v) => [v.team, v.shelf])).toEqual([['Blue', 500], ['Pink', 900]]);
+    expect(cap.variants.map((v) => [v.team, v.shelf])).toEqual([
+      ['Blue', 500],
+      ['Pink', 900],
+    ]);
     expect(cap.shelf).toBe(500);
   });
 
   it('keys a design the same way a box reward does', async () => {
     const { designs } = await search({ event: 'party', q: 'cap' });
     const cap = designs.find((d) => d.name === 'Cap')!;
-    const [{ id }] = (await db.query<{ id: number }>(`SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 1`)).rows;
-    const [reward] = await withShelfPrices([...(await readRewards(dbHandle.current as never, [id])).values()]);
+    const [{ id }] = (
+      await db.query<{ id: number }>(`SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 1`)
+    ).rows;
+    const [reward] = await withShelfPrices([
+      ...(await readRewards(dbHandle.current as never, [id])).values(),
+    ]);
     expect(reward.designKey).toBe(cap.key);
   });
 
@@ -150,7 +185,7 @@ describe('the cosmetic catalog', () => {
     expect(cap.variants[0]).toMatchObject({ cosmeticId: 1, name: 'Cap - Blue', url: 'u1' });
   });
 
-  it('strips the suffix exactly as the TypeScript rule does, and only for the cosmetic\'s own team', async () => {
+  it("strips the suffix exactly as the TypeScript rule does, and only for the cosmetic's own team", async () => {
     const { designs } = await search();
     for (const design of designs)
       for (const variant of design.variants)
@@ -169,7 +204,9 @@ describe('the cosmetic catalog', () => {
     expect(await names({ needsDefinition: true })).toEqual(
       expect.not.arrayContaining(['Cap', 'Gold Badge'])
     );
-    expect(await names({ needsDefinition: true })).toEqual(expect.arrayContaining(['Crown', 'Confetti']));
+    expect(await names({ needsDefinition: true })).toEqual(
+      expect.arrayContaining(['Crown', 'Confetti'])
+    );
   });
 
   it('prices a cosmetic by its published, unarchived shop item, and leaves any other unpriced', async () => {
@@ -183,13 +220,35 @@ describe('the cosmetic catalog', () => {
   it('narrows by name (a % is not a wildcard), event, type, team and price', async () => {
     expect(await names({ q: '100%' })).toEqual(['100% Fan']);
     expect(await names({ q: '%' })).toEqual(['100% Fan']);
-    expect((await names({ event: 'party' })).sort()).toEqual(['Cap', 'Confetti', 'Crown', 'Old Cap - Blue']);
-    expect((await names({ noEvent: true })).sort()).toEqual(['100% Fan', 'Gold Badge', 'Odd - Team']);
+    expect((await names({ event: 'party' })).sort()).toEqual([
+      'Cap',
+      'Confetti',
+      'Crown',
+      'Old Cap - Blue',
+    ]);
+    expect((await names({ noEvent: true })).sort()).toEqual([
+      '100% Fan',
+      'Gold Badge',
+      'Odd - Team',
+    ]);
     expect(await names({ types: ['Badge'] })).toEqual(['100% Fan', 'Gold Badge', 'Odd - Team']);
-    expect((await names({ event: 'party', team: 'Pink' })).sort()).toEqual(['Cap', 'Confetti', 'Crown', 'Old Cap - Blue']);
+    expect((await names({ event: 'party', team: 'Pink' })).sort()).toEqual([
+      'Cap',
+      'Confetti',
+      'Crown',
+      'Old Cap - Blue',
+    ]);
     expect((await names({ event: 'party', team: 'Green' })).sort()).toEqual(['Confetti']);
-    expect((await names({ minShelf: 501, maxShelf: 3000 })).sort()).toEqual(['Crown', 'Gold Badge']);
-    expect((await names({ noShelf: true })).sort()).toEqual(['100% Fan', 'Confetti', 'Odd - Team', 'Old Cap - Blue']);
+    expect((await names({ minShelf: 501, maxShelf: 3000 })).sort()).toEqual([
+      'Crown',
+      'Gold Badge',
+    ]);
+    expect((await names({ noShelf: true })).sort()).toEqual([
+      '100% Fan',
+      'Confetti',
+      'Odd - Team',
+      'Old Cap - Blue',
+    ]);
   });
 
   it('counts every match but returns only `limit` designs, in name order', async () => {
@@ -199,8 +258,14 @@ describe('the cosmetic catalog', () => {
   });
 
   it('prices the rewards already in a box from the same shelf rule', async () => {
-    const [{ id }] = (await db.query<{ id: number }>(`SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 1`)).rows;
-    const rewards = await withShelfPrices([...(await readRewards(dbHandle.current as never, [id])).values()]);
-    expect(rewards).toEqual([expect.objectContaining({ name: 'Cap - Blue', shelf: 500, design: 'Cap', team: 'Blue' })]);
+    const [{ id }] = (
+      await db.query<{ id: number }>(`SELECT id FROM "ItemDefinition" WHERE "cosmeticId" = 1`)
+    ).rows;
+    const rewards = await withShelfPrices([
+      ...(await readRewards(dbHandle.current as never, [id])).values(),
+    ]);
+    expect(rewards).toEqual([
+      expect.objectContaining({ name: 'Cap - Blue', shelf: 500, design: 'Cap', team: 'Blue' }),
+    ]);
   });
 });
