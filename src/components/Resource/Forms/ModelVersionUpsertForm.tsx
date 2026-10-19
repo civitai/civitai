@@ -1240,7 +1240,6 @@ export function ModelVersionUpsertForm({
                             h: 'auto',
                             leftSection: null,
                             className: 'border-2 border-dashed',
-                            // Dividers draw with this token, so the box reads as part of the section.
                             styles: {
                               root: { borderColor: 'var(--mantine-color-default-border)' },
                               label: { whiteSpace: 'normal' },
@@ -1264,6 +1263,12 @@ export function ModelVersionUpsertForm({
                             turboOnly: true,
                           }}
                         />
+                        {turboLora && (turboLora.isPrivate || !turboLora.canGenerate) && (
+                          <Text size="xs" c="yellow.6">
+                            This LoRA is not published or not generatable right now. The generator
+                            uses the ecosystem default until it is, and your pick is kept.
+                          </Text>
+                        )}
                       </Stack>
                     )}
                     {showClipSkip && (

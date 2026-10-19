@@ -80,8 +80,6 @@ describe('MetricPrivacyControls', () => {
       .toHaveValue('Hide for this model');
   });
 
-  // The old controls were disabled on the EDITOR's membership, which left moderators with dead
-  // controls and an owner with greyed-out ones instead of an explanation.
   test('an owner without a membership gets the sentence and no controls', async () => {
     renderWithProviders(<Harness access="owner-inactive" />);
 

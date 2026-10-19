@@ -55,8 +55,7 @@ describe('inheritedMetricPrivacy', () => {
 });
 
 describe('metricPrivacyAccessFor', () => {
-  // The read-time gate is the owner's membership, so a moderator must get live controls and an
-  // owner without a membership none; keying either off the editor's own membership was the bug.
+  // access follows the owner's membership, not the editor's
   it('gives a moderator editing someone else’s model live controls', () => {
     expect(metricPrivacyAccessFor({ isOwner: false, ownerHasMembership: false })).toBe('moderator');
   });

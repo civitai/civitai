@@ -42,11 +42,6 @@ export function inheritedMetricPrivacy({
   return states;
 }
 
-/**
- * The read-time gate is the OWNER's Creator Program membership, so the controls follow the owner:
- * an owner without one gets no controls, and a moderator editing someone else's model gets live
- * ones. The owner's membership is only known when the editor is the owner.
- */
 export function metricPrivacyAccessFor({
   isOwner,
   ownerHasMembership,

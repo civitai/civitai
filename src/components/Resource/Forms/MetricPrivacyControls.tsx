@@ -27,11 +27,7 @@ const INHERIT_LABEL: Record<InheritedMetricState['source'], string> = {
  */
 export type MetricPrivacyAccess = 'owner' | 'owner-inactive' | 'moderator';
 
-/**
- * Metric privacy for one model or version: one row per stat with the effective result and a select
- * bound to `meta.metricVisibility.<metric>`, whose inherit entry names its source. The account
- * default in Creator Controls is the primary control; this is the exception to it.
- */
+/** Per-model or per-version metric privacy; the account default in Creator Controls is the primary control. */
 export function MetricPrivacyControls({
   level,
   inherited,

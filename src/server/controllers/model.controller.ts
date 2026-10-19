@@ -44,6 +44,7 @@ import {
   hasValidCreatorMembershipCached,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -548,19 +549,10 @@ export const getModelHandler = async ({
         })
       : null;
 
-    // A moderator editing someone else's model: what the owner's account default makes each metric,
-    // so the editor's inherit entry can say so. The owner's own settings are already in the session.
-    const ownerMetricPrivacyDefaults =
-      ctx.user?.isModerator && ctx.user.id !== model.user.id
-        ? getUserMetricPrivacyDefaults(
-            (
-              await dbRead.user.findUnique({
-                where: { id: model.user.id },
-                select: { settings: true },
-              })
-            )?.settings
-          )
-        : null;
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      model.user.id
+    );
 
     return {
       ...model,

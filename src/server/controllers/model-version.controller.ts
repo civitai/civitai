@@ -97,7 +97,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
-import { getUserMetricPrivacyDefaults } from '~/server/utils/model-metric-privacy';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -345,19 +345,10 @@ const loadModelVersion = async ({
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
         : null;
 
-    // A moderator editing someone else's version: what the owner's account default makes each
-    // metric, so the editor's inherit entry can say so. The owner's own settings are in the session.
-    const ownerMetricPrivacyDefaults =
-      ctx.user?.isModerator && ctx.user.id !== version.model.user.id
-        ? getUserMetricPrivacyDefaults(
-            (
-              await dbRead.user.findUnique({
-                where: { id: version.model.user.id },
-                select: { settings: true },
-              })
-            )?.settings
-          )
-        : null;
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      version.model.user.id
+    );
 
     return {
       ...version,
