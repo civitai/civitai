@@ -2,15 +2,16 @@
   import { page } from '$app/state';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
+  import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
-  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
+  import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import { decisionEnabled, flaggedDecisions } from '$lib/minor-flags/flagged-decision';
   import {
     DEFAULT_FLAGGED_FILTERS,
@@ -42,7 +43,8 @@
   const ruling = rulingDraft<Verdict>(() => current);
 
   // One row per model. An older link's model:label:source key still opens that model.
-  const parseKey = (raw: string) => /^(\d+)(?::(?:minor|poi):(?:hash|redetected|text-scan))?$/.exec(raw)?.[1] ?? null;
+  const parseKey = (raw: string) =>
+    /^(\d+)(?::(?:minor|poi):(?:hash|redetected|text-scan))?$/.exec(raw)?.[1] ?? null;
 
   // Keys 1 and 2 confirm and revert every flag on the row; each is on only when every flag allows it.
   const rowDecisionEnabled = (row: FlaggedRow) => {
@@ -117,7 +119,7 @@
     {:else if filtersActive}
       <p class="m-0">No flags match these filters.</p>
     {:else}
-      <p class="m-0">No automatic flags are waiting on a ruling.</p>
+      <p class="m-0">No applied automatic flags are waiting on a ruling.</p>
     {/if}
     {#if filtersActive || data.q}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
@@ -131,7 +133,7 @@
   rowKey={(row: FlaggedRow) => row.key}
   {parseKey}
   selectionParam="item"
-  queueLabel="Flagged queue"
+  queueLabel="Auto-flagged queue"
   itemLabel="Flag"
   decisionEnabled={rowDecisionEnabled}
   {ondecision}
@@ -166,9 +168,13 @@
         {#each uniqueBy(row.flags, (f) => f.label) as flag (flag.label)}
           <FlagBadge label={flag.label} />
         {/each}
-        {#if row.hasPendingAppeal}
-          <MetaChip tone="amber">also in Appeals</MetaChip>
-        {/if}
+        <CrossTabChips
+          chips={crossTabChips(
+            { appeals: row.hasPendingAppeal, needsReview: row.alsoInNeedsReview },
+            row.modelId,
+            []
+          )}
+        />
         {#if hash && hash.daysLeft !== null}
           <span class="text-xs text-dark-2 tabular-nums">{hash.daysLeft === 0 ? 'window closed' : `${hash.daysLeft} d left`}</span>
         {/if}

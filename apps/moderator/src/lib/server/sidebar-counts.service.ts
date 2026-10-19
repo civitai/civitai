@@ -19,9 +19,11 @@ import { countStrikeReview } from './strike-review.service';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getFlaggedCount,
+  getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
 } from './minor-hash.service';
+import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -49,6 +51,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     minorQueue,
     modelFlagAppealGroups,
     flaggedModels,
+    heldDetectionModels,
     strikeReview,
     siteAppeals,
   ] = await Promise.all([
@@ -90,9 +93,11 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getMinorQueueCounts, 1_000),
     // The page's own facet query, so the badge always equals the queue's "All" total.
     getMinorFlagAppealGroups({}),
-    // The list's own total, in models: the badge equals the queue's "of N". The hash branch scans
+    // Auto-flagged's own total, in models: the badge equals the queue's "of N". The hash branch scans
     // "Model" (no index serves its predicate), so it is bounded; a failure drops only this badge.
     bounded(() => getFlaggedCount()),
+    // Needs review's held detections, in models (`Model_textScanRedetected_idx`).
+    bounded(getHeldDetectionModelCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
@@ -112,15 +117,42 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    ...(flaggedModels != null ? { modelFlagsReview: flaggedModels } : {}),
+    ...(flaggedModels != null ? { modelFlagsAuto: flaggedModels } : {}),
+    ...needsReviewCounts(heldDetectionModels, minorQueue),
     ...(siteAppeals != null
       ? Object.fromEntries(
           SITE_APPEAL_CATEGORIES.map((c) => [siteAppealCountKey(c), siteAppeals[c]])
         )
       : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
-    ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
+}
+
+/**
+ * Needs review's badge per combination of the kinds a viewer may rule (the nav picks the key; see
+ * `needsReviewCountKey`), each in models: a model with a held detection and a file match is one row
+ * and counts once. A model waiting in two tabs (Appeals and Auto-flagged, say) still counts in each.
+ */
+function needsReviewCounts(
+  detections: number | null | undefined,
+  matches: { pending: number; pendingWithDetection: number } | null | undefined
+): SidebarCounts {
+  const parts = {
+    detections: detections ?? null,
+    matches: matches?.pending ?? null,
+    overlap: matches?.pendingWithDetection ?? null,
+  };
+  const out: SidebarCounts = {};
+  const keys = [
+    [NEEDS_REVIEW_COUNT_KEYS.all, { detections: true, matches: true }],
+    [NEEDS_REVIEW_COUNT_KEYS.detections, { detections: true, matches: false }],
+    [NEEDS_REVIEW_COUNT_KEYS.matches, { detections: false, matches: true }],
+  ] as const;
+  for (const [key, granted] of keys) {
+    const total = needsReviewTotal(granted, parts);
+    if (total !== null) out[key] = total;
+  }
+  return out;
 }

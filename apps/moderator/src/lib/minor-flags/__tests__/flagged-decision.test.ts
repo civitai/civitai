@@ -6,6 +6,7 @@ import {
   flaggedDecisionEnabled,
   flaggedDecisions,
   flaggedReasonGroups,
+  needsReviewDecisions,
   parseKeptIds,
   planDecision,
   planReasonProblem,
@@ -159,5 +160,66 @@ describe('flaggedReasonGroups', () => {
   });
   it('is null when only hash flags are ruled', () => {
     expect(flaggedReasonGroups([minorHash], labels)).toBeNull();
+  });
+});
+
+describe('needsReviewDecisions', () => {
+  const held = (label: 'minor' | 'poi'): FlagRef => ({
+    label,
+    source: 'redetected',
+    textHash: 'h',
+  });
+  const match: FlagRef = { label: 'minor', source: 'file-match', textHash: null };
+
+  it('flags or does not flag a single held detection', () => {
+    expect(needsReviewDecisions([held('poi')])).toEqual([
+      { label: 'Flag as real person', keep: ['poi:redetected'], key: 1 },
+      { label: "Don't flag", keep: [], key: 2 },
+    ]);
+  });
+
+  it('flags a file match as minor or dismisses it', () => {
+    expect(needsReviewDecisions([match])).toEqual([
+      { label: 'Flag as minor', keep: ['minor:file-match'], key: 1 },
+      { label: 'Dismiss match', keep: [], key: 2 },
+    ]);
+  });
+
+  it('names both labels, and offers one per-label split, when two detections differ', () => {
+    expect(needsReviewDecisions([held('minor'), held('poi')])).toEqual([
+      {
+        label: 'Flag as minor and real person',
+        keep: ['minor:redetected', 'poi:redetected'],
+        key: 1,
+      },
+      { label: "Don't flag", keep: [], key: 2 },
+      { label: 'Flag as minor only', keep: ['minor:redetected'] },
+      { label: 'Flag as real person only', keep: ['poi:redetected'] },
+    ]);
+  });
+
+  it('offers no split when a held minor detection and a file match name the same label', () => {
+    expect(needsReviewDecisions([held('minor'), match])).toEqual([
+      { label: 'Flag as minor', keep: ['minor:redetected', 'minor:file-match'], key: 1 },
+      { label: "Don't flag", keep: [], key: 2 },
+    ]);
+  });
+});
+
+describe('file matches', () => {
+  it('stay open to both keys whatever the appeal state: the main app owns that check', () => {
+    expect(flaggedDecisionEnabled({ source: 'file-match', hasPendingAppeal: true })).toEqual([
+      true,
+      true,
+    ]);
+  });
+
+  it('record no reason, so a match alone offers no reason select', () => {
+    expect(
+      flaggedReasonGroups([{ label: 'minor', source: 'file-match', textHash: null }], {
+        keep: 'Flag',
+        revert: 'Dismiss',
+      })
+    ).toBeNull();
   });
 });

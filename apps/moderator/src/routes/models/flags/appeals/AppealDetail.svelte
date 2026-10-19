@@ -46,6 +46,9 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
+  import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
+  import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
@@ -252,6 +255,14 @@
         <MetaChip tone="amber" solid>appeal</MetaChip>
         <AppealTags {row} />
         <MetaChip tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
+        <CrossTabChips
+          chips={crossTabChips(
+            { auto: row.alsoInAutoFlagged, needsReview: row.alsoInNeedsReview },
+            row.modelId,
+            (page.data.modelFlagTabs ?? []).map((tab: { href: string }) => tab.href)
+          )}
+          linked
+        />
       {/snippet}
     </ModelDetailHeader>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageFilterChips, {
     type ChipGroup,
@@ -20,6 +20,7 @@
   } from '$lib/minor-flags/appeal-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
+  import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
@@ -151,7 +152,13 @@
     >
       {#snippet badges()}
         <AppealTags {row} />
-        {#if row.alsoInFlagged}<MetaChip tone="blue">also in Flagged</MetaChip>{/if}
+        <CrossTabChips
+          chips={crossTabChips(
+            { auto: row.alsoInAutoFlagged, needsReview: row.alsoInNeedsReview },
+            row.modelId,
+            []
+          )}
+        />
       {/snippet}
     </TriageRow>
   {/snippet}

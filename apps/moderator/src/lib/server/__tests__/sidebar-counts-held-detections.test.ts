@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getFlaggedCount, countStrikeReview, countSiteAppeals } = vi.hoisted(() => ({
+const {
+  getFlaggedCount,
+  getHeldDetectionModelCount,
+  getMinorQueueCounts,
+  countStrikeReview,
+  countSiteAppeals,
+} = vi.hoisted(() => ({
   getFlaggedCount: vi.fn(),
+  getHeldDetectionModelCount: vi.fn(),
+  getMinorQueueCounts: vi.fn(),
   countStrikeReview: vi.fn(),
   countSiteAppeals: vi.fn(),
 }));
@@ -34,7 +42,8 @@ vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
 vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));
 vi.mock('../minor-hash.service', () => ({
   getMinorFlagAppealGroups: async () => [{ count: 4 }],
-  getMinorQueueCounts: async () => ({ pending: 1 }),
+  getMinorQueueCounts,
+  getHeldDetectionModelCount,
   getFlaggedCount,
 }));
 
@@ -46,28 +55,42 @@ const { getSidebarCounts } = await import('../sidebar-counts.service');
 beforeEach(() => {
   vi.clearAllMocks();
   getFlaggedCount.mockResolvedValue(0);
+  getHeldDetectionModelCount.mockResolvedValue(3);
+  getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
 });
 
 describe('sidebar counts for Model Flags', () => {
-  it('shows the Flagged queue in models, the same total as the list, and the pending queue under File matches', async () => {
+  it('shows Auto-flagged in models, the same total as the list', async () => {
     getFlaggedCount.mockResolvedValue(15);
     const counts = await getSidebarCounts();
-    expect(counts).toMatchObject({
-      modelFlagsAppeals: 4,
-      modelFlagsReview: 15,
-      modelFlagsMatches: 1,
-    });
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsAuto: 15 });
     // The whole queue: no search, every source and label.
     expect(getFlaggedCount).toHaveBeenCalledWith();
-    expect(counts).not.toHaveProperty('heldDetections');
-    expect(counts).not.toHaveProperty('minorHashMatches');
+    expect(counts).not.toHaveProperty('modelFlagsReview');
+    expect(counts).not.toHaveProperty('modelFlagsMatches');
   });
 
-  it('drops Flagged, without blanking the other badges, when its count fails', async () => {
+  it('counts Needs review per kind of lead, a model with both kinds once', async () => {
+    expect(await getSidebarCounts()).toMatchObject({
+      modelFlagsNeedsReview: 12,
+      modelFlagsNeedsReviewDetections: 3,
+      modelFlagsNeedsReviewMatches: 10,
+    });
+  });
+
+  it('drops only the Needs review badges that need a count that failed', async () => {
+    getMinorQueueCounts.mockRejectedValue(new Error('slow'));
+    const counts = await getSidebarCounts();
+    expect(counts).toMatchObject({ modelFlagsNeedsReviewDetections: 3 });
+    expect(counts).not.toHaveProperty('modelFlagsNeedsReview');
+    expect(counts).not.toHaveProperty('modelFlagsNeedsReviewMatches');
+  });
+
+  it('drops Auto-flagged, without blanking the other badges, when its count fails', async () => {
     getFlaggedCount.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
-    expect(counts).not.toHaveProperty('modelFlagsReview');
-    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
+    expect(counts).not.toHaveProperty('modelFlagsAuto');
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsNeedsReview: 12 });
   });
 });
 

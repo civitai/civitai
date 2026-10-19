@@ -5,19 +5,21 @@ import {
 } from '@civitai/shared/resolution-reasons';
 import { decisionReasonProblem } from '$lib/triage/decision-reasons';
 
-export type FlaggedSource = 'hash' | 'redetected' | 'text-scan';
+/** What raised a flag or lead: an applied hash or text-scan flag (Auto-flagged), or a held detection
+ *  or file match nothing was applied for (Needs review). */
+export type FlaggedSource = 'hash' | 'redetected' | 'text-scan' | 'file-match';
 export type FlaggedLabel = 'minor' | 'poi';
 
 /** Key order: 1 keeps the flag, 2 lifts it. The main app refuses to keep a flag while the owner has an
  *  open appeal. A hash or text-scan row can still be lifted (the ruling settles the appeal); a
- *  re-detection is refused either way, so both keys go off. */
+ *  re-detection is refused either way, so both keys go off. A file match is not tied to an appeal. */
 export const flaggedDecisionEnabled = (row: {
   source: FlaggedSource;
   hasPendingAppeal: boolean;
-}): readonly boolean[] => [
-  !row.hasPendingAppeal,
-  !(row.hasPendingAppeal && row.source === 'redetected'),
-];
+}): readonly boolean[] =>
+  row.source === 'file-match'
+    ? [true, true]
+    : [!row.hasPendingAppeal, !(row.hasPendingAppeal && row.source === 'redetected')];
 
 /** One flag a Flagged row rules on: the label, what raised it, and the text a ruling is bound to. */
 export type FlagRef = { label: FlaggedLabel; source: FlaggedSource; textHash: string | null };
@@ -60,6 +62,28 @@ export function flaggedDecisions(flags: readonly FlagRef[]): FlaggedDecision[] {
     keep: [flagRefId(kept)],
   }));
   return [...all, ...splits];
+}
+
+/**
+ * Needs review's decisions: nothing is applied yet, so 1 flags every lead and 2 flags none ("Dismiss
+ * match" when the row is only a file match). With two labels, one split per label flags only it.
+ */
+export function needsReviewDecisions(flags: readonly FlagRef[]): FlaggedDecision[] {
+  const ids = flags.map(flagRefId);
+  const labels = [...new Set(flags.map((f) => FLAG_LABEL_NAMES[f.label]))];
+  const onlyMatches = flags.every((f) => f.source === 'file-match');
+  const all: FlaggedDecision[] = [
+    { label: `Flag as ${labels.join(' and ')}`, keep: ids, key: 1 },
+    { label: onlyMatches ? 'Dismiss match' : "Don't flag", keep: [], key: 2 },
+  ];
+  if (flags.length < 2 || labels.length !== flags.length) return all;
+  return [
+    ...all,
+    ...flags.map((f) => ({
+      label: `Flag as ${FLAG_LABEL_NAMES[f.label]} only`,
+      keep: [flagRefId(f)],
+    })),
+  ];
 }
 
 /** Whether every flag allows its part of the decision (see `flaggedDecisionEnabled`). */
@@ -154,7 +178,7 @@ export function flaggedReasonGroups(
   flags: readonly FlagRef[],
   labels: { keep: string; revert: string }
 ): { label: string; reasons: readonly ResolutionReason[] }[] | null {
-  const reasoned = flags.filter((f) => f.source !== 'hash');
+  const reasoned = flags.filter((f) => flagRuling({ source: f.source, keep: true }) !== null);
   if (!reasoned.length) return null;
   const list = (keep: boolean) => {
     const seen = new Map<string, ResolutionReason>();

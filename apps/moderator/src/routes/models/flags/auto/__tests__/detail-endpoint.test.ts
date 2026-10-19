@@ -12,12 +12,12 @@ type Event = Parameters<typeof GET>[0];
 const get = (modelId: string, query = '') =>
   GET({
     params: { modelId },
-    url: new URL(`http://x/models/flags/review/detail/${modelId}${query}`),
+    url: new URL(`http://x/models/flags/auto/detail/${modelId}${query}`),
   } as unknown as Event);
 
 beforeEach(() => getModelFlagDetail.mockReset());
 
-describe('GET /models/flags/review/detail/[modelId]', () => {
+describe('GET /models/flags/auto/detail/[modelId]', () => {
   it('returns the detail for the model, with the asked-for prompt ids', async () => {
     getModelFlagDetail.mockResolvedValue({ previewCount: 3 });
     const res = await get('42', '?prompts=7,x,8,7,-1');

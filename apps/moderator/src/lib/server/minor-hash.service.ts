@@ -15,6 +15,12 @@ import {
   type FlaggedFilters,
   type FlaggedFlag,
 } from '$lib/minor-flags/flagged-filters';
+import {
+  DEFAULT_NEEDS_REVIEW_FILTERS,
+  needsReviewBranches,
+  type NeedsReviewFilters,
+  type NeedsReviewSources,
+} from '$lib/minor-flags/needs-review';
 import type {
   FlagLabel,
   FlagRulingView,
@@ -55,11 +61,27 @@ const reviewWindowCutoff = sql`now() - make_interval(days => ${sql.raw(
 
 /** A seed is a model a HUMAN flagged: `source = 'auto'` and the unreviewed `'text-scan'` are
  *  excluded so automation cannot feed itself. One definition, because the scan path and the queue had drifted copies. */
-const moderatorMinorSeedPredicate = sql`
-  m.minor
-  AND 'minor' = ANY(m."lockedProperties")
-  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
-  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
+const moderatorMinorSeed = (alias: string) => sql`
+  ${sql.ref(`${alias}.minor`)}
+  AND 'minor' = ANY(${sql.ref(`${alias}.lockedProperties`)})
+  AND ${sql.ref(`${alias}.meta`)}->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+  AND ${sql.ref(
+    `${alias}.meta`
+  )}->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
+`;
+const moderatorMinorSeedPredicate = moderatorMinorSeed('m');
+
+/** A moderator's minor seed `s` carries a file with this hash, and `uploader` holds of it. */
+const seedSharesHash = (hash: RawBuilder<unknown>, uploader: RawBuilder<unknown>) => sql`
+  EXISTS (
+    SELECT 1
+    FROM "ModelFileHash" sh
+    JOIN "ModelFile" sf ON sf.id = sh."fileId" AND sf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelVersion" sv ON sv.id = sf."modelVersionId"
+    JOIN "Model" s ON s.id = sv."modelId"
+    WHERE sh.type = 'SHA256' AND sh.hash = ${hash} AND s.id <> m.id
+      AND ${moderatorMinorSeed('s')} AND ${uploader}
+  )
 `;
 
 /** A rollback deletes the snapshot, so without this the model drops straight back into the candidate
@@ -171,101 +193,6 @@ export type MinorHashReviewRow = {
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
-/** File matches: a model sharing a file hash with something a human flagged as minor, where the two
- *  were uploaded by DIFFERENT accounts (`NOT sameUploader`; the same-uploader case is what the scan
- *  hook auto-flags, which the Flagged tab lists). */
-export async function getMinorHashMatchesForReview({ limit, offset = 0, search }: Page) {
-  const rows = await sql<MinorHashReviewRow>`
-    WITH ${minorSrcCte},
-    candidates AS (
-      SELECT m.id AS "modelId", m.name AS "modelName", m."userId", m.status::text AS status,
-             m."createdAt",
-             bool_or(EXISTS (
-               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-             )) AS "sameUploader",
-             -- Same ORDER BY in both aggregates so element [1] of each comes from the same row: the
-             -- reported version is the one carrying the reported hash, not just any version.
-             (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
-             (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId",
-             (array_agg(mf.name ORDER BY mfh.hash, mv.id))[1] AS "fileName",
-             (array_agg(mf."sizeKB" ORDER BY mfh.hash, mv.id))[1] AS "fileSizeKB"
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
-      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mfh.type = 'SHA256'
-        AND mfh.hash IN (SELECT hash FROM minor_src)
-        AND NOT m.minor
-        AND m.status <> 'Deleted'
-        AND NOT (m.meta ? 'minorHashDismissed')
-        AND ${notMinorHashClearedPredicate}
-      GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
-    ),
-    pg AS (
-    SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
-           c."modelVersionId", c."fileName", c."fileSizeKB",
-           s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId",
-           (SELECT mv2.id
-            FROM "ModelFileHash" h2
-            JOIN "ModelFile" f2 ON f2.id = h2."fileId" AND f2.type = ${MINOR_HASH_FILE_TYPE}
-            JOIN "ModelVersion" mv2 ON mv2.id = f2."modelVersionId"
-            WHERE h2.type = 'SHA256' AND h2.hash = c.hash AND mv2."modelId" = s."minorModelId"
-            ORDER BY mv2.id
-            LIMIT 1) AS "minorModelVersionId"
-    FROM candidates c
-    JOIN LATERAL (
-      SELECT s2."minorModelId", s2."userId"
-      FROM minor_src s2
-      WHERE s2.hash = c.hash AND s2."userId" <> c."userId"
-      ORDER BY s2."minorModelId"
-      LIMIT 1
-    ) s ON TRUE
-    LEFT JOIN "Model" mm ON mm.id = s."minorModelId"
-    LEFT JOIN "User" u ON u.id = c."userId"
-    WHERE NOT c."sameUploader"
-      -- Any seed on the hash, not only the one the LATERAL reports (the lowest minorModelId), or
-      -- searching another flagged model on that hash misses the row.
-      AND ${searchPredicate(
-        search,
-        {
-          modelId: 'c.modelId',
-          modelName: 'c.modelName',
-          userId: 'c.userId',
-          username: 'u.username',
-        },
-        (id) => sql`EXISTS (
-          SELECT 1 FROM minor_src s3
-          WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
-            AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
-        )`
-      )}
-    ORDER BY c."modelId"
-    LIMIT ${limit + 1} OFFSET ${offset}
-    )
-    -- The page is cut first (pg), so the per-model LATERALs are bounded by the limit.
-    SELECT pg.*, m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
-           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
-           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
-           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
-           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
-           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
-           jsonb_build_object(
-             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
-             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
-           ) AS "pastAppeals"
-    FROM pg
-    JOIN "Model" m ON m.id = pg."modelId"
-    ${modelFactsJoin}
-    ${coverImagesJoin}
-    ${uploaderFlagsJoin}
-    ${pastAppealsJoin(sql``)}
-    ORDER BY pg."modelId"
-  `.execute(dbRead);
-
-  // The extra row is how "there is another page" is known without a second count query.
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
-}
-
 export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
 
 export type MinorFlagAppealRow = {
@@ -300,9 +227,11 @@ export type MinorFlagAppealRow = {
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
   /** This appeal's place among the uploader's model appeals this calendar year, counting it. */
   appealNthThisYear: number;
-  /** The Flagged tab lists this model too (a hash flag in its window, a held re-detection or an open
-   *  text-scan flag), so ruling there and here touch the same flag. */
-  alsoInFlagged: boolean;
+  /** Auto-flagged lists this model too (a hash flag in its window or an open text-scan flag), so
+   *  ruling there and here touch the same flag. */
+  alsoInAutoFlagged: boolean;
+  /** Needs review lists this model too (a held detection or a file match). */
+  alsoInNeedsReview: boolean;
   scanRows: ScanRows;
 };
 
@@ -546,7 +475,8 @@ export async function getMinorFlagAppealsForReview({
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals",
            ya.nth AS "appealNthThisYear",
-           ${inFlaggedQueueSql} AS "alsoInFlagged"
+           ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
+           ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
     FROM pg
     ${modelFactsJoin}
     ${coverImagesJoin}
@@ -621,8 +551,9 @@ export type FlaggedFlagItem = {
   prevGalleryLevel: number | null;
 };
 
-/** One model waiting in the Flagged tab, with every flag on it that is waiting (minor first). */
-export type FlaggedRow = {
+/** One model waiting in Auto-flagged or Needs review, with every flag on it that is waiting (minor
+ *  first). */
+export type ModelFlagsRow = {
   /** The model id: one row per model. */
   key: string;
   modelId: number;
@@ -651,6 +582,12 @@ export type FlaggedRow = {
   coverImages: AppealCoverImage[];
   otherFlaggedModels: number;
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+};
+
+/** One model waiting in Auto-flagged. */
+export type FlaggedRow = ModelFlagsRow & {
+  /** Needs review lists this model too. */
+  alsoInNeedsReview: boolean;
 };
 
 export type FlaggedQuery = Page & { filters?: FlaggedFilters };
@@ -735,17 +672,43 @@ const textScanFlaggedPredicate = sql`
   AND NOT (l.label = 'minor' AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY})
 `;
 
-/** The Flagged tab lists the model under any of its three sources; the appeals rows say so. Takes a
- *  model id from `pg`, so it is evaluated once per page row. */
-const inFlaggedQueueSql = sql`EXISTS (
+/** Auto-flagged lists the model: a hash flag in its window or an open text-scan flag. Evaluated once
+ *  per page row of another tab, which says so with an "also in" chip. */
+const inAutoFlaggedSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
   SELECT 1 FROM "Model" m
   ${redetectedLabelsJoin}
-  WHERE m.id = pg."modelId"
-    AND (
-      (l.label = 'minor' AND ${hashFlaggedPredicate()})
-      OR (${redetectedIndexPredicate} AND l.entry ? 'redetected')
-      OR (${textScanFlaggedPredicate})
-    )
+  WHERE m.id = ${modelId}
+    AND ((l.label = 'minor' AND ${hashFlaggedPredicate()}) OR (${textScanFlaggedPredicate}))
+)`;
+
+/** Needs review lists the model: a held detection, or a file shared with a moderator's minor seed
+ *  uploaded by another account (the File matches population, checked for one model from its own
+ *  hashes so it stays on the hash index instead of building every seed). */
+const inNeedsReviewSql = (modelId: RawBuilder<unknown>) => sql`(
+  EXISTS (
+    SELECT 1 FROM "Model" m WHERE m.id = ${modelId} AND ${redetectedIndexPredicate}
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'SHA256'
+    WHERE m.id = ${modelId}
+      AND NOT m.minor
+      AND m.status <> 'Deleted'
+      AND NOT (m.meta ? 'minorHashDismissed')
+      AND ${notMinorHashClearedPredicate}
+      AND ${seedSharesHash(sql.ref('mfh.hash'), sql`s."userId" <> m."userId"`)}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "ModelVersion" ov
+        JOIN "ModelFile" ofl ON ofl."modelVersionId" = ov.id AND ofl.type = ${MINOR_HASH_FILE_TYPE}
+        JOIN "ModelFileHash" oh ON oh."fileId" = ofl.id AND oh.type = 'SHA256'
+        WHERE ov."modelId" = m.id
+          AND ${seedSharesHash(sql.ref('oh.hash'), sql`s."userId" = m."userId"`)}
+      )
+  )
 )`;
 
 const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
@@ -768,7 +731,6 @@ const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => s
 /** Which branches a filter selects. Hash flags are minor flags, so a real-person filter excludes them. */
 const flaggedBranches = ({ source, flag }: Pick<FlaggedFilters, 'source' | 'flag'>) => ({
   hash: (source === 'all' || source === 'hash') && flag !== 'poi',
-  redetected: source === 'all' || source === 'redetected',
   textScan: source === 'all' || source === 'text-scan',
 });
 
@@ -783,7 +745,6 @@ const flaggedBranchList = (search: MinorSearch | undefined, filters: FlaggedFilt
   const use = flaggedBranches(filters);
   return [
     ...(use.hash ? [hashBranch(search)] : []),
-    ...(use.redetected ? [redetectedBranch(search, filters.flag)] : []),
     ...(use.textScan ? [textScanBranch(search, filters.flag)] : []),
   ];
 };
@@ -792,11 +753,106 @@ type FlaggedSqlRow = Omit<FlaggedRow, 'key' | 'flags'> & {
   flags: Omit<FlaggedFlagItem, 'daysLeft'>[];
 };
 
-/** Hash auto-flags in their review window, text-scan auto-flags and held re-detections, merged in
- *  SQL and grouped per model, so one query pages, sorts and counts models: a model flagged minor and
- *  real person is one row carrying both flags. Oldest flag first by default so nothing starves (newest
+/** One flag of a branch row, as the grouped rows carry it. */
+const flagJson = sql`jsonb_build_object(
+  'label', label, 'source', source, 'textHash', "textHash", 'flaggedAt', "flaggedAt",
+  'redetected', redetected, 'scanEntry', "scanEntry", 'granted', granted,
+  'grantedByUsername', "grantedByUsername", 'rulings', rulings,
+  'prevNsfw', "prevNsfw", 'prevGalleryLevel', "prevGalleryLevel"
+)`;
+
+const pageOrder = (newest: boolean) =>
+  newest
+    ? {
+        sortAt: sql`max(at)`,
+        inner: sql`"flaggedAt" DESC NULLS LAST, "modelId" DESC`,
+        outer: sql`pg."flaggedAt" DESC NULLS LAST, pg."modelId" DESC`,
+      }
+    : {
+        sortAt: sql`min(at)`,
+        inner: sql`"flaggedAt" NULLS LAST, "modelId"`,
+        outer: sql`pg."flaggedAt" NULLS LAST, pg."modelId"`,
+      };
+
+/**
+ * The model rows of a page. `ctes` defines the CTEs ending in `grouped`: one row per model on the page,
+ * already cut to it, with `modelId`, `flaggedAt`, `flags`, `hasScanFlag` and `hasTextScanFlag`; `extra`
+ * adds columns (and the joins they need) after the per-model facts, so the LATERALs are bounded by the
+ * page.
+ */
+const flaggedPageSql = <R>(
+  ctes: RawBuilder<unknown>,
+  outer: RawBuilder<unknown>,
+  extra: { columns: RawBuilder<unknown>; joins: RawBuilder<unknown> } = {
+    columns: sql``,
+    joins: sql``,
+  }
+) => sql<R>`
+  WITH ${ctes},
+  pg AS (
+    SELECT g.*, m.name AS "modelName", m."userId", u.username, m.status::text AS status,
+           m.minor, m.poi, m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt"
+    FROM grouped g
+    JOIN "Model" m ON m.id = g."modelId"
+    LEFT JOIN "User" u ON u.id = m."userId"
+  )
+  SELECT pg."modelId", pg."modelName", pg."userId", pg.username, pg.status, pg.minor, pg.poi,
+         pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
+         -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
+         -- a ruling while the model has a Pending appeal.
+         EXISTS (
+           SELECT 1 FROM "Appeal" a
+           WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
+             AND a.status::text = 'Pending' AND a.category IS NULL
+         ) AS "hasPendingAppeal",
+         v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
+         COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+         COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
+         COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
+         COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+         jsonb_build_object(
+           'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
+           'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
+         ) AS "pastAppeals",
+         CASE WHEN pg."hasTextScanFlag"
+              THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
+         CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"
+         ${extra.columns}
+  FROM pg
+  LEFT JOIN "EntityModeration" sm
+    ON pg."hasScanFlag" AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+  LEFT JOIN "EntityModeration" ss
+    ON pg."hasScanFlag" AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
+       AND ss."entityId" = pg."modelId"
+  LEFT JOIN LATERAL (
+    SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
+  ) ls ON TRUE
+  ${modelFactsJoin}
+  ${coverImagesJoin}
+  ${uploaderFlagsJoin}
+  ${pastAppealsJoin(sql``)}
+  ${extra.joins}
+  ORDER BY ${outer}
+`;
+
+const withDaysLeft = <T extends { modelId: number; flags: Omit<FlaggedFlagItem, 'daysLeft'>[] }>(
+  row: T,
+  now: number
+) => ({
+  ...row,
+  key: String(row.modelId),
+  flags: row.flags.map((flag) => ({
+    ...flag,
+    daysLeft: flag.source === 'hash' && flag.flaggedAt ? reviewDaysLeft(flag.flaggedAt, now) : null,
+  })),
+});
+
+/** Auto-flagged: hash auto-flags in their review window and text-scan auto-flags, merged in SQL and
+ *  grouped per model, so one query pages, sorts and counts models: a model flagged minor and real
+ *  person is one row carrying both flags. Oldest flag first by default so nothing starves (newest
  *  first sorts on the newest flag); a model with no timestamp sorts last either way. A filter narrows
- *  the flags a row carries, not just which rows show.
+ *  the flags a row carries, not just which rows show. Each row says whether the model also waits in
+ *  Needs review.
  *
  *  The page is cut first (CTE) so the per-model LATERALs are bounded by limit. */
 export async function getFlaggedModels({
@@ -808,89 +864,29 @@ export async function getFlaggedModels({
   const branches = flaggedBranchList(search, filters);
   if (!branches.length) return { items: [] as FlaggedRow[], hasMore: false };
 
-  const newest = filters.sort === 'newest';
-  const [sortAt, inner, outer] = newest
-    ? [
-        sql`max("flaggedAt")`,
-        sql`"flaggedAt" DESC NULLS LAST, "modelId" DESC`,
-        sql`pg."flaggedAt" DESC NULLS LAST, pg."modelId" DESC`,
-      ]
-    : [
-        sql`min("flaggedAt")`,
-        sql`"flaggedAt" NULLS LAST, "modelId"`,
-        sql`pg."flaggedAt" NULLS LAST, pg."modelId"`,
-      ];
-
-  const rows = await sql<FlaggedSqlRow>`
-    WITH grouped AS (
-      SELECT "modelId", ${sortAt} AS "flaggedAt",
-             jsonb_agg(jsonb_build_object(
-               'label', label, 'source', source, 'textHash', "textHash", 'flaggedAt', "flaggedAt",
-               'redetected', redetected, 'scanEntry', "scanEntry", 'granted', granted,
-               'grantedByUsername', "grantedByUsername", 'rulings', rulings,
-               'prevNsfw', "prevNsfw", 'prevGalleryLevel', "prevGalleryLevel"
-             ) ORDER BY label, source) AS flags,
+  const order = pageOrder(filters.sort === 'newest');
+  const rows = await flaggedPageSql<FlaggedSqlRow>(
+    sql`
+    flagged AS (SELECT *, "flaggedAt" AS at FROM (${sql.join(branches, sql` UNION ALL `)}) b),
+    grouped AS (
+      SELECT "modelId", ${order.sortAt} AS "flaggedAt",
+             jsonb_agg(${flagJson} ORDER BY label, source) AS flags,
              bool_or(source <> 'hash') AS "hasScanFlag",
              bool_or(source = 'text-scan') AS "hasTextScanFlag"
-      FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+      FROM flagged
       GROUP BY "modelId"
-      ORDER BY ${inner}
+      ORDER BY ${order.inner}
       LIMIT ${limit + 1} OFFSET ${offset}
-    ),
-    pg AS (
-      SELECT g.*, m.name AS "modelName", m."userId", u.username, m.status::text AS status,
-             m.minor, m.poi, m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt"
-      FROM grouped g
-      JOIN "Model" m ON m.id = g."modelId"
-      LEFT JOIN "User" u ON u.id = m."userId"
-    )
-    SELECT pg."modelId", pg."modelName", pg."userId", pg.username, pg.status, pg.minor, pg.poi,
-           pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
-           -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
-           -- a ruling while the model has a Pending appeal.
-           EXISTS (
-             SELECT 1 FROM "Appeal" a
-             WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
-               AND a.status::text = 'Pending' AND a.category IS NULL
-           ) AS "hasPendingAppeal",
-           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
-           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
-           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
-           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
-           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
-           jsonb_build_object(
-             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
-             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
-           ) AS "pastAppeals",
-           CASE WHEN pg."hasTextScanFlag"
-                THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
-           CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"
-    FROM pg
-    LEFT JOIN "EntityModeration" sm
-      ON pg."hasScanFlag" AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
-    LEFT JOIN "EntityModeration" ss
-      ON pg."hasScanFlag" AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
-         AND ss."entityId" = pg."modelId"
-    LEFT JOIN LATERAL (
-      SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
-    ) ls ON TRUE
-    ${modelFactsJoin}
-    ${coverImagesJoin}
-    ${uploaderFlagsJoin}
-    ${pastAppealsJoin(sql``)}
-    ORDER BY ${outer}
-  `.execute(dbRead);
+    )`,
+    order.outer,
+    {
+      columns: sql`, ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"`,
+      joins: sql``,
+    }
+  ).execute(dbRead);
 
   const now = Date.now();
-  const items: FlaggedRow[] = rows.rows.slice(0, limit).map((row) => ({
-    ...row,
-    key: String(row.modelId),
-    flags: row.flags.map((flag) => ({
-      ...flag,
-      daysLeft:
-        flag.source === 'hash' && flag.flaggedAt ? reviewDaysLeft(flag.flaggedAt, now) : null,
-    })),
-  }));
+  const items: FlaggedRow[] = rows.rows.slice(0, limit).map((row) => withDaysLeft(row, now));
   return { items, hasMore: rows.rows.length > limit };
 }
 
@@ -906,7 +902,7 @@ export async function getAutoFlaggedCount({ search }: { search?: MinorSearch } =
   return result.rows[0]?.count ?? 0;
 }
 
-/** The Flagged list's total in models, over the same branches as `getFlaggedModels`: a model with
+/** The Auto-flagged list's total in models, over the same branches as `getFlaggedModels`: a model with
  *  two waiting flags counts once. With no arguments it is the whole queue, which the tab badge shows. */
 export async function getFlaggedCount({
   search,
@@ -918,6 +914,229 @@ export async function getFlaggedCount({
   const result = await sql<{ count: number }>`
     SELECT count(DISTINCT "modelId")::int AS count
     FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
+}
+
+/** A file match as a Needs review row carries it: this model's file and the seed sharing it. */
+export type FileMatchItem = Pick<
+  MinorHashReviewRow,
+  | 'hash'
+  | 'fileName'
+  | 'fileSizeKB'
+  | 'modelVersionId'
+  | 'minorModelId'
+  | 'minorModelName'
+  | 'minorUserId'
+  | 'minorModelVersionId'
+> & {
+  /** When the earliest file carrying a shared hash was uploaded: the closest stored stand-in for
+   *  when the match arose (no match timestamp is stored). */
+  uploadedAt: string;
+};
+
+/** One model waiting in Needs review: its held detections (in `flags`) and its file match, if any. */
+export type NeedsReviewRow = ModelFlagsRow & {
+  match: FileMatchItem | null;
+  /** Auto-flagged lists this model too. */
+  alsoInAutoFlagged: boolean;
+};
+
+export type NeedsReviewQuery = Page & {
+  filters?: NeedsReviewFilters;
+  /** The kinds of lead to list; the caller passes only the ones the viewer may rule. */
+  sources: NeedsReviewSources;
+};
+
+/** The File matches candidates (every model sharing a file with a moderator's minor seed), as the
+ *  queue and its counts select them. Needs `minor_src`. */
+const matchCandidatesCte = sql`
+  candidates AS (
+    SELECT m.id AS "modelId", m.name AS "modelName", m."userId",
+           bool_or(EXISTS (
+             SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+           )) AS "sameUploader",
+           -- Same ORDER BY in each aggregate so element [1] of each comes from the same row: the
+           -- reported version is the one carrying the reported hash, not just any version.
+           (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
+           (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId",
+           (array_agg(mf.name ORDER BY mfh.hash, mv.id))[1] AS "fileName",
+           (array_agg(mf."sizeKB" ORDER BY mfh.hash, mv.id))[1] AS "fileSizeKB",
+           min(mf."createdAt") AS "uploadedAt"
+    FROM "ModelFileHash" mfh
+    JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mfh.type = 'SHA256'
+      AND mfh.hash IN (SELECT hash FROM minor_src)
+      AND NOT m.minor
+      AND m.status <> 'Deleted'
+      AND NOT (m.meta ? 'minorHashDismissed')
+      AND ${notMinorHashClearedPredicate}
+    GROUP BY m.id, m.name, m."userId"
+  )
+`;
+
+/** The CTEs a Needs review query starts from, ending in `keyed`: one row per waiting item (a held
+ *  detection label, or a file match) with its model, its time (`at`) and its facts. */
+function needsReviewKeyedCtes(
+  search: MinorSearch | undefined,
+  flag: FlaggedFlag,
+  use: NeedsReviewSources
+) {
+  const ctes: RawBuilder<unknown>[] = [];
+  const keyed: RawBuilder<unknown>[] = [];
+  if (use.matches) {
+    ctes.push(minorSrcCte, matchCandidatesCte);
+    ctes.push(sql`
+      matched AS (
+        SELECT c."modelId", c."uploadedAt" AS at,
+               jsonb_build_object(
+                 'hash', c.hash, 'modelVersionId', c."modelVersionId", 'fileName', c."fileName",
+                 'fileSizeKB', c."fileSizeKB", 'uploadedAt', c."uploadedAt"
+               ) AS match
+        FROM candidates c
+        LEFT JOIN "User" u ON u.id = c."userId"
+        WHERE NOT c."sameUploader"
+          AND EXISTS (
+            SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId"
+          )
+          -- Any seed on the hash, not only the one the row reports (the lowest minorModelId), or
+          -- searching another flagged model on that hash misses the row.
+          AND ${searchPredicate(
+            search,
+            {
+              modelId: 'c.modelId',
+              modelName: 'c.modelName',
+              userId: 'c.userId',
+              username: 'u.username',
+            },
+            (id) => sql`EXISTS (
+              SELECT 1 FROM minor_src s3
+              WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
+                AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
+            )`
+          )}
+      )`);
+    keyed.push(
+      sql`SELECT "modelId", at, NULL::jsonb AS flag, match, NULL::text AS label FROM matched`
+    );
+  }
+  if (use.detections) {
+    ctes.push(sql`detections AS (${redetectedBranch(search, flag)})`);
+    keyed.push(
+      sql`SELECT "modelId", "flaggedAt" AS at, ${flagJson} AS flag, NULL::jsonb AS match, label FROM detections`
+    );
+  }
+  ctes.push(sql`keyed AS (${sql.join(keyed, sql` UNION ALL `)})`);
+  return sql.join(ctes, sql`,`);
+}
+
+type NeedsReviewSqlRow = Omit<NeedsReviewRow, 'key' | 'flags'> & {
+  flags: Omit<FlaggedFlagItem, 'daysLeft'>[];
+};
+
+/**
+ * Needs review: leads nothing has been applied for. Held text-scan detections (first detections and
+ * re-detections after a clear) and file matches (a file shared with a moderator's minor seed, from a
+ * different uploader), merged in SQL and grouped per model, so paging, sort and `hasMore` work on
+ * models. Oldest first by default; a detection's time is when the scan held it, a match's is when the
+ * shared file was uploaded. Lists only the `sources` passed; each row says whether the model also
+ * waits in Auto-flagged.
+ */
+export async function getNeedsReviewModels({
+  limit,
+  offset = 0,
+  search,
+  filters = DEFAULT_NEEDS_REVIEW_FILTERS,
+  sources,
+}: NeedsReviewQuery) {
+  const use = needsReviewBranches(sources, filters);
+  if (!use.detections && !use.matches) return { items: [] as NeedsReviewRow[], hasMore: false };
+
+  const order = pageOrder(filters.sort === 'newest');
+  const rows = await flaggedPageSql<NeedsReviewSqlRow>(
+    sql`
+    ${needsReviewKeyedCtes(search, filters.flag, use)},
+    grouped AS (
+      SELECT "modelId", ${order.sortAt} AS "flaggedAt",
+             COALESCE(jsonb_agg(flag ORDER BY label) FILTER (WHERE flag IS NOT NULL), '[]'::jsonb)
+               AS flags,
+             jsonb_agg(match) FILTER (WHERE match IS NOT NULL) -> 0 AS match,
+             bool_or(flag IS NOT NULL) AS "hasScanFlag",
+             FALSE AS "hasTextScanFlag"
+      FROM keyed
+      GROUP BY "modelId"
+      ORDER BY ${order.inner}
+      LIMIT ${limit + 1} OFFSET ${offset}
+    )`,
+    order.outer,
+    {
+      // The seed is resolved for the page's matches only: the queue reports the lowest seed on the
+      // hash from a different uploader, and the seed's version carrying that file.
+      columns: sql`,
+        CASE WHEN pg.match IS NOT NULL THEN pg.match || jsonb_build_object(
+          'minorModelId', seed."minorModelId", 'minorUserId', seed."userId",
+          'minorModelName', seed.name, 'minorModelVersionId', seed."minorModelVersionId"
+        ) END AS match,
+        ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged"`,
+      joins: use.matches
+        ? sql`
+          LEFT JOIN LATERAL (
+            SELECT s2."minorModelId", s2."userId", sm2.name,
+                   (SELECT mv2.id
+                    FROM "ModelFileHash" h2
+                    JOIN "ModelFile" f2 ON f2.id = h2."fileId" AND f2.type = ${MINOR_HASH_FILE_TYPE}
+                    JOIN "ModelVersion" mv2 ON mv2.id = f2."modelVersionId"
+                    WHERE h2.type = 'SHA256' AND h2.hash = s2.hash
+                      AND mv2."modelId" = s2."minorModelId"
+                    ORDER BY mv2.id
+                    LIMIT 1) AS "minorModelVersionId"
+            FROM minor_src s2
+            LEFT JOIN "Model" sm2 ON sm2.id = s2."minorModelId"
+            WHERE pg.match IS NOT NULL
+              AND s2.hash = pg.match->>'hash' AND s2."userId" <> pg."userId"
+            ORDER BY s2."minorModelId"
+            LIMIT 1
+          ) seed ON TRUE`
+        : sql`LEFT JOIN LATERAL (
+            SELECT NULL::int AS "minorModelId", NULL::int AS "userId", NULL::text AS name,
+                   NULL::int AS "minorModelVersionId"
+          ) seed ON TRUE`,
+    }
+  ).execute(dbRead);
+
+  const now = Date.now();
+  const items: NeedsReviewRow[] = rows.rows.slice(0, limit).map((row) => withDaysLeft(row, now));
+  return { items, hasMore: rows.rows.length > limit };
+}
+
+/** The Needs review list's total in models, over the same CTEs as the list: a model with a held
+ *  detection and a file match counts once. Building the file-match set costs seconds, so callers
+ *  bound it. */
+export async function getNeedsReviewCount({
+  search,
+  filters = DEFAULT_NEEDS_REVIEW_FILTERS,
+  sources,
+}: {
+  search?: MinorSearch;
+  filters?: NeedsReviewFilters;
+  sources: NeedsReviewSources;
+}) {
+  const use = needsReviewBranches(sources, filters);
+  if (!use.detections && !use.matches) return 0;
+  const result = await sql<{ count: number }>`
+    WITH ${needsReviewKeyedCtes(search, filters.flag, use)}
+    SELECT count(DISTINCT "modelId")::int AS count FROM keyed
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
+}
+
+/** Models with a held detection: the detections part of the Needs review badge. Rides
+ *  `Model_textScanRedetected_idx`. */
+export async function getHeldDetectionModelCount() {
+  const result = await sql<{ count: number }>`
+    SELECT count(*)::int AS count FROM "Model" m WHERE ${redetectedIndexPredicate}
   `.execute(dbRead);
   return result.rows[0]?.count ?? 0;
 }
@@ -1083,14 +1302,16 @@ export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }
   return { match, detail };
 }
 
-export type MinorQueueCounts = { pending: number };
+/** `pending`: models with a file match. `pendingWithDetection`: those of them that also have a held
+ *  detection, so Needs review's badge can count such a model once. */
+export type MinorQueueCounts = { pending: number; pendingWithDetection: number };
 
 /**
- * The File matches count. Cached rather than computed per request, because it costs ~10s on its own: it
- * has to build the same seed set and candidate CTE the queue does, then count the whole population
+ * The file-match counts. Cached rather than computed per request, because they cost ~10s on their own:
+ * they build the same seed set and candidate CTE the queue does, then count the whole population
  * instead of one page of it.
  */
-const counts = createCache({ name: 'minor-queue-counts:v2', fetch: fetchCounts, ttlSeconds: 300 });
+const counts = createCache({ name: 'minor-queue-counts:v3', fetch: fetchCounts, ttlSeconds: 300 });
 
 export function getMinorQueueCounts(): Promise<MinorQueueCounts> {
   return counts.get({});
@@ -1103,35 +1324,28 @@ export function bustMinorQueueCounts(): Promise<void> {
 }
 
 async function fetchCounts(): Promise<MinorQueueCounts> {
-  const pending = await sql<{ count: number }>`
-    WITH ${minorSrcCte},
-    candidates AS (
-      SELECT m.id AS "modelId", m."userId",
-             bool_or(EXISTS (
-               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-             )) AS "sameUploader",
-             (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
-      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mfh.type = 'SHA256'
-        AND mfh.hash IN (SELECT hash FROM minor_src)
-        AND NOT m.minor
-        AND m.status <> 'Deleted'
-        AND NOT (m.meta ? 'minorHashDismissed')
-        AND ${notMinorHashClearedPredicate}
-      GROUP BY m.id, m."userId"
+  const result = await sql<MinorQueueCounts>`
+    WITH ${minorSrcCte}, ${matchCandidatesCte},
+    matched AS (
+      -- EXISTS rather than the queue's LATERAL join: the queue needs WHICH seed matched, a count
+      -- only needs that one did, and the two agree because the LATERAL is unconditional.
+      SELECT c."modelId"
+      FROM candidates c
+      WHERE NOT c."sameUploader"
+        AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
     )
-    -- EXISTS rather than the queue's LATERAL join: the queue needs WHICH seed matched, a count only
-    -- needs that one did, and the two agree because the LATERAL is unconditional (JOIN ... ON TRUE).
-    SELECT count(*)::int AS count
-    FROM candidates c
-    WHERE NOT c."sameUploader"
-      AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
+    SELECT count(*)::int AS pending,
+           count(*) FILTER (WHERE EXISTS (
+             SELECT 1 FROM "Model" m WHERE m.id = matched."modelId" AND ${redetectedIndexPredicate}
+           ))::int AS "pendingWithDetection"
+    FROM matched
   `.execute(dbRead);
 
-  return { pending: Number(pending.rows[0]?.count ?? 0) };
+  const row = result.rows[0];
+  return {
+    pending: Number(row?.pending ?? 0),
+    pendingWithDetection: Number(row?.pendingWithDetection ?? 0),
+  };
 }
 
 type ModelFactsRow = Omit<ModelFlagDetail, 'strikes' | 'notes' | 'promptVersions'> & {

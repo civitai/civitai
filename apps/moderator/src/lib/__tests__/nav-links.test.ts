@@ -82,44 +82,66 @@ describe('the Users section', () => {
 
 describe('the Models section', () => {
   const APPEALS = '/models/flags/appeals';
-  const REVIEW = '/models/flags/review';
-  const MATCHES = '/models/flags/matches';
+  const AUTO = '/models/flags/auto';
+  const NEEDS_REVIEW = '/models/flags/needs-review';
+  const DETECTIONS = permissionKey('modelFlags.detections.decide');
+  const MATCHES = permissionKey('modelFlags.fileMatches.decide');
   const flags = (roles = reviewer) =>
     navForUser(roles)
       .find((l) => l.label === 'Models')
       ?.children?.find((c) => c.path === '/models/flags');
   const counts: Record<string, number> = {
     modelFlagsAppeals: 3,
-    modelFlagsReview: 5,
-    modelFlagsMatches: 7,
+    modelFlagsAuto: 5,
+    modelFlagsNeedsReview: 7,
+    modelFlagsNeedsReviewDetections: 2,
+    modelFlagsNeedsReviewMatches: 6,
   };
   const countFor = (key: string | undefined) => (key ? counts[key] ?? null : null);
+  const needsReview = () => flags()?.children?.find((c) => c.path === NEEDS_REVIEW);
 
   it('is one Model Flags entry holding the three tabs, each under its own grant', () => {
     applyGrants({
       [APPEALS]: ['moderator:reviewer'],
-      [REVIEW]: ['moderator:reviewer'],
-      [MATCHES]: ['moderator:reviewer'],
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
     });
     expect(labelsUnder('Models')).toEqual([['/models/flags', 'Model Flags']]);
     expect(flags()?.tabs).toBe(true);
     expect(flags()?.children?.map((c) => [c.path, c.label])).toEqual([
       [APPEALS, 'Appeals'],
-      [REVIEW, 'Flagged'],
-      [MATCHES, 'File matches'],
+      [AUTO, 'Auto-flagged'],
+      [NEEDS_REVIEW, 'Needs review'],
     ]);
   });
 
   it('points the one entry at the first tab held and sums only the held tabs', () => {
     applyGrants({
-      [REVIEW]: ['moderator:reviewer'],
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
       [MATCHES]: ['moderator:reviewer'],
     });
     const entry = flags()!;
-    expect(navHref(entry)).toBe(REVIEW);
+    expect(navHref(entry)).toBe(AUTO);
     expect(navCount(entry, countFor)).toBe(12);
     const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
     expect(navCount(models, countFor)).toBe(12);
+  });
+
+  it('badges Needs review with only the kinds of lead the viewer may rule', () => {
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'], [MATCHES]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBe('modelFlagsNeedsReviewMatches');
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'], [DETECTIONS]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBe('modelFlagsNeedsReviewDetections');
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBeUndefined();
+    // The admin holds every permission, so every lead.
+    expect(
+      navForUser({ roles: ['moderator:admin'] })
+        .find((l) => l.label === 'Models')
+        ?.children?.[0]?.children?.find((c) => c.path === NEEDS_REVIEW)?.countKey
+    ).toBe('modelFlagsNeedsReview');
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
@@ -128,15 +150,15 @@ describe('the Models section', () => {
     expect(navHref(flags()!)).toBe(APPEALS);
     expect(navCount(flags()!, countFor)).toBe(3);
     expect(canAccess(reviewer, APPEALS)).toBe(true);
-    expect(canAccess(reviewer, REVIEW)).toBe(false);
-    expect(canAccess(reviewer, MATCHES)).toBe(false);
+    expect(canAccess(reviewer, AUTO)).toBe(false);
+    expect(canAccess(reviewer, NEEDS_REVIEW)).toBe(false);
   });
 
   it('is active on every tab of the entry', () => {
-    applyGrants({ [REVIEW]: ['moderator:reviewer'] });
+    applyGrants({ [AUTO]: ['moderator:reviewer'] });
     const entry = flags()!;
-    expect(isNavLinkActive(entry, [entry], at('/models/flags/review?source=hash'))).toBe(true);
-    expect(isNavLinkActive(entry, [entry], at('/models/flags/matches'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/auto?source=hash'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/needs-review'))).toBe(true);
     expect(isNavLinkActive(entry, [entry], at('/models'))).toBe(false);
   });
 
@@ -144,8 +166,8 @@ describe('the Models section', () => {
     const group = NAVIGATION.find((n) => n.path === '/models')?.children?.[0];
     expect(group?.children?.map((c) => [c.path, c.countKey])).toEqual([
       [APPEALS, 'modelFlagsAppeals'],
-      [REVIEW, 'modelFlagsReview'],
-      [MATCHES, 'modelFlagsMatches'],
+      [AUTO, 'modelFlagsAuto'],
+      [NEEDS_REVIEW, 'modelFlagsNeedsReview'],
     ]);
   });
 
@@ -173,11 +195,12 @@ describe('/admin grantable pages', () => {
   it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
       '/models/flags/appeals',
-      '/models/flags/review',
-      '/models/flags/matches',
+      '/models/flags/auto',
+      '/models/flags/needs-review',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
-    expect(isGrantable('/models/flags/review')).toBe(true);
+    expect(isGrantable('/models/flags/needs-review')).toBe(true);
+    expect(isGrantable('/models/flags/review')).toBe(false);
   });
 });
 

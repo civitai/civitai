@@ -4,10 +4,11 @@ import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants'
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import {
   MODEL_FLAGS_APPEALS_PATH,
-  MODEL_FLAGS_MATCHES_PATH,
+  MODEL_FLAGS_AUTO_PATH,
+  MODEL_FLAGS_NEEDS_REVIEW_PATH,
   MODEL_FLAGS_PATH,
-  MODEL_FLAGS_REVIEW_PATH,
 } from '$lib/minor-flags/paths';
+import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
@@ -125,8 +126,13 @@ export const NAVIGATION: NavLink[] = [
         tabs: true,
         children: [
           { path: MODEL_FLAGS_APPEALS_PATH, label: 'Appeals', countKey: 'modelFlagsAppeals' },
-          { path: MODEL_FLAGS_REVIEW_PATH, label: 'Flagged', countKey: 'modelFlagsReview' },
-          { path: MODEL_FLAGS_MATCHES_PATH, label: 'File matches', countKey: 'modelFlagsMatches' },
+          { path: MODEL_FLAGS_AUTO_PATH, label: 'Auto-flagged', countKey: 'modelFlagsAuto' },
+          // The badge each viewer sees counts only the leads they may rule (`withViewerCountKey`).
+          {
+            path: MODEL_FLAGS_NEEDS_REVIEW_PATH,
+            label: 'Needs review',
+            countKey: 'modelFlagsNeedsReview',
+          },
         ],
       },
     ],
@@ -363,6 +369,13 @@ function allows(path: string, user: RoleUser): boolean {
   return !!match && (user?.roles ?? []).some((r) => match.roles.has(r));
 }
 
+/** Needs review lists only the kinds of lead a viewer holds a permission for, so its badge reads the
+ *  shared count for exactly those. */
+function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
+  if (link.path !== MODEL_FLAGS_NEEDS_REVIEW_PATH) return link;
+  return { ...link, countKey: needsReviewCountKey(needsReviewSources(resolvePermissions(user))) };
+}
+
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
@@ -373,7 +386,7 @@ function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
     }
     const children = link.children ? pruneNav(link.children, user) : undefined;
     if (link.children && (!children || children.length === 0)) continue;
-    out.push({ ...link, children });
+    out.push(withViewerCountKey({ ...link, children }, user));
   }
   return out;
 }

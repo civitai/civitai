@@ -3,7 +3,8 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/** Runs the File matches query on real Postgres: who counts as a match, and the facts each row carries. */
+/** Runs Needs review's file-match half on real Postgres: who counts as a match, the facts each row
+ *  carries, and how matches and held detections share one list. */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -17,11 +18,21 @@ vi.mock('../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
+vi.mock('../cache', () => ({
+  createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({
+    get: () => fetch(),
+    bust: vi.fn(),
+  }),
+}));
 
-const { getAutoFlaggedMinorMatch, getMinorHashMatchesForReview } = await import(
-  '../minor-hash.service'
-);
+const { getAutoFlaggedMinorMatch, getMinorQueueCounts, getNeedsReviewCount, getNeedsReviewModels } =
+  await import('../minor-hash.service');
+
+const MATCHES = { detections: false, matches: true };
+const BOTH = { detections: true, matches: true };
+/** The File matches half of Needs review, as a viewer holding only that permission sees it. */
+const matches = (query: { limit: number; offset?: number; search?: { text: string } }) =>
+  getNeedsReviewModels({ ...query, sources: MATCHES });
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
@@ -51,6 +62,14 @@ CREATE TABLE "Post" (
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
   "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "activity" TEXT NOT NULL, "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE TABLE "EntityModeration" (
+  "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Succeeded',
+  "result" JSONB, "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), "workflowId" TEXT
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -99,7 +118,7 @@ const seedModel = async (
   ]);
 };
 
-describe('getMinorHashMatchesForReview', () => {
+describe('Needs review: file matches', () => {
   beforeEach(async () => {
     await seedModel(10, 1, 'aa', { minor: true });
     await seedModel(11, 2, 'aa'); // a different uploader sharing the file: a match
@@ -109,8 +128,9 @@ describe('getMinorHashMatchesForReview', () => {
   });
 
   it('lists only unflagged, undismissed copies by a different uploader', async () => {
-    const { items } = await getMinorHashMatchesForReview({ limit: 10 });
-    expect(items.map((r) => [r.modelId, r.minorModelId])).toEqual([[11, 10]]);
+    const { items } = await matches({ limit: 10 });
+    expect(items.map((r) => [r.modelId, r.match?.minorModelId])).toEqual([[11, 10]]);
+    expect(items[0].flags).toEqual([]);
   });
 
   it('carries the facts, covers and uploader context the detail shows', async () => {
@@ -125,7 +145,7 @@ describe('getMinorHashMatchesForReview', () => {
       `INSERT INTO "Model" (id, name, "userId", minor) VALUES (30, 'other flagged', 2, true)`
     );
 
-    const [row] = (await getMinorHashMatchesForReview({ limit: 10 })).items;
+    const [row] = (await matches({ limit: 10 })).items;
     expect(row).toMatchObject({
       modelType: 'LORA',
       baseModel: 'SDXL 1.0',
@@ -138,16 +158,22 @@ describe('getMinorHashMatchesForReview', () => {
     });
     expect(row.coverImages).toEqual([{ id: 1, url: 'cover-url', nsfwLevel: 1 }]);
     // The shared file as this model stores it: its own name for the bytes the seed also carries.
-    expect(row).toMatchObject({ fileName: 'file-11.safetensors', fileSizeKB: 1024 });
+    expect(row.match).toMatchObject({
+      fileName: 'file-11.safetensors',
+      fileSizeKB: 1024,
+      hash: 'aa',
+      minorModelName: 'model 10',
+      minorUserId: 1,
+    });
+    expect(row.match?.minorModelVersionId).toEqual(expect.any(Number));
+    expect(row.match?.modelVersionId).toEqual(expect.any(Number));
   });
 
   it('searches a model name as a case-insensitive substring, wildcards taken literally', async () => {
     await seedModel(15, 3, 'aa');
     await pg.query(`UPDATE "Model" SET name = 'Cute 100%_Chibi' WHERE id = 15`);
     const ids = async (text: string) =>
-      (await getMinorHashMatchesForReview({ limit: 10, search: { text } })).items.map(
-        (r) => r.modelId
-      );
+      (await matches({ limit: 10, search: { text } })).items.map((r) => r.modelId);
 
     expect(await ids('chibi')).toEqual([15]);
     expect(await ids('%')).toEqual([15]);
@@ -159,10 +185,10 @@ describe('getMinorHashMatchesForReview', () => {
 
   it('pages with one extra row to know there is another page', async () => {
     await seedModel(15, 3, 'aa');
-    const first = await getMinorHashMatchesForReview({ limit: 1 });
+    const first = await matches({ limit: 1 });
     expect(first.items.map((r) => r.modelId)).toEqual([11]);
     expect(first.hasMore).toBe(true);
-    const second = await getMinorHashMatchesForReview({ limit: 1, offset: 1 });
+    const second = await matches({ limit: 1, offset: 1 });
     expect(second.items.map((r) => r.modelId)).toEqual([15]);
     expect(second.hasMore).toBe(false);
   });
@@ -178,5 +204,79 @@ describe('getAutoFlaggedMinorMatch', () => {
       fileName: 'file-12.safetensors',
       fileSizeKB: 1024,
     });
+  });
+});
+
+describe('Needs review: held detections and file matches in one list', () => {
+  const held = (at: string) => ({
+    textScanFlags: {
+      minor: { redetected: { workflowId: 'wf', textHash: 'n', kind: 'first', at } },
+    },
+  });
+
+  beforeEach(async () => {
+    await seedModel(10, 1, 'aa', { minor: true });
+    // File matches, their shared files uploaded on these days.
+    await seedModel(11, 2, 'aa');
+    await seedModel(15, 3, 'aa');
+    await pg.query(
+      `UPDATE "ModelFile" SET "createdAt" = '2026-10-05' WHERE name = 'file-11.safetensors'`
+    );
+    await pg.query(
+      `UPDATE "ModelFile" SET "createdAt" = '2026-10-01' WHERE name = 'file-15.safetensors'`
+    );
+    // A held detection on its own, and one on a model that is also a file match.
+    await seedModel(20, 3, 'zz', { meta: held('2026-10-03T00:00:00Z') });
+    await pg.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 11`, [
+      JSON.stringify(held('2026-10-08T00:00:00Z')),
+    ]);
+  });
+
+  const rows = async (sources = BOTH, extra: object = {}) =>
+    (await getNeedsReviewModels({ limit: 10, sources, ...extra })).items.map((r) => [
+      r.modelId,
+      r.flags.map((f) => f.source),
+      r.match ? 'match' : null,
+    ]);
+
+  it('lists one row per model, oldest lead first: a detection by when it was held, a match by its file upload', async () => {
+    expect(await rows()).toEqual([
+      [15, [], 'match'],
+      [20, ['redetected'], null],
+      // Model 11 carries both; its oldest lead (the file, 10-05) places it.
+      [11, ['redetected'], 'match'],
+    ]);
+  });
+
+  it('lists only the kinds of lead the viewer may rule', async () => {
+    expect(await rows({ detections: true, matches: false })).toEqual([
+      [20, ['redetected'], null],
+      [11, ['redetected'], null],
+    ]);
+    expect(await rows(MATCHES)).toEqual([
+      [15, [], 'match'],
+      [11, [], 'match'],
+    ]);
+    expect(await rows({ detections: false, matches: false })).toEqual([]);
+  });
+
+  it('narrows by source chip, and drops file matches under a real-person filter', async () => {
+    const hash = { filters: { source: 'hash', flag: 'all', sort: 'oldest' } };
+    expect((await rows(BOTH, hash)).map((r) => r[0])).toEqual([15, 11]);
+    const textScan = { filters: { source: 'text-scan', flag: 'all', sort: 'oldest' } };
+    expect((await rows(BOTH, textScan)).map((r) => r[0])).toEqual([20, 11]);
+    const poi = { filters: { source: 'all', flag: 'poi', sort: 'oldest' } };
+    expect(await rows(BOTH, poi)).toEqual([]);
+  });
+
+  it('sorts newest first on each model’s newest lead', async () => {
+    const newest = { filters: { source: 'all', flag: 'all', sort: 'newest' } };
+    expect((await rows(BOTH, newest)).map((r) => r[0])).toEqual([11, 20, 15]);
+  });
+
+  it('counts models, a model with both kinds once, the same as the list', async () => {
+    expect(await getNeedsReviewCount({ sources: BOTH })).toBe(3);
+    expect(await getNeedsReviewCount({ sources: MATCHES })).toBe(2);
+    expect(await getMinorQueueCounts()).toEqual({ pending: 2, pendingWithDetection: 1 });
   });
 });

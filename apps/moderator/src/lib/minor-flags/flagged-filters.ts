@@ -1,4 +1,5 @@
-export const FLAGGED_SOURCES = ['all', 'hash', 'text-scan', 'redetected'] as const;
+/** Auto-flagged's sources: what applied the flag. */
+export const FLAGGED_SOURCES = ['all', 'hash', 'text-scan'] as const;
 export const FLAGGED_FLAGS = ['all', 'minor', 'poi'] as const;
 export const FLAGGED_SORTS = ['oldest', 'newest'] as const;
 
@@ -22,7 +23,6 @@ export const FLAGGED_SOURCE_LABELS: Record<FlaggedSourceFilter, string> = {
   all: 'All',
   hash: 'Hash',
   'text-scan': 'Text scan',
-  redetected: 'Re-detect',
 };
 
 export const FLAGGED_FLAG_LABELS: Record<FlaggedFlag, string> = {

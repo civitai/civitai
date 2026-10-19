@@ -1,12 +1,12 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
   import { browser } from '$app/environment';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
   import { IconMessage } from '@tabler/icons-svelte';
   import { page } from '$app/state';
+  import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
+  import EnforcementChip from '$lib/components/minor-flags/EnforcementChip.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
+  import FlagDecisionForm from '$lib/components/minor-flags/FlagDecisionForm.svelte';
   import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
@@ -16,24 +16,17 @@
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
   import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import ScannedNamesCard from '$lib/components/minor-flags/ScannedNamesCard.svelte';
-  import ScannedTextCard from '$lib/components/minor-flags/ScannedTextCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
-  import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
-  import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
+  import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import {
     FLAG_LABEL_NAMES,
-    decisionEnabled,
     flaggedDecisions,
-    flaggedReasonGroups,
-    planDecision,
-    planReasonProblem,
     type FlagRef,
   } from '$lib/minor-flags/flagged-decision';
   import {
@@ -44,19 +37,9 @@
     flagScanSource,
     textSinceFlag,
   } from '$lib/minor-flags/model-detail';
-  import { MODEL_FLAGS_APPEALS_PATH, MODEL_FLAGS_REVIEW_PATH } from '$lib/minor-flags/paths';
+  import { MODEL_FLAGS_APPEALS_PATH, MODEL_FLAGS_AUTO_PATH } from '$lib/minor-flags/paths';
   import { SSR_PENDING } from '$lib/ssr-pending';
-  import {
-    detectionCopy,
-    detectionKind,
-    detectionSections,
-    latestScanDisagrees,
-    scanVerdictProvenance,
-  } from '$lib/minor-flags/text-scan-verdicts';
-  import {
-    decisionReasonOptions,
-    suggestedReason,
-  } from '$lib/triage/decision-reasons';
+  import { latestScanDisagrees, scanVerdictProvenance } from '$lib/minor-flags/text-scan-verdicts';
   import type { FlaggedFlagItem, FlaggedRow } from '$lib/server/minor-hash.service';
   import type { Outcome } from '$lib/triage/queue';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
@@ -81,19 +64,23 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  // Mirrors the main app's refusal: an open appeal blocks keeping a flag, and blocks a re-detection
-  // ruling either way. Lifting a hash or text-scan flag is allowed. Change with `flaggedDecisionEnabled`.
-  const APPEAL_FIRST = "Resolve the owner's open appeal first.";
-  const canOpenAppeals = $derived(
-    page.data.modelFlagTabs?.some((tab: { href: string }) => tab.href === MODEL_FLAGS_APPEALS_PATH)
+  const heldTabs = $derived(
+    (page.data.modelFlagTabs ?? []).map((tab: { href: string }) => tab.href) as string[]
   );
+  const canOpenAppeals = $derived(heldTabs.includes(MODEL_FLAGS_APPEALS_PATH));
   const appealsHref = $derived(`${MODEL_FLAGS_APPEALS_PATH}?q=${row.modelId}`);
+  const alsoIn = $derived(
+    crossTabChips(
+      { appeals: row.hasPendingAppeal, needsReview: row.alsoInNeedsReview },
+      row.modelId,
+      heldTabs
+    )
+  );
 
   const flags = $derived(row.flags);
   const flagRefs: FlagRef[] = $derived(
     flags.map(({ label, source, textHash }) => ({ label, source, textHash }))
   );
-  const redetections = $derived(flags.filter((f) => f.source === 'redetected' && f.redetected));
   const textScans = $derived(flags.filter((f) => f.source === 'text-scan'));
   const hashFlag = $derived(flags.find((f) => f.source === 'hash') ?? null);
   const sources = $derived([...new Map(flags.map((f) => [f.source, f])).values()]);
@@ -102,8 +89,7 @@
   // Derived, never an effect: the shell keys the detail per row. Primitives first, so a reload that
   // hands back an equal row keeps the request.
   const modelId = $derived(row.modelId);
-  const promptIdOf = (flag: FlaggedFlagItem) =>
-    flagPromptId((flag.scanEntry ?? flag.redetected)?.promptIds, flag.label);
+  const promptIdOf = (flag: FlaggedFlagItem) => flagPromptId(flag.scanEntry?.promptIds, flag.label);
   const promptKey = $derived(
     flags
       .map(promptIdOf)
@@ -113,7 +99,7 @@
   const detail = $derived(
     browser
       ? fetchModelFlagDetail(
-          MODEL_FLAGS_REVIEW_PATH,
+          MODEL_FLAGS_AUTO_PATH,
           modelId,
           promptKey ? promptKey.split(',').map(Number) : []
         )
@@ -123,60 +109,7 @@
   const scanned = $derived(textScans.find((f) => f.textHash) ?? null);
   const names = $derived([...new Set(textScans.flatMap((f) => f.scanEntry?.names ?? []))]);
   const since = $derived(textSinceFlag(scanned?.textHash, row.scanRows));
-
   const decisions = $derived(flaggedDecisions(flagRefs));
-  const withAppeal = $derived(flags.map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal })));
-  const enabled = $derived(decisions.map((d) => decisionEnabled(withAppeal, d)));
-  const reasonGroups = $derived(
-    flaggedReasonGroups(flagRefs, { keep: decisions[0].label, revert: decisions[1].label })
-  );
-  const reasonOptions = $derived(reasonGroups ? decisionReasonOptions(reasonGroups) : null);
-  // Confirming takes one key when keeping has a single specific reason.
-  const suggested = $derived(
-    enabled[0] && reasonGroups ? suggestedReason(reasonGroups[0].reasons) : ''
-  );
-  const reason = $derived(draft.reason || suggested);
-  let problem = $state<string | null>(null);
-  let reasonSelect = $state<HTMLElement | null>(null);
-
-  const outcomeOf = (keep: string[]) =>
-    keep.length === flags.length ? 'Flagged' : keep.length === 0 ? 'Not flagged' : 'Split';
-
-  // One step: the decision button submits with the reason and note already in the bar, unless they
-  // cannot be recorded for that decision, in which case nothing is sent and the bar says why.
-  const decide: SubmitFunction = async (input) => {
-    const posted = input.formData.get('keep');
-    const index = decisions.findIndex((d) => d.keep.join(',') === posted);
-    const refusal =
-      index < 0
-        ? 'Pick a decision.'
-        : !enabled[index]
-          ? APPEAL_FIRST
-          : planReasonProblem(
-              planDecision(flagRefs, decisions[index].keep),
-              decisions[index].label,
-              reason,
-              draft.note
-            );
-    if (refusal) {
-      input.cancel();
-      problem = refusal;
-      if (refusal !== APPEAL_FIRST) reasonSelect?.focus();
-      return;
-    }
-    problem = null;
-    const finish = await submit(outcomeOf(decisions[index].keep))(input);
-    return async (result) => {
-      await finish?.(result);
-      // Some flags were ruled before one failed, or the action died and nobody knows: reload so the
-      // row shows only what is still waiting. A refusal stays on the page's form as the banner.
-      if (
-        result.result.type === 'error' ||
-        (result.result.type === 'failure' && result.result.data?.partial === true)
-      )
-        await invalidateAll();
-    };
-  };
 </script>
 
 {#snippet appealNotice()}
@@ -231,63 +164,6 @@
   </FlagVerdictBlock>
 {/snippet}
 
-{#snippet decisionButtons()}
-  {#each decisions as d, i (d.label)}
-    {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
-    {#if d.key}
-      <TriageKeyButton
-        type="submit"
-        key={d.key}
-        primary={i === 0}
-        name="keep"
-        value={d.keep.join(',')}
-        formaction={actionHref('decideFlags')}
-        disabled={!!unavailable}
-        title={unavailable ?? undefined}
-      >
-        {d.label}
-      </TriageKeyButton>
-    {:else}
-      <Button
-        type="submit"
-        variant="outline"
-        size="sm"
-        name="keep"
-        value={d.keep.join(',')}
-        formaction={actionHref('decideFlags')}
-        disabled={!!unavailable}
-        title={unavailable ?? undefined}
-        class="h-8 border-dark-4 bg-transparent text-[13px] font-semibold text-dark-0 dark:bg-transparent"
-      >
-        {d.label}
-      </Button>
-    {/if}
-  {/each}
-{/snippet}
-
-{#snippet fields()}
-  {#if reasonOptions}
-    <InlineReasonFields
-      options={reasonOptions}
-      bind:reason={
-        () => reason,
-        (next) => {
-          draft = { ...draft, reason: next };
-          problem = null;
-        }
-      }
-      bind:note={
-        () => draft.note,
-        (next) => {
-          draft = { ...draft, note: next };
-          problem = null;
-        }
-      }
-      bind:select={reasonSelect}
-    />
-  {/if}
-{/snippet}
-
 <TriageDetailFrame {verdict} {error}>
   {#snippet children()}
     <ModelDetailHeader
@@ -298,9 +174,10 @@
       {detail}
     >
       {#snippet chips()}
+        <EnforcementChip applied />
         {#each sources as flag (flag.source)}<FlaggedSourceBadge row={flag} />{/each}
         {#each labels as label (label)}<FlagBadge {label} />{/each}
-        {#if row.hasPendingAppeal}<MetaChip tone="amber">also in Appeals</MetaChip>{/if}
+        <CrossTabChips chips={alsoIn} linked />
         {#if hashFlag?.daysLeft != null}
           <MetaChip tone="amber"
             >{hashFlag.daysLeft === 0
@@ -316,31 +193,6 @@
       allHref={modelUrl(civitaiUrl, row.modelId)}
       {detail}
     />
-
-    {#each redetections as flag (flag.label)}
-      {@const redetection = flag.redetected!}
-      {@const copy = detectionCopy(detectionKind(redetection))}
-      <div
-        class={redetection.names?.length ? 'grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]' : ''}
-      >
-        <ScannedTextCard
-          title={redetections.length > 1 || flags.length > 1
-            ? `Why it was held: ${FLAG_LABEL_NAMES[flag.label]}`
-            : 'Why it was held'}
-          label={flag.label}
-          detection={redetection}
-          flagged={flag.label === 'poi' ? row.poi : row.minor}
-          explanation={copy.explanation}
-        />
-        {#if redetection.names?.length}
-          <ScannedNamesCard
-            names={redetection.names}
-            textHash={redetection.textHash}
-            since={textSinceFlag(flag.textHash, row.scanRows)}
-          />
-        {/if}
-      </div>
-    {/each}
 
     {#if textScans.length || hashFlag}
       <div class="grid gap-4 {hashFlag ? 'lg:grid-cols-[1fr_400px]' : 'lg:grid-cols-[1fr_360px]'}">
@@ -371,21 +223,16 @@
 
     <!-- One history card per label: a ruling stub records no label of its own. -->
     {#each labels as label, i (label)}
-      {@const flag =
-        flags.find((f) => f.label === label && f.source === 'redetected') ??
-        flags.find((f) => f.label === label)!}
-      {@const sections = flag.redetected
-        ? detectionSections(detectionKind(flag.redetected), flag.rulings)
-        : null}
+      {@const flag = flags.find((f) => f.label === label)!}
       <PriorRulingsCard
         title={labels.length > 1
           ? `Prior rulings and appeals: ${FLAG_LABEL_NAMES[label]}`
           : undefined}
-        granted={sections ? flag.granted : null}
-        grantedByUsername={sections ? flag.grantedByUsername : null}
+        granted={null}
+        grantedByUsername={null}
         rulings={flag.rulings}
-        showPriorClear={sections?.priorClear ?? false}
-        showRulings={sections?.rulings ?? true}
+        showPriorClear={false}
+        showRulings
         pastAppeals={i === 0 ? row.pastAppeals : undefined}
         appealOpen={i === 0 ? row.hasPendingAppeal : undefined}
       />
@@ -397,18 +244,15 @@
     </div>
   {/snippet}
   {#snippet actions()}
-    <!-- One form, one button per decision: each button posts the flags it keeps. -->
-    <form method="POST" action={actionHref('decideFlags')} use:enhance={decide} class="w-full">
-      <input type="hidden" name="modelId" value={row.modelId} />
-      <input type="hidden" name="flags" value={JSON.stringify(flagRefs)} />
-      <TriageDecisionBar
-        buttons={decisionButtons}
-        fields={reasonOptions ? fields : undefined}
-        {problem}
-        hint={reasonOptions
-          ? 'Every decision here is stored as a labelled example for tuning the text-scan prompts.'
-          : undefined}
-      />
-    </form>
+    <FlagDecisionForm
+      modelId={row.modelId}
+      flags={flagRefs}
+      {decisions}
+      hasPendingAppeal={row.hasPendingAppeal}
+      {submit}
+      {actionHref}
+      hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+      bind:draft
+    />
   {/snippet}
 </TriageDetailFrame>

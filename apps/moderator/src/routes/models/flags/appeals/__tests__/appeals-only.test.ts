@@ -10,7 +10,6 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorFlagAppealGroups: vi.fn(async () => []),
   getMinorFlagAppealsForReview,
-  getMinorHashMatchesForReview: vi.fn(),
   getFlaggedModels,
   getFlaggedCount,
 }));

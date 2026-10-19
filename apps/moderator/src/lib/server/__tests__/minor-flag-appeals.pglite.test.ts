@@ -34,7 +34,8 @@ CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "userId" INTEGER NOT NULL,
   "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
-  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB,
+  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
@@ -47,6 +48,12 @@ CREATE TABLE "ModelVersion" (
   "trainedWords" TEXT[] NOT NULL DEFAULT '{}', "status" TEXT NOT NULL DEFAULT 'Published',
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01'
 );
+CREATE TABLE "ModelFile" (
+  "id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER NOT NULL, "type" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "name" TEXT NOT NULL DEFAULT 'file',
+  "sizeKB" DOUBLE PRECISION NOT NULL DEFAULT 0
+);
+CREATE TABLE "ModelFileHash" ("fileId" INTEGER NOT NULL, "type" TEXT NOT NULL, "hash" TEXT NOT NULL);
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "modelVersionId" INTEGER,
   "publishedAt" TIMESTAMPTZ
@@ -400,15 +407,28 @@ describe('row context', () => {
   });
 });
 
-describe('also in Flagged', () => {
-  const flagged = async () => {
+describe('also in Auto-flagged and Needs review', () => {
+  const also = async () => {
     const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
-    return Object.fromEntries(items.map((i) => [i.modelId, i.alsoInFlagged]));
+    return Object.fromEntries(
+      items.map((i) => [i.modelId, [i.alsoInAutoFlagged, i.alsoInNeedsReview]])
+    );
+  };
+  const withFile = async (modelId: number, hash: string) => {
+    await db.query(
+      `INSERT INTO "ModelVersion" ("id","modelId","baseModel") VALUES ($1, $2, 'SDXL')`,
+      [modelId + 100, modelId]
+    );
+    await db.query(
+      `INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, 'Model')`,
+      [modelId + 100]
+    );
+    await db.query(`INSERT INTO "ModelFileHash" VALUES ($1, 'SHA256', $2)`, [modelId + 100, hash]);
   };
 
-  it('marks the models the Flagged tab lists too, whatever raised them', async () => {
-    // Model 2: a hash auto-flag inside its review window. Model 4: a held re-detection. Model 7: an
-    // open text-scan real-person flag.
+  it('marks applied flags as Auto-flagged and leads nothing was applied for as Needs review', async () => {
+    // Model 2: a hash auto-flag inside its review window. Model 7: an open text-scan real-person
+    // flag. Model 4: a held re-detection.
     await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
       JSON.stringify(snapshot('auto', new Date(Date.now() - 86_400_000).toISOString())),
     ]);
@@ -417,22 +437,39 @@ describe('also in Flagged', () => {
         textScanFlags: { minor: { redetected: { workflowId: 'w', textHash: 'h' } } },
       }),
     ]);
-    expect(await flagged()).toEqual({
-      1: false,
-      2: true,
-      3: false,
-      4: true,
-      5: false,
-      6: false,
-      7: true,
+    expect(await also()).toEqual({
+      1: [false, false],
+      2: [true, false],
+      3: [false, false],
+      4: [false, true],
+      5: [false, false],
+      6: [false, false],
+      7: [true, false],
     });
+  });
+
+  it("marks a file match: an unflagged model sharing a file with another uploader's seed", async () => {
+    // Model 1 becomes a moderator's minor seed (user 10); model 4 (user 13) and model 5 (user 10,
+    // the seed's own uploader, so automation's business) carry the same file.
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{minor}' WHERE id = 1`);
+    // The File matches predicates read keys off meta, as the queue does, so it is never null here.
+    await db.query(`UPDATE "Model" SET meta = '{}'::jsonb WHERE id = 4`);
+    await withFile(1, 'aa');
+    await withFile(4, 'aa');
+    await withFile(5, 'aa');
+    const result = await also();
+    expect(result[4]).toEqual([false, true]);
+    expect(result[5]).toEqual([false, false]);
+    // A dismissed match is no longer waiting.
+    await db.query(`UPDATE "Model" SET meta = '{"minorHashDismissed": true}'::jsonb WHERE id = 4`);
+    expect((await also())[4]).toEqual([false, false]);
   });
 
   it('drops a hash flag once its review window has closed', async () => {
     await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
       JSON.stringify(snapshot('auto', '2020-01-01T00:00:00Z')),
     ]);
-    expect((await flagged())[2]).toBe(false);
+    expect((await also())[2]).toEqual([false, false]);
   });
 });
 

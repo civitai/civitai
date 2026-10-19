@@ -15,19 +15,32 @@ import {
   parseKeptIds,
   planDecision,
   type FlagRef,
-  type PlannedFlag,
   withRuling,
 } from '$lib/minor-flags/flagged-decision';
 import {
+  getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
-  getMinorHashMatchesForReview,
   getMinorQueueCounts,
   getFlaggedCount,
   getFlaggedModels,
   getModelFlagDetail,
+  getNeedsReviewCount,
+  getNeedsReviewModels,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
+import {
+  DEFAULT_NEEDS_REVIEW_FILTERS,
+  NEEDS_REVIEW_PERMISSIONS,
+  NEEDS_REVIEW_SOURCE_FILTERS,
+  needsReviewBranches,
+  needsReviewSources,
+  needsReviewTotal,
+  type NeedsReviewFilters,
+  type NeedsReviewSources,
+} from '$lib/minor-flags/needs-review';
+import { denied, type PermissionSet } from '$lib/permissions';
+import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
   APPEAL_SORTS,
@@ -67,6 +80,12 @@ const appealFilterSchema = z.object({
   sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
 });
 
+const needsReviewFilterSchema = z.object({
+  source: z.enum(NEEDS_REVIEW_SOURCE_FILTERS).catch(DEFAULT_NEEDS_REVIEW_FILTERS.source),
+  flag: z.enum(FLAGGED_FLAGS).catch(DEFAULT_NEEDS_REVIEW_FILTERS.flag),
+  sort: z.enum(FLAGGED_SORTS).catch(DEFAULT_NEEDS_REVIEW_FILTERS.sort),
+});
+
 const flaggedFilterSchema = z.object({
   source: z.enum(FLAGGED_SOURCES).catch(DEFAULT_FLAGGED_FILTERS.source),
   flag: z.enum(FLAGGED_FLAGS).catch(DEFAULT_FLAGGED_FILTERS.flag),
@@ -85,9 +104,8 @@ function parsePaging(url: URL) {
 }
 
 /**
- * The File matches list. Its total is the cached queue count, which costs ~10s cold, so it is
- * bounded: a slow count drops the "of N" instead of holding the page. A search narrows the list, not the
- * count, so the total is only offered for the whole queue.
+ * A count that costs seconds cold (the file-match set) is decoration on the list: past this budget the
+ * footer drops "of N" instead of holding the page.
  *
  * ⚠️ Offset paging over a queue moderators are draining SKIPS rows: action a row on page 1 and every
  * later row shifts up one, so page 2 starts past something never seen. The shell's "Refresh queue"
@@ -95,31 +113,61 @@ function parsePaging(url: URL) {
  */
 const TOTAL_BUDGET_MS = 1_000;
 
-export async function loadMatchesQueue(url: URL) {
-  const { limit, page, q, offset, search } = parsePaging(url);
+const withinBudget = <T>(work: () => Promise<T>, what: string): Promise<T | undefined> => {
   let budget: number | undefined;
+  return Promise.race([
+    work(),
+    new Promise<undefined>((resolve) => {
+      budget = setTimeout(resolve, TOTAL_BUDGET_MS);
+    }),
+  ])
+    .catch((err) => {
+      console.error(`${what} failed`, err);
+      return undefined;
+    })
+    .finally(() => clearTimeout(budget));
+};
 
-  const [queue, total] = await Promise.all([
-    getMinorHashMatchesForReview({ limit, offset, search }),
-    search
-      ? undefined
-      : Promise.race([
-          getMinorQueueCounts().then((counts) => counts.pending),
-          new Promise<undefined>((resolve) => {
-            budget = setTimeout(resolve, TOTAL_BUDGET_MS);
-          }),
-        ])
-          .catch((err) => {
-            console.error('File matches total failed', err);
-            return undefined;
-          })
-          .finally(() => clearTimeout(budget)),
+/** Needs review's "of N". With file matches in the list it comes from the cached file-match counts,
+ *  so it is offered only for the unsearched, unfiltered-by-label queue; held detections alone are
+ *  cheap to count exactly. */
+async function needsReviewListTotal(
+  use: NeedsReviewSources,
+  search: MinorSearch | undefined,
+  filters: NeedsReviewFilters
+): Promise<number | undefined> {
+  if (!use.matches)
+    return withinBudget(
+      () => getNeedsReviewCount({ search, filters, sources: use }),
+      'Needs review total'
+    );
+  if (search || (use.detections && filters.flag !== 'all')) return undefined;
+  const [matches, detections] = await Promise.all([
+    withinBudget(getMinorQueueCounts, 'File matches total'),
+    use.detections ? withinBudget(getHeldDetectionModelCount, 'Held detections total') : 0,
   ]);
-
-  return { limit, page, offset, q, total, ...queue, fullBleed: true };
+  const total = needsReviewTotal(use, {
+    detections: detections ?? null,
+    matches: matches?.pending ?? null,
+    overlap: matches?.pendingWithDetection ?? null,
+  });
+  return total ?? undefined;
 }
 
-export type MatchesQueueData = Awaited<ReturnType<typeof loadMatchesQueue>>;
+/** Needs review lists only the kinds of lead the viewer may rule; `sources` tells the page which. */
+export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
+  const { limit, page, q, offset, search } = parsePaging(url);
+  const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
+  const sources = needsReviewSources(grants);
+  const use = needsReviewBranches(sources, needsReviewFilters);
+  const [queue, total] = await Promise.all([
+    getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
+    needsReviewListTotal(use, search, needsReviewFilters),
+  ]);
+  return { limit, page, offset, q, needsReviewFilters, sources, total, ...queue, fullBleed: true };
+}
+
+export type NeedsReviewQueueData = Awaited<ReturnType<typeof loadNeedsReviewQueue>>;
 
 export async function loadAppealQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
@@ -186,50 +234,24 @@ export async function modelFlagDetailResponse(rawModelId: string, url: URL) {
 /** The shell prefixes a refusal with this so a moderator knows which item it was about. */
 const modelSubject = (modelId: number) => `Model #${modelId}`;
 
-const modelIdFrom = async (event: RequestEvent) => {
-  const form = await event.request.formData();
-  const modelId = Number(form.get('modelId'));
-  return modelId > 0 ? modelId : null;
-};
-
-/** Every action reports the failure rather than swallowing it: these are minor-safety verdicts, and a
- *  refused write that renders as success is the worst outcome available here. */
-const run = async (
-  event: RequestEvent,
-  action: (modelId: number) => Promise<{ ok: boolean; error?: string; rescanQueued?: boolean }>
-) => {
-  const modelId = await modelIdFrom(event);
-  if (!modelId) return fail(400, { error: 'Missing model id.' });
-
-  const result = await action(modelId);
-  if (!result.ok)
-    return fail(400, {
-      error: result.error ?? 'Action failed.',
-      modelId,
-      subject: modelSubject(modelId),
-    });
-  return { success: true, modelId, rescanQueued: result.rescanQueued === true };
-};
-
-/** Flag a file match as minor, or dismiss it. The main app's endpoints take the model id only. */
-export const matchesActions: Actions = {
-  setMinor: (event) => run(event, setModelMinorFlag),
-  dismiss: (event) => run(event, dismissMinorHashMatch),
-};
-
 type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
 
 /** Rules one flag through the path its source owns: hash flags through the main app's confirm and
  *  revert endpoints (no reason yet), text-scan flags through `ruleTextScanFlag`, re-detections through
- *  `resolveRedetection`. The caller has checked the label, text hash and reason. */
+ *  `resolveRedetection`, file matches through set-minor and dismiss (no reason yet). The caller has
+ *  checked the label, text hash and reason. */
 async function ruleFlag(
   modelId: number,
   flag: FlagRef,
   keep: boolean,
   reason: RulingReason | null
 ): Promise<{ ok: true; resolved: string } | { ok: false; error: string }> {
-  if (flag.source === 'hash') {
-    const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
+  if (flag.source === 'hash' || flag.source === 'file-match') {
+    const [onKeep, onLift] =
+      flag.source === 'hash'
+        ? [confirmMinorFlag, revertMinorFlag]
+        : [setModelMinorFlag, dismissMinorHashMatch];
+    const result = await (keep ? onKeep : onLift)(modelId);
     return result.ok
       ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
@@ -256,7 +278,8 @@ const flaggedAction =
     const modelId = Number(form.get('modelId'));
     const posted = form.get('label');
     const label = z.enum(['minor', 'poi']).safeParse(posted);
-    const source = z.enum(['hash', 'redetected', 'text-scan']).safeParse(form.get('source'));
+    // Auto-flagged's sources only: held detections are ruled from Needs review, under its permission.
+    const source = z.enum(['hash', 'text-scan']).safeParse(form.get('source'));
     if (!(modelId > 0) || !source.success)
       return fail(400, { error: 'Missing model id, label or source.' });
     const refusal = (error: string) =>
@@ -294,13 +317,14 @@ const flaggedAction =
 
 const flagRefSchema = z.object({
   label: z.enum(['minor', 'poi']),
-  source: z.enum(['hash', 'redetected', 'text-scan']),
+  source: z.enum(['hash', 'redetected', 'text-scan', 'file-match']),
   textHash: z.string().min(1).max(200).nullable(),
 });
 const SOURCE_NAMES: Record<FlagRef['source'], string> = {
   hash: 'hash',
   'text-scan': 'text scan',
-  redetected: 're-detection',
+  redetected: 'held detection',
+  'file-match': 'file match',
 };
 const flagName = (flag: FlagRef) => {
   const name = FLAG_LABEL_NAMES[flag.label];
@@ -308,115 +332,132 @@ const flagName = (flag: FlagRef) => {
 };
 
 /**
- * One decision over every flag a Flagged row carries: `flags` lists them, the pressed button's `keep`
- * names the ones kept, and every other one is reverted. Each flag is ruled through its own source's
- * path (`ruleFlag`). Every check runs before the first write, so a refusal changes nothing; a failure
+ * One decision over every flag (or lead) a row carries: `flags` lists them, the pressed button's `keep`
+ * names the ones kept, and every other one is reverted or dismissed. Each is ruled through its own
+ * source's path (`ruleFlag`). Only `sources` are accepted, and `refuse` may refuse a flag (a permission
+ * the viewer lacks). Every check runs before the first write, so a refusal changes nothing; a failure
  * from the main app partway leaves the earlier flags ruled, and the error names which went through.
  */
-const decideFlags: Actions[string] = async (event) => {
-  const form = await event.request.formData();
-  const modelId = Number(form.get('modelId'));
-  let parsed: FlagRef[] | null = null;
-  try {
-    const result = z
-      .array(flagRefSchema)
-      .min(1)
-      .max(3)
-      .safeParse(JSON.parse(String(form.get('flags'))));
-    parsed = result.success ? result.data : null;
-  } catch {
-    parsed = null;
-  }
-  if (!(modelId > 0) || !parsed) return fail(400, { error: 'Missing model id or flags.' });
-  const flags = parsed;
-  const refusal = (error: string, partial = false) =>
-    fail(400, { error, modelId, subject: modelSubject(modelId), partial });
-
-  if (new Set(flags.map(flagRefId)).size !== flags.length)
-    return refusal('A flag is listed twice.');
-  const keep = parseKeptIds(form.get('keep'), flags);
-  if (!keep) return refusal('Pick a decision.');
-  for (const flag of flags) {
-    if (flag.source === 'hash' && flag.label !== 'minor')
-      return refusal('A hash flag can only be ruled as minor.');
-    if (flag.source !== 'hash' && !flag.textHash) return refusal('Missing text hash.');
-  }
-
-  const plan = planDecision(flags, keep);
-  const input = parseForm(z.object(resolutionReasonFields), form);
-  if (typeof input === 'string') return refusal(input);
-  const reasons: (RulingReason | null)[] = [];
-  for (const flag of plan) {
-    const ruling = flagRuling(flag);
-    if (!ruling) {
-      reasons.push(null);
-      continue;
+const decideAction =
+  (
+    sources: readonly FlaggedSource[],
+    refuse: (event: RequestEvent, flag: FlagRef) => string | null = () => null
+  ): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    let parsed: FlagRef[] | null = null;
+    try {
+      const result = z
+        .array(flagRefSchema)
+        .min(1)
+        .max(3)
+        .safeParse(JSON.parse(String(form.get('flags'))));
+      parsed = result.success ? result.data : null;
+    } catch {
+      parsed = null;
     }
-    const picked = {
-      resolvedReason: decisionReasonFor(plan, flag, input.resolvedReason ?? ''),
-      internalNotes: input.internalNotes,
-    };
-    const reason = withRuling(ruling, (subject, verdict) =>
-      checkedResolutionReason(subject, verdict, picked, [flag.label])
-    );
-    if (typeof reason === 'string')
-      return refusal(plan.length > 1 ? `${flagName(flag)}: ${reason}` : reason);
-    reasons.push(reason);
-  }
+    if (!(modelId > 0) || !parsed) return fail(400, { error: 'Missing model id or flags.' });
+    const flags = parsed;
+    const refusal = (error: string, partial = false) =>
+      fail(400, { error, modelId, subject: modelSubject(modelId), partial });
 
-  // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
-  // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
-  // it escape would hide the flags already ruled.
-  //
-  // Order is load-bearing for a held re-detection on the same label as a hash flag (both minor): the
-  // main app's hash confirm/revert stamps the minor entry and strips its `redetected` marker, so a
-  // re-detection ruled after it is refused as stale although the flag was ruled. Ruling the
-  // re-detection first finds the model already minor and closes it, then the hash ruling lands.
-  // Neither path records the bar's reason for that pair until the hash endpoints take one (P6).
-  // Every other flag keeps the row's order (minor before real person, hash before text scan).
-  const hashLabels = new Set(plan.filter((f) => f.source === 'hash').map((f) => f.label));
-  const first = (f: PlannedFlag) => f.source === 'redetected' && hashLabels.has(f.label);
-  const order = [...plan.keys()].sort((a, b) => Number(first(plan[b])) - Number(first(plan[a])));
-  const outcomes = [];
-  for (const i of order) {
-    const flag = plan[i];
-    const result = await ruleFlag(modelId, flag, flag.keep, reasons[i]).catch(
-      (err: unknown): { ok: false; error: string } => {
-        console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
-        return { ok: false, error: err instanceof Error ? err.message : 'Action failed.' };
+    if (new Set(flags.map(flagRefId)).size !== flags.length)
+      return refusal('A flag is listed twice.');
+    for (const flag of flags) {
+      if (!sources.includes(flag.source)) return refusal('This tab does not rule that flag.');
+      const refused = refuse(event, flag);
+      if (refused) return refusal(refused);
+    }
+    const keep = parseKeptIds(form.get('keep'), flags);
+    if (!keep) return refusal('Pick a decision.');
+    for (const flag of flags) {
+      if ((flag.source === 'hash' || flag.source === 'file-match') && flag.label !== 'minor')
+        return refusal(`A ${SOURCE_NAMES[flag.source]} can only be ruled as minor.`);
+      if ((flag.source === 'text-scan' || flag.source === 'redetected') && !flag.textHash)
+        return refusal('Missing text hash.');
+    }
+
+    const plan = planDecision(flags, keep);
+    const input = parseForm(z.object(resolutionReasonFields), form);
+    if (typeof input === 'string') return refusal(input);
+    const reasons: (RulingReason | null)[] = [];
+    for (const flag of plan) {
+      const ruling = flagRuling(flag);
+      if (!ruling) {
+        reasons.push(null);
+        continue;
       }
-    );
-    outcomes.push({ flag, result });
-  }
+      const picked = {
+        resolvedReason: decisionReasonFor(plan, flag, input.resolvedReason ?? ''),
+        internalNotes: input.internalNotes,
+      };
+      const reason = withRuling(ruling, (subject, verdict) =>
+        checkedResolutionReason(subject, verdict, picked, [flag.label])
+      );
+      if (typeof reason === 'string')
+        return refusal(plan.length > 1 ? `${flagName(flag)}: ${reason}` : reason);
+      reasons.push(reason);
+    }
 
-  const failed = outcomes.filter((o) => !o.result.ok);
-  if (failed.length) {
-    const done = outcomes.filter((o) => o.result.ok);
-    const message = [
-      ...failed.map((o) =>
-        `${flagName(o.flag)} not ruled: ${o.result.ok ? '' : o.result.error}`.replace(
-          /([^.])$/,
-          '$1.'
-        )
-      ),
-      ...done.map((o) => `${flagName(o.flag)} ${o.flag.keep ? 'kept' : 'reverted'}.`),
-    ].join(' ');
-    return refusal(message, done.length > 0);
-  }
-  const resolved = outcomes.map((o) => (o.result.ok ? o.result.resolved : ''));
-  return {
-    success: true,
-    modelId,
-    // "closed" means the main app found nothing left to do; say so only when that holds for all.
-    resolved: resolved.every((r) => r === 'closed') ? 'closed' : resolved[0],
+    // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
+    // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
+    // it escape would hide the flags already ruled. A Needs review row lists its held detections before
+    // its file match, so a kept minor detection lands before set-minor makes it a moderator's flag.
+    const outcomes = [];
+    for (const [i, flag] of plan.entries()) {
+      const result = await ruleFlag(modelId, flag, flag.keep, reasons[i]).catch(
+        (err: unknown): { ok: false; error: string } => {
+          console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
+          return { ok: false, error: err instanceof Error ? err.message : 'Action failed.' };
+        }
+      );
+      outcomes.push({ flag, result });
+    }
+
+    const failed = outcomes.filter((o) => !o.result.ok);
+    if (failed.length) {
+      const done = outcomes.filter((o) => o.result.ok);
+      const message = [
+        ...failed.map((o) =>
+          `${flagName(o.flag)} not ruled: ${o.result.ok ? '' : o.result.error}`.replace(
+            /([^.])$/,
+            '$1.'
+          )
+        ),
+        ...done.map((o) => `${flagName(o.flag)} ${o.flag.keep ? 'kept' : 'reverted'}.`),
+      ].join(' ');
+      return refusal(message, done.length > 0);
+    }
+    const resolved = outcomes.map((o) => (o.result.ok ? o.result.resolved : ''));
+    return {
+      success: true,
+      modelId,
+      // "closed" means the main app found nothing left to do; say so only when that holds for all.
+      resolved: resolved.every((r) => r === 'closed') ? 'closed' : resolved[0],
+    };
   };
-};
 
-/** Keep or lift a flag from the Flagged tab, whatever raised it; or decide every flag on the row. */
+/** Keep or lift an applied flag from Auto-flagged; or decide every flag on the row. */
 export const flaggedActions: Actions = {
   keepFlag: flaggedAction(true),
   liftFlag: flaggedAction(false),
-  decideFlags,
+  decideFlags: decideAction(['hash', 'text-scan']),
+};
+
+/** The permission each kind of Needs review lead is ruled under (`NEEDS_REVIEW_PERMISSIONS`). */
+const NEEDS_REVIEW_PERMISSION_OF = {
+  redetected: NEEDS_REVIEW_PERMISSIONS.detections,
+  'file-match': NEEDS_REVIEW_PERMISSIONS.matches,
+} as const;
+
+/** Flag or dismiss every lead on a Needs review row: held detections and the file match. The page
+ *  lists only the kinds the viewer may rule, and this checks again, since a form can post anything. */
+export const needsReviewActions: Actions = {
+  decideFlags: decideAction(['redetected', 'file-match'], (event, flag) => {
+    const id = NEEDS_REVIEW_PERMISSION_OF[flag.source as keyof typeof NEEDS_REVIEW_PERMISSION_OF];
+    return event.locals.grants[id] ? null : denied(id);
+  }),
 };
 
 const wholeAppealAction =

@@ -22,7 +22,6 @@ const {
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorFlagAppealGroups: vi.fn(async () => []),
-  getMinorHashMatchesForReview: vi.fn(),
   getFlaggedModels,
   getFlaggedCount,
 }));
@@ -42,7 +41,7 @@ const { actions, load } = await import('../+page.server');
 const post = (fields: Record<string, string>) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return { request: new Request('http://x/models/flags/review', { method: 'POST', body }) };
+  return { request: new Request('http://x/models/flags/auto', { method: 'POST', body }) };
 };
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
 const run = (name: string, fields: Record<string, string>) =>
@@ -110,78 +109,29 @@ describe('hash flag actions', () => {
   });
 });
 
-describe('re-detection actions', () => {
-  it('keep forwards the label, the reason and keeps', async () => {
-    expect(await run('keepFlag', { ...redetected, label: 'poi', ...kept })).toMatchObject({
-      success: true,
-      modelId: 42,
-      resolved: 'kept',
-    });
-    expect(resolveRedetection).toHaveBeenCalledWith(42, 'poi', true, 'h-1', {
-      resolvedReason: 'detection-correct',
-      internalNotes: undefined,
-    });
-    expect(confirmMinorFlag).not.toHaveBeenCalled();
-  });
+describe('held detections', () => {
+  it.each(['keepFlag', 'liftFlag'])(
+    '%s refuses one: Needs review rules them, under its own permission',
+    async (action) => {
+      expect(await run(action, { ...redetected, ...kept })).toMatchObject({ status: 400 });
+      expect(resolveRedetection).not.toHaveBeenCalled();
+    }
+  );
 
-  it('hands the main app\'s "already flagged" answer to the page', async () => {
-    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'closed' });
-    expect(await run('keepFlag', { ...redetected, ...kept })).toMatchObject({
-      success: true,
-      resolved: 'closed',
+  it('decideFlags refuses a row carrying one, before any write', async () => {
+    const flags = [
+      { label: 'minor', source: 'hash', textHash: null },
+      { label: 'poi', source: 'redetected', textHash: 'h-1' },
+    ];
+    const result = await run('decideFlags', {
+      modelId: '42',
+      flags: JSON.stringify(flags),
+      keep: '',
+      ...dismissed,
     });
-  });
-
-  it('lift forwards the label, the reason and note, and dismisses', async () => {
-    await run('liftFlag', {
-      ...redetected,
-      resolvedReason: 'other',
-      internalNotes: 'a cartoon',
-    });
-    expect(resolveRedetection).toHaveBeenCalledWith(42, 'minor', false, 'h-1', {
-      resolvedReason: 'other',
-      internalNotes: 'a cartoon',
-    });
-  });
-
-  it.each([
-    ['an unknown label', { ...redetected, label: 'nsfw', ...kept }],
-    ['an unknown source', { ...redetected, source: 'other', ...kept }],
-    ['no model', { label: 'minor', source: 'redetected', textHash: 'h-1', ...kept }],
-    ['no text hash', { modelId: '42', label: 'minor', source: 'redetected', ...kept }],
-    ['no reason', redetected],
-    ['a dismissal reason', { ...redetected, ...dismissed }],
-    ['Other without a note', { ...redetected, resolvedReason: 'other' }],
-  ])('refuses %s on a keep before calling the main app', async (_name, fields) => {
-    const result = await run('keepFlag', fields);
     expect(result).toMatchObject({ status: 400 });
+    expect(revertMinorFlag).not.toHaveBeenCalled();
     expect(resolveRedetection).not.toHaveBeenCalled();
-    expect(confirmMinorFlag).not.toHaveBeenCalled();
-  });
-
-  it('refuses a reason bound to the other label', async () => {
-    const result = await run('liftFlag', { ...redetected, label: 'poi', ...dismissed });
-    expect(result).toMatchObject({
-      status: 400,
-      data: { error: expect.stringMatching(/does not apply/) },
-    });
-    expect(resolveRedetection).not.toHaveBeenCalled();
-  });
-
-  it('refuses a keep reason on a dismissal', async () => {
-    const result = await run('liftFlag', { ...redetected, ...kept });
-    expect(result).toMatchObject({ status: 400, data: { modelId: 42 } });
-    expect(resolveRedetection).not.toHaveBeenCalled();
-  });
-
-  it('shows a refusal instead of reporting success', async () => {
-    resolveRedetection.mockResolvedValue({ ok: false, error: 'Reload the queue.' });
-    const result = (await run('liftFlag', { ...redetected, ...dismissed })) as {
-      status: number;
-      data: { error: string; modelId: number };
-    };
-    expect(result.status).toBe(400);
-    expect(result.data).toMatchObject({ error: 'Reload the queue.', modelId: 42 });
   });
 });
 
@@ -252,11 +202,14 @@ describe('one decision over every flag on the model', () => {
 
   it('posts the fields the action reads from the decision form', () => {
     const detail = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../FlaggedDetail.svelte'),
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../../../../lib/components/minor-flags/FlagDecisionForm.svelte'
+      ),
       'utf-8'
     );
     expect(detail).toMatch(/name="modelId"/);
-    expect(detail).toMatch(/name="flags" value=\{JSON\.stringify\(flagRefs\)\}/);
+    expect(detail).toMatch(/name="flags" value=\{JSON\.stringify\(flags\)\}/);
     expect(detail).toMatch(/name="keep"/);
     expect(detail).toMatch(/actionHref\('decideFlags'\)/);
   });
@@ -342,44 +295,6 @@ describe('one decision over every flag on the model', () => {
     });
   });
 
-  describe('a hash minor flag with a held minor re-detection', () => {
-    const held = { label: 'minor', source: 'redetected', textHash: 'h-2' };
-    // A fake main app: a hash ruling stamps the minor entry and strips its held detection, so a
-    // re-detection ruled after it is stale.
-    let detectionHeld: boolean;
-    beforeEach(() => {
-      detectionHeld = true;
-      const hashRuling = async () => {
-        detectionHeld = false;
-        return { ok: true };
-      };
-      confirmMinorFlag.mockImplementation(hashRuling);
-      revertMinorFlag.mockImplementation(hashRuling);
-      resolveRedetection.mockImplementation(async () =>
-        detectionHeld
-          ? { ok: true, resolved: 'closed' }
-          : {
-              ok: false,
-              error: 'This re-detection changed or was already resolved. Reload the queue.',
-            }
-      );
-    });
-
-    it.each([
-      ['reverts', '', dismissed, revertMinorFlag],
-      ['confirms', 'minor:hash,minor:redetected', kept, confirmMinorFlag],
-    ] as const)(
-      '%s both by ruling the re-detection before the hash flag',
-      async (_n, keep, reason, hashCall) => {
-        const result = await decide([minorHash, held], keep, reason);
-        expect(result).toMatchObject({ success: true, modelId: 42 });
-        expect(resolveRedetection.mock.invocationCallOrder[0]).toBeLessThan(
-          hashCall.mock.invocationCallOrder[0]
-        );
-      }
-    );
-  });
-
   it('reports a refusal of every flag without calling it partial', async () => {
     confirmMinorFlag.mockResolvedValue({ ok: false, error: 'Appeal open.' });
     const result = await decide([minorHash], 'minor:hash');
@@ -391,16 +306,20 @@ describe('one decision over every flag on the model', () => {
 
   it('says "already flagged" only when the main app closed every flag', async () => {
     ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'closed' });
-    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'closed' });
-    const held = { label: 'minor', source: 'redetected', textHash: 'h-2' };
-    expect(await decide([held, poiText], 'minor:redetected,poi:text-scan', kept)).toMatchObject({
-      success: true,
-      resolved: 'closed',
-    });
-    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'kept' });
-    expect(await decide([held, poiText], 'minor:redetected,poi:text-scan', kept)).toMatchObject({
-      resolved: 'kept',
-    });
+    expect(await decide([minorText, poiText], 'minor:text-scan,poi:text-scan', kept)).toMatchObject(
+      {
+        success: true,
+        resolved: 'closed',
+      }
+    );
+    ruleTextScanFlag
+      .mockResolvedValueOnce({ ok: true, ruled: 'kept' })
+      .mockResolvedValueOnce({ ok: true, ruled: 'closed' });
+    expect(await decide([minorText, poiText], 'minor:text-scan,poi:text-scan', kept)).toMatchObject(
+      {
+        resolved: 'kept',
+      }
+    );
   });
 
   it.each([
@@ -440,7 +359,7 @@ describe('queue load', () => {
   type Loaded = { flaggedFilters: unknown; items: unknown[] };
   const loadQueue = async (query = '') =>
     (await (load as unknown as (e: { url: URL }) => Promise<Loaded>)({
-      url: new URL(`http://x/models/flags/review${query}`),
+      url: new URL(`http://x/models/flags/auto${query}`),
     })) as Loaded;
 
   it('ignores a leftover ?view or ?tab param', async () => {
@@ -455,13 +374,10 @@ describe('queue load', () => {
     expect(loaded.items).toEqual([]);
   });
 
-  it('honours the source the held-detections redirect sends', async () => {
+  it('lists every source for the retired re-detect filter (its rows moved to Needs review)', async () => {
     await loadQueue('?source=redetected');
     expect(getFlaggedModels).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filters: { source: 'redetected', flag: 'all', sort: 'oldest' } })
-    );
-    expect(getFlaggedCount).toHaveBeenLastCalledWith(
-      expect.objectContaining({ source: 'redetected', flag: 'all' })
+      expect.objectContaining({ filters: { source: 'all', flag: 'all', sort: 'oldest' } })
     );
   });
 

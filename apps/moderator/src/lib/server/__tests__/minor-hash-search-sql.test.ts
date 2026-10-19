@@ -9,9 +9,14 @@ vi.mock('$lib/server/db', async () => {
 });
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
 
-const { getMinorHashMatchesForReview, getMinorFlagAppealsForReview } = await import(
+const { getNeedsReviewModels, getMinorFlagAppealsForReview } = await import(
   '../minor-hash.service'
 );
+
+/** Needs review's file-match half. */
+const getMinorHashMatchesForReview = (
+  query: Omit<Parameters<typeof getNeedsReviewModels>[0], 'sources'>
+) => getNeedsReviewModels({ ...query, sources: { detections: false, matches: true } });
 
 const compile = async (fn: () => Promise<unknown>) => {
   captured.length = 0;
