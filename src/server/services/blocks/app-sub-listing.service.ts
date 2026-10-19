@@ -265,7 +265,8 @@ export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | 
 
 /**
  * The app's shared item stored under `key`, hidden included, from the document store when the
- * app's approved manifest declares a shared collection, else from the legacy shared storage
+ * app's approved manifest declares an item collection (shared and viewer-authored), else from
+ * the legacy shared storage
  * (`resolveSharedItem`). A key that does not name one item reads as not
  * found. A document with no user author has `authorUserId: null`, which matches no publisher.
  * A store that cannot be read is a 503, never "not found".

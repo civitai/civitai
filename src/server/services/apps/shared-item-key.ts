@@ -2,35 +2,41 @@
 // checks one by key: App Store sub-listings (author + hidden) and spend attribution (author).
 // An app's shared items live in the App Blocks document store or in its legacy per-app shared
 // storage (`app_<slug>.shared_kv`). Which one is decided by the app's APPROVED manifest: an app
-// that declares at least one shared collection has moved, and the document store alone is
+// that declares at least one ITEM collection (shared, and a write policy under which viewers
+// author documents: `collectionNeedsPublishScope`) has moved, and the document store alone is
 // authoritative for it (a miss is no item; the legacy store is never read, so a legacy copy left
 // behind by the move cannot bring back an item deleted from the document store). An app that
 // declares none — or an environment without a document store — resolves from the legacy store,
 // exactly as before the document store existed.
 //
+// Any other shared collection never holds an item. A `write: "none"` one exists only for marks
+// and counters, which an app commonly keys by the item's own key (e.g. per-item downvotes); an
+// owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
+// a document can neither make a key ambiguous nor answer for an item.
+//
 // Accepted trade-off: between a version that declares shared collections going live and the
 // copy of its legacy rows finishing (run right after go-live), an old key does not resolve.
 //
-// "Declares a shared collection" is taken to mean "has moved"; nothing else enforces it, and
+// "Declares an item collection" is taken to mean "has moved"; nothing else enforces it, and
 // the legacy shared-write routes stay open. Consequences, by design:
-//   - once an app's approved manifest declares a shared collection, the document store is the
+//   - once an app's approved manifest declares an item collection, the document store is the
 //     only source for key → item: legacy shared rows written afterwards (e.g. by an old open
 //     tab) never resolve;
-//   - an app that keeps a legacy shared feed alongside a declared shared collection loses
+//   - an app that keeps a legacy shared feed alongside a declared item collection loses
 //     lookups for its legacy keys;
-//   - rollback hazard: re-approving a manifest with no shared collection makes legacy
+//   - rollback hazard: re-approving a manifest with no item collection makes legacy
 //     authoritative again — leftover legacy copies of deleted documents come back, and items
 //     that exist only in the document store stop resolving.
 //
 // Document store: production namespace only, so a dev or review document never resolves; only
-// the collections the APPROVED manifest declares shared are probed, so an app with none costs
+// the item collections the APPROVED manifest declares are probed, so an app with none costs
 // no document-store query.
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 
 export type SharedItem =
   | { kind: 'found'; authorUid: number | null; hidden: boolean }
   /**
-   * More than one declared shared collection holds the key (the store's primary key includes
+   * More than one declared item collection holds the key (the store's primary key includes
    * the collection), so the key does not name one item.
    */
   | { kind: 'ambiguous' }
@@ -59,7 +65,7 @@ export async function resolveSharedItem(args: {
 
 type DocStoreResult =
   | SharedItem
-  /** The app declares no shared collection, or there is no document store here: use legacy. */
+  /** The app declares no item collection, or there is no document store here: use legacy. */
   | { kind: 'not_authoritative' };
 
 async function findInDocStore(args: {
@@ -68,8 +74,13 @@ async function findInDocStore(args: {
   key: string;
 }): Promise<DocStoreResult> {
   const { declaredCollections } = await import('~/server/services/apps/doc-store-access');
+  const { collectionNeedsPublishScope } = await import(
+    '~/shared/constants/block-storage.constants'
+  );
+  // The item collections: the same allowlist that decides which collections need the publish
+  // scope (shared, viewer-authored), so a new write policy is classified in one place.
   const shared = [...declaredCollections(args.appBlockId, args.manifest)]
-    .filter(([, decl]) => decl.visibility === 'shared')
+    .filter(([, decl]) => collectionNeedsPublishScope(decl))
     .map(([name]) => name);
   if (shared.length === 0) return { kind: 'not_authoritative' };
 
