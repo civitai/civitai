@@ -61,8 +61,10 @@ import {
   emitSharedBlockAlert,
   enforcedBlockingHit,
   recordSharedDataScan,
+  resolveSharedDataModerationMode,
   scanCounterKey,
   scanSharedData,
+  scheduleSharedDataShadow,
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
@@ -536,10 +538,25 @@ async function charge(
 
 const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
 
+/** What `moderate` hands back: run it once the write has committed, with the stored key. */
+type AfterCommit = (committedKey?: string) => void;
+const nothingAfterCommit: AfterCommit = () => undefined;
+
 /**
- * Enforce-mode moderation of one shared write: every string leaf and object key of `data`
- * and, when the app chose it, the document key. A scan that cannot run is refused as
- * retryable; a hit is refused with a coarse category, never the matched text.
+ * Moderation of one shared write — every string leaf and object key of `data` and, when the app
+ * chose it, the document key — in the app's shared-data moderation mode
+ * (`resolveSharedDataModerationMode`: the same two per-app flags, evaluated the same way, as the
+ * legacy shared-storage surface in `apps-shared.router.ts`):
+ *
+ * - `off`: nothing is scanned or recorded.
+ * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
+ *   `scheduleSharedDataShadow`, the legacy surface's own shadow path: after the write, off the
+ *   request path, recorded with mode `shadow`, never refusing, never alerting. A scanner failure
+ *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
+ *   write that fails records nothing.
+ * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
+ *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category,
+ *   never the matched text, and raises the shared block alert.
  */
 async function moderate(
   access: StorageAccess,
@@ -547,7 +564,9 @@ async function moderate(
   surface: SharedDataSurface,
   rowKey: string,
   input: { data?: Record<string, unknown>; key?: string }
-): Promise<void> {
+): Promise<AfterCommit> {
+  const mode = await resolveSharedDataModerationMode(access.ctx.appId);
+  if (mode === 'off') return nothingAfterCommit;
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
   const scanOpts = { isModerator: user.isModerator };
   const scans: { field: 'data' | 'key'; run: () => Promise<SharedTextScan> }[] = [];
@@ -558,6 +577,17 @@ async function moderate(
   if (input.key !== undefined) {
     const key = input.key;
     scans.push({ field: 'key', run: () => scanCounterKey(key, scanOpts) });
+  }
+  if (mode === 'shadow') {
+    return (committedKey = rowKey) => {
+      for (const { run } of scans) {
+        scheduleSharedDataShadow(run, {
+          appBlockId: access.ctx.appId,
+          rowKey: committedKey,
+          surface,
+        });
+      }
+    };
   }
   for (const { field, run } of scans) {
     let scan: SharedTextScan;
@@ -599,6 +629,7 @@ async function moderate(
       });
     }
   }
+  return nothingAfterCommit;
 }
 
 /**
@@ -746,16 +777,22 @@ async function run(
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
-          if (user) await moderate(access, user, 'append', '', { data: created.data });
+          const afterCommit = user
+            ? await moderate(access, user, 'append', '', { data: created.data })
+            : nothingAfterCommit;
           const doc = await store.create(ctx, coll, created.data);
           landed();
+          afterCommit(doc.key);
           return ok(await presentDoc(doc, decl), 201);
         }
         if (putIn && route.op === 'put') {
           const { data, ifVersion } = putIn;
-          if (user) await moderate(access, user, 'update', route.key, { data, key: route.key });
+          const afterCommit = user
+            ? await moderate(access, user, 'update', route.key, { data, key: route.key })
+            : nothingAfterCommit;
           const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
           landed();
+          afterCommit();
           return ok(await presentDoc(doc, decl));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
@@ -785,11 +822,16 @@ async function run(
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
-      // Under `write: 'none'` an increment can CREATE a public document under the app's key.
-      if (user && decl.write === 'none') {
-        await moderate(access, user, 'counter', route.key, { key: route.key });
-      }
-      return ok(await store.increment(ctx, coll, route.key, route.name, by));
+      // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
+      // store does not say whether this one did, so the key is scanned on every such increment
+      // (enforce: before it; shadow: after it).
+      const afterCommit =
+        user && decl.write === 'none'
+          ? await moderate(access, user, 'counter', route.key, { key: route.key })
+          : nothingAfterCommit;
+      const counted = await store.increment(ctx, coll, route.key, route.name, by);
+      afterCommit();
+      return ok(counted);
     }
     case 'mark':
     case 'unmark': {

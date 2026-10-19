@@ -10,6 +10,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as SessionClientModule from '~/server/auth/session-client';
 import type * as Moderation from '~/server/services/apps/shared-data-moderation';
 import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
@@ -50,7 +52,47 @@ const h = vi.hoisted(() => ({
   users: new Map<number, unknown>(),
   runEnabled: true,
   authorEnabled: true,
+  /**
+   * The app's shared-data moderation mode, as the two per-app Flipt flags give it. The contract's
+   * moderation cases describe ENFORCE, so that is every test's default (reset in `beforeEach`).
+   */
+  moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
+  isFlipt: undefined as unknown as ReturnType<
+    typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
+  >,
+  /** ClickHouse inserts, captured only while a test sets `capture` (otherwise the real client). */
+  ch: { capture: false, inserts: [] as { table: string; values: unknown[] }[] },
 }));
+
+const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
+const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const real = await importOriginal<typeof FliptClient>();
+  h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
+    if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
+    if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
+    return real.isFlipt(flag, entityId, context as never);
+  });
+  return {
+    ...real,
+    isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+      h.isFlipt(flag, entityId, context),
+  };
+});
+vi.mock('~/server/clickhouse/client', async (importOriginal) => {
+  const real = await importOriginal<typeof ClickhouseClient>();
+  const capture = {
+    insert: async (args: { table: string; values: unknown[] }) => {
+      h.ch.inserts.push({ table: args.table, values: args.values });
+    },
+  };
+  return {
+    ...real,
+    get clickhouse() {
+      return h.ch.capture ? capture : real.clickhouse;
+    },
+  };
+});
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
@@ -81,10 +123,12 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
   const SECRET_LABEL = 'scanner-label-zq82';
   const verdict = (text: string): SharedTextScan => {
     if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
+    // The leaf is the scanned text, so a shadow record's `leafText` can be checked.
+    const leaf = { raw: text, path: 't', segments: ['t'], kind: 'value' as const };
     const hit = (category: 'audit_regex' | 'link') => ({
       leafCount: 1,
       overflow: null,
-      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf: null }],
+      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }],
     });
     if (text.includes('https://contract-blocked.example')) return hit('link');
     if (text.includes('contract-blocked-term')) return hit('audit_regex');
@@ -602,6 +646,9 @@ beforeEach(() => {
   publishRequests = [];
   h.runEnabled = true;
   h.authorEnabled = true;
+  h.moderationMode = 'enforce';
+  h.ch.capture = false;
+  h.ch.inserts = [];
   h.users.clear();
   for (const [name, v] of Object.entries(contract.viewers))
     h.users.set(VIEWER_IDS[name], user(name, v.trusted));
@@ -1997,5 +2044,243 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     const r = await call({ token: v1, method: 'POST', path: '/plain', body: pick(V2_OWN) });
     expect(r.status).toBe(201);
     expect(lookups).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared-data moderation follows the per-app shadow/enforce flags
+// ---------------------------------------------------------------------------
+
+describe('shared-data moderation follows the per-app shadow / enforce flags', () => {
+  const HITS_TABLE = 'appBlocksSharedDataHits';
+  const SCANS_TABLE = 'appBlocksSharedDataScans';
+  const BLOCK_ALERTS = [
+    'app-blocks-shared-storage-legal-block',
+    'app-blocks-shared-storage-content-block',
+  ];
+  const rowsOf = (table: string) =>
+    h.ch.inserts.filter((i) => i.table === table).flatMap((i) => i.values) as Record<
+      string,
+      unknown
+    >[];
+  const eventNames = () =>
+    loggingMock.logToAxiom.mock.calls.map((c) => String((c[0] as { name?: string }).name));
+  const flushImmediates = async () => {
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const scanner = async () => {
+    const m = await import('~/server/services/apps/shared-data-moderation');
+    return { data: vi.mocked(m.scanSharedData), key: vi.mocked(m.scanCounterKey) };
+  };
+
+  async function setup(mode: 'off' | 'shadow' | 'enforce') {
+    h.moderationMode = mode;
+    h.ch.capture = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    loggingMock.logToAxiom.mockClear();
+    h.isFlipt.mockClear();
+    const s = await scanner();
+    s.data.mockClear();
+    s.key.mockClear();
+    return { A, v1, ...s };
+  }
+
+  describe('SHADOW', () => {
+    it('🔴 REGRESSION: a hit on a shared PUT does not refuse the write; it is recorded as shadow, unblocked, with no alert', async () => {
+      const { A, v1 } = await setup('shadow');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(r.status).toBe(200);
+      const stored = await call({ token: v1, method: 'GET', path: '/posts/p1' });
+      expect(stored.status).toBe(200);
+      expect(stored.body).toMatchObject({ data: { t: 'contract-blocked-term' } });
+
+      await vi.waitFor(() => expect(rowsOf(HITS_TABLE).length).toBeGreaterThan(0));
+      // The legacy surface's own row shape: shadow keeps the user text (the leaf, the matched term).
+      expect(rowsOf(HITS_TABLE)).toEqual([
+        expect.objectContaining({
+          appBlockId: A.id,
+          rowKey: 'p1',
+          surface: 'update',
+          mode: 'shadow',
+          blocked: 0,
+          category: 'audit_regex',
+          matched: 'scanner-matched-text-zq81',
+          leafText: JSON.stringify({ t: 'contract-blocked-term' }),
+        }),
+      ]);
+      // One denominator row per scan: the data blob, and the app-chosen key.
+      await vi.waitFor(() => expect(rowsOf(SCANS_TABLE)).toHaveLength(2));
+      expect(rowsOf(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'update', mode: 'shadow', blocked: 0 }),
+        expect.objectContaining({ surface: 'update', mode: 'shadow', blocked: 0 }),
+      ]);
+      await flushImmediates();
+      for (const alert of BLOCK_ALERTS) expect(eventNames()).not.toContain(alert);
+    });
+
+    it('🔴 REGRESSION: a hit on a create and on a counter-created key is recorded after the write, never refused', async () => {
+      const { v1 } = await setup('shadow');
+      const created = await call({
+        token: v1,
+        method: 'POST',
+        path: '/posts',
+        body: { data: { 'contract-blocked-term': 'in a key' } },
+      });
+      expect(created.status).toBe(201);
+      const createdKey = (created.body as { key: string }).key;
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(200);
+
+      await vi.waitFor(() => expect(rowsOf(HITS_TABLE)).toHaveLength(2));
+      expect(rowsOf(HITS_TABLE)).toEqual(
+        expect.arrayContaining([
+          // A create's row carries the key the store gave it, once it exists.
+          expect.objectContaining({
+            rowKey: createdKey,
+            surface: 'append',
+            mode: 'shadow',
+            blocked: 0,
+          }),
+          expect.objectContaining({
+            rowKey: 'contract-blocked-term',
+            surface: 'counter',
+            mode: 'shadow',
+            blocked: 0,
+          }),
+        ])
+      );
+      await flushImmediates();
+      for (const alert of BLOCK_ALERTS) expect(eventNames()).not.toContain(alert);
+    });
+
+    it('🔴 REGRESSION: a scanner outage does not refuse the write (no 503); it is only logged', async () => {
+      const { v1 } = await setup('shadow');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-scanner-down' } },
+      });
+      expect(r.status).toBe(200);
+      await vi.waitFor(() =>
+        expect(eventNames()).toContain('app-blocks-shared-data-moderation-shadow-failed')
+      );
+      expect(rowsOf(HITS_TABLE)).toEqual([]);
+    });
+
+    it('the write does not wait for the scan — a scanner that never settles cannot hold it', async () => {
+      const { v1, data } = await setup('shadow');
+      data.mockImplementationOnce(() => new Promise<SharedTextScan>(() => undefined));
+      try {
+        const r = await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
+        expect(r.status).toBe(200);
+      } finally {
+        // Drops the never-settling scanner if it went unused, back to the mock's own verdicts.
+        data.mockReset();
+      }
+    }, 5_000);
+
+    it('a write that fails in the store schedules no scan', async () => {
+      const { A, v1, data, key } = await setup('shadow');
+      const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+      expect(
+        (await call({ token: v1, method: 'PUT', path: '/posts/owned', body: { data: {} } })).status
+      ).toBe(200);
+      await flushImmediates();
+      data.mockClear();
+      key.mockClear();
+      // v2 is not the author: the store refuses, so nothing landed and nothing is scanned.
+      const refused = await call({
+        token: v2,
+        method: 'PUT',
+        path: '/posts/owned',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(refused.status).toBe(403);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT GUARD: moderators keep their pattern-list exemption in shadow too', async () => {
+      const { A, data, key } = await setup('shadow');
+      h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });
+      const mod = await mint({ app: A, uid: VIEWER_IDS.v3, scopes: contract.defaultScopes });
+      expect(
+        (await call({ token: mod, method: 'PUT', path: '/posts/m', body: { data: {} } })).status
+      ).toBe(200);
+      await vi.waitFor(() => expect(key).toHaveBeenCalled());
+      expect(data.mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+      expect(key.mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+    });
+  });
+
+  describe('OFF', () => {
+    it('nothing is scanned or recorded, and a would-be hit is stored', async () => {
+      const { v1, data, key } = await setup('off');
+      const put = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(put.status).toBe(200);
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(200);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+      expect(h.ch.inserts).toEqual([]);
+      expect(eventNames()).not.toContain('app-blocks-shared-data-moderation-scan');
+    });
+  });
+
+  describe('ENFORCE (unchanged)', () => {
+    it('INVARIANT GUARD: a hit is refused with 422 content_rejected and raises the block alert', async () => {
+      const { v1 } = await setup('enforce');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect(eventNames()).toContain('app-blocks-shared-storage-content-block');
+      expect((await call({ token: v1, method: 'GET', path: '/posts/p1' })).status).toBe(404);
+    });
+
+    it('INVARIANT GUARD: a scanner outage is refused with 503 moderation_unavailable', async () => {
+      const { v1 } = await setup('enforce');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-scanner-down' } },
+      });
+      expect(r.status).toBe(503);
+      expect(r.body).toMatchObject({ code: 'moderation_unavailable' });
+    });
+  });
+
+  it('the mode is resolved per APP: entity id = the app block id, no context', async () => {
+    const { A, v1 } = await setup('shadow');
+    await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
+    expect(h.isFlipt).toHaveBeenCalledWith(SHADOW_FLAG, A.id, undefined);
+    expect(h.isFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, A.id, undefined);
   });
 });

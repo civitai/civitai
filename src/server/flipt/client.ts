@@ -106,8 +106,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
-  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys, in SHADOW: scan
-  // after the write commits and record what would have been blocked, without rejecting anything.
+  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys — the legacy
+  // shared-storage surface and the document store's shared writes alike — in SHADOW: scan after
+  // the write commits and record what would have been blocked, without rejecting anything.
   // Same submit/apply split as the XGuard pair above. DEFAULT-OFF.
   //
   // 🔴 EVALUATED PER APP — entityId = the app block id, NO context — so ramp by boolean, by

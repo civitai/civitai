@@ -47,6 +47,11 @@ import {
  * `off` (both off — no scan, no record, behaviour identical to before this existed), `shadow`
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
  *
+ * Both shared-write surfaces follow the mode: the legacy shared-storage router
+ * (`apps-shared.router.ts`) and the document store's REST layer (`doc-store-api.ts`). Each runs its
+ * shadow scans through `scheduleSharedDataShadow` and refuses an enforce hit through
+ * `enforcedBlockingHit`, so the two cannot diverge on what either mode does.
+ *
  * ## Evaluation — per APP, not per user
  *
  * Both flags are evaluated with the app block id as the Flipt entity id and NO context. That is
