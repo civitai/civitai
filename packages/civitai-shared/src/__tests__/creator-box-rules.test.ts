@@ -174,6 +174,13 @@ describe('creatorBoxWeightsProblem', () => {
       [9000, 1000],
       'Each item is less likely than one in the tier before',
     ],
+    // The tier falls (7500 > 2500) but each item is exactly 2500 in both: a tie is not "less likely".
+    [
+      'equally likely items',
+      [3, 1],
+      [7500, 2500],
+      'Each item is less likely than one in the tier before',
+    ],
   ])('refuses %s', (_label, sizes, weights, problem) => {
     expect(creatorBoxWeightsProblem(sizes, weights)).toBe(problem);
   });
@@ -235,18 +242,31 @@ describe('creatorBoxPriceBounds', () => {
     expect(creatorBoxPriceProblem(507, bounds)).toBeNull();
   });
 
-  const tier = [{ weight: 1, values: [500] }];
-  it.each<[string, { weight: number; values: number[] }[], number]>([
-    ['a zero weight', [{ weight: 0, values: [500] }], 500],
-    ['an empty tier', [{ weight: 1, values: [] }], 500],
-    ['a zero value', [{ weight: 1, values: [0] }], 500],
-    ['no tiers', [], 500],
+  // Each bad tier sits beside a good one, so the throw comes from its own guard and not from a
+  // zero total weight or an empty division.
+  const good = { weight: 10000, values: [500] };
+  it.each<[string, { weight: number; values: number[] }[], number, string]>([
+    [
+      'a zero weight',
+      [{ weight: 0, values: [10] }, good],
+      500,
+      'Tier weight 0 is not a positive integer',
+    ],
+    [
+      'a negative weight',
+      [{ weight: -1, values: [10] }, good],
+      500,
+      'Tier weight -1 is not a positive integer',
+    ],
+    ['an empty tier', [{ weight: 1, values: [] }, good], 500, 'Every tier needs at least one item'],
+    ['a zero value', [{ weight: 1, values: [0] }, good], 500, 'Item values are positive integers'],
+    ['no tiers', [], 500, 'A box needs at least one tier'],
     // A floor read from config that came back unset would otherwise allow a free box.
-    ['a missing floor', tier, NaN],
-    ['a zero floor', tier, 0],
-    ['a negative floor', tier, -50],
-  ])('throws on %s', (_label, tiers, floor) => {
-    expect(() => creatorBoxPriceBounds(tiers, floor)).toThrow(RangeError);
+    ['a missing floor', [good], NaN, 'Price floor NaN is not a positive integer'],
+    ['a zero floor', [good], 0, 'Price floor 0 is not a positive integer'],
+    ['a negative floor', [good], -50, 'Price floor -50 is not a positive integer'],
+  ])('throws on %s', (_label, tiers, floor, message) => {
+    expect(() => creatorBoxPriceBounds(tiers, floor)).toThrow(new RangeError(message));
   });
 });
 
