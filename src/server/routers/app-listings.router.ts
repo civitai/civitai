@@ -1345,6 +1345,7 @@ export const appListingsRouter = router({
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
+          mediaSplit: input.mediaSplit,
         });
       } catch (err) {
         throw mapOffsiteError(err);

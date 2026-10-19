@@ -1,5 +1,8 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import {
+  classifyGatedImageForViewer,
+  isLevelWithinCeiling,
+} from '~/server/services/blocks/block-gated-images.logic';
 import {
   LISTING_COVER_WIDTH,
   LISTING_SCREENSHOT_WIDTH,
@@ -155,6 +158,9 @@ export function listingMediaCeiling(
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
   return redHostMediaCeiling(audience, sfwBrowsingLevelsFlag & ratingLevels);
 }
+
+/** The gate's level comparison, for labels that describe where an image shows. */
+export { isLevelWithinCeiling };
 
 /** The fields `classifyGatedImageForViewer` reads. */
 type GatedFields = Parameters<typeof classifyGatedImageForViewer>[0];

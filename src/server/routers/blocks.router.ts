@@ -2910,6 +2910,7 @@ export const blocksRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
+          mediaSplit: input.mediaSplit,
         });
       } catch (err) {
         throw new TRPCError({

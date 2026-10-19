@@ -30,6 +30,8 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
   appListing: {
     updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
@@ -79,6 +81,8 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       deleteMany: vi.fn(async () => ({ count: 1 })),
@@ -2166,6 +2170,23 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     );
   }
 
+  /** `APP_ID` is split; the face read answers `faceLevels` by image id. */
+  function splitFake(faceLevels: Record<number, number> = {}) {
+    mockWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...v: unknown[]) => {
+        const text = strings.join('?');
+        if (text.includes('to_regclass'))
+          return [{ present: true, can_select: true, can_insert: true, can_update: true }];
+        if (text.includes('FROM app_listing_red_media')) return [{ split: v[0] === APP_ID }];
+        if (text.includes('FROM "Image"')) {
+          const ids = (v[0] as { values: number[] }).values;
+          return ids.map((id) => ({ nsfwLevel: faceLevels[id] ?? 0 }));
+        }
+        return [];
+      }
+    );
+  }
+
   /** The `data` payload of the listing status flip. */
   function flipData() {
     const call = mockWrite.appListing.updateMany.mock.calls.find(
@@ -2348,6 +2369,41 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     });
     await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+  });
+
+  it('🔴 a split a moderator granted is kept: the mature screenshot does not floor the republish', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_X },
+    });
+    splitFake();
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
+  // The same rule as an image re-rate: an icon raised above SFW since the grant does not end
+  // the split. civitai.com shows the placeholder, and the state this leaves (SFW rating, R
+  // icon) is the one the T8 seam (`listing-media-split.seam.test.ts`) pins `sfw-slot-mature`
+  // on. The face read still answers R, so a republish that re-checked the face would floor
+  // by all media ('r') and fail here.
+  it('🔴 …and kept when its icon is above SFW: the listing stays on civitai.com, floored by its civitai.com media', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_PG },
+    });
+    splitFake({ [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13 });
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
   });
 
   it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the floor did not displace it)', async () => {

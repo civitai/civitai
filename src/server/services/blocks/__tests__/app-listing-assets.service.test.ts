@@ -25,6 +25,8 @@ import { NsfwLevel } from '~/server/common/enums';
 
 const { mockDb, ids } = vi.hoisted(() => ({
   mockDb: {
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       // The lazy-mint shadow probe (`beginListingRevision`'s idempotent reuse).
@@ -1121,6 +1123,84 @@ describe('screenshot CRUD', () => {
     expect(res.screenshots).toHaveLength(1);
   });
 
+  it('🔴 getAssets on a revision shadow reports the LIVE parent’s media split', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    const asked: unknown[] = [];
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) => {
+      if (strings.join('').includes('to_regclass'))
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
+      asked.push(v[0]);
+      return [{ split: v[0] === 'apl_parent' }];
+    }) as never);
+    try {
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      const res = await getListingAssets({ listingId: 'apl_shadow' }, mod);
+      expect(res.mediaSplitApproved).toBe(true);
+      expect(asked).toEqual(['apl_parent']);
+    } finally {
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
+  it('🔴 getAssets surfaces a failed split read instead of reporting "not split"', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, id: 'apl_1' });
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      if (strings.join('').includes('to_regclass'))
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
+      throw new Error('connection terminated');
+    }) as never);
+    try {
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      await expect(getListingAssets({ listingId: 'apl_1' }, mod)).rejects.toThrow(
+        'connection terminated'
+      );
+    } finally {
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
+  it('🔴 getAssets keeps working for the AUTHOR when the split table is present but unreadable', async () => {
+    // The table exists but was never granted to the role the app connects as (PGlite, the real
+    // migration, `SET ROLE`). The author's media editor reads through here, so a permission error
+    // must never take the editor down; the split reads as "cannot tell" (`null`), never "split".
+    const { createSplitDb } = await import('./listing-media-split.harness');
+    const split = await createSplitDb();
+    try {
+      await split.applyMigration();
+      await split.seed({ listingIds: ['apl_1'], users: [7] });
+      await split.db.query(
+        `INSERT INTO app_listing_red_media (app_listing_id, media_split_approved_at, media_split_approved_by)
+           VALUES ('apl_1', now(), 7)`
+      );
+      await split.restrictTo([]);
+      split.route(mockDb as never);
+      mockDb.appListing.findUnique.mockResolvedValue({
+        ...listingRow,
+        id: 'apl_1',
+        iconId: 1,
+        coverId: 2,
+      });
+      mockDb.appListingScreenshot.findMany.mockResolvedValue([
+        { id: 's1', imageId: 10, order: 0, caption: null },
+      ]);
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      const res = await getListingAssets({ listingId: 'apl_1' }, owner);
+      expect(res.mediaSplitApproved).toBeNull();
+      expect(res.screenshots).toHaveLength(1);
+      // Positive control: the same read, granted SELECT, sees the stamp.
+      await split.restrictTo(['SELECT']);
+      expect((await getListingAssets({ listingId: 'apl_1' }, owner)).mediaSplitApproved).toBe(true);
+    } finally {
+      await split.db.close();
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+      mockDb.$executeRaw.mockReset().mockImplementation(async () => 0);
+    }
+  }, 60_000);
+
   it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([
@@ -1211,6 +1291,26 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
       where: { id: 'apl_live' },
       data: { contentRating: 'r' },
     });
+  });
+
+  it('🔴 on a SPLIT live listing, a mod adding an R screenshot does not raise it', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ ...approvedListing, contentRating: 'g' });
+    mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.R });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
+    mockDb.appListingScreenshot.count.mockResolvedValue(1);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) =>
+      strings.join('').includes('to_regclass')
+        ? [{ present: true, can_select: true, can_insert: true, can_update: true }]
+        : [{ split: v[0] === 'apl_live' }]) as never);
+    try {
+      const { addListingScreenshot } = await import('../app-listing-assets.service');
+      const res = await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
+      expect(res).toMatchObject({ status: 'attached' });
+      expect(mockDb.appListing.update).not.toHaveBeenCalled();
+    } finally {
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
   });
 
   it('mod adds a PG screenshot to an x-rated live listing → NO lowering (raise-only)', async () => {
@@ -1689,7 +1789,9 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
     // 🔴 The exact bypass this guards: manifest declares 'g', the author attached an
     // R-rated (Scanned, not Blocked) icon while pending. Approve must NOT stamp 'g'.
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'g')).resolves.toBe('r');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'g', false)).resolves.toBe(
+      'r'
+    );
   });
 
   it('RAISES a null-declared listing (null → SFW floor) to the derived rating', async () => {
@@ -1697,7 +1799,9 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.X }]);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', null)).resolves.toBe('x');
+    await expect(
+      resolveListingRatingFloorInTx(mockDb as never, 'apl_1', null, false)
+    ).resolves.toBe('x');
   });
 
   it('does NOT lower an x-declared listing whose media is only PG (raise-only)', async () => {
@@ -1708,7 +1812,9 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
       { nsfwLevel: NsfwLevel.PG },
     ]);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'x')).resolves.toBe('x');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'x', false)).resolves.toBe(
+      'x'
+    );
   });
 
   it('takes the MAX across icon + cover + screenshots (a single mature screenshot raises)', async () => {
@@ -1721,7 +1827,9 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
       { nsfwLevel: NsfwLevel.R },
     ]);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('r');
+    await expect(
+      resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg', false)
+    ).resolves.toBe('r');
     // Every attached asset id is considered — icon, cover AND both screenshots.
     expect(mockDb.image.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: [1, 2, 10, 11] } } })
@@ -1732,16 +1840,18 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
     mockDb.appListing.findUnique.mockResolvedValue({ iconId: null, coverId: null });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    await expect(
+      resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg', false)
+    ).resolves.toBe('pg');
     expect(mockDb.image.findMany).not.toHaveBeenCalled();
   });
 
   it('returns the declared rating when the listing row is missing (no blind widening)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(null);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_gone', 'pg')).resolves.toBe(
-      'pg'
-    );
+    await expect(
+      resolveListingRatingFloorInTx(mockDb as never, 'apl_gone', 'pg', false)
+    ).resolves.toBe('pg');
   });
 
   it('ignores a null-imageId screenshot row (deleted Image → SetNull)', async () => {
@@ -1749,7 +1859,9 @@ describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () 
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ imageId: null }]);
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG }]);
     const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
-    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    await expect(
+      resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg', false)
+    ).resolves.toBe('pg');
     expect(mockDb.image.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: [1] } } })
     );

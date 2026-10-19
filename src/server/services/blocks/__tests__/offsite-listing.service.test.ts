@@ -80,6 +80,8 @@ const { mockCreateImage } = vi.hoisted(() => ({
 
 const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),

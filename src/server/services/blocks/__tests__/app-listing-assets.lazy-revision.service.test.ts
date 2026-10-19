@@ -254,6 +254,8 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
   };
 
   const db = {
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing,
     appListingScreenshot,
     image,

@@ -58,6 +58,11 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { applyListingMediaSplitDecision } from '~/server/services/blocks/listing-media-split.service';
+import {
+  ratingFloorAssets,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -70,6 +75,7 @@ import type { AppRole } from '~/server/services/blocks/app-access.service';
 import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
+  type ListingAssetScan,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
@@ -2881,6 +2887,7 @@ export type ApproveExternalRequestResult = {
  * derived rating (never silently under-rated). An override AT or ABOVE the derived
  * value is honoured (a mod may always rate UP). Reads the backing Image levels from
  * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
+ * With `mediaSplit` the derive reads only the civitai.com-eligible assets.
  */
 async function resolveApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -2889,6 +2896,7 @@ async function resolveApprovalContentRating(
     iconId: number | null;
     coverId: number | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
   }
 ): Promise<OffsiteContentRating> {
   const shots = await tx.appListingScreenshot.findMany({
@@ -2901,7 +2909,12 @@ async function resolveApprovalContentRating(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      args.mediaSplit
+    )
+  );
   const override = args.override ?? null;
   if (override == null) return derived;
   return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
@@ -2948,9 +2961,15 @@ async function resolveOnsiteApprovalContentRating(
     appListingId: string;
     declared: string | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
   }
 ): Promise<string | null> {
-  const floored = await resolveListingRatingFloorInTx(tx, args.appListingId, args.declared);
+  const floored = await resolveListingRatingFloorInTx(
+    tx,
+    args.appListingId,
+    args.declared,
+    args.mediaSplit
+  );
   const override = args.override ?? null;
   if (override == null) return floored;
   return nsfwLevelFromContentRating(override) > nsfwLevelFromContentRating(floored)
@@ -3040,6 +3059,8 @@ export async function approveExternalRequest(opts: {
   approvalNotes?: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  /** The moderator's media-split decision; omitted means `rate-mature`. */
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -3120,6 +3141,7 @@ export async function approveExternalRequest(opts: {
       reviewerUserId,
       approvalNotes,
       contentRating: opts.contentRating,
+      mediaSplit: opts.mediaSplit,
     });
   }
 
@@ -3333,18 +3355,26 @@ export async function approveExternalRequest(opts: {
     // returns above via `applyApprovedRevision`. An on-site listing's `contentRating`
     // describes the APP (manifest-declared), so it must be raised by mature media and
     // never lowered by tame media. See {@link resolveOnsiteApprovalContentRating}.
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId,
+      face: { iconId: primaryListing.iconId, coverId: primaryListing.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
     const finalRating =
       request.kind === 'onsite'
         ? await resolveOnsiteApprovalContentRating(tx, {
             appListingId,
             declared: primaryListing.contentRating,
             override: opts.contentRating,
+            mediaSplit,
           })
         : await resolveApprovalContentRating(tx, {
             appListingId,
             iconId: primaryListing.iconId,
             coverId: primaryListing.coverId,
             override: opts.contentRating,
+            mediaSplit,
           });
     // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
     // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
@@ -3469,6 +3499,7 @@ async function applyApprovedRevision(opts: {
   approvalNotes: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -3657,6 +3688,23 @@ async function applyApprovedRevision(opts: {
       connectClientId: shadow.connectClientId,
     });
 
+    // The decision belongs to the live parent; the face it is checked against is the
+    // shadow's, which is what goes live.
+    //
+    // 🔴 LOCK THE PARENT FIRST. Unlike the first-time approves, this writes the split of a
+    // listing that is ALREADY `approved`, which a moderator's image re-rate
+    // (`reDeriveListingRatingInTx`) can re-rate concurrently: it takes `FOR UPDATE` on this
+    // row and then reads the split. Without this lock the re-rate could read the split as it
+    // stood before this decision and commit a rating floored by the wrong set of media. With
+    // it, the re-rate waits for this transaction and reads the decision it committed.
+    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId: parentId,
+      face: { iconId: shadow.iconId, coverId: shadow.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
+
     // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
     // untouched). KIND-AWARE:
     if (parent.kind === 'onsite') {
@@ -3709,6 +3757,7 @@ async function applyApprovedRevision(opts: {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         override: opts.contentRating,
+        mediaSplit,
       });
       appliedOffsiteRating = finalRating;
       await tx.appListing.update({
@@ -4324,31 +4373,28 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
   const ingestionRows = assetImageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: assetImageIds } },
-        select: { id: true, ingestion: true },
+        select: { id: true, ingestion: true, nsfwLevel: true },
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
+  const levelByImageId = new Map(ingestionRows.map((i) => [i.id, i.nsfwLevel ?? null]));
   const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;
     coverId: number | null;
     screenshots?: { imageId: number | null }[] | null;
-  }): { kind: 'icon' | 'cover' | 'screenshot'; status: 'scanned' | 'pending' | 'blocked' }[] => {
-    const scans: {
-      kind: 'icon' | 'cover' | 'screenshot';
-      status: 'scanned' | 'pending' | 'blocked';
-    }[] = [];
-    if (listing.iconId != null)
-      scans.push({ kind: 'icon', status: scanStatusOf(ingestionByImageId.get(listing.iconId)) });
-    if (listing.coverId != null)
-      scans.push({ kind: 'cover', status: scanStatusOf(ingestionByImageId.get(listing.coverId)) });
+  }): ListingAssetScan[] => {
+    const scans: ListingAssetScan[] = [];
+    const scanOf = (kind: ListingAssetScan['kind'], imageId: number): ListingAssetScan => ({
+      kind,
+      status: scanStatusOf(ingestionByImageId.get(imageId)),
+      nsfwLevel: levelByImageId.get(imageId) ?? null,
+    });
+    if (listing.iconId != null) scans.push(scanOf('icon', listing.iconId));
+    if (listing.coverId != null) scans.push(scanOf('cover', listing.coverId));
     for (const s of listing.screenshots ?? [])
-      if (s.imageId != null)
-        scans.push({
-          kind: 'screenshot',
-          status: scanStatusOf(ingestionByImageId.get(s.imageId)),
-        });
+      if (s.imageId != null) scans.push(scanOf('screenshot', s.imageId));
     return scans;
   };
 
