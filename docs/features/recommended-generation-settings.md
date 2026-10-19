@@ -133,11 +133,10 @@ searchable before the generator changes land.
 1. **PR 1: editor and index.** Settings schema, the version editor (Turbo section,
    checkpoint recommendations, the override picker), ecosystem turbo defaults for
    prefill, `versions.turbo` in the models index with the `turboOnly` filter in
-   the resource modal. No generator behaviour change. After deploy, in order: apply the new
-   filterable attribute to the live index with
-   `/api/admin/temp/apply-models-index-filterable-attributes` (hours to apply;
-   until then the turbo clause is dropped and the picker narrows client-side),
-   set the turbo block on the three MOSS turbo LoRAs and Base's `turboLora` by
+   the resource modal. No generator behaviour change. `versions.turbo` was made filterable on the live
+   models index on 2026-10-19 through
+   `/api/admin/temp/apply-models-index-filterable-attributes`, so no index step
+   follows the deploy. After deploy: set the turbo block on the three MOSS turbo LoRAs and Base's `turboLora` by
    SQL, reindex those models.
 2. **PR 2: generator.** Resource data forwarding, graph helper, `turbo` field, the
    Turbo row, slider zone, the MOSS code default; remove the hard-coded map.
