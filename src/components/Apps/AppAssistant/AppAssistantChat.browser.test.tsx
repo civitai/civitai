@@ -181,8 +181,8 @@ describe('AppAssistantChat', () => {
     expect(onToolResult).toHaveBeenCalledTimes(1);
   });
 
-  test('a message the page holds back is kept from the chat; any other goes out', async () => {
-    const hold = vi.fn((text: string) => text === 'hold me');
+  test('tells the page of each message before it goes, with the chat’s queue()', async () => {
+    const hold = vi.fn();
     renderWithProviders(
       <AppAssistantChat
         tokens={tokens()}
@@ -193,9 +193,10 @@ describe('AppAssistantChat', () => {
       />
     );
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    const queue = () => ({ text: '', release: () => undefined, cancel: () => undefined });
     const send = (text: string) => {
       const event = new CustomEvent('before-send', {
-        detail: { text },
+        detail: { text, queue },
         cancelable: true,
         bubbles: true,
         composed: true,
@@ -203,9 +204,13 @@ describe('AppAssistantChat', () => {
       chatEl().dispatchEvent(event);
       return event.defaultPrevented;
     };
-    await vi.waitFor(() => expect(send('hold me')).toBe(true));
-    expect(send('let me go')).toBe(false);
-    expect(hold.mock.calls.at(-1)).toEqual(['let me go']);
+    await vi.waitFor(() => {
+      send('Add a dark mode');
+      expect(hold).toHaveBeenCalled();
+    });
+    // The page gets the message and the chat's own queue(), and never keeps a message out itself.
+    expect(hold.mock.calls.at(-1)).toEqual(['Add a dark mode', queue]);
+    expect(send('Add a dark mode')).toBe(false);
   });
 
   test('an ask for a failed reply the page holds back is kept from the chat; any other goes on', async () => {

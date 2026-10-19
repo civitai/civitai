@@ -2,15 +2,16 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type { CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import '@civitai/components-chat/civitai-chat/define';
+import type { QueuedMessage } from '@civitai/components-chat/civitai-chat';
 import {
   isDictating,
+  listenBeforeSend,
   listenReplyResume,
   messageBoxText,
 } from '~/components/Apps/AppAssistant/chatAdapter';
 import {
-  releaseHeld,
   retryWhenReady,
-  type Release,
+  sendNotJoined,
 } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 
 afterEach(() => {
@@ -164,45 +165,28 @@ test('tracks the real chat’s dictation: while recording, in the moment after t
   expect(messageBoxText(chat)).toBe('draw');
 });
 
-test('a message released into the real chat waits out its hold in the box, sends nothing meanwhile, and goes once the chat says it can', async () => {
-  const { chat, box } = await realSignedInChat();
-  chat.holdReason = 'Your app is starting…';
-  await chat.updateComplete;
-  expect(chat.canSend).toBe(false);
-  const replaying: { current: Release | null } = { current: null };
-  const went: string[] = [];
-  // The page's before-send, as the workspace's onBeforeSend marks it: the message it is sending went.
-  chat.addEventListener('before-send', (event) => {
-    const text = (event as CustomEvent<{ text: string }>).detail.text;
-    went.push(text);
-    const release = replaying.current;
-    if (release?.text === text) release.went = true;
+test('a message the page keeps back through listenBeforeSend shows in the real chat at once, sends nothing, and goes once released', async () => {
+  const { chat } = await realSignedInChat();
+  // No Civitai tool servers: a reply goes straight to the model.
+  chat.mcp = { orchestration: false, site: false };
+  const requests = () =>
+    (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) =>
+      String(url).includes('chat/completions')
+    ).length;
+  let held: QueuedMessage | undefined;
+  const stop = listenBeforeSend(chat, (_text, queue) => {
+    held ??= queue('Your app is starting…');
   });
-  const sends = vi.spyOn(chat, 'send');
-
-  const kept = releaseHeld(
-    { current: chat },
-    replaying,
-    () => messageBoxText(chat),
-    () => isDictating(chat),
-    'Add a dark mode',
-    // Shorter than the test's own timeout, so an event that never comes fails here by assertion, with
-    // room for a slow runner before the hold lifts.
-    10_000
-  );
-  // The chat holds, so the message waits in its box for the user to see.
-  await expect.element(box).toHaveValue('Add a dark mode');
-  // Longer than several of the old retry intervals: still the one send that put it there.
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  expect(sends).toHaveBeenCalledTimes(1);
-  expect(went).toEqual([]);
-
-  chat.holdReason = undefined;
-  expect(await kept).toBe(true);
-  expect(went).toEqual(['Add a dark mode']);
-  expect(sends).toHaveBeenCalledTimes(2);
-  // The untouched copy leaves the box once the message went.
-  await expect.element(box).toHaveValue('');
+  await chat.send('Add a dark mode');
+  // The real chat shows it as the user's, waiting, and holds.
+  await expect.element(page.getByText('Add a dark mode')).toBeVisible();
+  await expect.element(page.getByText('Your app is starting…').first()).toBeVisible();
+  expect(chat.canSend).toBe(false);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(requests()).toBe(0);
+  held!.release();
+  await vi.waitFor(() => expect(requests()).toBeGreaterThanOrEqual(1), { timeout: 10_000 });
+  stop();
 });
 
 /**
@@ -325,7 +309,19 @@ test('retryWhenReady asks the real chat for its failed reply only once it can se
   expect(retry).toHaveBeenCalledTimes(1);
 });
 
-test('a message the real chat keeps back on a refused grant while the user dictates is taken out of the box and reported unsent', async () => {
+test('the real chat gives a message the page could not send back into an empty box, or offers it back beside what the user typed', async () => {
+  const { chat, box } = await realSignedInChat();
+  expect(chat.giveBack('Looks good — build it.')).toBe(true);
+  await expect.element(box).toHaveValue('Looks good — build it.');
+  await chat.compose('Also add a timer');
+  chat.giveBack('Looks good — build it.');
+  await expect
+    .element(page.getByText('This message was not sent: “Looks good — build it.”'))
+    .toBeVisible();
+  await expect.element(box).toHaveValue('Also add a timer');
+});
+
+test('a message the real chat keeps back in the empty box on a refused grant while the user dictates is taken out again (Build it)', async () => {
   fakeMicrophone();
   const { chat } = await realSignedInChat({ grants: false });
   await press('Talk instead of typing');
@@ -336,19 +332,17 @@ test('a message the real chat keeps back on a refused grant while the user dicta
   const fired = vi.fn();
   chat.addEventListener('before-send', fired);
   const compose = vi.spyOn(chat, 'compose');
-  const replaying: { current: Release | null } = { current: null };
-  const kept = await releaseHeld(
-    { current: chat },
-    replaying,
+  await sendNotJoined(
+    chat,
+    'Looks good — build it.',
     () => messageBoxText(chat),
     () => isDictating(chat),
-    'Add a dark mode',
-    5_000
+    () => false
   );
-  // The refused grant stopped it before before-send, and the copy it left was taken out.
+  // The refused grant stopped it before before-send, and the copy it left was taken out, so the
+  // page gives it back instead of the user's words being joined to it.
   expect(fired).not.toHaveBeenCalled();
   expect(compose.mock.calls).toEqual([['']]);
-  expect(kept).toBe(false);
   expect(messageBoxText(chat)).toBe('');
   expect(isDictating(chat)).toBe(true);
 });

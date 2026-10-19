@@ -5,7 +5,6 @@ import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
-import type { Release } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -41,7 +40,10 @@ const m = vi.hoisted(() => ({
       isError: boolean;
     }) => void;
     chatRef?: { current: unknown };
-    onBeforeSend?: (text: string) => boolean;
+    onBeforeSend?: (
+      text: string,
+      queue: (waiting?: string) => { text: string; release(): void; cancel(): void }
+    ) => void;
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
   },
@@ -86,17 +88,45 @@ const m = vi.hoisted(() => ({
   /** What the chat's `can-send-change` last said. */
   announced: false,
   /**
+   * The message the page keeps back with `queue()`, as 0.15.0 shows it: waiting, with `waiting` as its
+   * words, until released (then it goes once the chat can send) or cancelled (then it comes back).
+   */
+  queued: null as null | { text: string; waiting: string; held: boolean },
+  /** How many times the page released a kept-back message. */
+  releases: 0,
+  /** "This message was not sent" notices the chat shows (0.15.0's `giveBack` when the box is taken). */
+  notices: [] as string[],
+  /** 0.15.0's `giveBack`: into an empty box when the user is not dictating, else a notice (one per text). */
+  giveBack: vi.fn((text: string) => {
+    if (m.box === text) return true;
+    if (!m.box.trim() && !m.dictating) m.box = text;
+    else if (!m.notices.includes(text)) m.notices.push(text);
+    return true;
+  }),
+  /** A released message goes once nothing holds the chat but itself and no reply runs. */
+  flush: () => {
+    const q = m.queued;
+    if (!q || q.held || m.running || m.holdsOther()) return;
+    m.queued = null;
+    m.delivered.push(q.text);
+    // A new turn: the failed reply is no longer the latest.
+    m.failed = false;
+  },
+  /**
    * Whether the element holds, as 0.13.0 does, keeping a send in an EMPTY box: the page's
    * `holdReason`, the chat starting again for a new app, a saved chat opening, a message on its way,
    * or a just-added app's tools being listed.
    */
-  holds: () => Boolean(m.chat?.holdReason) || m.starting || m.opening || m.sending || m.listing,
+  holds: () => m.holdsOther() || m.queued !== null,
+  holdsOther: () =>
+    Boolean(m.chat?.holdReason) || m.starting || m.opening || m.sending || m.listing,
   /**
    * The element's `canSend` as 0.13.0 has it: a send would go now (no reply running, nothing holding;
    * the fake chat is always signed in), and its `can-send-change`, fired once each time that changes.
    */
   canSend: () => !m.running && !m.holds(),
   announce: () => {
+    m.flush();
     const canSend = m.canSend();
     if (canSend === m.announced) return;
     m.announced = canSend;
@@ -113,7 +143,34 @@ const m = vi.hoisted(() => ({
       if (!m.box) m.box = text;
       return;
     }
-    if (m.chat?.onBeforeSend?.(text)) return;
+    let open = true;
+    let queued = false;
+    const queue = (waiting = '') => {
+      if (!open) throw new Error('queue() after before-send');
+      const q = (m.queued ??= { text, waiting, held: true });
+      queued = true;
+      return {
+        text,
+        release: () => {
+          if (m.queued !== q || !q.held) return;
+          q.held = false;
+          m.releases++;
+          m.announce();
+        },
+        cancel: () => {
+          if (m.queued !== q) return;
+          m.queued = null;
+          m.giveBack(text);
+          m.announce();
+        },
+      };
+    };
+    m.chat?.onBeforeSend?.(text, queue);
+    open = false;
+    if (queued) {
+      m.announce();
+      return;
+    }
     m.delivered.push(text);
     // The failed reply is no longer the latest: nothing asks for it again.
     m.failed = false;
@@ -195,6 +252,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
           draft: { get: () => m.box },
           dictating: { get: () => m.dictating },
           canSend: { get: () => m.canSend() },
+          giveBack: { value: m.giveBack },
           retryReply: { value: m.retryReply },
           updateComplete: { get: () => m.update ?? Promise.resolve(true) },
         });
@@ -304,9 +362,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 const {
   APP_LIST_REFRESH_TIMEOUT_MS,
   AppAssistantWorkspace,
-  HELD_TIMEOUT_MS,
-  releaseHeld,
-  stopRelease,
+  HELD_RECORD_MS,
+  RESUME_ASK_TIMEOUT_MS,
 } = await import('./AppAssistantWorkspace');
 const { AssistantTokenError } = await import('~/components/Apps/AppAssistant/assistantToken');
 
@@ -360,40 +417,17 @@ function type(text: string) {
   fireInput();
 }
 
-/**
- * The user types in one of the chat's other fields (the model search, a chat's name, settings): an
- * `input` event the page sees, with the message box unchanged.
- */
-const typeElsewhere = () => fireInput();
-
 /** The chat starts or stops listing a just-added app's tools, and says so if that changes `canSend`. */
 function setListing(listing: boolean) {
   m.listing = listing;
   m.announce();
 }
 
-/** A saved chat starts or finishes opening, and the chat says so if that changes `canSend`. */
-function setOpening(opening: boolean) {
-  m.opening = opening;
-  m.announce();
-}
-
-/** A message the chat took starts or stops being on its way, and the chat says so if that changes `canSend`. */
-function setSending(sending: boolean) {
-  m.sending = sending;
-  m.announce();
-}
-
-/** A reply starts or ends, and the chat says so if that changes `canSend`. */
-function setRunning(running: boolean) {
-  m.running = running;
-  m.announce();
-}
-
 /** The user types `text` and presses Send, which does nothing while the chat holds or replies. */
 async function userSends(text: string) {
   type(text);
-  if (m.chat?.holdReason || m.listing || m.running) return;
+  // Send is off while the chat holds, a reply runs, or a message waits in it.
+  if (m.chat?.holdReason || m.listing || m.running || m.queued) return;
   m.box = '';
   await m.chatSend(text);
 }
@@ -453,6 +487,10 @@ beforeEach(() => {
   m.retryReply.mockClear();
   m.element = null;
   m.announced = false;
+  m.queued = null;
+  m.releases = 0;
+  m.notices = [];
+  m.giveBack.mockClear();
   m.deferOpen = false;
   m.resume.mockClear();
   m.settleOpen = null;
@@ -749,16 +787,35 @@ describe('AppAssistantWorkspace auto-resume', () => {
     screen.rerender(<Workspace />);
   };
 
-  test('a message to a paused app is held, the app resumed, and the message sent once it runs', async () => {
+  test('a message to a paused app is shown waiting in the chat, the app resumed, and the message sent once it runs', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     expect(m.box).toBe('');
+    // The chat shows it at once, as the user's, waiting with these words.
+    expect(m.queued).toEqual({
+      text: 'Add a dark mode',
+      waiting: 'Your app is starting…',
+      held: true,
+    });
     expect(m.resume.mock.calls).toEqual([['app-bbbb']]);
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
     expect(m.delivered).toEqual([]);
     runsB(screen);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.queued).toBeNull();
+    expect(m.box).toBe('');
+    expect(m.chat!.holdReason).toBeUndefined();
+  });
+
+  test('NEGATIVE CONTROL: while the app is still paused, before its resume starts it, the message keeps waiting', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    await settle(200);
+    expect(m.queued).toEqual({
+      text: 'Add a dark mode',
+      waiting: 'Your app is starting…',
+      held: true,
+    });
     expect(m.box).toBe('');
   });
 
@@ -767,50 +824,50 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await openFirst();
     await userSends('Add a dark mode');
     expect(m.delivered).toEqual(['Add a dark mode']);
+    expect(m.queued).toBeNull();
     expect(m.resume).not.toHaveBeenCalled();
   });
 
-  test('🔴 a follow-up typed while it resumes is not lost', async () => {
+  test('🔴 a follow-up typed while it resumes stays in the box and is not lost', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
     await userSends('and a timer');
     expect(m.box).toBe('and a timer');
     setListing(true);
     runsB(screen);
     await settle(100);
     setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
     expect(m.box).toBe('and a timer');
   });
 
-  test('a released message the chat still holds (listing the app’s tools) goes once it can, and its copy leaves the box', async () => {
+  test('released once its app runs, it goes when the chat has listed the app’s tools', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     setListing(true);
     runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    await vi.waitFor(() => expect(m.box).toBe(''));
-  });
-
-  test('🟡 a copy the user edits while the chat holds is theirs: the original is not sent over it', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    setListing(true);
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    type('Add a light mode');
-    setListing(false);
-    await settle(1200);
+    await vi.waitFor(() => expect(m.releases).toBe(1));
+    await settle(200);
     expect(m.delivered).toEqual([]);
-    expect(m.box).toBe('Add a light mode');
-    // The edited copy is in the box, so the message is not reported unsent as well.
-    expect(document.body.textContent).not.toMatch(/was not sent/);
+    // 0.15.0 keeps it in its waiting bubble, not as a copy in the box.
+    expect(m.box).toBe('');
+    setListing(false);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+    expect(m.releases).toBe(1);
   });
 
-  test('🟡 an app paused again while the message waits gives it back and lifts the hold', async () => {
+  test('NEGATIVE CONTROL: not released while the app is still starting', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    await settle(100);
+    expect(m.releases).toBe(0);
+    expect(m.delivered).toEqual([]);
+  });
+
+  test('🟡 an app paused again while the message waits gives it back', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
@@ -818,239 +875,111 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
     m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
     screen.rerender(<Workspace />);
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    expect(m.box).toBe('Add a dark mode');
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    expect(m.queued).toBeNull();
+    expect(m.chat!.holdReason).toBeUndefined();
     expect(m.delivered).toEqual([]);
   });
 
-  test('a message the user sends while one is being released ends the release', async () => {
+  test('opening another chat while the app resumes gives the message back, and it is not sent when the app runs', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    m.running = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    // The reply ends and the user sends before the chat's can-send-change reaches the page.
-    m.running = false;
-    await userSends('Actually, a light mode');
-    // The event then arrives: an ended release must not send the page's message after all.
-    m.announce();
-    await settle(100);
-    expect(m.delivered).toEqual(['Actually, a light mode']);
-  });
-
-  test('opening another chat while a message is released stops it going there', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.running = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    // The user opens another chat from history, in the order the element reports it: the chat holds
-    // while it opens, which stops the reply (no event: it still cannot send); the open lands and
-    // chat-change fires; then can-send-change says it can send, before the page has re-rendered.
-    setOpening(true);
-    setRunning(false);
     m.chat!.onChatChange!('chat-2');
-    setOpening(false);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    runsB(screen);
     await settle(100);
-    expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
   });
 
-  test('opening another app while a message is released stops it going out for that app', async () => {
+  test('opening another app while a released message still waits on the chat calls it back', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    m.running = true;
+    setListing(true);
     runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(m.releases).toBe(1));
     await openFromSwitcher('app-aaaa');
-    // The reply ends and the chat says it can send: a release still running would send now.
-    setRunning(false);
-    await settle(100);
-    expect(m.send).toHaveBeenCalledTimes(1);
-    expect(m.delivered).toEqual([]);
-  });
-
-  test('a release stops when the page goes away', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.running = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    screen.unmount();
-    setRunning(false);
-    await settle(100);
-    expect(m.send).toHaveBeenCalledTimes(1);
-  });
-
-  test('opening another chat while the app resumes gives the held message back', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.chat!.onChatChange!('chat-2');
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    runsB(screen);
+    setListing(false);
     await settle(100);
     expect(m.delivered).toEqual([]);
   });
 
-  test('🟢 a message given back over one the user typed is offered back, and Put it back keeps what they typed', async () => {
-    await openPaused();
-    m.deferOpen = true;
+  test('🟡 paused again after the release but before the chat sent it: called back, not sent without the app’s tools', async () => {
+    const screen = await openPaused();
     await userSends('Add a dark mode');
-    type('something else');
-    m.chat!.onChatChange!('chat-2');
-    await expect
-      .element(page.getByText('This message was not sent: “Add a dark mode”'))
-      .toBeVisible();
-    expect(m.box).toBe('something else');
-    await page.getByRole('button', { name: 'Put it back' }).click();
-    expect(m.box).toBe('Add a dark mode\n\nsomething else');
-  });
-
-  test('NEGATIVE CONTROL: Put it back into a box the user emptied puts back just the message', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    type('something else');
-    m.chat!.onChatChange!('chat-2');
-    await expect.element(page.getByRole('button', { name: 'Put it back' })).toBeVisible();
-    type('');
-    await page.getByRole('button', { name: 'Put it back' }).click();
+    setListing(true);
+    runsB(screen);
+    await vi.waitFor(() => expect(m.releases).toBe(1));
+    // The app is paused while the chat still lists its tools: they go, and so does the listing hold.
+    m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.mcpServers).toEqual([]));
+    setListing(false);
+    await settle(100);
+    expect(m.delivered).toEqual([]);
     expect(m.box).toBe('Add a dark mode');
   });
 
-  test('🟡 a message the user sends while the held one waits on the chat does not drop it silently', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
-    type('and a timer');
-    m.listing = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    // The chat has listed the tools; the user presses Send before its can-send-change reaches the page.
-    m.listing = false;
-    await userSends('and a timer');
-    expect(m.delivered).toEqual(['and a timer']);
-    await expect
-      .element(page.getByText('This message was not sent: “Add a dark mode”'))
-      .toBeVisible();
-    // The chat's can-send-change then arrives: the ended release sends nothing more.
-    m.announce();
-    await settle(100);
-    expect(m.delivered).toEqual(['and a timer']);
-  });
-
-  test('🟡 a released message the chat never takes, because a reply outlasts the wait, is reported unsent', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
-    m.running = true;
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
-    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS);
-    vi.useRealTimers();
-    await expect
-      .element(page.getByText('This message was not sent: “Add a dark mode”'))
-      .toBeVisible();
-    expect(m.delivered).toEqual([]);
-    expect(m.box).toBe('');
-  });
-
-  test('NEGATIVE CONTROL: a released message the chat takes on a later try is not reported unsent', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.running = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
-    setRunning(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    await settle(100);
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('🔴 a released message whose hold ends late (after 25 s) goes the moment the hold lifts', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    setListing(true);
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    await vi.advanceTimersByTimeAsync(25_000);
-    expect(m.delivered).toEqual([]);
-    setListing(false);
-    // No timer has to run: the chat's can-send-change sends it.
-    await vi.advanceTimersByTimeAsync(0);
-    vi.useRealTimers();
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 500 });
-    await vi.waitFor(() => expect(m.box).toBe(''));
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('🔴 nothing polls while the chat holds a released message: one send in a minute, one more when it lifts', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    setListing(true);
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    m.send.mockClear();
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    await vi.advanceTimersByTimeAsync(60_000);
-    vi.useRealTimers();
-    expect(m.send).toHaveBeenCalledTimes(1);
-    setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
-    expect(m.send).toHaveBeenCalledTimes(2);
-  });
-
-  test('a released message waits while another message is still on its way, and goes once it is', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    // Something else the chat took is still on its way (say, waiting on the viewer's Buzz permission).
-    setSending(true);
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    await settle(100);
-    expect(m.delivered).toEqual([]);
-    setSending(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
-    await vi.waitFor(() => expect(m.box).toBe(''));
-  });
-
-  test('🟡 typing in another of the chat’s fields while it resumes leaves no sent copy in the box', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    typeElsewhere();
-    setListing(true);
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    await vi.waitFor(() => expect(m.box).toBe(''));
-  });
-
-  test('🟡 typing in another of the chat’s fields does not stop a held message coming back into the box', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    typeElsewhere();
-    m.chat!.onChatChange!('chat-2');
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('INVARIANT: a held message whose app never runs comes back after HELD_TIMEOUT_MS, not before', async () => {
+  test('🟢 the page’s record of a held message ends with the chat’s own wait: a resume that never starts the app stops reading as starting', async () => {
     await openPaused();
     m.deferOpen = true;
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     await userSends('Add a dark mode');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
-    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 2000);
-    expect(m.box).toBe('');
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Starting…');
+    await vi.advanceTimersByTimeAsync(HELD_RECORD_MS - 2000);
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Starting…');
     await vi.advanceTimersByTimeAsync(4000);
-    expect(m.box).toBe('Add a dark mode');
     vi.useRealTimers();
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
+  });
+
+  test('🟡 its tools gone after the release (still running) before the chat sent it: called back', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    setListing(true);
+    runsB(screen);
+    await vi.waitFor(() => expect(m.releases).toBe(1));
+    // The running app's address moves outside the sandbox service: its tools are no longer handed over.
+    m.list = [m.list[0], { ...m.list[1], mcpUrl: 'https://elsewhere.example/s/x/mcp' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.mcpServers).toEqual([]));
+    setListing(false);
+    await settle(100);
     expect(m.delivered).toEqual([]);
+    expect(m.box).toBe('Add a dark mode');
+  });
+
+  test('a released message still waiting is called back when the page goes away', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    setListing(true);
+    runsB(screen);
+    await vi.waitFor(() => expect(m.releases).toBe(1));
+    screen.unmount();
+    setListing(false);
+    await settle(100);
+    expect(m.delivered).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: a released message that already went is not called back by a later app change', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    runsB(screen);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+    await openFromSwitcher('app-aaaa');
+    await settle(100);
+    expect(m.box).toBe('');
+    expect(m.notices).toEqual([]);
+  });
+
+  test('🟢 a message given back goes back through the chat, and the page shows no notice of its own', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    type('something else');
+    m.chat!.onChatChange!('chat-2');
+    // The chat (not the page) offers it back.
+    await vi.waitFor(() => expect(m.giveBack).toHaveBeenCalledWith('Add a dark mode'));
+    expect(document.body.textContent).not.toMatch(/was not sent/);
   });
 
   test('a resume that fails gives the message back and shows why', async () => {
@@ -1058,7 +987,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     m.openReject = new SandboxApiError('busy', 409, 'conflict');
     await userSends('Add a dark mode');
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.queued).toBeNull();
     m.openError = m.openReject;
     screen.rerender(<Workspace />);
     await expect
@@ -1067,7 +996,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(m.delivered).toEqual([]);
   });
 
-  test('opening another app while one resumes gives the held message back, and the resume does not pull the user back', async () => {
+  test('opening another app while one resumes gives the message back, and the resume does not pull the user back', async () => {
     const screen = await openPaused();
     m.deferOpen = true;
     await userSends('Add a dark mode');
@@ -1079,158 +1008,6 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await settle(100);
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
     expect(m.delivered).toEqual([]);
-  });
-
-  test('🟡 a held message given back while the user is dictating goes to the notice, not under what they say', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    m.dictating = true;
-    m.chat!.onChatChange!('chat-2');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    await settle(100);
-    endDictation('and a timer');
-    expect(m.box).toBe('and a timer');
-    await expect
-      .element(page.getByText('This message was not sent: “Add a dark mode”'))
-      .toBeVisible();
-  });
-
-  test('🟡 a released message the chat holds while the user is dictating is not joined to what they say', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.dictating = true;
-    setListing(true);
-    runsB(screen);
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    await settle(700);
-    endDictation('and a timer');
-    expect(m.box).toBe('and a timer');
-    setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    expect(m.box).toBe('and a timer');
-  });
-
-  test('🟡 a released copy the chat parked before the user began dictating still goes, and leaves the box to what they say', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    setListing(true);
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.dictating = true;
-    setListing(false);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    await vi.waitFor(() => expect(m.box).toBe(''));
-    endDictation('and a timer');
-    expect(m.box).toBe('and a timer');
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('🟡 a released copy the chat still holds when the wait runs out mid-dictation is cleared from the box and offered back', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    m.listing = true;
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    runsB(screen);
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.dictating = true;
-    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS);
-    vi.useRealTimers();
-    await vi.waitFor(() => expect(m.box).toBe(''));
-    await expect
-      .element(page.getByText('This message was not sent: “Add a dark mode”'))
-      .toBeVisible();
-    endDictation('and a timer');
-    expect(m.box).toBe('and a timer');
-    expect(m.delivered).toEqual([]);
-  });
-
-  test('🟡 a release goes out while the user dictates over text of their own, which no copy can join', async () => {
-    const screen = await openPaused();
-    await userSends('Add a dark mode');
-    type('my words');
-    m.dictating = true;
-    runsB(screen);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
-    expect(m.box).toBe('my words');
-    await settle(100);
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('NEGATIVE CONTROL: a held message given back when the user is not dictating goes into the empty box', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    m.chat!.onChatChange!('chat-2');
-    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    expect(document.body.textContent).not.toMatch(/was not sent/);
-  });
-
-  test('🟡 a second message that did not go is offered back beside the first, and each puts back its own', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    type('my words');
-    // The assistant planned features before the app came back, so Build it is on offer.
-    const input = { items: [{ label: 'Ask questions' }] };
-    expect(m.chat!.beforeToolCall!('set_checklist', input, conv)).toEqual({ allow: true });
-    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
-    const card = m.chat!.tools.set_checklist.render!({
-      name: 'set_checklist',
-      input,
-      state: 'done',
-      output,
-    }) as HTMLElement;
-    document.body.append(card);
-    // The resume fails, which gives the held message back over what the user typed.
-    m.openReject = new SandboxApiError('busy', 409, 'conflict');
-    m.settleOpen!();
-    const first = page.getByRole('alert').filter({ hasText: '“Add a dark mode”' });
-    await expect.element(first).toBeVisible();
-    // Build it while a reply is still ending comes back too.
-    m.running = true;
-    await page.getByRole('button', { name: 'Build it' }).click();
-    const second = page.getByRole('alert').filter({ hasText: '“Looks good — build it.”' });
-    await expect.element(second).toBeVisible();
-    await expect.element(first).toBeVisible();
-    expect(m.box).toBe('my words');
-    // Each notice's buttons say which message they act on.
-    for (const [notice, text] of [
-      [first, 'Add a dark mode'],
-      [second, 'Looks good — build it.'],
-    ] as const)
-      for (const name of ['Put it back', 'Dismiss'])
-        await expect
-          .element(notice.getByRole('button', { name }))
-          .toHaveAccessibleDescription(`This message was not sent: “${text}”`);
-
-    await first.getByRole('button', { name: 'Put it back' }).click();
-    expect(m.box).toBe('Add a dark mode\n\nmy words');
-    await expect.element(first).not.toBeInTheDocument();
-    await second.getByRole('button', { name: 'Put it back' }).click();
-    expect(m.box).toBe('Looks good — build it.\n\nAdd a dark mode\n\nmy words');
-    expect(m.delivered).toEqual([]);
-    card.remove();
-  });
-
-  test('🟡 sending another message keeps a notice for one that did not go; sending that one clears it', async () => {
-    await openPaused();
-    m.deferOpen = true;
-    await userSends('Add a dark mode');
-    type('something else');
-    m.chat!.onChatChange!('chat-2');
-    const notice = page.getByText('This message was not sent: “Add a dark mode”');
-    await expect.element(notice).toBeVisible();
-    // The app is still paused, so this one is held in turn.
-    await userSends('something else');
-    await settle(100);
-    await expect.element(notice).toBeVisible();
-    // Another chat gives that one back, and the user sends the first one again by hand.
-    m.chat!.onChatChange!('chat-3');
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    type('');
-    await userSends('Add a dark mode');
-    await expect.element(notice).not.toBeInTheDocument();
   });
 
   test('a running app whose tools cannot be handed over gives the message back rather than holding forever', async () => {
@@ -1246,8 +1023,32 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await userSends('Add a dark mode');
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.queued).toBeNull();
     expect(m.delivered).toEqual([]);
+  });
+
+  test('after the chat itself gave the message back (its wait ran out), the next message to the still-paused app waits in turn', async () => {
+    const screen = await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    // The page has rendered with its record of the held message (a page that also held the chat for
+    // it, by holdReason, would now block the re-send below).
+    await settle();
+    // The chat's own wait (QUEUE_TIMEOUT_MS) runs out: it gives the message back by itself.
+    m.queued = null;
+    m.giveBack('Add a dark mode');
+    m.announce();
+    m.box = '';
+    await userSends('Add a dark mode');
+    expect(m.queued).toEqual({
+      text: 'Add a dark mode',
+      waiting: 'Your app is starting…',
+      held: true,
+    });
+    m.deferOpen = false;
+    m.settleOpen!();
+    runsB(screen);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
   });
 
   // 0.14.0 asks again for a reply that lost its connection (Retry, or by itself as the page wakes) with
@@ -1559,6 +1360,29 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
+    test('🔴 a waiting message and a resume ask never both act: the send ends the ask, and no ask starts while the message waits', async () => {
+      const screen = await wakesPaused();
+      // The user writes while the page wakes the app for the chat's ask: the ask ends before the message
+      // is kept back.
+      await userSends('Add a dark mode');
+      expect(m.queued).toEqual({
+        text: 'Add a dark mode',
+        waiting: 'Your app is starting…',
+        held: true,
+      });
+      // The page wakes again while the message waits: the chat holds, so it does not ask again.
+      m.failed = true;
+      m.pageWakes('online');
+      expect(m.retried).toEqual([]);
+      runsB(screen);
+      await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+      await settle(100);
+      // Only the message went: no reply was asked for again, before or after it.
+      expect(m.retryReply).not.toHaveBeenCalled();
+      expect(m.retried).toEqual([]);
+      expect(m.delivered).toEqual(['Add a dark mode']);
+    });
+
     test('🟡 opening another chat meanwhile ends it', async () => {
       const screen = await wakesPaused();
       m.chat!.onChatChange!('chat-2');
@@ -1602,14 +1426,14 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
-    test('🟡 an app that does not run within HELD_TIMEOUT_MS ends it', async () => {
+    test('🟡 an app that does not run within RESUME_ASK_TIMEOUT_MS ends it', async () => {
       const screen = await openPaused();
       m.deferOpen = true;
       vi.useFakeTimers({ toFake: ['setTimeout'] });
       m.failed = true;
       m.pageWakes('visible');
       await expectHeld();
-      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS + 1000);
+      await vi.advanceTimersByTimeAsync(RESUME_ASK_TIMEOUT_MS + 1000);
       vi.useRealTimers();
       m.settleOpen!();
       runsB(screen);
@@ -1617,20 +1441,20 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
-    test('INVARIANT: an app that runs just inside HELD_TIMEOUT_MS still gets its reply asked for', async () => {
+    test('INVARIANT: an app that runs just inside RESUME_ASK_TIMEOUT_MS still gets its reply asked for', async () => {
       const screen = await openPaused();
       m.deferOpen = true;
       vi.useFakeTimers({ toFake: ['setTimeout'] });
       m.failed = true;
       m.pageWakes('visible');
-      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 2000);
+      await vi.advanceTimersByTimeAsync(RESUME_ASK_TIMEOUT_MS - 2000);
       vi.useRealTimers();
       m.settleOpen!();
       runsB(screen);
       await vi.waitFor(() => expect(m.retried).toEqual(['retryReply']));
     });
 
-    test('🟡 an app that runs just before HELD_TIMEOUT_MS still gets that long again for the chat to take the ask', async () => {
+    test('🟡 an app that runs just before RESUME_ASK_TIMEOUT_MS still gets that long again for the chat to take the ask', async () => {
       const screen = await openPaused();
       m.deferOpen = true;
       // Restarting the deadline clears the first one, so clearTimeout is faked too.
@@ -1638,7 +1462,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       m.failed = true;
       m.pageWakes('visible');
       await expectHeld();
-      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 2000);
+      await vi.advanceTimersByTimeAsync(RESUME_ASK_TIMEOUT_MS - 2000);
       m.settleOpen!();
       setListing(true);
       runsB(screen);
@@ -1648,13 +1472,13 @@ describe('AppAssistantWorkspace auto-resume', () => {
       await vi.waitFor(() => expect(m.retried).toEqual(['retryReply']));
     });
 
-    test('🟡 a chat that never takes the ask once the app runs ends it after HELD_TIMEOUT_MS again, so Retry goes on', async () => {
+    test('🟡 a chat that never takes the ask once the app runs ends it after RESUME_ASK_TIMEOUT_MS again, so Retry goes on', async () => {
       const screen = await wakesPaused();
       // The deadline restarted once the app ran clears the first one, so clearTimeout is faked too.
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       setListing(true);
       runsB(screen);
-      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS + 1000);
+      await vi.advanceTimersByTimeAsync(RESUME_ASK_TIMEOUT_MS + 1000);
       vi.useRealTimers();
       // Given up: the listing ending asks nothing, and the user's Retry is no longer kept back.
       setListing(false);
@@ -1751,7 +1575,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       m.failed = true;
       m.pageWakes('visible');
       await expectHeld();
-      await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS + 1000);
+      await vi.advanceTimersByTimeAsync(RESUME_ASK_TIMEOUT_MS + 1000);
       vi.useRealTimers();
       // Given up: the chat asks again on the next wake, and the page keeps it back without waking the app.
       m.pageWakes('online');
@@ -1851,9 +1675,8 @@ describe('AppAssistantWorkspace Build it', () => {
     await buildIt().click();
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Also add a timer');
-    await expect
-      .element(page.getByText('This message was not sent: “Looks good — build it.”'))
-      .toBeVisible();
+    // Offered back by the chat (0.15.0's giveBack), not by a notice of the page's own.
+    await vi.waitFor(() => expect(m.notices).toEqual(['Looks good — build it.']));
     expect(m.delivered).toEqual([]);
     card.remove();
   });
@@ -1865,7 +1688,7 @@ describe('AppAssistantWorkspace Build it', () => {
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Looks good — build it.');
     await settle(100);
-    expect(document.body.textContent).not.toMatch(/was not sent/);
+    expect(m.notices).toEqual([]);
     card.remove();
   });
 
@@ -1876,7 +1699,7 @@ describe('AppAssistantWorkspace Build it', () => {
     await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
     expect(m.box).toBe('');
     await settle(100);
-    expect(document.body.textContent).not.toMatch(/was not sent/);
+    expect(m.giveBack).not.toHaveBeenCalled();
     card.remove();
   });
 
@@ -1888,9 +1711,7 @@ describe('AppAssistantWorkspace Build it', () => {
     await expect.element(buildIt()).not.toBeInTheDocument();
     endDictation('and a timer');
     expect(m.box).toBe('and a timer');
-    await expect
-      .element(page.getByText('This message was not sent: “Looks good — build it.”'))
-      .toBeVisible();
+    await vi.waitFor(() => expect(m.notices).toEqual(['Looks good — build it.']));
     expect(m.delivered).toEqual([]);
     card.remove();
   });
@@ -2272,225 +2093,5 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
       allow: true,
     });
-  });
-});
-
-describe('releaseHeld', () => {
-  const HELD = 'Add a dark mode';
-  type Replaying = { current: Release | null };
-
-  /**
-   * A chat as 0.13.0 has it, alone: while it holds, a send only fills an EMPTY box; once it can send, a
-   * send goes, and the page's before-send marks the release as gone, as `onBeforeSend` does. With
-   * `refusing`, a send the chat can take is still kept back as a refused grant keeps it: in an EMPTY box.
-   * `lift()` ends the hold and fires `can-send-change`, as the element does.
-   */
-  function heldChat(replaying: Replaying, after?: () => void) {
-    const state = { box: '', canSend: false, refusing: false, went: [] as string[] };
-    // defineProperty, not Object.assign: assign would copy `canSend`'s value once, not the getter.
-    const chat = Object.assign(
-      Object.defineProperty(new EventTarget(), 'canSend', {
-        get: () => state.canSend,
-      }) as EventTarget & { readonly canSend: boolean },
-      {
-        send: vi.fn(async (text: string) => {
-          if (!state.canSend || state.refusing) {
-            if (!state.box) state.box = text;
-            return;
-          }
-          state.went.push(text);
-          const release = replaying.current;
-          if (release?.text === text) release.went = true;
-          after?.();
-        }),
-        compose: vi.fn(async (text: string) => {
-          state.box = text;
-        }),
-        lift() {
-          state.canSend = true;
-          chat.dispatchEvent(new CustomEvent('can-send-change', { detail: { canSend: true } }));
-        },
-      }
-    );
-    return { chat, state };
-  }
-
-  test('🟢 a copy the user rewrites while the message goes out is left in the box', async () => {
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying, () => (state.box = 'Add a light mode'));
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    );
-    await vi.waitFor(() => expect(state.box).toBe(HELD));
-    chat.lift();
-    expect(await kept).toBe(true);
-    expect(chat.send).toHaveBeenCalledTimes(2);
-    expect(state.went).toEqual([HELD]);
-    expect(state.box).toBe('Add a light mode');
-  });
-
-  test('NEGATIVE CONTROL: an untouched copy is cleared once the message went', async () => {
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    );
-    await vi.waitFor(() => expect(state.box).toBe(HELD));
-    chat.lift();
-    expect(await kept).toBe(true);
-    expect(state.went).toEqual([HELD]);
-    expect(state.box).toBe('');
-  });
-
-  test('🔴 a hold that ends late (after 25 s) still sends the message, the moment it lifts', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    let settled = false;
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    ).then((value) => ((settled = true), value));
-    await vi.advanceTimersByTimeAsync(25_000);
-    expect(settled).toBe(false);
-    expect(state.went).toEqual([]);
-    chat.lift();
-    // No timer has to run for it to go: the chat's own event sends it.
-    await vi.advanceTimersByTimeAsync(0);
-    expect(state.went).toEqual([HELD]);
-    expect(await kept).toBe(true);
-    expect(state.box).toBe('');
-  });
-
-  test('🔴 nothing polls: a minute of holding is one send (the one that puts the message in the box)', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    );
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(chat.send).toHaveBeenCalledTimes(1);
-    expect(state.box).toBe(HELD);
-    chat.lift();
-    expect(await kept).toBe(true);
-    expect(chat.send).toHaveBeenCalledTimes(2);
-  });
-
-  test('🟡 the wait is bounded by HELD_TIMEOUT_MS: a hold that never lifts leaves the copy to the user then, not before', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    let settled = false;
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    ).then((value) => ((settled = true), value));
-    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 1000);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(settled).toBe(true);
-    // The copy is still in the box, so it is not reported unsent.
-    expect(await kept).toBe(true);
-    expect(state.box).toBe(HELD);
-    expect(replaying.current).toBeNull();
-  });
-
-  test('a release stopped while it waits ends at once, with no timer run, and is reported unsent', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    let settled = false;
-    // The user is dictating into an empty box, so nothing is put there and nothing is kept.
-    const kept = releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => true,
-      HELD
-    ).then((value) => ((settled = true), value));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(settled).toBe(false);
-    stopRelease(replaying);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(settled).toBe(true);
-    expect(await kept).toBe(false);
-    expect(chat.send).not.toHaveBeenCalled();
-    expect(state.went).toEqual([]);
-  });
-
-  test('🟡 a message the chat can take but keeps back in the box while the user dictates is taken out and reported unsent', async () => {
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    // The chat can send, but refuses this one (as a refused grant does) by putting it in the empty box,
-    // hidden behind the dictation that would join it.
-    state.canSend = true;
-    state.refusing = true;
-    const kept = await releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => true,
-      HELD,
-      // Short, so a release that waits instead fails by assertion, not by the test's timeout.
-      1_000
-    );
-    expect(chat.send).toHaveBeenCalledTimes(1);
-    expect(state.went).toEqual([]);
-    expect(state.box).toBe('');
-    expect(kept).toBe(false);
-  });
-
-  test('🟡 a message the chat can take goes at once, even while the user dictates into an empty box', async () => {
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    state.canSend = true;
-    const kept = await releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => true,
-      HELD,
-      // Short, so a release that waits instead fails by assertion, not by the test's timeout.
-      1_000
-    );
-    expect(state.went).toEqual([HELD]);
-    expect(chat.send).toHaveBeenCalledTimes(1);
-    expect(state.box).toBe('');
-    expect(kept).toBe(true);
-  });
-
-  test('NEGATIVE CONTROL: kept back while the user is NOT dictating, the copy stays in the box for them', async () => {
-    const replaying: Replaying = { current: null };
-    const { chat, state } = heldChat(replaying);
-    state.canSend = true;
-    state.refusing = true;
-    const kept = await releaseHeld(
-      { current: chat },
-      replaying,
-      () => state.box,
-      () => false,
-      HELD
-    );
-    expect(state.box).toBe(HELD);
-    expect(kept).toBe(true);
   });
 });
