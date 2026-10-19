@@ -3,6 +3,7 @@ import {
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
+  allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
@@ -127,6 +128,14 @@ export function runVersionLabel(run: Run): string {
   const card = runCard(run);
   const v = card.versions.find((x) => x.key === run.versionKey);
   return versionSuffix(card.name, v?.label);
+}
+
+/** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
+export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+  return [
+    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
+  ];
 }
 
 export function newRun(card: ModelCard): Run {

@@ -1447,6 +1447,15 @@ export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies P
  * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
  * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
  */
+/** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
+ *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
+ *  only for these. */
+export const CUSTOM_BASE_ECOSYSTEMS: ReadonlySet<string> = new Set(['anima', 'sd1', 'sdxl']);
+
+/** A Custom run resolves to the card's primary version, so that version's ecosystem decides. */
+export const allowsCustomBase = (card: ModelCard): boolean =>
+  CUSTOM_BASE_ECOSYSTEMS.has(card.versions[0]!.ecosystem);
+
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =
   'its backend cannot train the text encoder, and a run that tries hangs without finishing.';
