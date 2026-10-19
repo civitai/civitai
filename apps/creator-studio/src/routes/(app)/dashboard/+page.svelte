@@ -18,6 +18,7 @@
     IconCash,
     IconClock,
     IconBuildingBank,
+    IconPigMoney,
     IconTrophy,
     IconDatabase,
   } from '@tabler/icons-svelte';
@@ -108,6 +109,15 @@
   const cashStats: Stat[] = $derived(
     data.membership.isCreatorProgramMember
       ? [
+          {
+            label: 'Banked this month',
+            value: data.banked != null ? formatBuzz(data.banked) : null,
+            buzz: data.banked ?? undefined,
+            pending: false,
+            hint: 'Paid out at month end',
+            icon: IconPigMoney,
+            color: currencyMeta('creatorProgramBank').color,
+          },
           {
             label: 'Cash pending',
             value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
@@ -261,7 +271,7 @@
     </div>
     <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
   </div>
-  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
     {#each stats as stat (stat.label)}
       <StatCard label={stat.label} icon={stat.icon} color={stat.color}>
         {#if stat.value != null}
@@ -298,6 +308,13 @@
       </StatCard>
     {/each}
   </div>
+  {#if data.membership.isCreatorProgramMember && !data.membership.isMember}
+    <p class="mt-3 text-sm text-dark-2">
+      Your membership isn't active, so you can't bank more Buzz. Buzz you've already banked still pays
+      out at the end of the month. To withdraw cash, you need $50 ready to withdraw and your payment
+      details set up; no membership is needed.
+    </p>
+  {/if}
 </section>
 
 <section class="mb-8">
