@@ -214,6 +214,6 @@ if (endpoint && token) {
   }
 } else {
   console.warn(
-    '[civitai-llm] ORCHESTRATOR_ENDPOINT and/or ORCHESTRATOR_ACCESS_TOKEN missing — calls to urn:air:* models will throw "Civitai LLM not connected".'
+    '[civitai-llm] ORCHESTRATOR_ENDPOINT and/or ORCHESTRATOR_ACCESS_TOKEN missing — calls to Civitai-hosted models (AIRs, civitai/ aliases) will throw "Civitai LLM not connected".'
   );
 }

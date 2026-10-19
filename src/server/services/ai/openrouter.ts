@@ -31,7 +31,8 @@ export const AI_MODELS = {
   // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
   QWEN_FLASH: 'qwen/qwen3.7-flash',
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
-  QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
+  // Orchestrator alias for the preferred hosted Qwen 3.8; the model behind it changes without a deploy here.
+  QWEN_38: 'civitai/qwen3.8',
   // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
   // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
   JEV: 'typesafe/jev-1.13',
@@ -40,6 +41,11 @@ export const AI_MODELS = {
   VISION_PRIMARY: 'openai/gpt-4o',
   VISION_FALLBACK: 'anthropic/claude-sonnet-4',
 } as const;
+
+// AIRs and civitai/ aliases are served by the orchestrator, not OpenRouter.
+export function isCivitaiHostedModel(model: string) {
+  return model.startsWith('urn:air:') || model.startsWith('civitai/');
+}
 
 // eslint-disable-next-line @typescript-eslint/ban-types
 export type AIModel = (typeof AI_MODELS)[keyof typeof AI_MODELS] | (string & {});

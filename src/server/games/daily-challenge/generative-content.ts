@@ -6,7 +6,7 @@ import type {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
-import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
+import { openrouter, AI_MODELS, isCivitaiHostedModel, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage, TokenUsage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
@@ -39,18 +39,11 @@ import {
 //
 // MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
 // on an article), which is irrelevant for the once-per-challenge content stages.
-//
-// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
-// pass the URN as `input.model` from the call site or the Playground; the
-// `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
 const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
 
-// URN-prefixed models go through the orchestrator's OpenAI-compatible endpoint
-// (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,
-// moonshotai/*, stepfun/*) stays on OpenRouter.
 function pickClient(model: string) {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     return civitaiLLM;
   }
@@ -102,7 +95,7 @@ export async function getCompletionWithUsage<T>(
   messages: SimpleMessage[],
   retries: number
 ): Promise<{ content: T; usage: TokenUsage }> {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
     return { content, usage: { promptTokens: 0, completionTokens: 0 } };
