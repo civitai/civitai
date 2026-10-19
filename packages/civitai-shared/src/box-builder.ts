@@ -5,6 +5,7 @@
  * both save a box the same way.
  */
 import { MAX_BOX_WEIGHT } from './box-odds';
+import { snapshotsMatch, type BoxOddsSnapshotData } from './box-odds-snapshot';
 import { isForTeam, ITEM_TYPE } from './mystery-box';
 
 /** A refusal the moderator can act on. Thrown before anything commits; the action answers 409. */
@@ -217,7 +218,8 @@ export const keptContentIds = (draft: Pick<BoxDraft, 'contents'>) =>
 
 /**
  * The tier rows to insert and to update (only those that changed), and the ids of the kept tiers by
- * key. The caller adds the inserted tiers' ids to `tierIdByKey`. Assumes `assertDraftFitsRows` passed.
+ * key; `tierIdsWithInserted` adds the new tiers' ids once they are inserted. Assumes
+ * `assertDraftFitsRows` passed.
  */
 export function planTierWrites(
   boxId: number,
@@ -245,6 +247,23 @@ export function planTierWrites(
       changedTiers.push({ id: tier.id, ...values });
   }
   return { newTiers, changedTiers, tierIdByKey };
+}
+
+/**
+ * Every tier id the save keeps, by key: the plan's kept tiers plus the rows the tier insert returned.
+ * The save deletes every tier missing from it, so a new tier left out would vanish with no error
+ * whenever nothing is in it.
+ */
+export function tierIdsWithInserted(
+  plan: Pick<ReturnType<typeof planTierWrites>, 'newTiers' | 'tierIdByKey'>,
+  inserted: readonly { id: number; key: string }[]
+) {
+  const tierIdByKey = new Map(plan.tierIdByKey);
+  for (const row of inserted) tierIdByKey.set(row.key, row.id);
+  for (const tier of plan.newTiers)
+    if (!tierIdByKey.has(tier.key))
+      throw new Error(`The tier insert returned no id for "${tier.key}".`);
+  return tierIdByKey;
 }
 
 /**
@@ -281,3 +300,12 @@ export function planContentWrites(
   }
   return { newContents, changedContents };
 }
+
+type BoxOddsState = { snapshot: BoxOddsSnapshotData; event: string | null };
+
+/**
+ * Whether a save changed what a buyer can draw: the tiers, weights or contents, or the event, which
+ * decides the buyers' teams. A change bumps the box's version.
+ */
+export const oddsChanged = (before: BoxOddsState, after: BoxOddsState) =>
+  !snapshotsMatch(before.snapshot, after.snapshot) || before.event !== after.event;

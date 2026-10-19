@@ -4,7 +4,6 @@ import type { DB } from '@civitai/db-schema/kysely';
 import {
   boxOddsSnapshotSchema,
   snapshotOfLiveBox,
-  snapshotsMatch,
   type BoxOddsSnapshotData,
 } from '@civitai/shared/box-odds-snapshot';
 import {
@@ -13,8 +12,10 @@ import {
   boxParamsForSave,
   BoxRefusal,
   keptContentIds,
+  oddsChanged,
   planContentWrites,
   planTierWrites,
+  tierIdsWithInserted,
   type BoxParams,
 } from '@civitai/shared/box-builder';
 import {
@@ -314,9 +315,12 @@ export async function saveBox({
     }
 
     const after = await liveSnapshot(trx, boxId);
-    const oddsChanged = !snapshotsMatch(before, after) || event !== eventBefore;
+    const changed = oddsChanged(
+      { snapshot: before, event: eventBefore },
+      { snapshot: after, event }
+    );
     const version =
-      oddsChanged || publish ? await bumpVersion(trx, boxId, { status, userId }) : box.version;
+      changed || publish ? await bumpVersion(trx, boxId, { status, userId }) : box.version;
     return { version, status, bumped: version !== box.version };
   });
 }
@@ -346,14 +350,12 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     .execute();
 
   // Runs under the lock every open waits on: write only changed rows, batched, not row by row.
-  const { newTiers, changedTiers, tierIdByKey } = planTierWrites(boxId, draft, tiers);
-  if (newTiers.length)
-    for (const row of await trx
-      .insertInto('BoxTier')
-      .values(newTiers)
-      .returning(['id', 'key'])
-      .execute())
-      tierIdByKey.set(row.key, row.id);
+  const plan = planTierWrites(boxId, draft, tiers);
+  const inserted = plan.newTiers.length
+    ? await trx.insertInto('BoxTier').values(plan.newTiers).returning(['id', 'key']).execute()
+    : [];
+  const tierIdByKey = tierIdsWithInserted(plan, inserted);
+  const { changedTiers } = plan;
   if (changedTiers.length)
     await sql`
       UPDATE "BoxTier" AS t

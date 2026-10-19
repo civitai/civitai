@@ -576,6 +576,47 @@ describe('a save writes only the tier and content rows it changes', () => {
     ]);
   });
 
+  it.each([
+    { dropped: 'one content', keep: [1, 2, 3], deleted: 1 },
+    { dropped: 'every content', keep: [], deleted: 4 },
+  ])('$dropped dropped from the draft is deleted', async ({ keep, deleted }) => {
+    const { boxId, draft } = await draftBox();
+    const writes = await countWrites();
+    const kept = await Promise.all(keep.map(defOf));
+    const edited = {
+      ...draft,
+      contents: draft.contents.filter((c) => kept.includes(c.rewardDefinitionId)),
+    };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([{ table: 'BoxContent', op: 'DELETE', n: deleted }]);
+    expect(
+      (
+        await rows<{ cosmeticId: number }>(
+          `SELECT d."cosmeticId" FROM "BoxContent" c
+           JOIN "ItemDefinition" d ON d.id = c."rewardDefinitionId"
+           WHERE c."boxDefinitionId" = $1 ORDER BY d."cosmeticId"`,
+          [boxId]
+        )
+      ).map((row) => row.cosmeticId)
+    ).toEqual(keep);
+  });
+
+  it('keeps a new tier saved with nothing in it', async () => {
+    const { boxId, draft } = await draftBox();
+    const writes = await countWrites();
+    const edited = {
+      ...draft,
+      tiers: [...draft.tiers, { id: null, key: 'epic', name: 'Epic', weight: 1, color: null }],
+    };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([{ table: 'BoxTier', op: 'INSERT', n: 1 }]);
+    expect((await tierRows(boxId)).map((tier) => tier.key)).toEqual(['common', 'epic', 'rare']);
+  });
+
   it('adds new tiers and contents in one save, beside rows it leaves alone', async () => {
     const { boxId, draft } = await publishedBox();
     const writes = await countWrites();
