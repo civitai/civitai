@@ -1795,7 +1795,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MossImage,
     defaults: {
       model: { id: 3409867 },
-      modelLocked: true,
     },
   },
   {

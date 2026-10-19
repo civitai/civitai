@@ -374,6 +374,21 @@ describe('moss-image.handler', () => {
       quantity: 2,
     });
     expect((firstInput(steps) as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+    expect(firstInput(steps)).not.toHaveProperty('diffusionModel');
+  });
+
+  it('a creator checkpoint reaches the orchestrator as diffusionModel', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage',
+      prompt: 'a cat',
+      model: { id: 424242, baseModel: 'MOSS Image', model: { type: 'Checkpoint' } },
+    });
+    expect(firstInput(steps)).toMatchObject({
+      ecosystem: 'mossImage',
+      model: 'sft',
+      diffusionModel: 'urn:air:test:424242',
+    });
   });
 
   // Turbo (DMD) LoRAs run at 8 steps, CFG 1; the floor sits below that for 4-step distills.
@@ -402,6 +417,7 @@ describe('moss-image.handler', () => {
       steps: 25,
       cfgScale: 3,
     });
+    expect(firstInput(steps)).not.toHaveProperty('diffusionModel');
   });
 });
 
