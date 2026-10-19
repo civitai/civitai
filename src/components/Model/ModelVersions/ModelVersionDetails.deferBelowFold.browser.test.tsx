@@ -27,9 +27,11 @@ import * as F from '~/tests/pages/models/model-page-fixture';
 const mocks = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
   getCreator: vi.fn(),
+  user: null as null | Record<string, unknown>,
+  downloaded: [] as number[],
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProviderModule>()),
   useFeatureFlags: () => mocks.flags,
@@ -72,6 +74,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
       },
       'model.getCollectionShowcase': q(F.SHOWCASE_COLLECTION),
+      'user.getEngagedModelVersions': {
+        useQuery: () => ({
+          data: { Notify: [], Downloaded: mocks.downloaded },
+          isLoading: false,
+          isSuccess: true,
+        }),
+      },
+      'resourceReview.getUserResourceReview': q([]),
       'common.getEntityAccess': q([
         { entityId: F.VERSION_IDS[0], entityType: 'ModelVersion', hasAccess: true },
       ]),
@@ -136,11 +146,22 @@ function Tree({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Marks the container once the client's effects have run, i.e. hydration has committed. */
+function HydratedMarker() {
+  const ref = React.useRef<HTMLSpanElement>(null);
+  React.useEffect(() => {
+    ref.current?.setAttribute('data-hydrated', 'true');
+  }, []);
+  return <span ref={ref} data-hydrated="false" />;
+}
+
 const details = () => (
   <Tree>
     <ModelVersionDetails model={F.MODEL} version={F.MODEL.modelVersions[0]} image={undefined} />
+    <HydratedMarker />
   </Tree>
 );
+const USER_REVIEW_PROMPT = 'What did you think of this resource?';
 
 const HYDRATION_RE =
   /(Hydration failed|An error occurred during hydration|The server HTML was replaced|Expected server HTML|did not match|Text content does not match)/i;
@@ -155,6 +176,8 @@ beforeEach(() => {
   consoleErrors = [];
   recoverable = [];
   mocks.getCreator.mockReset();
+  mocks.user = null;
+  mocks.downloaded = [];
   const original = console.error;
   console.error = ((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
@@ -176,7 +199,11 @@ const hydrationConsoleErrors = () =>
     (e) => HYDRATION_RE.test(e) && !/useLayoutEffect does nothing on the server/.test(e)
   );
 
-/** Plant server HTML, hydrate it, and yield until React's scheduler has run hydration + effects. */
+/**
+ * Plant server HTML, hydrate it, and wait until the client's effects have run. Hydration errors are
+ * reported during the hydration commit, before effects, so every assertion on the detectors that
+ * follows reads a finished hydration rather than racing it.
+ */
 async function hydrateInto(html: string, tree: React.ReactElement) {
   const container = document.createElement('div');
   container.innerHTML = html;
@@ -187,7 +214,13 @@ async function hydrateInto(html: string, tree: React.ReactElement) {
       recoverable.push(err instanceof Error ? err.message : String(err));
     },
   });
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  if (container.querySelector('[data-hydrated]')) {
+    await expect
+      .poll(() => container.querySelector('[data-hydrated]')?.getAttribute('data-hydrated'))
+      .toBe('true');
+  } else {
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
   return container;
 }
 
@@ -217,6 +250,7 @@ describe('ModelVersionDetails — modelPageDeferBelowFold hydration', () => {
     expect(hydrationConsoleErrors()).toEqual([]);
     // After mount: the real creator card replaced its placeholder and asked for its own data.
     await expect.poll(() => container.querySelector(CREATOR_CARD_LINK)).not.toBeNull();
+    expect(container.textContent).toContain('License');
     expect(container.querySelector('[data-deferred-section]')).toBeNull();
     expect(mocks.getCreator).toHaveBeenCalledWith({ id: F.CREATOR_ID });
   });
@@ -233,5 +267,22 @@ describe('ModelVersionDetails — modelPageDeferBelowFold hydration', () => {
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(container.querySelector(CREATOR_CARD_LINK)).not.toBeNull();
+  });
+
+  test("ON, downloader: the viewer's review card hydrates as a placeholder and arrives after mount", async () => {
+    mocks.flags = { modelPageDeferBelowFold: true, cosmeticShop: true };
+    mocks.user = { id: 5, username: 'lantern-viewer', isModerator: false, filePreferences: {} };
+    mocks.downloaded = [F.VERSION_IDS[0]];
+    const html = renderToString(details());
+
+    expect(html).toContain('data-deferred-section="user-review"');
+    expect(html).not.toContain(USER_REVIEW_PROMPT);
+
+    const container = await hydrateInto(html, details());
+
+    expect(recoverable).toEqual([]);
+    expect(hydrationConsoleErrors()).toEqual([]);
+    await expect.poll(() => container.textContent).toContain(USER_REVIEW_PROMPT);
+    expect(container.querySelector('[data-deferred-section]')).toBeNull();
   });
 });

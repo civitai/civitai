@@ -107,10 +107,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     useQuery: () => pending,
     useInfiniteQuery: () => ({ ...pending, hasNextPage: false, fetchNextPage: () => undefined }),
   };
-  // Exactly what the page's getServerSideProps prefetches (flag off).
+  // Exactly what the page's getServerSideProps prefetches — `user.getCreator` only with the flag
+  // off, as in `model-page-defer-prefetch.test.ts`, so a server-rendered reader of it that the
+  // deferral missed would render its pending state here exactly as it would in production.
   const prefetched: Record<string, unknown> = {
     'model.getById': q(() => F.MODEL),
-    'user.getCreator': q(() => F.CREATOR),
+    'user.getCreator': {
+      useQuery: () =>
+        m.flags.modelPageDeferBelowFold
+          ? pending
+          : { data: F.CREATOR, isLoading: false, isSuccess: true },
+    },
     'model.getCollectionShowcase': q(() => F.SHOWCASE_COLLECTION),
     'common.getEntityAccess': q(() => [
       { entityId: F.VERSION_IDS[0], entityType: 'ModelVersion', hasAccess: true },
