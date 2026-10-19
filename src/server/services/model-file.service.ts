@@ -40,6 +40,7 @@ import {
   assertFileTypeChangeAllowed,
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
+import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -187,12 +188,15 @@ export async function updateFile({
   // create branch still takes it from `modelFileCreateSchema`.
   modelVersionId: _modelVersionId,
   uploadDomain,
+  urlFromClient,
   ...inputData
 }: ModelFileUpdateInput & {
   userId: number;
   isModerator?: boolean;
   /** The request's domain, stamped onto a new training-data upload. Never the client's value. */
   uploadDomain?: ColorDomain | null;
+  /** A new url came from a client, so it must name an object the caller may attach. */
+  urlFromClient?: boolean;
 }) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
@@ -204,7 +208,15 @@ export async function updateFile({
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
-  if (inputData.url && inputData.url !== modelFile.url)
+  if (inputData.url && inputData.url !== modelFile.url) {
+    if (urlFromClient)
+      await assertClientFileUrlAllowed({
+        url: inputData.url,
+        userId,
+        isModerator: !!isModerator,
+        modelVersionId: modelFile.modelVersionId,
+        op: 'replace',
+      });
     return replaceFileContent({
       file: modelFile,
       input: { ...inputData, url: inputData.url, metadata },
@@ -212,6 +224,7 @@ export async function updateFile({
       isModerator,
       uploadDomain: uploadDomain ?? null,
     });
+  }
 
   const { count } = await dbWrite.modelFile.updateMany({
     where: { id },

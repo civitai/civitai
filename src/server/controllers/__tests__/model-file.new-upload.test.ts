@@ -3,6 +3,7 @@ import type * as OrchestratorService from '~/server/services/orchestrator/orches
 import type * as StorageResolver from '~/utils/storage-resolver';
 import type * as S3Utils from '~/utils/s3-utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { envMock } from '~/__tests__/mocks/env.mock';
 import '~/__tests__/mocks/logging.mock';
 
 /**
@@ -118,6 +119,8 @@ const ctx = (isModerator = false) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // NEW_URL is a checkpoint copied to the file's own version in an upload bucket.
+  envMock.set({ S3_UPLOAD_B2_BUCKET: 'model-bucket' });
   dbMock.dbWrite.modelFile.deleteMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID });
   dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
@@ -219,7 +222,7 @@ describe('a new upload through modelFile.upsert', () => {
     await upsertFileHandler({
       input: {
         id: OLD_ID,
-        url: `https://s3.us-west-004.backblazeb2.com/model-bucket/training/new.zip`,
+        url: `https://s3.us-west-004.backblazeb2.com/model-bucket/training-images/7/new.zip`,
         sizeKB: 5,
         metadata: { uploadDomain: 'blue' },
       },
@@ -272,5 +275,57 @@ describe('a metadata-only edit through modelFile.upsert', () => {
       data: { metadata: Record<string, unknown> };
     };
     expect(written.data.metadata).toEqual({ uploadDomain: 'red', numImages: 5 });
+  });
+});
+
+// A client may only put a url it uploaded (or one already on a model it owns) behind a file.
+describe('the url a client sends through modelFile.upsert', () => {
+  const OTHER_USERS_URL =
+    'https://s3.us-west-004.backblazeb2.com/model-bucket/model/8/theirs.safetensors';
+
+  it('refuses a new url under another user upload prefix before touching the file', async () => {
+    givenStored(storedFile('Draft'));
+
+    await expect(
+      upsertFileHandler({ input: { ...epochPick, url: OTHER_USERS_URL }, ctx: ctx() })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/upload the file again/i),
+    });
+    expect(dbMock.dbWrite.modelFile.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator put that url behind the file', async () => {
+    givenStored(storedFile('Draft'));
+
+    await expect(
+      upsertFileHandler({ input: { ...epochPick, url: OTHER_USERS_URL }, ctx: ctx(true) })
+    ).resolves.toMatchObject({ id: NEW_ID });
+  });
+
+  // A file on a model transferred to its owner keeps the original uploader's key. Resending the url
+  // it already has is an edit, not a new upload, and is not checked.
+  it('leaves an edit that resends the url the file already has alone', async () => {
+    givenStored(storedFile('Draft', { url: OTHER_USERS_URL }));
+
+    await expect(
+      upsertFileHandler({
+        input: { id: OLD_ID, url: OTHER_USERS_URL, overrideName: 'renamed' },
+        ctx: ctx(),
+      })
+    ).resolves.toMatchObject({ id: OLD_ID });
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same url on a new file (an upsert without an id)', async () => {
+    const { id: _id, ...newFile } = epochPick;
+
+    await expect(
+      upsertFileHandler({ input: { ...newFile, url: OTHER_USERS_URL }, ctx: ctx() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
   });
 });

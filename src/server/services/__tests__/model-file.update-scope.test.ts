@@ -570,3 +570,27 @@ describe('linked components', () => {
     expect(repointCalls()).toHaveLength(1);
   });
 });
+
+// The tRPC update passes urlFromClient; server-side callers choose their own url and do not.
+describe('a new url from a client', () => {
+  it('is refused before anything is swapped when it names no object the caller may attach', async () => {
+    await expect(
+      updateFile({ id: 1, url: NEW_URL, userId: 7, urlFromClient: true })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('is not checked when the url is the one the file already has', async () => {
+    await expect(
+      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7, urlFromClient: true })
+    ).resolves.toMatchObject({ id: 1 });
+    expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('is not checked for a moderator', async () => {
+    await expect(
+      updateFile({ id: 1, url: NEW_URL, userId: 99, isModerator: true, urlFromClient: true })
+    ).resolves.toMatchObject({ id: NEW_ID });
+  });
+});

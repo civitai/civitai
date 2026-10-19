@@ -27,6 +27,7 @@ import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
+import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -189,8 +190,15 @@ export const createFileHandler = async ({
 }: {
   input: ModelFileCreateInput;
   ctx: ProtectedContext;
-}) =>
-  createModelFile({
+}) => {
+  await assertClientFileUrlAllowed({
+    url: input.url,
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    modelVersionId: input.modelVersionId,
+    op: 'create',
+  });
+  return createModelFile({
     // The storage location is registered from the record's own url, as on update, never from a
     // client-supplied path, so what downloads resolve to is what gets scanned.
     input: { ...input, s3Path: undefined },
@@ -201,10 +209,12 @@ export const createFileHandler = async ({
     // stamp may come from — see the `uploadDomain` note on `createModelFile`.
     uploadDomain: ctx.domain,
   });
+};
 
 /**
  * The same create path with no request behind it, so a job can run it: a Hugging Face import
- * attaches its own file when the transfer lands, and has no session to borrow.
+ * attaches its own file when the transfer lands, and has no session to borrow. The url is the
+ * caller's own choice, so it is not bound the way a client's is (`assertClientFileUrlAllowed`).
  */
 export const createModelFile = async ({
   input,
@@ -331,6 +341,7 @@ export const updateFileHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       uploadDomain: ctx.domain,
+      urlFromClient: true,
     });
 
     const { replacedFileId } = result;
