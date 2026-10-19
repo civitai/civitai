@@ -181,13 +181,19 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
 
 /**
  * The COOKIE-authed dev-TUNNEL host-mint allowlist (Phase 2). IDENTICAL to
- * `DEV_TOKEN_SCOPE_ALLOWLIST` MINUS `apps:storage:read` / `apps:storage:write`
- * (Decision 1). App Storage is REFUSED pre-approval: a pre-approval app has a
- * synthetic, non-resolving appId, so its storage namespace is undefined and could
- * collide across the approve boundary — generation/Buzz work pre-approval, App
- * Storage does not. Stripping the scope from the clamp is defense-in-depth ON TOP
- * of the downstream `resolveStorageContext` 404 for a synthetic/non-approved appId
- * (so a minted tunnel token can NEVER carry a storage scope in the first place).
+ * `DEV_TOKEN_SCOPE_ALLOWLIST` MINUS its four storage scopes — `apps:storage`,
+ * `apps:storage:publish`, `apps:storage:read` and `apps:storage:write` (Decision 1;
+ * the shared `apps:storage:shared:*` pair is in neither list). App Storage is REFUSED
+ * pre-approval: a pre-approval app has a synthetic, non-resolving appId, so its
+ * storage namespace is undefined and could collide across the approve boundary —
+ * generation/Buzz work pre-approval, App Storage does not. Stripping the scope from
+ * the clamp is defense-in-depth ON TOP of the downstream `resolveStorageContext` 404
+ * for a synthetic/non-approved appId (so a minted tunnel token can NEVER carry a
+ * storage scope in the first place).
+ *
+ * An APPROVED app previewed through the tunnel never reaches this allowlist (it mints
+ * on the ordinary page path), so the same rule is applied there separately: see
+ * `withoutDocumentStoreScopes` in `src/pages/api/v1/block-tokens/index.ts`.
  */
 export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',

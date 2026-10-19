@@ -1203,3 +1203,110 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Dev-tunnel preview of an APPROVED page app (civitai#2989 Decision 1): a tunnel
+// preview's token carries no document-store scopes, whatever the app's approval
+// state. An approved app resolves through `resolvePageBlock`, so neither tunnel
+// branch runs; the dev-tunnel host marks its request `devTunnel: true` and the
+// ordinary page mint strips the whole `apps:storage*` family. The control arm is
+// the SAME request without the flag (what `/apps/run/<slug>` sends).
+// ───────────────────────────────────────────────────────────────────────────
+describe('POST /api/v1/block-tokens — approved page app previewed through the dev tunnel', () => {
+  // All six document-store scopes, pinned literally rather than derived from
+  // APP_STORAGE_SCOPES, so a change to that family shows up here as a diff.
+  const STORAGE = [
+    'apps:storage',
+    'apps:storage:publish',
+    'apps:storage:read',
+    'apps:storage:write',
+    'apps:storage:shared:read',
+    'apps:storage:shared:write',
+  ];
+  // Two non-storage scopes that must survive the strip untouched.
+  const OTHERS = ['buzz:read:self', 'social:tip:self'];
+  const DECLARED = [...STORAGE, ...OTHERS];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockBlockRegistry.resolveBlockInstance.mockReset();
+    mockBlockRegistry.resolvePageBlock.mockReset();
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      PAGE_BLOCK(DECLARED, DECLARED, MONEY_BITS)
+    );
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    // The owner has granted everything consent-gated, so nothing is withheld for
+    // consent and the only thing that can remove a scope is the tunnel strip.
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: [...OTHERS, 'apps:storage:publish'],
+      revokedAt: null,
+    });
+    mockRedis.incrBy.mockResolvedValue(1);
+    mockTokenService.checkRateLimit.mockResolvedValue(true);
+    (mockFlags.getFeatureFlags as any).mockImplementation(
+      ({ user }: { user?: { isModerator?: boolean } }) => ({
+        appBlocks: !!user?.isModerator,
+        appBlocksPages: !!user?.isModerator,
+      })
+    );
+  });
+
+  async function mint(body: Record<string, unknown>) {
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body }), res);
+    return res;
+  }
+
+  it('devTunnel: true → the token carries NO document-store scope and keeps every other scope', async () => {
+    const res = await mint({ ...pageBody(), devTunnel: true });
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+    const signed = mockTokenService.sign.mock.calls[0][0].scopes;
+    expect(signed).toEqual(OTHERS);
+    // The plaintext mirror the host forwards in BLOCK_INIT agrees with the token.
+    expect(res._body.scopes).toEqual(OTHERS);
+    // Still the ordinary approved-page token (real ids), not a dev token.
+    expect(mockTokenService.sign.mock.calls[0][0].appBlockId).toBe('apb_page');
+    expect(mockTokenService.sign.mock.calls[0][0].dev).toBeUndefined();
+  });
+
+  it('CONTROL — the same request WITHOUT the flag (the /apps/run path) still carries all six', async () => {
+    const res = await mint(pageBody());
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual(DECLARED);
+    expect(res._body.scopes).toEqual(DECLARED);
+  });
+
+  it('devTunnel: false is the control, not the strip', async () => {
+    const res = await mint({ ...pageBody(), devTunnel: false });
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual(DECLARED);
+  });
+
+  it('a tunnel preview is never prompted to consent to a storage scope it will not be given', async () => {
+    // apps:storage:publish is consent-gated; without a grant the run path withholds
+    // it and asks for consent. The tunnel preview must not ask at all.
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: OTHERS,
+      revokedAt: null,
+    });
+    const run = await mint(pageBody());
+    expect(run._body.needsConsent).toBe(true);
+    expect(run._body.missingScopes).toEqual(['apps:storage:publish']);
+
+    vi.clearAllMocks();
+    const tunnel = await mint({ ...pageBody(), devTunnel: true });
+    expect(tunnel._status).toBe(200);
+    expect(tunnel._body.needsConsent).toBe(false);
+    expect(tunnel._body.missingScopes).toEqual([]);
+    expect(tunnel._body.scopes).toEqual(OTHERS);
+  });
+
+  it('a non-boolean devTunnel is a 400, not a silent no-op', async () => {
+    const res = await mint({ ...pageBody(), devTunnel: 'yes' });
+    expect(res._status).toBe(400);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+});
