@@ -14,7 +14,14 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { runScriptAndExit } from '../lib/run-as-script';
-import { applyPlan, createReader, createSandboxWriter, describePlan, planSync } from './sync.lib';
+import {
+  applyPlan,
+  assertSandboxKey,
+  createReader,
+  createSandboxWriter,
+  describePlan,
+  planSync,
+} from './sync.lib';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -49,10 +56,11 @@ async function main() {
       'No live source key: set STRIPE_LIVE_READ_KEY or STRIPE_SECRET_KEY in .claude/skills/stripe/.env.'
     );
   }
-  // Built before any read, so a live target key stops the run before anything is planned.
+  // Before the reads: createReader accepts any key; only the writer checks it.
+  assertSandboxKey(targetKey);
   const writer = createSandboxWriter(targetKey);
   const live = createReader(sourceKey);
-  const sandbox = createReader(targetKey as string);
+  const sandbox = createReader(targetKey);
 
   const [liveProducts, livePrices, sandboxProducts, sandboxPrices] = await Promise.all([
     live.listProducts(),

@@ -119,13 +119,20 @@ function fakeSandbox() {
       },
       update: async (id: string, p: Stripe.PriceUpdateParams) => {
         const target = cat.prices.find((x) => x.id === id)!;
+        const owner = cat.products.find((x) => x.id === target.product);
+        if (p.active === false && owner?.default_price === id)
+          throw new Error('cannot archive the default price of a product');
         if (p.lookup_key && p.transfer_lookup_key) {
           for (const other of cat.prices)
             if (other.lookup_key === p.lookup_key) other.lookup_key = null;
         }
-        const { transfer_lookup_key: _t, metadata, ...rest } = p;
+        const { transfer_lookup_key: _t, metadata, lookup_key, ...rest } = p;
         Object.assign(target, rest);
-        if (metadata) target.metadata = { ...target.metadata, ...(metadata as Stripe.Metadata) };
+        if (lookup_key !== undefined) target.lookup_key = lookup_key || null;
+        if (metadata) {
+          const merged = { ...target.metadata, ...(metadata as Stripe.Metadata) };
+          target.metadata = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== ''));
+        }
         return target;
       },
     },
@@ -201,7 +208,6 @@ describe('planSync + applyPlan', () => {
     const live = liveCatalogue();
     live.prices[0] = { ...live.prices[0], unit_amount_decimal: '6000' };
     const steps = planSync(live, sb.cat);
-    // Stripe refuses to archive a product's default price, so the default moves first.
     expect(steps.map((s) => s.kind)).toEqual(['createPrice', 'setDefaultPrice', 'retirePrice']);
 
     await applyPlan(sb.writer, steps, sb.cat, noLog);
@@ -222,6 +228,63 @@ describe('planSync + applyPlan', () => {
     await sync(live, sb);
     expect(sb.cat.products[0].active).toBe(false);
     expect(planSync(live, sb.cat)).toEqual([]);
+  });
+
+  it('follows a live repricing that moves the default and archives the old price', async () => {
+    const sb = fakeSandbox();
+    await sync(liveCatalogue(), sb);
+
+    const live = liveCatalogue();
+    live.prices[0] = { ...live.prices[0], active: false, lookup_key: null };
+    live.prices.push(
+      price({
+        id: 'price_gold_m2',
+        product: 'prod_gold',
+        unit_amount_decimal: '6000',
+        lookup_key: 'gold_month',
+      })
+    );
+    live.products[0] = { ...live.products[0], default_price: 'price_gold_m2' };
+
+    const ids = await sync(live, sb);
+    const oldCopy = sb.cat.prices.find((p) => p.id === ids.prices.price_gold_m)!;
+    expect(oldCopy.active).toBe(false);
+    expect(sb.cat.products[0].default_price).toBe(ids.prices.price_gold_m2);
+    expect(planSync(live, sb.cat)).toEqual([]);
+  });
+
+  it('clears a metadata key and a lookup key that live removed from a price', async () => {
+    const sb = fakeSandbox();
+    const start = liveCatalogue();
+    start.prices[1] = { ...start.prices[1], metadata: { buzz: '1000' }, lookup_key: 'gold_year' };
+    const ids = await sync(start, sb);
+
+    const live = liveCatalogue();
+    await sync(live, sb);
+    const copy = sb.cat.prices.find((p) => p.id === ids.prices.price_gold_y)!;
+    expect(copy.metadata).toEqual({ [LIVE_ID_KEY]: 'price_gold_y' });
+    expect(copy.lookup_key).toBeNull();
+    expect(planSync(live, sb.cat)).toEqual([]);
+  });
+
+  it('retires a second active copy of one live price, even when it is the default', async () => {
+    const sb = fakeSandbox();
+    await sync(liveCatalogue(), sb);
+    const gold = sb.cat.products[0];
+    const dupe = await sb.writer.prices.create({
+      product: gold.id,
+      currency: 'usd',
+      unit_amount_decimal: '5000',
+      recurring: { interval: 'month' },
+      metadata: { [LIVE_ID_KEY]: 'price_gold_m' },
+    });
+    await sb.writer.products.update(gold.id, { default_price: dupe.id });
+
+    await sync(liveCatalogue(), sb);
+    const copies = sb.cat.prices.filter((p) => p.metadata[LIVE_ID_KEY] === 'price_gold_m');
+    expect(copies.filter((p) => p.active)).toHaveLength(1);
+    expect(gold.default_price).toBe(copies.find((p) => p.active)!.id);
+    expect(planSync(liveCatalogue(), sb.cat)).toEqual([]);
   });
 
   it('matches by live_id, not by id, so a sandbox with unrelated objects gets its own copies', async () => {

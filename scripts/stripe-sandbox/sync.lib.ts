@@ -60,8 +60,10 @@ export type PlanStep =
 
 const idOf = (ref: string | { id: string }) => (typeof ref === 'string' ? ref : ref.id);
 
-/** Indexes sandbox objects by the live id stamped on them, preferring an active one. */
-function indexByLiveId<T extends { active: boolean; metadata: Stripe.Metadata }>(items: T[]) {
+type Stamped = { id: string; active: boolean; metadata: Stripe.Metadata };
+
+/** On a duplicate live_id (a retired copy beside its replacement), the active one wins. */
+function indexByLiveId<T extends Stamped>(items: T[]) {
   const map = new Map<string, T>();
   for (const item of items) {
     const liveId = item.metadata?.[LIVE_ID_KEY];
@@ -70,6 +72,14 @@ function indexByLiveId<T extends { active: boolean; metadata: Stripe.Metadata }>
     if (!existing || (!existing.active && item.active)) map.set(liveId, item);
   }
   return map;
+}
+
+/** Active sandbox copies of a live object other than the one `indexByLiveId` picked. */
+function extraActiveCopies<T extends Stamped>(items: T[], picked: Map<string, T>) {
+  return items.filter((item) => {
+    const liveId = item.metadata?.[LIVE_ID_KEY];
+    return liveId && item.active && picked.get(liveId)?.id !== item.id;
+  });
 }
 
 function productFields(live: Stripe.Product): WantedProduct {
@@ -89,6 +99,17 @@ function sameMetadata(a: Stripe.Metadata, b: Stripe.Metadata) {
   return true;
 }
 
+/** Stripe merges metadata on update, so a key removed in live is sent as '' to clear it. */
+function metadataUpdate(current: Stripe.Metadata, want: Stripe.Metadata) {
+  if (sameMetadata(current, want)) return null;
+  const cleared = Object.fromEntries(
+    Object.keys(current ?? {})
+      .filter((k) => !(k in want))
+      .map((k) => [k, ''])
+  );
+  return { ...cleared, ...want };
+}
+
 function productDiff(sandbox: Stripe.Product, want: WantedProduct): ProductFields | null {
   const diff: ProductFields = {};
   if (sandbox.name !== want.name) diff.name = want.name;
@@ -97,19 +118,12 @@ function productDiff(sandbox: Stripe.Product, want: WantedProduct): ProductField
   if ((sandbox.unit_label ?? '') !== want.unit_label) diff.unit_label = want.unit_label;
   if (JSON.stringify(sandbox.images ?? []) !== JSON.stringify(want.images))
     diff.images = want.images;
-  if (!sameMetadata(sandbox.metadata, want.metadata)) {
-    // Keys present only in the sandbox are cleared, so a key removed in live goes away here too.
-    const cleared = Object.fromEntries(
-      Object.keys(sandbox.metadata ?? {})
-        .filter((k) => !(k in want.metadata))
-        .map((k) => [k, ''])
-    );
-    diff.metadata = { ...cleared, ...want.metadata };
-  }
+  const metadata = metadataUpdate(sandbox.metadata, want.metadata);
+  if (metadata) diff.metadata = metadata;
   return Object.keys(diff).length ? diff : null;
 }
 
-/** The fields Stripe will not let a price change after creation. A mismatch means a new price. */
+/** A difference here replaces the price instead of patching it (amounts and recurrence are immutable). */
 function priceShape(p: Stripe.Price) {
   const currencyOptions = Object.entries(p.currency_options ?? {})
     .filter(([c]) => c !== p.currency)
@@ -177,11 +191,11 @@ function priceDiff(sandbox: Stripe.Price, live: Stripe.Price): Stripe.PriceUpdat
   const diff: Stripe.PriceUpdateParams = {};
   if (sandbox.active !== live.active) diff.active = live.active;
   if ((sandbox.nickname ?? '') !== (live.nickname ?? '')) diff.nickname = live.nickname ?? '';
-  const want = { ...live.metadata, [LIVE_ID_KEY]: live.id };
-  if (!sameMetadata(sandbox.metadata, want)) diff.metadata = want;
-  if ((sandbox.lookup_key ?? null) !== (live.lookup_key ?? null) && live.lookup_key) {
-    diff.lookup_key = live.lookup_key;
-    diff.transfer_lookup_key = true;
+  const metadata = metadataUpdate(sandbox.metadata, { ...live.metadata, [LIVE_ID_KEY]: live.id });
+  if (metadata) diff.metadata = metadata;
+  if ((sandbox.lookup_key ?? null) !== (live.lookup_key ?? null)) {
+    diff.lookup_key = live.lookup_key ?? '';
+    if (live.lookup_key) diff.transfer_lookup_key = true;
   }
   return Object.keys(diff).length ? diff : null;
 }
@@ -201,10 +215,9 @@ function productCreateParams(want: WantedProduct): Stripe.ProductCreateParams {
 export type Catalogue = { products: Stripe.Product[]; prices: Stripe.Price[] };
 
 /**
- * Pure: what it takes to make the sandbox catalogue match live. Sandbox objects are matched to
- * live ones by `metadata.live_id`, never by id (ids differ across accounts), so a re-run
- * against an already-synced sandbox plans no creates. Inactive live objects are not copied
- * unless `includeInactive`, but a sandbox copy of one is still deactivated.
+ * Matches sandbox objects to live ones by `metadata.live_id`, never by id (ids differ across
+ * accounts). Inactive live objects are copied only with `includeInactive`; an existing sandbox
+ * copy of one is still deactivated.
  */
 export function planSync(
   live: Catalogue,
@@ -212,7 +225,9 @@ export function planSync(
   { includeInactive = false }: { includeInactive?: boolean } = {}
 ): PlanStep[] {
   const steps: PlanStep[] = [];
-  const retirements: Extract<PlanStep, { kind: 'retirePrice' }>[] = [];
+  // Stripe will not archive a product's default price, so every price deactivation runs after the
+  // default prices move.
+  const deactivations: PlanStep[] = [];
   const sandboxProducts = indexByLiveId(sandbox.products);
   const sandboxPrices = indexByLiveId(sandbox.prices);
 
@@ -254,13 +269,24 @@ export function planSync(
     }
     if (priceShape(existing) !== priceShape(price)) {
       steps.push({ kind: 'createPrice', liveId: price.id, liveProductId, params: create });
-      // Stripe will not archive a product's default price, so retiring waits for the defaults.
-      retirements.push({ kind: 'retirePrice', liveId: price.id, sandboxId: existing.id });
+      deactivations.push({ kind: 'retirePrice', liveId: price.id, sandboxId: existing.id });
       continue;
     }
     const diff = priceDiff(existing, price);
     if (diff)
-      steps.push({ kind: 'updatePrice', liveId: price.id, sandboxId: existing.id, params: diff });
+      (diff.active === false ? deactivations : steps).push({
+        kind: 'updatePrice',
+        liveId: price.id,
+        sandboxId: existing.id,
+        params: diff,
+      });
+  }
+  for (const extra of extraActiveCopies(sandbox.prices, sandboxPrices)) {
+    deactivations.push({
+      kind: 'retirePrice',
+      liveId: extra.metadata[LIVE_ID_KEY],
+      sandboxId: extra.id,
+    });
   }
 
   const syncedPriceIds = new Set([
@@ -275,11 +301,10 @@ export function planSync(
     const sandboxDefault = sandboxProduct?.default_price
       ? idOf(sandboxProduct.default_price)
       : null;
-    const sandboxDefaultLiveId = sandbox.prices.find((p) => p.id === sandboxDefault)?.metadata?.[
-      LIVE_ID_KEY
-    ];
-    const defaultReplaced = retirements.some((s) => s.liveId === liveDefault);
-    if (sandboxDefaultLiveId !== liveDefault || defaultReplaced) {
+    const defaultReplaced = deactivations.some(
+      (s) => s.kind === 'retirePrice' && s.liveId === liveDefault
+    );
+    if (defaultReplaced || sandboxDefault !== sandboxPrices.get(liveDefault)?.id) {
       steps.push({
         kind: 'setDefaultPrice',
         liveProductId: lp.id,
@@ -288,7 +313,7 @@ export function planSync(
     }
   }
 
-  return [...steps, ...retirements];
+  return [...steps, ...deactivations];
 }
 
 export type IdMap = { products: Record<string, string>; prices: Record<string, string> };
