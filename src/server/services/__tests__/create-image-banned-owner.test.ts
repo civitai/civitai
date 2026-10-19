@@ -58,11 +58,9 @@ describe('createImage for an owner', () => {
 
     await create();
 
-    expect(createdData()).toMatchObject({
-      ingestion: undefined,
-      blockedFor: undefined,
-      nsfwLevel: undefined,
-    });
+    expect(createdData().ingestion).toBeUndefined();
+    expect(createdData().blockedFor).toBeUndefined();
+    expect(createdData().nsfwLevel).toBeUndefined();
     expect(createImageIngestionRequest).toHaveBeenCalledOnce();
   });
 });

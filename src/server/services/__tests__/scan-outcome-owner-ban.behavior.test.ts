@@ -179,18 +179,19 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
     expect((await imageRow(6)).blockedFor).toBe('moderated');
   });
 
+  // One marker per row, so each of them alone keeps the block.
   it.each([
-    ['a failed scan moved it to Error', 'Error'],
-    ['a rescan request moved it to Rescan', 'Rescan'],
-  ])('keeps the block after %s', async (_, ingestion) => {
-    await insertImage(9, BANNED, ingestion, 'moderated', 32);
+    ['a failed scan moved it to Error, keeping its reason', 'Error', 'tos', 0],
+    ['a rescan request moved it to Rescan, keeping its level', 'Rescan', null, 32],
+  ] as const)('keeps the block after %s', async (_, ingestion, blockedFor, nsfwLevel) => {
+    await insertImage(9, BANNED, ingestion, blockedFor, nsfwLevel);
 
-    const outcome = await scan(loaded(9, BANNED, ingestion, 'moderated'));
+    const outcome = await scan(loaded(9, BANNED, ingestion, blockedFor));
 
     expect(outcome.ingestion).toBe('Blocked');
     expect(await imageRow(9)).toEqual({
       ingestion: 'Blocked',
-      blockedFor: 'moderated',
+      blockedFor: blockedFor ?? 'moderated',
       nsfwLevel: 32,
     });
   });
@@ -198,6 +199,8 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
 
 describe('a clean scan that should still lift or leave the image visible', () => {
   it("clears a blocked image's block when its owner is not banned (moderator rescan)", async () => {
+    // Another owner's banned, blocked image, stored first: the check reads the scanned image.
+    await insertImage(10, BANNED, 'Blocked', 'moderated');
     await insertImage(4, ACTIVE, 'Blocked', 'moderated');
 
     const outcome = await scan(loaded(4, ACTIVE, 'Blocked', 'moderated'));
