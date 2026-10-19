@@ -538,15 +538,17 @@ async function charge(
 
 const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
 
-/** What `moderate` hands back: run it once the write has committed, with the stored key. */
+/**
+ * What `moderate` hands back: run it once the write has committed — with the stored key when the
+ * store assigned it (a create); otherwise the key `moderate` was given is used.
+ */
 type AfterCommit = (committedKey?: string) => void;
 const nothingAfterCommit: AfterCommit = () => undefined;
 
 /**
  * Moderation of one shared write — every string leaf and object key of `data` and, when the app
  * chose it, the document key — in the app's shared-data moderation mode
- * (`resolveSharedDataModerationMode`: the same two per-app flags, evaluated the same way, as the
- * legacy shared-storage surface in `apps-shared.router.ts`):
+ * (`resolveSharedDataModerationMode`, which the legacy shared-storage surface follows too):
  *
  * - `off`: nothing is scanned or recorded.
  * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
@@ -657,8 +659,8 @@ function isOurFault(err: unknown): boolean {
 }
 
 /**
- * A shared document write spends the shared write budget: reserved before moderation (the
- * expensive part) and given back only if the write does not land. `fn` calls `landed()` the
+ * A shared document write spends the shared write budget: reserved before the write and any
+ * inline (enforce-mode) moderation scan, and given back only if the write does not land. `fn` calls `landed()` the
  * moment the store has committed, so a failure after that (presenting the result) spends the
  * token like any landed write.
  */

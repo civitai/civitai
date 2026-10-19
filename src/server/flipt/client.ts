@@ -116,7 +116,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // context-reading segment (moderators, testers, any cohort) matches nothing here and returns the
   // base value. See `shared-data-moderation.ts`.
   APP_BLOCKS_SHARED_DATA_MODERATION = 'app-blocks-shared-data-moderation',
-  // ENFORCE: reject a hit inline, with the title/body belt's consequences. Implies the scan — with
+  // ENFORCE: reject a hit inline (legacy surface: with the title/body belt's consequences; document
+  // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,

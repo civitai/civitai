@@ -36,7 +36,8 @@ import {
  *   path, and record what WOULD have been blocked. Never rejects, never files a report, never emits
  *   an abuse alert, never counts toward a mute.
  * - `app-blocks-shared-data-moderation-enforce` (ENFORCE): scan inline before the write, and reject
- *   a hit with the same consequences as a `title`/`body` hit.
+ *   a hit — on the legacy surface with the same consequences as a `title`/`body` hit; the document
+ *   store refuses it and raises the block alert, filing no Report.
  *
  * 🔴 ENFORCE IMPLIES SCAN. With enforce on and shadow off, the scan still runs (inline) and still
  * records its hits and its denominator — otherwise turning shadow off after the enforce flip would
@@ -48,9 +49,10 @@ import {
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
  *
  * Both shared-write surfaces follow the mode: the legacy shared-storage router
- * (`apps-shared.router.ts`) and the document store's REST layer (`doc-store-api.ts`). Each runs its
- * shadow scans through `scheduleSharedDataShadow` and refuses an enforce hit through
- * `enforcedBlockingHit`, so the two cannot diverge on what either mode does.
+ * (`apps-shared.router.ts`) and the document store's REST layer (`doc-store-api.ts`). Both run
+ * their shadow scans through `scheduleSharedDataShadow` and decide which enforce hit refuses a write
+ * through `enforcedBlockingHit`. What an enforce refusal then costs the writer (report, alert) is
+ * still decided by each surface.
  *
  * ## Evaluation — per APP, not per user
  *

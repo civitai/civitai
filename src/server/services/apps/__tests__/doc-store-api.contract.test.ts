@@ -2212,6 +2212,35 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
       expect(key).not.toHaveBeenCalled();
     });
 
+    it('a create or a counter increment that fails in the store schedules no scan', async () => {
+      const { v1, data, key } = await setup('shadow');
+      h.store = {
+        ...liveStore,
+        create: async () => {
+          throw new Error('store create failed');
+        },
+        increment: async () => {
+          throw new Error('store increment failed');
+        },
+      } as DocStore;
+      const created = await call({
+        token: v1,
+        method: 'POST',
+        path: '/posts',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(created.status).toBe(500);
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(500);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+    });
+
     it('INVARIANT GUARD: moderators keep their pattern-list exemption in shadow too', async () => {
       const { A, data, key } = await setup('shadow');
       h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });
