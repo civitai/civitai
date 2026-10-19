@@ -5,13 +5,13 @@
  * app's own default options, so "no request" below means React Query decided not to fetch —
  * not that a mocked hook was never asked.
  */
-import { QueryClient, useQuery } from '@tanstack/react-query';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
+import type { QueryClientTrpcFake } from '../../../../test/queryClientTrpcFake';
 
 const act = (React as unknown as { act: typeof actType }).act;
 
@@ -22,9 +22,7 @@ const h = vi.hoisted(() => ({
   user: { id: 1 } as { id: number } | null,
   handler: undefined as undefined | ((data: unknown) => unknown),
   showNotification: vi.fn(),
-  calls: [] as string[],
-  responses: {} as Record<string, () => unknown>,
-  client: undefined as unknown,
+  fake: undefined as unknown as QueryClientTrpcFake,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
@@ -35,56 +33,17 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
 }));
 vi.mock('@mantine/notifications', () => ({ showNotification: h.showNotification }));
 
-/**
- * The subset of the tRPC React surface these hooks use, routed to real React Query calls with
- * tRPC's key shape (`[path, input]`), so seeding, staleness and invalidation behave as they do
- * in the app.
- */
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
-  const client = new QueryClient({ defaultOptions: actual.queryClient.getDefaultOptions() });
-  h.client = client;
-  const key = (path: string, input: unknown) => [path, input ?? null];
-  const queryFn = (path: string) => async () => {
-    h.calls.push(path);
-    const respond = h.responses[path];
-    if (!respond) throw new Error(`no response scripted for ${path}`);
-    return respond();
-  };
-  const proc = (path: string) => ({
-    useQuery: (input: unknown, opts: Record<string, unknown> = {}) => {
-      const { trpc: _trpc, ...rest } = opts;
-      return useQuery({ queryKey: key(path, input), queryFn: queryFn(path), ...rest }, client);
-    },
-  });
-  const utilsProc = (path: string) => ({
-    fetch: (input: unknown, opts: Record<string, unknown> = {}) =>
-      client.fetchQuery({ queryKey: key(path, input), queryFn: queryFn(path), ...opts }),
-    invalidate: () => client.invalidateQueries({ queryKey: [path] }),
-  });
-  const routers = (make: (path: string) => unknown) =>
-    new Proxy(
-      {},
-      {
-        get: (_r, router) =>
-          new Proxy({}, { get: (_p, name) => make(`${String(router)}.${String(name)}`) }),
-      }
-    );
-  const utils = routers(utilsProc);
-  const hooks = routers(proc) as Record<string, unknown>;
-  return {
-    ...actual,
-    trpc: new Proxy(hooks, {
-      get: (target, prop) => (prop === 'useUtils' ? () => utils : Reflect.get(target, prop)),
-    }),
-  };
+  const { makeQueryClientTrpcFake } = await import('../../../../test/queryClientTrpcFake');
+  h.fake = makeQueryClientTrpcFake(actual.queryClient.getDefaultOptions());
+  return { ...actual, trpc: h.fake.trpc };
 });
 
 import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal';
 import { trpc } from '~/utils/trpc';
 
-const queryClient = () => h.client as QueryClient;
-const callsTo = (path: string) => h.calls.filter((p) => p === path).length;
+const callsTo = (path: string) => h.fake.callsTo(path);
 
 const currencies = [
   {
@@ -136,7 +95,9 @@ const flush = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 /** Delivers a signal. A rejection is swallowed as the signal worker swallows it: what counts is the toast. */
 async function signal(data: Record<string, unknown>) {
   await act(async () => {
-    await Promise.resolve(h.handler!({ paymentId: 'p1', amount: 10, ...data })).catch(() => undefined);
+    await Promise.resolve(h.handler!({ paymentId: 'p1', amount: 10, ...data })).catch(
+      () => undefined
+    );
   });
 }
 
@@ -148,14 +109,12 @@ const lastMessage = () =>
 beforeEach(() => {
   h.user = { id: 1 };
   h.handler = undefined;
-  h.calls = [];
   h.showNotification.mockReset();
-  h.responses = {
+  h.fake.reset({
     [CURRENCIES]: () => currencies,
     [BUZZ_ACCOUNT]: () => ({ yellow: 100 }),
     'nowPayments.getDepositHistory': () => [],
-  };
-  queryClient().clear();
+  });
 });
 
 afterEach(() => {
@@ -188,7 +147,7 @@ describe('useCryptoDepositSignal — page load', () => {
     mount(Registrar, BuzzBalance);
     await flush();
 
-    expect(h.calls).toEqual([]);
+    expect(h.fake.calls()).toEqual([]);
   });
 });
 
@@ -228,8 +187,8 @@ describe('useCryptoDepositSignal — on a deposit signal', () => {
     mount(Registrar);
     await flush();
     await act(async () => {
-      await queryClient().fetchQuery({
-        queryKey: [CURRENCIES, null],
+      await h.fake.client.fetchQuery({
+        queryKey: h.fake.queryKey(CURRENCIES),
         queryFn: async () => currencies,
       });
     });
@@ -242,9 +201,9 @@ describe('useCryptoDepositSignal — on a deposit signal', () => {
   });
 
   it('still shows the toast, with the raw code, when the currency lookup fails', async () => {
-    h.responses[CURRENCIES] = () => {
+    h.fake.respond(CURRENCIES, () => {
       throw new Error('currency lookup down');
-    };
+    });
     mount(Registrar);
     await flush();
 

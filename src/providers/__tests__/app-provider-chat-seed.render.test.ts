@@ -7,60 +7,31 @@
  * Requests are counted at a fake transport behind a REAL React Query client with the app's own
  * default options, so a zero means React Query chose not to fetch.
  */
-import { QueryClient, useQuery } from '@tanstack/react-query';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
+import type { QueryClientTrpcFake } from '../../../test/queryClientTrpcFake';
 
 const act = (React as unknown as { act: typeof actType }).act;
 
 const CHAT_SETTINGS = 'chat.getUserSettings';
 
-const h = vi.hoisted(() => ({
-  calls: [] as string[],
-  responses: {} as Record<string, () => unknown>,
-  client: undefined as unknown,
-}));
+const h = vi.hoisted(() => ({ fake: undefined as unknown as QueryClientTrpcFake }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
-  const client = new QueryClient({ defaultOptions: actual.queryClient.getDefaultOptions() });
-  h.client = client;
-  const key = (path: string, input: unknown) => [path, input ?? null];
-  const proc = (path: string) => ({
-    useQuery: (input: unknown, opts: Record<string, unknown> = {}) => {
-      const { trpc: _trpc, ...rest } = opts;
-      return useQuery(
-        {
-          queryKey: key(path, input),
-          queryFn: async () => {
-            h.calls.push(path);
-            return h.responses[path]?.() ?? null;
-          },
-          ...rest,
-        },
-        client
-      );
-    },
-  });
-  const routers = new Proxy(
-    {},
-    {
-      get: (_r, router) =>
-        new Proxy({}, { get: (_p, name) => proc(`${String(router)}.${String(name)}`) }),
-    }
-  );
-  return { ...actual, trpc: routers };
+  const { makeQueryClientTrpcFake } = await import('../../../test/queryClientTrpcFake');
+  h.fake = makeQueryClientTrpcFake(actual.queryClient.getDefaultOptions());
+  return { ...actual, trpc: h.fake.trpc };
 });
 
 import { AppProvider } from '~/providers/AppProvider';
 import { trpc } from '~/utils/trpc';
 
-const queryClient = () => h.client as QueryClient;
-const callsTo = (path: string) => h.calls.filter((p) => p === path).length;
+const callsTo = (path: string) => h.fake.callsTo(path);
 
 const STORED = { muteSounds: true, replaceBadWords: true, acknowledged: true };
 const FROM_SERVER = { muteSounds: false, replaceBadWords: false, acknowledged: true };
@@ -107,10 +78,8 @@ function render(props: Partial<ProviderProps>) {
 const flush = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 
 beforeEach(() => {
-  h.calls = [];
-  h.responses = { [CHAT_SETTINGS]: () => FROM_SERVER };
+  h.fake.reset({ [CHAT_SETTINGS]: () => FROM_SERVER });
   seen = undefined;
-  queryClient().clear();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -122,11 +91,12 @@ afterEach(() => {
 });
 
 describe('AppProvider — chat.getUserSettings seed', () => {
-  it('a seeded page load does not request chat settings, and the widget reads the seed', async () => {
+  it('a fully seeded page load issues no request at all, and the widget reads the seed', async () => {
     render({ chatSettings: STORED });
     await flush();
 
-    expect(callsTo(CHAT_SETTINGS)).toBe(0);
+    // Every query `AppProvider` mounts is seeded here, chat settings included.
+    expect(h.fake.calls()).toEqual([]);
     expect(seen).toEqual(STORED);
   });
 
@@ -147,7 +117,7 @@ describe('AppProvider — chat.getUserSettings seed', () => {
 
     // What `ChatSettings`' optimistic update writes.
     act(() => {
-      queryClient().setQueryData([CHAT_SETTINGS, null], { ...STORED, muteSounds: false });
+      h.fake.client.setQueryData(h.fake.queryKey(CHAT_SETTINGS), { ...STORED, muteSounds: false });
     });
     await flush();
 
