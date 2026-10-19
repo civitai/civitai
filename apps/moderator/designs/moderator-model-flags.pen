@@ -502,147 +502,6 @@
                           "fontWeight": "normal"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "FdNab",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "fHTpb",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "dzyz5",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "rAiwG",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "nlyP2",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag stays",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "vN5RY",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "tuKkw",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "wJYhf",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "J14214",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "no flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "CWtrx",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "mM32M",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "GqWHD",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "BBXFz",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
@@ -4452,147 +4311,6 @@
                           "fontWeight": "normal"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "f77ERa",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "l44pXg",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "bGdru",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "vESKa",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "nryYm",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag stays",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "rAzrg",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "HUxxx",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "o1pNII",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "O4OJu",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "no flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "XgY86",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "bXlle",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "WyK3I",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "jwtav",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
@@ -8390,147 +8108,6 @@
                           "fontWeight": "normal"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "xnmbO",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "lqyZX",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "uu4UA",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "WUqvS",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "M4OUa",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag stays",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "PfMjE",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "ZTYEn",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "YhpR8",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "eApYu",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "no flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ttHjv",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "ucUxZ",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "I6ALU",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "GoBuo",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
@@ -11294,7 +10871,7 @@
       "name": "Design notes",
       "width": 1440,
       "height": 420,
-      "content": "MODEL FLAGS: one page, three tabs. Tab = whether a flag is applied; chip = what found it.\n\nAppeals (owner is waiting): the flag is applied and the owner disputes it. 1 = reject (flag stays), 2 = approve (lift). Split rulings per label when both are flagged. A hash-sourced appeal shows the shared file side by side (this model vs the seed it matched: file name, size, short SHA, identical in both). Chip \"also in Auto-flagged\" when the review window is still open; ruling in either tab settles both with the same reason.\n\nAuto-flagged (flag applied · confirm or revert): automation applied the flag. Sources: hash auto-flag (same uploader as a minor-flagged seed) and text-scan flag. Red \"flag applied\" chip in the detail header, \"N d left\" in the 30-day review window. 1 = confirm flag(s), 2 = revert flag(s); split buttons per label when two labels are flagged. Source filter: All, Hash, Text scan.\n\nNeeds review (not applied · flag or dismiss): nothing is applied; the model stays as it is until a moderator decides. Neutral \"not applied\" chip in the detail header. Sources: text-scan detection (chip \"text scan · first detection\" or \"text scan · re-detection\" after a lift) and file match (minor only; a different uploader's byte-identical file, shown side by side). Text scan: 1 = flag as minor / real person, 2 = don't flag. File match: 1 = flag as minor, 2 = dismiss match. Source filter: All, Text scan, File match.\n\nCross-tab chips (amber) when a model sits in more than one tab: \"also in Appeals\", \"also in Auto-flagged\", \"also in Needs review\" (for example real person auto-flagged while a minor detection waits).\n\nDetail pane is one component with evidence blocks shown by source: Why it was flagged/detected (always), Scanned text with highlights (text scan), Shared file side by side (hash and file match), What the owner says (appeals), Prior rulings (always), Model and Uploader facts (always).\n\nStays separate: Reports > Models, Text scan > Model rules (config), main-app Models Needing Review (publish worthiness). Old URLs redirect: /models/flag-appeals, /models/held-detections, /models/minor-hash-matches and the main-app /moderator/minor-hash-matches."
+      "content": "MODEL FLAGS: one page, three tabs. Tab = whether a flag is applied; chip = what found it.\n\nAppeals (owner is waiting): the flag is applied and the owner disputes it. 1 = reject (flag stays), 2 = approve (lift). Split rulings per label when both are flagged. A hash-sourced appeal shows the shared file side by side (this model vs the seed it matched: file name, size, short SHA, identical in both). Chip \"also in Auto-flagged\" when the review window is still open; ruling in either tab settles both with the same reason.\n\nAuto-flagged (flag applied · confirm or revert): automation applied the flag. Sources: hash auto-flag (same uploader as a minor-flagged seed) and text-scan flag. Red \"flag applied\" chip in the detail header, \"N d left\" in the 30-day review window. 1 = confirm flag(s), 2 = revert flag(s); split buttons per label when two labels are flagged. Source filter: All, Hash, Text scan.\n\nNeeds review (not applied · flag or dismiss): nothing is applied; the model stays as it is until a moderator decides. Neutral \"not applied\" chip in the detail header. Sources: text-scan detection (chip \"text scan · first detection\" or \"text scan · re-detection\" after a lift) and hash match (minor only; a different uploader's byte-identical file, shown side by side; the row carries hash and minor chips, no notice). Text scan: 1 = flag as minor / real person, 2 = don't flag. Hash: 1 = flag as minor, 2 = dismiss match. Source filter: All, Text scan, Hash.\n\nCross-tab chips (amber) when a model sits in more than one tab: \"also in Appeals\", \"also in Auto-flagged\", \"also in Needs review\" (for example real person auto-flagged while a minor detection waits).\n\nDetail pane is one component with evidence blocks shown by source: Why it was flagged/detected (always), Scanned text with highlights (text scan), Shared file side by side (hash), What the owner says (appeals), Prior rulings (always), Model and Uploader facts (always).\n\nStays separate: Reports > Models, Text scan > Model rules (config), main-app Models Needing Review (publish worthiness). Header: title on the sidebar-toggle row; search (model name, id or uploader) applies itself after typing stops; no key hints. J = up, K = down in every queue. Appeals filters: All, Minor, Real person, Hash, Text scan.\n\nOld URLs redirect: /models/flag-appeals, /models/held-detections, /models/minor-hash-matches and the main-app /moderator/minor-hash-matches."
     },
     {
       "type": "frame",
@@ -11797,147 +11374,6 @@
                           "fontWeight": "normal"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "a6Gu5",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "KzDnS",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "rYrcu",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "Q9c5b",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "d0s2Z",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "fxiRv",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "W5HYg",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "o9BAQ",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "uWoCN",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "don't flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "D0UI3",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "cuG9L",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "JvVZ7",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "E5OaQh",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
@@ -12269,7 +11705,7 @@
                             {
                               "type": "frame",
                               "id": "UrgJu",
-                              "name": "Filter File match 8",
+                              "name": "Filter Hash 8",
                               "fill": "$raised",
                               "cornerRadius": 12,
                               "padding": [
@@ -12282,7 +11718,7 @@
                                   "id": "LfXnO",
                                   "name": "t",
                                   "fill": "$white",
-                                  "content": "File match 8",
+                                  "content": "Hash 8",
                                   "fontFamily": "$font",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -12307,19 +11743,6 @@
                               "icon": "info",
                               "library": "lucide",
                               "fill": "$text-2"
-                            },
-                            {
-                              "type": "text",
-                              "id": "NeMMn",
-                              "name": "t",
-                              "fill": "$text-2",
-                              "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "Minor only. Not flagged yet: each model shares a byte-identical file with a minor-flagged model from a different uploader. Same-uploader matches are flagged automatically and sit in Auto-flagged.",
-                              "lineHeight": 1.45,
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
                             }
                           ]
                         }
@@ -12412,7 +11835,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mDUZJ",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -12429,7 +11852,34 @@
                                           "id": "gvldZ",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "X3CrB",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "rgiML",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -12540,7 +11990,7 @@
                                     {
                                       "type": "frame",
                                       "id": "AHPZ4",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -12557,7 +12007,34 @@
                                           "id": "z5hJV",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "d35Nlt",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "CUUaD",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -12668,7 +12145,7 @@
                                     {
                                       "type": "frame",
                                       "id": "Q4fc9k",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -12685,7 +12162,34 @@
                                           "id": "iWevP",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "L0bLc",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "g5t89o",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -12796,7 +12300,7 @@
                                     {
                                       "type": "frame",
                                       "id": "czyQ1",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -12813,7 +12317,34 @@
                                           "id": "s844bl",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "b8Eed",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ozJH5",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -12924,7 +12455,7 @@
                                     {
                                       "type": "frame",
                                       "id": "m6HrHD",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -12941,7 +12472,34 @@
                                           "id": "C1tPc",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "qf8ZY",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "Cwb16",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -13052,7 +12610,7 @@
                                     {
                                       "type": "frame",
                                       "id": "yHdq4",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -13069,7 +12627,34 @@
                                           "id": "etS1L",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "jviKu",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ts70Z",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -13180,7 +12765,7 @@
                                     {
                                       "type": "frame",
                                       "id": "hwipR",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -13197,7 +12782,34 @@
                                           "id": "e3QA4Q",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "g9eT9",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "Zgum1",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -13308,7 +12920,7 @@
                                     {
                                       "type": "frame",
                                       "id": "ApNml",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -13325,7 +12937,34 @@
                                           "id": "MiIgf",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ulUdz",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "gap": 4,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "SaeiZ",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -13535,7 +13174,7 @@
                                     {
                                       "type": "frame",
                                       "id": "jFDub",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -13550,7 +13189,32 @@
                                           "id": "MQlS4",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "hpfti",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "fvKZF",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -15296,147 +14960,6 @@
                           "fontWeight": "normal"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "TMbgn",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "zIOea",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "N0KLN",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "t3nd70",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "TBwaj",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "UqZwA",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "L3WDni",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "U5qdD",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "zcKJA",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "don't flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "xXF7k",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "gfO2m",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "IOrp7",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "NFfIM",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
@@ -15755,7 +15278,7 @@
                         {
                           "type": "frame",
                           "id": "Kml0V",
-                          "name": "Filter File match",
+                          "name": "Filter Hash 8",
                           "cornerRadius": 12,
                           "stroke": "$border",
                           "strokeWidth": 1,
@@ -15769,7 +15292,7 @@
                               "id": "q5hnYk",
                               "name": "t",
                               "fill": "$text-1",
-                              "content": "File match 8",
+                              "content": "Hash 8",
                               "fontFamily": "$font",
                               "fontSize": 12,
                               "fontWeight": "normal"
@@ -16026,7 +15549,7 @@
                                     {
                                       "type": "frame",
                                       "id": "caSs7",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -16041,7 +15564,32 @@
                                           "id": "fhnMC",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "uNYFQ",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "dHAmm",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -16303,7 +15851,7 @@
                                     {
                                       "type": "frame",
                                       "id": "FPpE0",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -16318,7 +15866,32 @@
                                           "id": "yZfhN",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "hYq4R",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "r2AlIR",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -16555,7 +16128,7 @@
                                     {
                                       "type": "frame",
                                       "id": "t7eEAo",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -16570,7 +16143,32 @@
                                           "id": "sRyB2",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "DB2EQ",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "llpzY",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -16807,7 +16405,7 @@
                                     {
                                       "type": "frame",
                                       "id": "EfKnu",
-                                      "name": "Chip file match",
+                                      "name": "Chip hash",
                                       "fill": "$card",
                                       "cornerRadius": 4,
                                       "stroke": "$text-1",
@@ -16822,7 +16420,32 @@
                                           "id": "KIKlT",
                                           "name": "t",
                                           "fill": "$text-1",
-                                          "content": "file match",
+                                          "content": "hash",
+                                          "fontFamily": "$font",
+                                          "fontSize": 11,
+                                          "fontWeight": "500"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "jcYFu",
+                                      "name": "Chip minor",
+                                      "fill": "$card",
+                                      "cornerRadius": 4,
+                                      "stroke": "$text-1",
+                                      "strokeWidth": 1,
+                                      "padding": [
+                                        2,
+                                        7
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "LOerv",
+                                          "name": "t",
+                                          "fill": "$text-1",
+                                          "content": "minor",
                                           "fontFamily": "$font",
                                           "fontSize": 11,
                                           "fontWeight": "500"
@@ -19072,147 +18695,6 @@
                           "fontFamily": "$font",
                           "fontSize": 13,
                           "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "BUQDz",
-                      "name": "Key hints",
-                      "gap": 6,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "jhajv",
-                          "name": "Key 1",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "mhuBE",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "EjNgu",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "1",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "R26Uz",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "flag stays",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "Qo7k7",
-                          "name": "Key 2",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "EnG8D",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "Rr65o",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "2",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "DzeMR",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "no flag",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "U61Lg",
-                          "name": "Key J/K",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "frame",
-                              "id": "hDvFB",
-                              "name": "Kbd",
-                              "fill": "$card",
-                              "cornerRadius": 4,
-                              "stroke": "$border",
-                              "strokeWidth": 1,
-                              "padding": [
-                                1,
-                                5
-                              ],
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "MwP2j",
-                                  "name": "k",
-                                  "fill": "$text-0",
-                                  "content": "J/K",
-                                  "fontFamily": "$font",
-                                  "fontSize": 11,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "MdoYH",
-                              "name": "l",
-                              "fill": "$text-2",
-                              "content": "move",
-                              "fontFamily": "$font",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
                         }
                       ]
                     }
