@@ -32,6 +32,15 @@ describe('hasTipEligibleSelection', () => {
     expect(hasTipEligibleSelection({ model: { id: 1 } }, [exempt(1), eligible(2)])).toBe(false);
   });
 
+  it("is false when the only eligible resource is the user's own LoRA", () => {
+    expect(
+      hasTipEligibleSelection({ model: { id: 1 }, resources: [{ id: 2 }] }, [
+        exempt(1),
+        { id: 2, tipsEnabled: true, isOwnedByUser: true },
+      ])
+    ).toBe(false);
+  });
+
   it('treats a selected resource whose data has not loaded as eligible', () => {
     expect(hasTipEligibleSelection({ model: { id: 1 } }, [])).toBe(true);
   });
