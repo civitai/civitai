@@ -80,7 +80,8 @@ export function OnsiteApproveRatingWarning({
   if (isError)
     return (
       <Text size="xs" c="dimmed" data-testid="apps-onsite-rating-unchecked">
-        Could not load the listing’s image ratings — check them before approving.
+        Could not load the listing’s image ratings, so approve is unavailable. Close and reopen this
+        request to retry.
       </Text>
     );
   if (!data)

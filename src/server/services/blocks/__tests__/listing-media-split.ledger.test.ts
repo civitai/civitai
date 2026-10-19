@@ -47,16 +47,37 @@ describe('app_listing_red_media — the one module that names it', () => {
     ).toEqual([SERVICE]);
   });
 
-  it('every statement in it names the table only after the probe, in the same function', () => {
+  it('the chunker cuts at every top-level declaration shape', () => {
+    const shapes = [
+      'export async function a() {}',
+      'function b() {}',
+      'export function* c() {}',
+      'const d = async () => {};',
+      'const e: Fn = async () => {};',
+      'export const f =\n  async () => {};',
+      'let g = 1;',
+      'var h = 1;',
+      'class I {}',
+      'export default function j() {}',
+    ];
+    expect(topLevelChunks(shapes.join('\n')).map(chunkName)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+      'h',
+      'I',
+      'j',
+    ]);
+  });
+
+  it('every statement in it names the table only after the probe, in the same declaration', () => {
     const code = PRODUCTION.find((f) => f.rel === SERVICE)!.code;
-    // Every top-level declaration, exported or not, so a helper cannot hide inside its neighbour.
-    const functions = code
-      .split(/\n(?=(?:export )?(?:async )?function |(?:export )?(?:const|let|class) )/)
-      .map((chunk) =>
-        chunk.replace(/^(?:export )?(?:async )?(?:function |const |let |class )/, '')
-      );
-    const touching = functions.filter((fn) => /\bapp_listing_red_media\b(?!')/.test(fn));
-    expect(touching.map((fn) => fn.slice(0, fn.indexOf('('))).sort()).toEqual([
+    const touching = topLevelChunks(code).filter((fn) => /\bapp_listing_red_media\b(?!')/.test(fn));
+    expect(touching.map(chunkName).sort()).toEqual([
       'applyListingMediaSplitDecision',
       'readListingMediaSplit',
     ]);
@@ -72,3 +93,15 @@ describe('app_listing_red_media — the one module that names it', () => {
     expect(code).not.toMatch(/content_rating|contentRating|app_listings|appListing\./);
   });
 });
+
+/** Prettier-formatted source starts every top-level statement at column 0; cut before each one. */
+function topLevelChunks(code: string): string[] {
+  return code.split(/\n(?=[A-Za-z])/);
+}
+
+function chunkName(chunk: string): string {
+  const m = chunk.match(
+    /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|type)\s+(\w+)/
+  );
+  return m ? m[1] : chunk.slice(0, 20);
+}

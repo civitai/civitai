@@ -109,8 +109,8 @@ export async function readListingMediaSplitForGoLive(
  * the moderator who kept it.
  *
  * `face` is the icon and cover going live — for a revision, the shadow's, while `appListingId`
- * is the live listing. A split is refused while either is rated above SFW, since civitai.com
- * would then show a placeholder in its place.
+ * is the live listing. A split is refused while civitai.com could not show either (no SFW level),
+ * since it would then show a placeholder in its place.
  */
 export async function applyListingMediaSplitDecision(
   db: RawClient,

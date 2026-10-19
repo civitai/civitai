@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => ({
   rejectMutate: vi.fn(),
   // Mutable so a test can inject a blocked / pending scan state (Item 1).
   assetsData: { current: null as unknown },
+  assetsError: { current: false },
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -113,6 +114,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             // per test via mocks.assetsData.current.
             data: mocks.assetsData.current,
             isLoading: false,
+            isError: mocks.assetsError.current,
             error: null,
           }),
         },
@@ -147,6 +149,7 @@ beforeEach(() => {
   mocks.approveMutate.mockClear();
   mocks.rejectMutate.mockClear();
   mocks.assetsData.current = { ...DEFAULT_ASSETS };
+  mocks.assetsError.current = false;
 });
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
@@ -652,6 +655,31 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     await page.getByTestId('apps-offsite-approve-open').click();
     await expect.element(page.getByTestId('apps-media-split-unknown')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+  });
+
+  test('a failed read says so, and approve stays unavailable', async () => {
+    mocks.assetsData.current = undefined;
+    mocks.assetsError.current = true;
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect
+      .element(page.getByTestId('apps-media-split-unknown'))
+      .toHaveTextContent('Could not load the listing’s media');
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+  });
+
+  test('🔴 a request with no listing to read is never blocked on it', async () => {
+    mocks.assetsData.current = undefined;
+    renderWithProviders(
+      <OffsiteReviewModal
+        request={{ ...OFFSITE_ROW, appListingId: null } as never}
+        onClose={() => undefined}
+      />
+    );
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeEnabled();
+    expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
   });
 
   test('a cover above SFW makes the split unavailable', async () => {

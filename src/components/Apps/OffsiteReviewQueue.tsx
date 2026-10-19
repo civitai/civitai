@@ -497,7 +497,8 @@ export function OffsiteReviewModalBody({
   const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
   // Until the listing's media and split state have loaded, an approve would send a decision
   // nobody has seen — and for a split listing, end its split.
-  const splitStateUnknown = request.appListingId != null && !assetsQuery.data;
+  // Same condition the asset query is enabled on, so a request it never reads is never blocked.
+  const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
   const mediaSplit = resolveListingMediaSplitDecision({
     assets: ratingAssets,
     currentlySplit: assetsQuery.data?.mediaSplitApproved ?? false,
@@ -945,7 +946,9 @@ export function OffsiteReviewModalBody({
             />
             {splitStateUnknown && (
               <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
-                Approve is available once the listing’s media has loaded.
+                {assetsQuery.isError
+                  ? 'Could not load the listing’s media, so approve is unavailable. Close and reopen this request to retry.'
+                  : 'Approve is available once the listing’s media has loaded.'}
               </Text>
             )}
             <Group justify="flex-end" gap="xs">

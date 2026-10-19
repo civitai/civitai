@@ -374,6 +374,7 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     mocks.assets.data = assetsWithShot2At(4);
     bar(reRated({ approveRating: null }));
     await approveVisibleWithoutAlert();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
     expect(mocks.assetsQuery).not.toHaveBeenCalled();
   });
 
