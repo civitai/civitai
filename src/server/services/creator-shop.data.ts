@@ -3,7 +3,7 @@ import type {
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
-import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import {
   CREATOR_GRANT_USES_MULTIPLIER,
@@ -113,6 +113,40 @@ export const lastReviewIndex = (history?: CosmeticShopItemHistoryEntry[]) => {
 export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]) => {
   const index = lastReviewIndex(history);
   return index >= 0 && history![index].action === 'reject';
+};
+
+// The edits that change what a holder shows; price, quantity and sticker economics don't.
+const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+
+/**
+ * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
+ * and nothing anyone sees has changed since. Not status alone: relisting, restoring and a large
+ * price edit send an approved, unchanged item back to review.
+ */
+export const isListingDisplayable = ({
+  status,
+  meta,
+  rejectionReason,
+}: {
+  status: CosmeticShopItemStatus;
+  meta: CosmeticShopItemMeta | null;
+  rejectionReason: string | null;
+}) => {
+  if (status === CosmeticShopItemStatus.Published) return true;
+  if (meta?.takedown) return false;
+  const history = meta?.history ?? [];
+  const index = lastReviewIndex(history);
+  const approved =
+    index >= 0
+      ? history[index].action === 'approve'
+      : // Verdicts older than the history left only these: approval a price, the others a reason.
+        meta?.lastApprovedAmount != null && !rejectionReason;
+  return (
+    approved &&
+    !history
+      .slice(index + 1)
+      .some((entry) => entry.changes?.some((change) => DISPLAYED_FIELDS.has(change.field)))
+  );
 };
 
 /**

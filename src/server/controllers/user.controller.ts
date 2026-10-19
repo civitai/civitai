@@ -126,6 +126,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
@@ -1320,6 +1321,7 @@ export const getUserCosmeticsHandler = async ({
       entities: inUseCosmeticEntities,
       viewer: ctx.user,
     });
+    const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
     const cosmetics = user.cosmetics.reduce(
       (
@@ -1345,6 +1347,7 @@ export const getUserCosmeticsHandler = async ({
           inUse: !!equippedToId,
           // Also set while a content decoration is placed (that is `inUse`).
           equipped: !!equippedAt,
+          withheld: withheld.has(rest.id),
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(

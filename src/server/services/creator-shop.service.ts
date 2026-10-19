@@ -8,6 +8,7 @@ import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
+  unequipWithheldCosmetic,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
@@ -971,7 +972,7 @@ export const updateCreatorShopItem = async ({
       })
     : updatedMeta;
 
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       ...(name !== undefined ? { title: name } : {}),
@@ -985,6 +986,8 @@ export const updateCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+  await unequipWithheldCosmetic(existing.cosmeticId);
+  return updated;
 };
 
 /**
@@ -2139,6 +2142,7 @@ export const reviewCreatorShopItem = async ({
   // D14: an item leaving Published is no longer bundlable, so packs holding it
   // have to come off sale too.
   if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+  if (action !== 'approve') await unequipWithheldCosmetic(item.cosmeticId);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {

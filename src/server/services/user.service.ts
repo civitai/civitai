@@ -72,6 +72,10 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import {
+  WITHHELD_COSMETIC_ERROR,
+  getWithheldCosmeticIds,
+} from '~/server/services/creator-shop-withheld';
 import { bustModelSaleCacheForModels } from '~/server/services/paid-access.service';
 import {
   countPendingAccountDeletionImageRestores,
@@ -2971,6 +2975,8 @@ export async function equipCosmetic({
   // picker, so equipping has nothing to mean. Guarded here and not only in the
   // UI so an equipped sticker can't exist for the buckets to have to explain.
   if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
+  if ((await getWithheldCosmeticIds(cosmeticId, dbWrite)).size)
+    throw new Error(WITHHELD_COSMETIC_ERROR);
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({

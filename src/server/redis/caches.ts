@@ -45,6 +45,7 @@ import {
   modelTagCompositeSelect,
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
@@ -150,7 +151,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
-    const userCosmeticsRaw = await db.userCosmetic.findMany({
+    const equipped = await db.userCosmetic.findMany({
       where: { userId: { in: goodIds }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
@@ -158,6 +159,12 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
         data: true,
       },
     });
+    // Withholding unequips, but rows worn before that existed are still equipped.
+    const withheld = await getWithheldCosmeticIds(
+      equipped.map((x) => x.cosmeticId),
+      db
+    );
+    const userCosmeticsRaw = equipped.filter((x) => !withheld.has(x.cosmeticId));
     const results = userCosmeticsRaw.reduce((acc, { userId, cosmeticId, data }) => {
       acc[userId] ??= { userId, cosmetics: [] };
       acc[userId].cosmetics.push({ cosmeticId, data });

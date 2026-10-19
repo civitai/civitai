@@ -31,6 +31,11 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import {
+  WITHHELD_COSMETIC_ERROR,
+  getWithheldCosmeticIds,
+} from '~/server/services/creator-shop-withheld';
+import { bustUserCreatorCache } from '~/server/services/user-creator.service';
 import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
@@ -248,6 +253,8 @@ export async function equipCosmeticToEntity({
   // shape with no cssFrame or offset, on an entity nobody chose it for.
   if (userCosmetic.cosmetic.type === CosmeticType.Sticker)
     throw new Error('Stickers cannot be equipped');
+  if ((await getWithheldCosmeticIds([cosmeticId], dbWrite)).size)
+    throw new Error(WITHHELD_COSMETIC_ERROR);
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
@@ -713,6 +720,38 @@ export async function revokeCosmeticsFromUsers({
   await afterHoldingsRemoved(uniqueUserIds, equipped);
 
   return { revoked: count };
+}
+
+/**
+ * Takes a creator-shop cosmetic off everyone wearing or displaying it once its listing is withheld.
+ * A no-op while the listing is displayable, so callers run it after any review or edit.
+ */
+export async function unequipWithheldCosmetic(cosmeticId: number | null | undefined) {
+  if (cosmeticId == null) return;
+  if (!(await getWithheldCosmeticIds([cosmeticId], dbWrite)).has(cosmeticId)) return;
+
+  const wornWhere = {
+    cosmeticId,
+    OR: [{ equippedAt: { not: null } }, { equippedToId: { not: null } }],
+  } satisfies Prisma.UserCosmeticWhereInput;
+  const worn = await dbWrite.userCosmetic.findMany({
+    where: wornWhere,
+    select: {
+      userId: true,
+      equippedToId: true,
+      equippedToType: true,
+      cosmetic: { select: { data: true } },
+    },
+  });
+  if (!worn.length) return;
+
+  await dbWrite.userCosmetic.updateMany({
+    where: wornWhere,
+    data: { equippedAt: null, equippedToId: null, equippedToType: null },
+  });
+  const userIds = [...new Set(worn.map((row) => row.userId))];
+  await afterHoldingsRemoved(userIds, worn);
+  await bustUserCreatorCache(userIds);
 }
 
 type RemovedEquippedHolding = {
