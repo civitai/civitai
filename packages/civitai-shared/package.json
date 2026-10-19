@@ -25,6 +25,7 @@
     "./crucible": "./src/crucible.ts",
     "./box-odds": "./src/box-odds.ts",
     "./box-odds-snapshot": "./src/box-odds-snapshot.ts",
+    "./creator-box-rules": "./src/creator-box-rules.ts",
     "./item-holder-lock": "./src/item-holder-lock.ts",
     "./mystery-box": "./src/mystery-box.ts",
     "./json-ld": "./src/json-ld.ts",
