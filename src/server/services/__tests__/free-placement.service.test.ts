@@ -461,10 +461,13 @@ describe('the advisory locks have exactly one call site', () => {
   // item-holder-lock takes one per user (0x49480001) in the shop and pack grant transactions, after
   // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
   // never nested inside another advisory lock.
+  // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
+  // writes in submit, revise and withdraw; the only lock in its transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
+    'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
