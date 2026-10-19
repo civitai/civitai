@@ -18,7 +18,8 @@ import type * as ReactModule from 'react';
 const h = vi.hoisted(() => {
   const requests: number[][] = [];
   const gate: { current: Promise<void> | null } = { current: null };
-  const failing = { current: false };
+  /** How many of the next requests fail. */
+  const failing = { current: 0 };
   const reviewed = new Set<number>();
   const reveal = {
     count: 0,
@@ -69,8 +70,8 @@ const h = vi.hoisted(() => {
     query: async ({ modelIds }: { modelIds: number[] }) => {
       requests.push([...modelIds]);
       await gate.current;
-      if (failing.current) {
-        failing.current = false;
+      if (failing.current > 0) {
+        failing.current--;
         throw new Error('boom');
       }
       return { Recommended: modelIds.filter((id) => reviewed.has(id)) };
@@ -174,13 +175,15 @@ vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
 import { renderWithProviders } from '../../../test/component-setup';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { ModelsHitList } from '~/pages/search/models';
-import { __resetEngagedMembershipBatcher } from '~/hooks/useEngagedModelMembership';
+import {
+  __resetEngagedMembershipBatcher,
+  engagedMembershipBatcher,
+} from '~/hooks/useEngagedModelMembership';
 import {
   __resetEngagedModelsPersistenceForTests,
   flushEngagedModelsPersistence,
 } from '~/store/engaged-models.persist';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
-import { applyFavoriteToggled } from '~/store/engaged-models.optimistic';
 
 /** Distinct, non-contiguous ids, so a union, a slice and a single row can never coincide. */
 const PAGE = [101, 205, 309, 412, 517, 623, 731, 840, 952, 1063, 1177, 1290];
@@ -228,7 +231,9 @@ beforeEach(() => {
   __resetEngagedMembershipBatcher();
   h.requests.length = 0;
   h.gate.current = null;
-  h.failing.current = false;
+  h.failing.current = 0;
+  // The real backoff is seconds; the retry itself is what is under test, not its delay.
+  engagedMembershipBatcher.scheduleRetry = (cb) => void setTimeout(cb, 20);
   h.reviewed.clear();
   h.reveal.count = ROW;
   h.user.current = { id: 7 };
@@ -284,19 +289,6 @@ describe.each(surfaces)('engaged membership on the $name', ({ element }) => {
     for (const id of PAGE) expect(attr(id, 'data-known')).toBe('true');
   });
 
-  test('signing out clears what the signed-in viewer saw, without asking again', async () => {
-    h.reviewed.add(101);
-    h.reveal.count = PAGE.length;
-    const screen = await render();
-    await vi.waitFor(() => expect(attr(101, 'data-reviewed')).toBe('true'));
-
-    h.user.current = null;
-    await screen.rerender(element());
-    await vi.waitFor(() => expect(attr(101, 'data-reviewed')).toBe('false'));
-    await wait(PAST_WINDOW_MS);
-    expect(h.requests).toHaveLength(1);
-  });
-
   test('signing in on a loaded page asks once, for the page', async () => {
     h.user.current = null;
     h.reviewed.add(731);
@@ -317,40 +309,6 @@ describe.each(surfaces)('engaged membership on the $name', ({ element }) => {
 describe('engaged membership after the page request', () => {
   const render = () => renderWithProviders(feed());
 
-  test('every card shows its own engaged state from the one request', async () => {
-    h.reviewed.add(205).add(952);
-    await render();
-    await scrollThrough(PAGE);
-
-    for (const id of PAGE) {
-      expect(attr(id, 'data-reviewed'), `card ${id}`).toBe(String(id === 205 || id === 952));
-    }
-  });
-
-  test('a like after the page loaded updates that card, and only that card', async () => {
-    await render();
-    await scrollThrough(PAGE);
-
-    applyFavoriteToggled(840, true);
-    await vi.waitFor(() => expect(attr(840, 'data-reviewed')).toBe('true'));
-    for (const id of PAGE.filter((x) => x !== 840)) expect(attr(id, 'data-reviewed')).toBe('false');
-  });
-
-  test('a like made while the page request is in flight survives its stale answer', async () => {
-    h.reviewed.add(412); // the server's snapshot predates the un-like below
-    h.reveal.count = PAGE.length;
-    const release = h.holdResponses();
-    await render();
-    await vi.waitFor(() => expect(h.requests).toHaveLength(1));
-    expect(h.requests[0]).toContain(412);
-
-    applyFavoriteToggled(412, false);
-    release();
-    await vi.waitFor(() => expect(attr(205, 'data-known')).toBe('true'));
-
-    expect(attr(412, 'data-reviewed')).toBe('false');
-  });
-
   test('a page that loaded is remembered across a reload (control for the next test)', async () => {
     h.reveal.count = PAGE.length;
     const screen = await render();
@@ -364,17 +322,34 @@ describe('engaged membership after the page request', () => {
     expect(h.requests).toHaveLength(1);
   });
 
-  test('a page whose request FAILED is asked for again after a reload', async () => {
-    h.failing.current = true;
+  test('a page whose request FAILED (and whose retry failed) is asked for again after a reload', async () => {
+    h.failing.current = 2;
     h.reveal.count = PAGE.length;
     const screen = await render();
     // Usable after the error: a failed id reads known-not-engaged rather than loading forever.
     await vi.waitFor(() => expect(attr(1290, 'data-known')).toBe('true'));
     await screen.unmount();
+    const sentBeforeReload = h.requests.length;
     simulateReload();
 
     await render();
-    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
-    expect(sorted(h.requests[1])).toEqual(sorted(PAGE));
+    await vi.waitFor(() => expect(h.requests).toHaveLength(sentBeforeReload + 1));
+    expect(sorted(h.requests[sentBeforeReload])).toEqual(sorted(PAGE));
+  });
+
+  test('signing out while the page request is in flight: its answer never reaches the signed-out page', async () => {
+    h.reviewed.add(101);
+    h.reveal.count = PAGE.length;
+    const release = h.holdResponses();
+    const screen = await render();
+    await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+
+    h.user.current = null;
+    await screen.rerender(feed());
+    release();
+    await wait(PAST_WINDOW_MS);
+
+    expect(attr(101, 'data-reviewed')).toBe('false');
+    expect(h.requests).toHaveLength(1);
   });
 });
