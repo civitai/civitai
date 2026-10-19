@@ -155,12 +155,8 @@ export interface EngagedMembershipResult {
   isKnown: (modelId: number) => boolean;
 }
 
-/**
- * Register `modelIds` (only those the caller currently has on screen) and read
- * their membership reactively from the store. Unauthenticated users issue no
- * query and see empty membership (the endpoint is protected).
- */
-export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershipResult {
+/** Shared by the per-card read and the surface-wide prefetch, so both gate and rehydrate alike. */
+function useRegisterEngagedMembership(modelIds: number[]) {
   const currentUser = useCurrentUser();
   const validIds = modelIds.filter((id) => id > 0);
   const enabled = !!currentUser && validIds.length > 0;
@@ -185,9 +181,28 @@ export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
 
-  const sets = useEngagedModelsStore(
-    useShallow((s) => modelIds.map((id) => s.membership[id]))
-  );
+  return { currentUser, validIds, enabled };
+}
+
+/**
+ * Register a whole surface's ids from the container that holds them (a feed page, a page
+ * of search hits). A card renders its body only near the viewport, so cards alone register
+ * a row at a time while the user scrolls and each row lands in its own batch window — one
+ * request per row instead of one per page. Reads nothing; the cards still read their own.
+ */
+export function useEngagedModelsPrefetch(modelIds: number[]): void {
+  useRegisterEngagedMembership(modelIds);
+}
+
+/**
+ * Register `modelIds` (only those the caller currently has on screen) and read
+ * their membership reactively from the store. Unauthenticated users issue no
+ * query and see empty membership (the endpoint is protected).
+ */
+export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershipResult {
+  const { currentUser, validIds, enabled } = useRegisterEngagedMembership(modelIds);
+
+  const sets = useEngagedModelsStore(useShallow((s) => modelIds.map((id) => s.membership[id])));
   const knownFlags = useEngagedModelsStore(
     useShallow((s) => validIds.map((id) => s.queried.has(id)))
   );
