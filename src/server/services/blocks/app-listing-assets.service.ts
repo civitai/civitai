@@ -1751,8 +1751,9 @@ export async function getListingAssets(
     // Read through the WRITE client, the one every approve records or clears the split with, so
     // the review shows what that approve will act on, whatever the read client's role may do.
     // `null` when the write role cannot read it: rather than show a split listing as unsplit, the
-    // review then offers no split choice and approves with no decision, which leaves any split as
-    // it is. A failed statement still throws.
+    // review then offers no split choice and approves with no decision: the listing reads as
+    // unsplit (its rating covers all of its media), and a split stamped earlier stays in the table
+    // but is not applied. A failed statement still throws.
     mediaSplitApproved: await readListingMediaSplitState(
       dbWrite,
       listing.revisionOfId ?? listing.id

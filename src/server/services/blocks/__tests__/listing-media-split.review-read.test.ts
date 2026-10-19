@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
 /**
@@ -11,20 +12,9 @@ import { createSplitDb, type SplitDb } from './listing-media-split.harness';
  * with its own grant on the split table (`clientAs`), so a test can give them different grants.
  */
 
-const { clients } = vi.hoisted(() => {
-  const model = () => ({
-    appListing: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appListingScreenshot: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-    image: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
-    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
-  });
-  return { clients: { dbRead: model(), dbWrite: model() } };
-});
-vi.mock('~/server/db/client', () => clients);
+// The canonical `~/server/db/client` mock (`src/__tests__/setup.ts`); dbRead and dbWrite are
+// distinct objects there, which is what lets each client hold its own grant below.
+const clients = { dbRead: dbMock.dbRead, dbWrite: dbMock.dbWrite };
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
