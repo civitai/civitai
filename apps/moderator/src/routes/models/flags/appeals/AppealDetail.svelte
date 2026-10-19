@@ -57,6 +57,8 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
+  import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
+  import { effectiveSource } from '$lib/minor-flags/appeal-filters';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import { modelUrl, waiting } from '$lib/minor-flags/appeal-row';
   import { fetchModelFlagDetail, flagPromptId } from '$lib/minor-flags/model-detail';
@@ -95,6 +97,8 @@
   } = $props();
 
   const modelHref = $derived(modelUrl(civitaiUrl, row.modelId));
+  // A moderator confirming a hash flag keeps `confirmedFrom`, so those appeals show the match too.
+  const matchedByHash = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash');
 
   // Derived, never an effect: the shell keys the detail per row, so a late response cannot land on
   // another one. Primitives first, so a reload that hands back an equal row keeps the request.
@@ -261,6 +265,10 @@
       />
       <WhyFlaggedCard {row} {canUphold} {detail} />
     </div>
+
+    {#if matchedByHash}
+      <SharedFileCard {row} {civitaiUrl} status={{ label: 'under appeal', tone: 'blue' }} />
+    {/if}
 
     <PriorRulingsCard
       title="Prior rulings"

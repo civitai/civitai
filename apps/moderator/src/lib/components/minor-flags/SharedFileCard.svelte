@@ -135,9 +135,9 @@
               <p
                 class="m-0 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200"
               >
-                Nothing a moderator flagged minor still shares a file with this model: the match is
-                resolved live, so that model was unflagged or its hashes were deleted. Check before
-                you keep the flag.
+                <span class="font-semibold">Matched model no longer available.</span> No flagged model
+                shares a file with this one any more: the match is resolved live, so that model was
+                unflagged or its hashes were deleted. Check before you keep the flag.
               </p>
             {/if}
           </div>

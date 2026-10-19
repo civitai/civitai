@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
@@ -7,7 +6,6 @@
   import { dateTime } from '$lib/format';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import { ago } from '$lib/minor-flags/appeal-row';
-  import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
   import {
     HASH_FLAG_REASON,
     flagPromptId,
@@ -43,12 +41,6 @@
     })
   );
   const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
-
-  // Primitives first, so a reload that hands back an equal row doesn't rebuild the promise.
-  const modelId = $derived(row.modelId);
-  const isHash = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash');
-  // Derived, not an effect: the parent keys the detail per appeal, so a late response can't land on another one.
-  const hashDetail = $derived(browser && isHash ? fetchHashDetail(modelId) : null);
 
   // A minor flag no text-scan verdict explains (hash, a moderator, or no record) gets its own block, so
   // every label in force reads the same way: label, Flagged chip, reason, where it came from.
@@ -126,24 +118,6 @@
           <p class="m-0 text-sm text-dark-2">No text scan on record.</p>
         {/each}
       </div>
-    {/if}
-
-    <!-- The matched model is not shown here (the design has no shared-file box on an appeal); only a
-         match that no longer resolves is called out, since it changes whether to keep the flag. -->
-    {#if hashDetail}
-      {#await hashDetail then payload}
-        {#if !payload.match}
-          <p
-            class="m-0 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"
-          >
-            No flagged model shares a file with this one any more. The match is resolved live, so
-            the model it matched was unflagged or its hashes were deleted. Check before you keep
-            the flag.
-          </p>
-        {/if}
-      {:catch}
-        <p class="m-0 text-xs text-red-300">Could not check the matched model.</p>
-      {/await}
     {/if}
 
     {#if !canUphold}
