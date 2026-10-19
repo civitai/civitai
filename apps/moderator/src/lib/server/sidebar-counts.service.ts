@@ -15,11 +15,9 @@ import { countRemovedAppeals } from './removed-appeals.service';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
-  getAutoFlaggedCount,
-  getTextScanFlaggedCount,
+  getFlaggedCount,
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
-  getRedetectedCount,
 } from './minor-hash.service';
 
 export type SidebarCounts = Record<string, number>;
@@ -47,9 +45,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reRemovals,
     minorQueue,
     modelFlagAppealGroups,
-    heldDetections,
-    autoFlagged,
-    textScanFlagged,
+    flaggedModels,
     strikeReview,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -90,12 +86,9 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getMinorQueueCounts, 1_000),
     // The page's own facet query, so the badge always equals the queue's "All" total.
     getMinorFlagAppealGroups({}),
-    // Index-served (see `redetectedIndexPredicate`), but a failure must not blank the other badges.
-    bounded(getRedetectedCount),
-    // Its own cheap count, not the ~10s Pending one, so it survives that count dropping at the bound above.
-    bounded(getAutoFlaggedCount),
-    // No index serves the text-scan predicate yet, so it scans "Model"; bounded for that reason.
-    bounded(getTextScanFlaggedCount),
+    // The list's own total, in models: the badge equals the queue's "of N". The hash branch scans
+    // "Model" (no index serves its predicate), so it is bounded; a failure drops only this badge.
+    bounded(() => getFlaggedCount()),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
   ]);
@@ -112,10 +105,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    // All sources or none: one source alone would label the tab with a number that reads as "all clear".
-    ...(heldDetections != null && autoFlagged != null && textScanFlagged != null
-      ? { modelFlagsReview: heldDetections + autoFlagged + textScanFlagged }
-      : {}),
+    ...(flaggedModels != null ? { modelFlagsReview: flaggedModels } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),

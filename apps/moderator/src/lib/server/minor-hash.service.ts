@@ -25,6 +25,7 @@ import type {
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
 import type { ModelFlagDetail, ScanRows } from '$lib/minor-flags/model-detail';
+import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -581,11 +582,32 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
   return rows.rows;
 }
 
-export type FlaggedSource = 'hash' | 'redetected' | 'text-scan';
+export type { FlaggedSource };
 
-/** One waiting item of the Flagged tab, whatever raised it. A model can appear once per label and
- *  source, so the key is the triple. Text-scan auto-flags with no ruling join as a third `source`. */
+/** One waiting flag on a Flagged row: a label and what raised it. A model carries at most one per
+ *  label and source; text-scan auto-flags with no ruling join as a third `source`. */
+export type FlaggedFlagItem = {
+  label: FlagLabel;
+  source: FlaggedSource;
+  /** The detected text a ruling is bound to; null for hash flags. */
+  textHash: string | null;
+  /** ISO timestamp (from jsonb), or null when the entry carries none. */
+  flaggedAt: string | null;
+  /** Hash flags only: days until the review window closes and the flag is presumed correct. */
+  daysLeft: number | null;
+  redetected: RedetectionView | null;
+  /** Text-scan flags only: the flag entry as the scan wrote it (reason, names, hash). */
+  scanEntry: TextScanFlagView | null;
+  granted: PriorClearView | null;
+  grantedByUsername: string | null;
+  rulings: FlagRulingView[] | null;
+  prevNsfw: boolean | null;
+  prevGalleryLevel: number | null;
+};
+
+/** One model waiting in the Flagged tab, with every flag on it that is waiting (minor first). */
 export type FlaggedRow = {
+  /** The model id: one row per model. */
   key: string;
   modelId: number;
   modelName: string;
@@ -594,25 +616,14 @@ export type FlaggedRow = {
   status: string;
   minor: boolean;
   poi: boolean;
-  label: FlagLabel;
-  source: FlaggedSource;
-  /** The detected text a ruling is bound to; null for hash flags. */
-  textHash: string | null;
+  flags: FlaggedFlagItem[];
+  /** The sort key: the oldest flag's time (newest flag's under newest-first). */
   flaggedAt: Date | null;
-  /** Hash flags only: days until the review window closes and the flag is presumed correct. */
-  daysLeft: number | null;
-  redetected: RedetectionView | null;
-  /** Text-scan flags only: the flag entry as the scan wrote it (reason, names, hash). */
-  scanEntry: TextScanFlagView | null;
-  /** Text-scan flags only: what the latest scan rows say now. */
+  /** Rows with a text-scan flag only: what the latest scan rows say now. */
   latestScan: LatestScan | null;
-  /** Text-scan and re-detected rows: both scan rows, for provenance and "unchanged since flag". */
+  /** Rows with a text-scan or re-detected flag: both scan rows, for provenance and "unchanged since
+   *  flag". */
   scanRows: ScanRows;
-  granted: PriorClearView | null;
-  grantedByUsername: string | null;
-  rulings: FlagRulingView[] | null;
-  prevNsfw: boolean | null;
-  prevGalleryLevel: number | null;
   hasPendingAppeal: boolean;
   modelType: string;
   modelCreatedAt: Date;
@@ -758,9 +769,24 @@ export const reviewDaysLeft = (flaggedAt: Date | string, now = Date.now()) =>
     Math.ceil(AUTO_FLAG_REVIEW_WINDOW_DAYS - (now - new Date(flaggedAt).getTime()) / msPerDay)
   );
 
-/** Hash auto-flags in their review window and held re-detections, merged in SQL so one query pages,
- *  sorts and counts across both. Oldest flag first by default so nothing starves; an item with no
- *  timestamp sorts last either way.
+const flaggedBranchList = (search: MinorSearch | undefined, filters: FlaggedFilters) => {
+  const use = flaggedBranches(filters);
+  return [
+    ...(use.hash ? [hashBranch(search)] : []),
+    ...(use.redetected ? [redetectedBranch(search, filters.flag)] : []),
+    ...(use.textScan ? [textScanBranch(search, filters.flag)] : []),
+  ];
+};
+
+type FlaggedSqlRow = Omit<FlaggedRow, 'key' | 'flags'> & {
+  flags: Omit<FlaggedFlagItem, 'daysLeft'>[];
+};
+
+/** Hash auto-flags in their review window, text-scan auto-flags and held re-detections, merged in
+ *  SQL and grouped per model, so one query pages, sorts and counts models: a model flagged minor and
+ *  real person is one row carrying both flags. Oldest flag first by default so nothing starves (newest
+ *  first sorts on the newest flag); a model with no timestamp sorts last either way. A filter narrows
+ *  the flags a row carries, not just which rows show.
  *
  *  The page is cut first (CTE) so the per-model LATERALs are bounded by limit. */
 export async function getFlaggedModels({
@@ -769,32 +795,42 @@ export async function getFlaggedModels({
   search,
   filters = DEFAULT_FLAGGED_FILTERS,
 }: FlaggedQuery) {
-  const use = flaggedBranches(filters);
-  const branches = [
-    ...(use.hash ? [hashBranch(search)] : []),
-    ...(use.redetected ? [redetectedBranch(search, filters.flag)] : []),
-    ...(use.textScan ? [textScanBranch(search, filters.flag)] : []),
-  ];
+  const branches = flaggedBranchList(search, filters);
   if (!branches.length) return { items: [] as FlaggedRow[], hasMore: false };
 
-  const [inner, outer] =
-    filters.sort === 'newest'
-      ? [
-          sql`"flaggedAt" DESC NULLS LAST, "modelId" DESC, label, source`,
-          sql`pg."flaggedAt" DESC NULLS LAST, pg."modelId" DESC, pg.label, pg.source`,
-        ]
-      : [
-          sql`"flaggedAt" NULLS LAST, "modelId", label, source`,
-          sql`pg."flaggedAt" NULLS LAST, pg."modelId", pg.label, pg.source`,
-        ];
+  const newest = filters.sort === 'newest';
+  const [sortAt, inner, outer] = newest
+    ? [
+        sql`max("flaggedAt")`,
+        sql`"flaggedAt" DESC NULLS LAST, "modelId" DESC`,
+        sql`pg."flaggedAt" DESC NULLS LAST, pg."modelId" DESC`,
+      ]
+    : [
+        sql`min("flaggedAt")`,
+        sql`"flaggedAt" NULLS LAST, "modelId"`,
+        sql`pg."flaggedAt" NULLS LAST, pg."modelId"`,
+      ];
 
-  const rows = await sql<Omit<FlaggedRow, 'key' | 'daysLeft'>>`
+  const rows = await sql<FlaggedSqlRow>`
     WITH pg AS (
-      SELECT * FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+      SELECT "modelId", "modelName", "userId", username, status, minor, poi, "modelType",
+             "modelCreatedAt", ${sortAt} AS "flaggedAt",
+             jsonb_agg(jsonb_build_object(
+               'label', label, 'source', source, 'textHash', "textHash", 'flaggedAt', "flaggedAt",
+               'redetected', redetected, 'scanEntry', "scanEntry", 'granted', granted,
+               'grantedByUsername', "grantedByUsername", 'rulings', rulings,
+               'prevNsfw', "prevNsfw", 'prevGalleryLevel', "prevGalleryLevel"
+             ) ORDER BY label, source) AS flags,
+             bool_or(source <> 'hash') AS "hasScanFlag",
+             bool_or(source = 'text-scan') AS "hasTextScanFlag"
+      FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+      GROUP BY "modelId", "modelName", "userId", username, status, minor, poi, "modelType",
+               "modelCreatedAt"
       ORDER BY ${inner}
       LIMIT ${limit + 1} OFFSET ${offset}
     )
-    SELECT pg.*,
+    SELECT pg."modelId", pg."modelName", pg."userId", pg.username, pg.status, pg.minor, pg.poi,
+           pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
            -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
            -- a ruling while the model has a Pending appeal.
            EXISTS (
@@ -811,14 +847,14 @@ export async function getFlaggedModels({
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals",
-           CASE WHEN pg.source = 'text-scan'
+           CASE WHEN pg."hasTextScanFlag"
                 THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
-           CASE WHEN pg.source <> 'hash' THEN ${scanRowsSql} END AS "scanRows"
+           CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"
     FROM pg
     LEFT JOIN "EntityModeration" sm
-      ON pg.source <> 'hash' AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+      ON pg."hasScanFlag" AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
     LEFT JOIN "EntityModeration" ss
-      ON pg.source <> 'hash' AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
+      ON pg."hasScanFlag" AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
          AND ss."entityId" = pg."modelId"
     LEFT JOIN LATERAL (
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
@@ -833,8 +869,12 @@ export async function getFlaggedModels({
   const now = Date.now();
   const items: FlaggedRow[] = rows.rows.slice(0, limit).map((row) => ({
     ...row,
-    key: `${row.modelId}:${row.label}:${row.source}`,
-    daysLeft: row.source === 'hash' && row.flaggedAt ? reviewDaysLeft(row.flaggedAt, now) : null,
+    key: String(row.modelId),
+    flags: row.flags.map((flag) => ({
+      ...flag,
+      daysLeft:
+        flag.source === 'hash' && flag.flaggedAt ? reviewDaysLeft(flag.flaggedAt, now) : null,
+    })),
   }));
   return { items, hasMore: rows.rows.length > limit };
 }
@@ -851,19 +891,20 @@ export async function getAutoFlaggedCount({ search }: { search?: MinorSearch } =
   return result.rows[0]?.count ?? 0;
 }
 
-/** The Flagged list's total, over the same predicates as `getFlaggedModels`. */
+/** The Flagged list's total in models, over the same branches as `getFlaggedModels`: a model with
+ *  two waiting flags counts once. With no arguments it is the whole queue, which the tab badge shows. */
 export async function getFlaggedCount({
   search,
   source = 'all',
   flag = 'all',
 }: { search?: MinorSearch } & Partial<Pick<FlaggedFilters, 'source' | 'flag'>> = {}) {
-  const use = flaggedBranches({ source, flag });
-  const [hash, redetected, textScan] = await Promise.all([
-    use.hash ? getAutoFlaggedCount({ search }) : 0,
-    use.redetected ? getRedetectedCount({ search, flag }) : 0,
-    use.textScan ? getTextScanFlaggedCount({ search, flag }) : 0,
-  ]);
-  return hash + redetected + textScan;
+  const branches = flaggedBranchList(search, { ...DEFAULT_FLAGGED_FILTERS, source, flag });
+  if (!branches.length) return 0;
+  const result = await sql<{ count: number }>`
+    SELECT count(DISTINCT "modelId")::int AS count
+    FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
 }
 
 /** Text-scan flags waiting on a ruling, both labels. No index serves the predicate, so this scans

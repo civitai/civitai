@@ -95,17 +95,6 @@ describe('hash flag actions', () => {
     expect(confirmMinorFlag).toHaveBeenCalledWith(42);
   });
 
-  it('posts the label and source the action reads from the verdict form', () => {
-    const detail = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../FlaggedDetail.svelte'),
-      'utf-8'
-    );
-    const fields = detail.slice(detail.indexOf('{#snippet verdictFields()}'));
-    expect(fields.slice(0, fields.indexOf('{/snippet}'))).toMatch(
-      /name="modelId"[\s\S]*name="label" value=\{row\.label\}[\s\S]*name="source" value=\{row\.source\}/
-    );
-  });
-
   it('lift reverts the flag by model id', async () => {
     expect(await run('liftFlag', hash)).toMatchObject({ success: true, resolved: 'dismissed' });
     expect(revertMinorFlag).toHaveBeenCalledWith(42);
@@ -251,6 +240,145 @@ describe('text-scan flag actions', () => {
       status: 400,
       data: { error: 'Owner appeal is open.', modelId: 42, subject: 'Model #42' },
     });
+  });
+});
+
+describe('one decision over every flag on the model', () => {
+  const minorText = { label: 'minor', source: 'text-scan', textHash: 'h-1' };
+  const poiText = { label: 'poi', source: 'text-scan', textHash: 'h-1' };
+  const minorHash = { label: 'minor', source: 'hash', textHash: null };
+  const decide = (flags: object[], keep: string, extra: Record<string, string> = {}) =>
+    run('decideFlags', { modelId: '42', flags: JSON.stringify(flags), keep, ...extra });
+
+  it('posts the fields the action reads from the decision form', () => {
+    const detail = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../FlaggedDetail.svelte'),
+      'utf-8'
+    );
+    expect(detail).toMatch(/name="modelId"/);
+    expect(detail).toMatch(/name="flags" value=\{JSON\.stringify\(flagRefs\)\}/);
+    expect(detail).toMatch(/name="keep"/);
+    expect(detail).toMatch(/actionHref\('decideFlags'\)/);
+  });
+
+  it('confirms both flags, each through its own path, with the one reason', async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'kept' });
+    expect(await decide([minorHash, poiText], 'minor:hash,poi:text-scan', kept)).toMatchObject({
+      success: true,
+      modelId: 42,
+      resolved: 'kept',
+    });
+    expect(confirmMinorFlag).toHaveBeenCalledWith(42);
+    expect(ruleTextScanFlag).toHaveBeenCalledWith({
+      modelId: 42,
+      label: 'poi',
+      keep: true,
+      textHash: 'h-1',
+      reason: { resolvedReason: 'detection-correct', internalNotes: undefined },
+    });
+  });
+
+  it('reverts both with a reason that fits both labels', async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'lifted' });
+    await decide([minorText, poiText], '', { resolvedReason: 'terms-misread' });
+    expect(
+      ruleTextScanFlag.mock.calls.map(([c]) => [c.label, c.keep, c.reason.resolvedReason])
+    ).toEqual([
+      ['minor', false, 'terms-misread'],
+      ['poi', false, 'terms-misread'],
+    ]);
+  });
+
+  it('refuses a reason that explains only one of the reverted labels, before any write', async () => {
+    const result = await decide([minorText, poiText], '', dismissed);
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/does not apply/) },
+    });
+    expect(ruleTextScanFlag).not.toHaveBeenCalled();
+  });
+
+  it('splits: the reverted label records the picked reason, the kept one detection-correct', async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'kept' });
+    await decide([minorText, poiText], 'minor:text-scan', {
+      resolvedReason: 'not-a-real-person',
+      internalNotes: 'a cosplayer',
+    });
+    expect(ruleTextScanFlag.mock.calls.map(([c]) => [c.label, c.keep, c.reason])).toEqual([
+      ['minor', true, { resolvedReason: 'detection-correct', internalNotes: 'a cosplayer' }],
+      ['poi', false, { resolvedReason: 'not-a-real-person', internalNotes: 'a cosplayer' }],
+    ]);
+  });
+
+  it('names the label that failed and the one that went through, and does not report success', async () => {
+    revertMinorFlag.mockResolvedValue({ ok: true });
+    ruleTextScanFlag.mockResolvedValue({ ok: false, error: 'Text changed; reload.' });
+    const result = await decide([minorHash, poiText], '', { resolvedReason: 'not-a-real-person' });
+    expect(revertMinorFlag).toHaveBeenCalledWith(42);
+    expect(result).toMatchObject({
+      status: 400,
+      data: {
+        error: 'Real person (text scan) not ruled: Text changed; reload. Minor (hash) reverted.',
+        modelId: 42,
+        subject: 'Model #42',
+        partial: true,
+      },
+    });
+  });
+
+  it('reports a refusal of every flag without calling it partial', async () => {
+    confirmMinorFlag.mockResolvedValue({ ok: false, error: 'Appeal open.' });
+    const result = await decide([minorHash], 'minor:hash');
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: 'Minor (hash) not ruled: Appeal open.', partial: false },
+    });
+  });
+
+  it('says "already flagged" only when the main app closed every flag', async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'closed' });
+    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'closed' });
+    const held = { label: 'minor', source: 'redetected', textHash: 'h-2' };
+    expect(await decide([held, poiText], 'minor:redetected,poi:text-scan', kept)).toMatchObject({
+      success: true,
+      resolved: 'closed',
+    });
+    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'kept' });
+    expect(await decide([held, poiText], 'minor:redetected,poi:text-scan', kept)).toMatchObject({
+      resolved: 'kept',
+    });
+  });
+
+  it.each([
+    ['no flags', { modelId: '42', keep: '' }],
+    ['malformed flags', { modelId: '42', flags: '{', keep: '' }],
+    [
+      'a kept flag the form does not carry',
+      { modelId: '42', flags: JSON.stringify([minorText]), keep: 'poi:text-scan', ...kept },
+    ],
+    ['no keep field', { modelId: '42', flags: JSON.stringify([minorText]), ...kept }],
+    [
+      'a poi hash flag',
+      { modelId: '42', flags: JSON.stringify([{ ...minorHash, label: 'poi' }]), keep: '' },
+    ],
+    [
+      'a text-scan flag with no hash',
+      {
+        modelId: '42',
+        flags: JSON.stringify([{ ...minorText, textHash: null }]),
+        keep: '',
+        ...dismissed,
+      },
+    ],
+    [
+      'the same flag twice',
+      { modelId: '42', flags: JSON.stringify([minorText, minorText]), keep: '', ...dismissed },
+    ],
+  ])('refuses %s before any write', async (_name, fields) => {
+    expect(await run('decideFlags', fields)).toMatchObject({ status: 400 });
+    expect(ruleTextScanFlag).not.toHaveBeenCalled();
+    expect(confirmMinorFlag).not.toHaveBeenCalled();
+    expect(revertMinorFlag).not.toHaveBeenCalled();
   });
 });
 

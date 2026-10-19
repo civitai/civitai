@@ -11,7 +11,7 @@
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
+  import { decisionEnabled, flaggedDecisions } from '$lib/minor-flags/flagged-decision';
   import {
     DEFAULT_FLAGGED_FILTERS,
     FLAGGED_FLAG_LABELS,
@@ -41,7 +41,19 @@
   let current = $state<string | null>(null);
   const ruling = rulingDraft<Verdict>(() => current);
 
-  const parseKey = (raw: string) => (/^\d+:(minor|poi):(hash|redetected|text-scan)$/.test(raw) ? raw : null);
+  // One row per model. An older link's model:label:source key still opens that model.
+  const parseKey = (raw: string) => /^(\d+)(?::(?:minor|poi):(?:hash|redetected|text-scan))?$/.exec(raw)?.[1] ?? null;
+
+  // Keys 1 and 2 confirm and revert every flag on the row; each is on only when every flag allows it.
+  const rowDecisionEnabled = (row: FlaggedRow) => {
+    const flags = row.flags.map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal }));
+    return flaggedDecisions(flags)
+      .slice(0, 2)
+      .map((d) => decisionEnabled(flags, d));
+  };
+  const uniqueBy = <T,>(items: T[], key: (item: T) => string) => [
+    ...new Map(items.map((item) => [key(item), item])).values(),
+  ];
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
@@ -121,7 +133,7 @@
   selectionParam="item"
   queueLabel="Flagged queue"
   itemLabel="Flag"
-  decisionEnabled={flaggedDecisionEnabled}
+  decisionEnabled={rowDecisionEnabled}
   {ondecision}
   bind:current
   outcomeFor={(result, outcome) =>
@@ -147,13 +159,18 @@
       onselect={state.select}
     >
       {#snippet badges()}
-        <FlaggedSourceBadge {row} />
-        <FlagBadge label={row.label} />
+        {@const hash = row.flags.find((f) => f.source === 'hash')}
+        {#each uniqueBy(row.flags, (f) => f.source) as flag (flag.source)}
+          <FlaggedSourceBadge row={flag} />
+        {/each}
+        {#each uniqueBy(row.flags, (f) => f.label) as flag (flag.label)}
+          <FlagBadge label={flag.label} />
+        {/each}
         {#if row.hasPendingAppeal}
           <MetaChip tone="amber">also in Appeals</MetaChip>
         {/if}
-        {#if row.daysLeft !== null}
-          <span class="text-xs text-dark-2 tabular-nums">{row.daysLeft === 0 ? 'window closed' : `${row.daysLeft} d left`}</span>
+        {#if hash && hash.daysLeft !== null}
+          <span class="text-xs text-dark-2 tabular-nums">{hash.daysLeft === 0 ? 'window closed' : `${hash.daysLeft} d left`}</span>
         {/if}
       {/snippet}
     </TriageRow>

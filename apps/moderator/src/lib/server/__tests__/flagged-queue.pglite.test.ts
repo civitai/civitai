@@ -78,6 +78,12 @@ afterEach(async () => {
   await pg.close();
 });
 
+type Items = Awaited<ReturnType<typeof getFlaggedModels>>['items'];
+/** Each row's flags in order, as model:label:source. */
+const flagKeys = (items: Items) =>
+  items.flatMap((r) => r.flags.map((f) => `${r.modelId}:${f.label}:${f.source}`));
+const rowLabels = (items: Items) => items.map((r) => [r.modelId, r.flags.map((f) => f.label)]);
+
 const seedModel = (id: number, userId: number, textScanFlags: unknown) =>
   pg.query(`INSERT INTO "Model" (id, name, "userId", meta) VALUES ($1, $2, $3, $4)`, [
     id,
@@ -105,22 +111,22 @@ describe('getFlaggedModels', () => {
     await seedModel(5, 1, null);
   });
 
-  it('lists a row per waiting label, oldest detection first', async () => {
+  it('lists a row per model carrying its waiting labels, oldest detection first', async () => {
     const { items, hasMore } = await getFlaggedModels({ limit: 10 });
-    expect(items.map((r) => [r.modelId, r.label])).toEqual([
-      [2, 'minor'],
-      [1, 'minor'],
-      [2, 'poi'],
-      [7, 'minor'],
+    expect(rowLabels(items)).toEqual([
+      [2, ['minor', 'poi']],
+      [1, ['minor']],
+      [7, ['minor']],
     ]);
+    expect(items.map((r) => r.key)).toEqual(['2', '1', '7']);
     expect(hasMore).toBe(false);
   });
 
   it('carries the prior clear with the moderator who made it', async () => {
-    const [row] = (await getFlaggedModels({ limit: 10 })).items;
-    expect(row.granted).toMatchObject({ via: 'moderator', by: 5 });
-    expect(row.grantedByUsername).toBe('mod');
-    expect(row.redetected).toMatchObject({ textHash: 'new', reason: 'r' });
+    const [flag] = (await getFlaggedModels({ limit: 10 })).items[0].flags;
+    expect(flag.granted).toMatchObject({ via: 'moderator', by: 5 });
+    expect(flag.grantedByUsername).toBe('mod');
+    expect(flag.redetected).toMatchObject({ textHash: 'new', reason: 'r' });
   });
 
   it('flags the models whose owner also has an open appeal', async () => {
@@ -134,15 +140,12 @@ describe('getFlaggedModels', () => {
     });
   });
 
-  it('pages and reports whether more remain', async () => {
+  it('pages by model and reports whether more remain', async () => {
     const first = await getFlaggedModels({ limit: 2 });
-    expect(first.items).toHaveLength(2);
+    expect(first.items.map((r) => r.modelId)).toEqual([2, 1]);
     expect(first.hasMore).toBe(true);
     const second = await getFlaggedModels({ limit: 2, offset: 2 });
-    expect(second.items.map((r) => [r.modelId, r.label])).toEqual([
-      [2, 'poi'],
-      [7, 'minor'],
-    ]);
+    expect(second.items.map((r) => r.modelId)).toEqual([7]);
     expect(second.hasMore).toBe(false);
   });
 
@@ -158,34 +161,29 @@ describe('getFlaggedModels', () => {
 
   it('searches by username, ignoring case', async () => {
     const { items } = await getFlaggedModels({ limit: 10, search: { username: 'OTHER' } });
-    expect(items.map((r) => r.modelId)).toEqual([2, 2]);
+    expect(rowLabels(items)).toEqual([[2, ['minor', 'poi']]]);
   });
 
   it('filters by label', async () => {
     const ids = async (flag: 'all' | 'minor' | 'poi') =>
-      (
-        await getFlaggedModels({ limit: 10, filters: { source: 'all', flag, sort: 'oldest' } })
-      ).items.map((r) => [r.modelId, r.label]);
-    expect(await ids('poi')).toEqual([[2, 'poi']]);
-    expect(await ids('minor')).toEqual([
-      [2, 'minor'],
-      [1, 'minor'],
-      [7, 'minor'],
+      (await getFlaggedModels({ limit: 10, filters: { source: 'all', flag, sort: 'oldest' } }))
+        .items;
+    // A filter narrows the flags a row carries, not only which rows show.
+    expect(rowLabels(await ids('poi'))).toEqual([[2, ['poi']]]);
+    expect(rowLabels(await ids('minor'))).toEqual([
+      [2, ['minor']],
+      [1, ['minor']],
+      [7, ['minor']],
     ]);
-    expect((await ids('all')).length).toBe(4);
+    expect((await ids('all')).length).toBe(3);
   });
 
-  it('sorts newest detection first, and pages in that order', async () => {
+  it("sorts newest first on each model's newest detection, and pages in that order", async () => {
     const newest = { source: 'all', flag: 'all', sort: 'newest' } as const;
     const { items } = await getFlaggedModels({ limit: 10, filters: newest });
-    expect(items.map((r) => [r.modelId, r.label])).toEqual([
-      [7, 'minor'],
-      [2, 'poi'],
-      [1, 'minor'],
-      [2, 'minor'],
-    ]);
+    expect(items.map((r) => r.modelId)).toEqual([7, 2, 1]);
     const second = await getFlaggedModels({ limit: 2, offset: 2, filters: newest });
-    expect(second.items.map((r) => r.modelId)).toEqual([1, 2]);
+    expect(second.items.map((r) => r.modelId)).toEqual([1]);
   });
 
   it('puts a detection with no timestamp last in either order', async () => {
@@ -212,11 +210,11 @@ describe('getFlaggedModels', () => {
       },
     });
     const { items } = await getFlaggedModels({ limit: 10, search: { modelOrUserId: 10 } });
-    expect(items[0].rulings).toEqual([
+    expect(items[0].flags[0].rulings).toEqual([
       expect.objectContaining({ decision: 'appealUpheld', by: 5 }),
     ]);
     expect(
-      (await getFlaggedModels({ limit: 10 })).items.find((r) => r.modelId === 1)?.rulings
+      (await getFlaggedModels({ limit: 10 })).items.find((r) => r.modelId === 1)?.flags[0].rulings
     ).toBeNull();
   });
 
@@ -232,7 +230,7 @@ describe('getFlaggedModels', () => {
     `);
     const { items } = await getFlaggedModels({ limit: 10 });
     const covers = (id: number) =>
-      items.find((r) => r.modelId === id && r.label === 'minor')?.coverImages.map((c) => c.url);
+      items.find((r) => r.modelId === id)?.coverImages.map((c) => c.url);
     expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
     expect(covers(7)).toEqual(['only-draft.jpg']);
     expect(covers(2)).toEqual([]);
@@ -250,10 +248,7 @@ describe('getFlaggedModels', () => {
       INSERT INTO "Image" VALUES (11, 1, 'a.jpg', 'image', 0), (12, 1, 'b.jpg', 'image', 1);
     `);
     const { items } = await getFlaggedModels({ limit: 2 });
-    expect(items.map((r) => [r.modelId, r.label])).toEqual([
-      [2, 'minor'],
-      [1, 'minor'],
-    ]);
+    expect(items.map((r) => r.modelId)).toEqual([2, 1]);
   });
 });
 
@@ -340,7 +335,7 @@ describe('hash auto-flags and the merged queue', () => {
       JSON.stringify(meta),
     ]);
   const keys = async (filters: Partial<Parameters<typeof getFlaggedModels>[0]>) =>
-    (await getFlaggedModels({ limit: 20, ...filters })).items.map((r) => r.key);
+    flagKeys((await getFlaggedModels({ limit: 20, ...filters })).items);
 
   beforeEach(async () => {
     await seedFlagged(20, 1, snapshot('auto', daysAgo(25)));
@@ -374,20 +369,24 @@ describe('hash auto-flags and the merged queue', () => {
     expect(hash).toEqual(['20:minor:hash', '21:minor:hash']);
   });
 
-  it('puts days left on hash rows only', async () => {
+  it('puts days left on hash flags only', async () => {
     const { items } = await getFlaggedModels({ limit: 20 });
-    expect(Object.fromEntries(items.map((r) => [r.key, r.daysLeft]))).toEqual({
-      '1:minor:redetected': null,
-      '20:minor:hash': 5,
-      '21:minor:hash': 28,
+    const flags = items.flatMap((r) =>
+      r.flags.map((f) => [`${r.modelId}:${f.source}`, f] as const)
+    );
+    expect(Object.fromEntries(flags.map(([k, f]) => [k, f.daysLeft]))).toEqual({
+      '1:redetected': null,
+      '20:hash': 5,
+      '21:hash': 28,
     });
-    expect(items.find((r) => r.source === 'hash')).toMatchObject({
+    const byKey = Object.fromEntries(flags);
+    expect(byKey['20:hash']).toMatchObject({
       prevNsfw: true,
       prevGalleryLevel: 4,
       redetected: null,
       textHash: null,
     });
-    expect(items.find((r) => r.source === 'redetected')?.textHash).toBe('new');
+    expect(byKey['1:redetected'].textHash).toBe('new');
   });
 
   it('filters by source and by flag', async () => {
@@ -414,10 +413,10 @@ describe('hash auto-flags and the merged queue', () => {
 
   it('pages across the merge and reports whether more remain', async () => {
     const first = await getFlaggedModels({ limit: 2 });
-    expect(first.items.map((r) => r.key)).toEqual(['20:minor:hash', '1:minor:redetected']);
+    expect(flagKeys(first.items)).toEqual(['20:minor:hash', '1:minor:redetected']);
     expect(first.hasMore).toBe(true);
     const second = await getFlaggedModels({ limit: 2, offset: 2 });
-    expect(second.items.map((r) => r.key)).toEqual(['21:minor:hash']);
+    expect(flagKeys(second.items)).toEqual(['21:minor:hash']);
     expect(second.hasMore).toBe(false);
   });
 
@@ -440,7 +439,7 @@ describe('hash auto-flags and the merged queue', () => {
     expect(await getAutoFlaggedCount({ search: { modelOrUserId: 22 } })).toBe(1);
 
     const [row] = (await getFlaggedModels({ limit: 20, search: { modelOrUserId: 22 } })).items;
-    expect(row.daysLeft).toBe(0);
+    expect(row.flags[0].daysLeft).toBe(0);
   });
 
   it('still hides an aged-out flag a moderator accepted when searched by model id', async () => {
@@ -471,10 +470,10 @@ describe('hash auto-flags and the merged queue', () => {
       INSERT INTO "ModelVersion" (id, "modelId", "baseModel") VALUES (201, 20, 'SDXL 1.0');
     `);
     const row = (await getFlaggedModels({ limit: 20 })).items.find((r) => r.modelId === 20);
-    expect(row).toMatchObject({
-      rulings: [expect.objectContaining({ decision: 'appealUpheld', by: 5 })],
-      baseModel: 'SDXL 1.0',
-    });
+    expect(row?.flags[0].rulings).toEqual([
+      expect.objectContaining({ decision: 'appealUpheld', by: 5 }),
+    ]);
+    expect(row?.baseModel).toBe('SDXL 1.0');
   });
 
   it('counts the same population the list shows', async () => {
@@ -509,7 +508,7 @@ describe('text-scan auto-flags', () => {
       [id, `model ${id}`, userId, !!flags.minor, !!flags.poi, JSON.stringify(meta)]
     );
   const keys = async (filters: Partial<Parameters<typeof getFlaggedModels>[0]> = {}) =>
-    (await getFlaggedModels({ limit: 20, ...filters })).items.map((r) => r.key);
+    flagKeys((await getFlaggedModels({ limit: 20, ...filters })).items);
   const onlyTextScan = { source: 'text-scan', flag: 'all', sort: 'oldest' } as const;
 
   beforeEach(async () => {
@@ -559,17 +558,18 @@ describe('text-scan auto-flags', () => {
     await seed(36, 1, { minor: true }, { textScanFlags: { minor: { rulings: [] } } });
   });
 
-  it('lists a row per open label, with the entry, and leaves the ruled and lifted ones out', async () => {
+  it('lists each open label on its model, with the entry, and leaves the ruled and lifted ones out', async () => {
     const { items } = await getFlaggedModels({ limit: 20 });
-    expect(items.map((r) => r.key)).toEqual([
+    expect(flagKeys(items)).toEqual([
+      // A hash minor flag and a text-scan real-person flag on one model: one row, both flags.
+      '31:minor:hash',
       '31:poi:text-scan',
       '30:minor:text-scan',
       '30:poi:text-scan',
-      '31:minor:hash',
       // Held for review rather than flagged: the re-detection branch lists it, not this one.
       '34:minor:redetected',
     ]);
-    const row = items.find((r) => r.key === '30:poi:text-scan')!;
+    const row = items.find((r) => r.modelId === 30)!.flags.find((f) => f.label === 'poi')!;
     expect(row).toMatchObject({
       source: 'text-scan',
       textHash: 'h-2',
@@ -582,7 +582,7 @@ describe('text-scan auto-flags', () => {
 
   it('lists a hash-flagged model once for minor, and still lists its poi text-scan row', async () => {
     const keysFor31 = (await keys()).filter((k) => k.startsWith('31:'));
-    expect(keysFor31).toEqual(['31:poi:text-scan', '31:minor:hash']);
+    expect(keysFor31).toEqual(['31:minor:hash', '31:poi:text-scan']);
     expect(await keys({ filters: onlyTextScan })).not.toContain('31:minor:text-scan');
   });
 
@@ -661,29 +661,33 @@ describe('text-scan auto-flags', () => {
     ]);
   });
 
-  it('shows the latest scan for the label on a text-scan row only', async () => {
+  it('shows the latest scan on a row with a text-scan flag only', async () => {
     await pg.exec(`INSERT INTO "EntityModeration" ("entityType", "entityId", "result")
-      VALUES ('Model', 30, '{"labels":{"minor":{"detected":false,"reason":"gone"}}}')`);
+      VALUES ('Model', 30, '{"labels":{"minor":{"detected":false,"reason":"gone"}}}'),
+             ('Model', 34, '{"labels":{"minor":{"detected":false,"reason":"gone"}}}')`);
     const { items } = await getFlaggedModels({ limit: 20 });
-    const byKey = Object.fromEntries(items.map((r) => [r.key, r.latestScan]));
-    expect(byKey['30:minor:text-scan']?.minor).toMatchObject({
+    const byModel = Object.fromEntries(items.map((r) => [r.modelId, r.latestScan]));
+    expect(byModel[30]?.minor).toMatchObject({
       detected: false,
       reason: 'gone',
       source: 'main',
     });
-    expect(byKey['30:poi:text-scan']?.poi).toBeNull();
-    expect(byKey['31:minor:hash']).toBeNull();
+    expect(byModel[30]?.poi).toBeNull();
+    // A held re-detection only: no text-scan flag to compare against.
+    expect(byModel[34]).toBeNull();
   });
 
-  it('carries the scan rows on text-scan rows, for provenance and the text hash, and not on hash rows', async () => {
+  it('carries the scan rows on rows with a scan flag, for provenance and the text hash, and not on hash-only rows', async () => {
+    await seed(37, 1, { minor: true }, { minorFlagSnapshot: { source: 'auto', at: daysAgo(1) } });
     await pg.exec(`INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", "status", "result", "updatedAt")
       VALUES ('Model:search', 30, 'wf', 'Succeeded', '{"textHash":"h-1"}', '2026-10-01T00:00:00'),
-             ('Model', 31, 'wf-x', 'Succeeded', '{"textHash":"h-9"}', '2026-10-01T00:00:00')`);
+             ('Model', 31, 'wf-x', 'Succeeded', '{"textHash":"h-9"}', '2026-10-01T00:00:00'),
+             ('Model', 37, 'wf-y', 'Succeeded', '{"textHash":"h-7"}', '2026-10-01T00:00:00')`);
     // The column holds UTC without a zone: the rendered time must not follow the session's zone.
     await pg.exec(`SET TIME ZONE 'America/New_York'`);
     const { items } = await getFlaggedModels({ limit: 20 });
-    const byKey = Object.fromEntries(items.map((r) => [r.key, r.scanRows]));
-    expect(byKey['30:minor:text-scan']).toEqual({
+    const byModel = Object.fromEntries(items.map((r) => [r.modelId, r.scanRows]));
+    expect(byModel[30]).toEqual({
       main: null,
       search: {
         workflowId: 'wf',
@@ -692,8 +696,8 @@ describe('text-scan auto-flags', () => {
         updatedAt: '2026-10-01T00:00:00.000Z',
       },
     });
-    expect(byKey['31:poi:text-scan']?.main).toMatchObject({ workflowId: 'wf-x', textHash: 'h-9' });
-    expect(byKey['31:minor:hash']).toBeNull();
+    expect(byModel[31]?.main).toMatchObject({ workflowId: 'wf-x', textHash: 'h-9' });
+    expect(byModel[37]).toBeNull();
   });
 
   it('counts the same population the list shows', async () => {
@@ -701,8 +705,9 @@ describe('text-scan auto-flags', () => {
     expect(await getTextScanFlaggedCount({ flag: 'poi' })).toBe(2);
     expect(await getTextScanFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
     expect(await getTextScanFlaggedCount({ search: { username: 'other' } })).toBe(1);
-    expect(await getFlaggedCount()).toBe(5);
-    expect(await getFlaggedCount({ source: 'text-scan' })).toBe(3);
+    // Models, not labels: 30 and 31 each carry two flags and count once.
+    expect(await getFlaggedCount()).toBe(3);
+    expect(await getFlaggedCount({ source: 'text-scan' })).toBe(2);
     expect(await getFlaggedCount({ source: 'hash' })).toBe(1);
     expect(await getFlaggedCount({ source: 'text-scan', flag: 'minor' })).toBe(1);
   });

@@ -1,12 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getRedetectedCount, getAutoFlaggedCount, getTextScanFlaggedCount, countStrikeReview } =
-  vi.hoisted(() => ({
-    getTextScanFlaggedCount: vi.fn(),
-    getRedetectedCount: vi.fn(),
-    getAutoFlaggedCount: vi.fn(),
-    countStrikeReview: vi.fn(),
-  }));
+const { getFlaggedCount, countStrikeReview } = vi.hoisted(() => ({
+  getFlaggedCount: vi.fn(),
+  countStrikeReview: vi.fn(),
+}));
 
 vi.mock('../cache', () => ({
   createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
@@ -37,9 +34,7 @@ vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 
 vi.mock('../minor-hash.service', () => ({
   getMinorFlagAppealGroups: async () => [{ count: 4 }],
   getMinorQueueCounts: async () => ({ pending: 1 }),
-  getRedetectedCount,
-  getAutoFlaggedCount,
-  getTextScanFlaggedCount,
+  getFlaggedCount,
 }));
 
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
@@ -48,39 +43,30 @@ const { getSidebarCounts } = await import('../sidebar-counts.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getAutoFlaggedCount.mockResolvedValue(0);
-  getTextScanFlaggedCount.mockResolvedValue(0);
+  getFlaggedCount.mockResolvedValue(0);
 });
 
 describe('sidebar counts for Model Flags', () => {
-  it('adds the hash and text-scan auto-flags to the held detections under Flagged, and the pending queue to File matches', async () => {
-    getRedetectedCount.mockResolvedValue(5);
-    getAutoFlaggedCount.mockResolvedValue(7);
-    getTextScanFlaggedCount.mockResolvedValue(3);
+  it('shows the Flagged queue in models, the same total as the list, and the pending queue under File matches', async () => {
+    getFlaggedCount.mockResolvedValue(15);
     const counts = await getSidebarCounts();
     expect(counts).toMatchObject({
       modelFlagsAppeals: 4,
       modelFlagsReview: 15,
       modelFlagsMatches: 1,
     });
+    // The whole queue: no search, every source and label.
+    expect(getFlaggedCount).toHaveBeenCalledWith();
     expect(counts).not.toHaveProperty('heldDetections');
     expect(counts).not.toHaveProperty('minorHashMatches');
   });
 
-  it.each([
-    ['held detections', getRedetectedCount, getAutoFlaggedCount],
-    ['hash auto-flags', getAutoFlaggedCount, getRedetectedCount],
-    ['text-scan auto-flags', getTextScanFlaggedCount, getRedetectedCount],
-  ])(
-    'drops Flagged, without blanking the other badges, when the %s fail',
-    async (_name, failing, working) => {
-      failing.mockRejectedValue(new Error('db down'));
-      working.mockResolvedValue(3);
-      const counts = await getSidebarCounts();
-      expect(counts).not.toHaveProperty('modelFlagsReview');
-      expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
-    }
-  );
+  it('drops Flagged, without blanking the other badges, when its count fails', async () => {
+    getFlaggedCount.mockRejectedValue(new Error('db down'));
+    const counts = await getSidebarCounts();
+    expect(counts).not.toHaveProperty('modelFlagsReview');
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
+  });
 });
 
 describe('sidebar count strikeReview', () => {

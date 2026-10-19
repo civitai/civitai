@@ -1,8 +1,21 @@
 import { fail, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, RequestEvent } from '@sveltejs/kit';
-import { parseQuery } from '$lib/server/query';
-import { rulingReasonFromForm } from '$lib/server/resolution-reason';
+import { parseForm, parseQuery } from '$lib/server/query';
+import {
+  checkedResolutionReason,
+  resolutionReasonFields,
+  rulingReasonFromForm,
+} from '$lib/server/resolution-reason';
+import {
+  FLAG_LABEL_NAMES,
+  decisionReasonFor,
+  flagRefId,
+  flagRuling,
+  parseKeptIds,
+  planDecision,
+  type FlagRef,
+} from '$lib/minor-flags/flagged-decision';
 import {
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
@@ -202,6 +215,38 @@ export const matchesActions: Actions = {
   dismiss: (event) => run(event, dismissMinorHashMatch),
 };
 
+type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
+
+/** Rules one flag through the path its source owns: hash flags through the main app's confirm and
+ *  revert endpoints (no reason yet), text-scan flags through `ruleTextScanFlag`, re-detections through
+ *  `resolveRedetection`. The caller has checked the label, text hash and reason. */
+async function ruleFlag(
+  modelId: number,
+  flag: FlagRef,
+  keep: boolean,
+  reason: RulingReason | null
+): Promise<{ ok: true; resolved: string } | { ok: false; error: string }> {
+  if (flag.source === 'hash') {
+    const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
+    return result.ok
+      ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
+      : { ok: false, error: result.error ?? 'Action failed.' };
+  }
+  const textHash = flag.textHash!;
+  if (flag.source === 'text-scan') {
+    const result = await ruleTextScanFlag({
+      modelId,
+      label: flag.label,
+      keep,
+      textHash,
+      reason: reason!,
+    });
+    return result.ok ? { ok: true, resolved: result.ruled } : { ok: false, error: result.error };
+  }
+  const result = await resolveRedetection(modelId, flag.label, keep, textHash, reason!);
+  return result.ok ? { ok: true, resolved: result.resolved } : { ok: false, error: result.error };
+}
+
 const flaggedAction =
   (keep: boolean): Actions[string] =>
   async (event) => {
@@ -220,44 +265,139 @@ const flaggedAction =
       if (posted !== null && !(label.success && label.data === 'minor'))
         return refusal('A hash flag can only be ruled as minor.');
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
-      const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
-      if (!result.ok) return refusal(result.error ?? 'Action failed.');
-      return { success: true, modelId, label: 'minor', resolved: keep ? 'kept' : 'dismissed' };
+      const result = await ruleFlag(
+        modelId,
+        { label: 'minor', source: 'hash', textHash: null },
+        keep,
+        null
+      );
+      if (!result.ok) return refusal(result.error);
+      return { success: true, modelId, label: 'minor', resolved: result.resolved };
     }
 
     if (!label.success) return fail(400, { error: 'Missing model id, label or source.' });
     const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
     if (!textHash.success) return fail(400, { error: 'Missing text hash.' });
-    if (source.data === 'text-scan') {
-      const reason = rulingReasonFromForm('flagReview', keep ? 'Kept' : 'Lifted', form, [
-        label.data,
-      ]);
-      if (typeof reason === 'string') return refusal(reason);
-      const result = await ruleTextScanFlag({
-        modelId,
-        label: label.data,
-        keep,
-        textHash: textHash.data,
-        reason,
-      });
-      if (!result.ok) return refusal(result.error);
-      return { success: true, modelId, label: label.data, resolved: result.ruled };
-    }
-
-    const reason = rulingReasonFromForm('heldDetection', keep ? 'Kept' : 'Dismissed', form, [
-      label.data,
-    ]);
+    const flag: FlagRef = { label: label.data, source: source.data, textHash: textHash.data };
+    const ruling = flagRuling({ source: flag.source, keep })!;
+    const reason =
+      ruling.subject === 'flagReview'
+        ? rulingReasonFromForm(ruling.subject, ruling.verdict, form, [flag.label])
+        : rulingReasonFromForm(ruling.subject, ruling.verdict, form, [flag.label]);
     if (typeof reason === 'string') return refusal(reason);
 
-    const result = await resolveRedetection(modelId, label.data, keep, textHash.data, reason);
+    const result = await ruleFlag(modelId, flag, keep, reason);
     if (!result.ok) return refusal(result.error);
-    return { success: true, modelId, label: label.data, resolved: result.resolved };
+    return { success: true, modelId, label: flag.label, resolved: result.resolved };
   };
 
-/** Keep or lift a flag from the Flagged tab, whatever raised it. */
+const flagRefSchema = z.object({
+  label: z.enum(['minor', 'poi']),
+  source: z.enum(['hash', 'redetected', 'text-scan']),
+  textHash: z.string().min(1).max(200).nullable(),
+});
+const SOURCE_NAMES: Record<FlagRef['source'], string> = {
+  hash: 'hash',
+  'text-scan': 'text scan',
+  redetected: 're-detection',
+};
+const flagName = (flag: FlagRef) => {
+  const name = FLAG_LABEL_NAMES[flag.label];
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} (${SOURCE_NAMES[flag.source]})`;
+};
+
+/**
+ * One decision over every flag a Flagged row carries: `flags` lists them, the pressed button's `keep`
+ * names the ones kept, and every other one is reverted. Each flag is ruled through its own source's
+ * path (`ruleFlag`). Every check runs before the first write, so a refusal changes nothing; a failure
+ * from the main app partway leaves the earlier flags ruled, and the error names which went through.
+ */
+const decideFlags: Actions[string] = async (event) => {
+  const form = await event.request.formData();
+  const modelId = Number(form.get('modelId'));
+  let parsed: FlagRef[] | null = null;
+  try {
+    const result = z
+      .array(flagRefSchema)
+      .min(1)
+      .max(3)
+      .safeParse(JSON.parse(String(form.get('flags'))));
+    parsed = result.success ? result.data : null;
+  } catch {
+    parsed = null;
+  }
+  if (!(modelId > 0) || !parsed) return fail(400, { error: 'Missing model id or flags.' });
+  const flags = parsed;
+  const refusal = (error: string, partial = false) =>
+    fail(400, { error, modelId, subject: modelSubject(modelId), partial });
+
+  if (new Set(flags.map(flagRefId)).size !== flags.length)
+    return refusal('A flag is listed twice.');
+  const keep = parseKeptIds(form.get('keep'), flags);
+  if (!keep) return refusal('Pick a decision.');
+  for (const flag of flags) {
+    if (flag.source === 'hash' && flag.label !== 'minor')
+      return refusal('A hash flag can only be ruled as minor.');
+    if (flag.source !== 'hash' && !flag.textHash) return refusal('Missing text hash.');
+  }
+
+  const plan = planDecision(flags, keep);
+  const input = parseForm(z.object(resolutionReasonFields), form);
+  if (typeof input === 'string') return refusal(input);
+  const reasons: (RulingReason | null)[] = [];
+  for (const flag of plan) {
+    const ruling = flagRuling(flag);
+    if (!ruling) {
+      reasons.push(null);
+      continue;
+    }
+    const picked = {
+      resolvedReason: decisionReasonFor(plan, flag, input.resolvedReason ?? ''),
+      internalNotes: input.internalNotes,
+    };
+    const reason =
+      ruling.subject === 'flagReview'
+        ? checkedResolutionReason(ruling.subject, ruling.verdict, picked, [flag.label])
+        : checkedResolutionReason(ruling.subject, ruling.verdict, picked, [flag.label]);
+    if (typeof reason === 'string')
+      return refusal(plan.length > 1 ? `${flagName(flag)}: ${reason}` : reason);
+    reasons.push(reason);
+  }
+
+  // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
+  // stop the moderator from seeing which ones landed.
+  const outcomes = [];
+  for (const [i, flag] of plan.entries())
+    outcomes.push({ flag, result: await ruleFlag(modelId, flag, flag.keep, reasons[i]) });
+
+  const failed = outcomes.filter((o) => !o.result.ok);
+  if (failed.length) {
+    const done = outcomes.filter((o) => o.result.ok);
+    const message = [
+      ...failed.map((o) =>
+        `${flagName(o.flag)} not ruled: ${o.result.ok ? '' : o.result.error}`.replace(
+          /([^.])$/,
+          '$1.'
+        )
+      ),
+      ...done.map((o) => `${flagName(o.flag)} ${o.flag.keep ? 'kept' : 'reverted'}.`),
+    ].join(' ');
+    return refusal(message, done.length > 0);
+  }
+  const resolved = outcomes.map((o) => (o.result.ok ? o.result.resolved : ''));
+  return {
+    success: true,
+    modelId,
+    // "closed" means the main app found nothing left to do; say so only when that holds for all.
+    resolved: resolved.every((r) => r === 'closed') ? 'closed' : resolved[0],
+  };
+};
+
+/** Keep or lift a flag from the Flagged tab, whatever raised it; or decide every flag on the row. */
 export const flaggedActions: Actions = {
   keepFlag: flaggedAction(true),
   liftFlag: flaggedAction(false),
+  decideFlags,
 };
 
 const wholeAppealAction =
