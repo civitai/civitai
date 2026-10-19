@@ -41,7 +41,8 @@ change.
 The nightly `appeal-decision-records` job (`sweepLabelStore`) excludes images by the same rule it applies
 to appeal records; scan flags, votes and pipeline predictions also check it when they land. An image is
 excluded when it, or another image sharing its stored file, matches. Deleting an appeal record takes its
-image out too.
+image out too. The same job excludes a `model_text` subject as `removed` once its model is deleted (soft or hard),
+so the owner's text goes and the judgements stay; up to 5,000 models a run.
 
 The functions belong to the owner of the site tables; site code that calls them directly connects as
 that owner.

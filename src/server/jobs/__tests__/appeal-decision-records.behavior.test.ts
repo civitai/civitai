@@ -78,6 +78,7 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "userId" integer NOT NULL, "deletedAt" timestamp(3));
     -- Stand-in with the production columns; the table is not in the Prisma schema.
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
@@ -658,6 +659,62 @@ describe('sweepLabelStore', () => {
     await judged(107);
 
     expect(await sweepLabelStore()).toBe(1);
+    expect(await sweepLabelStore()).toBe(0);
+  });
+});
+
+describe('sweepLabelStore, model text', () => {
+  const ruled = (modelId: number) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'model_text', p_subject_id => $1, p_content_hash => $2, p_family => 'text_scan',
+         p_question => 'text_scan.model.poi', p_value => 'flag', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"text": "owner text"}', p_owner_user_id => 5)`,
+      [String(modelId), `h-${modelId}`, `m-${modelId}`]
+    );
+  const subjects = async () =>
+    (
+      await holder.db.query<{
+        subjectId: string;
+        excludedReason: string | null;
+        snapshot: unknown;
+        labels: number;
+      }>(
+        `SELECT s."subjectId", s."excludedReason", s.snapshot,
+           (SELECT count(*)::int FROM label_store.label l WHERE l."subjectId" = s.id) AS labels
+         FROM label_store.subject s WHERE s."subjectType" = 'model_text' ORDER BY s."subjectId"`
+      )
+    ).rows;
+
+  const judged = (imageId: number) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'image', p_subject_id => $1, p_content_hash => $2, p_family => 'test',
+         p_question => 'image.block', p_value => 'clear', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"url": "x"}')`,
+      [String(imageId), `h-${imageId}`, `t-${imageId}`]
+    );
+
+  beforeEach(async () => {
+    await holder.db.exec(`TRUNCATE "Model"`);
+  });
+
+  it('drops the text of a model deleted or gone, and keeps its judgements', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", "deletedAt") VALUES (1, 5, NULL), (2, 5, now());
+    `);
+    for (const id of [1, 2, 3]) await ruled(id);
+    await image(101, { needsReview: 'csam' });
+    await judged(101);
+
+    expect(await sweepLabelStore()).toBe(3);
+    expect(await subjects()).toEqual([
+      { subjectId: '1', excludedReason: null, snapshot: { text: 'owner text' }, labels: 1 },
+      { subjectId: '2', excludedReason: 'removed', snapshot: null, labels: 1 },
+      { subjectId: '3', excludedReason: 'removed', snapshot: null, labels: 1 },
+    ]);
     expect(await sweepLabelStore()).toBe(0);
   });
 });
