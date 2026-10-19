@@ -25,7 +25,7 @@ type Props = TextProps & {
   withAbbreviation?: boolean;
   /** Roll the digits when the balance changes. */
   animated?: boolean;
-  /** Show the "-N" that rolls out of the counter. Renders inside a positioned wrapper. */
+  /** Show the "-N" that rolls out of the counter, under its digits. */
   withDeltaPop?: boolean;
   accountId?: number;
   accountTypes?: BuzzSpendType[];
@@ -98,7 +98,12 @@ export function UserBuzz({
           size={textSize}
           fw={600}
           lh={0}
-          className={clsx(classes.buzzText, clipText && classes.withGradient)}
+          // Anchor the pop to the digits, not the padded counter, or it overhangs by the padding.
+          className={clsx(
+            classes.buzzText,
+            clipText && classes.withGradient,
+            withDeltaPop && 'relative'
+          )}
           span
         >
           {balance === null ? (
@@ -119,20 +124,13 @@ export function UserBuzz({
           ) : (
             balance.toLocaleString()
           )}
+          {withDeltaPop && <BuzzDeltaPop accountTypes={accountTypes} />}
         </Text>
       </Group>
     </Text>
   );
 
-  const counter = withTooltip ? <Tooltip label={label}>{content}</Tooltip> : content;
-  if (!withDeltaPop) return counter;
-
-  return (
-    <div className="relative">
-      {counter}
-      <BuzzDeltaPop accountTypes={accountTypes} />
-    </div>
-  );
+  return withTooltip ? <Tooltip label={label}>{content}</Tooltip> : content;
 }
 
 function AnimatedBalance({
