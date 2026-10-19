@@ -12,13 +12,61 @@ import {
   useMasonry,
   usePositioner,
   useResizeObserver,
-  useScroller,
   useScrollToIndex,
 } from 'masonic';
-import { useEffect, useRef } from 'react';
+import type { RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePrevious } from '@mantine/hooks';
 import { useWindowSize } from '@react-hook/window-size';
 import { InViewLoader } from '../InView/InViewLoader';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useScrollMargin } from '~/hooks/useScrollMargin';
+
+/**
+ * masonic's own `useScroller` reads `window.scrollY`, but the app scrolls its ScrollArea and the
+ * window never moves. Fed that, masonic never renders items below the first screens and pads the
+ * grid with estimated heights for them instead.
+ */
+function useScrollAreaScroller(
+  containerRef: RefObject<HTMLElement | null>,
+  fallbackHeight: number
+) {
+  const scrollAreaRef = useScrollAreaRef();
+  const scrollMargin = useScrollMargin(containerRef);
+  const [scrollAreaTop, setScrollAreaTop] = useState(0);
+  const [isScrolling, setIsScrolling] = useState(false);
+
+  useEffect(() => {
+    const node = scrollAreaRef?.current;
+    if (!node) return;
+    let frame: number | undefined;
+    const handleScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        setScrollAreaTop(node.scrollTop);
+        frame = undefined;
+      });
+    };
+    handleScroll();
+    node.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      node.removeEventListener('scroll', handleScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [scrollAreaRef]);
+
+  useEffect(() => {
+    setIsScrolling(true);
+    const timeout = window.setTimeout(() => setIsScrolling(false), 1000 / 6);
+    return () => window.clearTimeout(timeout);
+  }, [scrollAreaTop]);
+
+  return {
+    scrollTop: Math.max(0, scrollAreaTop - scrollMargin),
+    isScrolling,
+    height: scrollAreaRef?.current?.clientHeight || fallbackHeight,
+  };
+}
 
 type Props<TData, TFilters extends Record<string, unknown>> = Omit<
   UseMasonryOptions<TData>,
@@ -100,7 +148,11 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
   // #endregion
 
   // #region [masonic scroll settings]
-  const { scrollTop, isScrolling } = useScroller(offset);
+  const {
+    scrollTop,
+    isScrolling,
+    height: viewportHeight,
+  } = useScrollAreaScroller(containerRef, height);
   const scrollTo = useScrollToIndex(positioner, { offset, height, align: 'center' });
   useEffect(() => {
     if (!data || !scrollToIndex) return;
@@ -117,7 +169,7 @@ export function MasonryGrid2<T, TFilters extends Record<string, unknown>>({
         positioner,
         scrollTop,
         isScrolling,
-        height,
+        height: viewportHeight,
         containerRef,
         items: data,
         overscanBy,
