@@ -25,7 +25,8 @@ export const APP_ASSISTANT_EXCLUDED_TOOLS = [
 /**
  * The model App Assistant's replies use unless the viewer picks another. An OpenRouter id: the
  * orchestrator routes any id that is not an AIR to OpenRouter, where no free allowance applies, so
- * every step is paid. Other chats on the site keep the library's default.
+ * every step is paid. `configureChat` is page-wide and never reset, so a chat opened anywhere after App
+ * Assistant would inherit it too; today App Assistant is the only chat on the site.
  */
 export const APP_ASSISTANT_MODEL = 'openai/gpt-6-luna';
 
@@ -59,7 +60,7 @@ export const APP_ASSISTANT_EXAMPLES: ChatExample[] = [
   {
     title: 'Daily prompt challenge',
     prompt:
-      "Run a daily prompt challenge where everyone generates an image for today's theme and votes for their favourite entry",
+      'Run a daily challenge with a new theme each day, where people generate an image for it and vote for their favourite entry',
   },
   {
     title: 'Buzz tracker',
