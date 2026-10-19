@@ -89,7 +89,10 @@ type UserModActivity = {
     // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
     // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
     | `grantCreatorScore:${string}`
-    | `revokeCreatorScore:${string}`;
+    | `revokeCreatorScore:${string}`
+    // A moderator set or cleared the Creator Program ban
+    // (`creatorProgramBan:<set|clear>:<before>:<after>:<{reason,gateRef} JSON>`).
+    | `creatorProgramBan:${string}`;
 };
 
 type ComicProjectModActivity = {
