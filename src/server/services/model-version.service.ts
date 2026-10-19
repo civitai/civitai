@@ -159,6 +159,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1270,7 +1271,7 @@ export const updateModelVersionPaidAccess = async ({
   if (rightsAffirmation)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
-      SET meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify({ rightsAffirmation })}::jsonb
+      SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
       WHERE id = ${id}
     `;
 

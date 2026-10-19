@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
@@ -33,8 +35,12 @@ const args = (ruleIds: number[], textHash = 'h1') => ({
   subject: { fields: [], declared: {} },
   textHash,
 });
-const claimCall = () => dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown[];
-const claimSql = () => (claimCall()[0] as readonly string[]).join('?').replace(/\s+/g, ' ').trim();
+// Prisma.sql inlines a nested fragment and keeps only the bound values, as Prisma does.
+const claim = () => {
+  const [strings, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown[];
+  return Prisma.sql(strings as readonly string[], ...values);
+};
+const claimSql = () => claim().sql.replace(/\s+/g, ' ').trim();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -53,11 +59,13 @@ describe('applyModelRulesTextScan', () => {
       at: expect.any(String),
     };
     expect(claimSql()).toBe(
-      `UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('modelRules', ?::jsonb) ` +
+      `UPDATE "Model" SET meta = ${asJsonbObject(
+        'meta'
+      )} || jsonb_build_object('modelRules', ?::jsonb) ` +
         `WHERE id = ? AND status IN ('Published', 'Scheduled') AND availability <> 'Private' ` +
         `AND "deletedAt" IS NULL AND COALESCE(meta->'modelRules'->>'workflowId', '') <> ?`
     );
-    const [, json, id, workflowId] = claimCall();
+    const [json, id, workflowId] = claim().values;
     expect(JSON.parse(json as string)).toEqual(modelRules);
     expect([id, workflowId]).toEqual([7, 'wf-1']);
     expect(unpublishModelById).toHaveBeenCalledTimes(1);
@@ -173,7 +181,7 @@ describe('unpublishLiveModelForLiteralRules', () => {
   it('claims the public model under a synthetic workflow id, then unpublishes it for review', async () => {
     await run();
 
-    const [, json, id, workflowId] = claimCall();
+    const [json, id, workflowId] = claim().values;
     expect(JSON.parse(json as string)).toMatchObject({
       ruleIds: [3],
       workflowId: 'literal:h1:3',
@@ -201,7 +209,7 @@ describe('unpublishLiveModelForLiteralRules', () => {
   it('claims under an id that changes with the rule set, whatever order the ids arrive in', async () => {
     await unpublishLiveModelForLiteralRules({ modelId: 7, ruleIds: [4, 3], textHash: 'h1' });
 
-    const [, , , workflowId] = claimCall();
+    const [, , workflowId] = claim().values;
     expect(workflowId).toBe('literal:h1:3,4');
     expect(workflowId).not.toBe('literal:h1:3');
   });

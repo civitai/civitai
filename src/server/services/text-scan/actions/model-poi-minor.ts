@@ -25,6 +25,7 @@ import {
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelStatus } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const POI_LOCKED_PROPERTIES = ['poi', 'nsfw', 'sfwOnly'];
 
@@ -218,7 +219,7 @@ async function recordHold({
           AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash}`;
     return dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, COALESCE(${flagEntryPath(
       label
@@ -400,7 +401,7 @@ export async function flagModelPoi({
         "lockedProperties" = ARRAY(
           SELECT DISTINCT unnest(COALESCE(m."lockedProperties", ARRAY[]::text[]) || ${POI_LOCKED_PROPERTIES}::text[])
         ),
-        meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
             'poi', ${entry}::jsonb || ${carriedRulings('poi')} || ${keptMarker(
       'poi',
@@ -526,7 +527,7 @@ export async function flagModelMinor({
     ? 1
     : await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         'minor', ${entry}::jsonb || ${carriedRulings('minor')} || ${keptMarker(
         'minor',
@@ -750,7 +751,7 @@ export async function stampModelTextScanAppeal({
   const hashes = JSON.stringify(granted ? grantHashes : {});
   return dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
         SELECT jsonb_object_agg(
           l.label,

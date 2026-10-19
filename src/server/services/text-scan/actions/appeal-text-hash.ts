@@ -16,6 +16,7 @@ import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export async function loadTextScanTextHash(entityType: 'Model' | 'Bounty', entityId: number) {
   const subject = (await getTextScanProfile(entityType)?.load([entityId]))?.get(entityId);
@@ -67,7 +68,7 @@ export async function stampModeratorTextScanRuling({
   // The moderator just ruled on the current state, so a pending re-detection is moot.
   await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}::text, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, (COALESCE(${flagEntryPath(label)}, '{}'::jsonb) - 'redetected')
           || ${carriedRulings(label, ['appealGranted'])}

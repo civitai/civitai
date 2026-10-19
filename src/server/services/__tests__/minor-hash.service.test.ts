@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // The replica/primary distinction is the point of these two: `resolveMinorFlagAppeal` re-reads
@@ -1108,9 +1110,9 @@ describe('dismissMinorHashMatch', () => {
     await dismissMinorHashMatch({ modelId: 100, userId: 7 });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('COALESCE(meta');
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Prisma.sql(strings as TemplateStringsArray, ...values).sql;
+    expect(text).toContain(`meta = ${asJsonbObject('meta')}`);
     expect(text).toContain('|| jsonb_build_object');
     expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
       entityType: 'model',

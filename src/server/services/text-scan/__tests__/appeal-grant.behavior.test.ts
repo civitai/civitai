@@ -1055,6 +1055,21 @@ describe('review mode: a first detection waits for a moderator', () => {
     );
   });
 
+  // A model published with an empty meta stores JSON `null` there, and `COALESCE(meta, '{}') || x`
+  // turned it into `[null, x]`: on 2026-10-18 four held detections did this, and prepare-leaderboard's
+  // jsonb_set then threw on them and built no board.
+  it('writes an object, not an array, over a JSON-null meta', async () => {
+    labelMode.value = 'review';
+    await seed({ scanHash: SCANNED });
+    await holder.db.query(`UPDATE "Model" SET meta = 'null'::jsonb WHERE id = $1`, [MODEL_ID]);
+
+    await apply('minor', NEWER);
+
+    const { meta } = await stored();
+    expect(Array.isArray(meta)).toBe(false);
+    expect(meta.textScanFlags.minor.redetected).toMatchObject({ kind: 'first', textHash: NEWER });
+  });
+
   it('holds poi the same way, without restricting the model', async () => {
     await hold('poi');
     expect((await entryOf('poi')).redetected).toMatchObject({ kind: 'first', textHash: NEWER });

@@ -271,6 +271,7 @@ import type {
 import { Flags } from '~/shared/utils/flags';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2456,7 +2457,7 @@ async function captureMinorFlagSnapshot(modelId: number, source: MinorFlagSnapsh
   try {
     await dbWrite.$executeRaw`
       UPDATE "Model" m
-      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
         ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
           'at', now(),
           'source', ${source},
@@ -3742,7 +3743,7 @@ export const publishModelById = async ({
           },
           data: {
             status,
-            meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+            meta: isEmpty(meta) ? {} : meta,
             deletedAt: null,
           },
           select: publishedModelSelect,
@@ -4043,15 +4044,15 @@ export const unpublishModelById = async ({
             ? existing.status
             : ModelStatus.Unpublished
         }::"ModelStatus",
-            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(
-              preserveModStatus
-                ? {}
-                : {
-                    ...(reason ? { unpublishedReason: reason, customMessage } : {}),
-                    unpublishedAt,
-                    unpublishedBy: userId,
-                  }
-            )}::jsonb,
+            "meta" = ${asJsonbObjectSql('"meta"')} || ${JSON.stringify(
+        preserveModStatus
+          ? {}
+          : {
+              ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+              unpublishedAt,
+              unpublishedBy: userId,
+            }
+      )}::jsonb,
             -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
             -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
             -- public v1 payload via modelVersion.selector.
