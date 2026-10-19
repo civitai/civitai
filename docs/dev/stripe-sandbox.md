@@ -50,6 +50,8 @@ pnpm exec tsx scripts/stripe-sandbox/sync.ts --apply --map-out ids.json
   in place and create nothing new. A price whose amount, currency or interval changed in live gets a
   new sandbox price (prices are immutable); the lookup key and product default move to it, and the old
   copy is archived.
+- Sandbox objects without `metadata.live_id` (made by hand, or by other tests) are never touched, so
+  older hand-made copies with the same names can sit beside the synced ones.
 - Inactive live products and prices are skipped unless `--include-inactive`. Tiered prices are skipped.
 - `ids.json` maps each live id to its sandbox id.
 
