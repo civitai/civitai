@@ -85,11 +85,13 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             <Logo />
             {!features.canWrite ? (
               <ReadOnlyNotice />
-            ) : (
+            ) : features.buzzSpendPop ? (
               // Hidden on phones for signed-in users to make room for the Buzz counter.
               <div className={clsx({ ['@max-md:hidden']: !!currentUser })}>
                 <SupportButton />
               </div>
+            ) : (
+              <SupportButton />
             )}
             {/* Disabled until next event */}
             {/* <EventButton /> */}
@@ -147,6 +149,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             >
               <IconSearch />
             </LegacyActionIcon>
+            {currentUser && !features.buzzSpendPop && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && showChat && <ChatButton />}
             {/*{currentUser?.isModerator && <ModerationNav />}*/}

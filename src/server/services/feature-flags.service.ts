@@ -796,6 +796,12 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
+  // with the phone header change it needs (support pill and Civitai Link move into the account
+  // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
+  //
+  // Local dev: `FEATURE_FLAG_BUZZ_SPEND_POP=public` in `.env`, which bypasses Flipt entirely.
+  buzzSpendPop: { availability: ['mod', 'granted'], fliptKey: 'buzz-spend-pop' },
   // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
   // DARK by construction: Flipt owns it entirely and the flag must be created
   // default-OFF in flipt-state (separate, human-reviewed change) before any
