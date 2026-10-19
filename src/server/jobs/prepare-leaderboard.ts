@@ -526,6 +526,7 @@ export async function setCoverImageNsfwLevelOrLog() {
 /**
  * `jsonb_set` throws on a meta that is not an object, failing its whole chunk. On 2026-10-18 four
  * array-shaped `Model.meta` rows did that and no board was built for the next day.
+ * SQL NULL counts as malformed on purpose: `meta` is NOT NULL on both tables, so one cannot occur.
  */
 function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersion') {
   const isWritable = (row: NsfwLevelRow) => row.metaType === 'object' || row.metaType === 'null';
