@@ -8,6 +8,7 @@ import { bustPublicModelResponseCache } from '~/server/services/model-version.se
 import { createNotification } from '~/server/services/notification.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
+import { writeTextScanRuling } from '~/server/services/text-scan/label-capture';
 import {
   appealGrantCoversText,
   buildTextScanFlagEntry,
@@ -630,7 +631,10 @@ export async function grantModelTextScanPoi({
   });
   if (!before?.poi) return false;
 
-  const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
+  // The lift and its label commit together.
+  const [after] = await writeTextScanRuling(
+    { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
+    (tx) => tx.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
     SET poi = FALSE,
         nsfw = CASE WHEN m.minor THEN m.nsfw
@@ -676,7 +680,9 @@ export async function grantModelTextScanPoi({
       }
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
-  `;
+  `,
+    (rows) => rows.length > 0
+  );
   if (!after) return false;
 
   const { applyModelFlagSideEffects } = await loadModelService();
@@ -749,7 +755,10 @@ export async function stampModelTextScanAppeal({
   if (granted && !labels.every((label) => grantHashes?.[label]))
     throw new Error('A granted appeal needs the grant hash it covers for every label');
   const hashes = JSON.stringify(granted ? grantHashes : {});
-  return dbWrite.$executeRaw`
+  // The ruling and its labels commit together.
+  return writeTextScanRuling(
+    { modelId, labels, decision, via, moderatorId: userId, reason, note },
+    (tx) => tx.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
@@ -776,7 +785,9 @@ export async function stampModelTextScanAppeal({
           ? Prisma.sql`AND ${flagEntryPath(labels[0])}->>'textHash' = ${expectTextHash}`
           : Prisma.empty
       }
-  `;
+  `,
+    (changed) => changed > 0
+  );
 }
 
 export async function reassertModelPoiRestrictions(modelId: number) {
