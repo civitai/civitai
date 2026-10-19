@@ -636,17 +636,29 @@ export async function resolveScanOutcome({
   }
 
   // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
-  // never lifts it. Read fresh, not from `image`: the ban can block the row while this scan runs.
+  // never lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  // Judged on every block marker, as the appeal branch is: a scan error or a rescan request moves
+  // `ingestion` off Blocked but leaves the reason and the Blocked level.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
-      { ingestion: ImageIngestionStatus; blockedFor: string | null; ownerBanned: boolean }[]
+      {
+        ingestion: ImageIngestionStatus;
+        blockedFor: string | null;
+        nsfwLevel: number;
+        ownerBanned: boolean;
+      }[]
     >`
-      SELECT i.ingestion, i."blockedFor", u."bannedAt" IS NOT NULL AS "ownerBanned"
+      SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
       WHERE i.id = ${image.id}
     `;
-    if (current?.ownerBanned && current.ingestion === ImageIngestionStatus.Blocked) {
+    const blockedNow =
+      !!current &&
+      (current.ingestion === ImageIngestionStatus.Blocked ||
+        current.nsfwLevel === NsfwLevel.Blocked ||
+        current.blockedFor != null);
+    if (current?.ownerBanned && blockedNow) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;

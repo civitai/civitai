@@ -26,7 +26,7 @@ const create = (over: Record<string, unknown> = {}) =>
 const createdData = () => dbMock.dbWrite.image.create.mock.calls[0][0].data;
 
 describe('createImage for an owner', () => {
-  it('who is banned stores the image blocked and never sends it to scan', async () => {
+  it('who is banned stores the image blocked and still sends it to scan', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: new Date() } as never);
 
     await create();
@@ -41,7 +41,8 @@ describe('createImage for an owner', () => {
       blockedFor: 'moderated',
       nsfwLevel: 32,
     });
-    expect(createImageIngestionRequest).not.toHaveBeenCalled();
+    // Rated now, so the row is not unrated media if the block is ever lifted.
+    expect(createImageIngestionRequest).toHaveBeenCalledOnce();
   });
 
   it('who is banned stores the image blocked even when the caller skips ingestion', async () => {

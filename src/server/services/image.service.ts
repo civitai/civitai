@@ -6741,7 +6741,8 @@ export async function createImage({
     verifiedSourceImageIds
   );
   const metadata = stripBlockProvenanceMetadata(image.metadata);
-  // A banned owner's new image is stored blocked, like the media the ban already blocked.
+  // A banned owner's new image is stored blocked, like the media the ban already blocked. It is still
+  // scanned, so the row is rated if the block is ever lifted; the scan result keeps the block.
   const owner = await dbWrite.user.findUnique({
     where: { id: image.userId },
     select: { bannedAt: true },
@@ -6782,7 +6783,7 @@ export async function createImage({
     void fillVideoDimensions({ id: result.id, url: image.url }).catch(() => null);
   }
 
-  if (!skipIngestion && !ownerBanned) {
+  if (!skipIngestion) {
     await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
     await ingestImage({
       image: {

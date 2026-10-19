@@ -94,10 +94,16 @@ beforeEach(async () => {
   `);
 });
 
-const insertImage = (id: number, userId: number, ingestion: string, blockedFor: string | null) =>
+const insertImage = (
+  id: number,
+  userId: number,
+  ingestion: string,
+  blockedFor: string | null,
+  nsfwLevel = ingestion === 'Blocked' ? 32 : 0
+) =>
   holder.db.query(
     `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES ($1, $2, $3, $4, $5)`,
-    [id, userId, ingestion, blockedFor, ingestion === 'Blocked' ? 32 : 0]
+    [id, userId, ingestion, blockedFor, nsfwLevel]
   );
 
 /** The image as `loadImageForScan` handed it over, possibly before the row changed under it. */
@@ -171,6 +177,22 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
 
     expect(outcome.blockedFor).toBe('moderated');
     expect((await imageRow(6)).blockedFor).toBe('moderated');
+  });
+
+  it.each([
+    ['a failed scan moved it to Error', 'Error'],
+    ['a rescan request moved it to Rescan', 'Rescan'],
+  ])('keeps the block after %s', async (_, ingestion) => {
+    await insertImage(9, BANNED, ingestion, 'moderated', 32);
+
+    const outcome = await scan(loaded(9, BANNED, ingestion, 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(9)).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
   });
 });
 
