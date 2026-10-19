@@ -2,6 +2,7 @@ import type * as Crypto from 'crypto';
 import type * as EventShopItem from '~/server/events/event-shop-item';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as RosterSync from '~/server/events/points/roster-sync';
+import type * as LoadEvents from '~/server/events/load-events';
 import { Prisma } from '@prisma/client';
 import { computeBoxOdds } from '@civitai/shared/box-odds';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,10 +10,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Opening a mystery box: one transaction under the holder's item-holder lock that draws from what the
 // box still has for the holder, grants it, records the draw and removes the box. No money moves.
 
-const { mocks } = vi.hoisted(() => ({
+const { mocks, actual } = vi.hoisted(() => ({
+  actual: {} as { getEventBuyerTeam?: typeof EventShopItem.getEventBuyerTeam },
   mocks: {
     randomInt: vi.fn(),
     getEventBuyerTeam: vi.fn(),
+    loadEvents: vi.fn(),
     syncRoster: vi.fn(),
     refreshStickers: vi.fn(),
   },
@@ -22,9 +25,14 @@ vi.mock('crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof Crypto>()),
   randomInt: mocks.randomInt,
 }));
-vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
-  ...(await importOriginal<typeof EventShopItem>()),
-  getEventBuyerTeam: mocks.getEventBuyerTeam,
+vi.mock('~/server/events/event-shop-item', async (importOriginal) => {
+  const original = await importOriginal<typeof EventShopItem>();
+  actual.getEventBuyerTeam = original.getEventBuyerTeam;
+  return { ...original, getEventBuyerTeam: mocks.getEventBuyerTeam };
+});
+vi.mock('~/server/events/load-events', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoadEvents>()),
+  loadEvents: mocks.loadEvents,
 }));
 vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof RosterSync>()),
@@ -35,6 +43,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   refreshOwnedStickerCache: mocks.refreshStickers,
 }));
 
+import { modGrantSourceKey } from '@civitai/shared/mystery-box';
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
@@ -594,6 +603,76 @@ describe('opening a mystery box', () => {
   it("a held box opens after its definition is archived: the box is the holder's", async () => {
     world.box.status = 'archived';
     await expect(open()).resolves.toMatchObject({ replayed: false });
+  });
+});
+
+// A grant reaches a holder no purchase placed on a team: the open places them, before the lock.
+describe('a holder who never joined the event', () => {
+  const GRANTED = modGrantSourceKey('g1', HOLDER, 1);
+
+  beforeEach(() => {
+    world.items = [{ ...holderBox(), sourceKey: GRANTED }];
+    world.box.params = { event: 'birthday' };
+    world.contents = [
+      hat(1, COMMON, { event: 'birthday', team: 'red' }),
+      hat(2, COMMON, { event: 'birthday', team: 'blue' }),
+      hat(3, RARE, { event: 'birthday', team: 'red' }),
+    ];
+    mocks.getEventBuyerTeam.mockImplementation(actual.getEventBuyerTeam!);
+  });
+
+  // Unsettled, the holder has no team and a strict read throws: an open that skips settling fails.
+  const balancedEvent = (settle: () => Promise<string>) => {
+    let placed: string | undefined;
+    return {
+      name: 'birthday',
+      teams: ['red', 'blue'],
+      settleBalancedTeam: vi.fn(async () => {
+        world.log.push('settle');
+        placed = await settle();
+        return placed;
+      }),
+      getUserTeam: vi.fn(async () => {
+        if (!placed) throw new Error('not on a team');
+        return placed;
+      }),
+    };
+  };
+
+  it('is placed on a team by the open, before the lock, and draws from that team', async () => {
+    const event = balancedEvent(async () => 'blue');
+    mocks.loadEvents.mockResolvedValue([event]);
+
+    const result = await open();
+
+    expect(event.settleBalancedTeam.mock.calls).toEqual([[HOLDER]]);
+    expect(event.getUserTeam).toHaveBeenCalledWith(HOLDER, { strict: true });
+    expect(world.log.indexOf('settle')).toBeLessThan(
+      world.log.findIndex((line) => line.startsWith('lock:'))
+    );
+    expect(result).toMatchObject({ cosmeticId: 1002, replayed: false });
+    expect(world.openings.get(BOX_ITEM)).toMatchObject({
+      userId: HOLDER,
+      boxSourceKey: GRANTED,
+      contentId: 2,
+    });
+    expect(world.items).toEqual([]);
+  });
+
+  it('keeps the box when no team can be confirmed for them', async () => {
+    mocks.loadEvents.mockResolvedValue([
+      balancedEvent(async () => {
+        throw new Error('settle failed');
+      }),
+    ]);
+    await expect(open()).rejects.toThrow("We couldn't confirm your team");
+    nothingOpened();
+  });
+
+  it("keeps the box when its event isn't registered any more", async () => {
+    mocks.loadEvents.mockResolvedValue([]);
+    await expect(open()).rejects.toThrow(/^This item is not available$/);
+    nothingOpened();
   });
 });
 

@@ -124,8 +124,15 @@ let world: {
   contents: ReturnType<typeof hat>[];
   snapshots: { boxDefinitionId: number; version: number; snapshot: unknown; createdAt: Date }[];
   listings: Listing[];
-  items: { id: bigint; itemDefinitionId: number }[];
-  openings: { boxItemId: bigint; boxDefinitionId: number }[];
+  items: {
+    id: bigint;
+    itemDefinitionId: number;
+    holderType: string;
+    holderId: number;
+    quantity: number;
+  }[];
+  openings: { boxItemId: bigint; boxDefinitionId: number; userId: number }[];
+  purchases: { buzzTransactionId: string; shopItemId: number; refunded: boolean }[];
   blocked: unknown;
   owned: { userId: number; cosmeticId: number }[];
 };
@@ -149,9 +156,12 @@ function project(row: Record<string, unknown>, select: Select): Record<string, u
     })
   );
 }
+// An undefined value filters nothing, as in Prisma.
 const matches = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
   Object.entries(where).every(([key, want]) =>
-    want && typeof want === 'object' && 'in' in want
+    want === undefined
+      ? true
+      : want && typeof want === 'object' && 'in' in want
       ? (want as { in: unknown[] }).in.includes(row[key])
       : row[key] === want
   );
@@ -204,8 +214,17 @@ function installWorld() {
       .filter((l) => ids.includes(l.id) && l.sold > 0)
       .map((l) => ({ shopItemId: l.id, sold: l.sold }));
   });
-  db.item.findFirst.mockReset();
-  db.item.findFirst.mockImplementation(async (q: Query) => answer(world.items, q)[0] ?? null);
+  db.item.aggregate.mockReset();
+  db.item.aggregate.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+    const rows = world.items.filter((item) => matches(item, where));
+    return {
+      _sum: { quantity: rows.length ? rows.reduce((n, item) => n + item.quantity, 0) : null },
+    };
+  });
+  db.userCosmeticShopPurchases.findFirst.mockReset();
+  db.userCosmeticShopPurchases.findFirst.mockImplementation(
+    async (q: Query) => answer(world.purchases, q)[0] ?? null
+  );
   db.boxOpening.findFirst.mockReset();
   db.boxOpening.findFirst.mockImplementation(
     async (q: Query) => answer(world.openings, q)[0] ?? null
@@ -300,6 +319,7 @@ beforeEach(() => {
     listings: [listing(), listing({ id: 43, itemDefinitionId: OTHER_BOX, unitAmount: 900 })],
     items: [],
     openings: [],
+    purchases: [],
     blocked: undefined,
     owned: [],
   };
@@ -394,16 +414,23 @@ describe('who sees the odds page', () => {
   });
 });
 
-// A box is public once it has gone on sale, or once anyone holds or has opened one. Staged ahead of
-// its listing, only moderators see it.
 describe('before the box goes on sale', () => {
   const MOD = { id: 5, isModerator: true };
+  const HOLDER = { id: 6, isModerator: false };
+  const STRANGER = { id: 7, isModerator: false };
   const nextWeek = () => new Date(Date.now() + 7 * 24 * 3600_000);
+  const heldBy = (userId: number, itemDefinitionId = BOX, id = 501n) => ({
+    id,
+    itemDefinitionId,
+    holderType: 'user',
+    holderId: userId,
+    quantity: 1,
+  });
 
   it('hides a box whose only listing opens later, except from moderators', async () => {
     world.listings = [listing({ availableFrom: nextWeek() })];
     expect(await read()).toBeNull();
-    expect(await read({ viewer: { id: 6, isModerator: false } })).toBeNull();
+    expect(await read({ viewer: STRANGER })).toBeNull();
     expect((await read({ viewer: MOD }))?.price).toBeNull();
   });
 
@@ -415,16 +442,57 @@ describe('before the box goes on sale', () => {
     expect(await read()).toBeNull();
   });
 
-  it('shows it once anyone holds one, or has opened one', async () => {
+  it('shows a box granted before its sale to its holder, and to no one else', async () => {
+    world.listings = [listing({ availableFrom: nextWeek() })];
+    world.items = [heldBy(HOLDER.id)];
+    expect(await read({ viewer: HOLDER })).not.toBeNull();
+    expect(await read({ viewer: STRANGER })).toBeNull();
+    expect(await read()).toBeNull();
+  });
+
+  it('shows it to a viewer who has opened one, and to no one else', async () => {
     world.listings = [];
-    world.items = [{ id: 501n, itemDefinitionId: BOX }];
-    expect(await read()).not.toBeNull();
-    world.items = [{ id: 502n, itemDefinitionId: OTHER_BOX }];
+    world.openings = [{ boxItemId: 503n, boxDefinitionId: BOX, userId: HOLDER.id }];
+    expect(await read({ viewer: HOLDER })).not.toBeNull();
+    expect(await read({ viewer: STRANGER })).toBeNull();
+  });
+
+  it("isn't opened up by what the viewer holds of another box, or by an id-less viewer", async () => {
+    world.listings = [];
+    world.items = [heldBy(HOLDER.id, OTHER_BOX, 502n)];
+    world.openings = [{ boxItemId: 504n, boxDefinitionId: OTHER_BOX, userId: HOLDER.id }];
+    expect(await read({ viewer: HOLDER })).toBeNull();
+    world.items = [heldBy(HOLDER.id)];
+    expect(await read({ viewer: { isModerator: false } })).toBeNull();
+  });
+
+  it('shows it to anyone once one was bought, from a listing no longer on sale', async () => {
+    world.listings = [listing({ status: 'Archived', availableFrom: nextWeek() })];
     expect(await read()).toBeNull();
-    world.openings = [{ boxItemId: 504n, boxDefinitionId: OTHER_BOX }];
-    expect(await read()).toBeNull();
-    world.openings = [{ boxItemId: 503n, boxDefinitionId: BOX }];
+    world.purchases = [
+      { buzzTransactionId: 'item-purchase-v1-a', shopItemId: 42, refunded: false },
+    ];
+    expect(await read({ viewer: STRANGER })).not.toBeNull();
     expect(await read()).not.toBeNull();
+  });
+
+  // A refund does not un-publish a page already disclosed.
+  it('counts a refunded purchase as a sale', async () => {
+    world.listings = [listing({ status: 'Archived' })];
+    expect(await read()).toBeNull();
+    world.purchases = [{ buzzTransactionId: 'item-purchase-v1-r', shopItemId: 42, refunded: true }];
+    expect(await read()).not.toBeNull();
+  });
+
+  it("isn't opened up by a purchase of another box", async () => {
+    world.listings = [
+      listing({ status: 'Archived' }),
+      listing({ id: 43, itemDefinitionId: OTHER_BOX }),
+    ];
+    world.purchases = [
+      { buzzTransactionId: 'item-purchase-v1-b', shopItemId: 43, refunded: false },
+    ];
+    expect(await read()).toBeNull();
   });
 
   it('shows it, priced, once its listing window has opened', async () => {
