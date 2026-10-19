@@ -27,6 +27,15 @@ export type SplitDb = {
   raw: Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
   stamp: (appListingId: string) => Promise<{ at: string | null; by: number | null } | null>;
   /**
+   * Switch this connection to a role that may do everything to the other tables but only
+   * `privileges` on `app_listing_red_media` (none: present but unreadable) — the state of an
+   * environment where the table was created without granting it to the role the app connects
+   * as. Call after {@link SplitDb.applyMigration}. {@link SplitDb.stamp} reads as the owner.
+   */
+  restrictTo: (privileges: ('SELECT' | 'INSERT' | 'UPDATE')[]) => Promise<void>;
+  /** Back to the owning role (a no-op when not restricted). */
+  unrestrict: () => Promise<void>;
+  /**
    * Route a mocked Prisma client's raw SQL here when it names the split table or the face read;
    * everything else keeps answering `fallback`.
    */
@@ -61,7 +70,40 @@ export async function createSplitDb(): Promise<SplitDb> {
   } as unknown as Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
   const rawQuery = pg.queryRaw as RawFn;
   const rawExecute = pg.executeRaw as RawFn;
+  const readStamp = async (appListingId: string) => {
+    const { rows } = await db.query<{ at: string | null; by: number | null }>(
+      `SELECT media_split_approved_at::text AS at, media_split_approved_by AS by
+       FROM app_listing_red_media WHERE app_listing_id = $1`,
+      [appListingId]
+    );
+    return rows[0] ?? null;
+  };
+  let restricted = false;
+  const unrestrict = async () => {
+    if (!restricted) return;
+    await db.exec(`RESET ROLE`);
+    restricted = false;
+  };
   return {
+    restrictTo: async (privileges) => {
+      await unrestrict();
+      await db.exec(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'split_test_client') THEN
+            CREATE ROLE split_test_client;
+          END IF;
+        END $$;
+        GRANT ALL ON "User", "Image", app_listings TO split_test_client;
+        REVOKE ALL ON app_listing_red_media FROM split_test_client;
+      `);
+      if (privileges.length)
+        await db.exec(
+          `GRANT ${privileges.join(', ')} ON app_listing_red_media TO split_test_client`
+        );
+      await db.exec(`SET ROLE split_test_client`);
+      restricted = true;
+    },
+    unrestrict,
     db,
     raw,
     applyMigration: async () => {
@@ -80,12 +122,13 @@ export async function createSplitDb(): Promise<SplitDb> {
         await db.query(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [id]);
     },
     stamp: async (appListingId) => {
-      const { rows } = await db.query<{ at: string | null; by: number | null }>(
-        `SELECT media_split_approved_at::text AS at, media_split_approved_by AS by
-         FROM app_listing_red_media WHERE app_listing_id = $1`,
-        [appListingId]
-      );
-      return rows[0] ?? null;
+      const wasRestricted = restricted;
+      if (wasRestricted) await db.exec(`RESET ROLE`);
+      try {
+        return await readStamp(appListingId);
+      } finally {
+        if (wasRestricted) await db.exec(`SET ROLE split_test_client`);
+      }
     },
     route: (client, fallback = {}) => {
       client.$queryRaw.mockImplementation(async (strings, ...values) =>

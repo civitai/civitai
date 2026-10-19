@@ -6,11 +6,11 @@
 -- database (the one holding `app_listings`), dev first, then production.
 --
 -- Order relative to the code is free: apply it before or after the deploy. Every statement the
--- code issues against this table is preceded by a `to_regclass` probe
--- (`listing-media-split.service.ts`), so until it is applied every listing reads unsplit: its
--- rating is floored by all of its media, exactly as before this table existed. The one thing
--- that fails is a moderator explicitly choosing the split at approve, which is refused with a
--- message saying it is not available yet.
+-- code issues against this table is preceded by a probe (`listing-media-split.service.ts`) of
+-- whether the table exists AND what the connecting role may do with it, so until it is applied
+-- every listing reads unsplit: its rating is floored by all of its media, exactly as before this
+-- table existed. The one thing that fails is a moderator explicitly choosing the split at
+-- approve, which is refused with a message saying it is not available yet.
 --
 -- ADDITIVE ONLY. One new, empty table; no column, index or row of an existing table changes.
 -- Idempotent (`IF NOT EXISTS`), so a re-run is a no-op.
@@ -33,10 +33,19 @@
 --   2. Run it off-peak.
 --   3. On `canceling statement due to lock timeout`, nothing was applied (one transaction);
 --      wait and re-run.
---   4. The app's database role must be able to SELECT, INSERT and UPDATE the new table. The
---      probe only covers the table being ABSENT; a present table the app cannot read fails every
---      approve, owner republish and image re-rate. Grant it here if new tables are not
---      automatically owned by or granted to that role in this environment.
+--   4. GRANTS — two roles, if new tables are not automatically owned by or granted to them in
+--      this environment:
+--        - the role the app WRITES with (its primary client): SELECT, INSERT, UPDATE;
+--        - the role the app's READ client connects as: SELECT.
+--      Missing grants are fail-safe but not silent. A role that cannot SELECT the table reads
+--      every listing as unsplit (as if the table were absent), so author and store reads keep
+--      working — but without the READ client's grant the review modal shows a split listing as
+--      unsplit and preselects ending the split. A go-live that would write it — a split, or clearing one, which every approve
+--      without a split decision does — is refused up front with a moderator-facing message when
+--      the writing role lacks the privileges it needs, and nothing is written or built: a split
+--      needs all three; a clear needs SELECT, plus UPDATE when the listing is split. So with the
+--      table present and NO grant to the write role, every listing go-live approve is refused
+--      until it is granted.
 --
 -- ROLLBACK (discards every split decision; every listing then reads as unsplit, and the code
 -- does not need rolling back). Dropping the table drops its foreign keys, which locks the same

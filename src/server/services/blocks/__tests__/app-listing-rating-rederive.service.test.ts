@@ -99,7 +99,7 @@ function client(via: 'pool' | 'tx', undo: Array<() => void>) {
       const text = stmt.text.replace(/\s+/g, ' ').trim();
       if (text.includes("to_regclass('app_listing_red_media')")) {
         ops.push(`${via}:split`);
-        return [{ present: true }];
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
       }
       if (text.includes('FROM app_listing_red_media'))
         return [{ split: splitListings.has(stmt.values[0] as string) }];

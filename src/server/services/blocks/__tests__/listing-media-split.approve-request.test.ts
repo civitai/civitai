@@ -132,6 +132,7 @@ afterAll(async () => {
 });
 
 async function resetSplitTable(present: boolean) {
+  await split.unrestrict();
   await split.db.exec(`DROP TABLE IF EXISTS app_listing_red_media`);
   await split.db.exec(`TRUNCATE app_listings, "Image", "User" CASCADE`);
   if (present) await split.applyMigration();
@@ -260,6 +261,47 @@ describe.each([
     wire(target);
     await approve();
     expect(stampedRating(target)).toBe('r');
+  });
+
+  // The table present but not granted to the role the app writes with (`SET ROLE` on PGlite).
+  // The go-live writes below the pre-flight LOG AND CONTINUE, so without the pre-flight this
+  // deployed the app with the listing left `draft`, or `pending` with the block `suspended`.
+  const NOT_WRITABLE = /not permitted to update it/;
+  const unsuspended = () =>
+    db.write.appBlock.updateMany.mock.calls.some(
+      (c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved'
+    );
+
+  it('🔴 present but unreadable: an approve with NO decision is refused before anything is committed or flipped', async () => {
+    await split.restrictTo([]);
+    wire(target);
+    await expect(approve()).rejects.toThrow(NOT_WRITABLE);
+    expect(commitFiles).not.toHaveBeenCalled();
+    expect(stampedRating(target)).toBeUndefined();
+    expect(unsuspended()).toBe(false);
+  });
+
+  it('🔴 present but read-only: a split is refused as not writable before anything is committed', async () => {
+    await split.restrictTo(['SELECT']);
+    wire(target);
+    await expect(approve('split')).rejects.toThrow(NOT_WRITABLE);
+    expect(commitFiles).not.toHaveBeenCalled();
+    expect(stampedRating(target)).toBeUndefined();
+  });
+
+  it('🔴 present but read-only with nothing to clear: an approve without a decision goes live as before', async () => {
+    await split.restrictTo(['SELECT']);
+    wire(target);
+    await approve();
+    expect(stampedRating(target)).toBe('r');
+  });
+
+  it('positive control: granted SELECT, INSERT and UPDATE, the same role approves a split', async () => {
+    await split.restrictTo(['SELECT', 'INSERT', 'UPDATE']);
+    wire(target);
+    await approve('split');
+    expect(stampedRating(target)).toBe('g');
+    expect(await split.stamp(id)).toEqual({ at: expect.any(String), by: MOD });
   });
 });
 

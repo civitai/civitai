@@ -905,6 +905,9 @@ export function OffsiteReviewModalBody({
                 assets={ratingAssets}
                 currentlySplit={assetsQuery.data.mediaSplitApproved}
                 value={mediaSplit}
+                // An on-site media REVISION records the decision but keeps the app's rating
+                // (`applyApprovedRevision` is assets-only), so it must not preview ratings.
+                appliesRating={!(isOnsite && !isOnsiteRepublishReview)}
                 onChange={(v) => {
                   setMediaSplitChoice(v);
                   setRatingOverride(null);

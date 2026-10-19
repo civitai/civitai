@@ -2665,29 +2665,43 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
-  // The listing writes below log and continue on failure, so a split that cannot be granted
-  // is refused here, before anything is written or built.
-  if (params.mediaSplit === 'split') {
-    const target =
-      (await dbWrite.appListing.findFirst({
-        where: draftTransitionWhere({
-          slug: request.slug,
-          submittedByUserId: request.submittedByUserId,
-        }),
-        select: { iconId: true, coverId: true },
-      })) ??
-      (existingAppBlock
-        ? await dbWrite.appListing.findFirst({
-            where: resetRestoreWhere(existingAppBlock.id),
-            select: { iconId: true, coverId: true },
-          })
-        : null);
-    if (!target)
-      throw new Error(
-        'Cannot approve with a media split: this approve publishes no store listing.'
-      );
-    const { assertListingMediaSplitGrantable } = await import('./listing-media-split.service');
-    await assertListingMediaSplitGrantable(dbWrite, target);
+  // The listing writes below log and continue on failure, so a split decision they could not
+  // write is refused HERE, before anything is written or built — otherwise the app would deploy
+  // with its listing left `draft` (or, on a reset re-approve, `pending` with the block still
+  // `suspended`) and only a log line saying why. That covers every decision, not just `split`:
+  // without one the go-live CLEARS any earlier split, which needs the table to be writable too.
+  // With the table absent and no split asked for there is nothing to write, so no listing read.
+  {
+    const { assertListingMediaSplitDecisionApplicable, probeListingMediaSplitTable } = await import(
+      './listing-media-split.service'
+    );
+    const access = await probeListingMediaSplitTable(dbWrite);
+    if (params.mediaSplit === 'split' || access.present) {
+      const target =
+        (await dbWrite.appListing.findFirst({
+          where: draftTransitionWhere({
+            slug: request.slug,
+            submittedByUserId: request.submittedByUserId,
+          }),
+          select: { id: true, iconId: true, coverId: true },
+        })) ??
+        (existingAppBlock
+          ? await dbWrite.appListing.findFirst({
+              where: resetRestoreWhere(existingAppBlock.id),
+              select: { id: true, iconId: true, coverId: true },
+            })
+          : null);
+      if (!target && params.mediaSplit === 'split')
+        throw new Error(
+          'Cannot approve with a media split: this approve publishes no store listing.'
+        );
+      if (target)
+        await assertListingMediaSplitDecisionApplicable(
+          dbWrite,
+          { appListingId: target.id, face: target, decision: params.mediaSplit },
+          access
+        );
+    }
   }
 
   let appBlockId: string;

@@ -466,6 +466,32 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
     // assertion to the mismatch callout itself.
     await expect.element(mismatch).toHaveTextContent('must not exceed the app’s rating');
   });
+
+  test('🔴 the split choice previews no rating: the revision apply records it but rates nothing', async () => {
+    // `applyApprovedRevision`'s on-site branch is assets-only — it writes the split stamp and
+    // never `contentRating`. Fixture ratings are distinct (all media R, civitai.com media G), so
+    // a projection of either would be visible.
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const control = page.getByTestId('apps-media-split');
+    await expect.element(control).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-media-split-later'))
+      .toHaveTextContent('keeps the app’s current rating');
+    expect(page.getByTestId('apps-media-split-all-rating').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-media-split-com-rating').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-media-split-audiences').elements()).toHaveLength(0);
+    const text = control.element().textContent ?? '';
+    expect(text).not.toMatch(/\((G|PG|PG-13|R|X|XXX)\)/);
+    expect(text).not.toContain(' as G');
+    // The decision itself is kept: preselected as the listing's current split, and sent.
+    await expect.element(page.getByRole('radio', { name: /^Split:/ })).toBeChecked();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'split' })
+    );
+  });
 });
 
 // 🔴 The OTHER on-site request shape: an owner republish whose store imagery changed
@@ -520,6 +546,13 @@ describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-
     await expect.element(mismatch).toBeInTheDocument();
     await expect.element(mismatch).toHaveTextContent('it is a floor here, not a cap');
     expect(mismatch.element().textContent).not.toContain('reject this revision');
+  });
+
+  test('positive control: a republish review DOES rate, so its split choice shows the projection', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-media-split-all-rating')).toBeInTheDocument();
+    expect(page.getByTestId('apps-media-split-later').elements()).toHaveLength(0);
   });
 
   test('🔴 the approve Select defaults to the DERIVED rating (the floor), not the app rating', async () => {

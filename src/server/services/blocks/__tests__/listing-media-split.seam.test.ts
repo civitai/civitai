@@ -90,7 +90,8 @@ function tx() {
   return {
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = Prisma.sql(strings, ...values).text;
-      if (text.includes('to_regclass')) return [{ present: true }];
+      if (text.includes('to_regclass'))
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
       if (text.includes('FROM app_listing_red_media')) return [{ split }];
       return [{ id: LISTING_ID }]; // the row lock
     },

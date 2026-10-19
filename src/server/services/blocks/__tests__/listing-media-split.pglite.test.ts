@@ -6,6 +6,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   applyListingMediaSplitDecision,
   MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE,
+  MEDIA_SPLIT_NOT_WRITABLE_MESSAGE,
   MEDIA_SPLIT_UNAVAILABLE_MESSAGE,
   readListingMediaSplit,
 } from '~/server/services/blocks/listing-media-split.service';
@@ -178,6 +179,143 @@ describe('with the migration applied', () => {
     await grant();
     await s.applyMigration();
     expect(await readListingMediaSplit(s.raw, LISTING)).toBe(true);
+  });
+});
+
+describe('with the table PRESENT but not granted to the role the app connects as', () => {
+  // The migration is applied by hand, and a table created by a human's role is not necessarily
+  // readable or writable by the app's. Each case below runs AS a role holding only the named
+  // privileges on the table (and everything on the others), via `SET ROLE`.
+  let s: SplitDb;
+  beforeAll(async () => {
+    s = await createSplitDb();
+    await s.applyMigration();
+  });
+  afterAll(() => s.db.close());
+  beforeEach(async () => {
+    await s.unrestrict();
+    await s.db.exec(`TRUNCATE app_listing_red_media, app_listings, "Image", "User" CASCADE`);
+    await s.seed({
+      listingIds: [LISTING],
+      images: { [ICON]: NsfwLevel.PG, [COVER]: NsfwLevel.PG },
+      users: [MOD],
+    });
+  });
+
+  /** A split stamped by the owning role, before the app's role lost (or never had) its grant. */
+  const stampAsOwner = () =>
+    s.db.query(
+      `INSERT INTO app_listing_red_media (app_listing_id, media_split_approved_at, media_split_approved_by)
+       VALUES ($1, now(), $2)`,
+      [LISTING, MOD]
+    );
+
+  /**
+   * Refused by the service, up front — a `TRPCError` carrying the moderator-facing message — not
+   * by Postgres. The literal fragment keeps the check meaningful against code that never
+   * exported the constant.
+   */
+  async function expectNotWritable(p: Promise<unknown>) {
+    const err = await p.then(
+      () => undefined,
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('BAD_REQUEST');
+    expect((err as TRPCError).message).toMatch(/not permitted to update it/);
+    expect((err as TRPCError).message).toBe(MEDIA_SPLIT_NOT_WRITABLE_MESSAGE);
+  }
+
+  const decide = (decision?: 'split' | 'rate-mature') =>
+    applyListingMediaSplitDecision(s.raw, {
+      appListingId: LISTING,
+      face,
+      decision,
+      actorUserId: MOD,
+    });
+
+  it('positive control: the restricted role really cannot read it', async () => {
+    await s.restrictTo([]);
+    await expect(s.db.query(`SELECT 1 FROM app_listing_red_media`)).rejects.toThrow(
+      /permission denied/
+    );
+  });
+
+  it('🔴 unreadable: a read is "unsplit", even for a stamped listing, and does not throw', async () => {
+    await stampAsOwner();
+    await s.restrictTo([]);
+    expect(await readListingMediaSplit(s.raw, LISTING)).toBe(false);
+  });
+
+  it('🔴 unreadable: a read never aborts the transaction it runs in', async () => {
+    await s.restrictTo([]);
+    const after = await s.db.transaction(async (tx) => {
+      await readListingMediaSplit(createTxRaw(tx), LISTING);
+      return (await tx.query<{ n: number }>(`SELECT 41 + 1 AS n`)).rows[0].n;
+    });
+    expect(after).toBe(42);
+  });
+
+  it('positive control: with SELECT granted the same read sees the stamp', async () => {
+    await stampAsOwner();
+    await s.restrictTo(['SELECT']);
+    expect(await readListingMediaSplit(s.raw, LISTING)).toBe(true);
+  });
+
+  it('🔴 unreadable: clearing is refused, saying why, rather than assumed to have nothing to clear', async () => {
+    await stampAsOwner();
+    await s.restrictTo([]);
+    for (const decision of [undefined, 'rate-mature'] as const)
+      await expectNotWritable(decide(decision));
+    expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('🔴 read-only and the listing is not split: clearing has nothing to do and succeeds', async () => {
+    await s.restrictTo(['SELECT']);
+    expect(await decide()).toBe(false);
+    expect(await decide('rate-mature')).toBe(false);
+  });
+
+  it('🔴 read-only and the listing IS split: clearing is refused and the stamp stays', async () => {
+    await stampAsOwner();
+    await s.restrictTo(['SELECT']);
+    await expectNotWritable(decide('rate-mature'));
+    expect(await s.stamp(LISTING)).toEqual({ at: expect.any(String), by: MOD });
+  });
+
+  it('🔴 a split without INSERT and UPDATE is refused as not writable, not as unavailable', async () => {
+    for (const privileges of [
+      [],
+      ['SELECT'],
+      ['SELECT', 'INSERT'],
+      ['SELECT', 'UPDATE'],
+    ] as const) {
+      await s.restrictTo([...privileges]);
+      await expectNotWritable(decide('split'));
+      expect(await s.stamp(LISTING)).toBeNull();
+    }
+  });
+
+  it('🔴 a refusal never aborts the transaction it runs in', async () => {
+    await s.restrictTo([]);
+    const after = await s.db.transaction(async (tx) => {
+      await applyListingMediaSplitDecision(createTxRaw(tx), {
+        appListingId: LISTING,
+        face,
+        decision: 'split',
+        actorUserId: MOD,
+      }).catch(() => undefined);
+      return (await tx.query<{ n: number }>(`SELECT 41 + 1 AS n`)).rows[0].n;
+    });
+    expect(after).toBe(42);
+  });
+
+  it('positive control: with SELECT, INSERT and UPDATE the restricted role grants and clears', async () => {
+    await s.restrictTo(['SELECT', 'INSERT', 'UPDATE']);
+    expect(await decide('split')).toBe(true);
+    expect(await readListingMediaSplit(s.raw, LISTING)).toBe(true);
+    expect(await decide('rate-mature')).toBe(false);
+    expect(await s.stamp(LISTING)).toEqual({ at: null, by: null });
   });
 });
 

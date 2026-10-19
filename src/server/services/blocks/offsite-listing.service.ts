@@ -3690,6 +3690,14 @@ async function applyApprovedRevision(opts: {
 
     // The decision belongs to the live parent; the face it is checked against is the
     // shadow's, which is what goes live.
+    //
+    // 🔴 LOCK THE PARENT FIRST. Unlike the first-time approves, this writes the split of a
+    // listing that is ALREADY `approved`, which a moderator's image re-rate
+    // (`reDeriveListingRatingInTx`) can re-rate concurrently: it takes `FOR UPDATE` on this
+    // row and then reads the split. Without this lock the re-rate could read the split as it
+    // stood before this decision and commit a rating floored by the wrong set of media. With
+    // it, the re-rate waits for this transaction and reads the decision it committed.
+    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
     const mediaSplit = await applyListingMediaSplitDecision(tx, {
       appListingId: parentId,
       face: { iconId: shadow.iconId, coverId: shadow.coverId },

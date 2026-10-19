@@ -269,7 +269,7 @@ describe('the rating-change event', () => {
         ...v: unknown[]
       ) =>
         strings.join('').includes('to_regclass')
-          ? [{ present: true }]
+          ? [{ present: true, can_select: true, can_insert: true, can_update: true }]
           : [{ split: split && v[0] === 'apl_1' }]) as never);
 
     splitAnswer(true);

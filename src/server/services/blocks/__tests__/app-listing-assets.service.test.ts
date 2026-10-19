@@ -1131,7 +1131,8 @@ describe('screenshot CRUD', () => {
     });
     const asked: unknown[] = [];
     mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) => {
-      if (strings.join('').includes('to_regclass')) return [{ present: true }];
+      if (strings.join('').includes('to_regclass'))
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
       asked.push(v[0]);
       return [{ split: v[0] === 'apl_parent' }];
     }) as never);
@@ -1148,7 +1149,8 @@ describe('screenshot CRUD', () => {
   it('🔴 getAssets surfaces a failed split read instead of reporting "not split"', async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, id: 'apl_1' });
     mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-      if (strings.join('').includes('to_regclass')) return [{ present: true }];
+      if (strings.join('').includes('to_regclass'))
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
       throw new Error('connection terminated');
     }) as never);
     try {
@@ -1160,6 +1162,44 @@ describe('screenshot CRUD', () => {
       mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
     }
   });
+
+  it('🔴 getAssets keeps working for the AUTHOR when the split table is present but unreadable', async () => {
+    // The table exists but was never granted to the role the read client connects as
+    // (PGlite, the real migration, `SET ROLE`). The author's media editor reads through here,
+    // so a permission error must read as "not split", never take the editor down.
+    const { createSplitDb } = await import('./listing-media-split.harness');
+    const split = await createSplitDb();
+    try {
+      await split.applyMigration();
+      await split.seed({ listingIds: ['apl_1'], users: [7] });
+      await split.db.query(
+        `INSERT INTO app_listing_red_media (app_listing_id, media_split_approved_at, media_split_approved_by)
+           VALUES ('apl_1', now(), 7)`
+      );
+      await split.restrictTo([]);
+      split.route(mockDb as never);
+      mockDb.appListing.findUnique.mockResolvedValue({
+        ...listingRow,
+        id: 'apl_1',
+        iconId: 1,
+        coverId: 2,
+      });
+      mockDb.appListingScreenshot.findMany.mockResolvedValue([
+        { id: 's1', imageId: 10, order: 0, caption: null },
+      ]);
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      const res = await getListingAssets({ listingId: 'apl_1' }, owner);
+      expect(res.mediaSplitApproved).toBe(false);
+      expect(res.screenshots).toHaveLength(1);
+      // Positive control: the same read, granted SELECT, sees the stamp.
+      await split.restrictTo(['SELECT']);
+      expect((await getListingAssets({ listingId: 'apl_1' }, owner)).mediaSplitApproved).toBe(true);
+    } finally {
+      await split.db.close();
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+      mockDb.$executeRaw.mockReset().mockImplementation(async () => 0);
+    }
+  }, 60_000);
 
   it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
@@ -1261,7 +1301,7 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
     mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray, ...v: unknown[]) =>
       strings.join('').includes('to_regclass')
-        ? [{ present: true }]
+        ? [{ present: true, can_select: true, can_insert: true, can_update: true }]
         : [{ split: v[0] === 'apl_live' }]) as never);
     try {
       const { addListingScreenshot } = await import('../app-listing-assets.service');

@@ -2175,7 +2175,8 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     mockWrite.$queryRaw.mockImplementation(
       async (strings: TemplateStringsArray, ...v: unknown[]) => {
         const text = strings.join('?');
-        if (text.includes('to_regclass')) return [{ present: true }];
+        if (text.includes('to_regclass'))
+          return [{ present: true, can_select: true, can_insert: true, can_update: true }];
         if (text.includes('FROM app_listing_red_media')) return [{ split: v[0] === APP_ID }];
         if (text.includes('FROM "Image"')) {
           const ids = (v[0] as { values: number[] }).values;

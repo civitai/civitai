@@ -12,6 +12,7 @@ vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: vi.fn(async () => undefined),
 }));
 
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -24,8 +25,9 @@ import { createSplitDb, type SplitDb } from './listing-media-split.harness';
 
 /**
  * T6 — every moderator go-live `approveExternalRequest` reaches, with the media-split decision:
- * an on-site listing request (floored, raise-only), an off-site approve (derived replaces) and a
- * revision apply (decision on the live parent, face from the shadow). The split decision is
+ * an on-site listing request (floored, raise-only), an off-site approve (derived replaces), an
+ * off-site revision apply (decision on the live parent, face from the shadow) and an on-site
+ * media revision apply (decision recorded, rating left alone — the apply is assets-only). The split decision is
  * written to and read from a real `app_listing_red_media` (PGlite, the real migration); the
  * listing rows are the shared Prisma mock.
  *
@@ -62,6 +64,7 @@ const LEVELS: Record<number, number> = {
 };
 
 async function resetSplitTable(present: boolean) {
+  await split.unrestrict();
   await split.db.exec(`DROP TABLE IF EXISTS app_listing_red_media`);
   await split.db.exec(`TRUNCATE app_listings, "Image", "User" CASCADE`);
   if (present) await split.applyMigration();
@@ -121,20 +124,20 @@ function wireFirstApprove(kind: 'onsite' | 'offsite', coverId = COVER) {
   wireImages();
 }
 
-/** A pending off-site revision: the shadow carries the R screenshot onto an approved `g` parent. */
-function wireRevision(coverId = COVER) {
+/** A pending revision: the shadow carries the R screenshot onto an approved `g` parent. */
+function wireRevision(coverId = COVER, kind: 'onsite' | 'offsite' = 'offsite') {
   const parent = {
     id: PARENT_ID,
     slug: 'cool-app',
     status: 'approved',
-    kind: 'offsite',
+    kind,
     contentRating: 'g',
   };
   const shadow = {
     id: SHADOW_ID,
     status: 'draft',
     revisionOfId: PARENT_ID,
-    externalUrl: 'https://cool.app',
+    externalUrl: kind === 'offsite' ? 'https://cool.app' : null,
     iconId: ICON,
     coverId,
     connectClientId: null,
@@ -148,12 +151,12 @@ function wireRevision(coverId = COVER) {
     category: null,
     contentRating: 'g',
     slug: 'rev-x',
-    kind: 'offsite',
+    kind,
   };
   mockRead.appListingPublishRequest.findUnique.mockReset().mockResolvedValue({
     id: REQUEST_ID,
     status: 'pending',
-    kind: 'offsite',
+    kind,
     slug: 'cool-app',
     appListingId: SHADOW_ID,
   });
@@ -169,16 +172,31 @@ function wireRevision(coverId = COVER) {
 const approve = (mediaSplit?: ListingMediaSplitDecision) =>
   approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD, mediaSplit });
 
-/** The rating the approve stamped on the listing going live (first approve or revision parent). */
-function stampedRating(): string | null | undefined {
+/** The write that put the listing live: the first approve's flip, or the revision's parent copy. */
+function goLiveWrite(): { data: Record<string, unknown> } | undefined {
   const flip = mockWrite.appListing.updateMany.mock.calls.find(
     (c: { data?: { status?: string } }[]) => c[0]?.data?.status === 'approved'
   );
-  if (flip) return flip[0].data.contentRating;
-  const parentWrite = mockWrite.appListing.update.mock.calls.find(
+  if (flip) return flip[0];
+  return mockWrite.appListing.update.mock.calls.find(
     (c: { where?: { id?: string } }[]) => c[0]?.where?.id === PARENT_ID
-  );
-  return parentWrite?.[0]?.data?.contentRating;
+  )?.[0];
+}
+
+/** The rating the approve stamped on the listing going live (first approve or revision parent). */
+function stampedRating(): unknown {
+  return goLiveWrite()?.data?.contentRating;
+}
+
+/**
+ * The rating a site stamps, or — for the on-site revision, which leaves the rating alone — that
+ * it went live WITHOUT writing one (`contentRating` absent from the write, not merely unchanged).
+ */
+function expectRating(rates: boolean, rating: string) {
+  const write = goLiveWrite();
+  expect(write).toBeDefined();
+  if (rates) expect(write?.data.contentRating).toBe(rating);
+  else expect(write?.data).not.toHaveProperty('contentRating');
 }
 
 beforeEach(async () => {
@@ -211,21 +229,32 @@ const SITES = [
     site: 'off-site revision apply',
     wire: (coverId?: number) => wireRevision(coverId),
     listing: PARENT_ID,
+    rates: true,
   },
-];
+  {
+    // `applyApprovedRevision`'s on-site branch is ASSETS-ONLY: it records the decision on the
+    // live parent but never writes `contentRating`, so the decision only reaches the rating at
+    // the listing's next re-derive (an image re-rate, a later approve). Pinned as such, so a
+    // change to either half is a visible decision rather than drift.
+    site: 'on-site media revision apply (decision recorded, rating untouched)',
+    wire: (coverId?: number) => wireRevision(coverId, 'onsite'),
+    listing: PARENT_ID,
+    rates: false,
+  },
+].map((site) => ({ rates: true, ...site }));
 
-describe.each(SITES)('$site', ({ wire, listing }) => {
+describe.each(SITES)('$site', ({ wire, listing, rates }) => {
   it('🔴 a split approve keeps the listing at its civitai.com rating and records the decision', async () => {
     wire();
     await approve('split');
-    expect(stampedRating()).toBe('g');
+    expectRating(rates, 'g');
     expect(await split.stamp(listing)).toEqual({ at: expect.any(String), by: MOD });
   });
 
   it('invariant guard: with the decision omitted the R screenshot still floors the listing', async () => {
     wire();
     await approve();
-    expect(stampedRating()).toBe('r');
+    expectRating(rates, 'r');
     expect(await split.stamp(listing)).toBeNull();
   });
 
@@ -236,27 +265,68 @@ describe.each(SITES)('$site', ({ wire, listing }) => {
     wire();
     mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
     await approve('rate-mature');
-    expect(stampedRating()).toBe('r');
+    expectRating(rates, 'r');
     expect(await split.stamp(listing)).toEqual({ at: null, by: null });
   });
 
   it('🔴 refuses a split whose cover is above SFW, before anything goes live', async () => {
     wire(R_COVER);
     await expect(approve('split')).rejects.toThrow(MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE);
-    expect(stampedRating()).toBeUndefined();
+    expect(goLiveWrite()).toBeUndefined();
   });
 
   it('🔴 table absent: a split is refused as unavailable, and nothing goes live', async () => {
     await resetSplitTable(false);
     wire();
     await expect(approve('split')).rejects.toThrow(MEDIA_SPLIT_UNAVAILABLE_MESSAGE);
-    expect(stampedRating()).toBeUndefined();
+    expect(goLiveWrite()).toBeUndefined();
   });
 
   it('table absent: an approve without a decision floors exactly as before', async () => {
     await resetSplitTable(false);
     wire();
     await approve();
-    expect(stampedRating()).toBe('r');
+    expectRating(rates, 'r');
+  });
+
+  it('🔴 table present but not writable: any decision is refused, and nothing goes live', async () => {
+    for (const decision of ['split', 'rate-mature', undefined] as const) {
+      await resetSplitTable(true);
+      await split.restrictTo([]);
+      vi.clearAllMocks();
+      wire();
+      await expect(approve(decision)).rejects.toThrow(/not permitted to update it/);
+      expect(goLiveWrite()).toBeUndefined();
+    }
   });
 });
+
+describe.each(SITES.filter((s) => s.listing === PARENT_ID))(
+  '$site — the parent lock',
+  ({ wire }) => {
+    // GUARD, not a race test: PGlite is one connection, so the concurrent image re-rate this lock
+    // serialises against cannot be staged. It pins the ORDER that makes the re-rate (which takes
+    // `FOR UPDATE` on the parent, then reads the split) wait for this decision to commit.
+    it('🔴 guard: locks the live parent FOR UPDATE before the first statement on the split table', async () => {
+      const log: { text: string; values: unknown[] }[] = [];
+      for (const m of [mockWrite.$queryRaw, mockWrite.$executeRaw]) {
+        const inner = m.getMockImplementation();
+        m.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = Prisma.sql(strings, ...values);
+          log.push({ text: sql.text, values: sql.values });
+          return inner?.(strings, ...values);
+        });
+      }
+      wire();
+      await approve('split');
+      const lock = log.findIndex(
+        (l) =>
+          /FOR UPDATE/.test(l.text) && /app_listings/.test(l.text) && l.values.includes(PARENT_ID)
+      );
+      const firstSplit = log.findIndex((l) => l.text.includes('app_listing_red_media'));
+      expect(firstSplit).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeLessThan(firstSplit);
+    });
+  }
+);
