@@ -26,9 +26,16 @@ describe('auditPromptEnriched — empty prompt with a non-empty negative prompt'
     ['empty string', ''],
     ['whitespace only', '   \n\t '],
   ])('refuses a celebrity name in the negative prompt (prompt: %s)', (_label, prompt) => {
-    expect(auditPromptEnriched(prompt, POI_NEGATIVE)).toEqual({
+    expect(auditPromptEnriched(prompt, POI_NEGATIVE)).toMatchObject({
       blockedFor: [NEG_POI_MESSAGE],
-      triggers: [{ category: 'poi', message: NEG_POI_MESSAGE, matchedWord: 'tom cruise' }],
+      triggers: [
+        {
+          category: 'poi',
+          message: NEG_POI_MESSAGE,
+          matchedWord: 'tom cruise',
+          matchedField: 'negativePrompt',
+        },
+      ],
       success: false,
     });
   });

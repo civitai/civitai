@@ -21,6 +21,8 @@ import {
   isSoftBlock,
   type PromptTrigger,
   type PromptTriggerCategory,
+  type PromptTriggerField,
+  type PromptTriggerMatch,
 } from '~/utils/metadata/audit';
 
 // --- Blocked Prompt Store ---
@@ -37,6 +39,13 @@ export interface BlockedPromptEntry {
   category?: PromptTriggerCategory;
   matchedWord?: string;
   matchedRegex?: string;
+  /** The literal span found in the prompt, when the matching rule gives one. */
+  matchedText?: string;
+  matchedField?: PromptTriggerField;
+  /** The NSFW-list text that opened the gate the matching rule needs. */
+  gateWord?: string;
+  /** Every rule that matched; the top-level fields are the first of these. */
+  matches?: PromptTriggerMatch[];
   imageId: number | null;
   remixOfId: number | null;
   // Base/source media attached to the blocked job, surfaced in the moderator
@@ -73,6 +82,18 @@ const truncateForRecord = (text: string | undefined) =>
     ? `${text.slice(0, OVER_LENGTH_RECORDED_CHARS)}… [truncated from ${text.length} chars]`
     : text;
 
+/** The evidence a blocked entry keeps from the audit's first trigger. */
+function triggerEvidence(trigger?: PromptTrigger) {
+  return {
+    category: trigger?.category,
+    matchedWord: trigger?.matchedWord,
+    matchedRegex: trigger?.matchedRegex,
+    matchedText: trigger?.matchedText,
+    matchedField: trigger?.matchedField,
+    gateWord: trigger?.gateWord,
+    matches: trigger?.matches,
+  };
+}
 const RESET_MARKER = '__RESET__';
 
 export function getBlockedPromptsKey(userId: number) {
@@ -588,8 +609,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         prompt: prompt ?? '',
         negativePrompt: negativePrompt ?? '',
         source,
-        category: error.triggers[0]?.category,
-        matchedWord: error.triggers[0]?.matchedWord,
+        ...triggerEvidence(error.triggers[0]),
         imageId: imageId ?? null,
         remixOfId: remixOfId ?? null,
         inputImages,

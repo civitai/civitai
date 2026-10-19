@@ -37,6 +37,20 @@ export type RestrictionTrigger = {
   category?: string;
   matchedWord?: string;
   matchedRegex?: string;
+  /** The literal span found in the prompt, when the matching rule gives one. */
+  matchedText?: string;
+  matchedField?: 'prompt' | 'negativePrompt';
+  /** The NSFW-list text that opened the gate the matching rule needs. */
+  gateWord?: string;
+  /** Every rule that matched; the top-level fields are the first of these. */
+  matches?: {
+    category: string;
+    matchedWord?: string;
+    matchedRegex?: string;
+    matchedText?: string;
+    matchedField?: 'prompt' | 'negativePrompt';
+    gateWord?: string;
+  }[];
   imageId?: number | null;
   remixOfId?: number | null;
   /** Absent on rows written before origin was recorded. */
