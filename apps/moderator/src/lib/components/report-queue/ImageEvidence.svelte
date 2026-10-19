@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { page as pageState } from '$app/state';
   import { BlockedIds } from '$lib/blocked-ids.svelte';
+  import { ImageOwners, type ImageOwner } from '$lib/image-owners.svelte';
   import { selectionKey } from '$lib/paging';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
@@ -31,6 +32,7 @@
     endLabel = 'End of the images.',
     minColumn = 200,
     paging,
+    owners: pageOwners,
   }: {
     images: BulkImage[];
     /** The viewer's action grants: the bar needs `images`, its strike-the-owners box `strike`. */
@@ -45,6 +47,9 @@
     /** Numbered pages (`?imgPage=`), pager above and below, for an item with more images than one
      *  read holds. `page` is the server's, which clamps it. */
     paging?: { total: number; perPage: number; page: number };
+    /** This page's image owners, for an item whose images span accounts: the strike box then names
+     *  every owner the selection reaches instead of assuming one. */
+    owners?: ImageOwner[];
   } = $props();
 
   // The writes clear the selection they armed, and report what the server says it did — it can differ
@@ -65,29 +70,34 @@
     },
   });
   // The selection survives an image page turn and nothing else: any other URL change clears it, and
-  // the host's `{#key}` resets it per item. Blocked ids accumulate over the pages shown, since Restore's
-  // "not currently blocked" warning must know the ids carried off earlier pages. The last write's
-  // result belongs to the page it was made on.
+  // the host's `{#key}` resets it per item. Blocked ids and owners accumulate over the pages shown,
+  // since Restore's "not currently blocked" warning and the strike box must know about the ids carried
+  // off earlier pages. The last write's result belongs to the page it was made on.
   const blockedIds = new BlockedIds();
+  const owners = new ImageOwners();
   let shownKey: string | undefined;
   let shownPage: number | undefined;
   $effect.pre(() => {
     const key = selectionKey(pageState.url);
     const page = paging?.page;
     const items = images;
+    const named = pageOwners;
     untrack(() => {
       if (key !== shownKey) {
         shownKey = key;
         selected.clear();
         blockedIds.clear();
+        owners.clear();
       }
       if (page !== shownPage) {
         shownPage = page;
         result = null;
       }
       blockedIds.absorb(items);
+      owners.absorb(items, named);
     });
   });
+  const selectedOwners = $derived(owners.of(selected));
 </script>
 
 {#if form.error}
@@ -104,6 +114,7 @@
       bare
       {selected}
       selectable={images.map((i) => i.id)}
+      owners={selectedOwners}
       onSubmit={form.enhance}
       submitting={form.submitting}
       notify={false}
