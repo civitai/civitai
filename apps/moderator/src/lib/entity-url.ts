@@ -1,4 +1,5 @@
 import {
+  moderatorArticleLookupPath,
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
   moderatorModelLookupPath,
@@ -78,6 +79,7 @@ export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
 export const imageLookupUrl = moderatorImageLookupPath;
 export const modelLookupUrl = moderatorModelLookupPath;
 export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
+export const articleLookupUrl = moderatorArticleLookupPath;
 
 /** The user report queue opened on one account. The account and its tab are the PATH so the queue — a
  *  layout — keeps its data while a moderator moves between them; `details` is the bare path. */
@@ -109,6 +111,11 @@ export const chatAuditUserUrl = (username: string) =>
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
+ *  has no entry for them. */
+export const bountyEntryUrl = (civitaiUrl: string, bountyId: number, entryId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}/entries/${entryId}`;
 
 /** The public Known Issues board. 🔴 THERE IS NO DEEP LINK — `src/pages/issues/index.tsx` reads no
  *  id, so a link naming a specific issue still lands on the index. Here so that stays one claim in

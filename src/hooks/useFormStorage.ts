@@ -111,6 +111,47 @@ export function mergeRestoredValues<T extends Record<string, unknown>>({
   return merged as T;
 }
 
+/**
+ * Resolve the values to restore from a persisted draft, or `null` when nothing in it is usable.
+ *
+ * A draft that passes the whole schema restores its parsed output, as it always has. A draft
+ * that does not, typically a half-written form with a required field still empty, restores
+ * each stored field that passes its own field schema and keeps the current value for the
+ * rest; `partial` is then `true`. Object-level refinements are not checked here: submit still
+ * validates the whole form.
+ */
+export function resolveRestoredValues<T extends Record<string, unknown>>({
+  schema,
+  current,
+  stored,
+  shouldRestoreField,
+}: {
+  schema: z.ZodType;
+  current: T;
+  stored: unknown;
+  shouldRestoreField?: ShouldRestoreField;
+}): { values: T; partial: boolean } | null {
+  const merged = mergeRestoredValues({ current, stored, shouldRestoreField });
+  const result = schema.safeParse(merged);
+  if (result.success) return { values: result.data as T, partial: false };
+
+  const shape = (schema as { shape?: Record<string, z.ZodType> }).shape;
+  if (!shape || typeof stored !== 'object' || stored === null) return null;
+
+  const values: Record<string, unknown> = { ...current };
+  let restored = 0;
+  for (const name of Object.keys(stored)) {
+    const fieldSchema = Object.prototype.hasOwnProperty.call(shape, name) ? shape[name] : undefined;
+    if (!fieldSchema || merged[name] === current[name]) continue;
+    const field = fieldSchema.safeParse(merged[name]);
+    if (!field.success) continue;
+    values[name] = field.data;
+    restored++;
+  }
+
+  return restored > 0 ? { values: values as T, partial: true } : null;
+}
+
 function readId(value: unknown): number | null {
   if (typeof value !== 'object' || value === null) return null;
   const id = (value as { id?: unknown }).id;
@@ -188,6 +229,9 @@ export function useFormStorage<TSchema extends z.ZodObject, TContext>({
       // Expired / unparseable / legacy: nothing offerable, so don't leave it to be re-read.
       localStorage.removeItem(key);
     } else {
+      // A failed restore keeps the draft rather than deleting the text the author came back
+      // for. A successful one needs no copy: `form.reset` fires the watch, which re-persists.
+      let keepStored = false;
       openConfirmModal({
         modalId: 'restore-confirm',
         centered: true,
@@ -195,18 +239,20 @@ export function useFormStorage<TSchema extends z.ZodObject, TContext>({
         children: 'Would you like to restore the unsaved changes from your previous session',
         labels: { cancel: `No`, confirm: `Yes` },
         closeOnConfirm: true,
-        onClose: () => localStorage.removeItem(key),
+        onClose: () => {
+          if (!keepStored) localStorage.removeItem(key);
+        },
         onConfirm: () => {
-          const result = schema.safeParse(
-            mergeRestoredValues({
-              current: form.getValues() as Record<string, unknown>,
-              stored: stored.value,
-              shouldRestoreField,
-            })
-          );
-          if (!result.success)
+          const result = resolveRestoredValues({
+            schema,
+            current: form.getValues() as Record<string, unknown>,
+            stored: stored.value,
+            shouldRestoreField,
+          });
+          keepStored = !result;
+          if (!result)
             showErrorNotification({ error: new Error('could not restore unsaved changes') });
-          else form.reset(result.data as z.input<TSchema>);
+          else form.reset(result.values as z.input<TSchema>);
         },
       });
     }

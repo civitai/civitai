@@ -823,7 +823,8 @@ export const publishModelHandler = async ({
   ctx,
 }: {
   input: PublishModelSchema;
-  ctx: ProtectedContext;
+  // Narrowed so `/api/mod/model/republish` can run the same path with its own actor and tracker.
+  ctx: Pick<ProtectedContext, 'user' | 'track'>;
 }) => {
   try {
     const model = await dbRead.model.findUnique({
@@ -1941,7 +1942,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const ownerId = m.user.id;
         if (assocIsMod || ownerId === user?.id) continue;
         const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
-        if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
+        if (anyMetricHidden(getMetaMetricPrivacy(m.metricPrivacy)) || anyMetricHidden(defHidden))
           assocMembershipCandidates.add(ownerId);
       }
       assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
@@ -1961,11 +1962,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const isOwner = assocIsMod || model.user.id === user?.id;
         const hiddenMetrics = gateHiddenMetrics(metricPrivacyEnabled, () =>
           resolveModelHiddenMetrics({
-            modelMeta: {
-              hideBuzz: metricPrivacy.buzz,
-              hideDownloads: metricPrivacy.downloads,
-              hideGenerations: metricPrivacy.generations,
-            },
+            modelMeta: metricPrivacy,
             userSettings: assocOwnerSettingsMap.get(model.user.id),
             isOwnerOrModerator: isOwner,
             hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,

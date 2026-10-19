@@ -2,6 +2,7 @@ import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@manti
 import {
   type Icon,
   type IconProps,
+  IconBackpack,
   IconBarbell,
   IconBook,
   IconBookmark,
@@ -38,6 +39,7 @@ import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
+import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -104,7 +106,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
 
   // Already in flight for the notification bell — one request per session,
   // `staleTime: Infinity`. Reading it here adds no round trip.
-  const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
+  const { pendingPlacements, pendingCollectionReviews, unopenedBoxes } =
+    useQueryNotificationsCount();
 
   const eventItems = useEventMenuItems(
     theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')]
@@ -122,6 +125,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         // Stays after the event's strip is dismissed: the way back to the event.
         ...eventItems,
+        {
+          href: '/user/inventory',
+          visible: enabledInventoryTypes(features).length > 0,
+          icon: IconBackpack,
+          color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Inventory',
+          badge: unopenedBoxes,
+        },
         {
           href: `/user/${currentUser?.username as string}/shop`,
           // Only Creator Program members qualify to run a shop.

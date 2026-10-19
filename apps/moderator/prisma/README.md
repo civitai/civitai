@@ -44,6 +44,8 @@ subset with a screen. Consequences worth stating:
   authored in its `schema.sql`, applied by hand, then pulled. Change them there.
 - **`text_relabel_item` and `text_relabel_answer` belong to `automated-text-eval/`**, authored in its
   `schema.sql` the same way.
+- **The `assistant_*` tables belong to the mod assistant**: authored in `assistant/schema.sql` and typed
+  by hand in `src/lib/server/assistant/tables.ts`, which is what the app reads. Change them there.
 - **`TimedMutes` is present but must stay unread.** A timed mute is `User.muteExpiresAt` in the *main*
   database, drained hourly by `processTimedUnmutesJob`. This table duplicated that with no consumer, so a
   mute recorded only here never lifted. It is history awaiting a drop, not storage.

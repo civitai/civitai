@@ -37,6 +37,9 @@ import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donatio
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
+import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -72,7 +75,6 @@ import { useLastUsedBaseModelStore } from '~/store/last-used-base-model.store';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
-  ModelVersionMeta,
   ModelVersionPaidAccessDto,
   ModelVersionUpsertInput,
   RecommendedSettingsSchema,
@@ -228,11 +230,18 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { hideDonationGoals } = useCurrentUserSettings();
+  const userSettings = useCurrentUserSettings();
+  const { hideDonationGoals } = userSettings;
   const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
     useMutateUserSettings();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const inheritedMetrics = inheritedMetricPrivacy({
+    level: 'version',
+    userSettings,
+    modelMeta: model?.meta,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+  });
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
   // For a brand-new version, seed the base model from the previous version (if any),
@@ -304,11 +313,8 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
-    meta: {
-      hideBuzz: (version?.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
-      hideDownloads: (version?.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
-      hideGenerations: (version?.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
-    },
+    // The form holds the schema INPUT (choices, including inherit); Schema is typed as its output.
+    meta: { metricVisibility: getMetricVisibilityChoices(version?.meta) } as Schema['meta'],
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -735,11 +741,7 @@ export function ModelVersionUpsertForm({
           ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
           : null,
         recommendedResources: version.recommendedResources ?? [],
-        meta: {
-          hideBuzz: (version.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
-          hideDownloads: (version.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
-          hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
-        },
+        meta: { metricVisibility: getMetricVisibilityChoices(version.meta) } as Schema['meta'],
       });
       // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
       setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));
@@ -1105,31 +1107,19 @@ export function ModelVersionUpsertForm({
               />
               <Stack gap="xs">
                 <Divider label="Version metric privacy" />
-                <Text size="xs" c="dimmed">
-                  Hide these stats in this version&apos;s details card. This is a sub-option of the
-                  model-level controls — hiding at the model level already hides the model page
-                  totals and cards.{' '}
-                  {isActiveCreatorMember
-                    ? 'You and moderators always see your real stats.'
-                    : 'Requires an active Creator Program membership.'}
-                </Text>
-                <InputSwitch
-                  name="meta.hideBuzz"
-                  label="Hide earned Buzz"
+                <MetricPrivacyControls
+                  level="version"
+                  inherited={inheritedMetrics}
                   disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideDownloads"
-                  label="Hide download count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideGenerations"
-                  label="Hide generation count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
+                  note={
+                    <>
+                      These stats appear in this version&apos;s details card. Set the default for
+                      all your models in Creator Controls.{' '}
+                      {isActiveCreatorMember
+                        ? 'You and moderators always see your real stats.'
+                        : 'Requires an active Creator Program membership.'}
+                    </>
+                  }
                 />
               </Stack>
               {acceptsTrainedWords && (

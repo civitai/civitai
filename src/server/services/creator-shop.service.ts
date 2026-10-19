@@ -66,6 +66,7 @@ import type {
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
+import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -79,6 +80,7 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
@@ -91,6 +93,7 @@ import {
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
   PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
@@ -121,14 +124,15 @@ import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-acc
 // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so ANY
 // condition nested under it silently excludes every pack. The pack branch keeps
 // them visible; a pack containing stickers is refused at purchase either way.
+// A mystery box listing has no cosmetic either, and is not a pack.
 const hideStickers = (stickersEnabled?: boolean, packsEnabled?: boolean) =>
   stickersEnabled
     ? packsEnabled
-      ? {}
+      ? { itemDefinitionId: null }
       : { cosmeticId: { not: null } }
     : {
         OR: [
-          ...(packsEnabled ? [{ cosmeticId: null }] : []),
+          ...(packsEnabled ? [PACK_SHOP_ITEM_WHERE] : []),
           { cosmetic: { type: { not: CosmeticType.Sticker } } },
         ],
       };
@@ -646,6 +650,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       // Prior values, so an edit can record what it moved from.
       description: true,
       availableQuantity: true,
+      itemDefinitionId: true,
       cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
@@ -869,6 +874,16 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.RequestedChanges ||
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
+  // A capped or back-in-review item would stay in a live pack while failing the pack rules, unreviewed.
+  if (
+    !isModerator &&
+    existing.addedById != null &&
+    (availableQuantity != null || (isPublished && backToReview))
+  )
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
 
   const changes: CosmeticShopItemHistoryChange[] = [];
   const recordChange = (
@@ -1032,12 +1047,20 @@ export const archiveCreatorShopItem = async ({
   id: number;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // A creator's mystery pack has its own withdraw, which keeps its review and live count in step.
+  if (!isModerator && existing.itemDefinitionId != null)
+    throw throwBadRequestError('Withdraw a mystery pack instead of archiving its listing');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
   // Archiving is how a rejection used to be laundered: Archived overwrites the
   // status, and restoring re-enters review with the verdict cleared.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  if (!isModerator && existing.cosmeticId != null && existing.addedById != null)
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
@@ -1087,12 +1110,21 @@ export const setCreatorShopItemListed = async ({
   listed: boolean;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // The storefront would show it as a pack; a box is sold only through its own surface.
+  if (existing.itemDefinitionId != null)
+    throw throwBadRequestError('Mystery box listings stay unlisted');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Restore this item before changing its listing');
   // Listing resets an item to PendingReview and clears the verdict, so without
   // this a rejected item is one call away from being back in the queue unedited.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
+  // Delisting is exempt: the item stays in the pack as box-only.
+  if (listed && !isModerator && existing.cosmeticId != null && existing.addedById != null)
+    await assertNotInLiveMysteryPack({
+      cosmeticId: existing.cosmeticId,
+      sellerId: existing.addedById,
+    });
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
@@ -1136,6 +1168,8 @@ export const unarchiveCreatorShopItem = async ({
   id: number;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (!isModerator && existing.itemDefinitionId != null)
+    throw throwBadRequestError("A withdrawn mystery pack can't be restored");
   if (existing.status !== CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Only archived items can be restored');
   // `preArchiveStatus` is a leftover from when restoring returned an item to
@@ -1209,7 +1243,8 @@ export const deleteCreatorShopItem = async ({
 // only lets a moderator pass someone else's userId.
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
   const items = await dbRead.cosmeticShopItem.findMany({
-    where: { addedById: userId },
+    // Mystery box listings are managed with their box, not as a shop item.
+    where: { addedById: userId, itemDefinitionId: null },
     // The reseller count tells the creator what's at stake before they touch the
     // item's resale terms — existing resellers keep the ones they listed under.
     // Deleted accounts are filtered out to match `getShopItemResellers`, or the
@@ -1478,7 +1513,7 @@ export const getCommunityCosmetics = async ({
     OR: [
       // Packs show when nothing is filtered, or when the Pack chip is on.
       ...(packsEnabled && (!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE))
-        ? [{ cosmeticId: null }]
+        ? [PACK_SHOP_ITEM_WHERE]
         : []),
       ...(cosmeticTypes?.length && !realTypes.length
         ? []
@@ -1883,7 +1918,7 @@ export const getCreatorShopReviewQueue = async ({
       ...(packsWanted
         ? [
             {
-              cosmeticId: null,
+              ...PACK_SHOP_ITEM_WHERE,
               addedById: userId ?? { not: null },
               ...(username
                 ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
@@ -2148,10 +2183,15 @@ export const takedownCosmeticShopItem = async ({
       title: true,
       meta: true,
       addedById: true,
+      itemDefinitionId: true,
       cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
+  // Everything below reads a NULL cosmetic as a pack: refunds with no payouts to reverse and no
+  // members to revoke. A box's held boxes and opened rewards are neither.
+  if (item.itemDefinitionId != null)
+    throw throwBadRequestError('Mystery box listings cannot be taken down here');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
@@ -2680,5 +2720,7 @@ export const updateCreatorShopSettings = async ({
   // After commit — the settings cache is Redis, and it was never busted here at all,
   // so `getUserSettings` served a pre-shop blob for up to its 4h TTL.
   await bustUserSettings(userId);
+  // The creator card shows whether the shop is public (`creatorShopEnabled`).
+  await bustUserCreator(userId);
   return (settings.creatorShop ?? {}) as CreatorShopSettings;
 };

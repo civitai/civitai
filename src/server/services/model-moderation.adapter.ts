@@ -26,6 +26,7 @@ import {
 } from '~/server/services/text-scan/route';
 import { scanModelRules } from '~/server/services/text-scan/submit';
 import { removeTags } from '~/utils/string-helpers';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model' as const;
 
@@ -175,7 +176,7 @@ async function recordForensics({
   // erased, and that key is what gates the owner's appeal flow.
   await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       'textModeration', jsonb_build_object(
         'labels', ${labelsJson}::jsonb,
         'matchedTerms', to_jsonb(${matchedTerms}::text[]),

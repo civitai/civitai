@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
 import {
@@ -16,10 +17,7 @@ import {
  *     every model page they visit. The SQL joins on the current viewer's
  *     userId.
  */
-export const subscriptionScopeSchema = z.enum([
-  'publisher_all_my_models',
-  'viewer_personal',
-]);
+export const subscriptionScopeSchema = z.enum(['publisher_all_my_models', 'viewer_personal']);
 export type SubscriptionScope = z.infer<typeof subscriptionScopeSchema>;
 
 /**
@@ -42,6 +40,16 @@ export const subscriptionTargetsSchema = z.object({
   targetModelIds: z.array(z.number().int().positive()).max(64).nullable().default(null),
 });
 
+/** Max UTF-8 bytes of a block's JSON `settings`, here and in blocks.router. */
+export const BLOCK_SETTINGS_BYTES_MAX = 4096;
+
+/**
+ * Whether `settings` serialises to at most `BLOCK_SETTINGS_BYTES_MAX` UTF-8 bytes. A `const`
+ * so the block-token schema scan can read it from blocks.router's `settingsSchema`.
+ */
+export const blockSettingsWithinCap = (settings: unknown): boolean =>
+  jsonLengthWithin([settings], BLOCK_SETTINGS_BYTES_MAX, { unit: 'utf8' });
+
 /**
  * Wire shape for `blocks.upsertSubscription`. Settings are validated through
  * the per-block-id schema map at the service layer; the router-level shape
@@ -55,10 +63,10 @@ export const upsertSubscriptionSchema = z
     enabled: z.boolean().default(true),
     ...subscriptionTargetsSchema.shape,
   })
-  .refine(
-    (value) => Buffer.byteLength(JSON.stringify(value.settings), 'utf8') <= 4096,
-    { message: 'settings exceeds 4KB', path: ['settings'] }
-  );
+  .refine((value) => blockSettingsWithinCap(value.settings), {
+    message: 'settings exceeds 4KB',
+    path: ['settings'],
+  });
 export type UpsertSubscriptionInput = z.infer<typeof upsertSubscriptionSchema>;
 
 /**
@@ -243,9 +251,7 @@ export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
 export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
 
 export const listAvailableSchema = z.object({
-  slotId: z
-    .enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra'])
-    .optional(),
+  slotId: z.enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra']).optional(),
   query: z.string().max(200).optional(),
   // F-E E3: mod-assigned category filter. Validated against the single-source
   // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share

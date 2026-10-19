@@ -1,7 +1,8 @@
 <script lang="ts">
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { num } from '$lib/format';
-  import MessageMeta from './MessageMeta.svelte';
+  import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
+  import { chatUrl } from '../url';
   import type { PageData } from './$types';
 
   type Messages = NonNullable<PageData['userMessages']>;
@@ -34,7 +35,7 @@
     <ul class="space-y-2 text-sm">
       {#each visible as m (m.id)}
         <li class="min-w-0">
-          <MessageMeta {...m} />
+          <MessageMeta {...m} chatHref={chatUrl} />
           <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
         </li>
       {/each}

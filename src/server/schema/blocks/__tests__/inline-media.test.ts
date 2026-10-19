@@ -98,6 +98,64 @@ describe('inline-media predicate', () => {
     });
   });
 
+  describe('with a byte limit', () => {
+    const LIMIT = 262_144;
+    const nearMiss = `${base64Run(100_000)} `; // all of it is read, then it fails
+
+    it('stops reading strings once the ones it passed exceed the limit', () => {
+      const budget = { visits: 0 };
+      const value = { items: new Array(2_000).fill(nearMiss) };
+      expect(findInlineMediaPath(value, budget, LIMIT)).toBe('over-byte-limit');
+      expect(budget.inspected).toBeLessThanOrEqual(LIMIT + nearMiss.length);
+    });
+
+    it('still finds media in the string that crosses the limit', () => {
+      const photo = `data:image/jpeg;base64,${base64Run(LIMIT)}`;
+      expect(findInlineMediaPath({ pad: 'x'.repeat(1_000), photo }, { visits: 0 }, LIMIT)).toEqual([
+        'photo',
+      ]);
+    });
+
+    it('does not count strings JSON.stringify does not write', () => {
+      const photo = 'data:image/png;base64,iVBOR';
+      const hidden = { toJSON: () => 'short', text: '.'.repeat(LIMIT * 2) };
+      expect(findInlineMediaPath({ hidden, photo }, { visits: 0 }, LIMIT)).toEqual(['photo']);
+      // A boxed string is written as one string, not as its one-character entries.
+      const boxed = new String('.'.repeat(100_000));
+      expect(findInlineMediaPath({ boxed, photo }, { visits: 0 }, LIMIT)).toEqual(['photo']);
+      const list = Object.assign(['.'.repeat(LIMIT)], { toJSON: () => [] });
+      expect(findInlineMediaPath({ list, photo }, { visits: 0 }, LIMIT)).toEqual(['photo']);
+      // Nor anything further down.
+      const deep = { toJSON: () => 'short', nested: { text: '.'.repeat(LIMIT * 2) } };
+      expect(findInlineMediaPath({ deep, photo }, { visits: 0 }, LIMIT)).toEqual(['photo']);
+    });
+
+    it('never counts past the JSON length of a body that fits', () => {
+      const photo = 'data:image/png;base64,iVBOR';
+      // Short strings make the count closest to the real length: 3 counted of 4 written each.
+      const input = { s: new Array(65_000).fill('a'), photo };
+      expect(JSON.stringify(input).length).toBeLessThan(LIMIT);
+      expect(findInlineMediaPath(input, { visits: 0 }, LIMIT)).toEqual(['photo']);
+      // And one long string, which a count scaled by length would overshoot.
+      const long = { s: '.'.repeat(200_000), photo };
+      expect(JSON.stringify(long).length).toBeLessThan(LIMIT);
+      expect(findInlineMediaPath(long, { visits: 0 }, LIMIT)).toEqual(['photo']);
+    });
+
+    it('still reports a body past the value budget as too many values', () => {
+      const cyclic: Record<string, unknown> = { s: '.'.repeat(LIMIT) };
+      cyclic.self = cyclic;
+      expect(findInlineMediaPath(cyclic, { visits: 0 }, LIMIT)).toBe('too-many-values');
+    });
+
+    it('leaves a photo after the limit to the byte cap', () => {
+      const photo = 'data:image/png;base64,iVBOR';
+      expect(findInlineMediaPath({ pad: '.'.repeat(LIMIT), photo }, { visits: 0 }, LIMIT)).toBe(
+        'over-byte-limit'
+      );
+    });
+  });
+
   it('survives nesting deep enough to overflow a recursive walk', () => {
     let deep: unknown = 'data:image/png;base64,AA';
     for (let i = 0; i < 100_000; i++) deep = { d: deep };
@@ -107,8 +165,8 @@ describe('inline-media predicate', () => {
   it('names the path and the fix in its message', () => {
     expect(inlineMediaMessage(['steps', 1, 'input', 'images', 0])).toBe(
       'steps[1].input.images[0] carries inline media (data URI/base64); ' +
-        "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-        'or pick it with useImagePicker and pass the returned url'
+        'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+        "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url"
     );
   });
 });

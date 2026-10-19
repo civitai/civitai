@@ -226,27 +226,6 @@ const coerceSortValue = (
 };
 
 /**
- * Every column a `FeedbackRow` carries, joined the way it is carried, in ONE place.
- *
- * 🔴 THE QUEUE AND THE SINGLE-REPORT PAGE RENDER THE SAME PANEL, so a column added for one is a
- * column the other must carry — open-coding the projection twice is how a panel ends up showing
- * `undefined` on exactly one of the two routes, with nothing failing.
- *
- * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write here
- * reloads the page, so under replica lag an operator can see their own triage come back unapplied,
- * and their next click then posts the STALE `expectedStatus` and is refused with "someone else
- * already triaged this" over their own write.
- *
- * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
- * convention every other queue in this app follows, and a triage queue read by a handful of people
- * is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup goes to
- * the primary instead, and that is not an inconsistency — there the stale answer is a flat "no issue
- * with that number" for an issue the operator is looking at, which reads as a defect rather than as
- * a conflict.
- *
- * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
- */
-/**
  * Which areas the queue shows: the one picked, or every area but `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`.
  * The badges count through this too, so a badge and the view it links to cannot disagree.
  */
@@ -255,8 +234,21 @@ const inQueueArea = (area: string | null | undefined) =>
     ? sql<boolean>`f."area" = ${area}`
     : sql<boolean>`f."area" NOT IN (${sql.join([...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT])})`;
 
+/**
+ * Every column a `FeedbackRow` carries, joined the way it is carried, in ONE place.
+ *
+ * 🔴 THE QUEUE AND THE SINGLE-REPORT PAGE RENDER THE SAME PANEL, so a column added for one is a
+ * column the other must carry — open-coding the projection twice is how a panel ends up showing
+ * `undefined` on exactly one of the two routes, with nothing failing.
+ *
+ * 🔴 THE PRIMARY, NOT THE REPLICA — DO NOT MOVE THIS BACK TO `dbRead`. Every write on the panel
+ * reloads the page and re-reads the row through here, so on the replica a save inside the lag window
+ * comes back looking unapplied — the panel renders the pre-save row — and the operator's next click
+ * posts the stale `expectedStatus` and is refused as someone else's triage over their own write.
+ * Pinned by `feedback-read-your-writes.pglite.test.ts`, whose replica is a separate database.
+ */
 const feedbackRowQuery = () =>
-  dbRead
+  dbWrite
     .selectFrom('Feedback as f')
     .leftJoin('User as u', 'u.id', 'f.userId')
     .leftJoin('User as h', 'h.id', 'f.handledById')
@@ -862,8 +854,8 @@ export async function feedbackPanelExtras(
  * "someone else already triaged it" — the exact confusion the split exists to remove. Callers pass
  * the primary, or the open transaction.
  *
- * ⚠️ NOT COVERED BY A TEST. The PGlite tier binds `dbRead` and `dbWrite` to one client, so a change
- * passing the replica here is invisible to it. Verified by reading the call sites only.
+ * ⚠️ NOT COVERED BY A TEST. The PGlite suites that reach this bind `dbRead` and `dbWrite` to one
+ * client, so a change passing the replica here is invisible to them. Verified by reading the call sites only.
  */
 async function feedbackExists(
   db: Pick<typeof dbWrite, 'selectFrom'>,

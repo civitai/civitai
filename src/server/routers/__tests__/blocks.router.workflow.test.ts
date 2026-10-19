@@ -7759,6 +7759,65 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         );
       });
 
+      it('a long NON-STRING `mode` is described, not echoed', async () => {
+        const node = { note: 'x'.repeat(1_000) };
+        const mode = new Array(1_000).fill(node);
+        const stringify = JSON.stringify;
+        // Every character JSON.stringify writes during the call, whatever it is called on.
+        let stringified = 0;
+        const spy = vi
+          .spyOn(JSON, 'stringify')
+          .mockImplementation((...args: Parameters<typeof stringify>) => {
+            const out = stringify(...args);
+            stringified += out?.length ?? 0;
+            return out;
+          });
+        let issues;
+        try {
+          issues = await rejectionIssues({
+            kind: 'customComfy',
+            mode,
+            recipe: 'starter-comfy-txt2img',
+            params: { prompt: 'a cat' },
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        // The mode's JSON is ~1 MB; nothing near that is written.
+        expect(stringified).toBeLessThan(100_000);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // More entries than fit in 200 characters is described too, even ones left out of the JSON.
+        const padded = Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`k${i}`, undefined])
+        );
+        const described = await rejectionIssues({
+          kind: 'customComfy',
+          mode: padded,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(described[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // At the limit it is still echoed.
+        const atLimit = ['x'.repeat(200 - '[""]'.length)];
+        const echoed = await rejectionIssues({
+          kind: 'customComfy',
+          mode: atLimit,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(echoed[0].message).toBe(
+          `Invalid \`customComfy\` mode: ${JSON.stringify(
+            atLimit
+          )} — expected "recipe" or "inline".` + ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
       // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
       // after. A genuinely bad value on a DECLARED inline field is raised by that
       // field's own schema, not by the object, so the arm error map must not
@@ -10306,8 +10365,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     const expected =
       'input.ImageUrl carries inline media (data URI/base64); ' +
-      "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-      'or pick it with useImagePicker and pass the returned url';
+      'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+      "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
 
     it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
       '%s reports the inline-media message, not the byte cap',

@@ -12,9 +12,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export function ServicesSection({
   ownerUserId,
   username,
+  shopPublished,
 }: {
   ownerUserId: number;
   username: string;
+  /** A draft shop answers "Shop not found" to a buyer's request. A moderator can still see it, so don't offer one. */
+  shopPublished: boolean;
 }) {
   const currentUser = useCurrentUser();
   const { offerings } = useQueryShopServices(ownerUserId, ownerUserId > 0);
@@ -48,21 +51,23 @@ export function ServicesSection({
                   {!isOwner && (
                     <Group gap={4} ml="auto" wrap="nowrap">
                       <ReportServiceButton offeringId={offering.id} />
-                      <LoginRedirect reason="perform-action">
-                        <Button
-                          color="yellow"
-                          size="xs"
-                          disabled={full}
-                          onClick={() =>
-                            dialogStore.trigger({
-                              component: ServiceRequestModal,
-                              props: { offering, sellerUsername: username },
-                            })
-                          }
-                        >
-                          Request
-                        </Button>
-                      </LoginRedirect>
+                      {shopPublished && (
+                        <LoginRedirect reason="perform-action">
+                          <Button
+                            color="yellow"
+                            size="xs"
+                            disabled={full}
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: ServiceRequestModal,
+                                props: { offering, sellerUsername: username },
+                              })
+                            }
+                          >
+                            Request
+                          </Button>
+                        </LoginRedirect>
+                      )}
                     </Group>
                   )}
                 </Group>

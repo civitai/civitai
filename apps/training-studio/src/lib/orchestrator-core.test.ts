@@ -17,4 +17,10 @@ describe('describeSubmitError', () => {
   it('keeps a plain-text error as-is', () => {
     expect(describeSubmitError('workflow not found')).toBe('workflow not found');
   });
+
+  it('names the HTTP status of a failure with an empty body', () => {
+    expect(describeSubmitError(undefined, 502)).toContain('HTTP 502');
+    expect(describeSubmitError('', 503)).toContain('HTTP 503');
+    expect(describeSubmitError({ detail: 'bad input' }, 400)).toBe('bad input');
+  });
 });

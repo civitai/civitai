@@ -8,6 +8,7 @@ import {
   navForUser,
   pageAccessState,
   PERMISSIONS,
+  permissionKey,
 } from '$lib/server/access';
 
 const at = (href: string) => new URL(href, 'https://mod.test');
@@ -177,6 +178,18 @@ describe('/admin grantable pages', () => {
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/review')).toBe(true);
+  });
+});
+
+describe('/admin action grants', () => {
+  const { actions, granted } = pageAccessState();
+
+  // Flat and sorted on the grant key `/admin` shows in its own column, so one key's actions sit together.
+  it('lists every permission once, flat, in grant-key order', () => {
+    const ids = PERMISSIONS.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+    expect(actions.map((a) => a.key)).toEqual(ids.map(permissionKey));
+    expect(actions.every((a) => a.kind === 'permission' && !a.children.length)).toBe(true);
+    for (const a of actions) expect(granted).toHaveProperty(a.key);
   });
 });
 

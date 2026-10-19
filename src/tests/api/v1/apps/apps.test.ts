@@ -67,6 +67,8 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
 }));
 vi.mock('~/server/utils/server-domain', () => ({
   isHostForColor: mockIsHostForColor,
+  // The consolidated red-host test, driven by the same mock as `isHostForColor`.
+  isRedCapableHost: (host: string | null | undefined) => !!host && mockIsHostForColor(host, 'red'),
 }));
 // The public-catalog KILL SWITCH is a Flipt flag, so the flag client is the seam.
 // Spread the real module (rather than replacing it) so this stays honest if the

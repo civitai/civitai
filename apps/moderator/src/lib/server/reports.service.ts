@@ -34,6 +34,12 @@ export type ModeratorReportRow = {
   createdAt: Date;
   internalNotes: string | null;
   details: unknown;
+  /** The reporter. A chat report names a conversation, not a person, so the chat queue works out who
+   *  is being reported from who filed it (`chatReportSubject`'s rule). */
+  reportedById: number;
+  /** Everyone else who filed the same report — the main app folds a second reporter into the first
+   *  report rather than opening a new one, so the chat rule needs them as much as the filer. */
+  alsoReportedBy: number[];
   reportedByUsername: string | null;
   reportedByEmail: string | null;
   alsoReportedByCount: number;
@@ -308,6 +314,8 @@ export async function getReports({
       'Report.createdAt',
       'Report.internalNotes',
       'Report.details',
+      'Report.userId as reportedById',
+      'Report.alsoReportedBy',
       'User.username as reportedByUsername',
       'User.email as reportedByEmail',
       'Report.statusSetAt',
@@ -779,6 +787,24 @@ export async function getReportedGame(reportId: number): Promise<ReportedGame | 
  * id would let a stale tab unpublish one model and action a report about another. Null for a report
  * that is not a model's, or no longer exists.
  */
+/**
+ * The thing a report names, for an action that acts on it. Read from the REPORT rather than taken from
+ * the form, as `moderateModel` does: a stale tab or a hand-built POST must not act on one item while a
+ * moderator believes they are looking at another. Null when the report is gone or is about another type.
+ */
+export async function getReportedEntityId(
+  type: ReportEntity,
+  reportId: number
+): Promise<number | null> {
+  const join = reportEntity(type);
+  // The primary, not the replica: the moderator is acting on a row they just opened.
+  const { rows } = await sql<{ id: number }>`
+    SELECT er.${sql.ref(join.fk)} AS id FROM ${sql.table(join.reportTable)} er
+    WHERE er."reportId" = ${reportId} LIMIT 1
+  `.execute(dbWrite);
+  return rows[0]?.id ?? null;
+}
+
 export async function getReportedModelId(reportId: number): Promise<number | null> {
   // The primary, not the replica: the moderator is acting on a row they just opened.
   const row = await dbWrite

@@ -5,6 +5,11 @@ import { randomUUID } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import {
+  readListingMediaSplit,
+  readListingMediaSplitState,
+} from '~/server/services/blocks/listing-media-split.service';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -13,6 +18,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
+import { isWithinSfwImageCeiling } from '~/server/services/blocks/block-image-upload.logic';
 import {
   MAX_LISTING_SCREENSHOTS,
   validateListingImage,
@@ -939,7 +945,8 @@ export async function assertListingAssetsScanCleanInTx(
  * Go-live RATING FLOOR for a listing whose media was attached while it was directly
  * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
  * rating from the current assets' max `nsfwLevel` and returns `declaredRating` RAISED
- * to the derived value when the media is more mature — never lowered.
+ * to the derived value when the media is more mature — never lowered. With `mediaSplit`
+ * the derive reads only the civitai.com-eligible assets (`ratingFloorAssets`).
  *
  * 🔴 The on-site counterpart of the off-site approve's `resolveApprovalContentRating`
  * floor. It upholds the invariant stated at {@link reDeriveContentRatingForModLiveEdit}:
@@ -960,7 +967,8 @@ export async function assertListingAssetsScanCleanInTx(
 export async function resolveListingRatingFloorInTx(
   db: Prisma.TransactionClient,
   appListingId: string,
-  declaredRating: string | null
+  declaredRating: string | null,
+  mediaSplit: boolean
 ): Promise<string | null> {
   const listing = await db.appListing.findUnique({
     where: { id: appListingId },
@@ -979,7 +987,12 @@ export async function resolveListingRatingFloorInTx(
     where: { id: { in: imageIds } },
     select: { nsfwLevel: true },
   });
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      mediaSplit
+    )
+  );
   // Floor: only raise. `nsfwLevelFromContentRating` maps null → the SFW floor, so a null
   // declared rating is raised by any mature asset.
   return nsfwLevelFromContentRating(derived) > nsfwLevelFromContentRating(declaredRating)
@@ -1062,7 +1075,11 @@ export async function getAssetScanStatuses(
  * `kind` reuses the SCHEMA's `ListingAssetKind` (already imported above for the per-kind
  * size caps) rather than restating the union — one slot vocabulary, one declaration.
  */
-export type ListingAssetScanEntry = { kind: ListingAssetKind; status: AssetScanStatus };
+export type ListingAssetScanEntry = {
+  kind: ListingAssetKind;
+  status: AssetScanStatus;
+  nsfwLevel?: number | null;
+};
 
 /** The per-listing asset ids a batched scan read starts from. */
 export type ListingScanSubject = { id: string; iconId: number | null; coverId: number | null };
@@ -1078,8 +1095,8 @@ type ListingScanBatchReader = {
   image: {
     findMany: (args: {
       where: { id: { in: number[] } };
-      select: { id: true; ingestion: true };
-    }) => Promise<{ id: number; ingestion: string | null }[]>;
+      select: { id: true; ingestion: true; nsfwLevel: true };
+    }) => Promise<{ id: number; ingestion: string | null; nsfwLevel: number | null }[]>;
   };
 };
 
@@ -1141,16 +1158,17 @@ export async function loadListingAssetScansBatch(
 
   const images = await db.image.findMany({
     where: { id: { in: [...new Set(tagged.map((t) => t.imageId))] } },
-    select: { id: true, ingestion: true },
+    select: { id: true, ingestion: true, nsfwLevel: true },
   });
-  const ingestionById = new Map(images.map((i) => [i.id, i.ingestion]));
+  const imageById = new Map(images.map((i) => [i.id, i]));
 
   for (const { listingId, kind, imageId } of tagged) {
     // Absent Image row ⇒ no entry (see the doc above), NOT a `pending` invented out of a
     // deleted row — that would make `scanning-media` latch forever on a dead FK.
-    const status = assetScanStatusFromIngestion(ingestionById.get(imageId));
+    const image = imageById.get(imageId);
+    const status = assetScanStatusFromIngestion(image?.ingestion);
     if (status == null) continue;
-    byListing.get(listingId)?.push({ kind, status });
+    byListing.get(listingId)?.push({ kind, status, nsfwLevel: image?.nsfwLevel ?? null });
   }
   return byListing;
 }
@@ -1158,7 +1176,8 @@ export async function loadListingAssetScansBatch(
 /**
  * After a MODERATOR directly mutates a LIVE approved listing's asset SET (the only
  * path that bypasses the shadow-revision flow — see {@link assertOwnerAssetEditable}),
- * re-derive `contentRating` from the current assets' max nsfwLevel and FLOOR the
+ * re-derive `contentRating` from the current assets' max nsfwLevel (only the
+ * civitai.com-eligible ones on a listing a moderator split) and FLOOR the
  * stored rating at the derived value (RAISE-ONLY — never auto-lower). Without this a
  * mod adding a more-mature icon/cover/screenshot to a live listing leaves it
  * UNDER-rated: the approve path re-derives, but a direct live-asset edit never runs
@@ -1214,7 +1233,12 @@ async function reDeriveContentRatingForModLiveEdit(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      await readListingMediaSplit(tx, listing.id)
+    )
+  );
   // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
   // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
   // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
@@ -1650,6 +1674,11 @@ export type ListingAssetsView = {
   /** True when at least one attached asset is still `pending` a scan — approve is
    *  refused until it lands (surfaced so the mod knows WHY approve is blocked). */
   hasPendingScan: boolean;
+  /**
+   * A moderator has granted the live listing (a shadow's parent) a media split; `null` when the
+   * app cannot read the split record on this environment, so nobody can tell.
+   */
+  mediaSplitApproved: boolean | null;
 };
 
 /**
@@ -1719,6 +1748,16 @@ export async function getListingAssets(
     }),
     hasBlockedAsset: allScans.some((s) => s === 'blocked'),
     hasPendingScan: allScans.some((s) => s === 'pending'),
+    // Read through the WRITE client, the one every approve records or clears the split with, so
+    // the review shows what that approve will act on, whatever the read client's role may do.
+    // `null` when the write role cannot read it: rather than show a split listing as unsplit, the
+    // review then offers no split choice and approves with no decision: the listing reads as
+    // unsplit (its rating covers all of its media), and a split stamped earlier stays in the table
+    // but is not applied. A failed statement still throws.
+    mediaSplitApproved: await readListingMediaSplitState(
+      dbWrite,
+      listing.revisionOfId ?? listing.id
+    ),
   };
 }
 
@@ -1760,8 +1799,11 @@ export type BackfillCandidate = {
   appBlockId: string | null;
   /** The backing AppBlock's stored screenshots (bundle MinIO records), if any. */
   appBlockScreenshots: unknown;
-  /** Existing AppListingScreenshot rows (imageId + order). */
-  screenshots: { imageId: number | null; order: number }[];
+  /**
+   * Existing AppListingScreenshot rows (imageId + order), with each backing Image's current
+   * `nsfwLevel` (null when the Image is gone) — the cover pick reads it.
+   */
+  screenshots: { imageId: number | null; order: number; nsfwLevel?: number | null }[];
 };
 
 export type ScreenshotSourcePlan =
@@ -1810,6 +1852,20 @@ export function chooseScreenshotSource(candidate: BackfillCandidate): Screenshot
     if (bundle.length > 0) return { mode: 'migrate', count: bundle.length };
   }
   return { mode: 'none' };
+}
+
+/**
+ * The backfill's cover pick from EXISTING screenshots: the first whose Image is SFW-eligible
+ * (`isWithinSfwImageCeiling`: unrated or PG/PG-13), never simply the first. `null` ⇒ no cover is set and the card keeps its
+ * placeholder.
+ */
+export function firstSfwEligibleScreenshotId(
+  screenshots: BackfillCandidate['screenshots']
+): number | null {
+  return (
+    screenshots.find((s) => s.imageId != null && isWithinSfwImageCeiling(s.nsfwLevel ?? 0))
+      ?.imageId ?? null
+  );
 }
 
 /**
@@ -1887,13 +1943,17 @@ export async function backfillListingAssets(
       coverId: true,
       appBlockId: true,
       appBlock: { select: { screenshots: true } },
-      screenshots: { select: { imageId: true, order: true }, orderBy: { order: 'asc' } },
+      screenshots: {
+        select: { imageId: true, order: true, image: { select: { nsfwLevel: true } } },
+        orderBy: { order: 'asc' },
+      },
     },
     orderBy: { createdAt: 'desc' },
     ...(typeof limit === 'number' ? { take: limit } : {}),
   })) as unknown as Array<
-    Omit<BackfillCandidate, 'appBlockScreenshots'> & {
+    Omit<BackfillCandidate, 'appBlockScreenshots' | 'screenshots'> & {
       appBlock: { screenshots: unknown } | null;
+      screenshots: { imageId: number | null; order: number; image: { nsfwLevel: number } | null }[];
     }
   >;
 
@@ -1922,7 +1982,11 @@ export async function backfillListingAssets(
       coverId: row.coverId,
       appBlockId: row.appBlockId,
       appBlockScreenshots: row.appBlock?.screenshots ?? null,
-      screenshots: row.screenshots,
+      screenshots: row.screenshots.map((s) => ({
+        imageId: s.imageId,
+        order: s.order,
+        nsfwLevel: s.image?.nsfwLevel ?? null,
+      })),
     };
 
     // A screenshot row whose Image was deleted (imageId → null) does NOT count
@@ -1945,10 +2009,15 @@ export async function backfillListingAssets(
         result.bySource.migrated += plan.count;
         willChange = true;
       }
-      // Cover is derived from the first screenshot; only settable when a
-      // screenshot exists ('existing') or will be migrated ('migrate'). Under
-      // plan 'none' the cover stays null → the card's category-glyph placeholder.
-      if (candidate.coverId == null && plan.mode !== 'none') {
+      // Cover is derived from the first SFW-eligible screenshot; only settable when
+      // one exists ('existing') or will be migrated at an SFW level ('migrate').
+      // Otherwise the cover stays null → the card's category-glyph placeholder.
+      const coverWillBeSet =
+        plan.mode === 'existing'
+          ? firstSfwEligibleScreenshotId(candidate.screenshots) !== null
+          : plan.mode === 'migrate' &&
+            isWithinSfwImageCeiling(nsfwLevelFromContentRating(candidate.contentRating));
+      if (candidate.coverId == null && coverWillBeSet) {
         result.coversSet += 1;
         willChange = true;
       }
@@ -1969,8 +2038,15 @@ export async function backfillListingAssets(
       const derivedNsfwLevel = nsfwLevelFromContentRating(candidate.contentRating);
 
       // 1) Ensure at least one screenshot exists.
+      // The COVER candidate: the first SFW-eligible screenshot, never simply the first one.
+      // Why it matters even though the store gates every image at render: the listing's OWN card
+      // and detail fall back from a hidden cover to the first screenshot the viewer may see
+      // (`gatedListingCoverUrl`), so a mature cover there costs nothing. A sub-listing card's
+      // parent-cover fallback does NOT — it gates the stored cover with no screenshot fallback
+      // (`projectSubListingCard`) — so a mature stored cover would leave those cards coverless for
+      // every viewer who may not see it, where a SFW screenshot was available.
       let firstScreenshotImageId: number | null = hasScreenshots
-        ? candidate.screenshots.find((s) => s.imageId != null)?.imageId ?? null
+        ? firstSfwEligibleScreenshotId(candidate.screenshots)
         : null;
       if (!hasScreenshots) {
         const plan = chooseScreenshotSource(candidate);
@@ -2003,12 +2079,16 @@ export async function backfillListingAssets(
             })),
           });
           result.screenshotsCreated += imageIds.length;
-          firstScreenshotImageId = imageIds[0] ?? null;
+          // Migrated screenshots are all stamped `derivedNsfwLevel`, so either the first one is
+          // SFW-eligible or none is.
+          firstScreenshotImageId = isWithinSfwImageCeiling(derivedNsfwLevel)
+            ? imageIds[0] ?? null
+            : null;
           changed = true;
         }
       }
 
-      // 2) Cover = the first screenshot's Image (mirrors #2838 coverUrl pattern).
+      // 2) Cover = the first SFW-eligible screenshot's Image.
       if (candidate.coverId == null && firstScreenshotImageId != null) {
         await dbWrite.appListing.update({
           where: { id: candidate.id },

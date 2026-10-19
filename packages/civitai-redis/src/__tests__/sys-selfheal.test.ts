@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { forceSysReconnect } from '../client';
-import {
-  decSysInflight,
-  getSysInflight,
-  incSysInflight,
-  resetSysInflight,
-} from '../sys-inflight';
+import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from '../sys-inflight';
 import { ClusterSelfHealWatchdog } from '../cluster-selfheal';
 import type { ClusterSelfHealConfig, ClusterSelfHealDeps } from '../cluster-selfheal';
 
@@ -16,8 +11,9 @@ import type { ClusterSelfHealConfig, ClusterSelfHealDeps } from '../cluster-self
 //   1. forceSysReconnect: the sentinel destroy→connect correctness — reconnects ALL sys base
 //      connections, prefers destroy() over the queue-draining close(), resets the counter, and
 //      NEVER throws into the hot path (teardown/connect errors are swallowed).
-//   2. The reused ClusterSelfHealWatchdog wired with SYS geometry (deadline trigger OFF, since the
-//      sys client has no per-command deadline): below-threshold no-op, sustained-high fires with an
+//   2. The reused ClusterSelfHealWatchdog wired with SYS inflight geometry (the timeout-rate
+//      trigger switched off here to isolate the inflight path; it has its own suite,
+//      sys-selfheal-timeouts.test.ts): below-threshold no-op, sustained-high fires with an
 //      'inflight' trigger, disabled no-op, reconnect rejection doesn't wedge the watchdog.
 
 /** A fake node-redis Sentinel client with destroy()/connect() spies. */
@@ -112,15 +108,15 @@ describe('forceSysReconnect (sentinel destroy→connect correctness)', () => {
   });
 });
 
-// The sys watchdog reuses ClusterSelfHealWatchdog with sys geometry. These lock the wiring the
-// package uses (deadline trigger OFF → the ONLY trigger is sustained-inflight, exactly the incident
-// signature: a monotonic climb, no sawtooth).
+// The sys watchdog reuses ClusterSelfHealWatchdog with sys geometry. These lock the sustained-
+// inflight path (the incident signature: a monotonic climb, no sawtooth), with the timeout-rate
+// trigger switched off so only the inflight path can fire.
 const SYS_CFG: ClusterSelfHealConfig = {
   enabled: true,
   inflightThreshold: 500,
   sustainedMs: 20000,
   cooldownMs: 60000,
-  deadlineHitThreshold: 0, // sys has no per-command deadline
+  deadlineHitThreshold: 0, // timeout-rate trigger off: isolate the inflight path
   deadlineHitWindowMs: 0,
   reconnectJitterMs: 0,
 };
@@ -132,7 +128,7 @@ function makeSysHarness(cfg: Partial<ClusterSelfHealConfig> = {}) {
   const onReconnect = vi.fn();
   const log = vi.fn();
   const deps: ClusterSelfHealDeps = {
-    // NOTE: getDeadlineHits is intentionally OMITTED, exactly as startSysSelfHeal wires it.
+    // getDeadlineHits omitted: these cases drive the inflight path only.
     getInflight: () => inflight,
     reconnect,
     now: () => nowMs,
@@ -178,7 +174,7 @@ describe('sys self-heal watchdog (sustained-inflight only)', () => {
     expect(h.runFor(SYS_CFG.sustainedMs)).toBe(0); // not yet — window not elapsed
     expect(h.watchdog.tick()).toBe(true); // window elapsed → fire
     expect(h.reconnect).toHaveBeenCalledTimes(1);
-    // The sys client has no deadline trigger, so it's always the sustained-inflight path.
+    // The timeout-rate trigger is off in this harness, so it's the sustained-inflight path.
     expect(h.onReconnect).toHaveBeenCalledWith(7000, 'inflight');
     await flush();
   });

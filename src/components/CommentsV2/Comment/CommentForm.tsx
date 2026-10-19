@@ -83,7 +83,9 @@ export const CommentForm = ({
   const queryUtils = trpc.useUtils();
   const { mutate, isPending: isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
-      form.reset();
+      // An edit resets to the saved text: the editor now re-syncs on reset, and the original
+      // content would show again until the form closes.
+      form.reset(request.id ? { ...defaultValues, content: response.content } : undefined);
       // Placements just spent uses, so the picker's counts are stale.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
       // if it has an id, just set the data with state

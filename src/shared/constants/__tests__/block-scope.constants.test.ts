@@ -257,6 +257,8 @@ describe('block-scope.constants', () => {
       'goods:purchase:self',
       // Publishes store cards every visitor sees, under the viewer's name.
       'apps:store:items:write',
+      // A public, reward-paying reaction under the viewer's name.
+      'social:react:self',
     ];
 
     it('flags exactly the designated sensitive scopes', () => {

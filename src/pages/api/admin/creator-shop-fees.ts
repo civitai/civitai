@@ -1,12 +1,12 @@
 /**
  * Mod-managed Creator Shop submission fees (KeyValue: creatorShopFees).
- * Per cosmetic type, plus one figure for packs (a pack has no CosmeticType).
+ * Per cosmetic type, plus one figure each for packs and mystery packs (neither has a CosmeticType).
  * Defaults live in creator-shop.schema and apply until this row sets a value.
  *
  * Usage: /api/admin/creator-shop-fees?token=$WEBHOOK_TOKEN
- *   GET   return the effective fees { submission: { <CosmeticType>: n }, pack: n }
+ *   GET   return the effective fees { submission: { <CosmeticType>: n }, pack: n, mysteryPack: n }
  *   PUT   set the provided fees; omitted types keep their current value
- *         body: { submission?: { Sticker?: 5000, ... }, pack?: 1000 }
+ *         body: { submission?: { Sticker?: 5000, ... }, pack?: 1000, mysteryPack?: 1000 }
  *
  * A form already open when a fee changes is refused at submit rather than charged the
  * new number, so the creator is never billed an amount they weren't shown.
@@ -27,9 +27,10 @@ const bodySchema = z
   .object({
     submission: z.partialRecord(z.enum(creatorCosmeticTypes), fee).optional(),
     pack: fee.optional(),
+    mysteryPack: fee.optional(),
   })
-  .refine((d) => !!d.submission || d.pack !== undefined, {
-    message: 'Provide at least one of submission or pack',
+  .refine((d) => !!d.submission || d.pack !== undefined || d.mysteryPack !== undefined, {
+    message: 'Provide at least one of submission, pack or mysteryPack',
   });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {

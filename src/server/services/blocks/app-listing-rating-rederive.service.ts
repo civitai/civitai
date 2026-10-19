@@ -8,6 +8,7 @@ import {
   resolveReDerivedListingRating,
 } from '~/server/services/blocks/app-listing-rating';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { appDeclaredListingRating } from '~/shared/utils/listing-rating-display';
 
@@ -100,6 +101,7 @@ export async function reDeriveListingRatingInTx(
     reratedImageId: args.imageId,
     previousNsfwLevel: args.previousNsfwLevel,
     reviewedRating: await readReviewedRating(tx, args.appListingId),
+    mediaSplit: await readListingMediaSplit(tx, args.appListingId),
   });
   if (after == null) return null;
 

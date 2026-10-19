@@ -79,7 +79,10 @@ vi.mock('~/env/other', async () => ({
 // The quota WRITE. Stubbed so the sliding-window read is the only thing under test
 // (and so a fail-open log line can't be mistaken for the limiter working).
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: mockHSetWithTTL }));
-vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }));
+vi.mock('~/server/utils/server-domain', () => ({
+  isHostForColor: () => false,
+  isRedCapableHost: () => false,
+}));
 
 import { TRPCError } from '@trpc/server';
 import { appListingsRouter } from '../app-listings.router';

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getFlaggedCount, countStrikeReview } = vi.hoisted(() => ({
+const { getFlaggedCount, countStrikeReview, countSiteAppeals } = vi.hoisted(() => ({
   getFlaggedCount: vi.fn(),
   countStrikeReview: vi.fn(),
+  countSiteAppeals: vi.fn(),
 }));
 
 vi.mock('../cache', () => ({
@@ -38,6 +39,7 @@ vi.mock('../minor-hash.service', () => ({
 }));
 
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
+vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
@@ -79,6 +81,25 @@ describe('sidebar count strikeReview', () => {
     countStrikeReview.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
     expect(counts).not.toHaveProperty('strikeReview');
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
+  });
+});
+
+describe('sidebar count site appeals', () => {
+  it('is one badge per queue, keyed as the nav entries are', async () => {
+    countSiteAppeals.mockResolvedValue({ Account: 3, Article: 0, Model: 2, Other: 7 });
+    expect(await getSidebarCounts()).toMatchObject({
+      siteAppealsAccount: 3,
+      siteAppealsArticle: 0,
+      siteAppealsModel: 2,
+      siteAppealsOther: 7,
+    });
+  });
+
+  it('is dropped, without blanking the other badges, when its query fails', async () => {
+    countSiteAppeals.mockRejectedValue(new Error('db down'));
+    const counts = await getSidebarCounts();
+    expect(counts).not.toHaveProperty('siteAppealsAccount');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
 });

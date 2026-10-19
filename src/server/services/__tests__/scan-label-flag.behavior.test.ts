@@ -264,6 +264,16 @@ describe('recordScanLabelFlag', () => {
       expect(await queued()).toEqual([101, 102, 103]);
     });
 
+    it('does not count control-lane items toward the cap', async () => {
+      await postImages([101, 102, 103, 104]);
+      await holder.db.exec(
+        `INSERT INTO "ScanLabelItem" ("imageId", lane, "firstFlaggedAt") VALUES (101, 'control', now())`
+      );
+      for (const imageId of [102, 103, 104]) await flag({ imageId, workflowId: `wf-${imageId}` });
+
+      expect(await queued()).toEqual([101, 102, 103, 104]);
+    });
+
     it('caps each post on its own', async () => {
       await postImages([101, 102, 103, 104]);
       await postImages([201, 202], 901);

@@ -30,11 +30,11 @@ export type ModelVersionPublicDonationGoalCacheItem = {
  * inactive/draft goals out of the shared public key — can be tested against the REAL function
  * the cache uses, with no hand-copied "mirror" that could silently diverge.
  *
- * Holds ONLY the version's active donation goal + summed total (busted when a donation lands). The
+ * Holds ONLY the version's active donation goal + summed total (refreshed when a donation lands). The
  * display-time public filters — the early-access window (from PaidAccess) and the creator opt-out
  * (CP membership) — are time/membership-sensitive and applied at READ time in `getDonationGoals`,
  * NOT baked in here where a short TTL would serve a stale verdict. Existence uses the same
- * replica→primary fallback as the uncached read; seeds an entry for every EXISTING version (goal
+ * replica→primary fallback as the uncached read (the primary alone under fromWrite); seeds an entry for every EXISTING version (goal
  * null if none) so the caller can tell "exists, no goal" from "does not exist" (→ 404).
  */
 export const publicDonationGoalsLookupFn = async (
@@ -43,7 +43,9 @@ export const publicDonationGoalsLookupFn = async (
 ): Promise<Record<number, ModelVersionPublicDonationGoalCacheItem>> => {
   const versionSelect = { id: true } as const;
 
-  let versions = await dbRead.modelVersion.findMany({
+  // fromWrite (refresh() right after a write) checks existence on the primary too: a version created
+  // moments ago may not be on the replica, and an empty result here makes refresh() delete the entry.
+  let versions = await (fromWrite ? dbWrite : dbRead).modelVersion.findMany({
     where: { id: { in: ids } },
     select: versionSelect,
   });

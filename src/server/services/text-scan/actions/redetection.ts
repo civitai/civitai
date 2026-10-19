@@ -17,6 +17,7 @@ import {
 } from '~/server/services/text-scan/flag-snapshot';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
 
@@ -41,7 +42,7 @@ async function dismissRedetection({
   const entry = flagEntryPath(label);
   const dismissed = await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, (${entry} - 'redetected') || ${carriedRulings(label, [
     'appealGranted',
@@ -62,7 +63,13 @@ async function dismissRedetection({
 
 export async function hasOpenModelAppeal(modelId: number) {
   const openAppeal = await dbWrite.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, status: AppealStatus.Pending },
+    // In-app appeals only: a site-form appeal on the model is about its unpublish, not the flag.
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      status: AppealStatus.Pending,
+      category: null,
+    },
     select: { id: true },
   });
   return !!openAppeal;
@@ -92,8 +99,7 @@ export async function withResolutionLock<T>(
     .set(key, token, { NX: true, EX: LOCK_SECONDS })
     .then((reply) => !!reply)
     .catch(() => true);
-  if (!acquired)
-    throw throwBadRequestError('This flag is being resolved. Reload and try again.');
+  if (!acquired) throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {

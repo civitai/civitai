@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
 
@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
  * Endpoint-wiring security tests for /api/v1/blocks/images (the sibling of
@@ -441,4 +442,55 @@ describe('/api/v1/blocks/images — ?ids= batch', () => {
     expect(res.statusCode).toBe(429);
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
+});
+
+describe('/api/v1/blocks/images — reactTicket (app reactions provenance)', () => {
+  const SECRET = 'images-endpoint-secret';
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+    regionBox.restricted = false;
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockRunImageSearch.mockResolvedValue({
+      items: [{ id: 501 }, { id: 502 }],
+      nextCursor: undefined,
+    });
+  });
+
+  it('attaches a ticket per item that verifies for exactly (that image, this app, this viewer)', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'user:42', appBlockId: 'apb_test' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    const items = res.body.items as Array<{ id: number; reactTicket?: string }>;
+    expect(items.map((i) => i.id)).toEqual([501, 502]);
+    for (const item of items) {
+      const subject = {
+        entityType: 'image' as const,
+        entityId: item.id,
+        appBlockId: 'apb_test',
+        sub: 'user:42',
+      };
+      expect(verifyReactTicket(item.reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+      // Bound to the image: the other item's id does not verify with this ticket.
+      expect(
+        verifyReactTicket(
+          item.reactTicket,
+          { ...subject, entityId: item.id === 501 ? 502 : 501 },
+          { secret: SECRET }
+        ).ok
+      ).toBe(false);
+    }
+  });
+
+  it('attaches NO ticket for an anonymous token', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'anon' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    for (const item of res.body.items) expect(item).not.toHaveProperty('reactTicket');
+  });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

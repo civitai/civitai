@@ -124,7 +124,8 @@ describe('the model sale badge cache', () => {
 
     // The bust replaced the marker rather than being refused by it.
     expect(store.get(keyFor(MODEL))?.value).toEqual({ modelId: MODEL, debounce: true });
-    expect(writes.at(-1)?.options).toEqual({ EX: 10 });
+    // The builder's default non-SWR bust window (the cache sets no debounceTime).
+    expect(writes.at(-1)?.options).toEqual({ EX: 2 });
 
     await expect(fetchBadges()).resolves.toEqual({ [MODEL]: badge });
     expect(salesQuery).toHaveBeenCalledTimes(2);

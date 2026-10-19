@@ -309,6 +309,7 @@ describe('createClusterPipelinedGet (the wiring client.ts uses)', () => {
     const values = new Map(ids(40).map((id) => [keyOf(id), Buffer.from(`v${id}`)]));
     const calls = { routed: 0, sent: 0 };
     const typeMappings: unknown[] = [];
+    const sendOptions: Record<string, unknown>[] = [];
     const nodes = new Map(
       ['n1', 'n2', 'n3'].map((n) => [
         n,
@@ -318,6 +319,7 @@ describe('createClusterPipelinedGet (the wiring client.ts uses)', () => {
             sendCommand: async (args: string[], o?: { typeMapping?: unknown }) => {
               calls.sent++;
               typeMappings.push(o?.typeMapping);
+              sendOptions.push({ ...o });
               expect(args[0]).toBe('GET');
               if (reply) return reply(n, args[1]);
               if (ownerOf(calculateSlot(args[1])) !== n) throw new ErrorReply('MOVED');
@@ -345,6 +347,7 @@ describe('createClusterPipelinedGet (the wiring client.ts uses)', () => {
       calls,
       logs,
       typeMappings,
+      sendOptions,
       typeMapping,
       expected: keys.map((k) => values.get(k)!),
     };
@@ -355,6 +358,10 @@ describe('createClusterPipelinedGet (the wiring client.ts uses)', () => {
     expect(await w.get(w.keys)).toEqual(w.expected);
     expect(w.calls).toEqual({ routed: 0, sent: 40 });
     expect(w.typeMappings.every((t) => t === w.typeMapping)).toBe(true);
+    // node-redis 6 node connections default to a 5 s command timeout; every GET opts out of it
+    // (the batch deadline is `track`'s).
+    expect(w.sendOptions.length).toBeGreaterThan(0);
+    expect(w.sendOptions.every((o) => 'timeout' in o && o.timeout === undefined)).toBe(true);
   });
 
   it('a string reply (no Buffer mapping) is re-read, never decoded', async () => {

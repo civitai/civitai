@@ -107,8 +107,9 @@
   const goFirst = () => navigate(clearPaging);
 </script>
 
-{#snippet numberedPager()}
+{#snippet numberedPager(summary = true)}
   <NumberedPager
+    {summary}
     page={pageNumber}
     total={total ?? 0}
     perPage={perPage ?? 1}
@@ -127,7 +128,7 @@
   {/if}
 {:else}
   {#if pagerTop && numbered && (total ?? 0) > (perPage ?? 1)}
-    <div class="-mt-6 mb-4">{@render numberedPager()}</div>
+    <div class="-mt-6 mb-4">{@render numberedPager(false)}</div>
   {/if}
   <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}

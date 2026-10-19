@@ -363,7 +363,7 @@ LEFT JOIN LATERAL (
          count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
          count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
   FROM "Appeal" pa
-  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' ${exclude}
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL ${exclude}
 ) ap ON TRUE
 `;
 
@@ -500,7 +500,7 @@ export async function getMinorFlagAppealsForReview({
       FROM "Appeal" a
       JOIN "Model" m ON m.id = a."entityId"
       LEFT JOIN "User" u ON u.id = m."userId"
-      WHERE a."entityType" = 'Model'
+      WHERE a."entityType" = 'Model' AND a.category IS NULL
         -- Cast rather than bind the enum: the value goes over as text and Postgres has no
         -- AppealStatus = text operator.
         AND a.status::text = 'Pending'
@@ -556,7 +556,7 @@ export async function getMinorFlagAppealsForReview({
     LEFT JOIN LATERAL (
       SELECT count(*)::int + 1 AS nth
       FROM "Appeal" ya
-      WHERE ya."userId" = pg."userId" AND ya."entityType" = 'Model'
+      WHERE ya."userId" = pg."userId" AND ya."entityType" = 'Model' AND ya.category IS NULL
         AND ya."createdAt" >= date_trunc('year', pg."appealCreatedAt")
         AND (ya."createdAt", ya.id) < (pg."appealCreatedAt", pg."appealId")
     ) ya ON TRUE
@@ -573,7 +573,7 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       AND a.status::text = 'Pending'
       AND ${searchPredicate(search, {
         modelId: 'm.id',
@@ -840,7 +840,7 @@ export async function getFlaggedModels({
            EXISTS (
              SELECT 1 FROM "Appeal" a
              WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
-               AND a.status::text = 'Pending'
+               AND a.status::text = 'Pending' AND a.category IS NULL
            ) AS "hasPendingAppeal",
            v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
            COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",

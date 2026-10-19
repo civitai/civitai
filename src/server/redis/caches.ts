@@ -285,6 +285,8 @@ export const cosmeticEntityCaches = Object.fromEntries(
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData"
@@ -350,6 +352,8 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
       notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
       lookupFn: async (ids) => {
         const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
@@ -1846,10 +1850,14 @@ export type {
  * `modelVersionDonationGoal`), so a draft-inclusive payload can never leak into the shared
  * key and a cached public payload can never be served to a privileged viewer.
  *
- * Correctness rides on explicit busts, not TTL expiry — every writer (goal create in
- * `ensureDonationGoal`, donation + goal-completion in `checkDonationGoalComplete`) busts the key
- * eagerly, so the TTL (CacheTTL.hour, matching `PaidAccess`) is just a backstop. `staleWhileRevalidate:
- * false` so a bust truly clears the entry rather than serving one more stale read.
+ * Correctness rides on explicit writes, not TTL expiry, so the TTL (CacheTTL.hour, matching
+ * `PaidAccess`) is a backstop. Goal creation (`ensureDonationGoal`) and every donation, including the
+ * one that completes the goal (`checkDonationGoalComplete`), REFRESH the entry: one primary lookup
+ * written straight to the cache. The bulk path in `model.service.ts` BUSTS it.
+ * `staleWhileRevalidate: false` so a bust truly clears the entry rather than serving one more stale
+ * read. Known gap: refresh writes unconditionally, so a refresh whose lookup ran before a concurrent
+ * goal completion can land last and cache the goal as still open until the TTL. donateToGoal
+ * re-checks `active` on the primary, so that only affects what is displayed.
  *
  * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
  * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).

@@ -231,6 +231,22 @@ describe('BatchComposer', () => {
     expect(mocks.scheduleCalls.map((call) => call.posts.length)).toEqual([2, 2, 2, 2, 2, 2]);
   });
 
+  test('the success screen closes on Escape and leaves a fresh composer', async () => {
+    await uploadPosts(POST_COUNT);
+    await userEvent.click(page.getByTestId('batch-review-button'));
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+    await expect
+      .element(page.getByTestId('batch-success-summary'))
+      .toHaveTextContent(`${POST_COUNT} posts scheduled`);
+
+    await userEvent.keyboard('{Escape}');
+
+    await expect.element(page.getByTestId('batch-progress-modal')).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('batch-review-button')).toBeInTheDocument();
+  });
+
   test('submits each chunk once under StrictMode, with its own idempotency key', async () => {
     await uploadPosts(POST_COUNT, { strict: true });
     await userEvent.click(page.getByTestId('batch-review-button'));

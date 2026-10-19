@@ -5,6 +5,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import {
   DEFAULT_HAT_PLACEMENT,
+  getEventDecorationClearLeftCss,
   getHatLayout,
   HAT_PLAIN_CARD_NUDGE,
   hatShiftCss,
@@ -51,6 +52,42 @@ export function EventDecorationOverlay({
       />
     );
   return null;
+}
+
+export type WornDecoration = { data: EventDecorationData } | null | undefined;
+
+/**
+ * One image's own hat, inside its media's corner: the media clips at its edge, so the hat stays
+ * inside it. For views that show one image's media (a gallery post's slides, the post page, the
+ * image detail).
+ */
+export function ImageMediaHat({
+  imageId,
+  decoration,
+  cardWidth,
+}: {
+  imageId: number;
+  decoration: WornDecoration;
+  /** The media's drawn width; a picture narrower than a feed card wears the hat scaled down. */
+  cardWidth?: number;
+}) {
+  if (!decoration) return null;
+  return (
+    <EventDecorationOverlay
+      decoration={decoration.data}
+      placement="inside"
+      cardWidth={cardWidth}
+      wornOn={{ entityType: 'Image', entityId: imageId }}
+    />
+  );
+}
+
+/** Steps the media's top-left badges clear of its ImageMediaHat. */
+export function imageMediaHatClearLeft(decoration: WornDecoration) {
+  if (!decoration) return undefined;
+  return {
+    '--event-decoration-clear-left': getEventDecorationClearLeftCss(decoration.data, 'inside'),
+  } as CSSProperties;
 }
 
 const CONFETTI_COLORS = ['#fab005', '#228be6', '#e64980', '#40c057', '#fd7e14', '#be4bdb'];
@@ -104,6 +141,9 @@ function CardHat({
         // The card underneath is a link.
         e.preventDefault();
         e.stopPropagation();
+        // Safari and Firefox do not focus a clicked button, so Escape would target the page and a
+        // modal around the card would close instead of the popover.
+        e.currentTarget.focus();
         setBurst((x) => x + 1);
         if (wornOn) setOpened((x) => !x);
       }}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { redisEnvSchema } from '../env';
 
 // Minimal valid base — the two required URLs; everything else has a default.
@@ -200,5 +200,25 @@ describe('redisEnvSchema — sys self-heal invariants', () => {
         REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: '10',
       })
     ).toEqual([]);
+  });
+});
+
+describe('loadRedisEnv — sys self-heal timeout-rate trigger mapping', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('maps THRESHOLD and WINDOW_MS onto their own config fields (a swap would silently disable the trigger)', async () => {
+    vi.stubEnv('REDIS_URL', base.REDIS_URL);
+    vi.stubEnv('REDIS_SYS_URL', base.REDIS_SYS_URL);
+    // Values distinct from each other, from the defaults and from every other sys self-heal knob.
+    vi.stubEnv('REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD', '7');
+    vi.stubEnv('REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS', '45000');
+    vi.resetModules();
+    const { loadRedisEnv } = await import('../env');
+    const cfg = loadRedisEnv();
+    expect(cfg.sysSelfHealTimeoutThreshold).toBe(7);
+    expect(cfg.sysSelfHealTimeoutWindowMs).toBe(45000);
   });
 });

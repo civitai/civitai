@@ -1,7 +1,8 @@
 // The REST layer of the App Blocks document store: `/api/v1/blocks/storage/…`, served by
 // one catch-all page (`src/pages/api/v1/blocks/storage/[[...path]].ts`). It resolves the
 // caller (`doc-store-access.ts`), runs the gates the store leaves to its caller — scopes,
-// consent, the min-trust gate, rate limits, moderation — calls the store, and presents the
+// consent, a collection's `ownedModelVersions` rule (`doc-store-ownership.ts`), the
+// min-trust gate, rate limits, moderation — calls the store, and presents the
 // result. Every refusal leaves through `sendError`, the one place a `DocStoreError` code
 // becomes an HTTP status.
 //
@@ -37,11 +38,13 @@ import {
 import {
   assertCollection,
   assertShareWritable,
+  PUBLISHED_NS,
   refuseReportWithdrawal,
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import type {
   DocAuthor,
   DocCollection,
@@ -63,6 +66,7 @@ import {
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
@@ -179,6 +183,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
+  resource_not_owned: 403,
   not_found: 404,
   collection_not_declared: 404,
   version_conflict: 409,
@@ -599,8 +604,8 @@ async function moderate(
 /**
  * Failures that are OUR fault, refunded without charging the caller's rejection bucket: the
  * store or a dependency was unavailable, the store timed out on a lock other writers held, or
- * anything that is not a `DocStoreError` at all. Every refusal about the caller's request or
- * document is charged as a rejection.
+ * anything that is not a `DocStoreError` at all. Every other refusal `fn` raises before the
+ * write lands is charged as a rejection.
  *
  * ⚠️ THE DEFAULT IS THE OPPOSITE OF THE LEGACY SURFACE'S. `apps-shared.router.ts` refunds only
  * the statements it marks as plumbing (`asTransactionFault`: connection, BEGIN, COMMIT) and
@@ -734,6 +739,11 @@ async function run(
       const created = route.op === 'create' ? parseBody(createBody, body) : null;
       const putIn = route.op === 'put' ? parseBody(putBody, body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
+      // Every write that sets `data` (create and put are the only two), before the trust lookup,
+      // the write budget and the moderation scan — the manifest schema documents a refusal as
+      // spending no write budget and no scan.
+      const newData = created?.data ?? putIn?.data;
+      if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
           if (user) await moderate(access, user, 'append', '', { data: created.data });
@@ -749,7 +759,18 @@ async function run(
           return ok(await presentDoc(doc, decl));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
-        return ok(await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion }));
+        const result = await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion });
+        // The author removed a published item: its App Store card follows. Production only: a
+        // dev namespace's key is not the published item's.
+        if (result.deleted && shared && ctx.ns === PUBLISHED_NS) {
+          await syncStoreItem({
+            appBlockId: ctx.appId,
+            itemKey: route.key,
+            change: 'withdrawn',
+            authorUserId: uid,
+          });
+        }
+        return ok(result);
       };
       if (!shared || route.op === 'delete') {
         await charge('write', access, req);

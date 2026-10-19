@@ -83,7 +83,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <Grid.Col span="auto" pl={0}>
           <div className="flex items-center gap-2.5">
             <Logo />
-            {!features.canWrite ? <ReadOnlyNotice /> : <SupportButton />}
+            {!features.canWrite ? (
+              <ReadOnlyNotice />
+            ) : features.buzzSpendPop ? (
+              // Hidden on phones for signed-in users to make room for the Buzz counter.
+              <div className={clsx({ ['@max-md:hidden']: !!currentUser })}>
+                <SupportButton />
+              </div>
+            ) : (
+              <SupportButton />
+            )}
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </div>
@@ -140,7 +149,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             >
               <IconSearch />
             </LegacyActionIcon>
-            {currentUser && <CivitaiLinkPopover />}
+            {currentUser && !features.buzzSpendPop && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && showChat && <ChatButton />}
             {/*{currentUser?.isModerator && <ModerationNav />}*/}

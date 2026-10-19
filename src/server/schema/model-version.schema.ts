@@ -10,6 +10,10 @@ import { constants } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import {
+  metricVisibilityChoicesSchema,
+  metricVisibilityMetaFromChoices,
+} from '~/server/utils/model-metric-privacy';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
@@ -554,7 +558,11 @@ export const modelVersionUpsertSchema2 = z.object({
       hideBuzz: z.boolean().nullish(),
       hideDownloads: z.boolean().nullish(),
       hideGenerations: z.boolean().nullish(),
+      metricVisibility: metricVisibilityChoicesSchema.optional(),
     })
+    .transform(({ metricVisibility, ...val }) =>
+      metricVisibility ? { ...val, ...metricVisibilityMetaFromChoices(metricVisibility) } : val
+    )
     .optional(),
 });
 

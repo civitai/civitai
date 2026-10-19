@@ -761,6 +761,8 @@ export const upsertModelVersionHandler = async ({
 
           if (files.length) {
             await Promise.all(
+              // The url is the awarded entry's file as its author submitted it; it is not checked
+              // against the caller (assertClientFileUrlAllowed).
               files.map((f) =>
                 createFile({
                   modelVersionId: version.id,

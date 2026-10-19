@@ -6,6 +6,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { isStudioToggleAvailable } from '~/components/Training/Form/studioAudioNotice';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -76,22 +77,34 @@ export function SwitchToTrainingStudioAlert({
   );
 }
 
-export function Flux3StudioNotice() {
+// Models that train only in Training Studio, each behind the flag that shows its Studio card.
+const STUDIO_ONLY_MODELS = [
+  { name: 'Flux.3 Klein', feature: 'flux3KleinTraining' },
+  { name: 'MOSS Image', feature: 'mossImageTraining' },
+] as const satisfies readonly { name: string; feature: FeatureFlagKey }[];
+
+export function StudioOnlyModelsNotice() {
   const features = useFeatureFlags();
   const canSwitch = useCanSwitchToTrainingStudio();
   const { switchTo, switching } = useTrainingStudioSwitch();
-  if (!canSwitch || !features.flux3KleinTraining) return null;
+  const models = STUDIO_ONLY_MODELS.filter((model) => features[model.feature]);
+  if (!canSwitch || !models.length) return null;
+
+  const names = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+    models.map((model) => model.name)
+  );
 
   return (
     <DismissibleAlert
-      id="flux3-klein-training-studio"
+      // Keyed on the models shown, so a newly added one brings the notice back after a dismissal.
+      id={`training-studio-only-${models.map((model) => model.feature).join('-')}`}
       color="blue"
       size="sm"
       icon={<IconSparkles size={16} />}
-      title="Flux.3 Klein is here — in Training Studio"
+      title={`${names} ${models.length > 1 ? 'are' : 'is'} here — in Training Studio`}
     >
       <Text size="sm">
-        Flux.3 Klein LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
+        {names} LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
         <Anchor
           component="button"
           type="button"
@@ -101,7 +114,7 @@ export function Flux3StudioNotice() {
         >
           Switch to Training Studio
         </Anchor>{' '}
-        to try it. You can switch back at any time.
+        to try {models.length > 1 ? 'them' : 'it'}. You can switch back at any time.
       </Text>
     </DismissibleAlert>
   );

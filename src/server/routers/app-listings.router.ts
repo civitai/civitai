@@ -95,7 +95,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { isHostForColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
@@ -324,8 +324,7 @@ const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
  * Mirrors `blocks.router`'s `isRedCapableRequest`.
  */
 function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
-  const host = ctx.req?.headers?.host ?? '';
-  return host !== '' && isHostForColor(host, 'red');
+  return isRedCapableHost(ctx.req?.headers?.host);
 }
 
 /**
@@ -1346,6 +1345,7 @@ export const appListingsRouter = router({
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
+          mediaSplit: input.mediaSplit,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -2064,6 +2064,8 @@ export const appListingsRouter = router({
         scope,
         floor,
         viewer: listingViewerFromCtx(ctx),
+        // For the per-image media gate on a red-capable host (the list read passes the same).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;

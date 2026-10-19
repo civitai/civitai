@@ -6,8 +6,13 @@ import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
-
-const LAST_USED_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hour — don't update more frequently than this
+import {
+  cacheApiKey,
+  claimLastUsedWrite,
+  readCachedApiKey,
+  releaseLastUsedWrite,
+  startLookup,
+} from './api-key-principal-cache';
 
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
@@ -22,24 +27,34 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
-  const apiKey = await dbWrite.apiKey.findFirst({
-    where: {
-      key: token,
-      // Refresh tokens share this table and scope with their access token but are not bearer
-      // credentials. Allowlisted so a new key type is refused until deliberately added.
-      type: { in: [ApiKeyType.System, ApiKeyType.User, ApiKeyType.Access] },
-      OR: [{ expiresAt: { gte: now } }, { expiresAt: null }],
-    },
-    select: {
-      id: true,
-      userId: true,
-      tokenScope: true,
-      lastUsedAt: true,
-      buzzLimit: true,
-      clientId: true,
-      type: true,
-    },
-  });
+  const lookup = startLookup();
+  // Personal and system keys are served from a short-lived Redis copy of this row; see
+  // api-key-principal-cache.ts for what may be cached and how a revocation evicts it. A miss, a
+  // revoked or expired entry, or any Redis error reads the primary exactly as before.
+  const cached = await readCachedApiKey(token, now);
+  let apiKey = cached.apiKey;
+  if (!apiKey) {
+    apiKey = await dbWrite.apiKey.findFirst({
+      where: {
+        key: token,
+        // Refresh tokens share this table and scope with their access token but are not bearer
+        // credentials. Allowlisted so a new key type is refused until deliberately added.
+        type: { in: [ApiKeyType.System, ApiKeyType.User, ApiKeyType.Access] },
+        OR: [{ expiresAt: { gte: now } }, { expiresAt: null }],
+      },
+      select: {
+        id: true,
+        userId: true,
+        tokenScope: true,
+        lastUsedAt: true,
+        buzzLimit: true,
+        clientId: true,
+        type: true,
+        expiresAt: true,
+      },
+    });
+    if (apiKey && cached.fill) await cacheApiKey(token, apiKey, lookup);
+  }
   if (!apiKey) return null;
   if (
     !options.allowClientCredentialsOnly &&
@@ -48,9 +63,12 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     return null;
   }
 
-  // Update lastUsedAt (debounced — at most once per hour, fire-and-forget)
-  if (!apiKey.lastUsedAt || now.getTime() - apiKey.lastUsedAt.getTime() > LAST_USED_DEBOUNCE_MS) {
-    dbWrite.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: now } }).catch(() => {});
+  // Update lastUsedAt (debounced — at most once per hour per key, fire-and-forget)
+  if (await claimLastUsedWrite(apiKey, now)) {
+    const id = apiKey.id;
+    dbWrite.apiKey
+      .update({ where: { id }, data: { lastUsedAt: now } })
+      .catch(() => releaseLastUsedWrite(id));
   }
 
   const user = (await sessionClient.getSessionUserById(apiKey.userId)) as Session['user'] | null;

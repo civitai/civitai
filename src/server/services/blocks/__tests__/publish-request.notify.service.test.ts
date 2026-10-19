@@ -20,6 +20,8 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const mockNotify = vi.fn(async (..._a: unknown[]) => undefined);
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),

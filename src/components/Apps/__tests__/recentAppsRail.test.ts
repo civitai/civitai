@@ -938,12 +938,20 @@ describe('reconcileRecentApps', () => {
     expect(out.id).toBe('ab_gm');
   });
 
-  it('preserves a recorded iconUrl the card cannot supply', () => {
-    const [out] = reconcileRecentApps(
+  // 🔴 The card's icon is gated per viewer on the server, so its `null` is often the server
+  // HIDING the icon. A recorded icon must not resurrect it.
+  it("the card's icon wins over a recorded one, INCLUDING the card's null", () => {
+    const [hidden] = reconcileRecentApps(
       [legacy({ iconUrl: 'https://cdn.example/old.png' })],
       [onsiteCard({ iconUrl: null })]
     );
-    expect(out.iconUrl).toBe('https://cdn.example/old.png');
+    expect(hidden).not.toHaveProperty('iconUrl');
+    // Positive control: a visible card icon replaces the recorded one.
+    const [shown] = reconcileRecentApps(
+      [legacy({ iconUrl: 'https://cdn.example/old.png' })],
+      [onsiteCard({ iconUrl: 'https://cdn.example/live.png' })]
+    );
+    expect(shown.iconUrl).toBe('https://cdn.example/live.png');
   });
 
   it('is IDEMPOTENT — reconciling a reconciled list changes nothing', () => {

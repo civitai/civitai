@@ -1,3 +1,4 @@
+import { responseMayHaveLanded } from './rest-error-reason';
 import { callModEndpoint, readModEndpoint } from './user-actions.service';
 
 // The Buzz decision lives in the main app's `resolveServiceDealDispute`, under the deal lock. This
@@ -137,12 +138,9 @@ export async function resolveDispute(input: {
   );
   if (!result.ok) {
     // Anything but a refusal that proves nothing happened may have committed on the far side.
-    const lost =
-      !result.requestNeverSent &&
-      (result.status === undefined || result.status >= 500 || result.status === 408);
     return {
       ok: false,
-      error: lost
+      error: responseMayHaveLanded(result)
         ? `${result.error} The ruling may have gone through: reload to check.`
         : result.error,
     };

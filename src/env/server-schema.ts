@@ -972,6 +972,37 @@ export const serverSchema = z
     SCAN_LABEL_P3_B2_DELETE_ACCESS_KEY: z.string().optional(),
     SCAN_LABEL_P3_B2_DELETE_SECRET_KEY: z.string().optional(),
 
+    // Resource-intent v1 tag-index snapshots: a dedicated private B2 bucket, read and written with
+    // its own bucket-scoped key (never the S3_UPLOAD_* credentials). The bucket, endpoint or either
+    // key unset or empty: the snapshot store refuses to put or load. Region defaults to us-west-004.
+    RESOURCE_INTENT_TAG_INDEX_BUCKET: z.preprocess(
+      (v) => v || undefined,
+      z
+        .string()
+        .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'not an S3 bucket name')
+        .optional()
+    ),
+    RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT: z.preprocess(
+      (v) => v || undefined,
+      z.string().optional()
+    ),
+    RESOURCE_INTENT_TAG_INDEX_B2_REGION: z.preprocess((v) => v || undefined, z.string().optional()),
+    RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY: z.preprocess(
+      (v) => v || undefined,
+      z.string().optional()
+    ),
+    RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY: z.preprocess(
+      (v) => v || undefined,
+      z.string().optional()
+    ),
+    // The tag-index build's ClickHouse identity and observation hash key. Validated by the build,
+    // not here, so an empty or malformed value fails that job, not every pod's start.
+    P2M_CLICKHOUSE_URL: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_USER: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_PASSWORD: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY_FINGERPRINT: z.preprocess((v) => v || undefined, z.string().optional()),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),

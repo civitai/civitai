@@ -198,6 +198,7 @@ node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new
 node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
 node .claude/skills/dev-server/scripts/worktree-create.integration.selftest.mjs  # `wt new`: base, no upstream, refusals
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
+node .claude/skills/dev-server/scripts/dev-fs-cache.selftest.mjs       # worktrees start without the Turbopack dev cache; opt-ins win
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
 
@@ -345,6 +346,10 @@ wherever that was being checked. Extra args after `--` are passed to vitest, so
 runtime with `test config <n>`. `0` is legal and means *paused* — nothing starts until it is raised.
 A caller that queues behind a paused queue is told so explicitly rather than being handed a position
 and left waiting.
+
+**Vitest workers are capped at 4 per queued run** (`DEFAULT_MAX_WORKERS`), so a daemon restart cannot
+bring back an unclamped suite. Change it with `TEST_MAX_WORKERS` in the skill's `.env` or at runtime
+with `test config --max-workers <n>`; `none` removes the cap. A caller's own `--max-workers` wins.
 
 **Each kind of check is its own lane with its own limit**, because they are not the same load: a
 unit run saturates every core, while `tsc` is single-threaded and spends its budget on heap. The
@@ -660,11 +665,11 @@ The first route compiled drags in the whole shared graph — the pages-router `_
 
 So the working set for this app is roughly **2.5-4 GB per branch**, and it is real data, not a leak. It's large because the graph is large (3.4M cache keys, ~210k files in `node_modules`). Source maps are not the driver — they are 0.3% of a sampled segment.
 
-It earns the space: **45.8s cold vs 4.3s warm** on the same route after a restart. Disabling `turbopackFileSystemCacheForDev` trades a 10x slower restart for disk, which is the wrong trade on a machine with room.
+It earns the space only in a long-lived checkout: **45.8s cold vs 4.3s warm** on the same route after a restart. **Worktree sessions start with it off** (`NEXT_DEV_FS_CACHE=false`, which `next.config.mjs` maps to `turbopackFileSystemCacheForDev`); the primary checkout keeps it. Across 18 worktrees it reached 80 GB, and a session stopped soon after compiling (the stop is `taskkill /f`) loses the cache anyway: the next start discards it and rebuilds. Measured on one worktree, first page `/models`: cache on, `.next` 2.5 GB and 17s after a restart (65-73s cold); cache off, 1.1 GB and ~60-70s every start. Keep it for every worktree with `WORKTREE_DEV_FS_CACHE=true` in the skill `.env`, or for one with `NEXT_DEV_FS_CACHE=true` in that worktree's `.env`; the log line `Turbopack dev FS cache: on|off` says which a session got.
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`.
 
 ## Worktrees
 

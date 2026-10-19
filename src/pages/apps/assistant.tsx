@@ -42,7 +42,7 @@ export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistan
       <Meta title="App Assistant — Civitai Apps" deIndex />
       <AppsPageLayout
         title="App Assistant"
-        subtitle="Describe an app and the assistant builds it in your sandbox while you watch."
+        subtitle="Describe an app and the assistant builds it while you watch."
       >
         <AppAssistantWorkspace canPreview={canPreview} sandboxUrl={sandboxUrl} />
       </AppsPageLayout>

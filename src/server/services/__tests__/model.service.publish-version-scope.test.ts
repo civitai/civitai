@@ -191,3 +191,24 @@ describe('publishModelById only touches the model’s own versions', () => {
     expect(postRestore).toMatch(/WHERE mv\.id = p\."modelVersionId"\s+AND mv\."modelId" = \?\s/);
   });
 });
+
+describe('publishModelById meta', () => {
+  // JSON `null` here is what the `COALESCE(meta, '{}') || x` writers turned into `[null, x]`, which
+  // prepare-leaderboard's jsonb_set then threw on (2026-10-18). `{}` is the column's own default.
+  it('stores an empty object, not JSON null, when published without meta', async () => {
+    await publishModelById({ id: MODEL_ID, versionIds: [OWN_VERSION_ID] });
+
+    // toStrictEqual: Prisma.JsonNull is a class instance with no own keys, so plain equality takes it for {}.
+    expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({});
+  });
+
+  it('stores the meta it is given', async () => {
+    await publishModelById({
+      id: MODEL_ID,
+      versionIds: [OWN_VERSION_ID],
+      meta: { cannotPromote: true },
+    });
+
+    expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({ cannotPromote: true });
+  });
+});

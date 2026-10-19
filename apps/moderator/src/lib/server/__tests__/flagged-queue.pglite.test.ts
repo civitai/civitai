@@ -60,7 +60,7 @@ CREATE TABLE "EntityModeration" (
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER
+  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER, "category" TEXT
 );
 `;
 
@@ -138,6 +138,13 @@ describe('getFlaggedModels', () => {
       2: false,
       7: false,
     });
+  });
+
+  it('ignores a site-form appeal, which is about an unpublish rather than the flag', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 1, 'Pending', 1, 'Model')`);
+    const { items } = await getFlaggedModels({ limit: 10 });
+    expect(items.find((r) => r.modelId === 1)?.hasPendingAppeal).toBe(false);
   });
 
   it('pages by model and reports whether more remain', async () => {

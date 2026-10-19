@@ -30,7 +30,7 @@
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
-  import { extOfAir, mediaOfExt, mimeOfExt } from '$lib/media';
+  import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
     ToggleGroup,
     ToggleGroupItem,
@@ -229,7 +229,13 @@
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
   const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
   const matureTotal = $derived(images.filter(isMature).length);
-  const shownImages = $derived(
+  // "Show images" from Manage tags: the images that carried the tag when it was picked — a snapshot,
+  // so removing the tag from one while reviewing doesn't hide it.
+  let tagFilter = $state<{ tag: string; ids: number[] } | null>(null);
+  function showTag(tag: string) {
+    tagFilter = { tag, ids: images.filter((i) => i.tags.includes(tag)).map((i) => i.id) };
+  }
+  const statusShownImages = $derived(
     filter === 'labeled'
       ? images.filter(isLabeled)
       : filter === 'unlabeled'
@@ -240,6 +246,11 @@
             ? images.filter(isFailed)
             : images
   );
+  const shownImages = $derived.by(() => {
+    if (!tagFilter) return statusShownImages;
+    const ids = new Set(tagFilter.ids);
+    return statusShownImages.filter((i) => ids.has(i.id));
+  });
   // Mirrors Review's `blueExcluded`: unknown membership is warned too.
   const matureChargesYellow = hostConfig().isPaidMember !== true;
 
@@ -424,6 +435,11 @@
   // files; each tile carries its OWN mediaType so previews and labeling treat it correctly.
   // Classification itself (ext↔media↔mime) lives in $lib/media — this is only the acceptance policy.
   const acceptedMedia = $derived<Media[]>(media === 'video' ? ['video', 'image'] : [media]);
+  const acceptedExtsText = $derived(
+    extsOfMedia(acceptedMedia)
+      .map((ext) => ext.toUpperCase())
+      .join(', ')
+  );
   const fileMedia = (mime: string): Media | undefined =>
     acceptedMedia.find((m) => mime.startsWith(`${m}/`));
   const extMedia = (ext: string): Media | undefined => {
@@ -702,9 +718,22 @@
   let editorId = $state(0);
   const editing = $derived(images.find((x) => x.id === editorId));
 
+  // Prev/next walk the grid as it was when the editor opened, so labeling an image under "Unlabeled"
+  // doesn't pull it out of the sequence mid-pass.
+  let editorSequence = $state<number[]>([]);
+  const editorSteps = $derived(
+    editorSequence.filter((id) => images.some((x) => x.id === id && x.status === 'uploaded'))
+  );
+  const editorIndex = $derived(editorSteps.indexOf(editorId));
+
   function openEditor(id: number) {
+    editorSequence = shownImages.filter((i) => i.status === 'uploaded').map((i) => i.id);
     editorId = id;
     editorOpen = true;
+  }
+  function stepEditor(delta: -1 | 1) {
+    const next = editorSteps[editorIndex + delta];
+    if (next !== undefined) editorId = next;
   }
 
   // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
@@ -1048,6 +1077,9 @@
       <div class="mt-2 text-base font-semibold text-dark-0">
         Drop your {media} files or a .zip here, or click to browse
       </div>
+      <div class="mt-1 text-sm text-dark-2">
+        Accepts {acceptedExtsText}, or a .zip of them with matching .txt labels
+      </div>
       <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
     </button>
   {:else}
@@ -1107,7 +1139,12 @@
                 <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
               </Button>
             {/if}
-            <Button variant="outline" size="xs" onclick={() => fileInput.click()}>
+            <Button
+              variant="outline"
+              size="xs"
+              onclick={() => fileInput.click()}
+              title="Accepts {acceptedExtsText}"
+            >
               <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
             </Button>
           </div>
@@ -1145,6 +1182,17 @@
               </ToggleGroupItem>
             {/if}
           </ToggleGroup>
+          {#if tagFilter}
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
+              <span>Showing {mediaCount(shownImages.length, media)} tagged</span>
+              <span class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-dark-0">
+                {tagFilter.tag}
+              </span>
+              <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
+                <IconX size={12} stroke={2} class="mr-1 inline" />Clear
+              </Button>
+            </div>
+          {/if}
         </div>
 
         {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
@@ -1357,12 +1405,14 @@
   {trigger}
   {tagVocab}
   onRelabel={relabelOne}
+  position={{ index: editorIndex, total: editorSteps.length }}
+  onStep={stepEditor}
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} />
+<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

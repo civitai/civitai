@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocStore, DocStoreDb, DocStoreModeration } from '~/server/services/apps/doc-store';
+import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 
 /**
  * `apps.mod.docStore.*` end to end below the HTTP layer: the REAL router and its
@@ -21,6 +22,16 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
 vi.mock('~/server/services/apps/doc-store-moderation.instance', () => ({
   getDocStoreModeration: () => h.mod,
+}));
+// The App Store card sync, recorded at its entry point (its effect on the card rows is covered
+// in `app-sub-listing.service.test.ts`).
+const cardSync = vi.hoisted(() => ({ calls: [] as unknown[], fail: false }));
+vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubListingService>()),
+  syncSubListingForSharedRow: vi.fn(async (args: unknown) => {
+    cardSync.calls.push(args);
+    if (cardSync.fail) throw new Error('store card sync unavailable');
+  }),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -46,6 +57,7 @@ import {
   ctx as sctx,
   NS_PROD,
   POSTS,
+  TALLIES,
   VIEWER_1,
   VIEWER_2,
 } from '~/server/services/apps/__tests__/doc-store.functional';
@@ -727,6 +739,69 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
       caller().setHidden({ ...A1, hidden: true, reason: 'x'.repeat(1001) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(await h.store.get(v(APP_A), POSTS, 'a1')).not.toBeNull();
+  });
+});
+
+describe("the item's App Store card follows a moderator hide or delete, as for legacy shared rows", () => {
+  const A1 = { appBlockId: APP_A.id, collection: 'posts', key: 'a1' };
+  // Scoped to the document's author: the same key in another collection may be another item.
+  const hidden = {
+    appBlockId: APP_A.id,
+    itemKey: 'a1',
+    change: 'hidden',
+    authorUserId: VIEWER_1,
+    moderatorId: MOD.id,
+  };
+  beforeEach(() => {
+    cardSync.calls = [];
+    cardSync.fail = false;
+  });
+
+  it('hide hides the card; hiding an already-hidden document hides it again', async () => {
+    await seedQueue();
+    await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
+    await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
+    expect(cardSync.calls).toEqual([hidden, hidden]);
+  });
+
+  it('unhide leaves the card for a moderator to restore', async () => {
+    await seedQueue();
+    await caller().setHidden({ ...A1, hidden: true, reason: 'spam report' });
+    await caller().setHidden({ ...A1, hidden: false, reason: 'reviewed, fine' });
+    expect(cardSync.calls).toEqual([hidden]);
+  });
+
+  it('delete hides the card', async () => {
+    await seedQueue();
+    await caller().delete({ ...A1, reason: 'illegal content' });
+    expect(cardSync.calls).toEqual([hidden]);
+  });
+
+  it('a document no user authored backs no card: hiding or deleting it touches none', async () => {
+    // A counter document's recorded uid is its first incrementer, not an author.
+    await h.store.increment(v(APP_A), TALLIES, 'a1', 'plays', 1);
+    const counter = { appBlockId: APP_A.id, collection: 'tallies', key: 'a1' };
+    await caller().setHidden({ ...counter, hidden: true, reason: 'spam report' });
+    await caller().delete({ ...counter, reason: 'illegal content' });
+    expect(cardSync.calls).toEqual([]);
+  });
+
+  it('an action that did not happen touches no card', async () => {
+    await seedQueue();
+    await expect(
+      caller().delete({ appBlockId: APP_A.id, collection: 'posts', key: 'b1', reason: 'spam x' })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(cardSync.calls).toEqual([]);
+  });
+
+  it('a failing card sync never fails the action', async () => {
+    await seedQueue();
+    cardSync.fail = true;
+    await expect(caller().delete({ ...A1, reason: 'illegal content' })).resolves.toMatchObject({
+      deleted: true,
+    });
+    expect(cardSync.calls).toEqual([hidden]);
+    expect(await h.store.get(v(APP_A), POSTS, 'a1')).toBeNull();
   });
 });
 

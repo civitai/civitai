@@ -12,6 +12,9 @@ import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
+import { countSiteAppeals } from './site-appeals.service';
+import { siteAppealCountKey } from '$lib/site-appeals';
+import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
@@ -47,6 +50,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppealGroups,
     flaggedModels,
     strikeReview,
+    siteAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -91,6 +95,9 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(() => getFlaggedCount()),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
+    // One grouped count over the partial queue index for all four queues; bounded so a failure drops
+    // only these badges.
+    bounded(countSiteAppeals),
   ]);
   return {
     ...modes,
@@ -106,6 +113,11 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
     ...(flaggedModels != null ? { modelFlagsReview: flaggedModels } : {}),
+    ...(siteAppeals != null
+      ? Object.fromEntries(
+          SITE_APPEAL_CATEGORIES.map((c) => [siteAppealCountKey(c), siteAppeals[c]])
+        )
+      : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),

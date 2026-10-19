@@ -180,6 +180,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing. The ClickHouse read behind it is the expensive half.',
   },
+  getReactionsForApp: {
+    buckets: ['catalog'],
+    why: 'The read half of app reactions: a metric read plus the viewer’s own reactions for up to 100 ticketed images per call.',
+  },
   getMyViewer: {
     buckets: ['catalog'],
     why: 'The per-call viewer identity read every block makes on load; a session-user resolve per call, so it is bounded; pre-existing.',
@@ -219,6 +223,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   queryAppWorkflows: {
     buckets: ['catalog'],
     why: 'Up to 50 projections per call off an orchestrator LIST; pre-existing.',
+  },
+  setReactionFromApp: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
   },
   submitWorkflow: {
     buckets: [],
@@ -439,7 +447,15 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .filter(([, d]) => d.buckets.length === 0)
       .map(([name]) => name)
       .sort();
-    expect(unlimited).toEqual(['listMyWorkflows', 'submitWorkflow', 'updateUserSettings']);
+    // `setReactionFromApp` is not unlimited in fact — it is charged the site's per-user reaction
+    // quota by the rateLimit middleware, which this file's derivation does not read. It is listed
+    // here because that is what `buckets: []` means to this file; its ledger entry says why.
+    expect(unlimited).toEqual([
+      'listMyWorkflows',
+      'setReactionFromApp',
+      'submitWorkflow',
+      'updateUserSettings',
+    ]);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {

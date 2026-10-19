@@ -43,7 +43,9 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
  * response cache so a dark flag never reads, never spends. Behind it,
  * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10, and
- * `resourceIntentCheckpoint` admits `kind: 'checkpoint'` (400 while it is off). Checkpoint mode
+ * `resourceIntentCheckpoint` admits `kind: 'checkpoint'` (400 while it is off), `resourceIntentV1`
+ * serves the v1 content-tag arm for add-ons (over POOL_MERGE and HYBRID_10), and `resourceIntentV1Shadow`
+ * / `resourceIntentJudgeCapture` only record, after the response is built. Checkpoint mode
  * makes no vendor call but still spends from the same LLM bucket: kept, not split, while it is dark.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
@@ -110,10 +112,14 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   try {
     // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
     // path only (a Flipt eval on every hit would be waste); in checkpoint mode
-    // before the cache read, because it is a term of that mode's cache key.
+    // before the cache read, because it is a term of that mode's cache key. The
+    // v1 shadow resolves its own in either mode.
     const result = await getResourceIntent(intentInput, {
       browsingLevel,
       poolMerge: !!features.resourceIntentPoolMerge,
+      v1: !!features.resourceIntentV1,
+      v1Shadow: !!features.resourceIntentV1Shadow,
+      judgeCapture: !!features.resourceIntentJudgeCapture,
     });
     res.status(200).json({
       ...result,

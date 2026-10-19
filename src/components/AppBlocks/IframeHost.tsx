@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
   IconApps,
@@ -28,6 +28,7 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
@@ -81,6 +82,12 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -676,8 +683,14 @@ export function AppBlockChrome({
           after mount so SSR + first client render match). Excludes the app
           currently being viewed and the whole label+section is omitted when
           there's nothing else to show (a first-time / single-app viewer).
-          Each item shows the app icon (persisted `iconUrl`, else a generic
-          app icon) + name, linking to the full-page run route. */}
+          Each item shows the app's icon + name, linking to the full-page run
+          route. 🔴 THE ICON IS READ LIVE, NEVER FROM THE STORE: the recents
+          store never persists an icon url (`recentlyOpenedAppsStore.ts`) and
+          `selectChromeRecentApps` strips one, so `ChromeRecentAppIcon` gets
+          only the slug and draws the `iconUrl` the server's listing-media gate
+          returned for THIS host and viewer (`appListings.getAppDetail`) — the
+          generic glyph while that loads, on any error, and whenever the gate
+          hides the icon. */}
       {recentApps.length > 0 && (
         <ChromeSurfaceGroup data-testid="app-recently-run">
           <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
@@ -693,13 +706,8 @@ export function AppBlockChrome({
               // note in `ChromeSurface.tsx` for why it is opt-in rather than
               // universal.
               clamp
-              leftSection={
-                r.iconUrl ? (
-                  <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
-                ) : (
-                  <IconApps size={14} stroke={1.5} />
-                )
-              }
+              // `blockId` is the listing slug for an on-site app (`app-listing-mapper.ts`).
+              leftSection={<ChromeRecentAppIcon slug={r.blockId} />}
             >
               {/* The persisted `name` is the SAME publisher-controlled string
                   the trust label above laundered through localStorage — so
@@ -3203,6 +3211,111 @@ export function IframeHost({
     trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
+  ]);
+
+  // ── SET_ENTITY_REACTION / GET_ENTITY_REACTIONS ─────────────────────────────
+  // The model-slot twin of PageBlockHost's reaction handlers; the decision layer is shared
+  // (`reactionGate.ts`) and carries the rationale. This host contributes `currentUser` and the
+  // token's granted scopes. There is no mod-review sandbox on the model slot, so `reviewMode`
+  // is constant false here.
+  //
+  // No confirm dialog: the consent-gated `social:react:self` grant is the consent. Every path
+  // with a usable `requestId` replies exactly once; `trpcUtils.client` so no render-time hook
+  // is added.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
   ]);
 
   useEffect(() => {

@@ -30,6 +30,7 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
@@ -80,7 +81,11 @@
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
       <AddressesPanel {signals} accountId={result.identity.id} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
@@ -131,6 +136,7 @@
         userId={result.identity.id}
         canAct={data.canAct}
         canGrantCosmetics={!!data.grants['user.cosmetics.grant']}
+        canGrantBoxes={!!data.grants['items.boxes.grant']}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'generation'}
@@ -208,11 +214,15 @@
         <UserChatMessages userId={result.identity.id} />
       {/if}
     {:else if section === 'notes'}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
     {:else if section === 'notifications'}
       <NotificationsPanel
         userId={result.identity.id}
-        canAct={data.canAct}
+        canAct={data.canStrike}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'mutes'}
@@ -225,6 +235,9 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
       />
+      {#if data.grants['user.removeReactions']}
+        <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
+      {/if}
     {/if}
   {/key}
 {/if}

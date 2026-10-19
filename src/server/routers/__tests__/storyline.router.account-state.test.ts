@@ -5,7 +5,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A muted or banned account cannot write to a storyline: start one, edit it, add a chapter, pick
- * the canon branch, or add or remove a collaborator.
+ * the canon branch, join two branches, or add or remove a collaborator.
  *
  * Every one of those changes what other people read or who can post into the story. setCanon and
  * the collaborator pair ran on `protectedProcedure`, which refuses a ban and says nothing about a
@@ -20,6 +20,7 @@ const writers = vi.hoisted(() => ({
   updateStoryline: vi.fn(async () => ({ id: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
+  linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   removeStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   setStorylineTakedown: vi.fn(async () => ({ id: 1 })),
@@ -48,6 +49,11 @@ const WRITE_CALLS = [
     input: { parentChapterId: 3, postId: 12 },
   },
   { name: 'setCanon', writer: writers.setCanonChapter, input: { chapterId: 3 } },
+  {
+    name: 'linkChapter',
+    writer: writers.linkStorylineChapter,
+    input: { parentChapterId: 3, chapterId: 7 },
+  },
   {
     name: 'addCollaborator',
     writer: writers.addStorylineCollaborator,

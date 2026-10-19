@@ -21,6 +21,7 @@
   import { reportDetailEntries, reportedPlacementId } from '$lib/reports';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
   import type { ImageQueueData } from '$lib/server/image-queue';
+  import { denied } from '$lib/permissions';
 
   // Every image queue's page: the review queues under `/images/<view>` and the reported-image queue at
   // `/reports/image`. Which one is `data.kind`; the route only loads it and names it.
@@ -28,7 +29,8 @@
     data,
     form,
   }: {
-    /** `canAct` is `/reports/image`'s: reaching it is the shared Reports grant, acting needs `/users`.
+    /** `canAct` is `/reports/image`'s: reaching it is the shared Reports grant, acting needs the
+     *  `image.moderate` action grant.
      *  The `/images` queues gate both on the page, so they leave it out and can act. */
     data: ImageQueueData & { title: string; civitaiUrl: string; canAct?: boolean };
     form: {
@@ -162,7 +164,7 @@
 
 {#if !canAct}
   <p class="mb-3 text-sm text-dark-2">
-    Read-only: acting on this queue needs access to the Users page (`/users`), granted on `/admin`.
+    Read-only: {denied('image.moderate')} It is granted on <a href="/admin" class="link"><code>/admin</code></a>.
   </p>
 {/if}
 
