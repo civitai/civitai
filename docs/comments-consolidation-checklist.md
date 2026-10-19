@@ -10,7 +10,8 @@ deletion (`deletedAt` + `parentId ON DELETE RESTRICT`), comments FK'd to `Commen
 semantics are **decided** (D6): tombstone with replies, hard-delete childless. Per-thread
 notification mute is **in scope** (D7, added 2026-09-01 after PR #4524 shipped it for CommentsV2).
 The 2026-10-16 viability review (plan doc, top) changed Phase 2 to a trigger mirror and added the
-items marked **(review)** below.
+items marked **(review)** below; everything amended since Koen's 2026-08-25 design is listed under
+_Changes since 2026-08-25_ in the plan doc.
 
 ## Phase 0 — Measure & decide
 
@@ -20,8 +21,9 @@ Prod measurements (read-only replica, taken 2026-10-16 — figures in the plan d
       `CommentReport`, `CommentV2Report`
 - [x] v1 depth distribution — 3 rows; v1 backfill needs no depth handling
 - [x] Orphaned `Thread` count (all entity FKs null) and orphan comments under them — 288K / 233K,
-      plus 41K nested threads / 43K comments under them; cause is `ON DELETE SET NULL` on every
-      entity FK, growing ~6K comments/month
+      plus 41K nested threads / 43K comments under them; cause was `ON DELETE SET NULL` on every
+      entity FK (~6K comments/month) — stopped by the FK cascade (2026-10-16), stock purged
+      (2026-10-19)
 - [x] `Thread` rows pointing at deleted images — 0
 - [x] Per-entityType comment volume (drives flip order and index sizing)
 - [x] `Thread` rows for dead surfaces: `clubPostId` 53, `questionId`/`answerId` 456
@@ -33,7 +35,8 @@ Prod measurements (read-only replica, taken 2026-10-16 — figures in the plan d
 - [ ] EXPLAIN the capped per-parent reply-count `GROUP BY` at prod scale (replaces stored
       `childCount`; must be index-only on `(parentId, hidden, …)`) — needs the table to exist
 - [ ] Infra sign-off: `CREATE EXTENSION ltree` on prod (available 1.3, not installed)
-- [x] `ThreadMute` row count — 225 in prod; the comment / section / orphaned split is still to do
+- [x] `ThreadMute` row count — 225 in prod (the orphaned ones went with the purge); the comment /
+      section split is a Phase 3 parity input
 - [x] **(review)** v2 depth distribution — 692 comments deeper than 20, max 247
 - [x] **(review)** child threads with null `parentThreadId`/`rootThreadId` — 2
 
@@ -52,30 +55,30 @@ Decisions & prerequisites:
       tree in one statement — verified on Postgres 18.6
 - [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
       `replyToId` index, 59 s without — index added to the DDL
-- [x] **(review)** Prod purge of today's orphans — approved 2026-10-16; procedure written up in
-      the plan (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue`
-      deletes, batched thread deletes, rollback traps); migration
-      `20261101130000_purge_orphaned_comment_threads` applied in prod 2026-10-19 — the replica
-      shows zero orphan roots and zero dead-parent threads, `Thread` down by ~334K rows, and the
-      ten `archive` tables in place
+- [x] **(review)** Prod purge of the orphans — approved 2026-10-16; migration
+      `20261101130000_purge_orphaned_comment_threads` (PR #6313) applied in prod 2026-10-19: the
+      replica shows zero orphan roots and zero dead-parent threads; ten `archive` tables hold
+      334,004 threads / 281,426 comments / 5,868 reports (kept until Phase 6); procedure in the
+      plan under _Orphan purge_
 - [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
-      hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
-      by the backfill
-- [x] **(review)** Stop the leak now: flip the 16 `Thread` entity FKs to `ON DELETE CASCADE`
-      (`commentId` stays `SET NULL`; `challengeId` had no FK in prod, so it was added after
-      deleting its dangling threads) — PR #6155 merged and migration
-      `20261101120000_thread_entity_fk_cascade` applied in prod 2026-10-16; all 18 cascade keys
-      validated
-- [ ] **(review)** After the migration is applied: recapture the prod catalog, run
-      `drift:baseline` (the 15 Thread `referential-action` entries and
-      `missing-foreign-key|Thread|challengeId` drop out), and delete the `inFlightThreadCascade`
-      carve-out in `production-snapshot.test.ts`
+      hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged 2026-10-19; recurs until
+      V3 (`Thread.commentId` stays `SET NULL`), so the backfill skip still matters
+- [x] **(review)** Stop the leak now: flip the 16 `Thread` entity relations (17 columns) to
+      `ON DELETE CASCADE` (`commentId` stays `SET NULL`; `challengeId` had no FK in prod, so it
+      was added after deleting its dangling threads) — PR #6155 merged and migration
+      `20261101120000_thread_entity_fk_cascade` applied in prod 2026-10-16; all 18
+      `ON DELETE CASCADE` keys on `Thread` (16 entity + `parentThreadId`/`rootThreadId`) validated
+- [ ] **(review)** Recapture the prod catalog and run `drift:baseline` — in progress 2026-10-19
+      on its own branch from main: the 15 Thread `referential-action` entries and
+      `missing-foreign-key|Thread|challengeId` drop out, and the `inFlightThreadCascade` carve-out
+      in `production-snapshot.test.ts` goes
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id, flip order, the ltree infra sign-off and the baseline recapture.
+`ComicChapter` surrogate id, flip order, the ltree infra sign-off and the baseline recapture (in
+progress 2026-10-19).
 
 ## Phase 1 — Schema (expand)
 
@@ -166,8 +169,9 @@ the copy):
       (v2 ids preserved; note the off-by-one — v2 mutes the comment's CHILD thread); entity-bearing
       thread with no `commentId` → `CommentTopicMute`; orphaned → skipped and counted
 - [ ] Orphaned-thread comments (and their reactions/report links) skipped, counts logged —
-      **both classes**: entity-less root threads AND child threads with `commentId IS NULL`
-      (a null `parentId` from the latter would promote a reply to top level on a live entity)
+      entity-less root threads can no longer occur in prod (guard only); child threads with
+      `commentId IS NULL` still can until V3 lands (load-bearing: a null `parentId` from one
+      would promote a reply to top level on a live entity)
 - [ ] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
       tables, spot checksums, `ThreadMute` count vs `CommentMute` + `CommentTopicMute` + skipped,
       and an `updatedAt`/`deletedAt` comparison old vs new (count parity cannot see a stale edit
@@ -302,6 +306,7 @@ continuous across the cutover.
       the Phase 2 mirror triggers
 - [ ] Remove any remaining Thread entries from `schema-drift/drift-baseline.json` + update
       remediation plan and `production-plan.test.ts`
+- [ ] `DROP SCHEMA archive CASCADE` (the ten purge-archive tables) once the old tables are gone
 - [ ] `EntityType` values `Comment`/`CommentV2` **left in place** (read-time aliases only)
 - [ ] `job-queue.ts` unused mappings deleted; schema reverse-relations cleaned;
       `db:generate` + `db:check-generated` clean

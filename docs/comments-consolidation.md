@@ -7,7 +7,8 @@ depth-limited by design.
 Execution tracking lives in the companion checklist:
 [comments-consolidation-checklist.md](comments-consolidation-checklist.md).
 
-Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-16** (Briant):
+Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-19** (Briant). What
+changed after the 2026-08-25 merged design is listed under _Changes since 2026-08-25_ below.
 
 1. Questions & Answers comments are **not migrated** — dropped with the surface.
 2. The model page **keeps its current UI** for now — the migration swaps the storage under it,
@@ -26,18 +27,46 @@ Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-16** (
    rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
-path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
+path as the single source of tree truth, with `rootId`/`depth` filled from it by the insert trigger — adopted with
 three adjustments: `clubPost` dropped from the enum (dead surface), `CommentTopic.commentCount`
 kept (hot list-page reads), and the ltree operational constraints documented.
+
+## Changes since 2026-08-25 (for review)
+
+Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
+section that holds the detail.
+
+- **2026-10-16 — `rootId`/`depth` move from `GENERATED ALWAYS` columns into the
+  `commentv3_set_path` trigger** (blocker 6; schema-review notes under _Target data model_).
+- **2026-10-16 — an entity hard-delete removes its `CommentTopic` through a per-entity
+  `AFTER DELETE` trigger**, and comments, reactions, report links and mutes cascade from it
+  (_Entity deletion — decided_).
+- **2026-10-16 — partial index `commentv3_reply_to` on `replyToId`**, found by the cascade
+  benchmark: without it the `SET NULL` FK scans the table once per deleted row (_Indexes_).
+- **2026-10-16 — the depth-cap clamp applies retroactively** to the 692 migrated comments deeper
+  than 20 (_Depth limiting_).
+- **2026-10-16 — orphaned-thread comments are not migrated.** The `Thread` entity FKs are
+  `ON DELETE CASCADE` in prod since 2026-10-16 and the existing orphans were purged and archived
+  on 2026-10-19 (_Orphaned-thread comments — decided_ and the two sections after it).
+- **2026-10-16 — dual-write is `AFTER INSERT/UPDATE/DELETE` triggers on the old tables**, not an
+  app-level mirror, so database cascades and bypass writers are covered (blocker 2); the v1
+  copy's `ON CONFLICT` targets `legacyV1Id` (blocker 4).
+- **2026-10-16 — `crucible` joins `CommentEntityType`** (blocker 7).
+- **2026-09-01 — per-thread notification mute is in scope** as `CommentMute` +
+  `CommentTopicMute` (decision 7; _Thread mute_).
 
 ## Viability review (2026-10-16)
 
 Phase 0 ran on the prod replica and the plan was checked against the code and the Prisma/Postgres
 behaviour it relies on. The direction holds and the data is small. The plan is **not executable as
 written**: the blockers below have to be folded into Phases 1–3 first. The two decisions it raised
-(orphans, depth clamp) were settled the same day, and the purge and FK flip were approved.
+(orphans, depth clamp) were settled the same day, and the FK flip (applied 2026-10-16) and the
+purge (applied 2026-10-19) were approved.
 
 ### Phase 0 results
+
+Figures as measured on 2026-10-16, before the FK flip and the purge; the two orphan rows are
+zero since 2026-10-19.
 
 | Measure                                                   | Result                                                                                                                                                                                                                                                                                                         |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -96,31 +125,34 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
 7. **Crucible is a comment surface** (`Thread.crucibleId`, #5780, after this plan was written):
    add `'crucible'` to `CommentEntityType`, the backfill, the topic copy and the flip order.
 8. **`CommentTopic` has no FK to its entity**, so it accumulates orphans exactly as `Thread` does
-   unless every entity hard-delete path removes the topic row — today every entity FK on `Thread`
-   is `ON DELETE SET NULL` and nothing deletes `Thread` rows, which is where the 288K orphans come
-   from (Prisma already declares Cascade as of `fix/thread-entity-fk-cascade`; prod stays SET NULL
-   until that migration is applied by hand). Resolved by the per-entity `AFTER DELETE` triggers
+   unless every entity hard-delete path removes the topic row. `Thread` leaked the same way: every
+   entity FK was `ON DELETE SET NULL` and nothing deleted `Thread` rows, which is where its 288K
+   orphans came from, until the FKs became `ON DELETE CASCADE` in prod on 2026-10-16 (migration
+   `20261101120000_thread_entity_fk_cascade`, #6155) and the orphans were purged on 2026-10-19.
+   Resolved for `CommentTopic` by the per-entity `AFTER DELETE` triggers
    (_Entity deletion_, decided 2026-10-16). "Entity cleanup = delete one row" holds only once
    image, post, article, bounty and model deletes and account deletion do it.
 
 ### Orphaned-thread comments — decided
 
-- **Orphaned-thread comments.** They exist because every entity FK on `Thread` was
-  `ON DELETE SET NULL` (until the FK-cascade migration is applied) and nothing deletes `Thread`
-  rows: deleting an image, review, post or
-  article blanks the thread's entity column and leaves the thread, its comments, and its nested
-  reply threads behind, with no record of what they were attached to. It is an ongoing stream, not
-  a legacy artefact — about 6K comments a month join it (2026-10-16: 288,718 root threads holding
-  233,525 comments, plus 40,778 nested threads with another 42,577 comments). Nothing renders them
-  (no entity page), but they are not residue: reports, strikes, the scam-case ledger and
-  notification rows reference them by id, and the per-user readers (`events/points/hooks.ts`
-  comment count, `creator-score-self-activity.service.ts`, `block-hide-comments.service.ts`,
-  the moderator detail fetchers) still count them.
+- **Orphaned-thread comments.** They existed because every entity FK on `Thread` was
+  `ON DELETE SET NULL` and nothing deleted `Thread` rows: deleting an image, review, post or
+  article blanked the thread's entity column and left the thread, its comments, and its nested
+  reply threads behind, with no record of what they were attached to. About 6K comments a month
+  joined them (2026-10-16: 288,718 root threads holding 233,525 comments, plus 40,778 nested
+  threads with another 42,577 comments). Nothing rendered them (no entity page), but they were not
+  residue: reports, strikes, the scam-case ledger and notification rows referenced them by id, and
+  the per-user readers (`events/points/hooks.ts` comment count,
+  `creator-score-self-activity.service.ts`, `block-hide-comments.service.ts`, the moderator
+  detail fetchers) counted them. The FK cascade stopped the stream (2026-10-16) and the purge
+  removed the stock (2026-10-19); both sections follow.
 
   **Decided 2026-10-16: orphans should not persist.** In V3 an entity hard-delete
   deletes its `CommentTopic` and everything under it cascades (see _Entity deletion_ below), so
-  the backfill **skips** orphaned-thread comments rather than inventing a sentinel topic. What
-  that drops in prod, measured 2026-10-16 over all 276,102 orphan comments (35,547 authors):
+  the backfill **skips** orphaned-thread comments rather than inventing a sentinel topic (the
+  first class can no longer occur in prod, so that skip is a guard; the second class below still
+  can). What the purge dropped, measured 2026-10-16 over all 276,102 orphan comments (35,547
+  authors):
 
   | Referenced by                          | Rows                                                                   |
   | -------------------------------------- | ---------------------------------------------------------------------- |
@@ -143,33 +175,30 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
   live entity with no parent comment: 2,867 such threads holding 3,843 comments. Nothing can
   expand them either. The backfill must treat them as orphans too — mapped naively,
   `parentId = thread.commentId = NULL` would promote every one of those replies to a top-level
-  comment on a live entity.
+  comment on a live entity. The 2,867 existing ones were purged on 2026-10-19, but the class
+  recurs until V3 lands, because `Thread.commentId` stays `SET NULL`; the Phase 3 skip is
+  load-bearing for it.
 
   **Purging today's orphans in prod: approved 2026-10-16** — procedure under _Orphan purge_
   below; migration `20261101130000_purge_orphaned_comment_threads` (data only) applied by
   hand in prod 2026-10-19, after the FK flip.
 
-Decided 2026-10-16:
-
-- **Depth-cap clamp for migrated rows** — approved. The 692 over-cap comments are re-parented to
-  a depth-20 sibling with `replyToId` set, the write path's clamp applied retroactively.
-- **Orphans do not persist in V3** — approved; design under _Entity deletion_ in the target data
-  model, backfill consequence above.
-- **Purge and FK flip** — approved; sections below.
+Decided 2026-10-16: **the depth-cap clamp for migrated rows** — approved. The 692 over-cap
+comments are re-parented to a depth-20 sibling with `replyToId` set, the write path's clamp
+applied retroactively.
 
 ### Orphan purge — procedure (approved 2026-10-16, applied 2026-10-19)
 
 Applied in prod 2026-10-19. Step 6 read from the replica: zero set rows left, zero orphan roots,
 zero archived comments still live, zero reports kept by the guard. The `archive` schema holds
 334,004 threads (291,280 tops), 281,426 comments, 197,732 reactions, 5,868 reports (73 automated),
-6 mutes, 3 `EntityModeration` and 3 `JobQueue` rows; the read-only role was granted `USAGE`
-on it afterwards. The procedure below stays for the record and for restore.
+6 mutes, 3 `EntityModeration` and 3 `JobQueue` rows. The procedure below stays for the record
+and for restore.
 
 One-off, by hand on the primary, as migration `20261101130000_purge_orphaned_comment_threads`
 (data only; the Prisma schema does not change). Run with autocommit, one step at a time: the
 batched delete is a `DO` block that `COMMIT`s per batch. Everything is reversible until the
-archive is dropped in Phase 6. With the migration's own set definition the prod replica held
-333,997 threads and 281,417 comments on 2026-10-16, after the FK cascade was applied.
+archive is dropped in Phase 6.
 
 **What goes, and how** (prod FKs and triggers verified 2026-10-16):
 
@@ -181,16 +210,16 @@ archive is dropped in Phase 6. With the migration's own set definition the prod 
 | `CommentV2`                        | ~280K   | `threadId` cascade                                                               |
 | `CommentV2Reaction`                | ~184K   | `commentId` cascade                                                              |
 | `CommentV2Report` links            | ~5.7K   | `commentV2Id` cascade                                                            |
-| `ThreadMute`                       | 1       | `threadId` cascade                                                               |
+| `ThreadMute`                       | 1       | `threadId` cascade (6 over the full set, nested and dead-parent included)        |
 | `Report`                           | ~5.7K   | **explicit** — no FK reaches it; cascades to `ReportAutomated`                   |
 | `EntityModeration`                 | 3       | **explicit** — polymorphic `(entityType, entityId)`                              |
 | `JobQueue`                         | 3       | **explicit** — same                                                              |
 | `Thread` dangling on `challengeId` | 4       | the FK-cascade migration's own DELETE (before it adds the FK); cascades as above |
 
 None of the ~5.7K reports is also linked to an image, user or v1 comment, so deleting them
-removes nothing else. Reports linked to the four challenge-thread comments are not in the
-archive set; archive them before applying the migration if they matter. Untouched and unaffected: `UserRestriction.triggers` (scam ledger, restore
-is an id-list no-op), the notifications database (payload ids 404 like any deleted comment),
+removes nothing else. Reports linked to the four challenge-thread comments were not archived.
+Untouched and unaffected: `UserRestriction.triggers` (scam ledger, restore is an id-list
+no-op), the notifications database (payload ids 404 like any deleted comment),
 ClickHouse, Meilisearch (comments are not indexed), Buzz and event points (no clawback path),
 v1 `Comment` (its `modelId` FK already cascades; 0 dangling).
 
@@ -215,8 +244,8 @@ v1 `Comment` (its `modelId` FK already cascades; 0 dangling).
    deleted in the same statement — wasted work, not wrong results, and the reason to batch
    rather than run one statement. Expect minutes, not hours (the V3 benchmark above cascaded
    21K comments + 63K reactions in 0.5 s).
-6. **Verify**: the orphan-root query returns only threads created after step 1 (the ~6K/month
-   stream stops once the FK flip is applied; before then it continues); `CommentV2` and reaction
+6. **Verify**: the orphan-root query returns zero rows (the FK flip had already stopped the
+   stream); `CommentV2` and reaction
    counts dropped by the step-1 numbers; `Report` has no row whose only link was to a purged
    comment.
 7. Autovacuum reclaims the space; a manual `VACUUM ANALYZE` on `Thread`, `CommentV2` and
@@ -231,20 +260,17 @@ so insert comments with `reactionCount = 0`; and `trg_moderation_commentv2` fire
 `CommentV2` insert, so either disable it for the session or delete the ~280K `JobQueue` rows it
 enqueues afterwards.
 
-**Why purge at all, given the backfill skips orphans anyway.** It removes ~280K rows from the
-backfill and parity checks, drops 5.7K dead reports from a queue, and gives the archive a
-real-world rehearsal of the "entity delete cascades comments" semantics before V3 enforces them.
-It does not stop the leak — that needs the V3 triggers, or the FK flip below.
+The purge took ~280K rows out of the backfill and parity checks and 5.7K dead reports out of a
+queue. It did not stop the leak; the FK cascade below did.
 
-### Stopping the leak now — approved and built (2026-10-16)
+### Thread entity FKs → ON DELETE CASCADE (applied in prod 2026-10-16)
 
-The leak is 16 entity relations on `Thread` (17 columns; the comic one is composite). In prod 15
-are `ON DELETE SET NULL` and `challengeId` has no FK at all. Approved 2026-10-16 and built on
-`fix/thread-entity-fk-cascade` (migration `20261101120000_thread_entity_fk_cascade`): all 16
-become `ON DELETE CASCADE`, so the current schema gets the semantics V3 was decided to have: an
-entity hard-delete takes its thread, and `CommentV2` → reactions → report links → mutes already
-cascade from there. It is a schema change, so it is a PR with a migration file applied by hand,
-separate from the purge migration (data only).
+The leak was 16 entity relations on `Thread` (17 columns; the comic one is composite): 15 were
+`ON DELETE SET NULL` and `challengeId` had no FK at all. Migration
+`20261101120000_thread_entity_fk_cascade` (#6155) made all 16 `ON DELETE CASCADE` and validated
+them, so the current schema has the semantics V3 was decided to have: an entity hard-delete takes
+its thread, and `CommentV2` → reactions → report links → mutes already cascade from there. It was
+applied by hand in prod on 2026-10-16, separately from the purge migration (data only).
 
 - **Every lookup the cascade needs is indexed in prod** (checked 2026-10-16): each single-column
   entity link on `Thread` is `@unique`, `parentThreadId` and `rootThreadId` have btree indexes
@@ -261,20 +287,17 @@ separate from the purge migration (data only).
 - **`Thread.challengeId` is an ADD, not a flip.** The FK never existed in prod, so the migration
   first deletes `Thread` rows whose challenge no longer exists (4 rows at the time of writing;
   they take their comments with them), then adds `Thread_challengeId_fkey … ON DELETE CASCADE
-NOT VALID` and validates it. The drift baseline carries the 15 `referential-action` findings and
-  the `missing-foreign-key|Thread|challengeId` entry until the next catalog capture, and
-  `production-snapshot.test.ts` has a matching carve-out to remove then.
+NOT VALID` and validates it. The drift baseline's 15 `referential-action` findings and its
+  `missing-foreign-key|Thread|challengeId` entry drop out with the post-migration catalog
+  recapture (2026-10-19, its own PR), together with the `production-snapshot.test.ts` carve-out.
 - **What changes for users**: deleting an image, post, review, article, bounty, model, … now
   deletes its comments, their reactions and their report links. `Report` rows for those comments
   stay, targetless — the same as any hard-deleted comment today. Account deletion cascades one
   level further than before. Costs are the V3 benchmark's: sub-second for the largest article.
 - **`Thread.commentId` stays `SET NULL`.** Flipping it would make a v2 comment delete destroy
-  other users' replies (the v1 behaviour D6 rejected). The dead-parent class keeps growing
-  slowly (3.8K comments so far) until V3 tombstones replace hard-deletes; the backfill skips it.
-- Order (decided): apply the migration by hand → run the purge. The migration can go either side
-  of the deploy: the client never emulates delete actions (`relationMode` is `foreignKeys`), so
-  no code depends on it landing first. Flipping before purging means the purge removes a closed
-  set instead of chasing a stream; the purge query is unaffected either way.
+  other users' replies (the v1 behaviour D6 rejected). The dead-parent class (purged 2026-10-19)
+  therefore keeps recurring slowly until V3 tombstones replace hard-deletes; the backfill must
+  skip it.
 
 ### Drift since 2026-09-01
 
@@ -548,7 +571,7 @@ upserts it on first comment (replacing lazy Thread creation 1:1), and every comm
 it — so entity cleanup is "delete the topic row", with comments cascading. That's _more_ integrity
 than today from comment to topic. From topic to entity it is the same as `Thread`: there is no FK,
 so something has to delete the topic row when the entity goes, or orphans accumulate exactly as
-they do now (blocker 8).
+`Thread`'s did before the 2026-10-16 FK cascade (blocker 8).
 
 ### Entity deletion — decided 2026-10-16
 
@@ -580,10 +603,11 @@ topic alone — the entity still exists.
 - `Report` rows whose comment is gone stay, with no target. D6 already accepts this for childless
   hard-deletes, so the moderator queue has to tolerate it either way.
 - The event-points hook only recounts a user's comments when the comment service deletes them; a
-  cascade bypasses it and awarded points stand. Today the comments survive and the points stand
-  too — not a regression.
-- Volume: ~6K orphaned comments a month today means a few hundred entity-with-comments deletes a
-  day. Nothing to batch.
+  cascade bypasses it and awarded points stand. The 2026-10-16 FK cascade already does the same:
+  an entity hard-delete removes its comments without the hook, and the points stand — not a
+  regression.
+- Volume: the ~6K comments a month that used to orphan are the measure — a few hundred
+  entity-with-comments deletes a day. Nothing to batch.
 - **Cost of a big cascade — benchmarked 2026-10-16** (Postgres 18.6, the DDL and index set from
   this doc, 326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
   Articles are the only entity with threads over 200 comments (26 of them; the largest is 5,361
@@ -781,8 +805,8 @@ stay as-is — the swap happens inside the service layer, so UI churn is near ze
 What was asked for: row counts for `Comment`/`CommentV2`/`Thread`; v1 depth distribution (rows with
 `parentId` whose parent also has `parentId` — believed unreachable in UI); Thread orphan count
 (all entity FKs null — note `Thread.challengeId` had **no FK constraint in prod**, an accepted
-drift in `schema-drift/drift-baseline.json` until the FK-cascade migration, which deletes the
-dangling threads and adds the FK; `Thread.imageId` had none either until a validated FK landed before
+drift until the FK-cascade migration (applied 2026-10-16), which deleted the dangling threads and
+added the FK; `Thread.imageId` had none either until a validated FK landed before
 the 2026-10-16 catalog recapture); per-entityType comment volume; `Thread` rows for
 dead surfaces (`clubPostId`, `questionId`/`answerId`). Two schema facts to confirm:
 `Thread.modelId`/`challengeId`/`model3dId` are declared `@unique` but their back-relations are
@@ -867,9 +891,10 @@ Idempotent, batched copy jobs:
   `legacyV1Id`. Recompute `CommentV3.reactionCount` from the copied rows at the end.
 - Reports: `CommentV2Report` copies as-is; `CommentReport` maps through `legacyV1Id`. The `Report`
   rows themselves don't move.
-- Orphaned-thread comments (276K in prod, plus 3,843 in the dead-parent class) and their
-  reactions/report links are **skipped** (decided 2026-10-16) and the counts logged; fewer still
-  if the prod purge happens first.
+- Orphaned-thread comments and their reactions/report links are **skipped** and the counts
+  logged. Both existing classes were purged 2026-10-19. Entity-less root threads can no longer
+  occur, so that skip is a guard; the dead-parent class (replies whose `Thread.commentId` was
+  nulled by a v2 hard-delete) still can until V3 lands, so that skip matters.
 - Parity checks: per-entity counts vs `Thread.commentCount` (recomputed from `CommentV2` first —
   comic threads were over-counted until the double increment was removed), reaction counts vs the
   two source tables, spot checksums, and an `updatedAt`/`deletedAt` comparison against the old rows.
@@ -1163,16 +1188,18 @@ after flips would leave mod tooling blind to new comments on flipped surfaces). 
 paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.
 
-**Phase 6 — contract.** Drop `Thread` (and its 15 FK columns' reverse relations), `Comment`,
+**Phase 6 — contract.** Drop `Thread` (and its 16 entity relations' reverse relations), `Comment`,
 `CommentV2`, `CommentReaction`, `CommentV2Reaction`, `CommentReport`, `CommentV2Report`; drop the
 triggers `comment_count_update` (function `update_thread_comment_count`),
 `trg_moderation_comment`/`trg_moderation_commentv2`, `comment_reaction_count_update`, and the
 Phase 2 mirror triggers. Drop order: reaction/report join tables first (they FK-reference
 the comment tables), then `Comment`/`CommentV2`, then `Thread`. Also:
 
-- Remove the `Thread` entry (`missing-foreign-key|Thread|challengeId`) from
-  `schema-drift/drift-baseline.json` and update the remediation plan + its
-  `production-plan.test.ts`, or the drift gate fails on a table that no longer exists.
+- Remove any remaining `Thread` entries from `schema-drift/drift-baseline.json` and update the
+  remediation plan + its `production-plan.test.ts`, or the drift gate fails on a table that no
+  longer exists.
+- `DROP SCHEMA archive CASCADE` — the ten purge-archive tables (334,004 threads / 281,426
+  comments / 5,868 reports; _Orphan purge_ step 8).
 - **Leave the `Comment`/`CommentV2` values in the `EntityType` pg enum permanently.** Removing a pg
   enum value requires a type rewrite across every column using it, and historical `UserStrike`,
   `Appeal`, `JobQueue`, `EntityCollaborator`, and `ModerationRule` rows carry those values. Instead:
@@ -1196,9 +1223,8 @@ mute check and block-hide alike.
 - `clubPost` threads — clubs are dead code; rows (if any) are left behind and dropped with Thread.
 - `question`/`answer` — decided (decision 1): not migrated; rows drop with Thread, and
   `QuestionAnswerComments.tsx` + `question/answer.metrics.ts` retire alongside.
-- Comments attached to orphaned Threads (all entity FKs null) — 276K rows unreachable in the UI;
-  decided 2026-10-16 not to migrate them (inventory of what references them in _Orphaned-thread
-  comments — decided_).
+- Comments attached to orphaned Threads (all entity FKs null) — purged and archived 2026-10-19;
+  the backfill still skips any that recur (inventory in _Orphaned-thread comments — decided_).
 
 ## Sweep coverage (2026-08-24)
 
