@@ -172,6 +172,8 @@ export function useWatchHeldOutputs(workflows: HoldingWorkflow[]) {
   const watch = useRef<ReturnType<typeof createHeldOutputsWatch>>();
   watch.current ??= createHeldOutputsWatch();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => watch.current?.update(held), [key]);
+  useEffect(() => {
+    watch.current?.update(held);
+  }, [key]);
   useEffect(() => () => watch.current?.stop(), []);
 }
