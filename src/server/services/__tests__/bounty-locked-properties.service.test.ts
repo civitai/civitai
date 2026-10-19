@@ -49,7 +49,11 @@ vi.mock('~/server/redis/caches', () => ({
   userBountyCountCache: { refresh: vi.fn() },
 }));
 
-import { updateBountyById, upsertBounty } from '~/server/services/bounty.service';
+import {
+  addBenefactorUnitAmount,
+  updateBountyById,
+  upsertBounty,
+} from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
 
 const BOUNTY_ID = 55;
@@ -246,6 +250,16 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data.nsfw).toBe(false);
     expect(data).not.toHaveProperty('lockedProperties');
   });
+
+  it('stores the edited dates as their UTC day, hour dropped', async () => {
+    await upsert({
+      startsAt: '2030-03-04T13:00:00.000Z',
+      expiresAt: '2030-03-20T17:00:00.000Z',
+    });
+
+    expect(updateData().startsAt).toEqual(new Date('2030-03-04T00:00:00.000Z'));
+    expect(updateData().expiresAt).toEqual(new Date('2030-03-20T00:00:00.000Z'));
+  });
 });
 
 describe('upsertBounty — create path', () => {
@@ -292,6 +306,20 @@ describe('upsertBounty — create path', () => {
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
   });
 
+  it('stores the picked date as that UTC day, hour dropped', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const startDay = new Date(Math.floor((Date.now() + 3 * day) / day) * day);
+    const expiryDay = new Date(startDay.getTime() + 10 * day);
+
+    await create({
+      startsAt: new Date(startDay.getTime() + 17 * 60 * 60 * 1000).toISOString(),
+      expiresAt: new Date(expiryDay.getTime() + 23 * 60 * 60 * 1000).toISOString(),
+    });
+
+    expect(createData().startsAt).toEqual(startDay);
+    expect(createData().expiresAt).toEqual(expiryDay);
+  });
+
   it('refuses an expiration before the start date, which the field bounds alone allow', async () => {
     const day = 24 * 60 * 60 * 1000;
     await expect(
@@ -299,7 +327,10 @@ describe('upsertBounty — create path', () => {
         startsAt: new Date(Date.now() + 10 * day).toISOString(),
         expiresAt: new Date(Date.now() + 2 * day).toISOString(),
       })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Expiration date must come after the start date' });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Expiration date must come after the start date',
+    });
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
   });
 
@@ -401,5 +432,43 @@ describe('updateBountyById — a moderator clearing a text-scan poi flag', () =>
     const data = updateData();
     expect(data).not.toHaveProperty('availability');
     expect(data).not.toHaveProperty('meta');
+  });
+});
+
+describe('addBenefactorUnitAmount — bounty schedule', () => {
+  const hour = 60 * 60 * 1000;
+  const support = (startsAt: Date) => {
+    mockDbRead.bounty.findUnique.mockResolvedValue({
+      id: BOUNTY_ID,
+      complete: false,
+      nsfw: false,
+      nsfwLevel: 1,
+      startsAt,
+    });
+    mockDbRead.bountyBenefactor.findUnique.mockResolvedValue({
+      unitAmount: 100,
+      currency: 'BUZZ',
+      buzzTransactionId: [],
+    });
+    return addBenefactorUnitAmount({
+      bountyId: BOUNTY_ID,
+      unitAmount: 50,
+      userId: OWNER_ID,
+      buzzType: 'yellow',
+    });
+  };
+
+  it('refuses added support, and spends no Buzz, before the bounty starts', async () => {
+    await expect(support(new Date(Date.now() + 2 * hour))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.bountyBenefactor.upsert).not.toHaveBeenCalled();
+  });
+
+  it('takes added support once the bounty has started', async () => {
+    await support(new Date(Date.now() - hour));
+
+    expect(mockBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 });
