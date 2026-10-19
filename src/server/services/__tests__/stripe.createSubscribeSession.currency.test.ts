@@ -452,3 +452,72 @@ describe('createSubscribeSession — a gifted month armed for the plan being lef
     expect(dbMock.dbWrite.membershipGift.update).not.toHaveBeenCalled();
   });
 });
+
+describe('createSubscribeSession — an upgrade that is not paid', () => {
+  const HOSTED_INVOICE_URL = 'https://invoice.example.test/pay';
+  const upgrade = () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+    return subscribe();
+  };
+  const unpaid = (hosted_invoice_url: string | null) => ({
+    id: 'subscription_fixture',
+    status: 'active',
+    pending_update: { expires_at: 1 },
+    latest_invoice: { id: 'invoice_fixture', status: 'open', hosted_invoice_url },
+  });
+
+  it('asks Stripe to hold the plan change until the invoice is paid', async () => {
+    // 'default_incomplete' applies the new price at once and leaves the subscription past_due,
+    // which ends the plan the member already paid for. Stripe test mode, declining card:
+    // default_incomplete -> past_due on the new price; pending_if_incomplete -> still active on
+    // the old price with a pending_update.
+    await upgrade();
+
+    expect(mockSubscriptionsUpdate.mock.calls[0][1]).toMatchObject({
+      payment_behavior: 'pending_if_incomplete',
+      expand: ['latest_invoice'],
+    });
+  });
+
+  it('sends the member to pay the invoice, not to the success page', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await expect(upgrade()).resolves.toEqual({ sessionId: null, url: HOSTED_INVOICE_URL });
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+  });
+
+  it('says the membership is unchanged when there is no invoice page to send them to', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(null));
+
+    const error = (await upgrade().catch((e) => e)) as TRPCError;
+
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toBe(
+      'Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.'
+    );
+  });
+
+  it('points the armed gifted month back at its coupon, which the pending change did not remove', async () => {
+    dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue({
+      id: 'gift_fixture',
+      armedCouponId: 'gift_coupon_fixture',
+    });
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await upgrade();
+
+    expect(dbMock.dbWrite.membershipGift.update.mock.calls.at(-1)?.[0]).toMatchObject({
+      where: { id: 'gift_fixture' },
+      data: { armedCouponId: 'gift_coupon_fixture' },
+    });
+  });
+
+  it('still lands on the success page when the upgrade is paid', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue({ id: 'subscription_fixture', pending_update: null });
+
+    await expect(upgrade()).resolves.toEqual({
+      sessionId: null,
+      url: `/payment/success?cid=${CUSTOMER_ID.slice(-8)}`,
+    });
+  });
+});

@@ -398,13 +398,18 @@ export const createSubscribeSession = async ({
       );
       const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
 
+      let updated: Stripe.Subscription;
       try {
-        await stripe.subscriptions.update(subscriptionId, {
+        updated = await stripe.subscriptions.update(subscriptionId, {
           items,
           billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
           proration_behavior: 'none',
-          // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
-          payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
+          // An unpaid upgrade must leave the paid plan as it was. 'default_incomplete' applies the
+          // new price at once and drops the subscription to past_due until the invoice is paid,
+          // which ends the member's current plan; 'pending_if_incomplete' holds the whole change
+          // (price, discount, metadata) until payment succeeds and discards it after ~23h.
+          payment_behavior: isUpgrade ? 'pending_if_incomplete' : undefined,
+          expand: isUpgrade ? ['latest_invoice'] : undefined,
           ...(releasedGiftMonth
             ? { coupon: '' }
             : {
@@ -416,6 +421,18 @@ export const createSubscribeSession = async ({
       } catch (error) {
         if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
         throw error;
+      }
+
+      if (updated.pending_update) {
+        // Payment was declined or needs authentication. The coupon removal is pending with the
+        // rest of the change, so the gifted month is still on the subscription.
+        if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
+        const invoice = updated.latest_invoice;
+        const hostedInvoiceUrl = typeof invoice === 'object' ? invoice?.hosted_invoice_url : null;
+        if (hostedInvoiceUrl) return { sessionId: null, url: hostedInvoiceUrl };
+        throw throwBadRequestError(
+          `Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.`
+        );
       }
 
       if (sanitizedRefCode) {
