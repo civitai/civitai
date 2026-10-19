@@ -56,6 +56,15 @@ scan flag, vote or pipeline prediction on an image the site already excludes is 
 once; appeal decisions are refused upstream for such images, and direct `record_*` calls wait for the
 nightly sweep.
 
+Wired today from site code: moderator rulings on text-scan `minor` and `poi` flags on models
+(`src/server/services/text-scan/label-capture.ts`), recorded by the flag writer in the ruling's own
+transaction under a savepoint. Subject `model_text` keyed by the hash of the scanned text the ruling
+covers, with that text as the snapshot while it is unchanged; family `text_scan`, questions
+`text_scan.model.minor` / `text_scan.model.poi`, values `flag` / `clear`; a ruling on the owner's appeal is
+kind `appeal`. The ref is `TextScanRuling:Model:<id>:<label>:<kind>:<value>:<textHash>:<labeller hash>`,
+so a retried ruling records nothing. These questions have no `rule` row yet, so they never become
+trainable.
+
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back
 recorded, a duplicate, or rejected with a reason. The ref is stored as `pipeline:<sourceRef>` under family
