@@ -41,6 +41,8 @@ Grandfathering covers the **terms**, not the item's continued existence. Delisti
 
 **Coming back requires a new review.** Re-listing (`setCreatorShopItemListed({ listed: true })`) and restoring from the archive (`unarchiveCreatorShopItem`) both set `PendingReview` and clear the previous verdict, rather than returning the item straight to sale. That is what keeps ending the listings fair: without it, *withdraw → re-list* would be a one-click way to clear every reseller and re-offer the item at a worse share — the exact bait-and-switch this ticket exists to prevent. Delisting itself doesn't touch the status; only the return trip does.
 
+**An item in a creator mystery pack on sale stays on sale.** While a creator's own listing of an item is an enabled content of their published mystery pack, they can't archive it, re-list it, cap its stock, or change its price by more than ±25% (which sends it back to review) (`assertNotInLiveMysteryPack`). Delisting is allowed: the item stays in the pack as box-only. Moderators are exempt.
+
 `addResoldItem` correspondingly refuses an item that is currently off sale, so a row can only ever be created while the item was live. The resale picker still shows off-sale items (so the reseller doesn't have to hunt for them later), badged and with Add disabled.
 
 Both directions are indexed, which is why this is a table and not JSON on `User.settings`:

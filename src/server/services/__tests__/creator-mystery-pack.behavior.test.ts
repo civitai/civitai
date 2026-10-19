@@ -7,13 +7,14 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import { DEFAULT_CREATOR_SHOP_FEES } from '~/server/schema/creator-shop.schema';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * Creator mystery pack submit, revise and withdraw, run against the real mystery box migrations
- * (including 20261108120000, creator packs) on an in-process Postgres. Only Buzz and the blocklist
- * are faked; every check and write is the production SQL.
+ * Creator mystery pack submit, revise and withdraw on in-process Postgres with the real mystery box
+ * migrations. Buzz, the blocklist, the region list's KeyValue read and the shop service's Prisma
+ * reads are faked; the pack service's SQL is the production SQL.
  */
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -27,9 +28,10 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...buzz,
 }));
 
+const blocklist = vi.hoisted(() => ({ throwOnBlockedUserContent: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),
-  throwOnBlockedUserContent: vi.fn(async () => undefined),
+  ...blocklist,
 }));
 
 type Raw = ReturnType<typeof pgliteRaw>;
@@ -61,23 +63,24 @@ const MIGRATIONS = [
 const CREATOR = 10;
 const OTHER = 11;
 const MOD = 1;
-const FEE = 1000; // the default mystery pack fee: no KeyValue row in this suite
+const FEE = DEFAULT_CREATOR_SHOP_FEES.mysteryPack;
 const FEE_TX = 'fee-tx';
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
 
-/** Six of the creator's own items on sale at 500, ids 1-6. */
+/** Six items on sale at 500 for each creator: the creator's are ids 1-6, the other's 7-12. */
 const seedItems = async () => {
-  for (let id = 1; id <= 6; id++) {
+  for (let id = 1; id <= 12; id++) {
+    const owner = id <= 6 ? CREATOR : OTHER;
     await q(
       `INSERT INTO "Cosmetic" (id, name, type, data, "createdById") VALUES ($1, $2, 'Badge', '{}', $3)`,
-      [id, `Badge ${id}`, CREATOR]
+      [id, `Badge ${id}`, owner]
     );
     await q(
       `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, "addedById", status)
        VALUES ($1, 500, $2, $3, 'Published')`,
-      [id, `Badge ${id}`, CREATOR]
+      [id, `Badge ${id}`, owner]
     );
   }
 };
@@ -167,6 +170,9 @@ beforeAll(async () => {
       description text,
       "archivedAt" timestamp(3),
       status "CosmeticShopItemStatus" NOT NULL DEFAULT 'Published',
+      "reviewedById" int,
+      "reviewedAt" timestamp(3),
+      "rejectionReason" text,
       listed boolean NOT NULL DEFAULT true
     );
   `);
@@ -176,6 +182,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   for (const fn of Object.values(buzz)) fn.mockReset();
+  blocklist.throwOnBlockedUserContent.mockReset().mockResolvedValue(undefined);
   buzz.createBuzzTransaction.mockResolvedValue({ transactionId: FEE_TX });
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
   await holder.db.exec(`
@@ -276,7 +283,91 @@ describe('submitting a mystery pack', () => {
     }
   });
 
+  it('re-checks the live limit under the lock, and refunds when a pack landed after the charge', async () => {
+    for (let i = 0; i < 4; i++) await submit();
+    // A fifth pack lands between the pre-charge check and the lock, as a concurrent submit would.
+    buzz.createBuzzTransaction.mockImplementationOnce(async () => {
+      const [box] = await q<{ id: number }>(
+        `INSERT INTO "ItemDefinition" (type, name, status, "sellerId") VALUES ('box', 'Raced', 'draft', $1) RETURNING id`,
+        [CREATOR]
+      );
+      await q(
+        `INSERT INTO "CosmeticShopItem" ("itemDefinitionId", "unitAmount", title, "addedById", status, listed)
+         VALUES ($1, 500, 'Raced', $2, 'PendingReview', false)`,
+        [box.id, CREATOR]
+      );
+      return { transactionId: 'raced-tx' };
+    });
+
+    await expect(submit()).rejects.toThrow('at most 5 mystery packs');
+    expect(buzz.refundTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.refundTransaction).toHaveBeenCalledWith('raced-tx', expect.any(String));
+    expect(await q(`SELECT id FROM "ItemDefinition" WHERE type = 'box'`)).toHaveLength(5);
+  });
+
+  it('runs the name and description through the blocklist', async () => {
+    await submit({ description: 'About it' });
+    expect(blocklist.throwOnBlockedUserContent).toHaveBeenCalledWith(['My pack', 'About it'], {
+      surface: 'creatorShop',
+    });
+  });
+
+  it('records the rights affirmation with a cover, and refuses a cover without one', async () => {
+    await expect(submit({ imageUrl: 'cover.png' })).rejects.toThrow(
+      'You must confirm you have the rights to sell this artwork'
+    );
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+
+    const { boxId } = await submit({ imageUrl: 'cover.png', rightsAffirmed: true });
+    expect(await q(`SELECT "imageUrl" FROM "ItemDefinition" WHERE id = $1`, [boxId])).toEqual([
+      { imageUrl: 'cover.png' },
+    ]);
+    expect((await listingOf(boxId)).meta.rightsAffirmation).toMatchObject({ userId: CREATOR });
+  });
+
+  it('accepts stickers only while stickers are on', async () => {
+    await q(`UPDATE "Cosmetic" SET type = 'Sticker' WHERE id = 6`);
+    await expect(submit()).rejects.toThrow("Badge 6: This kind of item can't go in a mystery pack");
+    await expect(submit({ stickersEnabled: true })).resolves.toBeDefined();
+  });
+
+  it("judges an item by the creator's live listing when an archived one is newer", async () => {
+    await q(
+      `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, "addedById", status, "archivedAt")
+       VALUES (6, 500, 'Old', $1, 'Archived', now())`,
+      [CREATOR]
+    );
+    await expect(submit()).resolves.toBeDefined();
+  });
+
   describe('refuses, and charges nothing,', () => {
+    it('a fee quote that no longer matches', async () => {
+      await expect(submit({ quotedFee: FEE + 1 })).rejects.toThrow('The submission fee changed');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('content the blocklist refuses', async () => {
+      blocklist.throwOnBlockedUserContent.mockRejectedValueOnce(new Error('blocked'));
+      await expect(submit()).rejects.toThrow('blocked');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('a price under the floor', async () => {
+      await expect(submit({ price: 499 })).rejects.toThrow('The price is at least 500');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('items that do not exist', async () => {
+      await expect(
+        submit({
+          tiers: [
+            [1, 2, 3, 4],
+            [5, 999],
+          ],
+        })
+      ).rejects.toThrow("These items don't exist: 999");
+    });
+
     it.each([
       ['a muted creator', `UPDATE "User" SET muted = true WHERE id = ${CREATOR}`],
       ['a banned creator', `UPDATE "User" SET "bannedAt" = now() WHERE id = ${CREATOR}`],
@@ -311,6 +402,15 @@ describe('submitting a mystery pack', () => {
       expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it("but not for another creator's takedown", async () => {
+      await q(
+        `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, "addedById", status, meta)
+         VALUES (NULL, 500, 'Gone', $1, 'Archived', $2)`,
+        [OTHER, { takedown: { reason: 'x', moderatorId: MOD, at: new Date().toISOString() } }]
+      );
+      await expect(submit()).resolves.toBeDefined();
+    });
+
     it.each([
       ['in a blocked country', 'DE'],
       ['with no known country while any is blocked', null],
@@ -323,19 +423,26 @@ describe('submitting a mystery pack', () => {
       expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it('a sixth live pack; archived and rejected packs do not count', async () => {
+    it('a sixth live pack, on sale or in review; sent-back, archived and rejected packs do not count', async () => {
       const ids = [];
       for (let i = 0; i < 5; i++) ids.push((await submit()).boxId);
+      await publish(ids[0]);
+      await publish(ids[1]);
       await expect(submit()).rejects.toThrow('at most 5 mystery packs');
       expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(5);
 
-      await q(`UPDATE "CosmeticShopItem" SET status = 'Archived' WHERE "itemDefinitionId" = $1`, [
-        ids[0],
-      ]);
-      await q(`UPDATE "CosmeticShopItem" SET status = 'Rejected' WHERE "itemDefinitionId" = $1`, [
-        ids[1],
-      ]);
+      const setStatus = (id: number, status: string) =>
+        q(
+          `UPDATE "CosmeticShopItem" SET status = $2::"CosmeticShopItemStatus" WHERE "itemDefinitionId" = $1`,
+          [id, status]
+        );
+      await setStatus(ids[2], 'RequestedChanges');
       await expect(submit()).resolves.toBeDefined();
+      await setStatus(ids[3], 'Archived');
+      await setStatus(ids[4], 'Rejected');
+      await expect(submit()).resolves.toBeDefined();
+      await expect(submit()).resolves.toBeDefined();
+      await expect(submit()).rejects.toThrow('at most 5 mystery packs');
     });
 
     it.each([
@@ -361,7 +468,12 @@ describe('submitting a mystery pack', () => {
       ],
     ])('%s', async (_label, sql, message) => {
       await q(sql);
-      await expect(submit()).rejects.toThrow(`Badge 6: ${message}`);
+      const label = (
+        await q(`SELECT 1 FROM "Cosmetic" WHERE id = 6 AND "createdById" = ${CREATOR}`)
+      ).length
+        ? 'Badge 6'
+        : 'Item #6';
+      await expect(submit()).rejects.toThrow(`${label}: ${message}`);
       expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     });
 
@@ -377,9 +489,7 @@ describe('submitting a mystery pack', () => {
 });
 
 describe("a pack's value is the creator's own listings", () => {
-  // Binding: the creator's own listing (addedById), never another seller's. A reseller's pricier
-  // listing of the same item must not raise what the pack may sell for.
-  it("ignores another seller's pricier listing of the same item", async () => {
+  it("values contents by the creator's own listing, not another seller's", async () => {
     await q(
       `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, "addedById", status)
        VALUES (6, 50000, 'Resold', $1, 'Published')`,
@@ -469,18 +579,41 @@ describe('revising a mystery pack', () => {
     ).rejects.toThrow('BoxRevision_one_pending_key');
   });
 
-  it('sends a pack that was sent back before it sold back to review', async () => {
-    const { boxId } = await submit();
+  /** A first submission a moderator sent back: not live, with no edit waiting. */
+  const sendBack = async (boxId: number) => {
     await q(`UPDATE "BoxRevision" SET status = 'rejected' WHERE "boxDefinitionId" = $1`, [boxId]);
     await q(
-      `UPDATE "CosmeticShopItem" SET status = 'RequestedChanges' WHERE "itemDefinitionId" = $1`,
-      [boxId]
+      `UPDATE "CosmeticShopItem"
+       SET status = 'RequestedChanges', "rejectionReason" = 'Too many', "reviewedById" = $2, "reviewedAt" = now()
+       WHERE "itemDefinitionId" = $1`,
+      [boxId, MOD]
     );
+  };
+
+  it('sends a pack that was sent back before it sold back to review', async () => {
+    const { boxId } = await submit();
+    await sendBack(boxId);
 
     await revise(boxId);
 
     expect((await listingOf(boxId)).status).toBe('PendingReview');
     expect((await revisionsOf(boxId)).at(-1)).toMatchObject({ status: 'pending', baseVersion: 1 });
+    // Back in the queue with no verdict, as an item re-entering review is.
+    expect(
+      await q(
+        `SELECT "rejectionReason", "reviewedById", "reviewedAt" FROM "CosmeticShopItem" WHERE "itemDefinitionId" = $1`,
+        [boxId]
+      )
+    ).toEqual([{ rejectionReason: null, reviewedById: null, reviewedAt: null }]);
+  });
+
+  it('refuses to send a pack back to review past the live limit', async () => {
+    const { boxId } = await submit();
+    await sendBack(boxId);
+    for (let i = 0; i < 5; i++) await submit();
+
+    await expect(revise(boxId)).rejects.toThrow('at most 5 mystery packs');
+    expect((await listingOf(boxId)).status).toBe('RequestedChanges');
   });
 
   it.each([
@@ -496,8 +629,34 @@ describe('revising a mystery pack', () => {
     await expect(revise(boxId)).rejects.toThrow(message);
   });
 
+  it('runs the creator and content checks again', async () => {
+    const { boxId } = await submit();
+    await publish(boxId);
+
+    await expect(revise(boxId, 501)).rejects.toThrow('The price is at most 500');
+    await q(`UPDATE "User" SET muted = true WHERE id = ${CREATOR}`);
+    await expect(revise(boxId)).rejects.toThrow("You can't build mystery packs right now");
+    expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'approved' })]);
+  });
+
   it("treats another creator's pack as not found", async () => {
     const { boxId } = await submit();
+    await publish(boxId);
+    // With their own items, so the refusal is the box's and not the contents'.
+    await expect(
+      packs.reviseMysteryPack({
+        userId: OTHER,
+        countryCode: 'US',
+        stickersEnabled: false,
+        boxId,
+        steepness: 'standard',
+        tiers: [
+          [7, 8, 9, 10],
+          [11, 12],
+        ],
+        price: 500,
+      })
+    ).rejects.toThrow('Mystery pack not found');
     await expect(packs.withdrawMysteryPackRevision({ userId: OTHER, boxId })).rejects.toThrow(
       'Mystery pack not found'
     );
@@ -517,6 +676,22 @@ describe('withdrawing', () => {
     expect((await boxRow(boxId)).status).toBe('archived');
     expect((await listingOf(boxId)).status).toBe('Archived');
     expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('a pack sent back before it sold, with no edit waiting, archives it', async () => {
+    const { boxId } = await submit();
+    await q(`UPDATE "BoxRevision" SET status = 'rejected' WHERE "boxDefinitionId" = $1`, [boxId]);
+    await q(
+      `UPDATE "CosmeticShopItem" SET status = 'RequestedChanges' WHERE "itemDefinitionId" = $1`,
+      [boxId]
+    );
+
+    expect(await packs.withdrawMysteryPackRevision({ userId: CREATOR, boxId })).toEqual({
+      boxId,
+      archived: true,
+    });
+    expect((await boxRow(boxId)).status).toBe('archived');
+    expect((await listingOf(boxId)).status).toBe('Archived');
   });
 
   it("a live pack's edit leaves the pack on sale", async () => {
@@ -564,10 +739,11 @@ describe('the creator packs migration', () => {
 
 describe('an item in a mystery pack on sale', () => {
   /** Badge 1 as a content of the creator's published pack; returns its shelf listing id. */
-  const inLivePack = async ({ enabled = true, status = 'published' } = {}) => {
+  const inLivePack = async ({ enabled = true, status = 'published', platform = false } = {}) => {
     const { boxId } = await submit();
     await publish(boxId);
     await q(`UPDATE "ItemDefinition" SET status = $2 WHERE id = $1`, [boxId, status]);
+    if (platform) await q(`UPDATE "ItemDefinition" SET "sellerId" = NULL WHERE id = $1`, [boxId]);
     const [reward] = await q<{ id: number }>(
       `INSERT INTO "ItemDefinition" (type, name, "cosmeticId", status) VALUES ('cosmetic', 'Badge 1', 1, 'published') RETURNING id`
     );
@@ -616,12 +792,47 @@ describe('an item in a mystery pack on sale', () => {
   it.each([
     ['disabled in the pack', { enabled: false }],
     ["in a pack that isn't on sale", { status: 'draft' }],
+    ['in a platform box', { platform: true }],
   ])('can be archived when %s', async (_label, state) => {
     const id = await inLivePack(state);
     dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await shop.archiveCreatorShopItem({ userId: CREATOR, id });
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
+  });
+
+  it("doesn't hold back another seller's listing of the same item", async () => {
+    await inLivePack();
+    const [resold] = await q<{ id: number }>(
+      `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, "addedById", status)
+       VALUES (1, 900, 'Badge 1', $1, 'Published') RETURNING id`,
+      [OTHER]
+    );
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+      ...ownedItem(resold.id),
+      addedById: OTHER,
+    } as never);
+
+    await shop.archiveCreatorShopItem({ userId: OTHER, id: resold.id });
+    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
+  });
+
+  it("a pack's own listing can't be archived or restored by its creator", async () => {
+    const { boxId, shopItemId } = await submit();
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+      ...ownedItem(shopItemId),
+      cosmeticId: null,
+      cosmetic: null,
+      itemDefinitionId: boxId,
+    } as never);
+
+    await expect(shop.archiveCreatorShopItem({ userId: CREATOR, id: shopItemId })).rejects.toThrow(
+      'Withdraw a mystery pack instead of archiving its listing'
+    );
+    await expect(
+      shop.unarchiveCreatorShopItem({ userId: CREATOR, id: shopItemId })
+    ).rejects.toThrow("A withdrawn mystery pack can't be restored");
+    expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
   });
 
   it('can be archived by a moderator', async () => {

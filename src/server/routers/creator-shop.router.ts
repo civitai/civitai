@@ -94,7 +94,6 @@ const assertPacksEnabled = (features: FeatureAccess) => {
   if (!features.cosmeticPacks) throw throwAuthorizationError('Packs are not available yet');
 };
 
-// On guardedProcedure, which refuses a muted user; the service re-reads mute and ban from the primary.
 const assertMysteryPacksEnabled = (features: FeatureAccess) => {
   if (!creatorMysteryPacksEnabled(features))
     throw throwAuthorizationError('Mystery packs are not available yet');
@@ -156,7 +155,7 @@ export const creatorShopRouter = router({
       })
     ),
   // #endregion
-  // #region [Mystery packs]
+  // #region [Mystery packs] guardedProcedure: a muted creator is refused before the service runs.
   submitMysteryPack: guardedProcedure.input(submitMysteryPackSchema).mutation(({ input, ctx }) => {
     assertMysteryPacksEnabled(ctx.features);
     return submitMysteryPack({

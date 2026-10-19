@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CreatorMysteryPackService from '~/server/services/creator-mystery-pack.service';
 
-/**
- * The mystery pack procedures check all four flags and hand the service the creator's country, and
- * the service trusts what it is handed. Driven through `createCaller` so the real procedures run.
- */
+/** Gate and argument wiring of the mystery pack procedures, through `createCaller` so the real procedures run. */
 
 const service = vi.hoisted(() => ({
   submitMysteryPack: vi.fn(async () => ({ boxId: 1, shopItemId: 1 })),
@@ -88,7 +85,10 @@ describe('creator mystery pack procedures', () => {
   );
 
   it.each(procedures)('%s is refused for a muted creator', async (procedure) => {
-    await expect(calls[procedure](ALL_ON, { muted: true })).rejects.toThrow();
+    await expect(calls[procedure](ALL_ON, { muted: true })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('restricted'),
+    });
     for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
   });
 
@@ -106,5 +106,27 @@ describe('creator mystery pack procedures', () => {
         stickersEnabled: false,
       })
     );
+  });
+
+  // The service loads every item it is handed, so the cap holds before it is called.
+  it.each([
+    [
+      'across tiers',
+      [Array.from({ length: 40 }, (_, i) => i + 1), [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]],
+    ],
+    ['in one tier', [Array.from({ length: 51 }, (_, i) => i + 1), [52]]],
+  ])('refuses more than 50 items %s, before the service', async (_label, tiers) => {
+    await expect(
+      caller(ALL_ON).submitMysteryPack({ ...proposal, tiers, name: 'Pack', quotedFee: 1000 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller(ALL_ON).submitMysteryPack({
+        ...proposal,
+        tiers: [tiers[0].slice(0, 40), [41, 42, 43, 44, 45, 46, 47, 48, 49, 50]],
+        name: 'Pack',
+        quotedFee: 1000,
+      })
+    ).resolves.toBeDefined();
+    expect(service.submitMysteryPack).toHaveBeenCalledTimes(1);
   });
 });

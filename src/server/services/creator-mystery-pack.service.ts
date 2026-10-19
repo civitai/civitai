@@ -40,7 +40,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
-/** `BoxRevision.proposal`: what review approves and the approve step applies. */
+/** The shape of `BoxRevision.proposal`. */
 export type MysteryPackProposal = {
   steepness: CreatorBoxSteepness;
   tiers: { key: string; cosmeticIds: number[] }[];
@@ -49,7 +49,7 @@ export type MysteryPackProposal = {
 
 export const MAX_LIVE_MYSTERY_PACKS = 5;
 const TAKEDOWN_COOLDOWN_DAYS = 90;
-/** `pg_advisory_xact_lock(class, creatorId)`: one creator's mystery pack writes, one at a time. */
+/** Serialises one creator's pack writes, so the live-limit and one-pending-edit checks can't race. */
 const MYSTERY_PACK_LOCK_CLASS = 0x434d0001;
 
 type Tx = Prisma.TransactionClient;
@@ -57,11 +57,7 @@ type Tx = Prisma.TransactionClient;
 const lockCreator = (tx: Tx, userId: number) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(${MYSTERY_PACK_LOCK_CLASS}::int, ${userId}::int)`;
 
-/**
- * Refuses a creator who may not build mystery packs: muted, banned or deleted, one of their items
- * taken down in the last 90 days, or in a region where mystery boxes are blocked. Read from the
- * primary, not the session, which can be stale.
- */
+/** Reads the primary, not the session: a mute or ban the session hasn't seen must still refuse. */
 async function assertCreatorMayBuild({
   userId,
   countryCode,
@@ -109,11 +105,7 @@ type ContentRow = {
   unitAmount: number | null;
 };
 
-/**
- * The proposal as review will see it, once every content, the tier layout and the price pass the
- * creator box rules. Each content is judged by the creator's OWN listing of it (`addedById`), never
- * by another seller's: a reseller's pricier listing must not raise its value.
- */
+/** Values and checks each content by the creator's own listing of it (`addedById`) only. */
 async function checkProposal({
   creatorId,
   steepness,
@@ -171,7 +163,9 @@ async function checkProposal({
       stickersEnabled,
       now,
     });
-    if (problem) throw throwBadRequestError(`${row.name}: ${problem}`);
+    // Named only when it's the creator's own: an id alone mustn't reveal another cosmetic's name.
+    const label = row.createdById === creatorId ? row.name : `Item #${row.cosmeticId}`;
+    if (problem) throw throwBadRequestError(`${label}: ${problem}`);
   }
 
   const layout = creatorBoxWeights(
@@ -204,7 +198,7 @@ async function checkProposal({
   };
 }
 
-/** Live: waiting for review or on sale. Archived, rejected and sent-back packs don't count. */
+/** Sent-back, rejected and archived packs don't count as live. */
 async function assertUnderLiveLimit(client: Tx, userId: number) {
   const [{ live }] = await client.$queryRaw<{ live: number }[]>`
     SELECT count(*)::int AS live
@@ -218,11 +212,7 @@ async function assertUnderLiveLimit(client: Tx, userId: number) {
     );
 }
 
-/**
- * Charges the submission fee, then writes the box (a draft with no tiers or contents yet), its
- * unlisted listing in review, and the proposal as a pending revision. Approval writes the tiers and
- * contents, so nothing unreviewed is ever a box row a draw could read.
- */
+/** Writes an empty draft box with the proposal held in `BoxRevision`, so a draw never reads unreviewed contents. */
 export async function submitMysteryPack({
   userId,
   countryCode,
@@ -308,7 +298,7 @@ export async function submitMysteryPack({
   }
 }
 
-/** The creator's own box and its listing. Someone else's box reads as not found. */
+/** Someone else's box reads as not found. */
 async function getOwnBox(tx: Tx, boxId: number, userId: number) {
   const [box] = await tx.$queryRaw<
     {
@@ -341,17 +331,14 @@ const addHistory = (
     SET meta = ${JSON.stringify(appendItemHistory(box.meta ?? { purchases: 0 }, entry))}::jsonb
       ${
         status === 'PendingReview'
-          ? Prisma.sql`, status = 'PendingReview'`
+          ? Prisma.sql`, status = 'PendingReview', "rejectionReason" = NULL, "reviewedById" = NULL, "reviewedAt" = NULL`
           : status === 'Archived'
           ? Prisma.sql`, status = 'Archived', "archivedAt" = now()`
           : Prisma.empty
       }
     WHERE id = ${box.listingId}`;
 
-/**
- * Sends an edit of a live (or sent-back) mystery pack to review. The live version keeps selling;
- * approval applies the edit as the box's next version, if the box is still at `baseVersion`.
- */
+/** The live version keeps selling while the edit waits in `BoxRevision`. */
 export async function reviseMysteryPack({
   userId,
   countryCode,
@@ -388,13 +375,14 @@ export async function reviseMysteryPack({
       throw throwBadRequestError(
         'This mystery pack already has an edit waiting for review. Withdraw it first.'
       );
+    // Back in the queue, a sent-back pack counts as live again.
+    const backToReview = box.listingStatus === 'RequestedChanges';
+    if (backToReview) await assertUnderLiveLimit(tx, userId);
 
     const [revision] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
       VALUES (${boxId}, ${box.version}, ${JSON.stringify(proposal)}::jsonb, ${userId})
       RETURNING id`;
-    // A pack sent back before it ever sold goes back to the queue; a live one stays on sale.
-    const backToReview = box.listingStatus === 'RequestedChanges';
     await addHistory(
       tx,
       box,
@@ -412,8 +400,8 @@ export async function reviseMysteryPack({
 }
 
 /**
- * Withdraws the pack's edit waiting for review. A pack that never went on sale is withdrawn with it:
- * the box and its listing are archived, and the submission fee is kept, as for a rejection.
+ * A pack that never went on sale is archived with its edit, or on its own once sent back; the
+ * submission fee is kept.
  */
 export async function withdrawMysteryPackRevision({
   userId,
@@ -425,9 +413,11 @@ export async function withdrawMysteryPackRevision({
     const withdrawn = await tx.$executeRaw`
       UPDATE "BoxRevision" SET status = 'withdrawn'
       WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'`;
-    if (!withdrawn) throw throwBadRequestError('This mystery pack has no edit waiting for review');
-
     const neverSold = box.status === ITEM_DEFINITION_STATUS.draft;
+    const sentBack = neverSold && box.listingStatus === 'RequestedChanges';
+    if (!withdrawn && !sentBack)
+      throw throwBadRequestError('This mystery pack has no edit waiting for review');
+
     if (neverSold)
       await tx.$executeRaw`
         UPDATE "ItemDefinition"
@@ -449,12 +439,14 @@ export async function withdrawMysteryPackRevision({
   });
 }
 
-/**
- * Refuses a creator's change that would take this cosmetic out of a mystery pack on sale without
- * review (archiving its listing, capping it, or sending it back to review). Delisting is allowed:
- * the item stays in the pack as a box-only item.
- */
-export async function assertNotInLiveMysteryPack(cosmeticId: number) {
+/** Refuses when the cosmetic is an enabled content of this seller's published mystery pack. */
+export async function assertNotInLiveMysteryPack({
+  cosmeticId,
+  sellerId,
+}: {
+  cosmeticId: number;
+  sellerId: number;
+}) {
   const [box] = await dbWrite.$queryRaw<{ name: string }[]>`
     SELECT d.name
     FROM "ItemDefinition" r
@@ -462,7 +454,7 @@ export async function assertNotInLiveMysteryPack(cosmeticId: number) {
     JOIN "ItemDefinition" d ON d.id = bc."boxDefinitionId"
     WHERE r."cosmeticId" = ${cosmeticId}
       AND d.status = ${ITEM_DEFINITION_STATUS.published}
-      AND d."sellerId" IS NOT NULL
+      AND d."sellerId" = ${sellerId}
     LIMIT 1`;
   if (box)
     throw throwBadRequestError(
