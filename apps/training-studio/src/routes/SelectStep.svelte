@@ -528,6 +528,7 @@
       {#if !multi}
         {@const card = selectedCard}
         {@const runPrice = price(primary.cardType)}
+        {@const versions = versionOptions(card)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -541,14 +542,14 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {#if versionOptions(card).length > 1}
+          {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
               aria-label={`${card.name} version`}
             >
-              {#each versionOptions(card) as v (v.key)}
+              {#each versions as v (v.key)}
                 <button
                   type="button"
                   role="radio"

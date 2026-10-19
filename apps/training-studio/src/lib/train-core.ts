@@ -36,7 +36,11 @@ import {
   type TrainingStudioMeta,
   workflowToRow,
 } from '$lib/data/trainingRows';
-import { CUSTOM_BASE_ECOSYSTEMS, EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
+import {
+  EXTRA_PARAM_FIELDS,
+  TARGET_STEPS,
+  ecosystemAllowsCustomBase,
+} from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
@@ -336,7 +340,7 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     fail(`${field}.meta.name`, 'must be a string.');
   // A sweep row or restored selection can still carry one; submitting it would bill a run that
   // trains on the official base.
-  if (run.customModel !== undefined && !CUSTOM_BASE_ECOSYSTEMS.has(run.ecosystem))
+  if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
     fail(`${field}.customModel`, 'is not supported for this model.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');

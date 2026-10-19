@@ -1450,11 +1450,15 @@ export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies P
 /** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
  *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
  *  only for these. */
-export const CUSTOM_BASE_ECOSYSTEMS: ReadonlySet<string> = new Set(['anima', 'sd1', 'sdxl']);
+const CUSTOM_BASE_ECOSYSTEMS: ReadonlySet<string> = new Set(['anima', 'sd1', 'sdxl']);
 
-/** A Custom run resolves to the card's primary version, so that version's ecosystem decides. */
+export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
+  CUSTOM_BASE_ECOSYSTEMS.has(ecosystem);
+
+/** A Custom run resolves to the card's primary version (`runVersion`), so that version's ecosystem
+ *  decides: the same ecosystem the submit check sees. */
 export const allowsCustomBase = (card: ModelCard): boolean =>
-  CUSTOM_BASE_ECOSYSTEMS.has(card.versions[0]!.ecosystem);
+  ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
 
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =
