@@ -62,8 +62,7 @@ export function explainMatches(trigger: MatchSource): ExplainedMatch[] {
   }));
 }
 
-/** Literal strings to highlight per box. A match with no recorded field marks both boxes; a gate
- *  word is NSFW-list text from the prompt. */
+/** A match with no recorded field marks both boxes; a gate word is always from the prompt. */
 export function highlightSets(matches: ExplainedMatch[]): Record<TriggerField, string[]> {
   const sets: Record<TriggerField, Set<string>> = {
     prompt: new Set(),
@@ -79,12 +78,11 @@ export function highlightSets(matches: ExplainedMatch[]): Record<TriggerField, s
   return { prompt: [...sets.prompt], negativePrompt: [...sets.negativePrompt] };
 }
 
-/** A prompt was stored but nothing says why it was blocked. */
 export function hasNoRecordedMatch(trigger: MatchSource): boolean {
   return !!trigger.prompt && explainMatches(trigger).length === 0;
 }
 
-/** Past this, the encoded query risks being dropped by proxies, so the link carries no prefill. */
+/** Past this the link carries no prefill; very long URLs risk being dropped. */
 export const MAX_PREFILL_URL_LENGTH = 6000;
 
 export function promptTesterHref(input: { prompt: string; negativePrompt?: string }): {
@@ -105,7 +103,6 @@ export function prefillInput(prompt: string, negativePrompt?: string | null): st
   return JSON.stringify([negativePrompt ? { prompt, negativePrompt } : { prompt }], null, 2);
 }
 
-/** True when a match's display text cannot be found in the text of the field it names. */
 export function isMissingFromText(
   match: Pick<ExplainedMatch, 'text' | 'field'>,
   texts: { prompt?: string; negativePrompt?: string }

@@ -191,7 +191,7 @@ export const auditPromptEnriched = (
   options?: AuditTimerOptions
 ): EnrichedAuditResult => {
   const result = auditFirstBlock(prompt, negativePrompt, checkProfanity, options);
-  // Only a blocked prompt pays for the full evidence pass; the verdict is already decided.
+  // Evidence is collected only for a block, not on the passing path.
   const [first] = result.triggers;
   if (
     !result.success &&
@@ -478,8 +478,7 @@ function collectTriggerMatches(
     });
   }
 
-  // The blocklist is scanned in list order but the verdict takes the first hard word, so the
-  // deciding rule may not be first.
+  // Scan order can differ from verdict order, so move the deciding rule to the front.
   const decidingIndex = matches.findIndex(
     (m) => m.category === decided.category && m.matchedWord === decided.matchedWord
   );
@@ -991,11 +990,7 @@ function findPoi(prompt: string | undefined) {
   return words.poi.inPrompt(prompt, matcher) ? found ?? false : false;
 }
 
-/**
- * Every sub-check of the inappropriate rule, in the order the audit applies them. With
- * `collectAll` false it stops at the first hit; true keeps going so the caller can see every
- * sub-check that matched. Either way the first entry is what the first-hit mode returns.
- */
+/** Every sub-check that matches, in audit order; `collectAll` false stops at the first hit. */
 function findInappropriateEnriched(
   input: { prompt?: string; negativePrompt?: string },
   nsfw: boolean | undefined,

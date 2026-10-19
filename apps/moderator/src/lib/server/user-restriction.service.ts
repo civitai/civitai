@@ -37,7 +37,6 @@ export type RestrictionTrigger = {
   category?: string;
   matchedWord?: string;
   matchedRegex?: string;
-  /** The literal span found in the prompt, when the matching rule gives one. */
   matchedText?: string;
   matchedField?: 'prompt' | 'negativePrompt';
   /** The NSFW-list text that opened the gate the matching rule needs. */

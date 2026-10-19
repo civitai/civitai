@@ -40,7 +40,6 @@ export interface BlockedPromptEntry {
   category?: PromptTriggerCategory;
   matchedWord?: string;
   matchedRegex?: string;
-  /** The literal span found in the prompt, when the matching rule gives one. */
   matchedText?: string;
   matchedField?: PromptTriggerField;
   /** The NSFW-list text that opened the gate the matching rule needs. */
@@ -68,8 +67,6 @@ const GREEN_SFW_REDIRECT =
   'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
 
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
-// Seeding only needs enough hard blocks to put the counter past the mute threshold, so the
-// request re-audits at most this many of the newest rows and stops at the cap below.
 const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
@@ -87,7 +84,6 @@ const truncateForRecord = (text: string | undefined) =>
     : text;
 const TRUNCATED_RECORD = /… \[truncated from (\d+) chars\]$/;
 
-/** Whether a stored prompt has the exact shape `truncateForRecord` gives an over-length input. */
 function hasOverLengthRecordShape(text: string | undefined): boolean {
   const match = text != null ? TRUNCATED_RECORD.exec(text) : null;
   if (!match) return false;
@@ -97,7 +93,6 @@ function hasOverLengthRecordShape(text: string | undefined): boolean {
   );
 }
 
-/** The evidence a blocked entry keeps from the audit's first trigger. */
 function triggerEvidence(trigger?: PromptTrigger) {
   return {
     category: trigger?.category,
@@ -111,11 +106,9 @@ function triggerEvidence(trigger?: PromptTrigger) {
 }
 
 /**
- * What the regex audit says about a row read back from the audit log. The log does not record
- * whether a row was a hard block, so a soft one is recognised by its re-audit and an over-length
- * refusal by the shape of its truncation record, unless the text itself still re-audits as a hard
- * block. A row the audit no longer matches is kept
- * without evidence, as is an External row, which the regex layer cannot explain.
+ * The audit log does not record whether a row was a hard block, so re-audit it; an over-length
+ * refusal is told by its truncation record. Rows the audit no longer matches, and External rows,
+ * are kept without evidence.
  */
 async function reauditSeededRow(row: {
   prompt: string;
@@ -133,7 +126,7 @@ async function reauditSeededRow(row: {
       stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
       stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
-    // Profanity is checked because a soft row recorded on the green domain can only be told apart by it.
+    // Profanity on, so a soft block recorded on the green domain re-audits as one.
     const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
     if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
     if (isSoftBlock(triggers)) return { hardBlock: false };
@@ -177,7 +170,7 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     LIMIT ${SEED_MAX_ROWS}
   `;
 
-  // Newest first, bounded: past the mute threshold (plus a margin) more rows change nothing.
+  // Past the mute threshold (plus a margin) more rows change nothing.
   const seedCap = constants.imageGeneration.requestBlocking.muted + 2;
   const hardBlocks: { row: (typeof data)[number]; evidence?: PromptTrigger }[] = [];
   for (const [index, row] of data.entries()) {
@@ -188,7 +181,6 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     if (hardBlock) hardBlocks.push({ row, evidence });
   }
 
-  // Add the hard blocks oldest first, so the newest ends up at head.
   let seeded = 0;
   for (const { row, evidence } of hardBlocks.reverse()) {
     const entry: BlockedPromptEntry = {
@@ -205,7 +197,6 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     await sysRedis.rPush(key, JSON.stringify(entry));
     seeded++;
   }
-  // Nothing to count, set reset marker
   if (seeded === 0) await sysRedis.lPush(key, RESET_MARKER);
   await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
 }

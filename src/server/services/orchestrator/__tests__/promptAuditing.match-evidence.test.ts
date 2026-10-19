@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
-/**
- * A stored blocked prompt carries the evidence for why it was blocked, whether it was written live
- * or rebuilt from the audit log, and the rebuild only counts hard blocks.
- */
-
 const { mockClickhouseQuery } = vi.hoisted(() => ({ mockClickhouseQuery: vi.fn() }));
 
 vi.mock('~/server/integrations/moderation', () => ({
@@ -39,8 +34,6 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const mockSysRedis = redisMock.sysRedis;
 
-// `daughter` is a soft-tier blocklist entry; the other prompt is a hard minor-rule block whose
-// NSFW gate word is `nude`.
 const HARD_PROMPT = 'nude, young stepson';
 const SOFT_PROMPT = 'daughter';
 
@@ -55,7 +48,7 @@ const row = (prompt: string, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-// A record shaped as an over-length refusal is stored: 2000 chars of the input plus the marker.
+// Matches the shape the over-length path writes.
 const overLengthRecord = (head = 'a prompt') =>
   `${head.padEnd(2000, ' ')}… [truncated from 30000 chars]`;
 
@@ -122,7 +115,6 @@ describe('cold-seeding the blocked-prompt list from the audit log', () => {
     const [, ...values] = mockClickhouseQuery.mock.calls[0];
     expect(values).toContain(200);
     expect(entries.length).toBe(10);
-    // oldest of the kept rows first, so the newest ends up at the head of the list
     expect(entries[entries.length - 1].prompt).toBe(`${HARD_PROMPT} 0`);
   });
 
