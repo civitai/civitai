@@ -11,7 +11,12 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import type { CommentGetAllItem } from '~/types/router';
 
-export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 8, onlyHidden }: Props) {
+export function ModelDiscussionV2({
+  modelId,
+  modelUserId,
+  limit: initialLimit = 8,
+  onlyHidden,
+}: Props) {
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? initialLimit / 2 : initialLimit;
   const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
@@ -56,7 +61,11 @@ export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 
               filters={filters}
               columnWidth={300}
               autoFetch={false}
-              overscanBy={2}
+              // Render every loaded comment. MasonryGrid2 virtualizes against window scroll, which
+              // never moves inside the app's ScrollArea, so a finite overscan left later pages
+              // unrendered. Virtualizing properly instead makes long comments jitter on remount:
+              // the Show More label appears a frame late and changes the card's height.
+              overscanBy={Infinity}
             />
             {hasHiddenComments && !onlyHidden && (
               <RoutedDialogLink
