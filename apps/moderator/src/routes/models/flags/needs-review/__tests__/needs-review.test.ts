@@ -238,6 +238,7 @@ describe('queue load', () => {
   type Loaded = {
     sources: { detections: boolean; matches: boolean };
     total: number | undefined;
+    chipCounts: Record<string, number>;
     items: unknown[];
   };
   const loadQueue = async (query = '', grants: Grants = BOTH) =>
@@ -268,6 +269,23 @@ describe('queue load', () => {
 
   it('offers no total for a searched list with file matches in it', async () => {
     expect((await loadQueue('?q=bob')).total).toBeUndefined();
+  });
+
+  it('counts each source chip from the same parts, whichever chip is active', async () => {
+    const counts = { all: 12, 'text-scan': 3, hash: 10 };
+    expect((await loadQueue()).chipCounts).toEqual(counts);
+    expect((await loadQueue('?source=hash')).chipCounts).toEqual(counts);
+    expect((await loadQueue('?source=hash')).total).toBe(10);
+    expect((await loadQueue('?q=bob')).chipCounts).toEqual({});
+    expect((await loadQueue('?flag=poi')).chipCounts).toEqual({});
+  });
+
+  it('drops a chip count whose query ran past the budget', async () => {
+    getMinorQueueCounts.mockRejectedValue(new Error('slow'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loaded = await loadQueue();
+    expect(loaded.chipCounts).toEqual({ 'text-scan': 3 });
+    expect(loaded.total).toBeUndefined();
   });
 
   it('passes the filters through, ignoring unknown values', async () => {

@@ -87,6 +87,7 @@
         labels: NEEDS_REVIEW_SOURCE_LABELS,
         active: f.source,
         defaultValue: DEFAULT_NEEDS_REVIEW_FILTERS.source,
+        counts: data.chipCounts,
       },
       {
         key: 'flag',

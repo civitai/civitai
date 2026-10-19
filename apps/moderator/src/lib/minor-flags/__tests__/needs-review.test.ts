@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   leadRefs,
   needsReviewBranches,
+  needsReviewChipCounts,
   needsReviewCountKey,
   needsReviewSourceChips,
   needsReviewSources,
@@ -90,5 +91,28 @@ describe('leadRefs', () => {
       { label: 'minor', source: 'file-match', textHash: null },
     ]);
     expect(leadRefs({ flags: [], match: null })).toEqual([]);
+  });
+});
+
+describe('needsReviewChipCounts', () => {
+  it('counts each source chip, All counting a model with both leads once', () => {
+    expect(needsReviewChipCounts(both, { detections: 4, matches: 10, overlap: 1 })).toEqual({
+      all: 13,
+      'text-scan': 4,
+      hash: 10,
+    });
+  });
+  it('drops a count whose part is unknown, and All with it', () => {
+    expect(needsReviewChipCounts(both, { detections: 4, matches: null, overlap: null })).toEqual({
+      'text-scan': 4,
+    });
+  });
+  it('offers no counts when the chips are not shown', () => {
+    expect(
+      needsReviewChipCounts(
+        { detections: true, matches: false },
+        { detections: 4, matches: 10, overlap: 1 }
+      )
+    ).toEqual({});
   });
 });

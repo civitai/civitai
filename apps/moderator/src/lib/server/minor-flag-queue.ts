@@ -22,8 +22,8 @@ import {
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
   getMinorQueueCounts,
-  getFlaggedCount,
   getFlaggedModels,
+  getFlaggedSourceCounts,
   getModelFlagDetail,
   getModelMinor,
   getNeedsReviewCount,
@@ -35,9 +35,12 @@ import {
   NEEDS_REVIEW_PERMISSIONS,
   NEEDS_REVIEW_SOURCE_FILTERS,
   needsReviewBranches,
+  needsReviewChipCounts,
   needsReviewSources,
   needsReviewTotal,
+  type ChipCounts,
   type NeedsReviewFilters,
+  type NeedsReviewSourceFilter,
   type NeedsReviewSources,
 } from '$lib/minor-flags/needs-review';
 import { denied, type PermissionSet } from '$lib/permissions';
@@ -119,30 +122,40 @@ const withinBudget = async <T>(work: () => Promise<T>, what: string) =>
   (await bounded(work, TOTAL_BUDGET_MS, (err) => console.error(`${what} failed`, err))) ??
   undefined;
 
-/** Needs review's "of N". With file matches in the list it comes from the cached file-match counts,
- *  so it is offered only for the unsearched, unfiltered-by-label queue; held detections alone are
- *  cheap to count exactly. */
-async function needsReviewListTotal(
+/** Needs review's "of N" and source chip counts. With file matches in play they come from the cached
+ *  file-match counts and the cheap held-detection count, so they are offered only for the unsearched,
+ *  unfiltered-by-label queue; held detections alone are cheap to count exactly. */
+async function needsReviewCounts(
+  sources: NeedsReviewSources,
   use: NeedsReviewSources,
   search: MinorSearch | undefined,
   filters: NeedsReviewFilters
-): Promise<number | undefined> {
-  if (!use.matches)
-    return withinBudget(
-      () => getNeedsReviewCount({ search, filters, sources: use }),
-      'Needs review total'
-    );
-  if (search || (use.detections && filters.flag !== 'all')) return undefined;
+): Promise<{ total: number | undefined; chipCounts: ChipCounts<NeedsReviewSourceFilter> }> {
+  if (search || filters.flag !== 'all') {
+    // A label filter or search leaves the cached parts behind; only a detections-only list counts.
+    const total = use.matches
+      ? undefined
+      : await withinBudget(
+          () => getNeedsReviewCount({ search, filters, sources: use }),
+          'Needs review total'
+        );
+    return { total, chipCounts: {} };
+  }
   const [matches, detections] = await Promise.all([
-    withinBudget(getMinorQueueCounts, 'File matches total'),
-    use.detections ? withinBudget(getHeldDetectionModelCount, 'Held detections total') : 0,
+    sources.matches ? withinBudget(getMinorQueueCounts, 'File matches total') : undefined,
+    sources.detections
+      ? withinBudget(getHeldDetectionModelCount, 'Held detections total')
+      : undefined,
   ]);
-  const total = needsReviewTotal(use, {
+  const parts = {
     detections: detections ?? null,
     matches: matches?.pending ?? null,
     overlap: matches?.pendingWithDetection ?? null,
-  });
-  return total ?? undefined;
+  };
+  return {
+    total: needsReviewTotal(use, parts) ?? undefined,
+    chipCounts: needsReviewChipCounts(sources, parts),
+  };
 }
 
 /** Needs review lists only the kinds of lead the viewer may rule; `sources` tells the page which. */
@@ -151,11 +164,22 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
   const use = needsReviewBranches(sources, needsReviewFilters);
-  const [queue, total] = await Promise.all([
+  const [queue, { total, chipCounts }] = await Promise.all([
     getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
-    needsReviewListTotal(use, search, needsReviewFilters),
+    needsReviewCounts(sources, use, search, needsReviewFilters),
   ]);
-  return { limit, page, offset, q, needsReviewFilters, sources, total, ...queue, fullBleed: true };
+  return {
+    limit,
+    page,
+    offset,
+    q,
+    needsReviewFilters,
+    sources,
+    total,
+    chipCounts,
+    ...queue,
+    fullBleed: true,
+  };
 }
 
 export type NeedsReviewQueueData = Awaited<ReturnType<typeof loadNeedsReviewQueue>>;
@@ -182,17 +206,27 @@ export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 export async function loadFlaggedQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const flaggedFilters: FlaggedFilters = parseQuery(url, flaggedFilterSchema);
-  const [queue, total] = await Promise.all([
+  const [queue, chipCounts] = await Promise.all([
     getFlaggedModels({ limit, offset, search, filters: flaggedFilters }),
-    // The footer's "of N" is decoration; a failure here must not take the list down with it.
-    getFlaggedCount({ search, source: flaggedFilters.source, flag: flaggedFilters.flag }).catch(
-      (err) => {
-        console.error('Flagged total failed', err);
-        return undefined;
-      }
-    ),
+    // The footer's "of N" and the chip counts are decoration; a failure here must not take the list
+    // down with it. One pass counts every source, at the cost of the All count.
+    getFlaggedSourceCounts({ search, flag: flaggedFilters.flag }).catch((err) => {
+      console.error('Flagged counts failed', err);
+      return undefined;
+    }),
   ]);
-  return { limit, page, offset, q, flaggedFilters, total, ...queue, fullBleed: true };
+  const total = chipCounts?.[flaggedFilters.source];
+  return {
+    limit,
+    page,
+    offset,
+    q,
+    flaggedFilters,
+    total,
+    chipCounts: chipCounts ?? {},
+    ...queue,
+    fullBleed: true,
+  };
 }
 
 export type FlaggedQueueData = Awaited<ReturnType<typeof loadFlaggedQueue>>;

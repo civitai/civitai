@@ -9,21 +9,21 @@ const {
   confirmMinorFlag,
   revertMinorFlag,
   getFlaggedModels,
-  getFlaggedCount,
+  getFlaggedSourceCounts,
 } = vi.hoisted(() => ({
   ruleTextScanFlag: vi.fn(),
   resolveRedetection: vi.fn(),
   confirmMinorFlag: vi.fn(),
   revertMinorFlag: vi.fn(),
   getFlaggedModels: vi.fn(),
-  getFlaggedCount: vi.fn(),
+  getFlaggedSourceCounts: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorFlagAppealGroups: vi.fn(async () => []),
   getFlaggedModels,
-  getFlaggedCount,
+  getFlaggedSourceCounts,
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag,
@@ -54,7 +54,7 @@ beforeEach(() => {
   confirmMinorFlag.mockResolvedValue({ ok: true });
   revertMinorFlag.mockResolvedValue({ ok: true });
   getFlaggedModels.mockResolvedValue({ items: [], hasMore: false });
-  getFlaggedCount.mockResolvedValue(3);
+  getFlaggedSourceCounts.mockResolvedValue({ all: 3, hash: 2, 'text-scan': 2 });
 });
 
 const redetected = { modelId: '42', label: 'minor', source: 'redetected', textHash: 'h-1' };
@@ -367,8 +367,18 @@ describe('queue load', () => {
     expect(getFlaggedModels).toHaveBeenCalledTimes(1);
   });
 
+  it('takes the total from the active source chip and hands the page every chip count', async () => {
+    const loaded = (await loadQueue('?source=hash&flag=minor')) as Loaded & {
+      total: number | undefined;
+      chipCounts: Record<string, number>;
+    };
+    expect(getFlaggedSourceCounts).toHaveBeenLastCalledWith({ search: undefined, flag: 'minor' });
+    expect(loaded.total).toBe(2);
+    expect(loaded.chipCounts).toEqual({ all: 3, hash: 2, 'text-scan': 2 });
+  });
+
   it('still serves the list when the total fails', async () => {
-    getFlaggedCount.mockRejectedValue(new Error('db down'));
+    getFlaggedSourceCounts.mockRejectedValue(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const loaded = await loadQueue();
     expect(loaded.items).toEqual([]);

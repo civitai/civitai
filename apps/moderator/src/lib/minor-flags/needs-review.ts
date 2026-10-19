@@ -59,6 +59,23 @@ export const needsReviewBranches = (
 export const needsReviewSourceChips = (granted: NeedsReviewSources): NeedsReviewSourceFilter[] =>
   granted.detections && granted.matches ? [...NEEDS_REVIEW_SOURCE_FILTERS] : [];
 
+export type ChipCounts<K extends string> = Partial<Record<K, number>>;
+
+/** The numbers on the source chips, in models; a part that is unknown (timed out) drops its chip's
+ *  count, and All's. Empty while the chips are not offered. */
+export function needsReviewChipCounts(
+  granted: NeedsReviewSources,
+  parts: { detections: number | null; matches: number | null; overlap: number | null }
+): ChipCounts<NeedsReviewSourceFilter> {
+  if (!needsReviewSourceChips(granted).length) return {};
+  const counts: ChipCounts<NeedsReviewSourceFilter> = {};
+  const all = needsReviewTotal(granted, parts);
+  if (all !== null) counts.all = all;
+  if (parts.detections !== null) counts['text-scan'] = parts.detections;
+  if (parts.matches !== null) counts.hash = parts.matches;
+  return counts;
+}
+
 /** The sidebar counts are shared by everyone, so each viewer's badge reads the key for what they hold. */
 export const NEEDS_REVIEW_COUNT_KEYS = {
   all: 'modelFlagsNeedsReview',

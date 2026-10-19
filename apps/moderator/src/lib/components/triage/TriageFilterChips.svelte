@@ -11,6 +11,8 @@
     toggle?: boolean;
     /** Values kept off the row behind a "More" menu; one in force still shows on the row. */
     more?: readonly string[];
+    /** A number after a chip's label (models it would list); a value with none shows no number. */
+    counts?: Partial<Record<string, number>>;
   };
 </script>
 
@@ -58,6 +60,11 @@
       )}
     >
       {group.labels[value]}
+      {#if group.counts?.[value] != null}
+        <span class="ml-1 tabular-nums {active ? 'text-dark-0' : 'text-dark-2'}"
+          >{group.counts[value]}</span
+        >
+      {/if}
     </a>
   {/each}
   {#if chips.more.length}

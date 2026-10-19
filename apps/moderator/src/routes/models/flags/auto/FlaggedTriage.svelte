@@ -80,6 +80,7 @@
         labels: FLAGGED_SOURCE_LABELS,
         active: f.source,
         defaultValue: DEFAULT_FLAGGED_FILTERS.source,
+        counts: data.chipCounts,
       },
       {
         key: 'flag',

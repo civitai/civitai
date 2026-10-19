@@ -23,6 +23,7 @@ const {
   getAutoFlaggedCount,
   getFlaggedCount,
   getFlaggedModels,
+  getFlaggedSourceCounts,
   getHeldDetectionModelCount,
   getNeedsReviewCount,
   getNeedsReviewModels,
@@ -655,6 +656,21 @@ describe('text-scan auto-flags', () => {
     const keysFor31 = (await keys()).filter((k) => k.startsWith('31:'));
     expect(keysFor31).toEqual(['31:minor:hash', '31:poi:text-scan']);
     expect(await keys({ filters: onlyTextScan })).not.toContain('31:minor:text-scan');
+  });
+
+  it('counts each source chip in one pass, a model in both counted once under All', async () => {
+    // 31 carries a hash minor flag and a text-scan real-person flag.
+    expect(await getFlaggedSourceCounts()).toEqual({ all: 2, hash: 1, 'text-scan': 2 });
+    expect(await getFlaggedSourceCounts({ flag: 'poi' })).toEqual({
+      all: 2,
+      hash: 0,
+      'text-scan': 2,
+    });
+    expect(await getFlaggedSourceCounts({ search: { modelOrUserId: 30 } })).toEqual({
+      all: 1,
+      hash: 0,
+      'text-scan': 1,
+    });
   });
 
   describe('a minor flag the hash sweep owns', () => {

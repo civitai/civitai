@@ -923,6 +923,27 @@ export async function getFlaggedCount({
   return result.rows[0]?.count ?? 0;
 }
 
+export type FlaggedSourceCounts = Record<'all' | 'hash' | 'text-scan', number>;
+
+/** Auto-flagged's source chip counts, in models, from one pass over both branches: the cost of the
+ *  "All" count alone. A model with both sources counts once under All. */
+export async function getFlaggedSourceCounts({
+  search,
+  flag = 'all',
+}: { search?: MinorSearch } & Partial<
+  Pick<FlaggedFilters, 'flag'>
+> = {}): Promise<FlaggedSourceCounts> {
+  const branches = flaggedBranchList(search, { ...DEFAULT_FLAGGED_FILTERS, source: 'all', flag });
+  if (!branches.length) return { all: 0, hash: 0, 'text-scan': 0 };
+  const result = await sql<FlaggedSourceCounts>`
+    SELECT count(DISTINCT "modelId")::int AS "all",
+           (count(DISTINCT "modelId") FILTER (WHERE source = 'hash'))::int AS hash,
+           (count(DISTINCT "modelId") FILTER (WHERE source = 'text-scan'))::int AS "text-scan"
+    FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
+  `.execute(dbRead);
+  return result.rows[0] ?? { all: 0, hash: 0, 'text-scan': 0 };
+}
+
 /** A file match as a Needs review row carries it: this model's file and the seed sharing it. */
 export type FileMatchItem = Pick<
   MinorHashReviewRow,
