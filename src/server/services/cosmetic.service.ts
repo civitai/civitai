@@ -254,7 +254,7 @@ export async function equipCosmeticToEntity({
   if (userCosmetic.cosmetic.type === CosmeticType.Sticker)
     throw new Error('Stickers cannot be equipped');
   if ((await getWithheldCosmeticIds([cosmeticId], dbWrite)).size)
-    throw new Error(WITHHELD_COSMETIC_ERROR);
+    throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
@@ -722,10 +722,7 @@ export async function revokeCosmeticsFromUsers({
   return { revoked: count };
 }
 
-/**
- * Takes a creator-shop cosmetic off everyone wearing or displaying it once its listing is withheld.
- * A no-op while the listing is displayable, so callers run it after any review or edit.
- */
+/** Clears every worn or content-placed copy of a cosmetic whose creator-shop listing is withheld. */
 export async function unequipWithheldCosmetic(cosmeticId: number | null | undefined) {
   if (cosmeticId == null) return;
   if (!(await getWithheldCosmeticIds([cosmeticId], dbWrite)).has(cosmeticId)) return;

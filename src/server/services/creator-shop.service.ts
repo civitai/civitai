@@ -19,7 +19,9 @@ import {
   REJECTED_IS_FINAL,
   appendItemHistory,
   buildCosmeticData,
+  changesDisplay,
   creatorGrantRemaining,
+  isListingDisplayable,
   patchCosmeticData,
   shopItemDisplayMeta,
   wasLastReviewARejection,
@@ -958,6 +960,17 @@ export const updateCreatorShopItem = async ({
         }
       : {}),
     ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+    // Seeded from the history before this edit lands, so a later trim of the capped log can't
+    // forget a verdict.
+    displayApproved:
+      !isModerator && changesDisplay(changes)
+        ? false
+        : meta.displayApproved ??
+          isListingDisplayable({
+            status: existing.status,
+            meta,
+            rejectionReason: existing.rejectionReason,
+          }),
   };
   // An edit that moved nothing (e.g. a resubmit with identical values) isn't
   // worth a row in the history.
@@ -2104,7 +2117,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: null,
-            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
           },
           select: creatorShopItemSelect,
         })
@@ -2117,7 +2130,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: rejectionReason ?? null,
-            meta: reviewedMeta({}),
+            meta: reviewedMeta({ displayApproved: false }),
           },
           select: creatorShopItemSelect,
         });

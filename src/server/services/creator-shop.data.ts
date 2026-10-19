@@ -1,4 +1,5 @@
 import type {
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemHistoryEntry,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
@@ -115,8 +116,12 @@ export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]
   return index >= 0 && history![index].action === 'reject';
 };
 
-// The edits that change what a holder shows; price, quantity and sticker economics don't.
+// Allowlist: a newly recorded edit field that changes what holders see must be added here, or
+// editing it after approval leaves the item wearable unreviewed.
 const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+
+export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
+  !!changes?.some((change) => DISPLAYED_FIELDS.has(change.field));
 
 /**
  * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
@@ -134,19 +139,15 @@ export const isListingDisplayable = ({
 }) => {
   if (status === CosmeticShopItemStatus.Published) return true;
   if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
   const history = meta?.history ?? [];
   const index = lastReviewIndex(history);
   const approved =
     index >= 0
       ? history[index].action === 'approve'
-      : // Verdicts older than the history left only these: approval a price, the others a reason.
+      : // Pre-history items: approval left lastApprovedAmount and no reason; every other verdict left a reason.
         meta?.lastApprovedAmount != null && !rejectionReason;
-  return (
-    approved &&
-    !history
-      .slice(index + 1)
-      .some((entry) => entry.changes?.some((change) => DISPLAYED_FIELDS.has(change.field)))
-  );
+  return approved && !history.slice(index + 1).some((entry) => changesDisplay(entry.changes));
 };
 
 /**

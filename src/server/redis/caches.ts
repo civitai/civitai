@@ -159,7 +159,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
         data: true,
       },
     });
-    // Withholding unequips, but rows worn before that existed are still equipped.
+    // Unequip-on-withhold doesn't reach rows worn before it shipped, so filter on read too.
     const withheld = await getWithheldCosmeticIds(
       equipped.map((x) => x.cosmeticId),
       db

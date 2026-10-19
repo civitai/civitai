@@ -1,33 +1,36 @@
-/**
- * A creator's own copy of a shop item is granted on approval and was never taken back, so an
- * item later sent back for changes stayed in their inventory and could be equipped, and an
- * equipped one rendered for everyone. A creator-made cosmetic is now withheld from holders unless
- * its listing is live, or a moderator last approved it and nothing anyone sees has changed since.
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
+import type * as BuzzService from '~/server/services/buzz.service';
+import type * as NotificationService from '~/server/services/notification.service';
 
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
   createBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
   refundTransaction: vi.fn(),
 }));
-vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: vi.fn(),
+}));
 
 const { isListingDisplayable } = await import('~/server/services/creator-shop.data');
+const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
 const { reviewCreatorShopItem, updateCreatorShopItem } = await import(
   '~/server/services/creator-shop.service'
 );
-const { userCosmeticCache } = await import('~/server/redis/caches');
+const { cosmeticEntityCaches, userCosmeticCache } = await import('~/server/redis/caches');
 
 const CREATOR = 11;
 const BUYER = 12;
+const RESELLER = 13;
 const MOD = 99;
 const COSMETIC = 7;
 const OTHER_COSMETIC = 8;
+const IMAGE = 501;
+const IN_REVIEW = 'This item is in review and cannot be equipped';
 
 const at = (day: number) => `2026-08-${String(day).padStart(2, '0')}T00:00:00.000Z`;
 const submitted = (): CosmeticShopItemHistoryEntry => ({
@@ -57,39 +60,44 @@ type Listing = {
   rejectionReason?: string | null;
   lastApprovedAmount?: number;
   takedown?: boolean;
+  displayApproved?: boolean;
 };
-const displayable = ({
-  status,
-  history,
-  rejectionReason = null,
-  lastApprovedAmount,
-  takedown,
-}: Listing) =>
+const metaOf = ({ history, lastApprovedAmount, takedown, displayApproved }: Listing) => ({
+  purchases: 0,
+  ...(history ? { history } : {}),
+  ...(lastApprovedAmount ? { lastApprovedAmount } : {}),
+  ...(takedown ? { takedown: { reason: 'tos', moderatorId: MOD, at: at(9) } } : {}),
+  ...(displayApproved !== undefined ? { displayApproved } : {}),
+});
+const displayable = (listing: Listing) =>
   isListingDisplayable({
-    status: status as never,
-    meta: {
-      purchases: 0,
-      ...(history ? { history } : {}),
-      ...(lastApprovedAmount ? { lastApprovedAmount } : {}),
-      ...(takedown ? { takedown: { reason: 'tos', moderatorId: MOD, at: at(9) } } : {}),
-    },
-    rejectionReason,
+    status: listing.status as never,
+    meta: metaOf(listing),
+    rejectionReason: listing.rejectionReason ?? null,
   });
 
-// The reported item: approved, unpublished by a moderator, then sent back for visual quality.
-const SENT_BACK = {
+const SENT_BACK: Listing = {
   status: 'RequestedChanges',
-  history: [submitted(), reviewed('approve', 2), reviewed('revert', 2), reviewed('request-changes', 3)],
+  history: [
+    submitted(),
+    reviewed('approve', 2),
+    reviewed('revert', 2),
+    reviewed('request-changes', 3),
+  ],
   rejectionReason: 'Visual quality',
   lastApprovedAmount: 500,
 };
-const RELISTED = { status: 'PendingReview', history: [submitted(), reviewed('approve', 2)] };
+const RELISTED: Listing = { status: 'PendingReview', history: [submitted(), reviewed('approve', 2)] };
+const LIVE: Listing = { status: 'Published', history: [submitted(), reviewed('approve', 2)] };
 
 describe('whether a listing can be shown by its holders', () => {
-  it.each([
+  it.each<[string, Listing]>([
     ['sent back for changes after approval', SENT_BACK],
     ['rejected', { status: 'Rejected', history: [submitted(), reviewed('reject', 2)] }],
-    ['unpublished by a moderator', { status: 'PendingReview', history: [submitted(), reviewed('approve', 2), reviewed('revert', 3)] }],
+    [
+      'unpublished by a moderator',
+      { status: 'PendingReview', history: [submitted(), reviewed('approve', 2), reviewed('revert', 3)] },
+    ],
     ['never reviewed', { status: 'PendingReview', history: [submitted()] }],
     [
       'artwork swapped after a price edit put it back in review',
@@ -98,40 +106,83 @@ describe('whether a listing can be shown by its holders', () => {
         history: [submitted(), reviewed('approve', 2), edited('price', 3), edited('artwork', 4)],
       },
     ],
-    ['taken down', { status: 'Archived', history: [submitted(), reviewed('approve', 2)], takedown: true }],
-    ['sent back before the history existed', { status: 'RequestedChanges', rejectionReason: 'Off-brand', lastApprovedAmount: 500 }],
+    [
+      'taken down',
+      { status: 'Archived', history: [submitted(), reviewed('approve', 2)], takedown: true },
+    ],
+    [
+      'sent back before the history existed',
+      { status: 'RequestedChanges', rejectionReason: 'Off-brand', lastApprovedAmount: 500 },
+    ],
+    [
+      'its recorded verdict says so, though the capped history has lost it',
+      { status: 'PendingReview', lastApprovedAmount: 500, displayApproved: false },
+    ],
   ])('withheld when %s', (_, listing) => {
     expect(displayable(listing)).toBe(false);
   });
 
-  it.each([
-    ['live', { status: 'Published', history: [submitted(), reviewed('approve', 2)] }],
+  it.each<[string, Listing]>([
+    ['live', LIVE],
     ['relisted or restored from the archive', RELISTED],
     [
       'back in review for a large price edit',
       { status: 'PendingReview', history: [submitted(), reviewed('approve', 2), edited('price', 3)] },
     ],
     ['archived after approval', { status: 'Archived', history: [submitted(), reviewed('approve', 2)] }],
-    ['approved before the history existed, then archived', { status: 'Archived', lastApprovedAmount: 500 }],
+    [
+      'its art was fixed before it was approved',
+      {
+        status: 'Archived',
+        history: [submitted(), reviewed('request-changes', 2), edited('artwork', 3), reviewed('approve', 4)],
+      },
+    ],
+    [
+      'approved before the history existed, then archived',
+      { status: 'Archived', lastApprovedAmount: 500 },
+    ],
   ])('shown when %s', (_, listing) => {
     expect(displayable(listing)).toBe(true);
   });
 });
 
-// What the database holds for the creator's own listing, as the review and edit paths leave it.
-let stored: ReturnType<typeof listingRow>;
-function listingRow({ status, history, rejectionReason = null, lastApprovedAmount }: Listing) {
+describe('which cosmetics are withheld', () => {
+  const row = (addedById: number, listing: Listing) => ({
+    cosmeticId: COSMETIC,
+    addedById,
+    status: listing.status,
+    rejectionReason: listing.rejectionReason ?? null,
+    meta: metaOf(listing),
+    cosmetic: { createdById: CREATOR },
+  });
+
+  it("reads only the creator's own listing, never a reseller's", async () => {
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce([
+      row(CREATOR, LIVE),
+      row(RESELLER, SENT_BACK),
+    ]);
+    expect(await getWithheldCosmeticIds([COSMETIC])).toEqual(new Set());
+
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce([row(RESELLER, SENT_BACK)]);
+    expect(await getWithheldCosmeticIds([COSMETIC])).toEqual(new Set());
+
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce([row(CREATOR, SENT_BACK)]);
+    expect(await getWithheldCosmeticIds([COSMETIC])).toEqual(new Set([COSMETIC]));
+  });
+});
+
+function listingRow(listing: Listing) {
   return {
     id: 42,
     cosmeticId: COSMETIC,
     addedById: CREATOR,
-    status,
-    rejectionReason,
+    status: listing.status,
+    rejectionReason: listing.rejectionReason ?? null,
     unitAmount: 500,
     title: 'Gilded Aurora',
     description: 'A ring of light',
     availableQuantity: null,
-    meta: { history, ...(lastApprovedAmount ? { lastApprovedAmount } : {}) },
+    meta: metaOf(listing),
     cosmetic: {
       id: COSMETIC,
       createdById: CREATOR,
@@ -142,21 +193,30 @@ function listingRow({ status, history, rejectionReason = null, lastApprovedAmoun
     _count: { purchases: 0 },
   };
 }
-const listingsFor = ({ where }: { where: { cosmeticId: { in: number[] } } }) =>
-  Promise.resolve(where.cosmeticId.in.includes(COSMETIC) ? [stored] : []);
+let storedListing: ReturnType<typeof listingRow>;
+const listingsIn =
+  (rows: () => ReturnType<typeof listingRow>[]) =>
+  ({ where }: { where: { cosmeticId: { in: number[] } } }) =>
+    Promise.resolve(where.cosmeticId.in.includes(COSMETIC) ? rows() : []);
 
 beforeEach(() => {
-  stored = listingRow(SENT_BACK);
-  for (const db of [dbMock.dbRead, dbMock.dbWrite])
-    db.cosmeticShopItem.findMany.mockReset().mockImplementation(listingsFor);
-  dbMock.dbRead.cosmeticShopItem.findUnique.mockReset().mockImplementation(() => stored);
+  storedListing = listingRow(SENT_BACK);
+  dbMock.dbWrite.cosmeticShopItem.findMany
+    .mockReset()
+    .mockImplementation(listingsIn(() => [storedListing]));
+  // The replica lags the verdict just written: it still has the item live.
+  dbMock.dbRead.cosmeticShopItem.findMany
+    .mockReset()
+    .mockImplementation(listingsIn(() => [listingRow(LIVE)]));
+  dbMock.dbRead.cosmeticShopItem.findUnique.mockReset().mockImplementation(() => storedListing);
   dbMock.dbWrite.cosmeticShopItem.update
     .mockReset()
     .mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-      stored = { ...stored, ...data } as typeof stored;
-      return stored;
+      storedListing = { ...storedListing, ...data } as typeof storedListing;
+      return storedListing;
     });
-  dbMock.dbWrite.userCosmetic.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  for (const method of ['updateMany', 'update', 'upsert', 'createMany'] as const)
+    dbMock.dbWrite.userCosmetic[method].mockReset().mockResolvedValue({ count: 1 });
   dbMock.dbWrite.userCosmetic.findMany.mockReset().mockResolvedValue([]);
 });
 
@@ -169,13 +229,13 @@ describe('equipping', () => {
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue(owned('ProfileDecoration'));
 
     await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
-      'This item is in review and cannot be equipped'
+      IN_REVIEW
     );
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
   });
 
   it('equips a relisted item that was approved unchanged', async () => {
-    stored = listingRow(RELISTED);
+    storedListing = listingRow(RELISTED);
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue(owned('ProfileDecoration'));
 
     await equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC });
@@ -202,10 +262,10 @@ describe('equipping', () => {
         userId: CREATOR,
         cosmeticId: COSMETIC,
         claimKey: 'creator-shop',
-        equippedToId: 501,
+        equippedToId: IMAGE,
         equippedToType: 'Image',
       })
-    ).rejects.toThrow('This item is in review and cannot be equipped');
+    ).rejects.toThrow(IN_REVIEW);
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -213,7 +273,7 @@ describe('equipping', () => {
 describe('withholding takes the cosmetic off everyone', () => {
   const wearers = [
     { userId: BUYER, equippedToId: null, equippedToType: null, cosmetic: { data: {} } },
-    { userId: CREATOR, equippedToId: 501, equippedToType: 'Image', cosmetic: { data: {} } },
+    { userId: CREATOR, equippedToId: IMAGE, equippedToType: 'Image', cosmetic: { data: {} } },
   ];
   const unequipAll = {
     where: {
@@ -224,32 +284,42 @@ describe('withholding takes the cosmetic off everyone', () => {
   };
 
   beforeEach(() => {
-    stored = listingRow({ status: 'Published', history: [submitted(), reviewed('approve', 2)] });
+    storedListing = listingRow(LIVE);
     dbMock.dbWrite.userCosmetic.findMany.mockResolvedValue(wearers);
   });
 
-  it('a request for changes unequips worn and placed copies', async () => {
-    await reviewCreatorShopItem({
-      reviewerId: MOD,
-      id: 42,
-      action: 'request-changes',
-      rejectionReason: 'Visual quality',
-    });
+  it.each(['request-changes', 'reject', 'revert'])(
+    '%s unequips worn and placed copies and refreshes what shows them',
+    async (action) => {
+      const refreshWorn = vi.spyOn(userCosmeticCache, 'refresh');
+      const refreshFrames = vi.spyOn(cosmeticEntityCaches.Image, 'refresh');
 
-    expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledWith(unequipAll);
-  });
+      await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: action as never });
 
-  it('re-approval does not put it back on anyone', async () => {
+      expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledWith(unequipAll);
+      expect(refreshWorn).toHaveBeenCalledWith([BUYER, CREATOR]);
+      expect(refreshFrames).toHaveBeenCalledWith([IMAGE]);
+    }
+  );
+
+  it('re-approval grants without putting it back on anyone', async () => {
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
+    expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledTimes(1);
     dbMock.dbWrite.userCosmetic.updateMany.mockClear();
 
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'approve' });
 
-    expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
+    const [grant] = dbMock.dbWrite.userCosmetic.createMany.mock.calls.at(-1)!;
+    expect(grant.data).toEqual([
+      expect.not.objectContaining({ equippedAt: expect.anything() }),
+    ]);
+    expect(grant.data[0]).not.toHaveProperty('equippedToId');
+    for (const method of ['updateMany', 'update', 'upsert'] as const)
+      expect(dbMock.dbWrite.userCosmetic[method]).not.toHaveBeenCalled();
   });
 
   it('an edit to what holders see, after approval, unequips it', async () => {
-    stored = listingRow(RELISTED);
+    storedListing = listingRow(RELISTED);
 
     await updateCreatorShopItem({ id: 42, userId: CREATOR, name: 'Gilded Aurora II' });
 
@@ -257,7 +327,7 @@ describe('withholding takes the cosmetic off everyone', () => {
   });
 
   it('a price edit leaves it on', async () => {
-    stored = listingRow(RELISTED);
+    storedListing = listingRow(RELISTED);
 
     await updateCreatorShopItem({ id: 42, userId: CREATOR, price: 520 });
 
@@ -265,8 +335,27 @@ describe('withholding takes the cosmetic off everyone', () => {
   });
 });
 
+describe('a verdict outlives the capped history', () => {
+  it('a resubmit records the withheld verdict, so trimming the log does not lift it', async () => {
+    const { history: _, ...legacy } = SENT_BACK;
+    storedListing = listingRow({ ...legacy, history: [reviewed('request-changes', 3)] });
+
+    await updateCreatorShopItem({ id: 42, userId: CREATOR, price: 520 });
+    storedListing = { ...storedListing, meta: { ...storedListing.meta, history: [] } };
+    dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
+      { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
+    ]);
+
+    expect(storedListing.meta).toMatchObject({ displayApproved: false });
+    await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
+      IN_REVIEW
+    );
+  });
+});
+
 describe('equipped cosmetics shown to other users', () => {
   it('leave out a withheld cosmetic still worn from before withholding unequipped it', async () => {
+    dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation(listingsIn(() => [storedListing]));
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
       { userId: BUYER, cosmeticId: COSMETIC, data: null },
       { userId: BUYER, cosmeticId: OTHER_COSMETIC, data: null },

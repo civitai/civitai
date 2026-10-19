@@ -2976,7 +2976,7 @@ export async function equipCosmetic({
   // UI so an equipped sticker can't exist for the buckets to have to explain.
   if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
   if ((await getWithheldCosmeticIds(cosmeticId, dbWrite)).size)
-    throw new Error(WITHHELD_COSMETIC_ERROR);
+    throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
