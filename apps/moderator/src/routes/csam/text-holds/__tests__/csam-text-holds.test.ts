@@ -160,13 +160,13 @@ describe('csam text holds decide', () => {
 });
 
 describe('csam hold removal', () => {
-  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Model'])(
+  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Post', 'Model'])(
     'offers removal for a %s hold',
     (type) => expect(canRemoveHeld(type)).toBe(true)
   );
 
-  it('offers none for a post, which has no reversible removal', () => {
-    expect(canRemoveHeld('Post')).toBe(false);
+  it('offers none for a type the main app cannot remove', () => {
+    expect(canRemoveHeld('Image')).toBe(false);
   });
 });
 

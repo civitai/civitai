@@ -56,12 +56,13 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
-/** Removal needs an existing reversible path; a post has none, so only "do nothing" applies to it. */
+/** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
   'UserProfile',
+  'Post',
   'Model',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);

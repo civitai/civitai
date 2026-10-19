@@ -8,10 +8,11 @@ import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { unpublishModelById } from '~/server/services/model.service';
+import { unpublishPostAsModerator } from '~/server/services/post.service';
 import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
-import type { EntityType} from '~/shared/utils/prisma/enums';
+import type { EntityType } from '~/shared/utils/prisma/enums';
 import { StrikeReason } from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
@@ -34,14 +35,15 @@ const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: bo
 };
 
 /**
- * Types with an existing reversible removal. A post has none: only the owner-driven delete exists, and it
- * destroys the post's images.
+ * Every csam hold type has a removal that keeps the content: a flag, a field clear, an unpublish or a
+ * soft delete.
  */
 const REMOVABLE_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
   'UserProfile',
+  'Post',
   'Model',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
@@ -50,6 +52,7 @@ const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[numb
 // Shown to the author in the strike notice.
 const STRIKE_DESCRIPTION = 'Content you posted violated our Terms of Service.';
 const STRIKE_POINTS = 1;
+const POST_UNPUBLISH_REASON = 'csam-text-hold';
 const MODEL_UNPUBLISH_REASON = 'mature-underage';
 
 /** The moderator-app grants a decision needs beyond `csam.report.file`: the ones the ban and strike actions carry elsewhere. */
@@ -104,6 +107,14 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         });
       return;
     }
+    case 'Post':
+      // Unpublish, not delete: the post and its images stay, and a republish restores it.
+      await unpublishPostAsModerator({
+        id: entityId,
+        userId: actor.id,
+        reason: POST_UNPUBLISH_REASON,
+      });
+      return;
     case 'Model': {
       const model = await dbWrite.model.findUnique({
         where: { id: entityId },

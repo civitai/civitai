@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     chatAudit: vi.fn(),
   },
   deleteChatMessage: vi.fn(),
+  unpublishPostAsModerator: vi.fn(),
   bulkSetCommentTosViolation: vi.fn(),
   bulkSetCommentV2TosViolation: vi.fn(),
   toggleBan: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/services/strike.service', () => ({ createStrike: mocks.createStrike }));
 vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mocks.unpublishModelById,
+}));
+vi.mock('~/server/services/post.service', () => ({
+  unpublishPostAsModerator: mocks.unpublishPostAsModerator,
 }));
 vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: mocks.deleteChatMessage }));
 vi.mock('~/server/redis/caches', () => ({
@@ -283,16 +287,26 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.refreshModelCache).toHaveBeenCalledWith(55);
     });
 
-    it('refuses a post removal, which has no reversible service, before doing anything', async () => {
+    it('unpublishes a post instead of deleting it', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
+      await call({ holdId: 12, decision: 'remove' });
+      expect(mocks.unpublishPostAsModerator).toHaveBeenCalledWith({
+        id: 55,
+        userId: 7,
+        reason: 'csam-text-hold',
+      });
+    });
+
+    it('refuses a removal for a type with no removal path, before doing anything', async () => {
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'Image' }));
       const { status } = await call({ holdId: 12, decision: 'remove_ban' });
       expect(status).toBe(400);
       expect(mocks.toggleBan).not.toHaveBeenCalled();
       expect(updateMany).not.toHaveBeenCalled();
     });
 
-    it('still lets a post hold be dismissed', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
+    it('still lets a hold of that type be dismissed', async () => {
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'Image' }));
       expect((await call({ holdId: 12, decision: 'dismiss' })).status).toBe(200);
     });
   });
