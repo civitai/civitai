@@ -24,6 +24,8 @@ export function searchDebouncer({
   };
   const send = (value: string) => {
     cancel();
+    // Compared with the page, not with the last send: a search whose navigation was cancelled must
+    // still go when asked again.
     const next = value.trim();
     if (next !== current().trim()) submit(next);
   };
@@ -48,6 +50,8 @@ export function searchDebouncer({
       schedule(value);
     },
     cancel,
+    /** A typed search is waiting (or being composed): the box holds input the page doesn't show yet. */
+    pending: () => composing || timer !== undefined,
   };
 }
 

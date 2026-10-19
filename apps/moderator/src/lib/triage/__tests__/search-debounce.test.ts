@@ -96,3 +96,38 @@ describe('searchHref', () => {
     expect(searchHref(at('/models/flags/auto?q=old'), '')).toBe('/models/flags/auto');
   });
 });
+
+describe('searchDebouncer.pending', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('says whether a typed search is still waiting, so a landed page may reset the box only when none is', () => {
+    let current = '';
+    const search = searchDebouncer({
+      delay: 300,
+      current: () => current,
+      submit: (v) => (current = v),
+    });
+    expect(search.pending()).toBe(false);
+    search.input('foo');
+    expect(search.pending()).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(search.pending()).toBe(false);
+    search.input('bar');
+    search.cancel();
+    expect(search.pending()).toBe(false);
+  });
+
+  it('retries a search whose navigation never landed: it compares against the page, not the last send', () => {
+    const page = '';
+    const sent: string[] = [];
+    const search = searchDebouncer({
+      delay: 300,
+      current: () => page,
+      submit: (v) => sent.push(v),
+    });
+    search.enter('foo'); // the navigation is cancelled: the page still shows no search
+    search.enter('foo');
+    expect(sent).toEqual(['foo', 'foo']);
+  });
+});

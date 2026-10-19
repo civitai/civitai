@@ -2,7 +2,7 @@
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
   import { IconSearch } from '@tabler/icons-svelte';
-  import { beforeNavigate, goto } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import TriageTabs from '$lib/components/triage/TriageTabs.svelte';
@@ -17,28 +17,23 @@
   // and the old search describe the result set being replaced.
   const carried = $derived(carriedSearchParams(page.url.searchParams));
 
-  // The box keeps what was typed while its own searches land; a search changed elsewhere (a "Clear
-  // filters" link, back) replaces it.
+  // The box shows the page's search once a navigation lands, unless the moderator has typed since
+  // (a search still pending). That also puts it back when a search's own navigation was cancelled by
+  // a click elsewhere, instead of leaving the typed text over an unfiltered list.
   let value = $state(untrack(() => q));
-  let sent = untrack(() => q);
-  $effect(() => {
-    const next = q;
-    untrack(() => {
-      if (next !== sent) value = sent = next;
-    });
-  });
-
   const search = searchDebouncer({
     delay: 300,
-    current: () => sent,
+    current: () => page.url.searchParams.get('q') ?? '',
     submit: (next) => {
-      sent = next;
       void goto(searchHref(page.url, next), { keepFocus: true, noScroll: true, replaceState: true });
     },
   });
   // A pending search must not follow the moderator to another page or row. Its own navigation starts
   // after the pause has fired, so cancelling then drops nothing.
   beforeNavigate(() => search.cancel());
+  afterNavigate(({ to }) => {
+    if (!search.pending()) value = to?.url.searchParams.get('q') ?? '';
+  });
 </script>
 
 <!-- The root layout floats the sidebar trigger over this header (headerInline): pl-14 clears it and
