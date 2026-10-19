@@ -54,9 +54,13 @@
   entry has no turbo LoRAs: the editor shows neither the Turbo section nor the
   default turbo LoRA picker, and the server refuses both. With it, the editor
   prefills the turbo block from `settings` and the graph falls back to it for
-  anything a turbo LoRA left unset. `settings` is normally one of the shared
-  `TURBO_PRESETS`, since distillation recipes recur across ecosystems. Opted in
-  today: MOSS Image and Anima, both on the 8-step preset. Only ecosystems with a
+  anything a turbo LoRA left unset. `settings` is one of the shared `TURBO_PRESETS`, since
+  distillation recipes recur across ecosystems; a preset's numbers are what the
+  LoRA pages on the site state for that ecosystem. Opted in today: MOSS Image
+  and Anima. SDXL and its children, SD 1.5, Flux.1 D, Qwen and Wan all have
+  turbo-style LoRAs and can opt in once their numbers are confirmed from the
+  LoRA pages. A parent's entry reaches its children through the defaults
+  merge. Only ecosystems with a
   `lora` show the generator picker; today that is MOSS alone (Z-Image, Flux Draft and Krea 2 Turbo
   are distilled checkpoints or ecosystems, not LoRAs). Changing the default is a
   constants change and a deploy.

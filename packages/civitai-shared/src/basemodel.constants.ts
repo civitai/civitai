@@ -57,12 +57,20 @@ export type RecommendedRange = { min: number; max: number; default: number };
 /** The settings a turbo LoRA applies when it is on. */
 export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
 
-/** Distillation recipes recur across ecosystems, so an opt-in names a preset rather than its own numbers. */
+/**
+ * Distillation recipes recur across ecosystems, so an opt-in names a preset rather than its own
+ * numbers. Each preset's numbers are what the LoRA pages on the site state for that ecosystem.
+ */
 export const TURBO_PRESETS = {
-  /** 8-step DMD / Lightning-style adapters: no CFG to speak of. */
-  eightStep: {
-    steps: { min: 4, max: 12, default: 8 },
-    cfgScale: { min: 1, max: 1.5, default: 1 },
+  /** The MOSS Image DMD LoRAs: 8 steps (the Base one also 4 to 8), designed to run without CFG. */
+  mossDmd: {
+    steps: { min: 4, max: 8, default: 8 },
+    cfgScale: { min: 1, max: 1, default: 1 },
+  },
+  /** The Anima turbo / DMD2 LoRAs: CFG 1 at 8 to 12 steps, up to 16; CFG 1.2 to 1.4 with more steps. */
+  animaDmd2: {
+    steps: { min: 8, max: 16, default: 12 },
+    cfgScale: { min: 1, max: 1.4, default: 1 },
   },
 } as const satisfies Record<string, TurboSettings>;
 
@@ -1477,7 +1485,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2945208 },
-      turbo: { settings: TURBO_PRESETS.eightStep },
+      turbo: { settings: TURBO_PRESETS.animaDmd2 },
     },
   },
   {
@@ -1818,7 +1826,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MossImage,
     defaults: {
       model: { id: 3409867 },
-      turbo: { settings: TURBO_PRESETS.eightStep },
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {

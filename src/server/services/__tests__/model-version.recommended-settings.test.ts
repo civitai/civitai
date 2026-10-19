@@ -29,7 +29,7 @@ describe('assertRecommendedSettingsForType', () => {
   // The editor never offers the section outside an opted-in ecosystem; the API must not either.
   it('refuses a turbo block where the ecosystem has no turbo defaults', () => {
     expect(() =>
-      assertRecommendedSettingsForType({ turbo }, { modelType: 'LORA', baseModel: 'SDXL 1.0' })
+      assertRecommendedSettingsForType({ turbo }, { modelType: 'LORA', baseModel: 'HiDream' })
     ).toThrow(/not supported/);
   });
 
@@ -37,7 +37,7 @@ describe('assertRecommendedSettingsForType', () => {
     expect(() =>
       assertRecommendedSettingsForType(
         { generation: { turboLora: { id: 1 } } },
-        { modelType: 'Checkpoint', baseModel: 'SDXL 1.0' }
+        { modelType: 'Checkpoint', baseModel: 'HiDream' }
       )
     ).toThrow(/not supported/);
   });
