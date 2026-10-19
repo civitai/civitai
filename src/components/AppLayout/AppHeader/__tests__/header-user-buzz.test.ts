@@ -17,8 +17,9 @@ vi.mock('~/components/UserSettings/hooks', () => ({
 
 // `useAvailableBuzz` is left REAL — it holds the domain rule under test. Mocking it would make the
 // on-state assert the shape of the mock.
+const flags = { isGreen: false, buzzSpendPop: true };
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ isGreen: false }),
+  useFeatureFlags: () => flags,
 }));
 
 vi.mock('~/components/User/UserBuzz', () => ({
@@ -53,12 +54,20 @@ describe('HeaderUserBuzz', () => {
     accountTypesSeen.length = 0;
     propsSeen.length = 0;
     settings.value = {};
+    flags.buzzSpendPop = true;
   });
 
   it('rolls the digits and shows the spend pop-out', () => {
     render();
 
     expect(propsSeen).toEqual([{ animated: true, withDeltaPop: true }]);
+  });
+
+  it('shows the plain counter with no pop-out when buzzSpendPop is off', () => {
+    flags.buzzSpendPop = false;
+    render();
+
+    expect(propsSeen).toEqual([{ animated: false, withDeltaPop: false }]);
   });
 
   it('narrows the header to the domain type when blue is hidden', () => {

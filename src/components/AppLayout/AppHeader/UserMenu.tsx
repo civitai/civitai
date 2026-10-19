@@ -91,6 +91,7 @@ export function UserMenu() {
           <div
             className={clsx('flex items-center gap-2', {
               ['hidden']: !currentUser,
+              ['@max-md:hidden']: !features.buzzSpendPop,
             })}
           >
             <div className="@max-md:hidden">
@@ -254,7 +255,7 @@ function PhoneHeaderShortcuts() {
   const support = useSupportOption();
   const { handleClose } = useUserMenuContext();
 
-  if (!currentUser) return null;
+  if (!currentUser || !features.buzzSpendPop) return null;
 
   const items: UserMenuItem[] = [
     { href: support.href, icon: support.icon, label: support.text, visible: features.canWrite },
@@ -532,7 +533,7 @@ function BuzzMenuItem() {
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
         <UserBuzz
-          animated
+          animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
@@ -540,7 +541,7 @@ function BuzzMenuItem() {
           accountTypes={['blue']}
         />
         <UserBuzz
-          animated
+          animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
