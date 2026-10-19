@@ -1,28 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import {
-  APP_ASSISTANT_CHAT_CONFIG,
-  APP_ASSISTANT_EXAMPLES,
-} from '~/components/Apps/AppAssistant/assistantChatConfig';
+import { APP_ASSISTANT_EXAMPLES } from '~/components/Apps/AppAssistant/assistantChatConfig';
 
-describe('App Assistant chat config', () => {
-  // A wire value: the orchestrator routes this id to OpenRouter. The chat test proves the request uses it.
-  it('defaults App Assistant to GPT-6 Luna', () => {
-    expect(APP_ASSISTANT_CHAT_CONFIG.model).toBe('openai/gpt-6-luna');
-  });
-
-  it('offers four starter apps, each with a title and a prompt', () => {
-    expect(APP_ASSISTANT_EXAMPLES).toHaveLength(4);
-    for (const example of APP_ASSISTANT_EXAMPLES) {
-      expect(example.title.trim()).not.toBe('');
-      expect(example.prompt.trim()).not.toBe('');
-    }
-  });
-
-  // The old first example used nothing a Civitai app offers.
-  it('no longer offers the tip calculator', () => {
-    const tip = APP_ASSISTANT_EXAMPLES.filter((example) =>
-      /tip calculator/i.test(`${example.title} ${example.prompt}`)
-    );
-    expect(tip).toEqual([]);
+describe('App Assistant starter apps', () => {
+  // Reviewed copy: each prompt names an App SDK capability, so any reword is a change to re-review.
+  it('offers exactly the four reviewed starters', () => {
+    expect(APP_ASSISTANT_EXAMPLES).toEqual([
+      {
+        title: 'Character card maker',
+        prompt:
+          'Build a character card maker: I give a name and a few traits, it generates a portrait, and I can post the card to Civitai',
+      },
+      {
+        title: 'LoRA tester',
+        prompt:
+          'Make an app where I pick a checkpoint and a LoRA from Civitai and see the same prompt generated with and without the LoRA',
+      },
+      {
+        title: 'Daily prompt challenge',
+        prompt:
+          'Run a daily challenge with a new theme each day, where people generate an image for it and vote for their favourite entry',
+      },
+      {
+        title: 'Buzz tracker',
+        prompt:
+          'Show my Buzz balance and recent transactions, with a chart of what I spent this week',
+      },
+    ]);
   });
 });

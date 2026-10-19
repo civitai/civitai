@@ -33,6 +33,9 @@ export const APP_ASSISTANT_MODEL = 'openai/gpt-6-luna';
 export const APP_ASSISTANT_CHAT_CONFIG = {
   name: 'App Assistant',
   model: APP_ASSISTANT_MODEL,
+  // Adds to the picker's list, never narrows it. Gives the default a name for where the chat looks one
+  // up: Settings and /model now; the model chip once the chat names the default by its listed label.
+  models: [{ id: APP_ASSISTANT_MODEL, label: 'GPT-6 Luna' }],
   maxSteps: APP_ASSISTANT_MAX_STEPS,
   contextBudgetTokens: APP_ASSISTANT_CONTEXT_BUDGET_TOKENS,
 } satisfies Partial<ChatConfig>;
