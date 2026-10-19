@@ -4,7 +4,10 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import { fetchLinkedAccounts } from '$lib/linked-accounts';
+  import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
+  import LinkedAccountsPanel from '../LinkedAccountsPanel.svelte';
   import BountiesPanel from '../BountiesPanel.svelte';
   import BuzzBalances from '../BuzzBalances.svelte';
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
@@ -55,6 +58,9 @@
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
+  const linked = $derived(
+    browser && result && section === 'basic' ? fetchLinkedAccounts(result.identity.id, version) : null
+  );
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -90,7 +96,9 @@
         canAct={data.canAct}
         canStrike={data.canStrike}
       />
-      <AddressesPanel {signals} accountId={result.identity.id} />
+      <LinkedAccountsPanel {linked} accountId={result.identity.id} />
+      <AddressesPanel {signals} />
+      <AccountHistoryPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel

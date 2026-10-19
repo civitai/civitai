@@ -108,11 +108,13 @@ async function getIdentifyingIps(userId: number): Promise<string[]> {
   return rows.map((r) => r.ip).filter((ip) => IP_PATTERN.test(ip));
 }
 
-export async function getSharedIpAccounts(
+export type SharedIpRow = { userId: number; ip: string; type: string; last: string };
+
+export async function getSharedIpRows(
   userId: number
-): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
+): Promise<{ rows: SharedIpRow[]; truncated: boolean }> {
   const identifying = await getIdentifyingIps(userId);
-  if (!identifying.length) return { accounts: [], truncated: false };
+  if (!identifying.length) return { rows: [], truncated: false };
 
   const LIMIT = 100;
   const list = identifying.map((ip) => `'${ip}'`).join(', ');
@@ -132,24 +134,33 @@ export async function getSharedIpAccounts(
     LIMIT ${LIMIT + 1}
   `);
 
-  const truncated = rows.length > LIMIT;
-  const page = rows.slice(0, LIMIT);
-  const ids = page.map((r) => Number(r.userId));
+  return {
+    rows: rows.slice(0, LIMIT).map((r) => ({
+      userId: Number(r.userId),
+      ip: r.ip,
+      type: r.type,
+      last: clickhouseDate(r.last),
+    })),
+    truncated: rows.length > LIMIT,
+  };
+}
+
+export async function getSharedIpAccounts(
+  userId: number
+): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
+  const { rows, truncated } = await getSharedIpRows(userId);
+  const ids = rows.map((r) => r.userId);
   const [byId, strikes] = await Promise.all([usersByIds(ids), strikeCountsByUserIds(ids)]);
 
   return {
-    accounts: page.map((r) => {
-      const id = Number(r.userId);
-      const u = byId.get(id);
+    accounts: rows.map((r) => {
+      const u = byId.get(r.userId);
       return {
-        userId: id,
+        ...r,
         username: u?.username ?? null,
         bannedAt: u?.bannedAt ?? null,
         muted: u?.muted ?? null,
-        strikes: strikes.get(id) ?? 0,
-        ip: r.ip,
-        type: r.type,
-        last: clickhouseDate(r.last),
+        strikes: strikes.get(r.userId) ?? 0,
       };
     }),
     truncated,
