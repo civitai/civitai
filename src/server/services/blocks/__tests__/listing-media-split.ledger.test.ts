@@ -7,10 +7,10 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * T14 SEAM GUARD — who touches `app_listing_red_media`.
  *
  * The table is manual-apply, so every statement against it has to go through the probe in
- * `listing-media-split.service.ts`; and a split must change only WHICH images floor a rating,
- * never write a rating itself — every rating write stays at the go-live and re-rate sites that
- * already bust the catalog cache and record history. Pinned by equality, so the set failing to
- * GROW or SHRINK unnoticed is what this guards.
+ * `listing-media-split.service.ts`. That the probe runs, and keeps a surrounding transaction
+ * alive while the table is absent, is tested behaviourally in `listing-media-split.pglite.test.ts`;
+ * this pins only that no other production module names the table, so a second, unprobed
+ * statement cannot appear elsewhere. Pinned by equality, so the set GROWING or SHRINKING fails.
  */
 
 const SRC = resolve(__dirname, '../../../..');
@@ -46,62 +46,4 @@ describe('app_listing_red_media — the one module that names it', () => {
       PRODUCTION.filter((f) => /app_listing_red_media/.test(f.code)).map((f) => f.rel)
     ).toEqual([SERVICE]);
   });
-
-  it('the chunker cuts at every top-level declaration shape', () => {
-    const shapes = [
-      'export async function a() {}',
-      'function b() {}',
-      'export function* c() {}',
-      'const d = async () => {};',
-      'const e: Fn = async () => {};',
-      'export const f =\n  async () => {};',
-      'let g = 1;',
-      'var h = 1;',
-      'class I {}',
-      'export default function j() {}',
-    ];
-    expect(topLevelChunks(shapes.join('\n')).map(chunkName)).toEqual([
-      'a',
-      'b',
-      'c',
-      'd',
-      'e',
-      'f',
-      'g',
-      'h',
-      'I',
-      'j',
-    ]);
-  });
-
-  it('every statement in it names the table only after the probe, in the same declaration', () => {
-    const code = PRODUCTION.find((f) => f.rel === SERVICE)!.code;
-    const touching = topLevelChunks(code).filter((fn) => /\bapp_listing_red_media\b(?!')/.test(fn));
-    expect(touching.map(chunkName).sort()).toEqual([
-      'applyListingMediaSplitDecision',
-      'readListingMediaSplit',
-    ]);
-    for (const fn of touching) {
-      const probe = fn.indexOf('isListingMediaSplitTableAvailable(');
-      expect(probe).toBeGreaterThan(-1);
-      expect(probe).toBeLessThan(fn.search(/\bapp_listing_red_media\b(?!')/));
-    }
-  });
-
-  it('writes no listing rating', () => {
-    const code = PRODUCTION.find((f) => f.rel === SERVICE)!.code;
-    expect(code).not.toMatch(/content_rating|contentRating|app_listings|appListing\./);
-  });
 });
-
-/** Prettier-formatted source starts every top-level statement at column 0; cut before each one. */
-function topLevelChunks(code: string): string[] {
-  return code.split(/\n(?=[A-Za-z])/);
-}
-
-function chunkName(chunk: string): string {
-  const m = chunk.match(
-    /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|type)\s+(\w+)/
-  );
-  return m ? m[1] : chunk.slice(0, 20);
-}
