@@ -221,7 +221,7 @@
       {civitaiUrl}
     >
       {#snippet chips()}
-        <MetaChip tone="amber">appeal</MetaChip>
+        <MetaChip tone="amber" solid>appeal</MetaChip>
         <AppealTags {row} />
         <MetaChip tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
       {/snippet}
@@ -229,12 +229,13 @@
 
     <PreviewImagesCard images={row.coverImages} allHref={modelHref} />
 
-    <div class="grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]">
+    <div class="grid gap-4 lg:grid-cols-[380px_1fr]">
       <OwnerSaysCard message={row.appealMessage} appealedAt={row.appealCreatedAt} />
       <WhyFlaggedCard {row} {civitaiUrl} {canUphold} />
     </div>
 
     <PriorRulingsCard
+      title="Prior rulings"
       granted={null}
       grantedByUsername={null}
       rulings={null}

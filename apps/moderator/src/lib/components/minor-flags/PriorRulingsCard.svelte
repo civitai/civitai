@@ -10,13 +10,16 @@
   } from '$lib/minor-flags/text-scan-verdicts';
 
   let {
+    title = 'Prior rulings and appeals',
     granted,
     grantedByUsername,
     rulings,
     showPriorClear,
     showRulings,
     pastAppeals,
+    appealOpen,
   }: {
+    title?: string;
     granted: PriorClearView | null;
     grantedByUsername: string | null;
     rulings: FlagRulingView[] | null;
@@ -25,19 +28,21 @@
     showRulings: boolean;
     /** The uploader's earlier appeals, when the row carries them. */
     pastAppeals?: { approved: number; rejected: number; void: number; pending: number };
+    /** Whether the owner has an appeal open on this model, when the row knows. */
+    appealOpen?: boolean;
   } = $props();
 
   const listed = $derived(showRulings ? (rulings ?? []) : []);
   // Only a row that carries ruling history can say nobody has ruled; a null list means unknown.
   const none = $derived(
-    showRulings && Array.isArray(rulings) && rulings.length === 0 && !showPriorClear && !pastAppeals
+    showRulings && Array.isArray(rulings) && rulings.length === 0 && !showPriorClear
   );
   const visible = $derived(showPriorClear || listed.length > 0 || !!pastAppeals || none);
 </script>
 
 {#if visible}
-  <TriageCard dense title="Prior rulings and appeals">
-    <div class="space-y-1.5 text-dark-0">
+  <TriageCard dense {title}>
+    <div class="space-y-1.5 text-dark-1">
       {#if showPriorClear}
         <p class="m-0">
           {#if granted}
@@ -64,11 +69,14 @@
           {/if}
         </p>
       {/each}
+      {#if none}
+        <p class="m-0">
+          No moderator has ruled on this model yet.{#if appealOpen === false}
+            The owner has no open appeal.{/if}
+        </p>
+      {/if}
       {#if pastAppeals}
         <p class="m-0">This uploader's earlier appeals: {pastAppealsText(pastAppeals)}.</p>
-      {/if}
-      {#if none}
-        <p class="m-0">No moderator has ruled on this model yet.</p>
       {/if}
     </div>
   </TriageCard>

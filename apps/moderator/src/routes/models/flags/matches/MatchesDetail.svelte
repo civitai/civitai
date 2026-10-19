@@ -58,7 +58,7 @@
 
     <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
 
-    <div class="grid gap-4 lg:grid-cols-2">
+    <div class="grid gap-4 lg:grid-cols-[1fr_400px]">
       <TriageCard dense title="Why it is here">
         <div class="space-y-2 text-dark-0">
           <p class="m-0">
@@ -66,12 +66,13 @@
             uploader is a different account, so nothing was applied automatically. Decide whether
             this upload is the same content under a new name.
           </p>
-          <p class="m-0 text-sm text-dark-2" title={dateTime(row.createdAt)}>
-            uploaded {ago(row.createdAt)}
+          <!-- No match timestamp is stored, so the upload date stands in for when the sweep saw it. -->
+          <p class="m-0 text-[11px] text-dark-2" title={dateTime(row.createdAt)}>
+            hash sweep · model uploaded {ago(row.createdAt)}
           </p>
         </div>
       </TriageCard>
-      <SharedFileCard {row} {civitaiUrl} />
+      <SharedFileCard {row} {civitaiUrl} status={{ label: 'not flagged', tone: 'green' }} />
     </div>
 
     <div class="grid gap-4 md:grid-cols-2">

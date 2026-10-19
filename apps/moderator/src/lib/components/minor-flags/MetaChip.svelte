@@ -5,9 +5,12 @@
 
   let {
     tone = 'neutral',
+    solid = false,
     children,
   }: {
     tone?: 'neutral' | 'blue' | 'violet' | 'amber' | 'green' | 'red';
+    /** Filled with the tone, white text: the one chip that names what the item is (an appeal). */
+    solid?: boolean;
     children: Snippet;
   } = $props();
 
@@ -20,11 +23,22 @@
     green: 'border-emerald-400 text-emerald-400',
     red: 'border-red-400 text-red-400',
   } as const;
+  const SOLID = {
+    neutral: 'border-dark-1 bg-dark-1',
+    blue: 'border-blue-400 bg-blue-400',
+    violet: 'border-violet-400 bg-violet-400',
+    amber: 'border-amber-400 bg-amber-400',
+    green: 'border-emerald-400 bg-emerald-400',
+    red: 'border-red-400 bg-red-400',
+  } as const;
 </script>
 
 <Badge
   variant="outline"
-  class={cn('h-auto rounded bg-dark-6 px-[7px] py-0.5 text-[11px] leading-[13px] font-medium', TONE[tone])}
+  class={cn(
+    'h-auto rounded px-[7px] py-0.5 text-[11px] leading-[13px] font-medium',
+    solid ? ['text-white', SOLID[tone]] : ['bg-dark-6', TONE[tone]]
+  )}
 >
   {@render children()}
 </Badge>

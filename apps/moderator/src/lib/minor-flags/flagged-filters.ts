@@ -20,9 +20,9 @@ export const DEFAULT_FLAGGED_FILTERS: FlaggedFilters = {
 
 export const FLAGGED_SOURCE_LABELS: Record<FlaggedSourceFilter, string> = {
   all: 'All',
-  hash: 'Hash match',
+  hash: 'Hash',
   'text-scan': 'Text scan',
-  redetected: 'Re-detected',
+  redetected: 'Re-detect',
 };
 
 export const FLAGGED_FLAG_LABELS: Record<FlaggedFlag, string> = {
@@ -32,8 +32,8 @@ export const FLAGGED_FLAG_LABELS: Record<FlaggedFlag, string> = {
 };
 
 export const FLAGGED_SORT_LABELS: Record<FlaggedSort, string> = {
-  oldest: 'Oldest flag',
-  newest: 'Newest flag',
+  oldest: 'Oldest first',
+  newest: 'Newest first',
 };
 
 export const flaggedFilterParams = (filters: FlaggedFilters): Record<string, string> => {
@@ -42,3 +42,8 @@ export const flaggedFilterParams = (filters: FlaggedFilters): Record<string, str
     if (filters[k] !== DEFAULT_FLAGGED_FILTERS[k]) params[k] = filters[k];
   return params;
 };
+
+/** The page offers no flag chips (the design filters by source only), but a link that still sets
+ *  `flag` keeps its chip so the filter stays visible and can be switched off. */
+export const flagChipValues = (active: FlaggedFlag): FlaggedFlag[] =>
+  active === DEFAULT_FLAGGED_FILTERS.flag ? [] : [active];

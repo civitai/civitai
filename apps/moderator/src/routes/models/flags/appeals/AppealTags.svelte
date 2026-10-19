@@ -15,7 +15,7 @@
   const source = $derived(SOURCE[sourceKey(row.flagSource)]);
 </script>
 
-<MetaChip tone={source.tone}>{source.label}</MetaChip>
+<!-- Labels first, then where the flag came from. -->
 {#if row.minor}
   <FlagBadge label="minor" />
 {/if}
@@ -25,3 +25,4 @@
 {#if !row.minor && !row.poi}
   <MetaChip tone="green">no longer flagged</MetaChip>
 {/if}
+<MetaChip tone={source.tone}>{source.label}</MetaChip>

@@ -14,12 +14,12 @@
   import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
   import {
     DEFAULT_FLAGGED_FILTERS,
-    FLAGGED_FLAGS,
     FLAGGED_FLAG_LABELS,
     FLAGGED_SORTS,
     FLAGGED_SORT_LABELS,
     FLAGGED_SOURCES,
     FLAGGED_SOURCE_LABELS,
+    flagChipValues,
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
@@ -57,7 +57,7 @@
   );
   const filtersActive = $derived(Object.keys(flaggedFilterParams(data.flaggedFilters)).length > 0);
 
-  // Source first, with "All" clearing it; the flag chips sit after it and switch themselves off.
+  // Source chips, with "All" clearing them; a flag chip shows only while a link still sets one.
   const chipGroups = $derived.by(() => {
     const f = data.flaggedFilters;
     return [
@@ -72,7 +72,7 @@
       {
         key: 'flag',
         label: 'Flag',
-        values: FLAGGED_FLAGS,
+        values: flagChipValues(f.flag),
         labels: FLAGGED_FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_FLAGGED_FILTERS.flag,

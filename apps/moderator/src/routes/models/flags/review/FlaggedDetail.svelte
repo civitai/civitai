@@ -3,6 +3,7 @@
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
+  import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
@@ -29,7 +30,6 @@
     detectionSections,
     latestScanDisagrees,
     scanVerdictProvenance,
-    scanVerdictText,
   } from '$lib/minor-flags/text-scan-verdicts';
   import { FLAG_REVIEW_RULING_CHOICES, HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { resolutionReasonsFor } from '@civitai/shared/resolution-reasons';
@@ -119,7 +119,6 @@
         );
   const scanEntry = $derived(row.scanEntry);
   const latest = $derived(row.latestScan?.[row.label] ?? null);
-  const labelName = $derived(row.label === 'poi' ? 'real person' : 'minor');
 
   const reasonOptions = $derived(
     decisionReasonOptions(
@@ -268,7 +267,7 @@
           explanation={copy.explanation}
         />
         {#if redetection.names?.length}
-          <ScannedNamesCard names={redetection.names} />
+          <ScannedNamesCard names={redetection.names} textHash={redetection.textHash} />
         {/if}
       </div>
       {#if blocked}{@render appealNotice()}{/if}
@@ -279,89 +278,34 @@
         showPriorClear={sections.priorClear}
         showRulings={sections.rulings}
         pastAppeals={row.pastAppeals}
+        appealOpen={row.hasPendingAppeal}
       />
     {:else if row.source === 'text-scan'}
-      <div
-        class={scanEntry?.names?.length ? 'grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]' : ''}
-      >
+      <div class="grid gap-4 lg:grid-cols-[1fr_360px]">
         <TriageCard dense title="Why it was flagged">
-          <div class="space-y-2 text-dark-0">
-            <p class="m-0">
-              Text scan: {labelName}
-              {#if row.flaggedAt}
-                <span class="text-sm text-dark-2" title={dateTime(row.flaggedAt)}>
-                  · flagged {ago(row.flaggedAt)}
-                </span>
-              {/if}
-            </p>
-            <p class="m-0 text-sm">{scanEntry?.reason ?? 'No reason recorded.'}</p>
-            <p class="m-0 text-sm text-dark-2">
-              The scan flagged this automatically; no moderator has ruled on it.
-            </p>
-            {#if latest}
-              {@const provenance = scanVerdictProvenance(latest)}
-              <div class="rounded-md bg-dark-6 p-3 text-sm">
-                <p class="m-0 font-medium text-white">Latest scan</p>
-                <p class="m-0 mt-1">{scanVerdictText(latest)}</p>
-                <p class="m-0 text-dark-2">
-                  {provenance.source} ·
-                  {#if provenance.note}
-                    <span title={dateTime(latest.updatedAt)}>{provenance.note}</span>
-                  {:else}
-                    <span title={dateTime(latest.updatedAt)}>{ago(latest.updatedAt)}</span>
-                  {/if}
+          <div class="space-y-3">
+            <FlagVerdictBlock label={row.label} reason={scanEntry?.reason}>
+              {#snippet provenance()}
+                {@const at = scanEntry?.at ?? row.flaggedAt}
+                text scan{#if at}, <span title={dateTime(at)}>{ago(at)}</span>{/if}
+              {/snippet}
+              {#if latest && latestScanDisagrees(row.latestScan, row.label)}
+                {@const later = scanVerdictProvenance(latest)}
+                <p
+                  class="m-0 mt-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
+                  title={dateTime(latest.updatedAt)}
+                >
+                  The latest {later.source} ({later.note ?? ago(latest.updatedAt)}) says not detected.
+                  Keeping the flag is still your call.
                 </p>
-                {#if latestScanDisagrees(row.latestScan, row.label)}
-                  <p
-                    class="m-0 mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200"
-                  >
-                    Latest scan: not detected. Keeping the flag is still your call.
-                  </p>
-                {/if}
-              </div>
-            {/if}
+              {/if}
+            </FlagVerdictBlock>
             {#if blocked}{@render appealNotice()}{/if}
           </div>
         </TriageCard>
-        {#if scanEntry?.names?.length}
-          <ScannedNamesCard names={scanEntry.names} />
+        {#if scanEntry?.names?.length || row.textHash}
+          <ScannedNamesCard names={scanEntry?.names ?? []} textHash={row.textHash} />
         {/if}
-      </div>
-      <PriorRulingsCard
-        granted={null}
-        grantedByUsername={null}
-        rulings={row.rulings}
-        showPriorClear={false}
-        showRulings={(row.rulings?.length ?? 0) > 0}
-        pastAppeals={row.pastAppeals}
-      />
-    {:else}
-      <div class="grid gap-4 lg:grid-cols-2">
-        <TriageCard dense title="Why it was flagged">
-          <div class="space-y-2 text-dark-0">
-            <p class="m-0">
-              Its main file is byte-identical to a file in a model a moderator flagged as minor. The
-              flag was applied automatically.
-            </p>
-            {#if row.flaggedAt}
-              <p class="m-0 text-sm text-dark-2" title={dateTime(row.flaggedAt)}>
-                hash sweep, {ago(row.flaggedAt)}{#if row.daysLeft !== null}
-                  · {#if row.daysLeft === 0}review window closed; the flag is presumed correct{:else}{row.daysLeft}
-                    day{row.daysLeft === 1 ? '' : 's'} left; after that the flag is presumed
-                    correct{/if}{/if}
-              </p>
-            {/if}
-            {#if row.prevNsfw != null || row.prevGalleryLevel != null}
-              <p class="m-0 text-sm text-dark-2">
-                Before the flag: NSFW {row.prevNsfw ? 'on' : 'off'}{row.prevGalleryLevel != null
-                  ? `, gallery level ${row.prevGalleryLevel}`
-                  : ''}
-              </p>
-            {/if}
-            {#if blocked}{@render appealNotice()}{/if}
-          </div>
-        </TriageCard>
-        <SharedFileCard {row} {civitaiUrl} />
       </div>
       <PriorRulingsCard
         granted={null}
@@ -370,6 +314,43 @@
         showPriorClear={false}
         showRulings
         pastAppeals={row.pastAppeals}
+        appealOpen={row.hasPendingAppeal}
+      />
+    {:else}
+      <div class="grid gap-4 lg:grid-cols-[1fr_400px]">
+        <TriageCard dense title="Why it was flagged">
+          <div class="space-y-2 text-dark-0">
+            <p class="m-0">
+              Its main file is byte-identical to a file in a model a moderator flagged as minor. The
+              uploader is the same account, so the flag was applied automatically.
+            </p>
+            {#if row.flaggedAt}
+              <p class="m-0 text-[11px] text-dark-2" title={dateTime(row.flaggedAt)}>
+                hash sweep, {ago(row.flaggedAt)}{#if row.daysLeft !== null}
+                  · {#if row.daysLeft === 0}review window closed; the flag is presumed correct{:else}{row.daysLeft}
+                    day{row.daysLeft === 1 ? '' : 's'} left, then the flag is presumed correct{/if}{/if}
+              </p>
+            {/if}
+            {#if row.prevNsfw != null || row.prevGalleryLevel != null}
+              <p class="m-0 text-[11px] text-dark-2">
+                Before the flag: NSFW {row.prevNsfw ? 'on' : 'off'}{row.prevGalleryLevel != null
+                  ? `, gallery level ${row.prevGalleryLevel}`
+                  : ''}
+              </p>
+            {/if}
+            {#if blocked}{@render appealNotice()}{/if}
+          </div>
+        </TriageCard>
+        <SharedFileCard {row} {civitaiUrl} status={{ label: 'under review', tone: 'blue' }} />
+      </div>
+      <PriorRulingsCard
+        granted={null}
+        grantedByUsername={null}
+        rulings={row.rulings}
+        showPriorClear={false}
+        showRulings
+        pastAppeals={row.pastAppeals}
+        appealOpen={row.hasPendingAppeal}
       />
     {/if}
 

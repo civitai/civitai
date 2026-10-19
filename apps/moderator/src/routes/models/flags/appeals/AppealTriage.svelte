@@ -10,12 +10,12 @@
   import {
     APPEAL_FLAGS,
     APPEAL_SORTS,
-    APPEAL_SOURCES,
     DEFAULT_APPEAL_FILTERS,
     FLAG_LABELS,
     SORT_LABELS,
     SOURCE_LABELS,
     appealFilterParams,
+    type AppealSource,
   } from '$lib/minor-flags/appeal-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
@@ -52,6 +52,7 @@
   const total = $derived(data.facets?.source[data.appealFilters.source]);
 
   // Flag first, with "All" clearing it; the source chips sit after it and switch themselves off.
+  const CHIP_SOURCES = ['hash', 'text-scan', 'moderator', 'none'] as const satisfies readonly AppealSource[];
   const chipGroups = $derived.by(() => {
     const f = data.appealFilters;
     return [
@@ -62,16 +63,14 @@
         labels: FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_APPEAL_FILTERS.flag,
-        counts: data.facets?.flag,
       },
       {
         key: 'source',
         label: 'Source',
-        values: APPEAL_SOURCES,
-        labels: SOURCE_LABELS,
+        values: CHIP_SOURCES,
+        labels: { ...SOURCE_LABELS, hash: 'Hash' },
         active: f.source,
         defaultValue: DEFAULT_APPEAL_FILTERS.source,
-        counts: data.facets?.source,
         toggle: true,
       },
     ] satisfies ChipGroup[];

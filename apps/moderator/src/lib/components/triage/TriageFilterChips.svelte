@@ -6,7 +6,6 @@
     labels: Record<string, string>;
     active: string;
     defaultValue: string;
-    counts?: Record<string, number>;
     /** Drops the default chip and lets the active chip switch itself off, so several groups can share
      *  one row under a single "All". */
     toggle?: boolean;
@@ -18,7 +17,6 @@
   import { page } from '$app/state';
   import { NativeSelect } from '@civitai/ui/components/ui/native-select/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import { num } from '$lib/format';
   import { chipHref } from '$lib/triage/filters';
 
   let {
@@ -41,23 +39,19 @@
     {#each group.values as value (value)}
       {#if !group.toggle || value !== group.defaultValue}
         {@const active = group.active === value}
-        {@const count = group.counts?.[value]}
         <a
           href={hrefFor(group, value)}
           data-sveltekit-noscroll
           data-sveltekit-keepfocus
           aria-current={active ? 'true' : undefined}
           class={cn(
-            'inline-flex items-center gap-1 rounded-full border px-3 py-0.5 text-xs transition-colors',
+            'inline-flex items-center rounded-full border px-[9px] py-[3px] text-xs leading-[15px] transition-colors',
             active
               ? 'border-dark-5 bg-dark-5 text-white'
               : 'border-dark-4 text-dark-1 hover:bg-dark-5 hover:text-white'
           )}
         >
           {group.labels[value]}
-          {#if count !== undefined}
-            <span class="tabular-nums text-dark-2">{num(count)}</span>
-          {/if}
         </a>
       {/if}
     {/each}
@@ -66,7 +60,7 @@
     <NativeSelect
       aria-label={sort.label}
       value={sort.active}
-      class="h-7 border-0 bg-transparent py-0 ps-2 pe-7 text-xs text-dark-1 shadow-none"
+      class="h-7 border-0 bg-transparent py-0 ps-1 pe-7 text-xs text-dark-2 shadow-none"
       onchange={(e) =>
         goto(hrefFor(sort, e.currentTarget.value), { noScroll: true, keepFocus: true })}
     >

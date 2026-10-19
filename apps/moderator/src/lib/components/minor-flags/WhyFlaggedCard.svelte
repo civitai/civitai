@@ -1,5 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
@@ -54,27 +56,23 @@
     {/if}
 
     {#each verdicts as { label, flag } (label)}
-      <div class="rounded-md bg-dark-6 p-3 text-sm">
-        <p class="m-0 font-medium text-white">
-          Text scan: {labelName(label)}
-          {#if flag.at}
-            <span class="font-normal text-dark-2" title={dateTime(flag.at)}>
-              · flagged {ago(flag.at)}
-            </span>
-          {/if}
-        </p>
-        {#if flag.reason}<p class="m-0 mt-1">{flag.reason}</p>{/if}
+      <FlagVerdictBlock {label} reason={flag.reason}>
+        {#snippet provenance()}
+          text scan{#if flag.at}, <span title={dateTime(flag.at)}>{ago(flag.at)}</span>{/if}
+        {/snippet}
         {#if flag.names?.length}
-          <p class="m-0 mt-1">Names: {flag.names.join(', ')}</p>
+          <div class="flex flex-wrap gap-1.5 pt-1">
+            {#each flag.names as name, i (i)}<MetaChip tone="red">{name}</MetaChip>{/each}
+          </div>
         {/if}
         {#if latestScanDisagrees(scan, label)}
           <p
-            class="m-0 mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200"
+            class="m-0 mt-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
           >
-            Latest scan: not detected — flag kept (sticky)
+            Latest scan: not detected. The flag stays until a moderator rules.
           </p>
         {/if}
-      </div>
+      </FlagVerdictBlock>
     {/each}
 
     {#if verdicts.length || scanLabels.length}
