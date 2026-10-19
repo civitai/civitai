@@ -23,7 +23,7 @@ SET
   "userId" = m."userId",
   "lastVersionAt" = m."lastVersionAt",
   "status" = m."status",
-  "availability" = m."availability"
+  "availability" = m."availability",
   "mode" = m."mode"
 FROM "Model" m
 WHERE mm."modelId" = m."id"
