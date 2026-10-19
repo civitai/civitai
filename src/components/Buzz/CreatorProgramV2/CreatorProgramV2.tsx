@@ -44,6 +44,8 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { BankableBuzzMeter } from '~/components/Buzz/CreatorProgramV2/BankableBuzzMeter';
+import type { GetPaidCard } from '~/components/Buzz/CreatorProgramV2/getPaidCards';
+import { getPaidCards } from '~/components/Buzz/CreatorProgramV2/getPaidCards';
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
@@ -163,23 +165,15 @@ export const CreatorProgramV2 = () => {
           <CompensationPoolCard />
         </div>
       )}
-      {hasOnboardedInProgram &&
-        (membershipLapsed ? (
-          <div className="flex flex-col gap-4 md:flex-row">
-            {/* Extraction stays available: extractBuzz doesn't require an active
-                membership, so a lapsed member can still reclaim Buzz they banked. */}
-            {phase === 'extraction' && <ExtractBuzzCard />}
-            <MembershipLapsedCard />
-            <WithdrawCashCard />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4 md:flex-row">
-            {phase === 'bank' && <BankBuzzCard />}
-            {phase === 'extraction' && <ExtractBuzzCard />}
-            <EstimatedEarningsCard />
-            {<WithdrawCashCard />}
-          </div>
-        ))}
+      {hasOnboardedInProgram && membershipLapsed && <MembershipLapsedCard />}
+      {hasOnboardedInProgram && (
+        <div className="flex flex-col gap-4 md:flex-row">
+          {getPaidCards({ phase, membershipLapsed }).map((card) => {
+            const Card = GET_PAID_CARDS[card];
+            return <Card key={card} />;
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -205,9 +199,11 @@ const MembershipLapsedCard = () => {
         <Text fw={700} size="lg">
           Membership lapsed
         </Text>
-        <Text size="sm" c="dimmed" maw={320}>
-          Your Creator Program membership isn&apos;t active, so banking and earning are paused. You
-          can still withdraw any cash you&apos;ve already earned.
+        <Text size="sm" c="dimmed" maw={360}>
+          Your Creator Program membership isn&apos;t active, so you can&apos;t bank more Buzz. Buzz
+          you&apos;ve already banked still pays out at the end of the month. To withdraw cash, you
+          need {formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} ready to
+          withdraw and your payment details set up; no membership is needed.
         </Text>
       </div>
 
@@ -1328,4 +1324,11 @@ const ExtractBuzzCard = () => {
       </div>
     </div>
   );
+};
+
+const GET_PAID_CARDS: Record<GetPaidCard, React.ComponentType> = {
+  bank: BankBuzzCard,
+  extract: ExtractBuzzCard,
+  estimatedEarnings: EstimatedEarningsCard,
+  withdraw: WithdrawCashCard,
 };
