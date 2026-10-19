@@ -709,6 +709,43 @@ describe('text-scan auto-flags', () => {
       expect(count).toBe(4);
     });
 
+    it('lists a text-scan minor flag whose snapshot the text scan wrote, in the list, the count and the chip', async () => {
+      // Every text-scan minor flag carries one: setModelMinor snapshots with source 'text-scan'.
+      await seed(
+        44,
+        1,
+        { minor: true },
+        {
+          minorFlagSnapshot: { source: 'text-scan', at: daysAgo(3), prevNsfw: false },
+          textScanFlags: { minor: entry(daysAgo(3)) },
+        }
+      );
+      const { keys: listed, count } = await textScan();
+      expect(listed).toContain('44:minor:text-scan');
+      expect(count).toBe(4);
+      expect(await getFlaggedCount({ search: { modelOrUserId: 44 } })).toBe(1);
+      await seed(
+        45,
+        1,
+        {},
+        {
+          textScanFlags: {
+            minor: { redetected: { workflowId: 'w', textHash: 'n', at: daysAgo(1) } },
+          },
+        }
+      );
+      await pg.query(`UPDATE "Model" SET meta = meta || $1::jsonb WHERE id = 44`, [
+        JSON.stringify({
+          textScanFlags: {
+            minor: entry(daysAgo(3)),
+            poi: { redetected: { workflowId: 'w', textHash: 'n', at: daysAgo(1) } },
+          },
+        }),
+      ]);
+      const held = await needsReview({ limit: 20, search: { modelOrUserId: 44 } });
+      expect(held.items[0]?.alsoInAutoFlagged).toBe(true);
+    });
+
     it('lists a plain text-scan minor flag with no snapshot', async () => {
       await seed(43, 1, { minor: true }, { textScanFlags: { minor: entry(daysAgo(3)) } });
       const { keys: listed, count } = await textScan();

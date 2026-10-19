@@ -445,12 +445,11 @@ type RuleResult = { ok: true; resolved: string } | { ok: false; error: string };
 const MATCH_KEPT: FlagRef = { label: 'minor', source: 'file-match', textHash: null };
 
 /**
- * Flags a file match as minor. set-minor snapshots the model's current settings for a later revert
- * when it finds no snapshot, and a minor flag applied by a held detection writes none, so set-minor on
- * an already-minor model would record the FLAGGED settings as the ones to restore. A minor flag this
- * decision just applied (a kept minor detection) already settles the match, which leaves the queue
- * with it (the queue lists only models that are not minor); a model minor for any other reason is
- * refused.
+ * Flags a file match as minor, unless the model is minor already. A minor detection kept earlier in this
+ * decision applied the flag (and its snapshot) itself, so it settles the match, which leaves the queue
+ * with it (the queue lists only models that are not minor); set-minor again would not rewrite the
+ * snapshot but would re-run its side effects as a second, moderator-sourced flag. A model minor for any
+ * other reason is refused.
  */
 async function flagFileMatch(
   modelId: number,

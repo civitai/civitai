@@ -659,9 +659,10 @@ const textScanIndexPredicate = sql`
 `;
 
 /** A text-scan flag is waiting for a ruling while its entry has a workflow and no ruling stub, and
- *  the live column still carries it. A minor flag the hash sweep owns (any snapshot, whatever its
- *  window or source) is ruled through the hash branch and never relisted here, even after it was
- *  confirmed, accepted or aged out. The poi label has no hash twin. */
+ *  the live column still carries it. Applying a text-scan minor flag snapshots the model with source
+ *  'text-scan', so that snapshot keeps the row; any other source means the hash sweep or a moderator
+ *  owns the minor flag, which is ruled through the hash branch and never relisted here, even after it
+ *  was confirmed, accepted or aged out. The poi label has no hash twin. */
 const textScanFlaggedPredicate = sql`
   ${textScanIndexPredicate}
   AND l.entry ? 'workflowId'
@@ -669,7 +670,11 @@ const textScanFlaggedPredicate = sql`
   AND NOT l.entry ? 'appealGranted'
   AND NOT l.entry ? 'redetected'
   AND CASE WHEN l.label = 'minor' THEN m.minor ELSE m.poi END
-  AND NOT (l.label = 'minor' AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY})
+  AND NOT (
+    l.label = 'minor'
+    AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+    AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
+  )
 `;
 
 /** Auto-flagged lists the model: a hash flag in its window or an open text-scan flag. Evaluated once

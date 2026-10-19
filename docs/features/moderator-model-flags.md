@@ -27,14 +27,16 @@ Notes on the tabs:
   closed".
 - A text-scan row in Auto-flagged is a label whose scan flag has no ruling: the entry has a workflow, no upheld
   or granted ruling and no held detection, and the live `minor`/`poi` column is still on. It has no review
-  window. A minor flag a hash sweep also raised is listed once, as the hash flag. Confirm or revert posts to
+  window. Applying it snapshots the model with source `text-scan`; a minor flag whose snapshot has any other
+  source (`auto`, `manual`) belongs to the hash sweep or a moderator and is listed once, as the hash flag (or
+  not at all once confirmed or aged out). Confirm or revert posts to
   `minor-flag/rule` with the text hash the moderator was shown and a `flagReview` reason; the main app refuses a
   stale hash.
 - Needs review rules a held detection through `resolve-redetection` and a file match through `set-minor` or
   `dismiss`. A model with both is one row; the detection is ruled first, then the match. Flagging both keeps the
-  detection only: its minor flag settles the match (the model leaves the queue as minor), and `set-minor` on a
-  model that is already minor would snapshot the flagged settings as the ones a revert restores. For the same
-  reason "Flag as minor" on a match whose model is already minor for another reason is refused. A row's time is when the
+  detection only: its minor flag (snapshotted with source `text-scan`) settles the match, and the model leaves
+  the queue as minor; `set-minor` again would re-run its side effects as a second, moderator-sourced flag. "Flag
+  as minor" on a match whose model is already minor for another reason is refused. A row's time is when the
   scan held the detection or, for a match, when the shared file was uploaded (no match timestamp is stored), and
   the list sorts oldest first.
 - Each row and detail header says which other tabs the model waits in ("also in Appeals", "also in
