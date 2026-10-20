@@ -136,9 +136,57 @@ describe('evaluateCreator', () => {
   });
 });
 
+describe('evaluateCreator boundaries and detail', () => {
+  it('single-payer fires at exactly the share limit', () => {
+    const metrics = clean({
+      bankable: 1_000,
+      counterparties: [{ userId: 9, received: 600, sent: 0 }],
+    });
+    expect(fired(metrics)).toEqual(['single-payer']);
+  });
+
+  it('payout-jump compares against the median of an even history', () => {
+    // Median of [1_000, 3_000] is 2_000, so 8_000 is exactly 4x.
+    const metrics = clean({ payoutCents: 8_000, priorPayoutsCents: [1_000, 3_000] });
+    expect(fired(metrics, ctx({ topDecileCents: 8_000 }))).toEqual(['payout-jump']);
+  });
+
+  it('batch-payer adds up every payer from the batch', () => {
+    const metrics = clean({
+      bankable: 100_000,
+      counterparties: [
+        { userId: 50, received: 400, sent: 0 },
+        { userId: 51, received: 400, sent: 0 },
+      ],
+    });
+    expect(fired(metrics, ctx({ batchCreatorIds: new Set([1, 50, 51]) }))).toEqual(['batch-payer']);
+  });
+
+  it('names the largest exchange and the largest payer when there are several', () => {
+    const metrics = clean({
+      bankable: 2_000,
+      counterparties: [
+        { userId: 7, received: 1_100, sent: 1_000 },
+        { userId: 8, received: 1_500, sent: 1_200 },
+        { userId: 9, received: 300, sent: 0 },
+      ],
+    });
+    const detail = evaluateCreator(metrics, ctx({ limits: { ...limits, singlePayerShare: 0.7 } }));
+    expect(detail.get('counterparty')).toEqual({ value: 1_200, limit: 1_000, counterpartyId: 8 });
+    expect(detail.get('single-payer')).toEqual({ value: 1_500, limit: 500, counterpartyId: 8 });
+  });
+});
+
 describe('topDecileCents', () => {
-  it('is the payout at the 90th percentile position', () => {
-    expect(topDecileCents([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])).toBe(10);
+  it.each([
+    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 10],
+    [[10, 20, 30, 40, 50, 60, 70, 80, 90, 100], 90],
+  ])('is the payout at the 90th percentile position of %j', (payouts, expected) => {
+    expect(topDecileCents(payouts)).toBe(expected);
+  });
+
+  it('lets nothing through for an empty batch', () => {
+    expect(topDecileCents([])).toBe(Infinity);
   });
 });
 

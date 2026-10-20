@@ -39,6 +39,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { creatorsProgramSettleCash } from '~/server/jobs/creators-program-jobs';
 
+const ledgerRows = () =>
+  mocks.createBuzzTransactionMany.mock.calls.flatMap(
+    ([txs]) => txs as { fromAccountId: number; toAccountId: number; amount: number }[]
+  );
+
 const settledUserIds = () =>
   mocks.createBuzzTransactionMany.mock.calls
     .flatMap(([txs]) => txs as { toAccountId: number; toAccountType: string }[])
@@ -74,9 +79,29 @@ describe('creators-program-settlement with held payouts', () => {
     await creatorsProgramSettleCash.run({}).result;
 
     expect(settledUserIds()).toEqual([1, 3]);
+    // Neither leg touches the held creator, and the others keep their full amounts.
+    expect(ledgerRows().map((t) => [t.fromAccountId, t.toAccountId, t.amount])).toEqual([
+      [1, 0, 1_000],
+      [0, 1, 1_000],
+      [3, 0, 3_000],
+      [0, 3, 3_000],
+    ]);
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userIds: [1, 3] })
     );
+  });
+
+  it('writes nothing when every creator is held', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+      { userId: 1 },
+      { userId: 2 },
+      { userId: 3 },
+    ]);
+
+    await creatorsProgramSettleCash.run({}).result;
+
+    expect(mocks.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
   it('settles everyone when nobody is held', async () => {
@@ -131,8 +156,14 @@ describe('creators-program-settlement with held payouts', () => {
     expect(missingAlerts()).toHaveLength(1);
   });
 
-  it('pays nobody when the holds cannot be read for any other reason', async () => {
-    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(new Error('db down'));
+  it.each([
+    ['an outage', new Error('db down')],
+    [
+      'a pool timeout',
+      new Prisma.PrismaClientKnownRequestError('db down', { code: 'P2024', clientVersion: 'test' }),
+    ],
+  ])('pays nobody when the holds cannot be read because of %s', async (_, error) => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(error);
 
     await expect(creatorsProgramSettleCash.run({}).result).rejects.toThrow('db down');
     expect(mocks.createBuzzTransactionMany).not.toHaveBeenCalled();

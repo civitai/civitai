@@ -53,8 +53,8 @@ export type PrepayoutReviewDeps = {
   store: {
     startRun: (period: string, startedAt: Date) => Promise<number>;
     finishRun: (runId: number, outcome: RunOutcome & { finishedAt: Date }) => Promise<void>;
-    /** Upserts the period's row, leaving any decision on it alone. True when the row is new. */
-    saveFlag: (flag: PayoutReviewFlag) => Promise<{ created: boolean }>;
+    /** Upserts the period's row; `reopened` when new signals put a cleared row back on hold. */
+    saveFlag: (flag: PayoutReviewFlag) => Promise<{ created: boolean; reopened: boolean }>;
   };
   sendReport: (report: AbuseReportInput) => Promise<unknown>;
   now: () => Date;
@@ -196,7 +196,7 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
       outcome.flaggedCount++;
 
       const signals = [...fired.keys()];
-      const { created } = await deps.store.saveFlag({
+      const { created, reopened } = await deps.store.saveFlag({
         period,
         userId,
         signals,
@@ -209,16 +209,15 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
           youngSince,
         }),
       });
-      if (created)
+      if (created || reopened)
         findings.push({
           userId,
           confidence: 0.9,
-          reason: `Held the ${period} Creator Program payout (${dollars(
-            payoutCents
-          )}) for review: ${signals.map((s) => SIGNAL_LABELS[s]).join('; ')}.`.slice(
-            0,
-            MAX_REASON_LENGTH
-          ),
+          reason: `${
+            reopened ? 'Held again, after new signals since it was cleared,' : 'Held'
+          } the ${period} Creator Program payout (${dollars(payoutCents)}) for review: ${signals
+            .map((s) => SIGNAL_LABELS[s])
+            .join('; ')}.`.slice(0, MAX_REASON_LENGTH),
           actioned: true,
           action: 'held',
         });

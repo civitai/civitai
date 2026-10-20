@@ -15,6 +15,7 @@ type Rows = {
   batch: { userId: number; payoutCents: number }[];
   totals: { userId: number; amount: number }[];
   pairs: { userId: number; payerId: number; received: number; sent: number }[];
+  prior?: { userId: string; period: string; payoutCents: string }[];
 };
 
 function fakeClickhouse(rows: Rows) {
@@ -24,7 +25,7 @@ function fakeClickhouse(rows: Rows) {
     ch: {
       $query: vi.fn(async (sql: string) => {
         queries.push(sql);
-        if (sql.includes('substring(externalTransactionId')) return [];
+        if (sql.includes('substring(externalTransactionId')) return rows.prior ?? [];
         if (sql.includes("toAccountType = 'cashPending'")) return rows.batch;
         if (sql.includes('LEFT JOIN')) return rows.pairs;
         return rows.totals;
@@ -48,7 +49,7 @@ function makeDeps(rows: Rows, over: Partial<PrepayoutReviewDeps> = {}) {
   const store = {
     startRun: vi.fn(async () => 7),
     finishRun: vi.fn(async () => undefined),
-    saveFlag: vi.fn(async () => ({ created: true })),
+    saveFlag: vi.fn(async () => ({ created: true, reopened: false })),
   };
   const deps: PrepayoutReviewDeps = {
     ch,
@@ -112,14 +113,56 @@ describe('runPrepayoutReview', () => {
     );
   });
 
-  it('files a held creator on the board only the first time it is held', async () => {
+  it('files a held creator on the board when first held or held again, not on every re-run', async () => {
     const { deps } = makeDeps(batchRows);
-    deps.store.saveFlag = vi.fn(async (flag) => ({ created: flag.userId === 3 }));
+    deps.store.saveFlag = vi.fn(async (flag) => ({
+      created: flag.userId === 3,
+      reopened: false,
+    }));
+
+    await runPrepayoutReview(deps);
+    const [first] = (deps.sendReport as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(first.findings.map((f: { userId: number }) => f.userId)).toEqual([3]);
+
+    deps.store.saveFlag = vi.fn(async (flag) => ({ created: false, reopened: flag.userId === 2 }));
+    await runPrepayoutReview(deps);
+    const [second] = (deps.sendReport as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(second.findings).toEqual([
+      expect.objectContaining({ userId: 2, reason: expect.stringMatching(/^Held again/) }),
+    ]);
+  });
+
+  it('feeds payout history and prior warnings into the signals', async () => {
+    const rows: Rows = {
+      ...batchRows,
+      // Creator 4 usually gets 100 cents; 9_000 is 90x and the top of the batch.
+      batch: [...batchRows.batch, { userId: 4, payoutCents: 9_000 }],
+      totals: [...batchRows.totals, { userId: 4, amount: 500_000 }],
+      pairs: [{ userId: 3, payerId: 901, received: 600, sent: 600 }],
+      prior: [
+        { userId: '4', period: '2026-09', payoutCents: '100' },
+        { userId: '4', period: '2026-08', payoutCents: '100' },
+      ],
+    };
+    const { deps, store } = makeDeps(rows, {
+      loadAccounts: async (ids) => new Map(ids.map((id) => [id, account()])),
+      readCounterpartyMinimum: async () => 500,
+      getWarnedAt: async () => new Map([[3, '2026-09-02T10:00:00.000Z']]),
+    });
 
     await runPrepayoutReview(deps);
 
-    const [report] = (deps.sendReport as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(report.findings.map((f: { userId: number }) => f.userId)).toEqual([3]);
+    expect(store.saveFlag.mock.calls.map(([f]) => [f.userId, f.signals])).toEqual([
+      [3, ['warned-again']],
+      [4, ['payout-jump']],
+    ]);
+  });
+
+  it('records a failed run when ClickHouse is unavailable', async () => {
+    const { deps, store } = makeDeps(batchRows, { ch: null });
+
+    expect((await runPrepayoutReview(deps)).error).toBe('clickhouse unavailable');
+    expect(store.saveFlag).not.toHaveBeenCalled();
   });
 
   it('records a failed run, and holds nobody, while the limits are unset', async () => {

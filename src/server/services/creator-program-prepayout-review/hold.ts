@@ -1,12 +1,18 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
-import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
+import {
+  NotificationCategory,
+  OnboardingSteps,
+  SignalMessages,
+  SignalTopic,
+} from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany, getAccountsBalances } from '~/server/services/buzz.service';
 import { userCashCache } from '~/server/services/creator-program.service';
 import { createNotification } from '~/server/services/notification.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { Flags } from '~/shared/utils/flags';
 import { signalClient } from '~/utils/signal-client';
 
 /** Statuses under which a held row keeps the creator out of settlement. */
@@ -99,7 +105,8 @@ export type PayoutReviewDecision = z.infer<typeof payoutReviewDecisionSchema>;
 
 const TRANSITIONS: Record<Exclude<PayoutReviewDecision['action'], 'release'>, string[]> = {
   escalate: ['open'],
-  clear: ['open', 'escalated'],
+  // From `withheld` too, so a withhold made in error can be undone.
+  clear: ['open', 'escalated', 'withheld'],
   withhold: ['open', 'escalated'],
 };
 
@@ -111,11 +118,11 @@ export class PayoutReviewError extends Error {
 
 const conflict = (message: string) => new PayoutReviewError(409, message);
 
-export async function decidePayoutReview(input: PayoutReviewDecision) {
+export async function decidePayoutReview(input: PayoutReviewDecision, now = new Date()) {
   const review = await dbWrite.creatorProgramPayoutReview.findUnique({ where: { id: input.id } });
   if (!review) throw new PayoutReviewError(404, `No review ${input.id}`);
 
-  if (input.action === 'release') return releaseHeldPayout(review);
+  if (input.action === 'release') return releaseHeldPayout(review, input.decidedBy, now);
 
   if (!TRANSITIONS[input.action].includes(review.status))
     throw conflict(`Cannot ${input.action} a review that is ${review.status}`);
@@ -127,7 +134,7 @@ export async function decidePayoutReview(input: PayoutReviewDecision) {
     data: {
       status,
       hold: input.action !== 'clear',
-      decidedAt: new Date(),
+      decidedAt: now,
       decidedBy: input.decidedBy,
       decisionNote: input.note,
       askRef: input.askRef ?? review.askRef,
@@ -148,43 +155,88 @@ export async function decidePayoutReview(input: PayoutReviewDecision) {
   return { id: review.id, status };
 }
 
+/** From an hour before the 15th's settlement to the end of that day, a release could race it. */
+export function inSettlementWindow(now: Date) {
+  const day = now.getUTCDate();
+  return day === 15 || (day === 14 && now.getUTCHours() >= 23);
+}
+
 /**
- * Settles a cleared creator's pending cash now, for a creator cleared after the 15th whose next
- * settlement run would not include them.
+ * Settles a cleared creator's reviewed payout now, for a creator cleared after the 15th whose
+ * next settlement run would not include them.
  */
-async function releaseHeldPayout(review: {
-  id: number;
-  userId: number;
-  status: string;
-  releasedAt: Date | null;
-}) {
+async function releaseHeldPayout(
+  review: {
+    id: number;
+    userId: number;
+    status: string;
+    payoutCents: number;
+    releasedAt: Date | null;
+  },
+  decidedBy: string,
+  now: Date
+) {
   if (review.status !== 'cleared') throw conflict(`Only a cleared review can be released`);
   if (review.releasedAt) throw conflict(`Review ${review.id} was already released`);
+  if (inSettlementWindow(now))
+    throw conflict(
+      `Releases are paused around the 15th's settlement; the batch pays cleared reviews`
+    );
+
+  // Pending cash is one balance across periods: other held money must not leave with this one.
+  const [otherHold, user] = await Promise.all([
+    dbWrite.creatorProgramPayoutReview.findFirst({
+      where: { userId: review.userId, hold: true, status: { in: HOLDING_STATUSES } },
+      select: { id: true },
+    }),
+    dbWrite.user.findUnique({
+      where: { id: review.userId },
+      select: { bannedAt: true, onboarding: true },
+    }),
+  ]);
+  if (otherHold) throw conflict(`Review ${otherHold.id} still holds this creator's payout`);
+  if (
+    !user ||
+    user.bannedAt ||
+    Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)
+  )
+    throw conflict(`Creator ${review.userId} is banned and is not paid`);
 
   const [balance] = await getAccountsBalances({
     accountIds: [review.userId],
     accountTypes: ['cashPending'],
   });
-  const amount = balance?.balance ?? 0;
+  // Never more than the reviewed payout: a later month's credit has not been reviewed yet.
+  const amount = Math.min(balance?.balance ?? 0, review.payoutCents);
   const externalId = `settlement-release-${review.id}`;
 
-  if (amount > 0)
-    await createBuzzTransactionMany(
-      pendingToSettledTransactions({
-        userId: review.userId,
-        amount,
-        description: `Cash settlement released after review ${review.id}`,
-        bankExternalId: `settlement-release-bank-${review.id}`,
-        externalId,
-      })
-    );
-
-  await dbWrite.creatorProgramPayoutReview.update({
-    where: { id: review.id },
-    data: { releasedAt: new Date(), releaseExternalId: amount > 0 ? externalId : null },
+  // Claimed before the money moves, so two releases cannot both pass the check above.
+  const { count } = await dbWrite.creatorProgramPayoutReview.updateMany({
+    where: { id: review.id, releasedAt: null },
+    data: { releasedAt: now, releaseExternalId: amount > 0 ? externalId : null },
   });
+  if (!count) throw conflict(`Review ${review.id} was already released`);
 
   if (amount > 0) {
+    try {
+      await createBuzzTransactionMany(
+        pendingToSettledTransactions({
+          userId: review.userId,
+          amount,
+          description: `Cash settlement released after review ${review.id}`,
+          bankExternalId: `settlement-release-bank-${review.id}`,
+          externalId,
+        })
+      );
+    } catch (e) {
+      // The external ids make a retry safe, so give the claim back for one.
+      await dbWrite.creatorProgramPayoutReview.update({
+        where: { id: review.id },
+        data: { releasedAt: null, releaseExternalId: null },
+      });
+      throw e;
+    }
+
     await createNotification({
       type: 'creator-program-funds-settled',
       category: NotificationCategory.Creator,
@@ -206,6 +258,7 @@ async function releaseHeldPayout(review: {
     reviewId: review.id,
     userId: review.userId,
     amount,
+    decidedBy,
   });
   return { id: review.id, status: review.status, released: amount };
 }

@@ -1,4 +1,3 @@
-import type { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -9,9 +8,9 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   runPrepayoutReview,
   type AccountState,
-  type PayoutReviewFlag,
 } from '~/server/services/creator-program-prepayout-review/run';
 import { parseLimits } from '~/server/services/creator-program-prepayout-review/signals';
+import { createPayoutReviewStore } from '~/server/services/creator-program-prepayout-review/store';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { createJob } from './job';
 
@@ -23,10 +22,12 @@ export async function readLimits() {
 }
 
 async function getWarnedAt(userIds: number[]) {
-  const all = await sysRedis.hGetAll(COUNTERPARTY_REVIEW_WARNINGS);
+  const records = userIds.length
+    ? await sysRedis.hmGet(COUNTERPARTY_REVIEW_WARNINGS, userIds.map(String))
+    : [];
   const warned = new Map<number, string>();
-  for (const userId of userIds) {
-    const raw = decodeRedisString(all[String(userId)]);
+  for (const [i, userId] of userIds.entries()) {
+    const raw = decodeRedisString(records[i]);
     if (!raw) continue;
     try {
       warned.set(userId, (JSON.parse(raw) as { warnedAt: string }).warnedAt);
@@ -55,38 +56,6 @@ async function loadAccounts(userIds: number[]) {
   return accounts;
 }
 
-const store = {
-  startRun: async (period: string, startedAt: Date) =>
-    (await dbWrite.creatorProgramPayoutReviewRun.create({ data: { period, startedAt } })).id,
-  finishRun: async (
-    runId: number,
-    data: {
-      finishedAt: Date;
-      creditedCount: number;
-      evaluatedCount: number;
-      flaggedCount: number;
-      error: string | null;
-    }
-  ) => {
-    await dbWrite.creatorProgramPayoutReviewRun.update({ where: { id: runId }, data });
-  },
-  saveFlag: async ({ period, userId, signals, payoutCents, evidence }: PayoutReviewFlag) => {
-    const row = await dbWrite.creatorProgramPayoutReview.upsert({
-      where: { period_userId: { period, userId } },
-      create: { period, userId, signals, payoutCents, evidence: evidence as Prisma.InputJsonValue },
-      update: {
-        signals,
-        payoutCents,
-        evidence: evidence as Prisma.InputJsonValue,
-        lastEvaluatedAt: new Date(),
-        evaluations: { increment: 1 },
-      },
-      select: { evaluations: true },
-    });
-    return { created: row.evaluations === 1 };
-  },
-};
-
 /**
  * Daily from the 1st to the 14th, so last month's pending payouts are reviewed before the 15th's
  * settlement and re-reviewed as new evidence lands.
@@ -101,7 +70,7 @@ export const creatorProgramPrepayoutReview = createJob(
       readCounterpartyMinimum: readMinimum,
       getWarnedAt,
       loadAccounts,
-      store,
+      store: createPayoutReviewStore(dbWrite),
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
       log: (name, data) =>
