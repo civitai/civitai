@@ -5,7 +5,7 @@ import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-fi
 import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
-import { MODEL_COVER_ORDER, modelCoverCount, modelCoverImages } from './minor-hash.service';
+import { MODEL_COVER_ORDER, modelCoverCount, modelCoverImages } from './model-covers';
 import { MAX_INT4 } from './users.service';
 
 export type CsamHoldRow = {

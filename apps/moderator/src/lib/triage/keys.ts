@@ -1,6 +1,6 @@
 export type TriageKeyAction = 'next' | 'previous' | { decision: number };
 
-export type TriageKeyEvent = {
+export type PlainKeyEvent = {
   key: string;
   ctrlKey: boolean;
   metaKey: boolean;
@@ -8,6 +8,22 @@ export type TriageKeyEvent = {
   defaultPrevented: boolean;
   isComposing: boolean;
   typing: boolean;
+  dialogOpen?: boolean;
+};
+
+/** An unmodified key nothing else is handling: not typing, composing, or behind an open dialog. */
+export const isPlainKey = (e: PlainKeyEvent) =>
+  !(
+    e.typing ||
+    e.dialogOpen ||
+    e.defaultPrevented ||
+    e.isComposing ||
+    e.ctrlKey ||
+    e.metaKey ||
+    e.altKey
+  );
+
+export type TriageKeyEvent = PlainKeyEvent & {
   /** One entry per decision, in key order: digit `n + 1` picks index `n`. False makes that key a no-op. */
   decisionEnabled: readonly boolean[];
   /** The reason list is open and owns every key until it closes. */
@@ -15,8 +31,7 @@ export type TriageKeyEvent = {
 };
 
 export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
-  if (e.typing || e.defaultPrevented || e.isComposing || e.picking) return null;
-  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  if (!isPlainKey(e) || e.picking) return null;
   if (e.key === 'j' || e.key === 'J') return 'previous';
   if (e.key === 'k' || e.key === 'K') return 'next';
   if (/^[1-9]$/.test(e.key)) {
@@ -73,31 +88,11 @@ export const TYPING_SELECTOR = [
 export const isTypingTarget = (target: { closest?: (selector: string) => unknown } | null) =>
   !!target?.closest?.(TYPING_SELECTOR);
 
-export type RevealKeyEvent = {
-  key: string;
-  ctrlKey: boolean;
-  metaKey: boolean;
-  altKey: boolean;
-  repeat: boolean;
-  defaultPrevented: boolean;
-  isComposing: boolean;
-  typing: boolean;
-  /** A dialog or alert dialog is open: the key belongs to what is behind it only once it closes. */
-  dialogOpen: boolean;
-};
+/** A dialog is open. */
+export const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
+
+export const isDialogOpen = () => document.querySelector(DIALOG_SELECTOR) !== null;
 
 /** V toggles the page's image reveal. */
-export const isRevealKey = (e: RevealKeyEvent) =>
-  (e.key === 'v' || e.key === 'V') &&
-  !(
-    e.ctrlKey ||
-    e.metaKey ||
-    e.altKey ||
-    e.repeat ||
-    e.defaultPrevented ||
-    e.isComposing ||
-    e.typing ||
-    e.dialogOpen
-  );
-
-export const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
+export const isRevealKey = (e: PlainKeyEvent & { repeat: boolean }) =>
+  (e.key === 'v' || e.key === 'V') && !e.repeat && isPlainKey(e);

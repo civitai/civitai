@@ -23,7 +23,7 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { dateTime, shortAge } from '$lib/format';
+  import { LINK_BUTTON, dateTime, shortAge } from '$lib/format';
   import type { CsamHoldItem } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
   import {
@@ -75,12 +75,10 @@
   const phrases = $derived(quotedPhrases(row.reason));
   const typeName = $derived(entityLabel(row.entityType));
 
-  const LINK_BUTTON =
-    'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
-
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<CsamHoldDecision>('dismiss');
   let confirming = $state<CsamHoldDecision | null>(null);
+  let confirmOpen = $state(false);
 
   // One form and one note for every action; the hidden field carries which button was pressed.
   async function decide(next: CsamHoldDecision) {
@@ -91,8 +89,10 @@
 
   // A decision that takes the account or its content down asks first.
   const press = (next: CsamHoldDecision) => {
-    if (CSAM_HOLD_CONFIRMS[next]) confirming = next;
-    else void decide(next);
+    if (CSAM_HOLD_CONFIRMS[next]) {
+      confirming = next;
+      confirmOpen = true;
+    } else void decide(next);
   };
 
   type KeyTone = 'red' | 'dark-red' | 'darker-red' | 'red-outline';
@@ -291,9 +291,7 @@
           {/snippet}
         </TriageDecisionBar>
       </form>
-      <AlertDialog.Root
-        bind:open={() => confirming !== null, (open) => !open && (confirming = null)}
-      >
+      <AlertDialog.Root bind:open={confirmOpen}>
         <AlertDialog.Content>
           {#if confirming && CSAM_HOLD_CONFIRMS[confirming]}
             {@const ask = CSAM_HOLD_CONFIRMS[confirming]!}
@@ -306,9 +304,8 @@
               <AlertDialog.Action
                 variant="destructive"
                 onclick={() => {
-                  const chosen = confirming!;
-                  confirming = null;
-                  void decide(chosen);
+                  confirmOpen = false;
+                  void decide(confirming!);
                 }}>{ask.label}</AlertDialog.Action
               >
             </AlertDialog.Footer>

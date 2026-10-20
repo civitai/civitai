@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
+  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
@@ -15,6 +16,7 @@
     DEFAULT_CSAM_HOLD_FILTERS,
     type CsamHoldFilters,
   } from '$lib/csam-holds/hold-filters';
+  import { LINK_BUTTON } from '$lib/format';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { chipHref } from '$lib/triage/filters';
   import { CSAM_HOLD_ENTITY_TYPES, entityLabel, splitEmptyTypes } from './hold-entity';
@@ -77,13 +79,14 @@
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
             {#snippet child({ props })}
-              <button
+              <Button
                 {...props}
-                type="button"
-                class="inline-flex items-center gap-1 rounded px-1 py-[3px] text-xs text-dark-2 outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500/50"
+                variant="ghost"
+                size="sm"
+                class="h-auto gap-1 px-1 py-[3px] text-xs font-normal text-dark-2 hover:bg-transparent hover:text-white"
               >
                 {split.empty.length} empty <IconChevronDown class="size-3" aria-hidden="true" />
-              </button>
+              </Button>
             {/snippet}
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start">
@@ -107,8 +110,7 @@
     <Button
       variant="outline"
       size="sm"
-      class="ml-auto h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1"
-      aria-pressed={imageReveal.on}
+      class="ml-auto {LINK_BUTTON}"
       onclick={imageReveal.toggle}
     >
       {#if imageReveal.on}
@@ -116,7 +118,7 @@
       {:else}
         <IconEye aria-hidden="true" /> Reveal images
       {/if}
-      <kbd class="rounded border border-dark-4 px-1 text-[10px] text-dark-2">V</kbd>
+      <Kbd class="h-4 min-w-0 px-1 text-[10px]">V</Kbd>
     </Button>
   </div>
 </div>

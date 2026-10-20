@@ -13,7 +13,7 @@
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
-  import { DIALOG_SELECTOR, isRevealKey, isTypingTarget } from '$lib/triage/keys';
+  import { isDialogOpen, isRevealKey, isTypingTarget } from '$lib/triage/keys';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
@@ -51,14 +51,13 @@
       defaultPrevented: e.defaultPrevented,
       isComposing: e.isComposing,
       typing: isTypingTarget(e.target as Element | null),
-      dialogOpen: document.querySelector(DIALOG_SELECTOR) !== null,
+      dialogOpen: isDialogOpen(),
     });
     if (revealKey) imageReveal.toggle();
   };
 
   const parseKey = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : null);
 
-  // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
     formActionHref(action, {
       ...csamHoldFilterParams(data.holdFilters, data.entityType),

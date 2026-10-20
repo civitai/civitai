@@ -18,11 +18,15 @@
   <!-- Four columns whatever the count, so every model's tiles are the same size to compare. -->
   <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
-      <a
-        href={getEdgeUrl(image.url, { type: 'image', original: true })}
-        target="_blank"
-        rel="noreferrer"
-        aria-label="Open image {i + 1} of {images.length} full size"
+      <svelte:element
+        this={blurred ? 'div' : 'a'}
+        href={blurred ? undefined : getEdgeUrl(image.url, { type: 'image', original: true })}
+        target={blurred ? undefined : '_blank'}
+        rel={blurred ? undefined : 'noreferrer'}
+        aria-label={blurred
+          ? `Image ${i + 1} of ${images.length}, hidden`
+          : `Open image ${i + 1} of ${images.length} full size`}
+        role={blurred ? 'img' : undefined}
         class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
         <EdgeMedia
@@ -38,7 +42,7 @@
         >
           {getBrowsingLevelLabel(image.nsfwLevel)}
         </span>
-      </a>
+      </svelte:element>
     {/each}
   </div>
 {:else}

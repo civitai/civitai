@@ -52,6 +52,10 @@ describe('triageKeyAction', () => {
     expect(key('j', { isComposing: true })).toBeNull();
   });
 
+  it('ignores every key while a dialog is open', () => {
+    for (const k of ['1', '2', 'j', 'k']) expect(key(k, { dialogOpen: true })).toBeNull();
+  });
+
   it('ignores keys while typing or with a modifier', () => {
     expect(key('1', { typing: true })).toBeNull();
     expect(key('j', { metaKey: true })).toBeNull();
