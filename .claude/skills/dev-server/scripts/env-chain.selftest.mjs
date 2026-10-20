@@ -11,6 +11,7 @@ import { resolve } from 'path';
 import { loadEnvChain, appEnvChain, APP_REGISTRY, primaryCheckout, AppSession } from './daemon.mjs';
 import { LOCAL_MAIL_ENV } from './local-mail.mjs';
 import { DB_KEYS } from './dev-db.mjs';
+import { BLANKED_KEY } from './blank-keys.mjs';
 import { redactedMismatch } from './selftest-redact.mjs';
 
 const dir = mkdtempSync(resolve(tmpdir(), 'env-chain-'));
@@ -85,9 +86,9 @@ try {
 
   // An empty chain means "this daemon does not supply this process's env" — the auth hub, which lets
   // Vite load its own .env. spawnEnv must then be process.env plus only the local mail keys (and, in
-  // a worktree, the DB keys), and the warning must stay quiet rather than naming an inherited
-  // candidate the process may not even use.
-  const forced = (k) => k in LOCAL_MAIL_ENV || DB_KEYS.includes(k);
+  // a worktree, the DB and blanked keys), and the warning must stay quiet rather than naming an
+  // inherited candidate the process may not even use.
+  const forced = (k) => k in LOCAL_MAIL_ENV || DB_KEYS.includes(k) || BLANKED_KEY.test(k);
   const hubLike = new AppSession('moderator', worktree, 5174, [], []).spawnEnv();
   const added = Object.keys(hubLike).filter((k) => !(k in process.env) && !forced(k));
   const changed = Object.keys(process.env).filter((k) => !forced(k) && hubLike[k] !== process.env[k]);

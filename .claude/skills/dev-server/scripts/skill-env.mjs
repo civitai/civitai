@@ -281,6 +281,7 @@ function syncApp(primary, target, refresh) {
   for (const p of r.copied) console.log(`  copied    ${p}`);
   for (const p of r.refreshed) console.log(`  refreshed ${p}`);
   for (const p of r.dbRouted) console.log(`  db        ${p} (DATABASE_URL / DATABASE_REPLICA_URL set to the primary root .env's)`);
+  for (const p of r.blanked) console.log(`  emptied   ${p} (CSAM_*)`);
   for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
   const stale = refresh ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
   console.log(

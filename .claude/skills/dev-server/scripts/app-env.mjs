@@ -9,7 +9,8 @@
  * EMAIL_* lines are rewritten to the local mail catcher's on the way in (`local-mail.mjs`), so a
  * copy never carries real mail credentials. DATABASE_URL / DATABASE_REPLICA_URL take the primary
  * root `.env`'s values (`dev-db.mjs`) on the way in AND in files a tree already has, so a primary
- * app `.env` that points elsewhere never reaches a worktree.
+ * app `.env` that points elsewhere never reaches a worktree. The keys `blank-keys.mjs` names keep
+ * their lines with an empty value, the same way.
  *
  * A copy is a snapshot: an edit to the primary's file later does not reach the tree.
  * `wt env <tree> --refresh` re-copies every file the primary holds a newer version of.
@@ -23,6 +24,7 @@ import { dirname, join, posix } from 'path';
 import { samePath } from './paths.mjs';
 import { routeEnvTextToCatcher } from './local-mail.mjs';
 import { DevDbMissingError, devDbFromEnvText, routeEnvTextToDevDb } from './dev-db.mjs';
+import { blankEnvText } from './blank-keys.mjs';
 
 // `.env`, `.env.local`, `.env.development`, … — not examples or hand-made backups.
 const ENV_NAME = /^\.env(\.[\w.-]+)?$/;
@@ -67,17 +69,16 @@ export function findAppEnvFiles(primary) {
  * Fills gaps only, unless `refresh`: then a tree file is also overwritten when the primary's
  * copy was modified more recently — including over the tree's own edit, if that is older.
  * A file whose directory does not exist in the target (an app the branch predates) is skipped.
- * Files left in place still have their DB lines routed (`dbRouted`), which is how `wt env` repairs
- * a tree copied before the routing existed.
+ * Files left in place still have their DB lines routed (`dbRouted`) and their blanked keys emptied
+ * (`blanked`), which is how `wt env` repairs a tree copied before either existed.
  *
  * Throws DevDbMissingError, writing nothing, when a file has an active DB line and the primary
  * root `.env` has no DATABASE_URL to give it.
  */
 export function syncAppEnv(primary, target, { refresh = false } = {}) {
-  if (samePath(primary, target))
-    return { skipped: 'same-tree', copied: [], refreshed: [], kept: [], noDir: [], dbRouted: [] };
+  const result = { copied: [], refreshed: [], kept: [], noDir: [], dbRouted: [], blanked: [] };
+  if (samePath(primary, target)) return { skipped: 'same-tree', ...result };
 
-  const result = { copied: [], refreshed: [], kept: [], noDir: [], dbRouted: [] };
   const rootEnv = join(primary, '.env');
   const devDb = existsSync(rootEnv) ? devDbFromEnvText(readFileSync(rootEnv, 'utf8')) : null;
   const writes = [];
@@ -91,20 +92,24 @@ export function syncAppEnv(primary, target, { refresh = false } = {}) {
     }
     const fresh = !existsSync(to);
     if (fresh || (refresh && statSync(from).mtimeMs > statSync(to).mtimeMs)) {
-      const routed = routeEnvTextToDevDb(routeEnvTextToCatcher(readFileSync(from, 'utf8')), devDb);
+      const blanked = blankEnvText(routeEnvTextToCatcher(readFileSync(from, 'utf8')));
+      const routed = routeEnvTextToDevDb(blanked.text, devDb);
       if (routed.missing) missing.push(rel);
       if (routed.changed) result.dbRouted.push(rel);
+      if (blanked.changed) result.blanked.push(rel);
       writes.push({ to, text: routed.text });
       (fresh ? result.copied : result.refreshed).push(rel);
       continue;
     }
-    const routed = routeEnvTextToDevDb(readFileSync(to, 'utf8'), devDb);
+    const blanked = blankEnvText(readFileSync(to, 'utf8'));
+    const routed = routeEnvTextToDevDb(blanked.text, devDb);
     if (routed.missing) missing.push(rel);
-    else if (routed.changed) {
+    else if (routed.changed || blanked.changed) {
       // The old mtime is kept: a repaired file that looked newer than the primary's would hide the
       // primary's next edit from `--refresh`.
       writes.push({ to, text: routed.text, stat: statSync(to) });
-      result.dbRouted.push(rel);
+      if (routed.changed) result.dbRouted.push(rel);
+      if (blanked.changed) result.blanked.push(rel);
     }
     result.kept.push(rel);
   }

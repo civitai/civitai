@@ -530,6 +530,7 @@ the primary's app `.env`, which may name a database other than dev: they come fr
 app `.env` if it sets them, else from the root `.env` chain (primary root, then the worktree's root).
 A key neither sets is removed from the spawn env, so the app refuses to start rather than inherit
 one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand.
+Every `CSAM_*` key in a worktree app's spawn env is set empty, wherever it came from.
 The app prints the `DATABASE_URL` **host** (never the credential) on startup and carries it as
 `dbHost` in `app` / `status` output — read it before you click anything that writes.
 
@@ -727,12 +728,14 @@ What's already handled:
   `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, except that
   every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, and every
   `DATABASE_URL` / `DATABASE_REPLICA_URL` line takes the primary **root** `.env`'s value (commented
-  ones dropped), so a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself
-  and never inherits an app `.env` pointed at another database. A copy is a snapshot: when the
-  primary's file changes, `wt env <worktree> --refresh` re-copies every one the primary edited more
-  recently, over the tree's version. Without `--refresh`, existing files are left alone apart from
-  those two database keys, which `wt env` (with or without `--refresh`) routes in place, mtime kept:
-  run it to repair a tree copied before the routing existed. A hand edit to a tree's app database
+  ones dropped), and every `CSAM_*` line (commented ones too) keeps its key with an empty value, so
+  a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
+  app `.env` pointed at another database, and never carries storage credentials for the restricted
+  bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
+  re-copies every one the primary edited more recently, over the tree's version. Without
+  `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
+  copied before either existed. A hand edit to a tree's app database
   therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
   while a file to copy has one, `wt new` and `wt env` exit 1 and write none of them.
 

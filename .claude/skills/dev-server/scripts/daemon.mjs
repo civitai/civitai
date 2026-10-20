@@ -25,6 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
 import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
+import { blankKeys } from './blank-keys.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -1917,7 +1918,7 @@ class AppSession extends AuthHub {
 
   // In a worktree the DB keys skip the chain's base, the primary's app .env, which may name a
   // database other than dev. A key neither the worktree's app .env nor its root chain sets is
-  // removed rather than inherited.
+  // removed rather than inherited. Non-null here is also what empties the blanked keys.
   databaseEnv() {
     if (samePath(this.worktree, primaryCheckout)) return null;
     return appDatabaseEnv(loadEnvFile(resolve(this.path, '.env')), loadEnvChain(this.rootEnvPaths));
@@ -1930,6 +1931,7 @@ class AppSession extends AuthHub {
 // way. The primary checkout keeps it.
 // Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
 // apps/auth/.env itself) is routed to the catcher only because the keys are set here.
+// `databaseEnv` is non-null only for an app in a worktree, which also gets the blanked keys emptied.
 function spawnEnvFor(envVars, databaseEnv = null) {
   const env = { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
   if (databaseEnv) {
@@ -1937,6 +1939,7 @@ function spawnEnvFor(envVars, databaseEnv = null) {
       if (databaseEnv[key] === undefined) delete env[key];
       else env[key] = databaseEnv[key];
     }
+    blankKeys(env);
   }
   return env;
 }

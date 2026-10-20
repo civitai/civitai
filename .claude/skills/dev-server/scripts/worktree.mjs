@@ -645,6 +645,7 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
     const appEnv = syncAppEnv(primary, target);
     if (appEnv.copied.length) console.log(`env files: copied ${appEnv.copied.length} (${appEnv.copied.join(', ')})`);
     if (appEnv.dbRouted.length) console.log(`env files: DATABASE_URL / DATABASE_REPLICA_URL set to the primary root .env's in ${appEnv.dbRouted.length} (${appEnv.dbRouted.join(', ')})`);
+    if (appEnv.blanked.length) console.log(`env files: CSAM_* emptied in ${appEnv.blanked.length} (${appEnv.blanked.join(', ')})`);
     if (appEnv.noDir.length) console.log(`env files: skipped ${appEnv.noDir.length} whose app is not on this branch (${appEnv.noDir.join(', ')})`);
   } catch (error) {
     if (error.code === 'DEV_DB_MISSING')

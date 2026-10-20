@@ -142,11 +142,16 @@ try {
   const DEV_REPLICA = 'postgres://dev:dev@dev-replica.example.invalid:5432/civitai';
   const PLANTED = 'postgres://u:p@example.invalid:5432/x';
   const devLines = `DATABASE_URL=${DEV}\nDATABASE_REPLICA_URL=${DEV_REPLICA}\n`;
+  // The CSAM_* keys arrive with values and must leave empty, commented lines included.
   const plantedAuth =
-    `AUTH=1\nDATABASE_URL=${PLANTED}\nDATABASE_REPLICA_URL=${PLANTED}\n# DATABASE_URL=${PLANTED}\n`;
-  const routedAuth = `AUTH=1\n${devLines}`;
+    `AUTH=1\nDATABASE_URL=${PLANTED}\nDATABASE_REPLICA_URL=${PLANTED}\n# DATABASE_URL=${PLANTED}\n` +
+    'CSAM_UPLOAD_KEY=planted-csam-key\n# CSAM_UPLOAD_SECRET=planted-csam-secret\n';
+  const routedAuth = `AUTH=1\n${devLines}CSAM_UPLOAD_KEY=\n# CSAM_UPLOAD_SECRET=\n`;
   const planted = (text) => (text ?? '').split('u:p@example.invalid').length - 1;
-  writeFileSync(join(primary, '.env'), `ROOT=1\n${devLines}`);
+  const plantedCsam = (text) => (text ?? '').split('planted-csam').length - 1;
+  const rootSrc = (n) => `ROOT=${n}\n${devLines}CSAM_BUCKET_NAME=planted-csam-bucket\n`;
+  const rootCopy = (n) => `ROOT=${n}\n${devLines}CSAM_BUCKET_NAME=\n`;
+  writeFileSync(join(primary, '.env'), rootSrc(1));
   writeFileSync(join(primary, 'apps', 'auth', '.env'), plantedAuth);
   writeFileSync(join(primary, '.env.local'), 'LOCAL=1\n');
   const realMail =
@@ -182,7 +187,10 @@ try {
     '## feat/one'
   );
   const read = (rel) => (existsSync(join(tree, rel)) ? readFileSync(join(tree, rel), 'utf8') : null);
-  check('copies the root .env', read('.env'), `ROOT=1\n${devLines}`);
+  check('copies the root .env, its CSAM_* keys present and empty', read('.env'), rootCopy(1));
+  check('the root copy holds no planted CSAM_* value', plantedCsam(read('.env')), 0);
+  check("the auth app's copy holds no planted CSAM_* value", plantedCsam(read('apps/auth/.env')), 0);
+  check('wt new names the files it emptied', /CSAM_\* emptied in 2 \(\.env, apps\/auth\/\.env\)/.test(created.out), true);
   check(
     "the auth app's copy takes the primary root .env's database, its commented line dropped",
     read('apps/auth/.env'),
@@ -215,12 +223,12 @@ try {
   writeFileSync(join(tree, 'apps', 'web', '.env'), 'WEB=tree\n');
   const past = new Date(Date.now() - 60_000);
   utimesSync(join(tree, 'apps', 'web', '.env'), past, past);
-  writeFileSync(join(primary, '.env'), `ROOT=2\n${devLines}`);
+  writeFileSync(join(primary, '.env'), rootSrc(2));
   check('without --refresh, an existing file is kept', syncAppEnv(primary, tree).refreshed.join(), '');
-  check('without --refresh, the old value stays', read('.env'), `ROOT=1\n${devLines}`);
+  check('without --refresh, the old value stays', read('.env'), rootCopy(1));
   const refreshed = syncAppEnv(primary, tree, { refresh: true }).refreshed;
   check('--refresh re-copies files the primary edited later', refreshed.join(), '.env,apps/web/.env');
-  check('--refresh brings the new value', read('.env'), `ROOT=2\n${devLines}`);
+  check('--refresh brings the new value', read('.env'), rootCopy(2));
   writeFileSync(join(tree, '.env.development'), 'A=tree\n');
   utimesSync(join(tree, '.env.development'), past, past);
   writeFileSync(join(primary, '.env.development'), realMail);
@@ -242,6 +250,8 @@ try {
   check('... leaving none of the planted value', planted(read('apps/auth/.env')), 0);
   check('... and keeps its mtime', Math.round(statSync(treeAuth).mtimeMs / 1000), Math.round(past.getTime() / 1000));
   check('... and says which file', /db\s+apps\/auth\/\.env/.test(repaired.out), true);
+  check('wt env empties the planted CSAM_* values in a kept file', plantedCsam(read('apps/auth/.env')), 0);
+  check('... and says which file', /emptied\s+apps\/auth\/\.env/.test(repaired.out), true);
   const future = new Date(Date.now() + 60_000);
   writeFileSync(treeAuth, plantedAuth);
   utimesSync(treeAuth, future, future);
@@ -263,7 +273,7 @@ try {
     existsSync(join(reposRoot, 'worktrees', 'four', 'apps', 'auth', '.env')),
     false
   );
-  writeFileSync(join(primary, '.env'), `ROOT=2\n${devLines}`);
+  writeFileSync(join(primary, '.env'), rootSrc(2));
 
   const dupBranch = run(primary, 'two', 'feat/one');
   check('refuses an existing branch name', dupBranch.code, 1);
