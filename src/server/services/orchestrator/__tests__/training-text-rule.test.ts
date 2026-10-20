@@ -22,10 +22,18 @@ describe('assertTrainingTextAllowed', () => {
   it('lets a soft hit through when the classifier is clear', async () => {
     await expect(
       check(['mystyle', 'mystyle, a dog peeing on a tree in the park'])
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ classifierFailed: false });
     expect(classifyPromptExternally).toHaveBeenCalledTimes(1);
     // Labelled as neither a generation nor a remix in the classifier's metrics.
     expect(classifyPromptExternally).toHaveBeenCalledWith(expect.any(String), 'other');
+  });
+
+  it('passes when the classifier is down, and says so', async () => {
+    classifyPromptExternally.mockResolvedValueOnce({
+      categories: [],
+      externalError: { message: 'down' },
+    });
+    await expect(check(['mystyle', 'mystyle, a cat'])).resolves.toEqual({ classifierFailed: true });
   });
 
   it('refuses a hard hit without asking the classifier', async () => {
@@ -37,7 +45,7 @@ describe('assertTrainingTextAllowed', () => {
 
   it('checks every caption of a large dataset, not only the first', async () => {
     const clean = Array.from({ length: 450 }, (_, i) => `mystyle, landscape ${i}, `.repeat(20));
-    await expect(check(clean)).resolves.toBeUndefined();
+    await expect(check(clean)).resolves.toEqual({ classifierFailed: false });
 
     const late = [...clean];
     late[420] = 'mystyle, 8 year old girl';

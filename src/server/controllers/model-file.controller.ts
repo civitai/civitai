@@ -30,6 +30,7 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
+import { startTrainingZipCheck } from '~/server/services/orchestrator/training/training-zip-check';
 
 type ResolverBackend = 'backblaze' | 'cloudflare';
 
@@ -198,7 +199,7 @@ export const createFileHandler = async ({
     modelVersionId: input.modelVersionId,
     op: 'create',
   });
-  return createModelFile({
+  const file = await createModelFile({
     // The storage location is registered from the record's own url, as on update, never from a
     // client-supplied path, so what downloads resolve to is what gets scanned.
     input: { ...input, s3Path: undefined },
@@ -209,6 +210,14 @@ export const createFileHandler = async ({
     // stamp may come from — see the `uploadDomain` note on `createModelFile`.
     uploadDomain: ctx.domain,
   });
+  // Not awaited: the user sets up the run while it reads.
+  if (input.type === 'Training Data')
+    void startTrainingZipCheck({
+      url: input.url,
+      userId: ctx.user.id,
+      modelVersionId: input.modelVersionId,
+    });
+  return file;
 };
 
 /**
@@ -403,6 +412,12 @@ export const updateFileHandler = async ({
         url: result.url,
         handler: 'updateFileHandler',
       });
+      if (result.type === 'Training Data')
+        void startTrainingZipCheck({
+          url: result.url,
+          userId: ctx.user.id,
+          modelVersionId: result.modelVersionId,
+        });
     } else {
       ctx.track
         .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })

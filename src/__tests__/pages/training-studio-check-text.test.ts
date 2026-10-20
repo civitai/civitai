@@ -110,7 +110,8 @@ describe('POST /api/training-studio/check-text', () => {
   it('charges the caller one unit per classifier batch, keyed by user', async () => {
     await call({ triggerWord: 'mystyle', captions: Array(3).fill('b'.repeat(15_000)) });
     const [key, , , weight] = gate.rate.mock.calls[0] as [string, number, number, number];
-    expect(key).toMatch(/:7$/);
+    // The budget the trainer's checks draw on too.
+    expect(key).toMatch(/^training:text-check-rate-limit:7$/);
     expect(weight).toBe(3);
   });
 

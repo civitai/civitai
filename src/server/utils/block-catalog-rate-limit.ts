@@ -355,7 +355,7 @@ export type BlockCatalogRateLimitResult =
  *      this one body to the MULTI shape and leaves all five buckets' unit suites
  *      green.**
  *
- * Also used outside App Blocks, by `src/pages/api/training-studio/check-text.ts`: a change to this
+ * Also used outside App Blocks, by `takeTrainingTextCheckBudget` (training-label-check.ts): a change to this
  * body changes that limit too.
  */
 export async function checkFixedWindow(

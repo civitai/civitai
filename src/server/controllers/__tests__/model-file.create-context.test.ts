@@ -9,17 +9,22 @@ import { envMock } from '~/__tests__/mocks/env.mock';
  * job passes it as a plain `true`, so the tRPC path must keep passing the session's own value —
  * these pin that the two callers are not interchangeable.
  */
-const { createFile, registerFileLocation, createModelFileScanRequest } = vi.hoisted(() => ({
-  createFile: vi.fn(),
-  registerFileLocation: vi.fn(),
-  createModelFileScanRequest: vi.fn(),
-}));
+const { createFile, registerFileLocation, createModelFileScanRequest, startTrainingZipCheck } =
+  vi.hoisted(() => ({
+    startTrainingZipCheck: vi.fn(),
+    createFile: vi.fn(),
+    registerFileLocation: vi.fn(),
+    createModelFileScanRequest: vi.fn(),
+  }));
 
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   createFile,
 }));
 vi.mock('~/utils/storage-resolver', () => ({ registerFileLocation }));
+vi.mock('~/server/services/orchestrator/training/training-zip-check', () => ({
+  startTrainingZipCheck,
+}));
 vi.mock('~/server/services/model-file-scan.service', () => ({
   createModelFileScanRequest,
   ModelFileScanSubmissionError: class extends Error {},
@@ -185,6 +190,13 @@ describe('the uploadDomain stamp on a training-data upload', () => {
           metadata: expect.objectContaining({ uploadDomain: serverDomain, numImages: 12 }),
         })
       );
+      // The dataset's text is checked while the user sets up the run.
+      expect(startTrainingZipCheck).toHaveBeenCalledWith({
+        url: trainingInput.url,
+        userId: 7,
+        modelVersionId: 42,
+      });
+      expect(startTrainingZipCheck).toHaveBeenCalledTimes(1);
     }
   );
 
@@ -211,6 +223,7 @@ describe('the uploadDomain stamp on a training-data upload', () => {
 
     const [{ metadata }] = createFile.mock.calls[0];
     expect(metadata?.uploadDomain).toBeUndefined();
+    expect(startTrainingZipCheck).not.toHaveBeenCalled();
   });
 });
 

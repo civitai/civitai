@@ -918,7 +918,7 @@ export async function getUploadPartUrl({
  * one. `null` is "size unknown", NOT "size zero" — a size check must not fire on it.
  */
 export type ObjectHeadResult =
-  | { status: 'present'; size: number | null }
+  | { status: 'present'; size: number | null; etag: string | null }
   | { status: 'absent' }
   | { status: 'unknown' };
 
@@ -958,6 +958,7 @@ export async function headObject(
     return {
       status: 'present',
       size: typeof head?.ContentLength === 'number' ? head.ContentLength : null,
+      etag: head?.ETag ?? null,
     };
   } catch (e) {
     return isNotFoundError(e) ? { status: 'absent' } : { status: 'unknown' };

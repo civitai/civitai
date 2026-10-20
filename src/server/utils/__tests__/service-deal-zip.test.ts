@@ -435,17 +435,35 @@ describe('a final missing from the bucket', () => {
 
 describe('reading from the bucket', () => {
   it('asks for exactly the range, and for nothing when the range is empty', async () => {
-    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abc')]) }));
+    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abcdefghij')]) }));
     const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
     const chunks: Buffer[] = [];
     for await (const chunk of source.readRange(10, 20)) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).toString()).toBe('abc');
+    expect(Buffer.concat(chunks).toString()).toBe('abcdefghij');
     const command = (send.mock.calls[0] as unknown as [{ input: Record<string, unknown> }])[0];
     expect(command.input).toMatchObject({ Bucket: 'bucket', Key: 'key', Range: 'bytes=10-19' });
     const empty: unknown[] = [];
     for await (const chunk of source.readRange(5, 5)) empty.push(chunk);
     expect(empty).toEqual([]);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the stream when the body ends short of the range, rather than passing on less', async () => {
+    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abc')]) }));
+    const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
+    await expect(
+      (async () => {
+        for await (const chunk of source.readRange(10, 20)) void chunk;
+      })()
+    ).rejects.toThrow('ended early');
+  });
+
+  it('asks for no more than the object holds', async () => {
+    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('xyz')]) }));
+    const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
+    for await (const chunk of source.readRange(97, 120)) void chunk;
+    const command = (send.mock.calls[0] as unknown as [{ input: Record<string, unknown> }])[0];
+    expect(command.input).toMatchObject({ Range: 'bytes=97-99' });
   });
 
   it('fails the stream when the bucket does', async () => {

@@ -984,6 +984,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
   });
 
+  const checkLabelsMutation = trpc.training.checkLabels.useMutation();
   const submitTagMutation = trpc.training.autoTag.useMutation({
     // TODO allow people to rerun failed images
     onError(error) {
@@ -1105,6 +1106,33 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
+
+    if (!dlOnly) {
+      hideNotification(notificationId);
+      showNotification({
+        id: notificationId,
+        loading: true,
+        autoClose: false,
+        withCloseButton: false,
+        title: 'Checking labels',
+        message: 'Checking your labels before uploading...',
+      });
+      try {
+        await checkLabelsMutation.mutateAsync({
+          triggerWord,
+          captions: imageList
+            .map((i) => labelAsTrained(i.label, triggerWord, labelType))
+            .filter((label) => label.length > 0),
+        });
+      } catch (e: unknown) {
+        setZipping(false);
+        updateNotification({
+          ...notificationFailBase,
+          ...(e instanceof Error && e.message ? { message: e.message } : {}),
+        });
+        return;
+      }
+    }
 
     const zip = await getJSZip();
 
@@ -1306,7 +1334,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       const audit = auditTrainingLabels({
         triggerWord,
-        // Checked as written to the dataset, which is what the submit re-checks.
+        // Checked as written to the dataset, which is what the server checks once uploaded.
         labels: imageList.map((i) => ({
           key: getShortNameFromUrl(i),
           label: labelAsTrained(i.label, triggerWord, labelType),

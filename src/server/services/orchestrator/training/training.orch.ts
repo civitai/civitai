@@ -36,7 +36,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
-import { assertTrainingZipAllowed } from '~/server/services/orchestrator/training/training-label-check';
+import { assertTrainingZipAllowed } from '~/server/services/orchestrator/training/training-zip-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -460,9 +460,7 @@ export const createTrainingWorkflow = async ({
   const modelFileId = modelVersion.fileId;
 
   await assertTrainingZipAllowed({
-    s3: trainingDataS3,
-    bucket: trainingDataLocation.bucket,
-    key: trainingDataLocation.key,
+    url: modelVersion.trainingUrl,
     triggerWord,
     userId,
     modelVersionId,

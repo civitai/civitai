@@ -42,7 +42,8 @@ export const bufferZipSource = (buffer: Buffer): ZipSource => ({
   readRange: (start, end) => Readable.from([buffer.subarray(start, end)]),
 });
 
-/** Every failure, whether opening the read or mid-body, surfaces as a `RangeReadError`. */
+/** Every failure, whether opening the read, mid-body or a body cut short, surfaces as a
+ *  `RangeReadError`. */
 const streamFrom = (start: number, end: number, open: () => Promise<Readable>) => {
   const out = new PassThrough();
   if (end <= start) {
@@ -51,8 +52,15 @@ const streamFrom = (start: number, end: number, open: () => Promise<Readable>) =
   }
   open()
     .then((body) => {
+      let received = 0;
+      body.on('data', (chunk: Buffer) => (received += chunk.length));
       body.on('error', (error) => out.destroy(asRangeReadError(error)));
-      body.pipe(out);
+      body.on('end', () =>
+        received < end - start
+          ? out.destroy(new RangeReadError('Range read ended early'))
+          : out.end()
+      );
+      body.pipe(out, { end: false });
     })
     .catch((error) => out.destroy(asRangeReadError(error)));
   return out;
@@ -67,16 +75,19 @@ export const s3ZipSource = (
   signal?: AbortSignal
 ): ZipSource => ({
   size,
-  readRange: (start, end) =>
-    streamFrom(start, end, async () => {
+  readRange: (start, end) => {
+    // Storage answers a range past the end with what exists, which would read as cut short.
+    const to = Math.min(end, size);
+    return streamFrom(start, to, async () => {
       const response = await client.send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${end - 1}` }),
+        new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${to - 1}` }),
         { abortSignal: signal }
       );
       const body = response.Body as Readable | undefined;
       if (!body) throw new Error('Empty object body');
       return body;
-    }),
+    });
+  },
 });
 
 /** One read of the end covers the end-of-archive records and, usually, the whole file list. */

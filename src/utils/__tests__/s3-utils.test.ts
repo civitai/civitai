@@ -680,13 +680,21 @@ describe('headObject — presence AND size, as a three-state result', () => {
     await expect(headObject(BUCKET, KEY, s3Returning({ ContentLength: 4096 }))).resolves.toEqual({
       status: 'present',
       size: 4096,
+      etag: null,
     });
+  });
+
+  it('returns the ETag, which identifies the stored bytes', async () => {
+    await expect(
+      headObject(BUCKET, KEY, s3Returning({ ContentLength: 1, ETag: '"abc"' }))
+    ).resolves.toMatchObject({ status: 'present', etag: '"abc"' });
   });
 
   it('reports a real ZERO length as zero, not as "no length"', async () => {
     await expect(headObject(BUCKET, KEY, s3Returning({ ContentLength: 0 }))).resolves.toEqual({
       status: 'present',
       size: 0,
+      etag: null,
     });
   });
 
@@ -699,6 +707,7 @@ describe('headObject — presence AND size, as a three-state result', () => {
     await expect(headObject(BUCKET, KEY, s3Returning(out))).resolves.toEqual({
       status: 'present',
       size: null,
+      etag: null,
     });
   });
 

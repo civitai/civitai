@@ -11,7 +11,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
-vi.mock('~/server/services/orchestrator/training/training-label-check', () => ({
+vi.mock('~/server/services/orchestrator/training/training-zip-check', () => ({
   assertTrainingZipAllowed: vi.fn(async () => undefined),
 }));
 vi.mock('~/utils/s3-utils', () => ({
