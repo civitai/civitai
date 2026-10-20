@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listPendingCsamHolds, countPendingCsamHolds, decideCsamHold } = vi.hoisted(() => ({
-  listPendingCsamHolds: vi.fn(),
-  countPendingCsamHolds: vi.fn(),
+const { listCsamHolds, countCsamHoldsByType, decideCsamHold } = vi.hoisted(() => ({
+  listCsamHolds: vi.fn(),
+  countCsamHoldsByType: vi.fn(),
   decideCsamHold: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('$lib/server/csam-holds.service', () => ({
-  listPendingCsamHolds,
-  countPendingCsamHolds,
+vi.mock('$lib/server/csam-holds.service', async () => ({
+  // The real search parser: what a `q` becomes is part of what the load hands the query.
+  csamHoldSearch: (
+    await vi.importActual<typeof import('$lib/server/csam-holds.queries')>(
+      '$lib/server/csam-holds.queries'
+    )
+  ).csamHoldSearch,
+  listCsamHolds,
+  countCsamHoldsByType,
   decideCsamHold,
 }));
 
@@ -40,50 +46,84 @@ const decide = (fields: Record<string, string>, grants: Record<string, boolean>)
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listPendingCsamHolds.mockResolvedValue({ items: [{ id: 1 }], hasMore: true });
-  countPendingCsamHolds.mockResolvedValue(7);
+  listCsamHolds.mockResolvedValue({ items: [{ id: 1 }], hasMore: true });
+  countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
   decideCsamHold.mockResolvedValue({ ok: true });
 });
 
 describe('csam text holds load', () => {
-  it('pages the queue and narrows it to one entity type', async () => {
-    const data = await loadAt('?page=3&limit=20&entityType=ChatMessage');
-    expect(listPendingCsamHolds).toHaveBeenCalledWith({
+  it('lists the pending queue, oldest first, by default', async () => {
+    const data = await loadAt('');
+    expect(listCsamHolds).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+      entityType: undefined,
+      status: 'pending',
+      sort: 'oldest',
+      search: undefined,
+    });
+    expect(data).toMatchObject({ holdFilters: { status: 'pending', sort: 'oldest' }, q: '' });
+  });
+
+  it('pages the queue and narrows it by type, status, sort and search', async () => {
+    const data = await loadAt(
+      '?page=3&limit=20&entityType=ChatMessage&status=removed&sort=newest&q=42'
+    );
+    expect(listCsamHolds).toHaveBeenCalledWith({
       limit: 20,
       offset: 40,
       entityType: 'ChatMessage',
+      status: 'removed',
+      sort: 'newest',
+      search: { id: 42 },
     });
-    expect(countPendingCsamHolds).toHaveBeenCalledWith('ChatMessage');
+    expect(countCsamHoldsByType).toHaveBeenCalledWith({ status: 'removed', search: { id: 42 } });
     expect(data).toMatchObject({
       page: 3,
       offset: 40,
       entityType: 'ChatMessage',
-      total: 7,
+      total: 2,
+      typeCounts: { Post: 5, ChatMessage: 2, all: 7 },
       items: [{ id: 1 }],
       hasMore: true,
     });
   });
 
-  it('ignores an unknown entity type instead of filtering on it', async () => {
-    const data = await loadAt('?entityType=Image');
-    expect(listPendingCsamHolds).toHaveBeenCalledWith({
-      limit: 50,
-      offset: 0,
-      entityType: undefined,
-    });
-    expect(data.entityType).toBeNull();
+  it('searches a non-numeric term as a username', async () => {
+    await loadAt('?q=%20someone%20');
+    expect(listCsamHolds).toHaveBeenCalledWith(
+      expect.objectContaining({ search: { username: 'someone' } })
+    );
+  });
+
+  it.each(['?entityType=Image', '?entityType=ResourceReview'])(
+    'ignores %s instead of filtering on it',
+    async (query) => {
+      const data = await loadAt(query);
+      expect(listCsamHolds).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: undefined })
+      );
+      expect(data.entityType).toBeNull();
+    }
+  );
+
+  it('falls back to the defaults for an unknown status or sort', async () => {
+    await loadAt('?status=bogus&sort=sideways');
+    expect(listCsamHolds).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending', sort: 'oldest' })
+    );
   });
 
   it('refuses a moderator without the csam permission before reading any hold', async () => {
     await expect(loadAt('', {})).rejects.toMatchObject({ status: 403 });
-    expect(listPendingCsamHolds).not.toHaveBeenCalled();
-    expect(countPendingCsamHolds).not.toHaveBeenCalled();
+    expect(listCsamHolds).not.toHaveBeenCalled();
+    expect(countCsamHoldsByType).not.toHaveBeenCalled();
   });
 
-  it('still lists the queue when the total fails', async () => {
-    countPendingCsamHolds.mockRejectedValue(new Error('db down'));
+  it('still lists the queue when the counts fail', async () => {
+    countCsamHoldsByType.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
-    expect(data).toMatchObject({ items: [{ id: 1 }], total: undefined });
+    expect(data).toMatchObject({ items: [{ id: 1 }], total: undefined, typeCounts: null });
   });
 });
 

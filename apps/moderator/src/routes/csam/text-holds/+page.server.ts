@@ -2,9 +2,16 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { denied, requiresGrant } from '$lib/server/access';
 import {
-  countPendingCsamHolds,
+  CSAM_HOLD_SORTS,
+  CSAM_HOLD_STATUSES,
+  DEFAULT_CSAM_HOLD_FILTERS,
+  type CsamHoldFilters,
+} from '$lib/csam-holds/hold-filters';
+import {
+  countCsamHoldsByType,
+  csamHoldSearch,
   decideCsamHold,
-  listPendingCsamHolds,
+  listCsamHolds,
 } from '$lib/server/csam-holds.service';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
@@ -19,22 +26,43 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   entityType: z.enum(CSAM_HOLD_ENTITY_TYPES).optional().catch(undefined),
+  status: z.enum(CSAM_HOLD_STATUSES).catch(DEFAULT_CSAM_HOLD_FILTERS.status),
+  sort: z.enum(CSAM_HOLD_SORTS).catch(DEFAULT_CSAM_HOLD_FILTERS.sort),
+  q: z.string().trim().max(100).catch(''),
 });
 
 // The page grant only decides who sees the nav entry and badge; the held text is for csam filers.
 export const load: PageServerLoad = async ({ url, locals }) => {
   if (!locals.grants['csam.report.file']) error(403, denied('csam.report.file'));
-  const { limit, page, entityType } = parseQuery(url, querySchema);
+  const { limit, page, entityType, status, sort, q } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
-  const [queue, total] = await Promise.all([
-    listPendingCsamHolds({ limit, offset, entityType }),
-    // The footer's "of N" is decoration; a failure here must not take the list down with it.
-    countPendingCsamHolds(entityType).catch((err) => {
-      console.error('CSAM hold total failed', err);
-      return undefined;
+  const search = csamHoldSearch(q);
+  const holdFilters: CsamHoldFilters = { status, sort };
+  const [queue, byType] = await Promise.all([
+    listCsamHolds({ limit, offset, entityType, status, sort, search }),
+    // The chip counts and the footer's "of N" are decoration; a failure here must not take the list down with it.
+    countCsamHoldsByType({ status, search }).catch((err) => {
+      console.error('CSAM hold counts failed', err);
+      return null;
     }),
   ]);
-  return { limit, page, offset, entityType: entityType ?? null, total, ...queue, fullBleed: true };
+  const typeCounts: Record<string, number> | null = byType && {
+    ...byType,
+    all: Object.values(byType).reduce((sum, n) => sum + n, 0),
+  };
+  const total = typeCounts ? typeCounts[entityType ?? 'all'] ?? 0 : undefined;
+  return {
+    limit,
+    page,
+    offset,
+    q,
+    entityType: entityType ?? null,
+    holdFilters,
+    typeCounts,
+    total,
+    ...queue,
+    fullBleed: true,
+  };
 };
 
 const decideSchema = z.object({

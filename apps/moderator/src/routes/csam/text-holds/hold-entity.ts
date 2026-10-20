@@ -2,15 +2,13 @@ import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } fro
 
 export const NOTE_MAX_LENGTH = 500;
 
-/** The entity types the main app records csam holds for. */
+/** The entity types whose text-scan profile requests the csam label, so the only ones a hold can exist for. */
 export const CSAM_HOLD_ENTITY_TYPES = [
   'Model',
   'Post',
   'ChatMessage',
   'Comment',
   'CommentV2',
-  'ResourceReview',
-  'User',
   'UserProfile',
 ] as const;
 
@@ -22,8 +20,6 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
-  ResourceReview: 'Review',
-  User: 'Account',
   UserProfile: 'Profile',
 };
 
@@ -55,6 +51,15 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   remove_ban_report: 'Content removed, author banned — file the CSAM report',
   dismiss: 'Dismissed',
 };
+
+/** What a decided hold was decided as; the recorded action when there is one, else the status alone. */
+export function decisionLabel(hold: { status: string; decision: string | null }): string {
+  const outcome =
+    hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
+      ? CSAM_HOLD_OUTCOMES[hold.decision as CsamHoldDecision]
+      : null;
+  return outcome ?? (hold.status === 'Dismissed' ? 'Dismissed' : 'Removed');
+}
 
 /** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
@@ -101,7 +106,6 @@ export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null
       return commentV2Url(civitaiUrl, hold.entityId);
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
-    case 'User':
     case 'UserProfile':
       if (hold.username) return userUrl(civitaiUrl, hold.username);
       return hold.userId ? userLookupUrl(hold.userId) : null;

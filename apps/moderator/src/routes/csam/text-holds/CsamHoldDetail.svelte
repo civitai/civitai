@@ -16,6 +16,7 @@
     CSAM_HOLD_OUTCOMES,
     NOTE_MAX_LENGTH,
     canRemoveHeld,
+    decisionLabel,
     entityLabel,
     holdEntityHref,
     type CsamHoldDecision,
@@ -49,6 +50,8 @@
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
   const canRemove = $derived(canRemoveHeld(row.entityType));
   const hasAuthor = $derived(row.userId !== null);
+  // A decided hold opens read-only; the main app refuses a second decision either way.
+  const decidedRow = $derived(row.status !== 'Pending');
 
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<CsamHoldDecision>('dismiss');
@@ -109,6 +112,21 @@
       </div>
     </header>
 
+    {#if decidedRow}
+      <TriageCard title="Decision">
+        <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt class="text-dark-2">Decided</dt>
+          <dd class="m-0 text-dark-0">{decisionLabel(row)}</dd>
+          <dt class="text-dark-2">By</dt>
+          <dd class="m-0 text-dark-0">{row.decidedByUsername ?? 'an unknown moderator'}</dd>
+          <dt class="text-dark-2">When</dt>
+          <dd class="m-0 text-dark-0">{dateTime(row.decidedAt)}</dd>
+          <dt class="text-dark-2">Note</dt>
+          <dd class="m-0 text-dark-0 whitespace-pre-wrap break-words">{row.decisionNote ?? '—'}</dd>
+        </dl>
+      </TriageCard>
+    {/if}
+
     <TriageCard title="Held text">
       <!-- Focusable so a keyboard user can scroll the text (WCAG 2.1.1). -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -137,7 +155,9 @@
     </TriageCard>
   {/snippet}
   {#snippet actions()}
-    {#if canDecide}
+    {#if decidedRow}
+      <p class="m-0 text-sm text-dark-2">This hold is already decided.</p>
+    {:else if canDecide}
       <form
         bind:this={formEl}
         method="POST"

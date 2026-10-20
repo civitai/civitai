@@ -1,8 +1,10 @@
 import { callModEndpoint } from './user-actions.service';
 
 export {
+  countCsamHoldsByType,
   countPendingCsamHolds,
-  listPendingCsamHolds,
+  csamHoldSearch,
+  listCsamHolds,
   type CsamHoldRow,
 } from './csam-holds.queries';
 

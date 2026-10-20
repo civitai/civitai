@@ -1,6 +1,10 @@
 // No `$app/*` imports: the sidebar counts import this, and the node suites that load them cannot
 // resolve `$app/server`.
+import { sql } from 'kysely';
+import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
 import { dbRead } from './db';
+import { escapeLike } from './like';
+import { MAX_INT4 } from './users.service';
 
 export type CsamHoldRow = {
   id: number;
@@ -15,28 +19,67 @@ export type CsamHoldRow = {
   contentAt: Date | null;
   createdAt: Date;
   chatId: number | null;
+  status: string;
+  decidedAt: Date | null;
+  decidedByUsername: string | null;
+  decisionNote: string | null;
+  /** The action taken, as the main app records it with the decision; null while pending. */
+  decision: string | null;
 };
 
-const pendingCsamHolds = (entityType?: string) => {
-  let query = dbRead
-    .selectFrom('TextScanHold as h')
-    .where('h.label', '=', 'csam')
-    .where('h.status', '=', 'Pending');
-  if (entityType) query = query.where('h.entityType', '=', entityType);
-  return query;
+/** A number matches the held content's id or its author's id; anything else is a username. */
+export type CsamHoldSearch = { id: number } | { username: string };
+
+export const csamHoldSearch = (q: string): CsamHoldSearch | undefined => {
+  if (!q) return undefined;
+  if (/^\d+$/.test(q)) return { id: Number(q) > MAX_INT4 ? 0 : Number(q) };
+  return { username: q };
 };
 
-export async function listPendingCsamHolds({
-  limit,
-  offset,
-  entityType,
-}: {
+export type CsamHoldQuery = {
+  status: CsamHoldStatusFilter;
+  sort: CsamHoldSort;
   limit: number;
   offset: number;
   entityType?: string;
-}): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
-  const rows = await pendingCsamHolds(entityType)
+  search?: CsamHoldSearch;
+};
+
+const STATUS_COLUMN = { pending: 'Pending', removed: 'Confirmed', dismissed: 'Dismissed' } as const;
+
+const csamHolds = ({
+  status,
+  search,
+}: {
+  status: CsamHoldStatusFilter;
+  search?: CsamHoldSearch;
+}) => {
+  let query = dbRead
+    .selectFrom('TextScanHold as h')
     .leftJoin('User as u', 'u.id', 'h.userId')
+    .where('h.label', '=', 'csam');
+  if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
+  if (search && 'id' in search)
+    query = query.where((eb) =>
+      eb.or([eb('h.entityId', '=', search.id), eb('h.userId', '=', search.id)])
+    );
+  else if (search)
+    query = query.where(
+      sql<boolean>`lower(u.username) like lower(${escapeLike(search.username) + '%'})`
+    );
+  return query;
+};
+
+export async function listCsamHolds({
+  limit,
+  offset,
+  entityType,
+  status,
+  sort,
+  search,
+}: CsamHoldQuery): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
+  let query = csamHolds({ status, search })
+    .leftJoin('User as d', 'd.id', 'h.decidedById')
     .select([
       'h.id',
       'h.entityType',
@@ -50,27 +93,48 @@ export async function listPendingCsamHolds({
       'h.contentAt',
       'h.createdAt',
       'h.meta',
-    ])
-    .orderBy('h.createdAt', 'asc')
-    .orderBy('h.id', 'asc')
+      'h.status',
+      'h.decidedAt',
+      'd.username as decidedByUsername',
+      'h.decisionNote',
+    ]);
+  if (entityType) query = query.where('h.entityType', '=', entityType);
+  const rows = await query
+    .orderBy('h.createdAt', sort === 'newest' ? 'desc' : 'asc')
+    .orderBy('h.id', sort === 'newest' ? 'desc' : 'asc')
     .limit(limit + 1)
     .offset(offset)
     .execute();
 
   const items = rows.slice(0, limit).map(({ meta, ...row }) => {
-    const chatId = (meta as { chatId?: unknown } | null)?.chatId;
+    const { chatId, decision } = (meta ?? {}) as { chatId?: unknown; decision?: unknown };
     return {
       ...row,
       username: row.username ?? null,
+      decidedByUsername: row.decidedByUsername ?? null,
       chatId: typeof chatId === 'number' ? chatId : null,
+      decision: typeof decision === 'string' ? decision : null,
     };
   });
   return { items, hasMore: rows.length > limit };
 }
 
+/** Holds per entity type for one status and search, ignoring the type filter so the chips stay put. */
+export async function countCsamHoldsByType(args: {
+  status: CsamHoldStatusFilter;
+  search?: CsamHoldSearch;
+}): Promise<Record<string, number>> {
+  const rows = await csamHolds(args)
+    .select(['h.entityType', (eb) => eb.fn.countAll<string>().as('count')])
+    .groupBy('h.entityType')
+    .execute();
+  return Object.fromEntries(rows.map((r) => [r.entityType, Number(r.count)]));
+}
+
+/** What the sidebar badge shows: every pending csam hold. */
 export async function countPendingCsamHolds(entityType?: string): Promise<number> {
-  const row = await pendingCsamHolds(entityType)
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .executeTakeFirst();
+  let query = csamHolds({ status: 'pending' });
+  if (entityType) query = query.where('h.entityType', '=', entityType);
+  const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
   return Number(row?.count ?? 0);
 }
