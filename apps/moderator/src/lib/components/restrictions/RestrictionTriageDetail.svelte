@@ -22,6 +22,7 @@
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { unwiredRulingReason } from '$lib/restriction-types';
   import { originSummary, sourceState } from '$lib/restrictions/origin';
+  import { groupRepeats } from '$lib/restrictions/trigger-groups';
   import { rulingLabel } from '$lib/restrictions/verdict-label';
   import type { RemixSource, RestrictionRow } from '$lib/server/user-restriction.service';
   import type { Outcome } from '$lib/triage/queue';
@@ -62,6 +63,7 @@
   } = $props();
 
   const summary = $derived(originSummary(row.triggers));
+  const groups = $derived(groupRepeats(row.triggers));
   const pending = $derived(row.status === 'Pending');
   // The server refuses these rows too; this only stops the moderator being invited to click a control
   // whose one possible outcome is a 400.
@@ -69,7 +71,14 @@
   const name = $derived(row.username ?? `#${row.userId}`);
 
   const selected = new SvelteSet<string>();
-  const toggle = (key: string) => (selected.has(key) ? selected.delete(key) : selected.add(key));
+  // A repeat group is one card: ticking it ticks every attempt in it, and the form still posts each key.
+  const toggle = (keys: string[]) => {
+    const all = keys.every((k) => selected.has(k));
+    for (const k of keys) {
+      if (all) selected.delete(k);
+      else selected.add(k);
+    }
+  };
 
   const flag = new FormState({
     // The server's count: it drops any trigger that no longer exists.
@@ -200,18 +209,19 @@
     </header>
 
     <div class="space-y-4">
-      {#each row.triggers as trigger, i (trigger.key)}
+      {#each groups as group (group.triggers[0].key)}
+        {@const trigger = group.triggers[0]}
         {@const sourceId = trigger.origin?.remix?.imageId ?? trigger.remixOfId}
         <TriageTriggerCard
-          {trigger}
-          index={i}
+          repeats={group.triggers}
+          index={group.start}
           total={row.triggers.length}
           {civitaiUrl}
           source={sourceId ? sources[sourceId] : undefined}
           sourceState={sourceId
             ? sourceState(sourceId, { sources, failed: sourcesFailed, notLoaded: sourcesNotLoaded })
             : undefined}
-          selected={selected.has(trigger.key)}
+          selected={group.triggers.every((r) => selected.has(r.key))}
           onToggle={toggle}
         />
       {/each}

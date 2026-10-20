@@ -17,6 +17,7 @@
     promptTesterHref,
     sourceLabel,
   } from '$lib/restrictions/trigger-evidence';
+  import { formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
   import type {
     RemixSource,
     RestrictionTriggerView,
@@ -25,7 +26,7 @@
   import PromptDiff from './PromptDiff.svelte';
 
   let {
-    trigger,
+    repeats,
     index,
     total,
     civitaiUrl,
@@ -34,16 +35,25 @@
     selected,
     onToggle,
   }: {
-    trigger: RestrictionTriggerView;
+    /** Adjacent identical attempts; the first stands for all of them. */
+    repeats: RestrictionTriggerView[];
     index: number;
     total: number;
     civitaiUrl: string;
     source: RemixSource | undefined;
     sourceState: SourceState | undefined;
     selected: boolean;
-    onToggle: (key: string) => void;
+    onToggle: (keys: string[]) => void;
   } = $props();
 
+  const trigger = $derived(repeats[0]);
+  const count = $derived(repeats.length);
+  const span = $derived(repeatSpanMs(repeats));
+  const title = $derived(
+    count > 1
+      ? `Triggers ${index + 1}–${index + count} of ${total}`
+      : `Trigger ${index + 1} of ${total}`
+  );
   const origin = $derived(triggerOrigin(trigger));
   const matches = $derived(explainMatches(trigger));
   const highlights = $derived(highlightSets(matches));
@@ -63,8 +73,22 @@
   const imageFailed = $derived(source !== undefined && failedSourceId === source.id);
 </script>
 
-<TriageCard title="Trigger {index + 1} of {total}">
+<TriageCard {title}>
   <div class="space-y-4">
+    {#if count > 1}
+      <details class="rounded-md border border-dark-4 bg-dark-6 px-3 py-2">
+        <summary class="cursor-pointer text-sm text-white">
+          Submitted {count}×{span !== null ? ` · ${formatSpan(span)} apart` : ''}
+          <span class="text-dark-2">· identical prompt and input, retried</span>
+        </summary>
+        <ul class="m-0 mt-2 list-none space-y-0.5 p-0 text-xs text-dark-0">
+          {#each repeats as r (r.key)}
+            <li>{r.time ? dateTime(r.time) : 'Time not recorded'}</li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+
     {#if origin.kind !== 'none'}
       <div class="space-y-2">
         <div class="flex flex-wrap items-center gap-2">
@@ -173,7 +197,7 @@
           <div class="flex items-center gap-2">
             <Checkbox
               id="flag-{trigger.key}"
-              bind:checked={() => selected, () => onToggle(trigger.key)}
+              bind:checked={() => selected, () => onToggle(repeats.map((r) => r.key))}
             />
             <Label for="flag-{trigger.key}" class="font-normal text-dark-0">
               False positive
