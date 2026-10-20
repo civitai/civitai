@@ -41,6 +41,7 @@ import {
 import {
   ecosystemBaseModelGate,
   gateEligibleEcosystems,
+  RESOURCE_INTENT_V1_GATE_SPEC_HASH,
 } from '~/server/services/resource-intent-tags/gate';
 import {
   scoreTagRequest,
@@ -299,8 +300,9 @@ export function resourceIntentCacheKey(input: {
 /**
  * The v1_tags arm's key. `snapshot` is the held tag index's payload sha256 (which covers its
  * vocabulary and tables), or `COOC_FALLBACK_SNAPSHOT_KEY` when none is held; `tagsSpecHash` is
- * `RESOURCE_INTENT_TAGS_SPEC_HASH` ('' when none is held). The stage-1 hash is the last term, which
- * ends no other mode's key, so no other key can equal one of these.
+ * `RESOURCE_INTENT_TAGS_SPEC_HASH` ('' when none is held); `RESOURCE_INTENT_V1_GATE_SPEC_HASH` covers
+ * the request-time gate and floor, which neither of those does. The stage-1 hash is the last term,
+ * which ends no other mode's key, so no other key can equal one of these.
  */
 export function v1TagsCacheKey(input: {
   prompt: string;
@@ -319,6 +321,7 @@ export function v1TagsCacheKey(input: {
     'addon',
     input.snapshot,
     input.tagsSpecHash,
+    RESOURCE_INTENT_V1_GATE_SPEC_HASH,
     RESOURCE_INTENT_SPEC_HASH,
   ];
   const hash = createHash('sha256').update(terms.join('|')).digest('hex');

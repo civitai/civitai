@@ -78,7 +78,7 @@ const { RESOURCE_INTENT_TAGS_SPEC_HASH } = await import(
   '~/server/services/resource-intent-tags/spec'
 );
 const { RESOURCE_INTENT_COOC_SPEC } = await import('~/server/services/resource-intent-cooc/spec');
-const { V1_TAGS_MIN_ECOSYSTEM_RESOURCES } = await import(
+const { RESOURCE_INTENT_V1_GATE_SPEC_HASH, V1_TAGS_MIN_ECOSYSTEM_RESOURCES } = await import(
   '~/server/services/resource-intent-tags/gate'
 );
 const { CoocCountAccumulator } = await import('~/server/services/resource-intent-cooc/build');
@@ -107,8 +107,8 @@ const VOCAB = 'd'.repeat(64);
 /**
  * Three tags: `zephyr` (SDXL-leaning, two add-ons), `velvet` (explicit, one Illustrious add-on) and
  * `lantern` (Illustrious-leaning, the same add-on). Model ids are distinct from version ids. Untagged
- * SDXL add-ons fill the catalogue past the floor a tag-chosen ecosystem needs (both ecosystems' gates
- * admit SDXL 1.0), so they rank nothing but keep both ecosystems choosable.
+ * add-ons published for both ecosystems fill each one's pool past the floor a tag-chosen ecosystem
+ * needs, so they rank nothing but keep both ecosystems choosable.
  */
 const CATALOGUE_FILL = V1_TAGS_MIN_ECOSYSTEM_RESOURCES;
 function tagIndex(ecosystemUsers = [200, 150]): TagIndex {
@@ -147,7 +147,7 @@ function tagIndex(ecosystemUsers = [200, 150]): TagIndex {
     kinds: {
       addon: kind(
         [101, 102, 103, ...Array.from({ length: CATALOGUE_FILL }, (_, i) => 1000 + i)],
-        [[0], [0], [1], ...Array.from({ length: CATALOGUE_FILL }, () => [0])],
+        [[0], [0], [1], ...Array.from({ length: CATALOGUE_FILL }, () => [0, 1])],
         [0, 2, 3, 4],
         [0, 1, 2, 2]
       ),
@@ -271,7 +271,7 @@ const ids = (r: { suggestions: { versionId: number }[] }) => r.suggestions.map((
 describe('cache key', () => {
   const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
 
-  it('🔴 carries the arm, the request, the snapshot, the tags spec and the stage-1 spec, in order', () => {
+  it('🔴 carries the arm, the request, the snapshot, the tags spec, the gate spec and the stage-1 spec, in order', () => {
     expect(v1TagsCacheKey({ ...base, snapshot: SNAPSHOT_SHA, tagsSpecHash: 'e'.repeat(64) })).toBe(
       keyOf([
         'v1_tags',
@@ -282,6 +282,7 @@ describe('cache key', () => {
         'addon',
         SNAPSHOT_SHA,
         'e'.repeat(64),
+        RESOURCE_INTENT_V1_GATE_SPEC_HASH,
         RESOURCE_INTENT_SPEC_HASH,
       ])
     );

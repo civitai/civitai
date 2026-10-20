@@ -113,7 +113,8 @@ export function buildResourceIntentFilter({
 }): string | null {
   const typeClauses = modelTypes?.flatMap((type) => {
     const typeBaseModels = baseModelsByType ? baseModelsByType.get(type) ?? [] : baseModels;
-    // A gated type with no base model admits nothing, so it gets no clause rather than a bare type.
+    // Invariant guard (unreachable today: a gate always holds its ecosystem's own name). A gated type
+    // with no base model admits nothing, so it gets no clause rather than a bare type.
     if (baseModelsByType && !typeBaseModels?.length) return [];
     return typeBaseModels?.length
       ? [and(eq('type', type), inArray('versions.baseModel', typeBaseModels))]
@@ -590,7 +591,8 @@ export async function findRankedCandidates(opts: {
     seed = seedFilter({ modelTypes, baseModel: opts.baseModel }, opts);
   } else {
     const baseModels = gateBaseModels(opts.baseModel);
-    // An empty gate would leave the filter without a type clause, admitting every type.
+    // Invariant guard (unreachable today: a gate always holds its ecosystem's own name). An empty
+    // gate would leave the filter without a type clause, admitting every type.
     if (!baseModels.length) return [];
     const baseModelsByType = opts.baseModel;
     const filter = buildResourceIntentFilter({ ...opts, modelTypes, baseModels, baseModelsByType });
