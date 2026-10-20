@@ -315,6 +315,28 @@ export async function castVote(
   });
 }
 
+export type VotedItemOwner = { imageId: number; ownerId: number; ownerUsername: string | null };
+
+/**
+ * Votes are cast blind, so the vote row is the gate: the owner is never part of the card a moderator is
+ * still deciding on. Reads the primary because it runs straight after the vote it depends on.
+ */
+export async function getVotedItemOwner(
+  itemId: number,
+  userId: number
+): Promise<VotedItemOwner | null> {
+  const row = await dbWrite
+    .selectFrom('ScanLabelVote as v')
+    .innerJoin('ScanLabelItem as i', 'i.id', 'v.itemId')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .leftJoin('User as u', 'u.id', 'img.userId')
+    .select(['i.imageId', 'img.userId as ownerId', 'u.username as ownerUsername'])
+    .where('v.itemId', '=', itemId)
+    .where('v.userId', '=', userId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
 export type ScanLabelCounters = {
   openInFilter: number;
   myVotesToday: number;

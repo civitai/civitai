@@ -30,9 +30,8 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions, sourceOrder } = await import(
-  '../scan-label.service'
-);
+const { claimNext, castVote, getCounters, getOpenFlaggerVersions, getVotedItemOwner, sourceOrder } =
+  await import('../scan-label.service');
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
 const KEEP = { block: false } as const;
@@ -62,8 +61,10 @@ beforeEach(async () => {
   await pg.exec(`
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "type" TEXT NOT NULL DEFAULT 'image',
-      "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT
+      "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT,
+      "userId" INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
   `);
   for (const sql of MIGRATIONS) await pg.exec(sql);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
@@ -414,6 +415,56 @@ describe('outcome', () => {
       unanimous: false,
       status: 'decided',
     });
+  });
+});
+
+describe('owner reveal', () => {
+  const OWNER = 500;
+  const ownedItem = async (imageId: number, owner = OWNER) => {
+    const itemId = await seedItem(imageId);
+    await pg.query(`UPDATE "Image" SET "userId" = $1 WHERE id = $2`, [owner, imageId]);
+    return itemId;
+  };
+  beforeEach(async () => {
+    await pg.query(`INSERT INTO "User" ("id", "username") VALUES (1, 'voter'), ($1, 'uploader')`, [
+      OWNER,
+    ]);
+  });
+
+  it('serves the card with no owner in it', async () => {
+    await ownedItem(1);
+    const card = await claimNext(1, {}, NOW);
+    expect(Object.keys(card!).sort()).toEqual(
+      ['itemId', 'imageId', 'url', 'type', 'name', 'width', 'height', 'leaseExpiresAt'].sort()
+    );
+  });
+
+  it('names the image owner, not the moderator who voted', async () => {
+    const it1 = await ownedItem(7);
+    await claimNext(1, {}, NOW);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 1)).toEqual({
+      imageId: 7,
+      ownerId: OWNER,
+      ownerUsername: 'uploader',
+    });
+  });
+
+  it('keeps the id of an owner whose account row is gone', async () => {
+    const it1 = await ownedItem(7, 501);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 1)).toEqual({
+      imageId: 7,
+      ownerId: 501,
+      ownerUsername: null,
+    });
+  });
+
+  it('reveals nothing to a moderator who has not voted on the item', async () => {
+    const it1 = await ownedItem(7);
+    await claimNext(2, {}, NOW);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 2)).toBeNull();
   });
 });
 
