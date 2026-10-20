@@ -318,9 +318,8 @@ export async function castVote(
 export type VotedItemOwner = { imageId: number; ownerId: number; ownerUsername: string | null };
 
 /**
- * The owner of an image this moderator has voted on, or null when they have not. Votes are cast blind,
- * so the vote row is the gate: the owner is never part of the card a moderator is still deciding on.
- * Reads the primary because it runs straight after the vote it depends on.
+ * Votes are cast blind, so the vote row is the gate: the owner is never part of the card a moderator is
+ * still deciding on. Reads the primary because it runs straight after the vote it depends on.
  */
 export async function getVotedItemOwner(
   itemId: number,

@@ -12,6 +12,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { urlWith } from '$lib/url';
   import VoteForm from './VoteForm.svelte';
+  import type { VotedItemOwner } from '$lib/server/scan-label.service';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -44,6 +45,9 @@
   };
 
   let serverError = $state<string | null>(null);
+  // Kept here rather than derived from `form`: a refused vote replaces `form` and would drop the
+  // owner of the vote that did land.
+  let lastVoted = $state<VotedItemOwner | null>(null);
 
   const submitVote: SubmitFunction = ({ formData }) => {
     submitting = true;
@@ -57,6 +61,8 @@
           serverError = 'Your vote was not recorded. Try again.';
           return;
         }
+        if (result.type === 'success')
+          lastVoted = (result.data as { owner?: VotedItemOwner | null } | undefined)?.owner ?? null;
         await applyAction(result);
         // Invalidate on 409 too: the reload claims the next item.
         await invalidateAll();
@@ -67,7 +73,6 @@
   };
 
   const versionLabel = $derived(data.version || 'All versions');
-  const lastVoted = $derived(form && 'owner' in form ? form.owner : null);
 </script>
 
 <div class="mx-auto flex max-w-5xl flex-col gap-4">
@@ -133,11 +138,13 @@
   {/if}
 
   {#if lastVoted}
-    <p class="rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-sm text-dark-2">
+    <p class="rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-sm text-dark-2" role="status">
       Last vote:
       <a href={imageLookupUrl(lastVoted.imageId)} class={LINK_CLASS}>image #{lastVoted.imageId}</a>
       · Owner:
-      <a href={userLookupUrl(lastVoted.ownerUsername ?? lastVoted.ownerId)} class={LINK_CLASS}>
+      <!-- By id: User Lookup reads an all-digit term as an id first, so a numeric username would open
+           someone else's account. -->
+      <a href={userLookupUrl(lastVoted.ownerId)} class={LINK_CLASS}>
         {lastVoted.ownerUsername ?? '[deleted]'}
       </a>
       · #{lastVoted.ownerId}

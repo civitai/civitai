@@ -89,8 +89,6 @@ export const actions: Actions = {
         isModerationBlocked,
       }
     ).catch((e) => console.error('scan label block sweep failed', e));
-    // The item this vote was just recorded on, so the strip names the image the moderator saw. The
-    // vote row gates the read; a failure only hides the strip.
     const owner = await getVotedItemOwner(input.itemId, locals.user.id).catch((e) => {
       console.error('scan label owner read failed', e);
       return null;
