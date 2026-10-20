@@ -2429,6 +2429,8 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
+    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
+    REPEATS: 'download:repeats',
   },
   GENERATION: {
     LIMITS: 'generation:limits',

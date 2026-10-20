@@ -2,7 +2,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { isIpAddress } from '~/server/utils/client-ip';
 
 /**
- * Rolling 24h Download count for a rate-limiter key, read from ClickHouse.
+ * Rolling 24h count of distinct model versions downloaded by a rate-limiter key, read from
+ * ClickHouse. Distinct, because every resume of a download records another event and the route
+ * counts repeats of one file only past a cap (`countsTowardDownloadLimit`). Counted by version, so two
+ * files of one version reseed as one.
  *
  * The key is a union: either a numeric user id (authenticated caller) or a
  * client IP (anonymous caller). Which column to filter on is decided by
@@ -94,7 +97,7 @@ export async function fetchDownloadCount(userKey: string): Promise<number> {
 
   const data = await clickhouse.$query<{ count: number }>`
       SELECT
-        COUNT(*) as count
+        COUNT(DISTINCT modelVersionId) as count
       FROM modelVersionEvents
       WHERE type = 'Download' AND time > subtractHours(now(), 24)
       ${isUserId ? `AND userId = ${userKey}` : `AND ip = '${userKey}'`}
