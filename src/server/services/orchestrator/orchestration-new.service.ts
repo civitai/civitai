@@ -1940,6 +1940,10 @@ export async function generateFromGraph({
     });
   }
 
+  // One user for validation and for the reply: coverage of a cold checkpoint depends on tier and
+  // isModerator, so formatting the reply with less would contradict what validation accepted.
+  const user = { id: userId, isModerator, tier: externalCtx.user.tier };
+
   const {
     steps,
     workflowMetadata,
@@ -1948,7 +1952,7 @@ export async function generateFromGraph({
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
-    user: { id: userId, isModerator, tier: externalCtx.user.tier },
+    user,
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
@@ -2072,7 +2076,7 @@ export async function generateFromGraph({
   await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
-  const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
   const priced = await downloadWhatIf;
   attachEstimatedPreparation(
     formatted.steps,
@@ -3190,7 +3194,7 @@ export async function updateWorkflow({
 
 export async function formatGenerationResponse2(
   workflows: Workflow[],
-  user?: SessionUser
+  user?: { id?: number; isModerator?: boolean; tier?: string }
 ): Promise<NormalizedWorkflow[]> {
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
