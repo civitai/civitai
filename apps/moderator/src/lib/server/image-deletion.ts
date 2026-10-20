@@ -5,6 +5,7 @@ import { dbWrite } from './db';
 import { getStorage } from './storage';
 import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
+import { bustProfilePictures, profilePictureUserIds } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { syncSearchIndexBulk } from './search-index';
@@ -15,6 +16,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   // an image that still exists would hide it from search while it is live on the site.
   const deleted: number[] = [];
   const parentIds: (number | null)[] = [];
+  const avatarUserIds = await profilePictureUserIds(ids).catch(() => []);
   for (const id of ids) {
     try {
       await dbWrite.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
@@ -64,6 +66,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
 
   void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
   await invalidateThumbnails(deleted, parentIds);
+  await bustProfilePictures({ userIds: avatarUserIds });
 
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];

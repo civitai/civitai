@@ -1,5 +1,7 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
+import type { RemovedUserCosmetic } from '~/server/redis/caches';
+import { refreshUserCosmeticCacheForRemoved } from '~/server/redis/caches';
 
 export async function deliverMembershipCosmetics({
   now,
@@ -85,7 +87,7 @@ export async function deliverMembershipCosmetics({
     ON CONFLICT DO NOTHING;
   `;
 
-  await dbWrite.$executeRaw`
+  const revoked = await dbWrite.$queryRaw<RemovedUserCosmetic[]>`
     -- Revoke member limited cosmetics
     WITH to_revoke AS (
       SELECT
@@ -110,8 +112,10 @@ export async function deliverMembershipCosmetics({
       WHERE r."userId" = uc."userId"
       AND c."permanentUnlock" = false
       AND c.source = 'Membership'
-    );
+    )
+    RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
+  await refreshUserCosmeticCacheForRemoved(revoked);
 }
 
 export const deliverPurchasedCosmetics = createJob(

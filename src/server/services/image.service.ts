@@ -223,7 +223,10 @@ import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
   getCosmeticsForUsers,
+  getProfilePictureUserIds,
   getProfilePicturesForUsers,
+  refreshProfilePicturesForImages,
+  refreshProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -746,6 +749,10 @@ export const deleteImageById = async ({
       source: 'image-delete',
     });
 
+    // Also before the delete: `User.profilePictureId` is `onDelete: SetNull`, so afterwards nothing
+    // says whose avatar this was. Non-throwing for the same reason as the resolver above.
+    const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
@@ -777,6 +784,7 @@ export const deleteImageById = async ({
       userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
       ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
+      refreshProfilePicturesForUsers(profilePictureUserIds),
     ]);
 
     return image;
@@ -1171,6 +1179,10 @@ export async function handleBlockImages({
     });
   }
 
+  // Blocking a whole account can be tens of thousands of ids; its own avatar is the one that matters.
+  if (userId) await refreshProfilePicturesForUsers([userId]);
+  else await refreshProfilePicturesForImages(images.map((x) => x.id));
+
   // Prevent remix-source audit job from re-flagging blocked images
   await markRemixSourceReviewed(images);
 
@@ -1191,7 +1203,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await refreshThumbnailCache(ids);
+  await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -7554,7 +7566,11 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
+    await Promise.all([
+      imageMetadataCache.refresh(id),
+      refreshThumbnailCache(id),
+      refreshProfilePicturesForImages([id]),
+    ]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7655,7 +7671,7 @@ export async function raiseOwnImageNsfwLevel({
   `;
   if (!raised) return false;
 
-  await refreshThumbnailCache(id);
+  await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });

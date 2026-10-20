@@ -15,6 +15,15 @@ dbMock.dbWrite.$executeRaw.mockImplementation((async (
   const { affectedRows } = await holder.db.query(flat.text, flat.values as unknown[]);
   return affectedRows ?? 0;
 }) as never);
+// The revoke returns the rows it deleted, so it is a query rather than an execute.
+dbMock.dbWrite.$queryRaw.mockImplementation((async (
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => {
+  const flat = Prisma.sql(strings, ...(values as never[]));
+  const { rows } = await holder.db.query(flat.text, flat.values as unknown[]);
+  return rows;
+}) as never);
 
 const { deliverMembershipCosmetics } = await import('~/server/jobs/deliver-purchased-cosmetics');
 
@@ -104,6 +113,8 @@ beforeAll(async () => {
       "cosmeticId" int NOT NULL,
       "obtainedAt" timestamp(3),
       "claimKey" text NOT NULL DEFAULT 'claimed',
+      "equippedAt" timestamp(3),
+      "equippedToId" int,
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
     INSERT INTO "Product" VALUES
