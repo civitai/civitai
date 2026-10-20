@@ -6,7 +6,7 @@ import { TrainingTextCheckError, TrainingTextRefusedError } from '$lib/training-
 import { mainAppSessionOrigin } from './main-app';
 import { mainAppTextCheck } from './text-check';
 
-const input = { triggerWord: 'mystyle', captions: ['a cat'] };
+const input = { triggerWord: 'mystyle' };
 
 function answer(status: number, body: unknown) {
   const fetch = vi.fn(async () => new Response(JSON.stringify(body), { status }));
@@ -44,6 +44,22 @@ describe('mainAppTextCheck', () => {
     const error = await mainAppTextCheck('', 1)(input).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TrainingTextCheckError);
     expect(error).toMatchObject({ status, message: 'nope' });
+  });
+});
+
+describe('mainAppTextCheck when the request fails', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('answers with a generic failure, not the underlying error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED internal-host:3000');
+      })
+    );
+    const error = await mainAppTextCheck('', 1)(input).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TrainingTextCheckError);
+    expect((error as Error).message).not.toContain('internal-host');
   });
 });
 

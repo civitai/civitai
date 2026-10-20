@@ -6,13 +6,12 @@ import {
 import { logToAxiom } from './axiom';
 import { mainAppSessionOrigin } from './main-app';
 
-/** Long enough to classify a dataset at the main app's text cap. */
-const CHECK_TIMEOUT_MS = 120_000;
+const CHECK_TIMEOUT_MS = 15_000;
 
 type Answer = { ok?: unknown; message?: string; error?: string } | null;
 
 /**
- * The main app's training text rule, called as this user: their shared .civitai.com session cookie
+ * The main app's trigger word check, called as this user: their shared .civitai.com session cookie
  * is forwarded verbatim, which is what authenticates the request. Only an explicit `{ ok: true }`
  * passes; a refusal throws `TrainingTextRefusedError`, anything else `TrainingTextCheckError`.
  */
@@ -20,9 +19,11 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
   return async (input) => {
     let status: number | undefined;
     let data = null as Answer;
-    // A refusal's reason arrives as `message`; the route's own answers (413, 429) use `error`.
+    /** Why the request itself failed; logged, never shown, as it can name configuration. */
+    let failure: string | undefined;
+    // A refusal's reason arrives as `message`; the route's answer to a malformed body uses `error`.
     const detail = () => data?.message ?? data?.error;
-    const reason = () => detail() ?? `The training text check failed (${status ?? 'unreachable'}).`;
+    const reason = () => detail() ?? `The trigger word check failed (${status ?? 'unreachable'}).`;
     try {
       const res = await fetch(`${mainAppSessionOrigin()}/api/training-studio/check-text`, {
         method: 'POST',
@@ -37,7 +38,8 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
       if (status === 400) throw new TrainingTextRefusedError(detail() ?? 'Refused.');
     } catch (err) {
       if (err instanceof TrainingTextRefusedError) throw err;
-      data = { error: (err as Error)?.message };
+      failure = (err as Error)?.message;
+      data = null;
       status = undefined;
     }
     logToAxiom({
@@ -45,7 +47,7 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
       type: 'error',
       userId,
       status,
-      message: detail(),
+      message: failure ?? detail(),
     });
     throw new TrainingTextCheckError(reason(), status);
   };

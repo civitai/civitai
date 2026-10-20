@@ -6292,7 +6292,7 @@ export const blocksRouter = router({
    *
    * A block names the viewer's image ids and per-image captions; the server
    * admits only the viewer's OWN images that pass the gated-image predicate under
-   * the token's maturity ceiling, moderates the captions, imports the admitted
+   * the token's maturity ceiling, imports the admitted
    * images into orchestrator blobs under the viewer's orchestrator token, and
    * returns an opaque `datasetId` bound to this subject, app and install. The
    * training body names that handle — never images, blob references or a count.
@@ -6348,7 +6348,6 @@ export const blocksRouter = router({
         },
         items: input.items,
         token,
-        checkCaptions: (captions) => checkBlockTrainingText(claims, userId, '', captions),
       });
     }),
 
@@ -14269,7 +14268,7 @@ const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
  *
  * A confirmed quote is what lets a job cost more than the per-call budget. For training
  * that grant belongs to `kind:'training'`, which is what binds the server-prepared
- * dataset to the viewer, audits the captions and prompts, resolves the run against the
+ * dataset to the viewer, checks the trigger word and audits the sample prompts, resolves the run against the
  * training service's own gates and checks the training flag. A training `$type` granted
  * a STEP quote would run above the budget, under the step flag, with none of that.
  *
@@ -14600,7 +14599,7 @@ async function estimateTrainingWorkflow(opts: {
 
   // The sample prompts drive sample generation, so they are moderated as prompts.
   await Promise.all([
-    checkBlockTrainingText(claims, userId, body.triggerWord, []),
+    checkBlockTriggerWord(claims, userId, body.triggerWord),
     auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
   ]);
 
@@ -14653,9 +14652,8 @@ async function estimateTrainingWorkflow(opts: {
 }
 
 /**
- * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
- * body's trigger word + sample prompts. Not a generation submit, so it joins the
- * `other` moderation-source population.
+ * The prompt-moderation pass for a `kind:'training'` body's sample prompts. Not a generation
+ * submit, so it joins the `other` moderation-source population.
  */
 async function auditBlockTrainingText(opts: {
   claims: BlockClaims;
@@ -14669,22 +14667,13 @@ async function auditBlockTrainingText(opts: {
   await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
 }
 
-/**
- * The training text rule for a block's run. Submit passes only the trigger word: captions are
- * checked when the dataset is prepared.
- */
-async function checkBlockTrainingText(
-  claims: BlockClaims,
-  userId: number,
-  triggerWord: string,
-  captions: string[]
-) {
-  const { assertTrainingTextAllowed } = await import(
-    '~/server/services/orchestrator/training/training-label-check'
+/** The training trigger word check, the same on every training path. */
+async function checkBlockTriggerWord(claims: BlockClaims, userId: number, triggerWord: string) {
+  const { assertTrainingTriggerWordAllowed } = await import(
+    '~/server/services/orchestrator/training/training-trigger-word-check'
   );
-  await assertTrainingTextAllowed({
+  await assertTrainingTriggerWordAllowed({
     triggerWord,
-    captions,
     log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
   });
 }
@@ -14760,7 +14749,7 @@ async function submitTrainingWorkflow(opts: {
           isModerator: !!user.isModerator,
         });
         await Promise.all([
-          checkBlockTrainingText(claims, userId, body.triggerWord, []),
+          checkBlockTriggerWord(claims, userId, body.triggerWord),
           auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
         ]);
         // `name` is what the snapshot/publish extractors key on.

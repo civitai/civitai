@@ -21,7 +21,7 @@ const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'events';
 /** Submit a batch of training workflows (see `core.submitTrainingBatch` for the stop-at-first-failure /
  *  partial-return policy). Charges Buzz — the single write in the flow. The `userId` registers the
  *  orchestrator callback that pushes live `workflow-update` signals for each run; `cookie` is the
- *  caller's, forwarded to the main app's training text check. */
+ *  caller's, forwarded to the main app's trigger word check. */
 export function submitTrainingBatch(
   token: string,
   runs: TrainingRunInput[] | undefined,

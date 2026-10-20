@@ -9,7 +9,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
-import type * as ZipModule from '~/server/utils/zip-range-reader';
+import type * as ZipModule from '~/server/utils/service-deal-zip';
 import type * as ScanModule from '~/server/services/creator-service-deal-file-scan';
 import {
   buildZip,
@@ -83,7 +83,7 @@ const bucket = vi.hoisted(() => ({
   objects: new Map<string, Buffer>(),
   zipReads: [] as string[],
 }));
-vi.mock('~/server/utils/zip-range-reader', async (importOriginal) => {
+vi.mock('~/server/utils/service-deal-zip', async (importOriginal) => {
   const original = await importOriginal<typeof ZipModule>();
   return {
     ...original,

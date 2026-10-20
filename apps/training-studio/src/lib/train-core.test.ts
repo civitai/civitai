@@ -94,8 +94,8 @@ describe('extra ai-toolkit fields on the wire', () => {
   });
 });
 
-describe('the training text check', () => {
-  it('checks every run, trigger word and raw captions, before submitting any', async () => {
+describe('the trigger word check', () => {
+  it("checks every run's trigger word before submitting any", async () => {
     const events: unknown[] = [];
     const check = async (input: unknown) => void events.push(input);
     const second = { ...baseRun(), trigger: 'other' };
@@ -105,14 +105,14 @@ describe('the training text check', () => {
     await submitTrainingBatch(client, [baseRun(), second], { checkText: check });
 
     expect(events).toEqual([
-      { triggerWord: baseRun().trigger, captions: baseRun().items.map((i) => i.caption) },
-      { triggerWord: 'other', captions: second.items.map((i) => i.caption) },
+      { triggerWord: baseRun().trigger },
+      { triggerWord: 'other' },
       'submit',
       'submit',
     ]);
   });
 
-  it('checks a dataset repeated across a sweep once', async () => {
+  it('checks a trigger word repeated across a sweep once', async () => {
     const check = vi.fn(async () => undefined);
     submitWorkflow
       .mockResolvedValueOnce({ data: { id: 'wf-5' } })
@@ -143,13 +143,7 @@ describe('keep-training currencies', () => {
       steps: [
         {
           $type: 'training',
-          input: {
-            engine: 'ai-toolkit',
-            ecosystem: 'sdxl',
-            epochs: 10,
-            steps: 2000,
-            trainingData: { type: 'blobs', items: [] },
-          },
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
           output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
         },
       ],
@@ -168,7 +162,7 @@ describe('keep-training currencies', () => {
     expect(submitted![0].body.currencies).toEqual(['blue', 'green']);
   });
 
-  it('checks the source run text again, and submits nothing when it is refused', async () => {
+  it("checks the source run's trigger word again, and submits nothing when it is refused", async () => {
     getWorkflow.mockResolvedValue({
       data: {
         steps: [
@@ -177,7 +171,6 @@ describe('keep-training currencies', () => {
             input: {
               ...sourceRun.data.steps[0].input,
               triggerWord: 'mystyle',
-              trainingData: { type: 'blobs', items: [{ air: 'a', caption: 'a cat' }] },
             },
           },
         ],
@@ -190,30 +183,7 @@ describe('keep-training currencies', () => {
     await expect(continueTraining(client, opts, { checkText: refuse })).rejects.toBeInstanceOf(
       TrainingTextRefusedError
     );
-    expect(refuse).toHaveBeenCalledWith({ triggerWord: 'mystyle', captions: ['a cat'] });
-    expect(submitWorkflow.mock.calls.length).toBe(calls);
-  });
-
-  it('refuses to continue a run whose dataset text cannot be read back', async () => {
-    getWorkflow.mockResolvedValue({
-      data: {
-        steps: [
-          {
-            ...sourceRun.data.steps[0],
-            input: {
-              ...sourceRun.data.steps[0].input,
-              trainingData: { type: 'zip', sourceUrl: 'x' },
-            },
-          },
-        ],
-      },
-    });
-    const calls = submitWorkflow.mock.calls.length;
-    const check = vi.fn(async () => undefined);
-    await expect(continueTraining(client, opts, { checkText: check })).rejects.toBeInstanceOf(
-      TrainingTextRefusedError
-    );
-    expect(check).not.toHaveBeenCalled();
+    expect(refuse).toHaveBeenCalledWith({ triggerWord: 'mystyle' });
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 

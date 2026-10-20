@@ -702,9 +702,9 @@ the viewer, and the viewer is signed in. Steps 1–3 check these server-side.
    in the same `error` field.
 
    The server admits only the viewer's own scanned, unflagged images within the token's
-   maturity ceiling, moderates the captions (and, at estimate and submit, the trigger word)
-   under the same training text rule the trainer and Training Studio use, imports the
-   admitted images under the viewer's orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
+   maturity ceiling, imports the admitted images under the viewer's orchestrator token, and
+   returns `{ datasetId, count, rejected }`. Captions are not moderated; the trigger word is
+   checked at estimate and submit, under the same rule the trainer and Training Studio use. The handle is
    bound to the viewer, app and install; the image count is always server-derived.
    Every image is re-checked at submit, before anything is charged; a dataset with an
    image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator

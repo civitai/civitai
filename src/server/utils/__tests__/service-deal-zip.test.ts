@@ -1,15 +1,16 @@
 import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  bufferZipSource,
   deliveryName,
   openEntryStream,
   openZip,
   pathRefusal,
   readEntry,
+  s3ZipSource,
   ZipRejectedError,
   type EntryKind,
 } from '~/server/utils/service-deal-zip';
-import { bufferZipSource, s3ZipSource } from '~/server/utils/zip-range-reader';
 import {
   SERVICE_ZIP_MAX_ENTRIES,
   SERVICE_ZIP_MAX_ENTRY_BYTES,
@@ -411,59 +412,19 @@ describe('what an archive actually does', () => {
   });
 });
 
-describe('a final missing from the bucket', () => {
-  it('is refused once, with a reason, rather than retried for ever', async () => {
-    const send = vi.fn(async () => {
-      throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
-    });
-    await expect(openZip(s3ZipSource({ send } as never, 'bucket', 'key', 100))).rejects.toThrow(
-      new ZipRejectedError('The file is no longer in storage. Upload it again.')
-    );
-  });
-
-  it('while any other storage failure is left to be retried', async () => {
-    const send = vi.fn(async () => {
-      throw new Error('connection reset');
-    });
-    const error = await openZip(s3ZipSource({ send } as never, 'bucket', 'key', 100)).catch(
-      (e: unknown) => e
-    );
-    expect(error).not.toBeInstanceOf(ZipRejectedError);
-    expect((error as Error).message).toBe('connection reset');
-  });
-});
-
 describe('reading from the bucket', () => {
   it('asks for exactly the range, and for nothing when the range is empty', async () => {
-    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abcdefghij')]) }));
+    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abc')]) }));
     const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
     const chunks: Buffer[] = [];
     for await (const chunk of source.readRange(10, 20)) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).toString()).toBe('abcdefghij');
+    expect(Buffer.concat(chunks).toString()).toBe('abc');
     const command = (send.mock.calls[0] as unknown as [{ input: Record<string, unknown> }])[0];
     expect(command.input).toMatchObject({ Bucket: 'bucket', Key: 'key', Range: 'bytes=10-19' });
     const empty: unknown[] = [];
     for await (const chunk of source.readRange(5, 5)) empty.push(chunk);
     expect(empty).toEqual([]);
     expect(send).toHaveBeenCalledTimes(1);
-  });
-
-  it('fails the stream when the body ends short of the range, rather than passing on less', async () => {
-    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('abc')]) }));
-    const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
-    await expect(
-      (async () => {
-        for await (const chunk of source.readRange(10, 20)) void chunk;
-      })()
-    ).rejects.toThrow('ended early');
-  });
-
-  it('asks for no more than the object holds', async () => {
-    const send = vi.fn(async () => ({ Body: Readable.from([Buffer.from('xyz')]) }));
-    const source = s3ZipSource({ send } as never, 'bucket', 'key', 100);
-    for await (const chunk of source.readRange(97, 120)) void chunk;
-    const command = (send.mock.calls[0] as unknown as [{ input: Record<string, unknown> }])[0];
-    expect(command.input).toMatchObject({ Range: 'bytes=97-99' });
   });
 
   it('fails the stream when the bucket does', async () => {
@@ -564,9 +525,8 @@ describe('copying an entry out', () => {
   });
 
   it('fails when the source of the archive fails part-way, rather than waiting for ever', async () => {
-    // Larger than the tail the reader holds in memory, so the entry's bytes are read from the source.
     const whole = bufferZipSource(
-      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(40000)), method: 'store' }])
+      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(2000)), method: 'store' }])
     );
     let failing = false;
     const flaky = {

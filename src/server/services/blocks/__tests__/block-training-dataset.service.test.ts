@@ -24,8 +24,7 @@ import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/workflo
 
 /**
  * The `kind:'training'` DATASET primitive: admission per image, server-derived
- * count, the caption check BEFORE any import, and a handle bound to the
- * subject/app/install that prepared it.
+ * count, and a handle bound to the subject/app/install that prepared it.
  */
 
 // PG (1) | PG13 (2) — a SFW ceiling. 4 (R) is above it.
@@ -110,9 +109,6 @@ describe('trainingBlobAirFromImport', () => {
 });
 
 describe('prepareBlockTrainingDataset', () => {
-  const audit = vi.fn(async () => undefined);
-  beforeEach(() => audit.mockReset());
-
   it('stores only admitted, imported images; the count is server-derived', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([
       row({ id: 1, url: 'k1' }),
@@ -128,7 +124,6 @@ describe('prepareBlockTrainingDataset', () => {
         { imageId: 9, caption: 'not mine' },
       ],
       token: 'tok',
-      checkCaptions: audit,
     });
     expect(out.count).toBe(2);
     expect(out.datasetId).toMatch(/^tds_[a-f0-9]{32}$/);
@@ -136,13 +131,6 @@ describe('prepareBlockTrainingDataset', () => {
       { imageId: 2, reason: 'not-eligible' },
       { imageId: 9, reason: 'unavailable' },
     ]);
-
-    // Captions are checked once, over the ADMITTED set only, before any import.
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(audit).toHaveBeenCalledWith(['a cat', 'c']);
-    expect(audit.mock.invocationCallOrder[0]).toBeLessThan(
-      mockImageUpload.mock.invocationCallOrder[0]
-    );
 
     // Imported under the VIEWER's token with the token's maturity clamp.
     expect(mockImageUpload).toHaveBeenCalledTimes(2);
@@ -171,7 +159,6 @@ describe('prepareBlockTrainingDataset', () => {
       actor: ACTOR,
       items: [{ imageId: 1, caption: '' }],
       token: 'tok',
-      checkCaptions: audit,
     });
     const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [
       TemplateStringsArray,
@@ -196,25 +183,9 @@ describe('prepareBlockTrainingDataset', () => {
         { imageId: 2, caption: '' },
       ],
       token: 'tok',
-      checkCaptions: audit,
     });
     expect(out.count).toBe(1);
     expect(out.rejected).toEqual([{ imageId: 1, reason: 'import-failed' }]);
-  });
-
-  it('a refused caption set stops the request before any import', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row({ id: 1 })]);
-    audit.mockRejectedValueOnce(new Error('prompt refused'));
-    await expect(
-      prepareBlockTrainingDataset({
-        actor: ACTOR,
-        items: [{ imageId: 1, caption: 'bad' }],
-        token: 'tok',
-        checkCaptions: audit,
-      })
-    ).rejects.toThrow('prompt refused');
-    expect(mockImageUpload).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 
   it('nothing admitted is a refusal, and nothing is stored', async () => {
@@ -224,7 +195,6 @@ describe('prepareBlockTrainingDataset', () => {
         actor: ACTOR,
         items: [{ imageId: 1, caption: '' }],
         token: 'tok',
-        checkCaptions: audit,
       })
     ).rejects.toThrow('none of the requested images can be used for training');
     expect(mockImageUpload).not.toHaveBeenCalled();
@@ -240,11 +210,11 @@ describe('prepareBlockTrainingDataset', () => {
         { imageId: 1, caption: 'second' },
       ],
       token: 'tok',
-      checkCaptions: audit,
     });
     expect(out.count).toBe(1);
     expect(mockImageUpload).toHaveBeenCalledTimes(1);
-    expect(audit).toHaveBeenCalledWith(['first']);
+    const stored = JSON.parse(redisMock.sysRedis.set.mock.calls[0][1] as string);
+    expect(stored.items.map((i: { caption: string }) => i.caption)).toEqual(['first']);
   });
 
   it('refuses more than the per-dataset maximum', async () => {
@@ -253,7 +223,7 @@ describe('prepareBlockTrainingDataset', () => {
       caption: '',
     }));
     await expect(
-      prepareBlockTrainingDataset({ actor: ACTOR, items, token: 'tok', checkCaptions: audit })
+      prepareBlockTrainingDataset({ actor: ACTOR, items, token: 'tok' })
     ).rejects.toThrow(`at most ${BLOCK_TRAINING_DATASET_MAX_ITEMS}`);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
@@ -302,8 +272,6 @@ describe('loadBlockTrainingDataset — the handle is bound to subject, app and i
 });
 
 describe('import failures are classified, and the timeout is per image', () => {
-  const audit = vi.fn(async () => undefined);
-
   it('an unavailable orchestrator is a RETRYABLE reason, a refusal is not', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([
       row({ id: 1, url: 'k1' }),
@@ -325,7 +293,6 @@ describe('import failures are classified, and the timeout is per image', () => {
         { imageId: 3, caption: '' },
       ],
       token: 'tok',
-      checkCaptions: audit,
     });
     expect(out.count).toBe(1);
     expect(out.rejected).toEqual([
@@ -349,7 +316,6 @@ describe('import failures are classified, and the timeout is per image', () => {
           { imageId: 2, caption: '' },
         ],
         token: 'tok',
-        checkCaptions: audit,
       });
       let settled = false;
       void pending.then(() => (settled = true)).catch(() => (settled = true));
@@ -380,7 +346,6 @@ describe('the whole-request import budget', () => {
         actor: ACTOR,
         items: rows.map((r) => ({ imageId: r.id, caption: '' })),
         token: 'tok',
-        checkCaptions: vi.fn(async () => undefined),
       });
       let message: string | null = null;
       void pending.then(

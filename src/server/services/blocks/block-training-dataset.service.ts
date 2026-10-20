@@ -200,10 +200,6 @@ async function importTrainingImage(
 /**
  * Prepare a training dataset from the viewer's own images.
  *
- * `checkCaptions` is the training text rule (`assertTrainingTextAllowed`), run before
- * any orchestrator import so a refused caption set costs no upload. It is injected
- * because the log identity (the block's claims) belongs to the caller.
- *
  * Throws BAD_REQUEST when nothing was admitted — a handle to an empty dataset would
  * only fail later, at a quote.
  */
@@ -212,7 +208,6 @@ export async function prepareBlockTrainingDataset(input: {
   items: Array<{ imageId: number; caption: string }>;
   /** The viewer's orchestrator token. */
   token: string;
-  checkCaptions: (captions: string[]) => Promise<void>;
 }): Promise<{
   datasetId: string;
   count: number;
@@ -258,8 +253,6 @@ export async function prepareBlockTrainingDataset(input: {
       message: 'none of the requested images can be used for training',
     });
   }
-
-  await input.checkCaptions(admitted.map((a) => a.caption));
 
   const limit = pLimit(BLOCK_TRAINING_IMPORT_CONCURRENCY);
   const deadline = Date.now() + BLOCK_TRAINING_IMPORT_BUDGET_MS;

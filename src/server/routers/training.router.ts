@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
@@ -19,11 +18,6 @@ import {
 } from '~/server/schema/training.schema';
 import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
 import { moveAsset } from '~/server/services/orchestrator/training/move-asset';
-import {
-  assertTrainingTextAllowed,
-  takeTrainingTextCheckBudget,
-  TRAINING_DATASET_MAX_FILES,
-} from '~/server/services/orchestrator/training/training-label-check';
 import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
 import {
   autoCaptionHandler,
@@ -37,7 +31,6 @@ import {
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
-import { MAX_AUDIT_PROMPT_LENGTH } from '~/utils/metadata/audit';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -115,33 +108,6 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getByIdSchema)
     .query(getModelData),
-  /** The training text rule over the labels the trainer is about to upload, so a dataset that would
-   *  be refused is never uploaded. The uploaded zip itself is checked again once stored. */
-  checkLabels: guardedProcedure
-    .meta({ requiredScope: TokenScope.AIServicesWrite })
-    .input(
-      z.object({
-        triggerWord: z.string().max(MAX_AUDIT_PROMPT_LENGTH),
-        // A label longer than one audit is refused anyway.
-        captions: z.array(z.string().max(MAX_AUDIT_PROMPT_LENGTH)).max(TRAINING_DATASET_MAX_FILES),
-      })
-    )
-    .mutation(async ({ input, ctx }) => {
-      const rate = await takeTrainingTextCheckBudget(ctx.user.id, [
-        input.triggerWord,
-        ...input.captions,
-      ]);
-      if (!rate.allowed)
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Too many training checks. Try again later.',
-        });
-      await assertTrainingTextAllowed({
-        ...input,
-        log: { userId: ctx.user.id, source: 'trainer-upload' },
-      });
-      return { ok: true as const };
-    }),
   autoTag: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(autoTagInput)

@@ -23,12 +23,11 @@ import * as train from '$lib/train-core';
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
-  /** The main app's training text rule for one run, called before anything is submitted. Resolves
+  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
    *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
    *  cannot start training: the element refuses rather than submit unchecked. */
   checkTrainingText?(input: {
     triggerWord: string;
-    captions: string[];
   }): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;

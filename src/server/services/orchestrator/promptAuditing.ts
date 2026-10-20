@@ -441,9 +441,8 @@ export async function classifyPromptServer(
 
 /**
  * The external classifier alone, sent the same benign-stripped copy `classifyPromptServer` sends
- * it. For text whose word rules are applied elsewhere: training text is checked tag by tag, so a
- * regex pass over joined captions would match across unrelated tags. Fails open and records
- * nothing, as there.
+ * it. For text whose word rules are applied elsewhere, such as a training trigger word, where a
+ * soft word-rule hit passes. Fails open and records nothing, as there.
  */
 export async function classifyPromptExternally(
   prompt: string,

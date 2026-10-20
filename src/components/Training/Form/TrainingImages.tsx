@@ -67,7 +67,7 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingLabels, labelAsTrained } from '~/utils/metadata/training-label-audit';
+import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
 import {
   blankTagStr,
   labelDescriptions,
@@ -338,7 +338,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
   const [isZoomed, setIsZoomed] = useState(false);
-  const [onlyIssues, setOnlyIssues] = useState(false);
   const [accordionUpload, setAccordionUpload] = useState<string | null>(
     imageList.length > 0 ? null : 'uploading'
   );
@@ -626,7 +625,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 type: mediaExts[fileExt],
                 url: scaledUrl,
                 label: labelStr,
-                invalidLabel: false,
                 source: source ?? null,
               });
               completedCount++;
@@ -698,7 +696,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 name: f.name,
                 type: storedType,
                 url: scaledUrl,
-                invalidLabel: false,
                 label,
                 source,
               },
@@ -984,7 +981,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
   });
 
-  const checkLabelsMutation = trpc.training.checkLabels.useMutation();
   const submitTagMutation = trpc.training.autoTag.useMutation({
     // TODO allow people to rerun failed images
     onError(error) {
@@ -1072,12 +1068,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
-  const hasIssues = imageList.some((i) => i.invalidLabel);
-
   const filteredImages = useMemo(() => {
     return imageList.filter((i) => {
-      if (hasIssues && onlyIssues && !i.invalidLabel) return false;
-
       if (labelType === 'caption') {
         if (!searchCaption.length && !selectedTags.length) return true;
         if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
@@ -1095,7 +1087,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return mergedCapts.length > 0;
       }
     });
-  }, [imageList, labelType, selectedTags, searchCaption, onlyIssues, hasIssues]);
+  }, [imageList, labelType, selectedTags, searchCaption]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
@@ -1106,33 +1098,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
-
-    if (!dlOnly) {
-      hideNotification(notificationId);
-      showNotification({
-        id: notificationId,
-        loading: true,
-        autoClose: false,
-        withCloseButton: false,
-        title: 'Checking labels',
-        message: 'Checking your labels before uploading...',
-      });
-      try {
-        await checkLabelsMutation.mutateAsync({
-          triggerWord,
-          captions: imageList
-            .map((i) => labelAsTrained(i.label, triggerWord, labelType))
-            .filter((label) => label.length > 0),
-        });
-      } catch (e: unknown) {
-        setZipping(false);
-        updateNotification({
-          ...notificationFailBase,
-          ...(e instanceof Error && e.message ? { message: e.message } : {}),
-        });
-        return;
-      }
-    }
 
     const zip = await getJSZip();
 
@@ -1332,35 +1297,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingLabels({
-        triggerWord,
-        // Checked as written to the dataset, which is what the server checks once uploaded.
-        labels: imageList.map((i) => ({
-          key: getShortNameFromUrl(i),
-          label: labelAsTrained(i.label, triggerWord, labelType),
-        })),
-        checkProfanity: isGreen,
-      });
-
-      if (triggerWordInvalid !== audit.triggerWordInvalid) {
-        setTriggerWordInvalid(model.id, thisMediaType, audit.triggerWordInvalid);
+      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+      if (triggerWordInvalid !== (audit.severity !== 'clean')) {
+        setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
       }
-      const invalidKeys = new Set(audit.invalidKeys);
-      imageList.forEach((i) => {
-        const matcher = getShortNameFromUrl(i);
-        const invalidLabel = invalidKeys.has(matcher);
-        if (!!i.invalidLabel !== invalidLabel) {
-          updateImage(model.id, thisMediaType, { matcher, invalidLabel });
-        }
-      });
 
       if (audit.severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
           color: 'red',
-          title: 'Inappropriate labels',
-          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${audit.offendingWords.join(
+          title: 'Inappropriate trigger word',
+          message: `This trigger word has been blocked. Please review it and resubmit. Reason: ${audit.offendingWords.join(
             ', '
           )}`,
         });
@@ -1387,19 +1335,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       };
 
       if (audit.severity === 'soft') {
-        // A trigger-word-only hit marks no image card, so copy that says "labels" sends the
-        // creator hunting through labels that are all fine.
-        const subject = [
-          audit.invalidKeys.length ? 'labels' : undefined,
-          audit.triggerWordInvalid ? 'trigger word' : undefined,
-        ]
-          .filter(isDefined)
-          .join(' and ');
         return openConfirmModal({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">{`Check your ${subject}`}</Text>
+              <Text size="lg">Check your trigger word</Text>
             </Group>
           ),
           children: (
@@ -1410,7 +1350,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
-          labels: { cancel: `Review ${subject}`, confirm: 'Continue anyway' },
+          labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
           centered: true,
           onConfirm: continueSubmit,
         });
@@ -1710,12 +1650,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
                     onBlur={() => {
-                      const audit = auditTrainingLabels({
-                        triggerWord,
-                        labels: [],
-                        checkProfanity: isGreen,
-                      });
-                      if (audit.triggerWordInvalid) {
+                      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+                      if (audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
                           const soft = audit.severity === 'soft';
@@ -1780,13 +1716,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ) : (
               <></>
             )}
-            {hasIssues && (
-              <Checkbox
-                label="Show only inappropriate labels"
-                checked={onlyIssues}
-                onChange={(event) => setOnlyIssues(event.currentTarget.checked)}
-              />
-            )}
             {loadingZip ? (
               <Center mt="md" style={{ flexDirection: 'column' }}>
                 <Loader />
@@ -1813,7 +1742,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         shadow="sm"
                         radius="sm"
                         withBorder
-                        className={clsx('p-1', { [styles.badLabel]: imgData.invalidLabel })}
+                        className="p-1"
                       >
                         <Card.Section className="-mx-1 -mt-1" mb="xs">
                           {AUDIO_MIME_TYPE.includes(imgData.type as never) ? (

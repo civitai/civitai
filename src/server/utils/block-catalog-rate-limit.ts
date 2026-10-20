@@ -354,11 +354,8 @@ export type BlockCatalogRateLimitResult =
  *      separate change with its own verification. **Closing condition: a PR that moves
  *      this one body to the MULTI shape and leaves all five buckets' unit suites
  *      green.**
- *
- * Also used outside App Blocks, by `takeTrainingTextCheckBudget` (training-label-check.ts): a change to this
- * body changes that limit too.
  */
-export async function checkFixedWindow(
+async function checkFixedWindow(
   key: string,
   max: number,
   windowSeconds: number,

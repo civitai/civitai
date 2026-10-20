@@ -19,7 +19,6 @@ const {
   mockDeleteObject,
   mockResourceDataBust,
   mockBustOrchestrator,
-  mockStartZipCheck,
 } = vi.hoisted(() => ({
   mockRegister: vi.fn(() => Promise.resolve()),
   mockDeregister: vi.fn(() => Promise.resolve()),
@@ -27,7 +26,6 @@ const {
   mockDeleteObject: vi.fn(() => Promise.resolve()),
   mockResourceDataBust: vi.fn(() => Promise.resolve()),
   mockBustOrchestrator: vi.fn(() => Promise.resolve()),
-  mockStartZipCheck: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('~/utils/storage-resolver', async (importOriginal) => ({
@@ -48,9 +46,6 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
-}));
-vi.mock('~/server/services/orchestrator/training/training-zip-check', () => ({
-  startTrainingZipCheck: mockStartZipCheck,
 }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventModelVersionLag: vi.fn(() => Promise.resolve()),
@@ -179,8 +174,6 @@ describe('a new upload through modelFile.upsert', () => {
       mockScan.mock.invocationCallOrder[0]
     );
     expect(mockDeregister).toHaveBeenCalledWith([OLD_ID]);
-    // A model file is not a dataset.
-    expect(mockStartZipCheck).not.toHaveBeenCalled();
   });
 
   it('still answers when the scan submit fails; the fallback job retries it', async () => {
@@ -240,13 +233,6 @@ describe('a new upload through modelFile.upsert', () => {
       data: { metadata: Record<string, unknown> };
     };
     expect(created.data.metadata).toMatchObject({ uploadDomain: 'green', numImages: 4 });
-    // The new dataset's text is checked while the user sets up the run.
-    expect(mockStartZipCheck).toHaveBeenCalledWith({
-      url: 'https://s3.us-west-004.backblazeb2.com/model-bucket/training-images/7/new.zip',
-      userId: OWNER_ID,
-      modelVersionId: VERSION_ID,
-    });
-    expect(mockStartZipCheck).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -289,8 +275,6 @@ describe('a metadata-only edit through modelFile.upsert', () => {
       data: { metadata: Record<string, unknown> };
     };
     expect(written.data.metadata).toEqual({ uploadDomain: 'red', numImages: 5 });
-    // The dataset itself is unchanged, so its verdict stands.
-    expect(mockStartZipCheck).not.toHaveBeenCalled();
   });
 });
 

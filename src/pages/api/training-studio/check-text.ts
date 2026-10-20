@@ -1,54 +1,28 @@
 import * as z from 'zod';
-import {
-  assertTrainingTextAllowed,
-  takeTrainingTextCheckBudget,
-} from '~/server/services/orchestrator/training/training-label-check';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
-import { BodyTooLargeError, readCappedBody } from '~/server/utils/read-capped-body';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
-// Body read by hand after authentication, so an anonymous request is never parsed.
-export const config = { api: { bodyParser: false } };
+export const config = { api: { bodyParser: { sizeLimit: '16kb' } } };
 
-const MAX_BODY_BYTES = 5 * 1024 * 1024;
-
-const schema = z.object({
-  triggerWord: z.string(),
-  captions: z.array(z.string()),
-});
+// Far beyond any trigger word; bounds what one request sends to the classifier.
+const schema = z.object({ triggerWord: z.string().max(1000) });
 
 /**
- * The training text rule for the Training Studio, which submits to the orchestrator itself: both of
- * its surfaces call this for every run before submitting. POST { triggerWord, captions } → 200
- * { ok: true }; 400 with the refusal's reason in `message`; 413 when the text is beyond what is checked.
+ * The training trigger word check for the Training Studio, which submits to the orchestrator
+ * itself: both of its surfaces call this for every run before submitting. POST { triggerWord } →
+ * 200 { ok: true }; 400 with the refusal's reason in `message`.
  */
 export default AuthedEndpoint(
   async (req, res, user) => {
     if (!(await allowTrainingStudio(req, res, user, { pageFlag: false }))) return;
 
-    let body: unknown;
-    try {
-      body = JSON.parse((await readCappedBody(req, MAX_BODY_BYTES)).toString('utf8'));
-    } catch (e) {
-      if (e instanceof BodyTooLargeError)
-        return res.status(413).json({ error: 'This dataset has more text than can be checked.' });
-      return res.status(400).json({ error: 'Invalid training text.' });
-    }
-    const input = schema.safeParse(body);
-    if (!input.success) return res.status(400).json({ error: 'Invalid training text.' });
-
-    const rate = await takeTrainingTextCheckBudget(user.id, [
-      input.data.triggerWord,
-      ...input.data.captions,
-    ]);
-    if (!rate.allowed) {
-      res.setHeader('Retry-After', String(rate.retryAfterSeconds));
-      return res.status(429).json({ error: 'Too many training checks. Try again later.' });
-    }
+    const input = schema.safeParse(req.body);
+    if (!input.success) return res.status(400).json({ error: 'Invalid trigger word.' });
 
     try {
-      await assertTrainingTextAllowed({
-        ...input.data,
+      await assertTrainingTriggerWordAllowed({
+        triggerWord: input.data.triggerWord,
         log: { userId: user.id, source: 'training-studio' },
       });
     } catch (e) {

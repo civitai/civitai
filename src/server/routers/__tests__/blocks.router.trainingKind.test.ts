@@ -39,7 +39,7 @@ const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(async () => undefined),
   audit: vi.fn(async () => undefined),
-  checkText: vi.fn(async (_input: { triggerWord: string; captions: string[] }) => undefined),
+  checkTriggerWord: vi.fn(async (_input: { triggerWord: string }) => undefined),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   reserveAppSpend: vi.fn(async () => ({ allowed: true, dailyKey: 'app-daily' })),
   refundAppSpend: vi.fn(async () => undefined),
@@ -95,9 +95,8 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (...a: unknown[]) => h.audit(...(a as [])),
 }));
-vi.mock('~/server/services/orchestrator/training/training-label-check', () => ({
-  assertTrainingTextAllowed: (input: { triggerWord: string; captions: string[] }) =>
-    h.checkText(input),
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: (input: { triggerWord: string }) => h.checkTriggerWord(input),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -483,13 +482,13 @@ describe('training ESTIMATE — prices the run and stores a quote', () => {
     ]);
   });
 
-  it('checks the trigger word under the training rule and audits the sample prompts, before pricing', async () => {
+  it('checks the trigger word and audits the sample prompts, before pricing', async () => {
     await estimate();
-    expect(h.checkText).toHaveBeenCalledTimes(1);
-    expect(h.checkText).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerWord: 'mychar', captions: [] })
+    expect(h.checkTriggerWord).toHaveBeenCalledTimes(1);
+    expect(h.checkTriggerWord).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar' })
     );
-    expect(h.checkText.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(h.checkTriggerWord.mock.invocationCallOrder[0]).toBeLessThan(
       h.submitWorkflow.mock.invocationCallOrder[0]
     );
     expect(h.audit).toHaveBeenCalledWith(
@@ -502,6 +501,12 @@ describe('training ESTIMATE — prices the run and stores a quote', () => {
     expect(h.audit.mock.invocationCallOrder[0]).toBeLessThan(
       h.submitWorkflow.mock.invocationCallOrder[0]
     );
+  });
+
+  it('a refused trigger word stops the estimate before pricing', async () => {
+    h.checkTriggerWord.mockRejectedValueOnce(new Error('trigger word refused'));
+    await expect(estimate()).rejects.toThrow('trigger word refused');
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1147,12 +1152,12 @@ describe('training — maturity, currency and re-admission', () => {
 
   it('the submit re-checks the trigger word, and a refusal charges nothing', async () => {
     const quoteId = await confirmedQuote();
-    h.checkText.mockClear();
-    h.checkText.mockRejectedValueOnce(new Error('trigger word refused'));
+    h.checkTriggerWord.mockClear();
+    h.checkTriggerWord.mockRejectedValueOnce(new Error('trigger word refused'));
     await expect(submit(body({ quoteId }))).rejects.toThrow('trigger word refused');
-    expect(h.checkText).toHaveBeenCalledTimes(1);
-    expect(h.checkText).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerWord: 'mychar', captions: [] })
+    expect(h.checkTriggerWord).toHaveBeenCalledTimes(1);
+    expect(h.checkTriggerWord).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar' })
     );
     expect(realSubmits()).toHaveLength(0);
     expect(counter('system:blocks:buzz-cap')).toBe(0);
@@ -1337,9 +1342,9 @@ describe('prepareTrainingDataset — router wiring', () => {
       ],
     });
     expect(out.rejected).toEqual([{ imageId: 6, reason: 'not-eligible' }]);
-    expect(h.checkText).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerWord: '', captions: ['a cat'] })
-    );
+    // Captions are not moderated: neither check runs at prepare.
+    expect(h.checkTriggerWord).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
     expect(h.imageUpload).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'orch-token', allowMatureContent: false })
     );

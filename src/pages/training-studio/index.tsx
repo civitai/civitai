@@ -161,7 +161,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
         },
-        checkTrainingText: async (input: { triggerWord: string; captions: string[] }) => {
+        checkTrainingText: async (input: { triggerWord: string }) => {
           const r = await fetch('/api/training-studio/check-text', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -173,12 +173,12 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             message?: string;
             error?: string;
           } | null;
-          // A refusal's reason arrives as `message`; the route's own answers (413, 429) use `error`.
+          // A refusal's reason arrives as `message`; the route's answer to a malformed body uses `error`.
           const detail = data?.message ?? data?.error;
           // Only an explicit verdict passes.
           if (r.ok && data?.ok === true) return { ok: true as const };
           if (r.status === 400) return { ok: false as const, error: detail ?? 'Refused.' };
-          throw new Error(detail ?? `The training text check failed (${r.status}).`);
+          throw new Error(detail ?? `The trigger word check failed (${r.status}).`);
         },
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
