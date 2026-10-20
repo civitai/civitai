@@ -28,6 +28,25 @@ describe('humanizeCategory', () => {
 });
 
 describe('explainMatches', () => {
+  it('shows an external label as the category, not as text from the prompt', () => {
+    const out = explainMatches({
+      prompt: 'some prompt',
+      category: 'external',
+      matchedWord: 'flagged label',
+    });
+    expect(out).toEqual([
+      {
+        category: 'flagged label',
+        text: undefined,
+        regex: undefined,
+        field: undefined,
+        gateWord: undefined,
+      },
+    ]);
+    expect(isMissingFromText(out[0], { prompt: 'some prompt' })).toBe(false);
+    expect(highlightSets(out)).toEqual({ prompt: [], negativePrompt: [] });
+  });
+
   it('uses matches when present', () => {
     const out = explainMatches({
       matches: [

@@ -53,13 +53,18 @@ export function explainMatches(trigger: MatchSource): ExplainedMatch[] {
       trigger.gateWord
     ? [trigger]
     : [];
-  return raw.map((m) => ({
-    category: m.category || undefined,
-    text: m.matchedText || m.matchedWord || undefined,
-    regex: m.matchedRegex || undefined,
-    field: m.matchedField,
-    gateWord: m.gateWord || undefined,
-  }));
+  return raw.map((m) =>
+    // External moderation stores its classifier label in matchedWord; it is not prompt text.
+    m.category?.toLowerCase() === 'external'
+      ? { category: m.matchedWord || m.category }
+      : {
+          category: m.category || undefined,
+          text: m.matchedText || m.matchedWord || undefined,
+          regex: m.matchedRegex || undefined,
+          field: m.matchedField,
+          gateWord: m.gateWord || undefined,
+        }
+  );
 }
 
 /** A match with no recorded field marks both boxes; a gate word is always from the prompt. */
