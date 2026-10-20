@@ -83,7 +83,7 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     //   -1  `updateUserSettings`  → user-settings.service.ts          (POST /user-checkpoint/set)
     // Both landed as their own ledger entries below, so net production call sites are
     // unchanged — the count moved between rows, it did not leave the table.
-    // 15 → 16: the shared gate of the `kind:'training'` entry points (now
+    // 15 → 16: the shared gate of the quoted-grant entry points (now
     // `assertQuotedGrantRequestAllowed`). One call site — the helper is the gate.
     // 16 → 14: `getMyBuzzBalance`'s inline call and the buzz-read helper's call. The four
     // buzz reads now reach the gate through `authorizeBlockBridgeViewer`'s one call, which

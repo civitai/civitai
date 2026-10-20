@@ -180,7 +180,9 @@ describe('training submit replies', () => {
 
 /**
  * THE CLIENT-BUNDLE RELATIONSHIP. `PageBlockHost` imports this gate statically, so
- * everything it imports at RUNTIME ships in the page host's chunk. The dataset schema
+ * everything it imports at RUNTIME ships in the page host's chunk: an import of
+ * `workflow.schema` here would put every step and recipe registry in front of every
+ * app page's first render. The dataset schema
  * lives in `training-dataset.schema.ts` (zod only) so that `workflow.schema.ts` — and
  * the step/recipe registries it imports — stays out. Pinned as a set: it fails if the
  * closure GROWS or SHRINKS.

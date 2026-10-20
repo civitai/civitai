@@ -5273,8 +5273,8 @@ export function PageBlockHost({
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
-  // Kept so a bundle still sending this fails at once instead of hanging. Training images
-  // now arrive via OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }.
+  // A bundle may still send this: answer at once rather than hang. Training images
+  // arrive via OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }.
   useEffect(() => {
     const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
       const requestId = (raw as { requestId?: unknown } | null | undefined)?.requestId;

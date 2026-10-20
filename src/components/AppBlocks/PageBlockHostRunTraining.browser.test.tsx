@@ -190,6 +190,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     previewMutate.mockReset();
     consentMutate.mockReset();
     submitMutate.mockReset();
+    uploadConsumerBlob.mockReset();
     previewMutate.mockResolvedValue(PREVIEW);
     consentMutate.mockResolvedValue({ quoteId: QUOTE_ID, total: 1234, consented: true });
     submitMutate.mockResolvedValue({ snapshot: SNAPSHOT });
@@ -344,7 +345,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     });
     const png = (name: string) =>
       new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
-    await userEvent.upload(input, [png('K1.png'), png('K2.png')]);
+    await userEvent.upload(input, [png('K1.png'), png('K2.png'), png('K3.png')]);
     const urlOf = (key: string) =>
       `https://orchestration.civitai.com/v2/consumer/blobs/${key}?sig=${key}`;
     await vi.waitFor(() => {
@@ -356,6 +357,7 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
           images: [
             { url: urlOf('K1.png'), air: 'K1.png' },
             { url: urlOf('K2.png'), air: 'K2.png' },
+            { url: urlOf('K3.png'), air: 'K3.png' },
           ],
         },
       });
@@ -436,6 +438,13 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
       });
     });
     expect(consentMutate).not.toHaveBeenCalled();
+
+    // Positive control: the one that uploaded WAS recorded.
+    previewMutate.mockResolvedValue({ ...PREVIEW, itemKeys: ['OK.png'] });
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_ok', body: BODY });
+    await expect
+      .element(page.getByRole('button', { name: 'Train for 1,234 Buzz' }))
+      .toBeInTheDocument();
     replies.stop();
   });
 
