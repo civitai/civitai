@@ -184,7 +184,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -4342,6 +4342,14 @@ export interface UserPurchasedRewards {
   createdAt: Date;
   meta: JsonValue;
   code: string;
+}
+
+export interface ImageCdnAccess {
+  url: string;
+  state: string;
+  deniedAt: Date;
+  retractedAt: Date | null;
+  lastAssertedAt: Date;
 }
 
 export interface JobQueue {

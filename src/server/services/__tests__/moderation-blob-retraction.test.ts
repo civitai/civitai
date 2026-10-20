@@ -5,10 +5,9 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 
 const mockLogToAxiom = loggingMock.logToAxiom;
 
-// The image-cache service's invalidate endpoint can also destroy the SHARED, content-addressed
-// stored object behind an image. That object is shared by every byte-identical image, of every
-// owner, so destroying it is a cross-account destructive act — not a cache bust. The service
-// gates it behind one exact query parameter and refuses to do it otherwise.
+// The image-cache service's invalidate endpoint can also retract an image's public copies: delete
+// them and purge them from the CDN. That is a takedown, not a cache bust. The service gates it
+// behind one exact query parameter and refuses to do it otherwise.
 //
 // This file is the guard on WHO may ask for that. The central claim, and the reason the file
 // exists, is the NEGATIVE one:
@@ -164,9 +163,8 @@ describe('purgeResizeCache retraction opt-in', () => {
   });
 
   // Fail-closed cross-check. `hidden-meta-orphans` means the image is still LIVE — only the
-  // variants derived before a metadata flip are being cleared. Retracting the shared object
-  // there would destroy the bytes of an image nobody asked to take down, and of every
-  // byte-identical copy besides. The combination is meaningless, so it degrades to NO
+  // variants derived before a metadata flip are being cleared. Retracting there would take
+  // down an image nobody asked to remove. The combination is meaningless, so it degrades to NO
   // retraction rather than to the wider blast radius.
   it('refuses to retract on a partial-scope purge', async () => {
     await purgeResizeCache({ url: KEY, scope: 'hidden-meta-orphans', retractPublicBlobs: true });
@@ -211,9 +209,7 @@ describe('deleteImageFromS3 retraction opt-in', () => {
     expect(lastUrl()).toContain(`&${RETRACT}`);
   });
 
-  // The app cannot enumerate the other images whose bytes this removes — it stores no
-  // content-hash key, and the perceptual hash it does store is not a byte-identity key. This
-  // log line is therefore the ONLY attribution trail that a retraction was requested at all.
+  // This log line is the attribution trail that a retraction was requested.
   it('records the retraction request against the image id', async () => {
     await deleteImageFromS3({ id: 4242, url: KEY, retractPublicBlobs: true });
 
@@ -277,7 +273,7 @@ describe('deleteImages retraction opt-in', () => {
   });
 
   // The option must not be positional-adjacent to `updatePosts`: a caller that means "do not
-  // update posts" must not be able to request a cross-account destruction by accident.
+  // update posts" must not be able to request a retraction by accident.
   it('does not ask for retraction when only updatePosts is passed', async () => {
     await deleteImages([1], false);
 

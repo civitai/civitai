@@ -355,19 +355,16 @@ const {
 export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
 
 /**
- * 🔴 Ask the image-cache service to destroy the SHARED STORED OBJECT too, not just this image's
- * derived variants. Off unless a caller says otherwise, and only a moderation takedown may say so.
+ * 🔴 Ask the image-cache service to also delete this image's PUBLIC derived copies (resized and
+ * converted variants, and the public copy of the original) and purge them from the CDN, so a
+ * redirect cached before the takedown lands on nothing. Off unless a caller says otherwise, and
+ * only a moderation takedown may say so.
  *
- * The stored object is content-addressed, so it is shared by every byte-identical image, of every
- * owner. Destroying it removes the full-resolution original for all of them at once — a
- * cross-account destructive act, not a cache invalidation, and not reversible from here.
- *
- * 🔴 KNOWN AND ACCEPTED COLLATERAL. The other images keep their database rows and will serve a
- * broken original. The app cannot enumerate them: it does not store the content-hash key per
- * image, and the perceptual hash it does store is a similarity signal, NOT a byte-identity key,
- * so it cannot stand in for one. Accepted because a byte-identical copy of content that must not
- * exist is the same content — the point of a takedown is that no copy survives. The
- * `image-blob-retraction-requested` log line below is the only attribution trail there is.
+ * Scope: the service names each public copy from the image's own storage key (`Image.url`) plus the
+ * transform parameters, so a retraction reaches only this url's copies. Rows that share the url share
+ * them. It does not reach another upload of the same bytes, and it never touches the private upload
+ * the copies are derived from, so lifting the deny lets them re-derive on the next request. The
+ * `image-blob-retraction-requested` log line below records each request.
  */
 export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
 
@@ -422,8 +419,8 @@ export async function purgeResizeCache({
     })();
 
     // Retraction is only coherent for a FULL purge. A narrower scope means the image is still
-    // live — only the pre-flip variants are being cleared — so destroying the shared object there
-    // would take down an image nobody asked to remove, plus every byte-identical copy of it.
+    // live — only the pre-flip variants are being cleared — so retracting its public copies there
+    // would take down an image nobody asked to remove.
     // The combination degrades to NO retraction rather than to the wider blast radius, and says
     // so, because it can only mean a caller is confused about what it is asking for.
     const retract = retractPublicBlobs === true && scope === 'all';
@@ -616,16 +613,13 @@ export async function deleteImageFromS3({
     await queueImageStorageDeleteRetry({ id, url });
   }
 
-  // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
-  // byte-identical image of every owner, and the app cannot enumerate those rows — it stores no
-  // content-hash key, and the perceptual hash it does store is not a byte-identity key. Their
-  // rows survive and will serve a broken original. Emitted before the request rather than after,
-  // so a request that is made but never confirmed still leaves a record.
+  // The attribution trail for a retraction (see `PurgeResizeCacheRetraction`). Emitted before the
+  // request rather than after, so a request that is made but never confirmed still leaves a record.
   if (retractPublicBlobs) {
     await logToAxiom({
       type: 'warning',
       name: 'image-blob-retraction-requested',
-      message: 'moderation requested retraction of the shared stored object for this image',
+      message: 'moderation requested retraction of the public copies of this image',
       imageId: id,
       url,
     }).catch(() => undefined);
@@ -854,7 +848,7 @@ export async function queueReplacedImageDeletion(ids: number[]) {
 
 /**
  * 🔴 A NAMED options object, deliberately not a third positional boolean beside `updatePosts`.
- * The thing it turns on is cross-account and irreversible, so it must be impossible to reach by
+ * The thing it turns on deletes an image's public copies, so it must be impossible to reach by
  * getting an argument position wrong. Default is off, stated explicitly at every layer rather
  * than left to `undefined` being falsy.
  */

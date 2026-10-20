@@ -6996,6 +6996,18 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  CdnAccessSync
+}
+
+/// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
+/// its public variants deleted). Written only by the cdn-access-sync jobs; a row is removed when
+/// the deny is lifted or no image row uses the url any more.
+model ImageCdnAccess {
+  url            String    @id
+  state          String
+  deniedAt       DateTime  @default(now())
+  retractedAt    DateTime?
+  lastAssertedAt DateTime  @default(now())
 }
 
 model JobQueue {

@@ -3259,6 +3259,13 @@ export type Image = {
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
 };
+export type ImageCdnAccess = {
+  url: string;
+  state: string;
+  deniedAt: Generated<Timestamp>;
+  retractedAt: Timestamp | null;
+  lastAssertedAt: Generated<Timestamp>;
+};
 export type ImageConnection = {
   imageId: number;
   entityId: number;
@@ -6106,6 +6113,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageCdnAccess: ImageCdnAccess;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
