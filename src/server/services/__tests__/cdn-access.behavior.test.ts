@@ -493,6 +493,13 @@ describe('moderator-app deletes', () => {
     await syncCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
   });
+
+  it('denies only when the queue row does not say whose image it was', async () => {
+    await sql`SELECT queue_cdn_access_sync(1, 'Image',
+          ${JSON.stringify({ url: GONE, moderatorDelete: true })}::jsonb)`;
+    await syncCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny']);
+  });
 });
 
 describe('image keys', () => {
