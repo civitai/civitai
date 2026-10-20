@@ -963,12 +963,9 @@ export const updatePost = async ({
       where: { id, userId: !user.isModerator ? user.id : undefined },
       data: {
         ...restData,
-        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
-        detail: !!restData.detail
-          ? restData.detail.length > 0
-            ? restData.detail
-            : null
-          : undefined,
+        // An empty string clears the field; only an omitted one leaves it alone.
+        title: restData.title === undefined ? undefined : restData.title || null,
+        detail: restData.detail === undefined ? undefined : restData.detail || null,
       },
     });
     if (publishedAt !== undefined) {
