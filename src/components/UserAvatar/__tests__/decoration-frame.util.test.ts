@@ -21,6 +21,22 @@ describe('decorationFrameBox', () => {
     ).toEqual({ left: -6, top: -24, width: 210, height: 264 });
   });
 
+  it('keeps a -50 moderator fit in proportion at a small and a large avatar', () => {
+    const offsets = { top: -50, right: -50, bottom: -20, left: -10 };
+    expect(decorationFrameBox(96, { offsets })).toEqual({
+      left: -10,
+      top: -50,
+      width: 156,
+      height: 166,
+    });
+    expect(decorationFrameBox(24, { offsets })).toEqual({
+      left: -2.5,
+      top: -12.5,
+      width: 39,
+      height: 41.5,
+    });
+  });
+
   it('grows a pixel offset by that many pixels, as `calc(100% + 12px)` does', () => {
     expect(decorationFrameBox(92, { offset: '12px' })).toEqual({
       left: -6,

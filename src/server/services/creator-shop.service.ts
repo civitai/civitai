@@ -22,6 +22,7 @@ import {
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
+  edgesBeyondCreatorRange,
   isListingDisplayable,
   patchCosmeticData,
   recordedDisplayVerdict,
@@ -94,6 +95,7 @@ import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import {
+  CREATOR_OFFSET_LIMIT,
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   cosmeticPriceFloor,
@@ -487,6 +489,14 @@ const buildRightsAffirmation = (userId: number) => ({
   statement: RIGHTS_AFFIRMATION_STATEMENT,
 });
 
+const assertCreatorOffsets = (next: CosmeticOffsets, stored?: CosmeticOffsets | null) => {
+  const edges = edgesBeyondCreatorRange(next, stored);
+  if (edges.length)
+    throw throwBadRequestError(
+      `Fit offsets can be at most ${CREATOR_OFFSET_LIMIT}px per edge (${edges.join(', ')})`
+    );
+};
+
 const offsetsLabel = (offsets?: CosmeticOffsets | null) =>
   offsets ? `T${offsets.top} R${offsets.right} B${offsets.bottom} L${offsets.left}` : undefined;
 
@@ -514,6 +524,10 @@ export const submitCreatorShopItem = async ({
   rightsAffirmed,
   quotedFee,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
+  // Submitters are held to the creator range, moderators included: a moderator widens the fit
+  // afterwards on the review page.
+  if (offsets) assertCreatorOffsets(offsets);
+
   // The same CosmeticShopItem.title/description columns the moderator-only upsert guards; these
   // are the CREATOR-facing doors into them. Guarding only the moderator one would have closed
   // the lower-risk door and left these open.
@@ -716,6 +730,7 @@ export const updateCreatorShopItem = async ({
     offsets?: CosmeticOffsets;
   } & Record<string, unknown>;
   const offsetsChange = isDecoration && offsets !== undefined;
+  if (offsetsChange && offsets && !isModerator) assertCreatorOffsets(offsets, existingData.offsets);
   const nextOffsets = !isDecoration
     ? null
     : offsets === undefined

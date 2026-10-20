@@ -32,7 +32,7 @@ import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.cons
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  DECORATION_OFFSET_LIMIT,
+  CREATOR_OFFSET_LIMIT,
   RIGHTS_AFFIRMATION_STATEMENT,
   computeCreatorShopSplit,
   isCreatorCosmeticType,
@@ -255,28 +255,32 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               <Stack gap={6}>
                 <Divider label="Adjust fit" labelPosition="left" />
                 <Text size="xs" c="dimmed">
-                  Nudge each edge of your frame by up to {DECORATION_OFFSET_LIMIT}px to fit the
-                  avatar. Negative values extend it outside the avatar (bigger); positive values
-                  pull it in. The preview above updates live.
+                  Nudge each edge of your frame by up to {CREATOR_OFFSET_LIMIT}px to fit the avatar.
+                  Negative values extend it outside the avatar (bigger); positive values pull it in.
+                  The preview above updates live.
                 </Text>
                 <Group grow>
                   {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
                     <NumberInput
                       key={side}
                       label={side.charAt(0).toUpperCase() + side.slice(1)}
-                      min={-DECORATION_OFFSET_LIMIT}
-                      max={DECORATION_OFFSET_LIMIT}
+                      min={-CREATOR_OFFSET_LIMIT}
+                      max={CREATOR_OFFSET_LIMIT}
                       step={1}
                       allowDecimal={false}
                       suffix="px"
                       value={offsets[side]}
+                      disabled={form.moderatorSetSides.includes(side)}
+                      description={
+                        form.moderatorSetSides.includes(side) ? 'Set by a moderator' : undefined
+                      }
                       onChange={(v) =>
                         form.setOffset(
                           side,
                           typeof v === 'number'
                             ? Math.max(
-                                -DECORATION_OFFSET_LIMIT,
-                                Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                -CREATOR_OFFSET_LIMIT,
+                                Math.min(CREATOR_OFFSET_LIMIT, Math.round(v))
                               )
                             : 0
                         )

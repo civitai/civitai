@@ -82,7 +82,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  DECORATION_OFFSET_LIMIT,
+  MODERATOR_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -976,9 +976,9 @@ function CreatorShopReviewPage() {
                           Fit adjustment
                         </Text>
                         <Text size="xs" c="dimmed">
-                          Pixel offset per edge (−{DECORATION_OFFSET_LIMIT} to{' '}
-                          {DECORATION_OFFSET_LIMIT}) — negative extends the frame outside the
-                          avatar. The preview above updates live.
+                          Pixel offset per edge (−{MODERATOR_OFFSET_LIMIT} to{' '}
+                          {MODERATOR_OFFSET_LIMIT}) — negative extends the frame outside the avatar.
+                          The preview above updates live.
                         </Text>
                         <Group gap="xs" grow>
                           {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
@@ -986,8 +986,8 @@ function CreatorShopReviewPage() {
                               key={side}
                               size="xs"
                               label={side.charAt(0).toUpperCase() + side.slice(1)}
-                              min={-DECORATION_OFFSET_LIMIT}
-                              max={DECORATION_OFFSET_LIMIT}
+                              min={-MODERATOR_OFFSET_LIMIT}
+                              max={MODERATOR_OFFSET_LIMIT}
                               step={1}
                               allowDecimal={false}
                               suffix="px"
@@ -999,8 +999,8 @@ function CreatorShopReviewPage() {
                                   [side]:
                                     typeof v === 'number'
                                       ? Math.max(
-                                          -DECORATION_OFFSET_LIMIT,
-                                          Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                          -MODERATOR_OFFSET_LIMIT,
+                                          Math.min(MODERATOR_OFFSET_LIMIT, Math.round(v))
                                         )
                                       : 0,
                                 }))
