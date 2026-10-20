@@ -1,0 +1,122 @@
+-- Hold marker: while an owner has an active hold, none of their images is deleted.
+--
+-- Apply this BEFORE deploying the code that reads "EvidenceHeldUser": the purge jobs query the view
+-- and fail on a database that lacks it.
+
+CREATE TABLE "EvidenceHold" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "csamReportId" INTEGER,
+  "role" TEXT NOT NULL,
+  "reportSentAt" TIMESTAMP(3),
+  "releaseAt" TIMESTAMP(3),
+  "extendedUntil" TIMESTAMP(3),
+  "extensionRequestedBy" TEXT,
+  "extensionReference" TEXT,
+  "reason" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdById" INTEGER,
+  "releasedAt" TIMESTAMP(3),
+  "releasedById" INTEGER,
+  "releaseReason" TEXT,
+  CONSTRAINT "EvidenceHold_role_check" CHECK ("role" IN ('subject', 'secondary', 'manual')),
+  -- A report row names its report; a manual row names none.
+  CONSTRAINT "EvidenceHold_report_role_check" CHECK (("role" = 'manual') = ("csamReportId" IS NULL)),
+  -- A release is a logged act: who and why, never just a timestamp.
+  CONSTRAINT "EvidenceHold_release_logged_check" CHECK (
+    "releasedAt" IS NULL OR ("releasedById" IS NOT NULL AND "releaseReason" IS NOT NULL)
+  ),
+  -- An extension records who asked for it and their reference.
+  CONSTRAINT "EvidenceHold_extension_logged_check" CHECK (
+    "extendedUntil" IS NULL OR ("extensionRequestedBy" IS NOT NULL AND "extensionReference" IS NOT NULL)
+  )
+);
+
+CREATE UNIQUE INDEX "EvidenceHold_csamReportId_userId_key"
+  ON "EvidenceHold" ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL;
+CREATE INDEX "EvidenceHold_userId_idx" ON "EvidenceHold" ("userId");
+
+-- The one definition of "held". Every reader goes through this view.
+CREATE VIEW "EvidenceHeldUser" AS
+SELECT
+  "userId",
+  -- NULL: held until released.
+  CASE WHEN bool_or("releaseAt" IS NULL) THEN NULL
+       ELSE max(GREATEST("releaseAt", COALESCE("extendedUntil", "releaseAt"))) END AS "heldUntil"
+FROM "EvidenceHold"
+WHERE "releasedAt" IS NULL
+  AND ("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())
+GROUP BY "userId";
+
+-- A sent report holds its subject and its secondary user for a year from sending. Written here rather
+-- than at each call site, because several code paths set "reportSentAt". Never raises: a failure
+-- here would fail the write that records a report as sent. The first send's row stands: a later
+-- change to "reportSentAt" does not move "releaseAt".
+CREATE OR REPLACE FUNCTION evidence_hold_from_csam_report() RETURNS trigger AS $$
+BEGIN
+  IF NEW."reportSentAt" IS NULL THEN
+    RETURN NEW;
+  END IF;
+  INSERT INTO "EvidenceHold" ("userId", "csamReportId", "role", "reportSentAt", "releaseAt", "reason")
+  SELECT v.uid, NEW."id", v.role, NEW."reportSentAt", NEW."reportSentAt" + interval '1 year', 'report sent'
+  FROM (
+    VALUES
+      (NEW."userId", 'subject'),
+      (CASE WHEN (NEW."details" ->> 'secondaryUserId') ~ '^[0-9]{1,9}$'
+            THEN (NEW."details" ->> 'secondaryUserId')::int END, 'secondary')
+  ) AS v(uid, role)
+  WHERE v.uid IS NOT NULL
+  ON CONFLICT ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "CsamReport_evidence_hold"
+AFTER INSERT OR UPDATE OF "reportSentAt", "details" ON "CsamReport"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_from_csam_report();
+
+-- Backstop for every deletion path, including ones written later: a held owner's image row is not
+-- deleted. A direct DELETE skips the row (it is absent from RETURNING, so callers never go on to
+-- delete its stored file). A delete reached from another trigger, which includes a cascade from a
+-- parent row, raises instead: skipping a cascaded row would leave it pointing at a deleted parent.
+CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN
+    IF pg_trigger_depth() > 1 THEN
+      RAISE EXCEPTION 'Image % is under a hold and cannot be deleted', OLD."id";
+    END IF;
+    RETURN NULL;
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "Image_evidence_hold"
+BEFORE DELETE ON "Image"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_image();
+
+-- Existing sent reports. One whose year has already passed is recorded as released by the system
+-- user, never put back on hold; that set is the rows with this "releaseReason".
+INSERT INTO "EvidenceHold" (
+  "userId", "csamReportId", "role", "reportSentAt", "releaseAt", "reason",
+  "releasedAt", "releasedById", "releaseReason"
+)
+SELECT
+  v.uid, c."id", v.role, c."reportSentAt", c."reportSentAt" + interval '1 year', 'report sent',
+  r."releasedAt", r."releasedById", r."releaseReason"
+FROM "CsamReport" c
+CROSS JOIN LATERAL (
+  SELECT
+    CASE WHEN c."reportSentAt" + interval '1 year' <= now() THEN now() END AS "releasedAt",
+    CASE WHEN c."reportSentAt" + interval '1 year' <= now() THEN -1 END AS "releasedById",
+    CASE WHEN c."reportSentAt" + interval '1 year' <= now()
+         THEN 'expired before table existed' END AS "releaseReason"
+) r
+CROSS JOIN LATERAL (
+  VALUES
+    (c."userId", 'subject'),
+    (CASE WHEN (c."details" ->> 'secondaryUserId') ~ '^[0-9]{1,9}$'
+          THEN (c."details" ->> 'secondaryUserId')::int END, 'secondary')
+) AS v(uid, role)
+WHERE c."reportSentAt" IS NOT NULL AND v.uid IS NOT NULL
+ON CONFLICT ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL DO NOTHING;

@@ -170,6 +170,33 @@ describe('deleteAccount — the audit row belongs to the endpoint', () => {
   });
 });
 
+describe('purgeAllContent — images kept under a hold', () => {
+  it('warns how many images the purge kept, so it does not read as complete', async () => {
+    respond = () => new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 3 }));
+
+    const result = await purgeAllContent({ userId: TARGET, moderatorId: 990000007 });
+
+    expect(result).toEqual({
+      ok: true,
+      warning:
+        '3 images were kept under a hold and not deleted. The rest of the content was removed.',
+    });
+  });
+
+  it('carries no warning when nothing was kept', async () => {
+    respond = () => new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 0 }));
+
+    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({ ok: true });
+  });
+
+  // The purge already ran by the time the body is read, so a body it cannot parse is still a success.
+  it('still reports success when the body is unreadable', async () => {
+    respond = () => new Response('not json');
+
+    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({ ok: true });
+  });
+});
+
 /**
  * 🔴 WHAT MAY BE CALLED A FAILURE, AND WHAT MAY NOT.
  *

@@ -6404,6 +6404,40 @@ model CsamReport {
   // modelVersionIds  Int[]     @default([])
 }
 
+/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
+/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
+/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
+/// later), or when a person releases it; clearing an image's review flag never ends it.
+model EvidenceHold {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  csamReportId    Int?
+  /// subject | secondary | manual
+  role            String
+  reportSentAt    DateTime?
+  /// NULL holds until released.
+  releaseAt       DateTime?
+  extendedUntil   DateTime?
+  /// Who asked for the extension (e.g. a law-enforcement agency), and their reference.
+  extensionRequestedBy String?
+  extensionReference   String?
+  reason          String
+  createdAt       DateTime  @default(now())
+  createdById     Int?
+  releasedAt      DateTime?
+  releasedById    Int?
+  releaseReason   String?
+
+  @@index([userId])
+}
+
+/// @view
+/// The owners with at least one active `EvidenceHold`.
+model EvidenceHeldUser {
+  userId    Int       @id
+  heldUntil DateTime?
+}
+
 model Link {
   id         Int      @id @default(autoincrement())
   url        String

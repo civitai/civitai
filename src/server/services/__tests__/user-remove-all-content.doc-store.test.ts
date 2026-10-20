@@ -227,7 +227,9 @@ describe('removeAllContent → document store', () => {
     };
     holder.maintenance = createDocStoreMaintenance({ db: down });
 
-    await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
+      keptUnderHold: 0,
+    });
 
     // The main-database wipe ran in full regardless.
     for (const model of MAIN_DB_WIPE) {
@@ -263,7 +265,7 @@ describe('removeAllContent → document store', () => {
         failures: [{ appId: app, ns: NS_PROD, error: 'lock timeout' }],
       }),
     };
-    await expect(removeAllContent({ id: TARGET })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({ keptUnderHold: 0 });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls
       .map((c) => String(c[0]))

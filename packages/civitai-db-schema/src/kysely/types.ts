@@ -2952,6 +2952,36 @@ export type EventCosmeticScoreDaily = {
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
 };
+export type EvidenceHeldUser = {
+  userId: number;
+  heldUntil: Timestamp | null;
+};
+export type EvidenceHold = {
+  id: Generated<number>;
+  userId: number;
+  csamReportId: number | null;
+  /**
+   * subject | secondary | manual
+   */
+  role: string;
+  reportSentAt: Timestamp | null;
+  /**
+   * NULL holds until released.
+   */
+  releaseAt: Timestamp | null;
+  extendedUntil: Timestamp | null;
+  /**
+   * Who asked for the extension (e.g. a law-enforcement agency), and their reference.
+   */
+  extensionRequestedBy: string | null;
+  extensionReference: string | null;
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+  releaseReason: string | null;
+};
 export type FeaturedModelVersion = {
   id: Generated<number>;
   modelVersionId: number;
@@ -6005,6 +6035,8 @@ export type DB = {
   EntityModeration: EntityModeration;
   EventCosmeticPlacement: EventCosmeticPlacement;
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
+  EvidenceHeldUser: EvidenceHeldUser;
+  EvidenceHold: EvidenceHold;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;

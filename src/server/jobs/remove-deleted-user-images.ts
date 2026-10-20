@@ -122,6 +122,7 @@ async function drainUser(
           SELECT 1 FROM "Image" f
           WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
         )
+        AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
       LIMIT ${budget}
     `;
 
@@ -178,6 +179,7 @@ async function drainUser(
             SELECT 1 FROM "Image" f
             WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
           )
+          AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
       `;
     }
 
@@ -456,6 +458,7 @@ export const removeDeletedUserImages = createJob(
         AND NOT EXISTS (
           SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
         )
+        AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = u.id)
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -505,6 +508,7 @@ export const removeDeletedUserImages = createJob(
           AND NOT EXISTS (
             SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )
+          AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = u.id)
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i

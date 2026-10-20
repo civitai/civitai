@@ -3950,6 +3950,29 @@ export interface CsamReport {
   type: CsamReportType;
 }
 
+export interface EvidenceHold {
+  id: number;
+  userId: number;
+  csamReportId: number | null;
+  role: string;
+  reportSentAt: Date | null;
+  releaseAt: Date | null;
+  extendedUntil: Date | null;
+  extensionRequestedBy: string | null;
+  extensionReference: string | null;
+  reason: string;
+  createdAt: Date;
+  createdById: number | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  releaseReason: string | null;
+}
+
+export interface EvidenceHeldUser {
+  userId: number;
+  heldUntil: Date | null;
+}
+
 export interface Link {
   id: number;
   url: string;

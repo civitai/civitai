@@ -541,15 +541,15 @@ export async function deleteImageFromS3({
 
   let outcome: StorageDeleteOutcome = 'deleted';
   try {
-    const otherImagesWithSameUrl = await dbWrite.image.findFirst({
+    // Every caller runs this after deleting the row, so a row with this url that still exists,
+    // this image's own included, is one the delete skipped (a hold marker keeps it) or another
+    // image sharing the object. Either way the object stays.
+    const imageWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
-      where: {
-        url: url,
-        id: { not: id },
-      },
+      where: { url },
     });
 
-    if (!!otherImagesWithSameUrl) return 'skipped';
+    if (!!imageWithSameUrl) return 'skipped';
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".

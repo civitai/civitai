@@ -75,6 +75,10 @@ type Fixture = {
   csamFlagged?: boolean;
   /** The flag as the primary holds it, when it lands after the worklist read. */
   primaryCsamFlagged?: boolean;
+  /** The account is under a hold marker, as the replica sees it. */
+  held?: boolean;
+  /** The hold marker as the primary holds it, when it lands after the worklist read. */
+  primaryHeld?: boolean;
   /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
@@ -217,6 +221,12 @@ const REVIEW_FLAG_HOLD =
 const blockedByReviewFlag = (sql: string, flagged: boolean | undefined) =>
   !!flagged && REVIEW_FLAG_HOLD.test(sql);
 const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
+
+/** The per-account hold-marker exclusion, as every statement that carries it spells it. */
+const EVIDENCE_HOLD =
+  /NOT EXISTS \(SELECT 1 FROM "EvidenceHeldUser" h WHERE h\."userId" = (?:\?|u\.id)\)/;
+const blockedByHold = (sql: string, held: boolean | undefined) => !!held && EVIDENCE_HOLD.test(sql);
+const heldOnPrimary = (fixture: Fixture) => fixture.primaryHeld ?? fixture.held;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
 function passesPrimaryChoice(sql: string, fixture: Fixture) {
@@ -399,6 +409,7 @@ function seed(next: Record<number, Fixture>) {
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
         .filter((id) => !blockedByCsamReport(sql, fixtures[id].csamReports))
         .filter((id) => !blockedByReviewFlag(sql, fixtures[id].csamFlagged))
+        .filter((id) => !blockedByHold(sql, fixtures[id].held))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -456,6 +467,7 @@ function seed(next: Record<number, Fixture>) {
           return Promise.resolve([]);
         if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve([]);
         if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
+        if (blockedByHold(sql, heldOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -498,6 +510,7 @@ function seed(next: Record<number, Fixture>) {
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
       if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
       if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve(0);
+      if (blockedByHold(sql, heldOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -1393,6 +1406,51 @@ describe('an image carrying the moderator-only review flag', () => {
 
   it('does not hold an account whose images carry no flag', async () => {
     seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], csamFlagged: false } });
+
+    const result = await run();
+
+    expect(result.deletedImages).toBe(10);
+    expect(deletedPostIds).toEqual([900]);
+  });
+});
+
+describe('an account under a hold marker', () => {
+  it('keeps the account out of both worklists', async () => {
+    cursorStore[FRESH_KEY] = NEWER;
+    seed({
+      7: { deletedAt: RECENT, images: ids(10), posts: [900], held: true },
+      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], held: true },
+    });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
+  });
+
+  it('stops the image delete for a hold placed after the worklist read', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryHeld: true } });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(pagedImageIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+  });
+
+  it('stops the post delete for a hold placed after the worklist read', async () => {
+    seed({ 7: { deletedAt: NEWER, images: [], posts: [900], primaryHeld: true } });
+
+    const result = await run();
+
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(0);
+  });
+
+  it('does not hold an account with no marker', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], held: false } });
 
     const result = await run();
 

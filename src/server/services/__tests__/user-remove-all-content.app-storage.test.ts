@@ -398,7 +398,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.poolDown = 'apps database unreachable';
 
     // Must RESOLVE, not reject.
-    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
+      keptUnderHold: 0,
+    });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
     // rejects, so "it resolved" alone is satisfied by the bug this whole commit

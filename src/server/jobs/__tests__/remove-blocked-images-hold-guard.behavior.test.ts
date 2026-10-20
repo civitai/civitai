@@ -1,6 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
@@ -41,6 +43,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const NO_COPY = { holdForTrainingCopy: false };
 
+const HOLD_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+);
+
 const PLAIN_USER = 1;
 const OPEN_REPORT_USER = 2;
 const EXPIRED_REPORT_USER = 3;
@@ -58,6 +65,26 @@ const CLOSED = 16; // owner's report sent and archived -> deleted
 const OTHER_FLAG = 17; // a review flag that is not a hold -> deleted
 const UNSENT = 18; // owner's report archived but never sent -> kept
 const ALL = [PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, CLOSED, OTHER_FLAG, UNSENT];
+
+// Hold markers. Owners, then one blocked, unflagged image each.
+const RECENT_REPORT_USER = 6; // report sent and archived 10 days ago
+const SECONDARY_USER = 7; // named as the secondary user on that report
+const MANUAL_USER = 8; // hold set by a person, no end date
+const RELEASED_USER = 9; // hold set by a person, then released
+const EXTENDED_USER = 10; // report sent over a year ago, hold extended past today
+const RECENT_REPORTED = 20;
+const SECONDARY = 21;
+const MANUAL = 22;
+const RELEASED = 23;
+const EXTENDED = 24;
+const MARKED = [RECENT_REPORTED, SECONDARY, MANUAL, RELEASED, EXTENDED];
+
+const BACKFILL_RECENT_USER = 30;
+const BACKFILL_EXPIRED_USER = 31;
+const backfill = {
+  rows: [] as { userId: number; releasedById: number | null; releaseReason: string | null }[],
+  held: [] as number[],
+};
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -79,7 +106,8 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      images jsonb NOT NULL DEFAULT '[]'
+      images jsonb NOT NULL DEFAULT '[]',
+      details jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "AppealDecisionRecord" (
       "imageId" int NOT NULL,
@@ -93,6 +121,27 @@ beforeAll(async () => {
       "trainingCopyState" text
     );
   `);
+  // Reports already sent when the migration runs, for its backfill.
+  await holder.db.exec(`
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
+      (${BACKFILL_RECENT_USER}, now() - interval '30 days', now() - interval '30 days'),
+      (${BACKFILL_EXPIRED_USER}, now() - interval '400 days', now() - interval '400 days');
+  `);
+  await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  backfill.rows = (
+    await holder.db.query<{
+      userId: number;
+      releasedById: number | null;
+      releaseReason: string | null;
+    }>(`SELECT "userId", "releasedById", "releaseReason" FROM "EvidenceHold" ORDER BY "userId"`)
+  ).rows;
+  backfill.held = (
+    await holder.db.query<{ userId: number }>(
+      `SELECT "userId" FROM "EvidenceHeldUser" ORDER BY "userId"`
+    )
+  ).rows.map((r) => r.userId);
+  // Off unless a case turns it on, so the guard is what the other cases exercise.
+  await holder.db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold"`);
 });
 
 beforeEach(async () => {
@@ -109,7 +158,7 @@ beforeEach(async () => {
   }) as never);
 
   await holder.db.exec(`
-    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord";
+    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${PLAIN}, ${PLAIN_USER}, 'Blocked', NULL),
       (${APPEALED}, ${PLAIN_USER}, 'Blocked', 'appeal'),
@@ -122,11 +171,31 @@ beforeEach(async () => {
       (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL);
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OPEN_REPORT_USER}, NULL, NULL),
-      (${EXPIRED_REPORT_USER}, now(), NULL),
-      (${CLOSED_REPORT_USER}, now(), now()),
+      -- Sent over a year ago, so the hold marker the send wrote has lapsed.
+      (${EXPIRED_REPORT_USER}, now() - interval '400 days', NULL),
+      (${CLOSED_REPORT_USER}, now() - interval '400 days', now() - interval '400 days'),
       (${UNSENT_ARCHIVED_USER}, NULL, now());
   `);
 });
+
+const insertMarkedOwners = () =>
+  holder.db.exec(`
+    INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
+      (${RECENT_REPORTED}, ${RECENT_REPORT_USER}, 'Blocked', NULL),
+      (${SECONDARY}, ${SECONDARY_USER}, 'Blocked', NULL),
+      (${MANUAL}, ${MANUAL_USER}, 'Blocked', NULL),
+      (${RELEASED}, ${RELEASED_USER}, 'Blocked', NULL),
+      (${EXTENDED}, ${EXTENDED_USER}, 'Blocked', NULL);
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
+      (${RECENT_REPORT_USER}, now() - interval '10 days', now() - interval '10 days',
+        '{"secondaryUserId": ${SECONDARY_USER}}'),
+      (${EXTENDED_USER}, now() - interval '400 days', now() - interval '400 days', '{}');
+    UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '90 days', "extensionRequestedBy" = 'agency', "extensionReference" = 'ref'
+      WHERE "userId" = ${EXTENDED_USER};
+    INSERT INTO "EvidenceHold" ("userId", role, reason, "releasedAt", "releasedById", "releaseReason") VALUES
+      (${MANUAL_USER}, 'manual', 'review', NULL, NULL, NULL),
+      (${RELEASED_USER}, 'manual', 'review', now(), 1, 'done');
+  `);
 
 const remaining = async () =>
   (await holder.db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`)).rows.map(
@@ -199,11 +268,90 @@ describe('purgeHoldGuard on the delete', () => {
     });
   });
 
-  // The positive control for the cases above: without the guard the same call deletes every
-  // fixture row, so what they keep is the guard's doing.
+  describe('hold markers', () => {
+    beforeEach(insertMarkedOwners);
+
+    it('keeps every image of a held owner, and only of a held owner', async () => {
+      await imageService.deleteImages([...ALL, ...MARKED], true, {
+        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
+      });
+
+      expect((await remaining()).filter((id) => MARKED.includes(id))).toEqual([
+        RECENT_REPORTED,
+        SECONDARY,
+        MANUAL,
+        EXTENDED,
+      ]);
+    });
+
+    it('is not lifted by the report-expiry override', async () => {
+      await imageService.deleteImages(MARKED, true, {
+        onlyWhere: purgeHoldGuard([RECENT_REPORT_USER, MANUAL_USER], NO_COPY),
+      });
+
+      expect(await remaining()).toContain(RECENT_REPORTED);
+      expect(await remaining()).toContain(MANUAL);
+    });
+
+    it('deletes the image once the hold has ended', async () => {
+      await holder.db.exec(`
+        UPDATE "EvidenceHold" SET "releaseAt" = now() - interval '1 day'
+        WHERE "userId" = ${RECENT_REPORT_USER}
+      `);
+
+      await imageService.deleteImages([RECENT_REPORTED], true, {
+        onlyWhere: purgeHoldGuard([], NO_COPY),
+      });
+
+      expect(await remaining()).not.toContain(RECENT_REPORTED);
+    });
+  });
+
+  // The backstop for every other deletion path, which passes no guard.
+  describe('the image delete trigger', () => {
+    beforeEach(async () => {
+      await insertMarkedOwners();
+      await holder.db.exec(`ALTER TABLE "Image" ENABLE TRIGGER "Image_evidence_hold"`);
+    });
+    afterEach(() => holder.db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold"`));
+
+    it("skips a held owner's rows, and their side effects, with no guard given", async () => {
+      const deleted = await imageService.deleteImages([PLAIN, ...MARKED], true);
+
+      expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
+      expect((await remaining()).filter((id) => MARKED.includes(id))).toEqual([
+        RECENT_REPORTED,
+        SECONDARY,
+        MANUAL,
+        EXTENDED,
+      ]);
+      const deindexed = vi
+        .mocked(imagesSearchIndex.queueUpdate)
+        .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
+      expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
+    });
+  });
+
+  // The positive control for the cases above: without the guard or the trigger the same call
+  // deletes every fixture row, so what they keep is the guard's or the trigger's doing.
   it('deletes every listed image when no guard is given', async () => {
-    await imageService.deleteImages(ALL, true);
+    await insertMarkedOwners();
+    await imageService.deleteImages([...ALL, ...MARKED], true);
 
     expect(await remaining()).toEqual([]);
+  });
+});
+
+describe('the migration backfill', () => {
+  it('holds a report sent within the year and records an older one as released', () => {
+    expect(backfill.rows).toEqual([
+      { userId: BACKFILL_RECENT_USER, releasedById: null, releaseReason: null },
+      {
+        userId: BACKFILL_EXPIRED_USER,
+        releasedById: -1,
+        releaseReason: 'expired before table existed',
+      },
+    ]);
+    expect(backfill.held).toEqual([BACKFILL_RECENT_USER]);
   });
 });

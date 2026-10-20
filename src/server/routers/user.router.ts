@@ -307,11 +307,12 @@ export const userRouter = router({
     // records WHO ordered the wipe. The other caller of `removeAllContent`
     // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
     // identity and correctly passes none.
-    await removeAllContent({ ...input, actorUserId: ctx.user.id });
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id });
     ctx.track.userActivity({
       type: 'RemoveContent',
       targetUserId: input.id,
     });
+    return result;
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

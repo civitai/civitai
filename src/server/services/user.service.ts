@@ -1457,13 +1457,29 @@ export const removeAllContent = async ({
   await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
   await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
-  // remove images from s3 buckets before deleting them
-  try {
-    for (const image of images) {
-      await deleteImageById({ id: image.id });
-    }
-  } catch (e) {}
-  await dbWrite.image.deleteMany({ where: { userId: id } });
+  // A hold marker keeps every image of this owner: the delete would skip each one, so it is not
+  // attempted, and the caller is told how many were kept rather than reading the wipe as complete.
+  const [hold] = await dbWrite.$queryRaw<{ held: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${id}) AS held
+  `;
+  const keptUnderHold = hold?.held ? images.length : 0;
+  if (keptUnderHold)
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'info',
+      message: 'Kept images under a hold',
+      userId: id,
+      count: keptUnderHold,
+    }).catch(() => undefined);
+  else {
+    // remove images from s3 buckets before deleting them
+    try {
+      for (const image of images) {
+        await deleteImageById({ id: image.id });
+      }
+    } catch (e) {}
+    await dbWrite.image.deleteMany({ where: { userId: id } });
+  }
 
   await modelsSearchIndex.queueUpdate(
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
@@ -1592,6 +1608,7 @@ export const removeAllContent = async ({
   }
 
   await wipeAccountFromDocStore(id);
+  return { keptUnderHold };
 };
 
 /**

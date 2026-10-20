@@ -45,7 +45,10 @@ export type ActionResult = { ok: true; warning?: string } | { ok: false; error: 
 async function callMainApp(
   path: string,
   params: Record<string, string>,
-  label: string
+  label: string,
+  /** Reads a warning out of a successful response body. An unreadable body is no warning: the
+   *  action already happened. */
+  warningFrom?: (body: unknown) => string | undefined
 ): Promise<ActionResult> {
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
@@ -58,7 +61,8 @@ async function callMainApp(
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
-    return { ok: true };
+    const warning = warningFrom?.(await res.json().catch(() => null));
+    return warning ? { ok: true, warning } : { ok: true };
   } catch (e) {
     console.error(`[user-actions] ${label} failed`, e);
     return { ok: false, error: `${label} failed.` };
@@ -1465,12 +1469,21 @@ export async function purgeAllContent(input: {
   const result = await callMainApp(
     '/api/mod/remove-all-content',
     { userId: String(input.userId) },
-    'Purge'
+    'Purge',
+    keptUnderHoldWarning
   );
   if (!result.ok) return result;
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
-  return { ok: true };
+  return result;
+}
+
+function keptUnderHoldWarning(body: unknown): string | undefined {
+  const kept = (body as { keptUnderHold?: unknown } | null)?.keptUnderHold;
+  if (typeof kept !== 'number' || kept <= 0) return undefined;
+  return `${kept} ${
+    kept === 1 ? 'image was' : 'images were'
+  } kept under a hold and not deleted. The rest of the content was removed.`;
 }
 
 /** One sentence for every way this call can fail without proving the deletion did not happen. The

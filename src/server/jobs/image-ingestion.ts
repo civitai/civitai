@@ -555,7 +555,9 @@ export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
  * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
- * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
+ * report, past `CSAM_HOLD_MAX_DAYS`; that override never reaches a hold marker
+ * (`EvidenceHeldUser`), which only its own end date or an explicit release lifts. Only valid on a
+ * statement over an unaliased "Image".
  */
 export function purgeHoldGuard(
   reportHoldExpiredUserIds: number[],
@@ -565,6 +567,7 @@ export function purgeHoldGuard(
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = "Image"."userId")
     AND (
       "Image"."userId" = ANY(${reportHoldExpiredUserIds}::int[])
       OR NOT EXISTS (
@@ -625,7 +628,17 @@ export const removeBlockedImages = createJob(
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
-    const held = [...heldActive, ...appealHeld, ...csamReviewHeld];
+    // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
+    // same replica-lag reason as above.
+    const evidenceHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT i.id FROM "Image" i
+        JOIN "EvidenceHeldUser" h ON h."userId" = i."userId"
+        WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+    ).map((x) => x.id);
+
+    const held = [...new Set([...heldActive, ...appealHeld, ...csamReviewHeld, ...evidenceHeld])];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -641,12 +654,14 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
       });
       return {
         processed: 0,
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
       };
     }
 
@@ -705,6 +720,7 @@ export const removeBlockedImages = createJob(
       csamHoldExpired: holdExpiredDeletions.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -901,6 +917,7 @@ export const removeBlockedImages = createJob(
       csamHoldExpired: holdExpiredDeletions.filter((x) => deletedSet.has(x.id)).length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
