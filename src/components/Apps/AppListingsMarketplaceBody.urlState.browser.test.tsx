@@ -272,6 +272,65 @@ describe('(a) the search box tracks an EXTERNAL query change', () => {
   });
 });
 
+/**
+ * (d) WHITESPACE IS NOT A DISAGREEMENT. The echo into the URL compares TRIMMED values ('Alpha '
+ * and 'Alpha' are the same search), so it skips a write when only whitespace changed. The adopt
+ * effect compared RAW values, so it read that skipped write as `router.query` having moved and
+ * reset the box to the URL: a space typed after a pause vanished, and a space deleted came back.
+ * Every one of these waits out the 300ms debounce, because that is when it happened.
+ */
+describe('(d) a space in the search box survives the URL round-trip', () => {
+  const PAST_DEBOUNCE_MS = 700;
+
+  test('🔴 a trailing space typed after a pause stays in the box', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    await search.fill('Alpha ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha ');
+  });
+
+  test('🔴 a trailing space deleted after a pause stays deleted', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha ');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha ' }));
+
+    await search.fill('Alpha');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha');
+  });
+
+  test('a leading space typed into an empty box stays', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill(' ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe(' ');
+  });
+
+  test('a Back to a genuinely different term is still adopted', async () => {
+    // The control that keeps the fix honest: ignoring whitespace must not make the box deaf to
+    // an external change.
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toHaveValue('Alpha');
+
+    navigateTo({ query: 'Bravo' });
+    await vi.waitFor(() => expect((search.element() as HTMLInputElement).value).toBe('Bravo'));
+  });
+});
+
 describe('(b) two fast filter clicks must not drop one', () => {
   test('🔴 kind then category, both inside the in-flight window, both survive', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
