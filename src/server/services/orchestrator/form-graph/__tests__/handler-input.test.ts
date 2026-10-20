@@ -195,6 +195,7 @@ describe('krea3.handler', () => {
       workflow: 'txt2img',
       ecosystem: 'Krea3',
       prompt: 'a cat',
+      resolution: '2k',
       thinkingMode: 'ultra',
       expectFlags: { krea3Ultra: true },
     });
@@ -204,9 +205,33 @@ describe('krea3.handler', () => {
       workflow: 'txt2img',
       ecosystem: 'Krea3',
       prompt: 'a cat',
+      resolution: '2k',
       thinkingMode: 'ultra',
     });
     expect(firstInput(off)).toMatchObject({ thinkingMode: 'instant' });
+  });
+
+  // The orchestrator refuses Ultra at 1K ("Ultra is only available at 2K"), and 1K is the default.
+  it('sends Ultra only at 2K, falling back to instant at 1K', async () => {
+    const at2k = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '2k',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(at2k)).toMatchObject({ resolution: '2k', thinkingMode: 'ultra' });
+
+    const at1k = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '1k',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(at1k)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
   });
 });
 

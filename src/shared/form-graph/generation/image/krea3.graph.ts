@@ -59,9 +59,15 @@ const krea3ThinkingModeOptions = [
   { label: 'Ultra', value: 'ultra' },
 ] as const;
 
-/** Ultra is gated by `krea3Ultra` (Krea's capacity-limited top mode, opened at launch). */
-export function getKrea3ThinkingModeOptions(flags?: Partial<FeatureAccess>) {
-  return flags?.krea3Ultra === true
+/**
+ * Ultra is gated by `krea3Ultra` (Krea's capacity-limited top mode, opened at launch) and is
+ * 2K only: the orchestrator refuses it at 1K.
+ */
+export function getKrea3ThinkingModeOptions(
+  flags?: Partial<FeatureAccess>,
+  resolution: Krea3Resolution = '1k'
+) {
+  return flags?.krea3Ultra === true && resolution === '2k'
     ? krea3ThinkingModeOptions
     : krea3ThinkingModeOptions.filter((o) => o.value !== 'ultra');
 }
@@ -91,6 +97,9 @@ export const krea3 = defineGraph<FamilyExt>({ scope: familyScope })
     _ext.workflow.startsWith('txt') ? AR(resolution ?? '1k') : null
   )
   .field('images', img2imgImages({ min: 1, max: KREA3_IMAGES_LIMIT }))
-  .field('thinkingMode', ({ _ext }) =>
-    enumDef({ options: getKrea3ThinkingModeOptions(_ext.flags), default: 'instant' })
+  .field('thinkingMode', ({ resolution, _ext }) =>
+    enumDef({
+      options: getKrea3ThinkingModeOptions(_ext.flags, resolution ?? '1k'),
+      default: 'instant',
+    })
   );
