@@ -1,19 +1,20 @@
-import type { Prisma } from '@prisma/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type {
+  CosmeticShopItemHistoryEntry,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import {
   getMultiAccountTransactionsByPrefix,
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
 import { revokeCosmeticsFromUsers } from '~/server/services/cosmetic.service';
-import { appendItemHistory } from '~/server/services/creator-shop.data';
+import { CREATOR_SHOP_HISTORY_LIMIT } from '~/server/services/creator-shop.data';
 import { createNotification } from '~/server/services/notification.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withRetries } from '~/server/utils/errorHandling';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * Refunds the buyers of a Creator Shop item that was withdrawn after it sold: rejected by a
@@ -89,7 +90,7 @@ async function refundOnce(transactionId: string) {
 
 async function reversePurchase(
   purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
-  clawback: boolean
+  { clawback, trigger }: { clawback: boolean; trigger: 'reject' | 'archive' }
 ): Promise<PurchaseOutcome> {
   let rows: LedgerRow[];
   try {
@@ -109,6 +110,20 @@ async function reversePurchase(
       status: 'failed',
       error: `debits ${paid} do not match the price ${purchase.unitAmount}`,
     };
+
+  // An archive is the creator's own act, so the platform must not end up carrying a refund the
+  // creator was to pay: their payouts come back first, and until they do nothing is refunded.
+  if (clawback && trigger === 'archive') {
+    for (const t of [...payouts, ...debits]) {
+      try {
+        await refundOnce(t.transactionId);
+      } catch (error) {
+        return { status: 'failed', error: messageOf(error) };
+      }
+    }
+    const clawedBack = payouts.reduce((sum, t) => sum + t.amount, 0);
+    return { status: 'refunded', refunded: paid, clawedBack, payoutFailures: [] };
+  }
 
   // The buyer first: until every debit is back the purchase stays owed and the job retries it.
   for (const t of debits) {
@@ -135,6 +150,14 @@ async function reversePurchase(
     }
   }
   return { status: 'refunded', refunded: paid, clawedBack, payoutFailures };
+}
+
+async function markerStands(shopItemId: number, at: string) {
+  const current = await dbWrite.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { meta: true },
+  });
+  return ((current?.meta ?? {}) as CosmeticShopItemMeta).withdrawnRefund?.at === at;
 }
 
 const logRefund = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
@@ -197,11 +220,17 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   let refundedValue = 0;
   let clawedBack = 0;
   let revoked = 0;
+  let stopped = false;
   for (const purchase of purchases) {
+    // An approval or a restore clears the marker; one landing mid-run stops what is left of it.
+    if (!(await markerStands(shopItemId, marker.at))) {
+      stopped = true;
+      break;
+    }
     const outcome =
       purchase.unitAmount === 0
         ? ({ status: 'refunded', refunded: 0, clawedBack: 0, payoutFailures: [] } as const)
-        : await reversePurchase(purchase, marker.clawback);
+        : await reversePurchase(purchase, marker);
     if (outcome.status === 'failed') {
       failures.push({ ...purchase, error: outcome.error });
       await logRefund('error', 'Purchase refund failed', { shopItemId, ...purchase, ...outcome });
@@ -241,23 +270,29 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
         details: { title: item.title },
       }).catch(() => undefined);
 
-    const latest = await dbWrite.cosmeticShopItem.findUnique({
-      where: { id: shopItemId },
-      select: { meta: true, status: true },
-    });
-    const latestMeta = (latest?.meta ?? {}) as CosmeticShopItemMeta;
-    await dbWrite.cosmeticShopItem.update({
-      where: { id: shopItemId },
-      data: {
-        meta: appendItemHistory(latestMeta, {
-          at: new Date().toISOString(),
-          userId: marker.userId,
-          kind: 'refunded',
-          status: latest?.status ?? CosmeticShopItemStatus.Archived,
-          note: `${refunded.length} purchase(s), ${refundedValue} Buzz refunded; ${clawedBack} Buzz reversed from payouts`,
-        }) as Prisma.InputJsonValue,
-      },
-    });
+    const entry: CosmeticShopItemHistoryEntry = {
+      at: new Date().toISOString(),
+      userId: marker.userId,
+      kind: 'refunded',
+      note: `${refunded.length} purchase(s), ${refundedValue} Buzz refunded; ${clawedBack} Buzz reversed from payouts`,
+    };
+    // One statement touching only `history`: writing back the whole meta read earlier would undo a
+    // verdict that landed during the run, marker included.
+    await dbWrite.$executeRaw`
+      UPDATE "CosmeticShopItem"
+      SET meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{history}', (
+        SELECT coalesce(jsonb_agg(kept.e ORDER BY kept.o), '[]'::jsonb)
+        FROM (
+          SELECT x.e, x.o
+          FROM jsonb_array_elements(
+            coalesce(meta->'history', '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb
+          ) WITH ORDINALITY AS x(e, o)
+          ORDER BY x.o DESC
+          LIMIT ${CREATOR_SHOP_HISTORY_LIMIT}
+        ) kept
+      ))
+      WHERE id = ${shopItemId}
+    `;
   }
 
   const summary = {
@@ -271,6 +306,7 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
     revokedFrom: revoked,
     failures,
     payoutFailures,
+    stoppedByVerdict: stopped,
   };
   if (purchases.length)
     await logRefund(

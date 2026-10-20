@@ -171,6 +171,19 @@ describe('archiving', () => {
         { kind: 'edited', field: 'name' }
       ),
     ],
+    [
+      'its creator edited it after approval, and a moderator then sent the edit back',
+      history(
+        { kind: 'submitted' },
+        { kind: 'reviewed', action: 'approve' },
+        { kind: 'edited', field: 'artwork' },
+        { kind: 'reviewed', action: 'request-changes' }
+      ),
+    ],
+    [
+      'a moderator sent it back before it was ever approved',
+      history({ kind: 'submitted' }, { kind: 'reviewed', action: 'request-changes' }),
+    ],
     ['nothing records who withheld it', undefined],
   ])('an item withheld because %s refunds its buyers and reverses the payouts', async (_, h) => {
     stored = listing('PendingReview', { displayApproved: false, ...(h ? { history: h } : {}) });

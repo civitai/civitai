@@ -152,6 +152,15 @@ beforeEach(() => {
       itemMeta = data.meta;
       return item();
     });
+  // The history append is one SQL statement whose values are the new entries and the cap; it
+  // touches only `history`, so this applies it to the meta as it stands NOW.
+  dbMock.dbWrite.$executeRaw
+    .mockReset()
+    .mockImplementation(async (_sql: TemplateStringsArray, entries: string, cap: number) => {
+      const history = [...((itemMeta.history as unknown[]) ?? []), ...JSON.parse(entries)];
+      itemMeta = { ...itemMeta, history: history.slice(-cap) };
+      return 1;
+    });
   dbMock.dbWrite.userCosmeticShopPurchases.findMany
     .mockReset()
     .mockImplementation(
@@ -294,6 +303,142 @@ describe('refundWithdrawnShopItem after archiving a withheld item', () => {
 
     expect(refundedIds()).toEqual(['p-1-debit', 'p-2-debit']);
     expect(purchases.map((p) => p.refunded)).toEqual([true, true]);
+  });
+
+  describe('when the creator pays', () => {
+    beforeEach(() => {
+      itemMeta = { purchases: 0, withdrawnRefund: { ...marker('archive'), clawback: true } };
+    });
+
+    it('takes the payout back before refunding the buyer', async () => {
+      await refundWithdrawnShopItem(ITEM);
+
+      expect(mocks.refundTransaction.mock.calls.map(([id]) => id)).toEqual([
+        'p-1-payout',
+        'p-1-debit',
+        'p-2-payout',
+        'p-2-debit',
+      ]);
+    });
+
+    // An archive is the creator's own act: a payout they've already spent must not leave the
+    // platform refunding their buyers for them.
+    it('refunds nobody whose payout will not come back, and leaves the purchase owed', async () => {
+      mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+        if (transactionId === 'p-1-payout') throw new Error('insufficient funds');
+        ledger.refunded.add(transactionId);
+      });
+
+      const result = await refundWithdrawnShopItem(ITEM);
+
+      expect(result).toEqual({ purchases: 2, refunded: 1, failures: 1 });
+      expect(ledger.refunded.has('p-1-debit')).toBe(false);
+      expect(purchases.map((p) => p.refunded)).toEqual([false, true]);
+      expect(mocks.revokeCosmeticsFromUsers.mock.calls.map(([a]) => a.claimKeys)).toEqual([
+        ['p-2'],
+      ]);
+    });
+  });
+});
+
+describe('refundWithdrawnShopItem and a verdict landing mid-run', () => {
+  it('stops at the next purchase once the marker is cleared', async () => {
+    mocks.revokeCosmeticsFromUsers.mockImplementation(async () => {
+      // An approval lands while the first purchase is being settled.
+      const { withdrawnRefund: _cleared, ...rest } = itemMeta;
+      itemMeta = { ...rest, displayApproved: true };
+      return { revoked: 1 };
+    });
+
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(result).toEqual({ purchases: 2, refunded: 1, failures: 0 });
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+  });
+
+  it('records the refund without bringing back what the verdict cleared', async () => {
+    mocks.revokeCosmeticsFromUsers.mockImplementation(async () => {
+      const { withdrawnRefund: _cleared, ...rest } = itemMeta;
+      itemMeta = { ...rest, displayApproved: true };
+      return { revoked: 1 };
+    });
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(itemMeta.withdrawnRefund).toBeUndefined();
+    expect(itemMeta.displayApproved).toBe(true);
+    expect((itemMeta.history as { kind: string }[]).at(-1)).toMatchObject({ kind: 'refunded' });
+    expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('refundWithdrawnShopItem edge cases', () => {
+  it('counts and notifies only purchases this run marked', async () => {
+    const mark = dbMock.dbWrite.userCosmeticShopPurchases.updateMany.getMockImplementation()!;
+    dbMock.dbWrite.userCosmeticShopPurchases.updateMany.mockImplementation(async (args) =>
+      // Another path marked p-1 between this run's read and its write.
+      args.where.buzzTransactionId === 'p-1' ? { count: 0 } : mark(args)
+    );
+
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(result).toEqual({ purchases: 2, refunded: 1, failures: 0 });
+    expect(mocks.createNotification.mock.calls.map(([n]) => n.userId)).toEqual([102]);
+    expect((itemMeta.history as { note: string }[]).at(-1)!.note).toBe(
+      '1 purchase(s), 1000 Buzz refunded; 700 Buzz reversed from payouts'
+    );
+  });
+
+  it('marks a free purchase without asking Buzz to reverse a charge that never happened', async () => {
+    const charge = '7d9e2b1c-0000-4000-8000-000000000001';
+    purchases = [
+      {
+        userId: 101,
+        buzzTransactionId: charge,
+        unitAmount: 0,
+        purchasedAt: new Date('2026-10-10T00:00:00.000Z'),
+        refunded: false,
+      },
+    ];
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(purchases[0].refunded).toBe(true);
+  });
+
+  it('notifies a buyer with two purchases once', async () => {
+    purchases = [sale(101, 'p-1'), sale(101, 'p-2')];
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(purchases.map((p) => p.refunded)).toEqual([true, true]);
+  });
+
+  it('leaves a purchase owed when its ledger cannot be read', async () => {
+    const charge = '7d9e2b1c-0000-4000-8000-000000000002';
+    purchases = [
+      {
+        userId: 101,
+        buzzTransactionId: charge,
+        unitAmount: 1000,
+        purchasedAt: new Date('2026-10-10T00:00:00.000Z'),
+        refunded: false,
+      },
+    ];
+    const list = vi.spyOn(ledger.rows, 'get').mockImplementation(() => {
+      throw new Error('buzz 503');
+    });
+
+    const result = await refundWithdrawnShopItem(ITEM);
+    list.mockRestore();
+
+    // Read as an empty ledger, the legacy fallback would invent a debit and refund it.
+    expect(result).toEqual({ purchases: 1, refunded: 0, failures: 1 });
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(purchases[0].refunded).toBe(false);
   });
 });
 
