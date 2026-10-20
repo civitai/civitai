@@ -59,9 +59,15 @@ export type TurnOutcome = {
   toolCalls: TurnToolCall[];
   sources: TurnSource[];
   unverified: string[];
+  /** Every round's reasoning, in order, capped at `MAX_REASONING_CHARS`. Null when the model gave none. */
+  reasoning: string | null;
   promptTokens: number;
   completionTokens: number;
 };
+
+/** Kept for the moderator to read, not resent to the model, so the cap only bounds the row and page. */
+export const MAX_REASONING_CHARS = 20_000;
+export const REASONING_CUT = '\n\n[Reasoning cut here: it ran past what is kept.]';
 
 export async function runTurn(input: {
   system: string;
@@ -102,6 +108,7 @@ export async function runTurn(input: {
   const sources = new Map<string, TurnSource>();
   let promptTokens = 0;
   let completionTokens = 0;
+  const reasoning: string[] = [];
 
   const finish = (
     status: TurnOutcome['status'],
@@ -110,7 +117,13 @@ export async function runTurn(input: {
   ): TurnOutcome => {
     clearTimeout(timer);
     const known = [...input.knownRefs, ...sources.keys()];
+    const thought = reasoning.join('\n\n');
     return {
+      reasoning: !thought
+        ? null
+        : thought.length > MAX_REASONING_CHARS
+        ? thought.slice(0, MAX_REASONING_CHARS) + REASONING_CUT
+        : thought,
       status,
       answer,
       error,
@@ -146,6 +159,8 @@ export async function runTurn(input: {
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
+      const thought = completion.message.reasoning?.trim();
+      if (thought) reasoning.push(thought);
       const calls = last ? [] : completion.message.tool_calls ?? [];
 
       if (!calls.length) {
