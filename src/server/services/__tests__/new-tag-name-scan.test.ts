@@ -79,6 +79,11 @@ describe('findOrCreateTagsByName', () => {
     await expect(findOrCreateTagsByName([STORED])).resolves.toEqual({ [STORED.toLowerCase()]: 1 });
   });
 
+  it('creates a new tag beside an existing one the list refuses', async () => {
+    await expect(findOrCreateTagsByName([STORED, 'fresh'])).resolves.toBeDefined();
+    expect(dbMock.dbWrite.tag.createMany).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses to create a tag the list refuses, before writing', async () => {
     await expect(findOrCreateTagsByName([STORED, 'new BLOCKED tag'])).rejects.toThrow('blocked');
     expect(dbMock.dbWrite.tag.createMany).not.toHaveBeenCalled();
