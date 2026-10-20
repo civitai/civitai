@@ -57,13 +57,9 @@ beforeEach(() => {
 
 describe('executeTurn', () => {
   it('records and calls the model the moderator picked', async () => {
-    await ask('stepfun/step-5-preview');
-    expect(startTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'stepfun/step-5-preview' })
-    );
-    expect(complete).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'stepfun/step-5-preview' })
-    );
+    await ask('z-ai/glm-5.3');
+    expect(startTurn).toHaveBeenCalledWith(expect.objectContaining({ model: 'z-ai/glm-5.3' }));
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ model: 'z-ai/glm-5.3' }));
   });
 
   it('runs the default when nothing, or nothing listed, was picked', async () => {

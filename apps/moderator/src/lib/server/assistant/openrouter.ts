@@ -51,7 +51,8 @@ export async function listPrices(now = Date.now()): Promise<Record<string, Price
     for (const m of body.data) {
       const input = perMillion(m?.pricing?.prompt);
       const output = perMillion(m?.pricing?.completion);
-      if (m && m.id in byId && input !== null && output !== null) byId[m.id] = { input, output };
+      if (m && m.id in byId && input !== null && output !== null)
+        byId[m.id] = { input, output, current: true };
     }
   } catch (e) {
     ttl = PRICE_RETRY_MS;
@@ -108,7 +109,7 @@ export async function complete(input: {
       messages: input.messages,
       tools: input.tools?.length ? input.tools : undefined,
       tool_choice: input.tools?.length ? input.toolChoice ?? 'auto' : undefined,
-      temperature: findModel(input.model)?.noTemperature ? undefined : 0.2,
+      temperature: 0.2,
       // Reasoning tokens are billed and counted against the turn's budget; low keeps them short.
       reasoning: { effort: 'low' },
       // Account data goes into these prompts. Route only to providers that do not retain or train on

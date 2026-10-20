@@ -27,8 +27,10 @@ describe('listPrices', () => {
     const prices = await listPrices(later());
     expect(prices['z-ai/glm-5.3-flash'].input).toBeCloseTo(0.3, 10);
     expect(prices['z-ai/glm-5.3-flash'].output).toBeCloseTo(1, 10);
-    // A model the list did not return keeps the release's price; an unlisted one is never added.
-    expect(prices['openai/gpt-6-luna']).toEqual({ input: 0.1, output: 0.5 });
+    expect(prices['z-ai/glm-5.3-flash'].current).toBe(true);
+    // A model the list did not return keeps the release's price, marked not current; an unlisted
+    // one is never added.
+    expect(prices['z-ai/glm-5.3']).toEqual({ input: 0.079, output: 1.4 });
     expect(prices['not/listed']).toBeUndefined();
   });
 
@@ -50,14 +52,14 @@ describe('listPrices', () => {
         Response.json({
           data: [
             { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.0000003', completion: '-1' } },
-            { id: 'openai/gpt-6-luna', pricing: { prompt: null, completion: null } },
+            { id: 'z-ai/glm-5.3', pricing: { prompt: null, completion: null } },
           ],
         })
       )
     );
     const prices = await listPrices(later());
     expect(prices['z-ai/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
-    expect(prices['openai/gpt-6-luna']).toEqual({ input: 0.1, output: 0.5 });
+    expect(prices['z-ai/glm-5.3']).toEqual({ input: 0.079, output: 1.4 });
   });
 
   it('retries a failed read after minutes, not an hour', async () => {
@@ -87,8 +89,8 @@ afterEach(() => {
 
 describe('assistantModel', () => {
   it('takes ASSISTANT_MODEL when it names a listed model', () => {
-    env.ASSISTANT_MODEL = ' openai/gpt-6-luna ';
-    expect(assistantModel()).toBe('openai/gpt-6-luna');
+    env.ASSISTANT_MODEL = ' z-ai/glm-5.3 ';
+    expect(assistantModel()).toBe('z-ai/glm-5.3');
   });
 
   it('ignores a model outside the list, which was never checked for the no-retention policy', () => {
@@ -126,25 +128,10 @@ describe('complete', () => {
       Response.json({ choices: [{ message: { content: 'ok' } }] })
     );
     vi.stubGlobal('fetch', fetch);
-    await complete({ model: 'openai/gpt-6-luna', messages: [{ role: 'user', content: 'q' }] });
+    await complete({ model: 'z-ai/glm-5.3', messages: [{ role: 'user', content: 'q' }] });
     const sent = JSON.parse(fetch.mock.calls[0][1].body as string);
-    expect(sent.model).toBe('openai/gpt-6-luna');
+    expect(sent.model).toBe('z-ai/glm-5.3');
     expect(sent.provider).toEqual({ data_collection: 'deny', require_parameters: true });
-  });
-
-  // With `require_parameters`, one unsupported parameter leaves no endpoint at all: GPT-6 Luna under
-  // the no-retention policy came back 404 until temperature was dropped for it.
-  it('sends temperature only to a model that accepts it', async () => {
-    const fetch = vi.fn(async (_url: string, _init: RequestInit) =>
-      Response.json({ choices: [{ message: { content: 'ok' } }] })
-    );
-    vi.stubGlobal('fetch', fetch);
-    const sent = async (model: string) => {
-      await complete({ model, messages: [{ role: 'user', content: 'q' }] });
-      return JSON.parse(fetch.mock.calls.at(-1)![1].body as string);
-    };
-    expect((await sent('openai/gpt-6-luna')).temperature).toBeUndefined();
-    expect((await sent('z-ai/glm-5.3-flash')).temperature).toBe(0.2);
   });
 });
 

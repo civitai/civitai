@@ -120,13 +120,21 @@
       <!-- A popover, not a title: the per-model split must reach a phone and a keyboard too. -->
       <Popover.Root>
         <Popover.Trigger class="underline decoration-dotted underline-offset-2">
-          ≈ {usd(data.spend.usd)}{data.spend.unpricedTokens ? '+' : ''} today (est.)
+          ≈ {usd(data.spend.usd)}{data.spend.unpricedTokens ? '+' : ''} today ({data.spend.current
+            ? 'est.'
+            : 'est., prices not current'})
         </Popover.Trigger>
         <Popover.Content align="end" class="w-64 text-xs">
           <p class="mt-0 mb-2 text-dark-2">
             Estimated at OpenRouter's list prices. The router picks the provider per call, so the real
             cost can differ.
           </p>
+          {#if !data.spend.current}
+            <p class="mt-0 mb-2 text-amber-300">
+              OpenRouter's current prices could not be read, so some of this uses the prices this
+              release shipped with, which may be out of date.
+            </p>
+          {/if}
           <ul class="m-0 space-y-1 p-0">
             {#each data.spend.byModel as r (r.model)}
               <li class="flex justify-between gap-2">

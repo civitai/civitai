@@ -56,8 +56,8 @@ describe('/assistant/[chatId] load', () => {
   });
 
   it("keeps the chat on its last turn's model, and falls back to the default for one no longer listed", async () => {
-    listTurns.mockResolvedValue([{ model: 'stepfun/step-5-preview', sources: [] }]);
-    expect((await run()).model).toBe('stepfun/step-5-preview');
+    listTurns.mockResolvedValue([{ model: 'z-ai/glm-5.3', sources: [] }]);
+    expect((await run()).model).toBe('z-ai/glm-5.3');
     listTurns.mockResolvedValue([{ model: 'retired/model', sources: [] }]);
     expect((await run()).model).toBe('z-ai/glm-5.3-flash');
   });

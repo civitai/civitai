@@ -32,11 +32,9 @@ beforeEach(() => {
 
 describe('POST /assistant/[chatId]/turn', () => {
   it('runs the question on the listed model the moderator picked', async () => {
-    const res = await post({ prompt: 'q', model: 'openai/gpt-6-luna' });
+    const res = await post({ prompt: 'q', model: 'z-ai/glm-5.3' });
     await res.text();
-    expect(executeTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'openai/gpt-6-luna' })
-    );
+    expect(executeTurn).toHaveBeenCalledWith(expect.objectContaining({ model: 'z-ai/glm-5.3' }));
   });
 
   it('refuses a model outside the list without starting a turn', async () => {
