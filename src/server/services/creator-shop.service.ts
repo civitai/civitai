@@ -27,7 +27,6 @@ import {
   recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
-  withheldByModerator,
 } from '~/server/services/creator-shop.data';
 import { refundWithdrawnShopItem } from '~/server/services/creator-shop-withdrawn-refund.service';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -1116,8 +1115,8 @@ export const archiveCreatorShopItem = async ({
       sellerId: existing.addedById,
     });
   // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
-  // are refunded. The platform carries it only when a moderator's verdict withheld the item;
-  // otherwise the creator's payouts are reversed too.
+  // are refunded. Archiving is the creator's own act, so the creator pays: their payouts are
+  // reversed, even into a negative balance (Justin, 2026-10-20).
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const withheld =
@@ -1138,7 +1137,7 @@ export const archiveCreatorShopItem = async ({
               ...meta,
               withdrawnRefund: {
                 trigger: 'archive',
-                clawback: !withheldByModerator(meta),
+                clawback: true,
                 userId,
                 at: now.toISOString(),
               },

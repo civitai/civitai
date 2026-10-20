@@ -128,33 +128,17 @@ describe('archiving', () => {
       ...(field ? { changes: [{ field, from: 'a', to: 'b' }] } : {}),
     })) as CosmeticShopItemMeta['history'];
 
-  it('an item a moderator sent back refunds its buyers, the platform paying', async () => {
-    stored = listing('RequestedChanges', {
-      displayApproved: false,
-      history: history(
+  // Archiving is the creator's own act, so the creator pays whatever withheld the item
+  // (Justin, 2026-10-20), including an item a moderator sent back.
+  it.each([
+    [
+      'a moderator sent it back after approval',
+      history(
         { kind: 'submitted' },
         { kind: 'reviewed', action: 'approve' },
         { kind: 'reviewed', action: 'request-changes' }
       ),
-    });
-    const before = Date.now();
-
-    await archiveCreatorShopItem({ userId: CREATOR, id: 42 });
-
-    const written = storedMeta().withdrawnRefund!;
-    expect(written).toEqual({
-      trigger: 'archive',
-      clawback: false,
-      userId: CREATOR,
-      at: expect.any(String),
-    });
-    expect(Date.parse(written.at)).toBeGreaterThanOrEqual(before);
-    expect(refund.refundWithdrawnShopItem.mock.calls).toEqual([[42, { limit: 25 }]]);
-  });
-
-  // The creator can make their own item unwearable by editing what holders see. Archiving it then
-  // must not have the platform pay their buyers back while they keep what the sales paid them.
-  it.each([
+    ],
     [
       'its creator edited what holders see after approval',
       history(
@@ -164,34 +148,25 @@ describe('archiving', () => {
       ),
     ],
     [
-      'its creator edited it after a moderator sent it back',
-      history(
-        { kind: 'submitted' },
-        { kind: 'reviewed', action: 'request-changes' },
-        { kind: 'edited', field: 'name' }
-      ),
-    ],
-    [
-      'its creator edited it after approval, and a moderator then sent the edit back',
-      history(
-        { kind: 'submitted' },
-        { kind: 'reviewed', action: 'approve' },
-        { kind: 'edited', field: 'artwork' },
-        { kind: 'reviewed', action: 'request-changes' }
-      ),
-    ],
-    [
       'a moderator sent it back before it was ever approved',
       history({ kind: 'submitted' }, { kind: 'reviewed', action: 'request-changes' }),
     ],
     ['nothing records who withheld it', undefined],
   ])('an item withheld because %s refunds its buyers and reverses the payouts', async (_, h) => {
-    stored = listing('PendingReview', { displayApproved: false, ...(h ? { history: h } : {}) });
+    stored = listing('RequestedChanges', { displayApproved: false, ...(h ? { history: h } : {}) });
+    const before = Date.now();
 
     await archiveCreatorShopItem({ userId: CREATOR, id: 42 });
 
-    expect(storedMeta().withdrawnRefund).toMatchObject({ trigger: 'archive', clawback: true });
-    expect(refund.refundWithdrawnShopItem).toHaveBeenCalledTimes(1);
+    const written = storedMeta().withdrawnRefund!;
+    expect(written).toEqual({
+      trigger: 'archive',
+      clawback: true,
+      userId: CREATOR,
+      at: expect.any(String),
+    });
+    expect(Date.parse(written.at)).toBeGreaterThanOrEqual(before);
+    expect(refund.refundWithdrawnShopItem.mock.calls).toEqual([[42, { limit: 25 }]]);
   });
 
   it('a withheld listing with no cosmetic of its own refunds nothing', async () => {
