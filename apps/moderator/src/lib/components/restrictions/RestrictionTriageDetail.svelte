@@ -22,8 +22,8 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { unwiredRulingReason } from '$lib/restriction-types';
-  import { originSummary, sourceState } from '$lib/restrictions/origin';
-  import { planRecheck, type Recheck } from '$lib/restrictions/recheck';
+  import { sourceState } from '$lib/restrictions/origin';
+  import { countNotBlocking, planRecheck, type Recheck } from '$lib/restrictions/recheck';
   import { groupRepeats } from '$lib/restrictions/trigger-groups';
   import { rulingLabel } from '$lib/restrictions/verdict-label';
   import type { RemixSource, RestrictionRow } from '$lib/server/user-restriction.service';
@@ -65,7 +65,6 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  const summary = $derived(originSummary(row.triggers));
   const groups = $derived(groupRepeats(row.triggers));
   const pending = $derived(row.status === 'Pending');
   // The server refuses these rows too; this only stops the moderator being invited to click a control
@@ -76,6 +75,7 @@
   // Fetched on open, per restriction: `load` does not re-run when the selection changes.
   let rechecks = $state<Record<number, Recheck | 'loading' | 'failed'>>({});
   const recheck = $derived(rechecks[row.id]);
+  const notBlocking = $derived(typeof recheck === 'object' ? countNotBlocking(recheck) : 0);
   const needsRecheck = $derived(planRecheck(row.triggers).inputs.length > 0);
 
   $effect(() => {
@@ -225,9 +225,6 @@
         {/if}
         · <a href={userLookupUrl(row.username ?? row.userId)} class={LINK_CLASS}>User lookup</a>
       </p>
-      {#if summary.verdict}
-        <p class="m-0 text-base font-medium text-white">{summary.verdict}</p>
-      {/if}
       {#if unwiredReason && pending}
         <p
           class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200"
@@ -244,6 +241,16 @@
       />
     {/if}
 
+    {#if notBlocking > 0}
+      <p
+        class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200"
+      >
+        {notBlocking} of {row.triggers.length}
+        {row.triggers.length === 1 ? 'trigger' : 'triggers'} would not block under the current word
+        list. They were likely warnings counted toward the mute.
+      </p>
+    {/if}
+
     <div class="space-y-4">
       {#each groups as group (group.triggers[0].key)}
         {@const trigger = group.triggers[0]}
@@ -251,7 +258,6 @@
         <TriageTriggerCard
           repeats={group.triggers}
           index={group.start}
-          total={row.triggers.length}
           {civitaiUrl}
           source={sourceId ? sources[sourceId] : undefined}
           sourceState={sourceId

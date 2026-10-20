@@ -53,8 +53,8 @@ export function summarizeTriggers(
     } else {
       const rechecked = recheckLabels[trigger.key];
       if (!rechecked) reasons.push('Match not recorded');
-      else if (!rechecked.length) reasons.push('Re-check found no match');
-      else reasons.push(...rechecked.map((label) => `Re-check: ${label}`));
+      else if (!rechecked.length) reasons.push('No match with the current list');
+      else reasons.push(...rechecked);
     }
 
     const time = Date.parse(trigger.time ?? '');

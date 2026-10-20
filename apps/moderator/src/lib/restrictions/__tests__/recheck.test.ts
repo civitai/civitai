@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { planRecheck, recheckCategories, recheckReasonLabels, recheckResult } from '../recheck';
+import {
+  countNotBlocking,
+  normalisedDiffers,
+  planRecheck,
+  recheckCategories,
+  recheckReasonLabels,
+  recheckResult,
+} from '../recheck';
 
 const t = (key: string, extra: Record<string, unknown> = {}) => ({
   key,
@@ -107,7 +114,7 @@ describe('recheckReasonLabels', () => {
       prompt: [seg('minor'), seg('nsfw')],
       negativePrompt: null,
     });
-    expect(recheckReasonLabels(r, names)).toEqual(['would block (MINOR, NSFW)']);
+    expect(recheckReasonLabels(r, names)).toEqual(['Would block now (MINOR, NSFW)']);
   });
 
   it('says would not block when only non-blocking terms were found', () => {
@@ -116,7 +123,7 @@ describe('recheckReasonLabels', () => {
       prompt: [seg('nsfw')],
       negativePrompt: null,
     });
-    expect(recheckReasonLabels(r, names)).toEqual(['would not block']);
+    expect(recheckReasonLabels(r, names)).toEqual(['Would not block now']);
   });
 
   it('is empty when nothing was found', () => {
@@ -126,5 +133,36 @@ describe('recheckReasonLabels', () => {
       negativePrompt: null,
     });
     expect(recheckReasonLabels(r, names)).toEqual([]);
+  });
+});
+
+describe('normalisedDiffers', () => {
+  it('is false when the segments rebuild the raw text exactly', () => {
+    expect(
+      normalisedDiffers(
+        [
+          { text: 'al', category: null },
+          { text: 'pha', category: 'nsfw' },
+        ],
+        'alpha'
+      )
+    ).toBe(false);
+  });
+
+  it('is true when normalisation changed the text', () => {
+    expect(normalisedDiffers([{ text: 'alpha', category: null }], 'Alpha &amp; beta')).toBe(true);
+  });
+});
+
+describe('countNotBlocking', () => {
+  const r = (wouldBlock: boolean) => ({ prompt: [], negativePrompt: null, wouldBlock });
+  it('counts re-checked triggers the current list would not block, including ones with no hits', () => {
+    expect(
+      countNotBlocking({ results: [r(true), r(false)], byKey: { a: 0, b: 1, c: 1, d: 1 } })
+    ).toBe(3);
+  });
+
+  it('is zero without a re-check', () => {
+    expect(countNotBlocking(undefined)).toBe(0);
   });
 });

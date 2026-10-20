@@ -9,7 +9,8 @@ export type RecheckResult = {
   wouldBlock: boolean;
 };
 
-export const RECHECK_NOT_BLOCKING = 'would not block';
+export const RECHECK_BLOCKS = 'Would block now';
+export const RECHECK_NOT_BLOCKING = 'Would not block now';
 
 /** Highlighted terms alone do not block; only the audit's own verdict or a blocked-list hit does. */
 export function recheckResult(audit: {
@@ -31,7 +32,9 @@ export function recheckReasonLabels(
   if (!categories.length && !result.wouldBlock) return [];
   if (!result.wouldBlock) return [RECHECK_NOT_BLOCKING];
   return [
-    categories.length ? `would block (${categories.map(categoryName).join(', ')})` : 'would block',
+    categories.length
+      ? `${RECHECK_BLOCKS} (${categories.map(categoryName).join(', ')})`
+      : RECHECK_BLOCKS,
   ];
 }
 
@@ -75,4 +78,15 @@ export function recheckCategories(
     if (segment.category) found.add(segment.category);
   }
   return [...found];
+}
+
+/** Segments are of normalised text; only offer the original when the two actually differ. */
+export function normalisedDiffers(segments: readonly PromptSegment[], raw: string): boolean {
+  return segments.map((s) => s.text).join('') !== raw;
+}
+
+/** Re-checked triggers the current word list would not block, including ones it finds nothing in. */
+export function countNotBlocking(recheck: Recheck | undefined): number {
+  if (!recheck) return 0;
+  return Object.values(recheck.byKey).filter((i) => !recheck.results[i]?.wouldBlock).length;
 }

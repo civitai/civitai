@@ -1,8 +1,14 @@
 <script lang="ts">
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { dateTime } from '$lib/format';
   import { HIGHLIGHT_LEGEND } from '$lib/prompt-highlight';
   import { originSummary } from '$lib/restrictions/origin';
-  import { RECHECK_NOT_BLOCKING, recheckReasonLabels, type Recheck } from '$lib/restrictions/recheck';
+  import {
+    RECHECK_BLOCKS,
+    RECHECK_NOT_BLOCKING,
+    recheckReasonLabels,
+    type Recheck,
+  } from '$lib/restrictions/recheck';
   import { formatSpan } from '$lib/restrictions/trigger-groups';
   import { summarizeTriggers } from '$lib/restrictions/trigger-summary';
   import type { RestrictionTriggerView } from '$lib/server/user-restriction.service';
@@ -27,47 +33,57 @@
     )
   );
   const summary = $derived(summarizeTriggers(triggers, labels));
-  const origin = $derived(originSummary(triggers).chip);
+  const originChips = $derived(originSummary(triggers).chip.split(' · ').filter(Boolean));
   const span = $derived(
     summary.first && summary.last ? Date.parse(summary.last) - Date.parse(summary.first) : null
   );
+  const range = $derived(
+    summary.first && summary.last
+      ? `${dateTime(summary.first)} → ${dateTime(summary.last)}`
+      : undefined
+  );
+
+  const WARN = 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+  const tone = (label: string) =>
+    label === RECHECK_NOT_BLOCKING
+      ? 'warn'
+      : label.startsWith(RECHECK_BLOCKS)
+        ? 'block'
+        : 'plain';
 </script>
 
-{#snippet tallies(title: string, items: { label: string; count: number }[])}
-  <div class="min-w-0 space-y-1">
-    <p class="m-0 text-xs font-semibold tracking-wide text-dark-2 uppercase">{title}</p>
-    <ul class="m-0 list-none space-y-0.5 p-0 text-sm text-dark-0">
-      {#each items as item (item.label)}
-        {@const warn = item.label === `Re-check: ${RECHECK_NOT_BLOCKING}`}
-        <li class={warn ? 'font-medium text-amber-300' : undefined}>
-          {item.label}
-          <span class={warn ? 'text-amber-300' : 'text-dark-2'}>× {item.count}</span>
-        </li>
-      {/each}
-    </ul>
-  </div>
-{/snippet}
-
-<section class="space-y-3 rounded-md border border-dark-4 bg-dark-6 p-3">
-  <p class="m-0 text-sm text-white">
+<section class="space-y-2">
+  <p class="m-0 text-sm text-white" title={range}>
     {summary.total}
     {summary.total === 1 ? 'trigger' : 'triggers'}
     <span class="text-dark-2">·</span>
-    {summary.distinctPrompts} distinct {summary.distinctPrompts === 1 ? 'prompt' : 'prompts'}
-    {#if summary.first && summary.last && span}
-      <span class="text-dark-2">·</span>
-      {dateTime(summary.first)} → {dateTime(summary.last)}
-      <span class="text-dark-2">({formatSpan(span)})</span>
-    {:else if summary.first}
-      <span class="text-dark-2">·</span>
-      {dateTime(summary.first)}
+    {summary.distinctPrompts}
+    {summary.distinctPrompts === 1 ? 'prompt' : 'prompts'}
+    {#if span}
+      <span class="text-dark-2">· over {formatSpan(span)}</span>
     {/if}
   </p>
-  <div class="grid gap-4 sm:grid-cols-2">
-    {@render tallies('Why blocked', summary.reasons)}
-    {@render tallies('Source', summary.sources)}
+  <div class="flex flex-wrap items-center gap-1.5">
+    {#each summary.reasons as item (item.label)}
+      {@const t = tone(item.label)}
+      <Badge
+        variant={t === 'block' ? 'destructive' : 'outline'}
+        class={t === 'warn' ? WARN : undefined}
+      >
+        {item.label} × {item.count}
+      </Badge>
+    {/each}
+    {#if summary.sources.length > 1}
+      <span class="mx-1 text-dark-2" aria-hidden="true">|</span>
+      {#each summary.sources as item (item.label)}
+        <Badge variant="secondary">{item.label} × {item.count}</Badge>
+      {/each}
+    {/if}
+    {#if originChips.length}
+      <span class="mx-1 text-dark-2" aria-hidden="true">|</span>
+      {#each originChips as chip (chip)}
+        <Badge variant="ghost" class="text-dark-2">{chip}</Badge>
+      {/each}
+    {/if}
   </div>
-  {#if origin}
-    <p class="m-0 text-xs text-dark-2">Origin: <span class="text-dark-0">{origin}</span></p>
-  {/if}
 </section>

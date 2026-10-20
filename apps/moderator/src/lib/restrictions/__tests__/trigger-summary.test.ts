@@ -62,11 +62,14 @@ describe('summarizeTriggers', () => {
   });
 
   it('uses re-check categories for unrecorded rows and says when the re-check found nothing', () => {
-    const s = summarizeTriggers([t('a'), t('b'), t('c')], { a: ['Minor'], b: [] });
+    const s = summarizeTriggers([t('a'), t('b'), t('c')], {
+      a: ['Would block now (Minor)'],
+      b: [],
+    });
     expect(s.reasons).toEqual([
       { label: 'Match not recorded', count: 1 },
-      { label: 'Re-check found no match', count: 1 },
-      { label: 'Re-check: Minor', count: 1 },
+      { label: 'No match with the current list', count: 1 },
+      { label: 'Would block now (Minor)', count: 1 },
     ]);
   });
 
