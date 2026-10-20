@@ -556,6 +556,9 @@ describe('blocklistSelfCheck', () => {
   });
 });
 
+// Windows has no POSIX permission bits: Node reports every file 0666 and chmod sets only read-only.
+const POSIX_MODES = process.platform !== 'win32';
+
 describe('entry-script guards', () => {
   it('refuses ClickHouse or Axiom configuration — any non-empty value, as the client gates read it', () => {
     expect(() => assertNoSinks({ CLICKHOUSE_HOST: '', AXIOM_TOKEN: '' })).not.toThrow();
@@ -570,22 +573,28 @@ describe('entry-script guards', () => {
   });
 
   describe('resolveOutPath', () => {
-    // A fake filesystem: these paths exist, and `/tmp/link` is a symlink into a checkout.
-    const fsFake = (paths: string[], links: Record<string, string> = {}) => ({
-      exists: (p: string) => paths.includes(p),
-      realpath: (p: string) => links[p] ?? p,
-    });
+    // A fake filesystem: these paths exist, and `/tmp/link` is a symlink into a checkout. Each path
+    // is resolved as the guard resolves its input, so on Windows the fake holds `C:\work\repo`.
+    const p = (posix: string) => path.resolve(posix);
+    const fsFake = (paths: string[], links: Record<string, string> = {}) => {
+      const existing = paths.map(p);
+      const real = new Map(Object.entries(links).map(([from, to]) => [p(from), p(to)]));
+      return {
+        exists: (q: string) => existing.includes(q),
+        realpath: (q: string) => real.get(q) ?? q,
+      };
+    };
 
     it('refuses a path inside any checkout — found by its .git — and accepts one outside', () => {
       const f = fsFake(['/', '/work', '/work/repo', '/work/repo/.git', '/work/other', '/tmp']);
       const resolve = (out: string) => resolveOutPath(out, f.exists, f.realpath);
       expect(() => resolve('/work/repo/out.csv')).toThrow(
-        /inside a git checkout: \/work\/repo\/out.csv/
+        `inside a git checkout: ${p('/work/repo/out.csv')}`
       );
       // A directory that does not exist yet, inside the checkout, is still refused.
       expect(() => resolve('/work/repo/new/dir/out.csv')).toThrow(/inside a git checkout/);
-      expect(resolve('/work/other/out.csv')).toBe('/work/other/out.csv');
-      expect(resolve('/tmp/out.csv')).toBe('/tmp/out.csv');
+      expect(resolve('/work/other/out.csv')).toBe(p('/work/other/out.csv'));
+      expect(resolve('/tmp/out.csv')).toBe(p('/tmp/out.csv'));
     });
 
     it('resolves the parent through symlinks first, so a link cannot smuggle the file in', () => {
@@ -679,10 +688,10 @@ describe('entry-script guards', () => {
       const dir = defaultReplayDir(root);
       expect(path.basename(dir)).toBe(REPLAY_DIR_NAME);
       expect(ensureReplayDir(dir)).toBe(fs.realpathSync(dir));
-      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+      if (POSIX_MODES) expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
       fs.chmodSync(dir, 0o755);
       ensureReplayDir(dir);
-      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+      if (POSIX_MODES) expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
 
       const elsewhere = fs.mkdtempSync(path.join(root, 'elsewhere-'));
       const link = path.join(root, 'linked');
@@ -735,7 +744,7 @@ describe('entry-script guards', () => {
         )
       ).resolves.toBe(7);
       expect(fs.readFileSync(out, 'utf8')).toBe('h\r\nr\r\n');
-      expect(fs.statSync(out).mode & 0o777).toBe(0o600);
+      if (POSIX_MODES) expect(fs.statSync(out).mode & 0o777).toBe(0o600);
       expect(log).toHaveBeenCalledWith(`writing CSV: ${out}`);
     });
 
