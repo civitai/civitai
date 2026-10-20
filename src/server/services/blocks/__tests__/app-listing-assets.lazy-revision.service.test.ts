@@ -343,6 +343,12 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
 // 🔴 dbRead and dbWrite are DISTINCT fakes over one store. They used to be the same
 // object, which silently made every "reads the primary" claim in this module
 // unfalsifiable.
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: readDb, dbWrite: db }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_gen_${++ids.n}`,

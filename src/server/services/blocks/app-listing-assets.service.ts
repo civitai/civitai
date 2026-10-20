@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import {
@@ -1394,6 +1395,11 @@ export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
 ): Promise<AddListingScreenshotResult> {
+  // Before the lazy mint below, so a refused caption opens no shadow revision.
+  await throwOnBlockedUserContent(args.caption, {
+    isModerator: user.isModerator,
+    surface: 'app-listing',
+  });
   // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
   const listing = await resolveOwnerAssetEditTarget(
     await loadOwnedListing(args.listingId, user),
@@ -1657,6 +1663,10 @@ export async function updateListingScreenshotCaption(
   args: { screenshotId: string; caption?: string | null },
   user: SessionUser
 ): Promise<{ id: string }> {
+  await throwOnBlockedUserContent(args.caption, {
+    isModerator: user.isModerator,
+    surface: 'app-listing',
+  });
   const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   assertOwnerAssetEditable(listing, user);
   // 🔴 LISTING-SCOPED write — see `throwScreenshotNoLongerOnRevision`.

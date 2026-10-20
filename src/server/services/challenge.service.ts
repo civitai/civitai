@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -1684,6 +1685,12 @@ export async function upsertUserChallenge({
       message: 'Green challenges must be Safe-For-Work.',
     });
   const themeEls = themeElements?.length ? themeElements : undefined;
+
+  // Before the cover image below, so a refused write leaves no orphan Image behind.
+  await throwOnBlockedUserContent(
+    [rest.title, rest.description, rest.theme, rest.invitation, ...(themeEls ?? [])],
+    { isModerator, surface: 'challenge' }
+  );
 
   // Derive label + criteria from the ChallengeCategory library (throws on unknown keys) so only
   // server-derived text is persisted / reaches the judge prompt.
