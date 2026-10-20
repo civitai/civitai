@@ -13,18 +13,23 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 // A panel capped during the session: the chapter cache never received the reason the poll
 // persisted, so the card must take it from the poll reply or it offers the unlock again.
-const h = vi.hoisted(() => ({ poll: vi.fn() }));
+const h = vi.hoisted(() => {
+  const poll = vi.fn();
+  // Stable like the real `trpc.useUtils()`: the card's poll callback depends on it.
+  const utils = {
+    comics: {
+      pollPanelStatus: { fetch: poll },
+      getChapter: { setData: () => undefined, invalidate: async () => undefined },
+    },
+  };
+  return { poll, utils };
+});
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy(
     {},
     {
-      useUtils: () => ({
-        comics: {
-          pollPanelStatus: { fetch: h.poll },
-          getChapter: { setData: vi.fn(), invalidate: vi.fn(async () => undefined) },
-        },
-      }),
+      useUtils: () => h.utils,
     }
   ),
 }));
@@ -62,15 +67,7 @@ afterEach(() => {
 const buttonLabels = () =>
   Array.from(document.body.querySelectorAll('button')).map((el) => el.textContent?.trim());
 
-it('offers no unlock once the poll reports the output capped', async () => {
-  h.poll.mockResolvedValue({
-    id: 1,
-    status: 'RequireUnlock',
-    imageUrl: null,
-    errorMessage: NSFW_CAPPED_MESSAGE,
-    blockedReason: NSFW_CAPPED,
-    blurredPreviewUrl: null,
-  });
+async function mountCard(panel: { status: string; metadata: Record<string, unknown> }) {
   const host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -86,10 +83,9 @@ it('offers no unlock once the poll reports the output capped', async () => {
             imageId: null,
             imageUrl: null,
             prompt: 'a panel',
-            status: 'RequireUnlock',
             workflowId: 'wf-1',
             errorMessage: null,
-            metadata: { quantity: 1 },
+            ...panel,
           },
           projectId: 11,
           chapterPosition: 1,
@@ -104,9 +100,37 @@ it('offers no unlock once the poll reports the output capped', async () => {
       )
     );
   });
-
   expect(h.poll).toHaveBeenCalledWith({ panelId: 1 }, expect.anything());
+}
+
+it('offers no unlock once the poll reports the output capped', async () => {
+  h.poll.mockResolvedValue({
+    id: 1,
+    status: 'RequireUnlock',
+    imageUrl: null,
+    errorMessage: NSFW_CAPPED_MESSAGE,
+    blockedReason: NSFW_CAPPED,
+    blurredPreviewUrl: null,
+  });
+  await mountCard({ status: 'RequireUnlock', metadata: { quantity: 1 } });
+
   expect(buttonLabels()).not.toContain('Unlock');
   expect(buttonLabels()).toContain('Regenerate');
   expect(document.body.textContent).toContain(NSFW_CAPPED_MESSAGE);
+});
+
+it('stops inviting an unlock once the poll reports every locked candidate capped', async () => {
+  h.poll.mockResolvedValue({
+    id: 1,
+    status: 'AwaitingSelection',
+    candidates: [{ requiresUnlock: true, blockedReason: NSFW_CAPPED }, { key: 'clean-key' }],
+  });
+  // Saved before the reason was recorded, so the slot reads as unlockable until the poll lands.
+  await mountCard({
+    status: 'AwaitingSelection',
+    metadata: { quantity: 2, candidateImages: [{ requiresUnlock: true }, { key: 'clean-key' }] },
+  });
+
+  expect(document.body.textContent).toContain('Click to choose');
+  expect(document.body.textContent).not.toContain('Some need unlock');
 });

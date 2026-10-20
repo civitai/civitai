@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CandidateSlot } from '~/components/Comics/CandidateImageModal';
 import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
 import { PanelUnlockActions } from '~/components/Comics/PanelUnlockActions';
-import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
+import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,7 +55,7 @@ describe('comics candidate picker', () => {
   it('offers no yellow unlock when every locked result is capped', () => {
     renderPicker([capped, clean], 'red');
     expect(buttonLabels()).not.toContain('Unlock with yellow Buzz');
-    expect(document.body.textContent).toContain('limited to a lower rating');
+    expect(document.body.textContent).toContain(NSFW_CAPPED_MESSAGE);
   });
 
   it('offers the unlock when one locked result is within the cap', () => {
@@ -94,7 +94,7 @@ describe('single-image panel unlock', () => {
   ])('offers nothing to unlock a capped output on %s', (_domain, isGreen) => {
     renderActions(NSFW_CAPPED, isGreen);
     expect(buttonLabels()).toEqual([]);
-    expect(document.body.textContent).toContain('limited to a lower rating');
+    expect(document.body.textContent).toContain(NSFW_CAPPED_MESSAGE);
   });
 
   it('sends an output within the cap from green to red', () => {
