@@ -8,6 +8,7 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -161,25 +162,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
         },
-        checkTrainingText: async (input: { triggerWord: string }) => {
-          const r = await fetch('/api/training-studio/check-text', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(input),
-            redirect: 'error',
-          });
-          const data = (await r.json().catch(() => null)) as {
-            ok?: unknown;
-            message?: string;
-            error?: string;
-          } | null;
-          // A refusal's reason arrives as `message`; the route's answer to a malformed body uses `error`.
-          const detail = data?.message ?? data?.error;
-          // Only an explicit verdict passes.
-          if (r.ok && data?.ok === true) return { ok: true as const };
-          if (r.status === 400) return { ok: false as const, error: detail ?? 'Refused.' };
-          throw new Error(detail ?? `The trigger word check failed (${r.status}).`);
-        },
+        checkTrainingText: checkStudioTriggerWord,
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
         getBuzzBalances: async () => {

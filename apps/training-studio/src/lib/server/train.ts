@@ -6,11 +6,11 @@ import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
 import { mainAppTextCheck } from './text-check';
 import type { TrainingTextCheck } from '$lib/training-text';
+import * as core from '$lib/train-core';
+import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 const textCheck = (cookie: string | null, userId: number): TrainingTextCheck =>
   cookie === null ? async () => undefined : mainAppTextCheck(cookie, userId);
-import * as core from '$lib/train-core';
-import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
 
