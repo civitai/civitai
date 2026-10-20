@@ -72,7 +72,8 @@ vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   };
 });
 
-const { updateImageNsfwLevel, handleBlockImages } = await import('../image.service');
+const { updateImageNsfwLevel, handleBlockImages, updateNsfwLevel, resetBlockedNsfwLevel } =
+  await import('../image.service');
 
 const AVATAR = 7301;
 const OTHER_IMAGE = 7302;
@@ -137,6 +138,43 @@ describe('a moderator re-rate', () => {
 
     dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('db down'));
     await expect(reRate(AVATAR)).resolves.toBe(NsfwLevel.X);
+  });
+});
+
+// The tag-derived recompute: unblocks, appeal approvals and account restores reach it through
+// resetBlockedNsfwLevel, and its result can move an avatar across the safe-for-work gate either way.
+describe('a recompute of the rating from tags', () => {
+  it('refreshes the cached profile picture of the user whose avatar was recomputed, after it', async () => {
+    await updateNsfwLevel([AVATAR, OTHER_IMAGE]);
+
+    expect(pictureLookups()).toEqual([[AVATAR, OTHER_IMAGE]]);
+    expect(refreshPicture).toHaveBeenCalledTimes(1);
+    expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      refreshPicture.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refreshes it when an unblock resets and recomputes the rating', async () => {
+    await resetBlockedNsfwLevel(AVATAR);
+
+    expect(pictureLookups()).toEqual([[AVATAR]]);
+    expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+  });
+
+  it('refreshes nothing for images that are nobody’s avatar', async () => {
+    await updateNsfwLevel(OTHER_IMAGE);
+
+    expect(pictureLookups()).toEqual([[OTHER_IMAGE]]);
+    expect(refreshPicture).not.toHaveBeenCalled();
+  });
+
+  it('still completes when the refresh or the avatar lookup fails', async () => {
+    refreshPicture.mockRejectedValue(new Error('cache down'));
+    await expect(updateNsfwLevel(AVATAR)).resolves.toBeUndefined();
+
+    dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('db down'));
+    await expect(updateNsfwLevel(AVATAR)).resolves.toBeUndefined();
   });
 });
 

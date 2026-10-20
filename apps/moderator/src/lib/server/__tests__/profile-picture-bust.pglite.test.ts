@@ -55,7 +55,7 @@ vi.mock('../storage', () => ({
   getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
 }));
 
-const { blockImage } = await import('../image-moderation.service');
+const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
 const { deleteImagesByIds } = await import('../image-deletion');
 
@@ -137,6 +137,12 @@ describe('moderator writes to an image that is a profile picture', () => {
 
   it('deleteImagesByIds evicts it, though the row naming the avatar is gone', async () => {
     await deleteImagesByIds([AVATAR_ID]);
+
+    expect(bustedKeys()).toContain(avatarKey);
+  });
+
+  it('acceptImage evicts it: the accept recomputes the rating from tags', async () => {
+    await acceptImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
   });

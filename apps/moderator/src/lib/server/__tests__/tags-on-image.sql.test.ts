@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   sql: [] as string[],
   params: [] as unknown[][],
   invalidatedAfter: [] as number[],
+  bustedPictures: [] as { imageIds: number[]; after: number }[],
 }));
 
 vi.mock('../db', async () => {
@@ -19,6 +20,11 @@ vi.mock('../thumbnail-cache', () => ({
     h.invalidatedAfter.push(h.sql.length);
   }),
 }));
+vi.mock('../profile-picture-cache', () => ({
+  bustProfilePictures: vi.fn(async (target: { imageIds: number[] }) => {
+    h.bustedPictures.push({ imageIds: target.imageIds, after: h.sql.length });
+  }),
+}));
 
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
 
@@ -28,6 +34,7 @@ beforeEach(() => {
   h.sql.length = 0;
   h.params.length = 0;
   h.invalidatedAfter.length = 0;
+  h.bustedPictures.length = 0;
 });
 
 describe('upsertTagsOnImageNew', () => {
@@ -55,5 +62,16 @@ describe('upsertTagsOnImageNew', () => {
 
     // Two statements in: the upsert and update_nsfw_levels_new.
     expect(h.invalidatedAfter).toEqual([2]);
+  });
+
+  // The main app serves avatars from a day-long profile-picture cache and gates them on its rating, so
+  // a tag that re-rates someone's avatar has to evict that entry too.
+  it('evicts the cached profile pictures of the re-rated images after the recompute', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 31, tagId: 2 },
+      { imageId: 32, tagId: 2 },
+    ]);
+
+    expect(h.bustedPictures).toEqual([{ imageIds: [31, 32], after: 2 }]);
   });
 });
