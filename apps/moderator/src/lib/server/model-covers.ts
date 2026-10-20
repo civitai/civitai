@@ -19,8 +19,8 @@ export const modelCoverCount = (
   ) capped`;
 
 /** A model's first `limit` cover images, as a subquery to alias `c`, ordered by `MODEL_COVER_ORDER`.
- *  The outer LIMIT has no ORDER BY on purpose: one would force a full read of every post's images;
- *  the lateral join already emits in sorted post order. */
+ *  The outer ORDER BY leads with `pp`'s own sort keys, so Postgres runs it as an incremental sort and
+ *  still stops after the first posts; reorder those keys and it reads every post's images. */
 export const modelCoverImages = (
   modelId: RawBuilder<unknown>,
   userId: RawBuilder<unknown>,
@@ -44,4 +44,5 @@ export const modelCoverImages = (
     ORDER BY i.index ASC NULLS LAST, i.id ASC
     LIMIT ${sql.raw(String(limit))}
   ) i
+  ORDER BY pp.unpublished, pp."versionIndex" ASC NULLS LAST, pp."postId", i.index ASC NULLS LAST, i.id
   LIMIT ${sql.raw(String(limit))}`;
