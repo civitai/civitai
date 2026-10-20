@@ -207,6 +207,13 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const checkSfwFaceSchema = z.object({
+  sfwName: z.string().max(255).optional(),
+  sfwDescription: z.string().max(50000).optional(),
+  modelId: z.number().optional(),
+});
+export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
+
 export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),

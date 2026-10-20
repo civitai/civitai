@@ -273,6 +273,7 @@ import {
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
+import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 
@@ -3000,6 +3001,8 @@ export const upsertModel = async (
           select: {
             name: true,
             description: true,
+            sfwName: true,
+            sfwDescription: true,
             poi: true,
             userId: true,
             minor: true,
@@ -3025,6 +3028,15 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
+  const sfwFaceChanged =
+    (data.sfwName !== undefined && data.sfwName !== beforeUpdate?.sfwName) ||
+    (data.sfwDescription !== undefined && data.sfwDescription !== beforeUpdate?.sfwDescription);
+  if (!isModerator && data.sfwName && sfwFaceChanged)
+    await assertSfwFaceSafe({
+      sfwName: data.sfwName,
+      sfwDescription: data.sfwDescription ?? beforeUpdate?.sfwDescription,
+      userId,
+    });
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,

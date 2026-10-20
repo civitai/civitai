@@ -50,6 +50,7 @@ import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
+  checkSfwFaceSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
@@ -110,6 +111,7 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
+import { checkSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
   middleware,
@@ -290,6 +292,11 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)
     .mutation(upsertModelHandler),
+  checkSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(checkSfwFaceSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsDelete })
     .input(deleteModelSchema)
