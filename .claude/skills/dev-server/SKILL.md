@@ -525,10 +525,14 @@ answers 200s and looks completely healthy — the only thing that contradicts yo
 base, with `<worktree>/apps/<name>/.env` layered on top when the worktree has one. Those files are
 gitignored, so a fresh worktree has neither — the base is what makes it start at all.
 
-⚠️ **That base may point at a production database**, and the fall-through means a fresh worktree
-inherits it without anyone choosing it. The app prints the `DATABASE_URL` **host** (never the
-credential) on startup and carries it as `dbHost` in `app` / `status` output — read it before you
-click anything that writes.
+**Except the database.** In a worktree, `DATABASE_URL` and `DATABASE_REPLICA_URL` never come from
+the primary's app `.env`, which may name a database other than dev: they come from the worktree's own
+app `.env` if it sets them, else from the root `.env` chain (primary root, then the worktree's root).
+A key neither sets is removed from the spawn env, so the app refuses to start rather than inherit
+one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand.
+Every `CSAM_*` key in a worktree app's spawn env is set empty, wherever it came from.
+The app prints the `DATABASE_URL` **host** (never the credential) on startup and carries it as
+`dbHost` in `app` / `status` output — read it before you click anything that writes.
 
 `storage` and `notifications` are **not** here. They were registered and could never start: no
 `vite.config.ts` (their dev script is `tsx watch src/server.ts`) and no `.env`, so every attempt died
@@ -722,10 +726,18 @@ What's already handled:
 
 - **Every app `.env`, on `wt new`.** The root `.env` and each `apps/*/.env` (any untracked
   `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, except that
-  every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, so a tree also
-  works for a bare `pnpm`/`prisma` command that reads `.env` itself. A copy is a snapshot: when the
-  primary's file changes, `wt env <worktree> --refresh` re-copies every one the primary edited more
-  recently, over the tree's version. Without `--refresh`, existing files are never touched.
+  every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, and every
+  `DATABASE_URL` / `DATABASE_REPLICA_URL` line takes the primary **root** `.env`'s value (commented
+  ones dropped), and every `CSAM_*` line (commented ones too) keeps its key with an empty value, so
+  a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
+  app `.env` pointed at another database, and never carries storage credentials for the restricted
+  bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
+  re-copies every one the primary edited more recently, over the tree's version. Without
+  `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
+  copied before either existed. A hand edit to a tree's app database
+  therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
+  while a file to copy has one, `wt new` and `wt env` exit 1 and write none of them.
 
   It reports three states, because two were misleading. `set` is a skill with its own file.
   `root` is one with no file whose every declared key the root `.env` supplies — most skills fall

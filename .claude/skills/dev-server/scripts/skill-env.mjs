@@ -269,12 +269,19 @@ function syncApp(primary, target, refresh) {
   try {
     r = syncAppEnv(primary, target, { refresh });
   } catch (error) {
+    if (error.code === 'DEV_DB_MISSING') {
+      console.error(`\n${error.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     console.warn(`Could not copy env files -- ${error.message.split('\n')[0]}`);
     return;
   }
   if (r.skipped) return;
   for (const p of r.copied) console.log(`  copied    ${p}`);
   for (const p of r.refreshed) console.log(`  refreshed ${p}`);
+  for (const p of r.dbRouted) console.log(`  db        ${p} (DATABASE_URL / DATABASE_REPLICA_URL set to the primary root .env's)`);
+  for (const p of r.blanked) console.log(`  emptied   ${p} (CSAM_*)`);
   for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
   const stale = refresh ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
   console.log(

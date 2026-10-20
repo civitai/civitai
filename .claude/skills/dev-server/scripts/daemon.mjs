@@ -24,6 +24,8 @@ import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
+import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
+import { blankKeys } from './blank-keys.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -1571,9 +1573,17 @@ class AuthHub {
     // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
     // the thing described and the thing handed to the child have to be one object.
     if (!this.spawnEnvCache) {
-      this.spawnEnvCache = spawnEnvFor(this.envPaths.length ? loadEnvChain(this.envPaths) : {});
+      this.spawnEnvCache = spawnEnvFor(
+        this.envPaths.length ? loadEnvChain(this.envPaths) : {},
+        this.databaseEnv()
+      );
     }
     return this.spawnEnvCache;
+  }
+
+  // The hub runs from the primary checkout and keeps whatever database its own .env names.
+  databaseEnv() {
+    return null;
   }
 
   // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
@@ -1643,7 +1653,7 @@ class AuthHub {
     if (!this.requiredEnvPath && !this.spawnEnv().DATABASE_URL) {
       this.status = 'error';
       this.lastError =
-        `${this.label} has no DATABASE_URL: none of ${this.envPaths.join(', ')} supply one. ` +
+        `${this.label} has no DATABASE_URL: none of ${(this.databaseEnv() ? [resolve(this.path, '.env'), ...this.rootEnvPaths] : this.envPaths).join(', ')} supply one. ` +
         (primaryResolution.derived
           ? 'Copy an .env from the primary checkout.'
           : `The primary checkout could not be resolved from git (${primaryResolution.error}), ` +
@@ -1665,11 +1675,11 @@ class AuthHub {
     this.lastError = null;
     this.addLog('info', `Starting ${this.label} on port ${this.port}: ${this.path}`);
     this.addLog('info', LOCAL_MAIL_LOG);
+    if (this.databaseEnv()) this.addLog('info', DEV_DB_LOG);
 
-    // A fresh worktree inherits the primary checkout's apps/<name>/.env, and those point at the
-    // production database. Nothing in the start output used to say so, and a moderator remove-click
-    // deletes live rows — so name the host here, where it is read at the moment it matters, rather
-    // than only in a doc nobody opens at start time.
+    // An app's database is whatever its .env chain, the worktree's own app .env, or a hand edit made
+    // it, and a moderator remove-click deletes rows in it — so name the host here, where it is read
+    // at the moment it matters, rather than only in a doc nobody opens at start time.
     //
     // Describes the MERGED env, not the chain: the child gets `{ ...process.env, ...chain }`, so a
     // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
@@ -1877,7 +1887,7 @@ const APP_REGISTRY = {
 // a worktree served the primary checkout instead, silently: the app came up, answered 200s, and
 // showed `main`. Nothing in the output contradicted you unless you read the `path` field.
 class AppSession extends AuthHub {
-  constructor(name, worktree, port, envPaths) {
+  constructor(name, worktree, port, envPaths, rootEnvPaths = rootEnvChain(worktree)) {
     super('.', port);
     this.name = name;
     this.worktree = worktree;
@@ -1887,6 +1897,7 @@ class AppSession extends AuthHub {
     // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
     this.requiredEnvPath = null;
     this.envPaths = envPaths;
+    this.rootEnvPaths = rootEnvPaths;
     // Born live: an entry reading `stopped` between the map insert and start() is one a concurrent
     // start treats as dead and inherits the port of. The handler sets it too — see there for why.
     this.status = 'starting';
@@ -1904,6 +1915,14 @@ class AppSession extends AuthHub {
       dbHost: this.dbHost ?? null,
     };
   }
+
+  // In a worktree the DB keys skip the chain's base, the primary's app .env, which may name a
+  // database other than dev. A key neither the worktree's app .env nor its root chain sets is
+  // removed rather than inherited. Non-null here is also what empties the blanked keys.
+  databaseEnv() {
+    if (samePath(this.worktree, primaryCheckout)) return null;
+    return appDatabaseEnv(loadEnvFile(resolve(this.path, '.env')), loadEnvChain(this.rootEnvPaths));
+  }
 }
 
 // Turbopack's dev filesystem cache (`.next/dev/cache`, read by next.config.mjs as NEXT_DEV_FS_CACHE)
@@ -1912,8 +1931,17 @@ class AppSession extends AuthHub {
 // way. The primary checkout keeps it.
 // Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
 // apps/auth/.env itself) is routed to the catcher only because the keys are set here.
-function spawnEnvFor(envVars) {
-  return { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
+// `databaseEnv` is non-null only for an app in a worktree, which also gets the blanked keys emptied.
+function spawnEnvFor(envVars, databaseEnv = null) {
+  const env = { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
+  if (databaseEnv) {
+    for (const key of DB_KEYS) {
+      if (databaseEnv[key] === undefined) delete env[key];
+      else env[key] = databaseEnv[key];
+    }
+    blankKeys(env);
+  }
+  return env;
 }
 
 function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
@@ -1952,6 +1980,14 @@ function appEnvChain(worktree, name) {
   // samePath, not `!==`: started from the primary checkout in the other drive-letter casing this
   // would otherwise put the same file in the chain twice.
   if (!samePath(worktreeEnv, paths[0])) paths.push(worktreeEnv);
+  return paths;
+}
+
+// The root .env chain a worktree session runs on: the primary's, then the worktree's own.
+function rootEnvChain(worktree) {
+  const paths = [resolve(primaryCheckout, '.env')];
+  const own = resolve(worktree, '.env');
+  if (!samePath(own, paths[0])) paths.push(own);
   return paths;
 }
 
@@ -3255,6 +3291,7 @@ export {
   APP_REGISTRY,
   AppSession,
   appEnvChain,
+  rootEnvChain,
   appIsLive,
   appSessionKey,
   settleDelayMs,
