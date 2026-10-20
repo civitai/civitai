@@ -280,6 +280,25 @@ export function canonAheadForkStops(
     .map((stop) => stop.chapterId);
 }
 
+/**
+ * Where the reader is on their line, as the map's header says it. The line is the reader's path
+ * then the canon ahead of its end, so it is the canon path only while every chapter of the path is
+ * on the main route. A chapter that does not say counts as on it. The count is the line's whatever
+ * it is called; `length` is undefined until the canon ahead is known.
+ */
+export function storylinePositionLabel({
+  number,
+  length,
+  path,
+}: {
+  number: number;
+  length: number | undefined;
+  path: { onMain?: boolean }[];
+}) {
+  const line = path.some((chapter) => chapter.onMain === false) ? 'this path' : 'the canon path';
+  return `Chapter ${number}${length ? ` of ${length} on ${line}` : ''}`;
+}
+
 export type StorylineShares = { total: number; shares: Record<number, number> } | undefined;
 
 /** Readers who took a way, from its share of the total; a way nobody took reads 0. */

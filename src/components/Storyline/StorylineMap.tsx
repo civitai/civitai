@@ -42,6 +42,7 @@ import {
   buildSubwayStops,
   getForkShare,
   getStorylineChapterName,
+  storylinePositionLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -207,8 +208,11 @@ function StorylineMap({
           </Text>
           {current && (
             <Text size="xs" c="dimmed" data-testid="storyline-map-position">
-              Chapter {current.chapter.depth + 1}
-              {length ? ` of ${length} on the canon path` : ''}
+              {storylinePositionLabel({
+                number: current.chapter.depth + 1,
+                length,
+                path: path.chapters,
+              })}
             </Text>
           )}
           {current && length ? (

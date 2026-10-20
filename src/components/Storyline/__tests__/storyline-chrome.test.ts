@@ -374,6 +374,29 @@ describe('the map', () => {
     ]);
   });
 
+  // The line the map counts is the reader's path then the canon ahead of its end: off the main
+  // route it is not the canon path, whatever number it counts.
+  it('says this path, with the same count, once the reader has left the main route', () => {
+    mocks.ahead = [chapter(4, 3)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+      { ...chapter(7, 2), onMain: false },
+    ];
+    renderMap({ chapters, current: 7 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 3 of 4 on this path');
+  });
+
+  it('still says the canon path for a reader on the main route', () => {
+    mocks.ahead = [chapter(3, 2)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+    ];
+    renderMap({ chapters, current: 2 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 2 of 3 on the canon path');
+  });
+
   it('gives no total while the canon path is still being read', () => {
     mocks.aheadLoading = true;
     renderMap({ chapterIds: [1, 2], current: 2 });
