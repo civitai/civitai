@@ -249,8 +249,8 @@ describe('remove-blocked-images retention clock', () => {
     expect(queuePruneIds()).toContain(1);
   });
 
-  // This job is the ONE moderation flow allowed to ask the image-cache service to destroy the
-  // shared stored object, not just the derived variants. Every other caller of `deleteImages`
+  // This job is the moderation flow allowed to ask the image-cache service to retract an
+  // image's public copies, not just invalidate them. Every other caller of `deleteImages`
   // (replaced-image reaping, deleted-user cleanup, the moderator bulk endpoint) omits the
   // option and gets today's behaviour. The intent has to be stated here, in words, or it does
   // not travel: `deleteImages` defaults it off at every layer below.

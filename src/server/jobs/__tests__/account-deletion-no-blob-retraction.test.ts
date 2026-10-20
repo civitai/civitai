@@ -8,9 +8,8 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 /**
  * 🔴 REACHABILITY GUARD, not a unit test of a filter.
  *
- * `remove-blocked-images` is the one job allowed to ask the image-cache service to destroy the
- * SHARED, content-addressed stored object behind an image — which removes the full-resolution
- * original for every byte-identical image of every other owner. It first asked for that on the
+ * `remove-blocked-images` asks the image-cache service to retract an image's public copies on a
+ * moderator takedown. It first asked for that on the
  * reasoning that "Blocked, still Blocked, not AiNotVerified, and past the retention window" made
  * every image it deletes a moderation takedown.
  *
@@ -401,13 +400,12 @@ describe('self-service account deletion never reaches blob retraction', () => {
     expect(retractionFor(GRACE_IMAGE)).not.toBeUndefined();
     expect(retractionFor(MODERATED_IMAGE)).not.toBeUndefined();
 
-    // 🔴 THE REGRESSION. Nothing about this image was moderated, so destroying the shared stored
-    // object — and with it the original of every byte-identical image of every other owner — is
-    // not something this flow may ask for.
+    // 🔴 THE REGRESSION. Nothing about this image was moderated, so retracting its public copies
+    // is not something this flow may ask for.
     expect(
       retractionFor(GRACE_IMAGE),
       'an account-deletion grace block reached the retracting call: a user deleting their own ' +
-        'account must not destroy other owners’ stored bytes'
+        'account is not a takedown'
     ).toBe(false);
 
     // Both directions. Turning retraction off wholesale would satisfy the assertion above while
