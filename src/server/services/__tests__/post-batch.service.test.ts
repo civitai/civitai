@@ -62,6 +62,7 @@ vi.mock('~/server/services/model-version-visibility.service', async (importOrigi
 }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { scheduleBatch, validateBatchSchedule } from '~/server/services/post-batch.service';
 
 const NOW = new Date('2026-10-01T12:00:00.000Z');
@@ -590,6 +591,8 @@ describe('scheduleBatch: an attempt repeated after the client gave up on it', ()
     const input = keyed(batchOf([at(24)]), KEYS);
 
     const original = scheduleBatch({ input, ctx: ctxFor() });
+    // The original holds the lock and is mid-way through creating its post.
+    await vi.waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
     await expect(scheduleBatch({ input, ctx: ctxFor() })).rejects.toMatchObject({
       code: 'CONFLICT',
       message: expect.stringContaining('still running'),
@@ -602,5 +605,78 @@ describe('scheduleBatch: an attempt repeated after the client gave up on it', ()
 
     expect(later.created).toEqual([{ ...done.created[0], alreadyCreated: true }]);
     expect(createPost).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('scheduleBatch: the step breakdown a slow call logs', () => {
+  const logAxiom = loggingMock.logToAxiom;
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const stepLines = () =>
+    logAxiom.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .filter((payload) => payload.name === 'post-schedule-batch-steps');
+
+  beforeEach(() => {
+    logAxiom.mockClear();
+    vi.stubEnv('TRPC_SLOW_LOG_MS', '1');
+    // Nothing from an earlier attempt: the world fakes above outlive their own tests.
+    dbMock.dbWrite.post.findMany.mockReset().mockResolvedValue([]);
+    redisMock.sysRedis.get.mockReset().mockResolvedValue(null);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('logs where a slow call spent its time, in durations and counts only', async () => {
+    addImage.mockImplementation(async () => {
+      await pause(5);
+      return { id: 1 };
+    });
+
+    await scheduleBatch({
+      input: batchOf([at(24), at(48)], { tools: [1], techniques: [9] }),
+      ctx: ctxFor(),
+    });
+
+    const [line] = stepLines();
+    expect(stepLines()).toHaveLength(1);
+    expect(line).toMatchObject({
+      type: 'info',
+      userId: OWNER.id,
+      posts: 2,
+      created: 2,
+      alreadyCreated: 0,
+      images: 4,
+      failed: false,
+    });
+    expect(line.addImageMs as number).toBeGreaterThanOrEqual(15);
+    expect(line.addImageMaxMs as number).toBeGreaterThanOrEqual(4);
+    expect(line.durationMs as number).toBeGreaterThanOrEqual(line.addImageMs as number);
+    for (const key of ['lockWaitMs', 'lookupMs', 'validateMs', 'createPostMs', 'toolsMs'])
+      expect(typeof line[key]).toBe('number');
+    // Nothing the creator wrote or uploaded.
+    expect(JSON.stringify(line)).not.toMatch(/0-a|1-b|Post 1|Post 2/);
+  });
+
+  it('marks a slow call that was refused as failed', async () => {
+    existingPosts([at(24)]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => {
+      await pause(3);
+      return [{ publishedAt: at(24) }];
+    }) as never);
+
+    await expect(
+      scheduleBatch({ input: batchOf([at(24, 10)]), ctx: ctxFor() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(stepLines()).toEqual([expect.objectContaining({ failed: true, created: 0 })]);
+  });
+
+  it('logs nothing for a call under the slow threshold', async () => {
+    vi.stubEnv('TRPC_SLOW_LOG_MS', '60000');
+
+    await scheduleBatch({ input: batchOf([at(24)]), ctx: ctxFor() });
+
+    expect(stepLines()).toEqual([]);
   });
 });
