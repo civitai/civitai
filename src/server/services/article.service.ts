@@ -1041,6 +1041,7 @@ export const upsertArticle = async ({
             articleId: result.id,
             content: result.content,
             userId,
+            ownerId: result.userId,
             coverId: result.coverId,
           });
 
@@ -1460,6 +1461,7 @@ export async function applyArticleContentChange({
           articleId: id,
           content,
           userId,
+          ownerId,
           coverId,
           cleanupOnly: !scanContent,
         });
@@ -1771,17 +1773,22 @@ export async function unpublishArticleById({
  * @param articleId - Article ID to link images to
  * @param content - Article HTML content
  * @param userId - User ID for image ownership
+ * @param ownerId - The article's author. Content links images by media key alone, so an article
+ *   can reference another user's image; only the author's own images, used nowhere else, are
+ *   returned as orphans to delete.
  */
 export async function linkArticleContentImages({
   articleId,
   content,
   userId,
+  ownerId,
   coverId,
   cleanupOnly,
 }: {
   articleId: number;
   content: string;
   userId: number;
+  ownerId: number;
   coverId?: number | null;
   cleanupOnly?: boolean;
 }): Promise<{ orphanedImageIds: number[] }> {
@@ -1895,12 +1902,14 @@ export async function linkArticleContentImages({
       });
     }
 
-    // Find truly orphaned images (no connections to ANY entity)
+    // Find truly orphaned images: the author's own, in no post and connected to nothing else
     let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: {
           id: { in: orphanedIds },
+          userId: ownerId,
+          postId: null,
           connections: { none: {} },
         },
         select: { id: true },
@@ -2572,6 +2581,7 @@ export async function rescanArticle({
       articleId: id,
       content: article.content,
       userId: article.userId,
+      ownerId: article.userId,
       coverId: article.coverId,
     });
   }
