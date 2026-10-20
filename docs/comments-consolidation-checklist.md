@@ -89,7 +89,8 @@ and flip order.
 - [ ] ltree present on dev cnpg, the CI Postgres service (`lint.yml`) and local docker-compose
       before the migration runs there
 - [ ] DDL from the plan doc: `CommentV3` (ltree `path`, generated `rootId`/`depth`, `replyToId`,
-      `deletedAt`, FK to `CommentTopic`, `parentId ON DELETE RESTRICT`, CHECKs), `CommentTopic`,
+      `deletedAt`, FK to `CommentTopic`, `parentId ON DELETE RESTRICT`, CHECKs), `CommentTopic`
+      (partitioned, see the 2026-10-20 item below),
       `CommentV3Reaction`, `CommentV3Report`; `CommentEntityType` includes `crucible` **(review)**
 - [ ] `CommentMute` (`@@id([userId, commentId])`, FK to `CommentV3` CASCADE, `@@index([commentId])`)
       and `CommentTopicMute` (`@@id([userId, entityType, entityId])`) — two tables, because a
@@ -111,8 +112,11 @@ and flip order.
       per enum value, each with an `ON DELETE CASCADE` FK to its entity table (`ComicChapter (id)`,
       `app_listings (serial_id)`); the migration loops over the enum and fails on a missing
       mapping; no DEFAULT partition; PK `("entityId", "entityType")`. Replaces the per-entity
-      `AFTER DELETE` triggers. On the dev apply, re-run the reply-tree cascade from the entity
-      side under `parentId RESTRICT`
+      `AFTER DELETE` triggers. On the dev apply: re-run the reply-tree cascade from the entity
+      side under `parentId RESTRICT`; mirror a comment insert racing an entity delete (the
+      old-side write must not fail, and entity delete → `Thread` → mirror delete must not collide
+      with the partition cascade in the same statement); confirm `db:generate`,
+      `db:check-generated` and the moderator introspection tolerate the partition children
 - [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
       `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
       `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
@@ -144,7 +148,8 @@ backfill to race.
       delete applies D6 (tombstone if the v3 row has children, else hard-delete)
 - [ ] `commentv3_thread_entity(thread)` SQL function — one `Thread` → `(entityType, entityId)`
       resolver shared by the mirror triggers and the backfill; the `comicChapter` branch joins
-      `ComicChapter` on `(projectId, position)` and returns its `id`
+      `ComicChapter` on `(projectId, position)` and returns its `id`; the `appListing` branch
+      returns `Thread.appListingId` (= `app_listings.serial_id`, not the text ULID `id`)
 - [ ] Mirror triggers on `CommentReaction`/`CommentV2Reaction` → `CommentV3Reaction`,
       `CommentReport`/`CommentV2Report` → `CommentV3Report`, `ThreadMute` → `CommentMute`/
       `CommentTopicMute`
@@ -183,8 +188,9 @@ id the mirror gave it; a mirrored row is always at least as fresh as the copy):
       `hidden`/`locked` → false; idempotent + batched + resumable
 - [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, new ids from the shared sequence
       for pre-existing rows; `createdAt` verbatim (the Newest sort reads it, not `id`)
-- [ ] Topic copy: one `CommentTopic` per entity-bearing Thread (locked carried, count recomputed
-      from `CommentV2` rows, not copied from `Thread.commentCount`)
+- [ ] Topic copy: one `CommentTopic` per entity-bearing Thread whose entity exists (missing
+      entity skipped and counted; `ON CONFLICT ("entityId", "entityType") DO NOTHING`; locked
+      carried, count recomputed from `CommentV2` rows, not copied from `Thread.commentCount`)
 - [ ] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;
       `reactionCount` recomputed at end
 - [ ] Report copy: `CommentV2Report` as-is, `CommentReport` via `legacyV1Id`

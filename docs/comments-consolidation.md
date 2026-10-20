@@ -46,8 +46,8 @@ section that holds the detail.
   value, each with an `ON DELETE CASCADE` FK to its entity table** (Koen's proposal, 2026-10-19).
   This replaces the per-entity `AFTER DELETE` triggers: the link is a visible constraint, a topic
   for a missing entity is rejected, and an enum value with no partition fails on its first insert.
-  Found on the way: app listings key on `app_listings.serial_id` (the store `id` is a text
-  ULID), which the trigger draft had wrong (_Entity deletion_, DDL under _Target data model_).
+  Found on the way: app listings key on `app_listings.serial_id`, since the store `id` is a text
+  ULID (_Entity deletion_, DDL under _Target data model_).
 - **2026-10-19 — Newest/Oldest sort on `(createdAt, id)`, not `id`.** The v1 backfill under
   dual-write makes id order diverge from creation order; the two "newest" indexes lead on
   `createdAt` and the keyset cursor is the pair (_ID strategy_, _Indexes_). Also: a v1 row
@@ -160,8 +160,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
    applies it on dev first.
 7. **Crucible is a comment surface** (`Thread.crucibleId`, #5780, after this plan was written):
    add `'crucible'` to `CommentEntityType`, the backfill, the topic copy and the flip order.
-8. **`CommentTopic` has no FK to its entity**, so it accumulates orphans exactly as `Thread` does
-   unless every entity hard-delete path removes the topic row. `Thread` leaked the same way: every
+8. **`CommentTopic` as first drafted had no FK to its entity** (a single FK cannot reference 13
+   tables), so it would have accumulated orphans as `Thread` did. `Thread` leaked that way: every
    entity FK was `ON DELETE SET NULL` and nothing deleted `Thread` rows, which is where its 288K
    orphans came from, until the FKs became `ON DELETE CASCADE` in prod on 2026-10-16 (migration
    `20261101120000_thread_entity_fk_cascade`, #6155) and the orphans were purged on 2026-10-19.
@@ -393,14 +393,10 @@ CREATE TYPE "CommentEntityType" AS ENUM (
 -- Seeded past max(Comment.id, CommentV2.id) at migration time.
 CREATE SEQUENCE comment_shared_id_seq AS integer;
 
--- Exists to lock an entity (including before any comment exists) and to hold the
--- entity-level count. Required parent of every comment. List-partitioned by entity type so each
--- partition carries a real FK to its entity table: an entity hard-delete cascades into the topic,
--- a topic for a missing entity is rejected, and an enum value with no partition fails on its
--- first insert ("no partition found") — which is why there is deliberately no DEFAULT partition.
--- Every read filters on BOTH columns, or Postgres scans all 13 partitions. entityId leads the
--- key so the FK cascade's lookup (entityId alone, inside one partition) is a plain index probe;
--- app reads always supply both columns and are unaffected by the order.
+-- Required parent of every comment; holds the entity lock (which can exist before any comment)
+-- and the entity-level count. List-partitioned by entityType, one partition per enum value, each
+-- with an ON DELETE CASCADE FK to its entity table (loop below). No DEFAULT partition, on
+-- purpose. Rules and the PK order: "Entity deletion".
 CREATE TABLE "CommentTopic" (
   "entityType"   "CommentEntityType" NOT NULL,
   "entityId"     integer             NOT NULL,
@@ -411,17 +407,17 @@ CREATE TABLE "CommentTopic" (
 
 -- One partition per enum value, each with an ON DELETE CASCADE FK to its entity table. The loop
 -- runs over the enum so a value with no mapping fails here, not on the first comment.
--- ComicChapter is referenced by its unique SERIAL id (its PK is composite); app listings by
--- serial_id (the store id is a text ULID, and Thread.appListingId already holds serial_id).
+-- ComicChapter by its unique SERIAL id (composite PK); app listings by serial_id — see
+-- "Entity deletion", keying.
 DO $$
 DECLARE
-  t   text;
-  tbl text;
-  col text;
+  t            text;
+  entity_table text;
+  entity_col   text;
 BEGIN
   FOREACH t IN ARRAY enum_range(NULL::"CommentEntityType")::text[] LOOP
-    tbl := NULL;
-    SELECT v.tbl, v.col INTO tbl, col FROM (VALUES
+    entity_table := NULL;  -- SELECT INTO leaves the variable untouched when no row matches
+    SELECT v.tbl, v.col INTO entity_table, entity_col FROM (VALUES
       ('model',         'Model',          'id'),
       ('image',         'Image',          'id'),
       ('post',          'Post',           'id'),
@@ -436,13 +432,13 @@ BEGIN
       ('appListing',    'app_listings',   'serial_id'),
       ('crucible',      'Crucible',       'id')
     ) AS v(type, tbl, col) WHERE v.type = t;
-    IF tbl IS NULL THEN
+    IF entity_table IS NULL THEN
       RAISE EXCEPTION 'CommentEntityType value % has no entity table mapped', t;
     END IF;
     EXECUTE format('CREATE TABLE %I PARTITION OF "CommentTopic" FOR VALUES IN (%L)',
                    'CommentTopic_' || t, t);
     EXECUTE format('ALTER TABLE %I ADD FOREIGN KEY ("entityId") REFERENCES %I (%I) ON DELETE CASCADE',
-                   'CommentTopic_' || t, tbl, col);
+                   'CommentTopic_' || t, entity_table, entity_col);
   END LOOP;
 END $$;
 
@@ -475,7 +471,7 @@ CREATE TABLE "CommentV3" (
   "legacyV1Id"    integer,                                 -- old Comment.id
 
   PRIMARY KEY ("id"),
-  FOREIGN KEY ("entityType", "entityId") REFERENCES "CommentTopic" ("entityType", "entityId") ON DELETE CASCADE,
+  FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType") ON DELETE CASCADE,
   FOREIGN KEY ("parentId")  REFERENCES "CommentV3" ("id") ON DELETE RESTRICT,  -- a childless-delete that loses a race fails, never orphans
   FOREIGN KEY ("replyToId") REFERENCES "CommentV3" ("id") ON DELETE SET NULL,
   FOREIGN KEY ("userId")    REFERENCES "User" ("id")      ON DELETE CASCADE,
@@ -526,8 +522,9 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   instead of orphaning. Tombstones stay in indexes and pages — they render as "[deleted]"
   placeholders, which is the point.
 - **`CommentTopic` is a required parent** (FK with CASCADE): the service upserts the topic on
-  first comment (replacing lazy Thread creation 1:1), and entity cleanup becomes "delete the
-  topic row".
+  first comment (replacing lazy Thread creation 1:1) with `ON CONFLICT ("entityId", "entityType")`,
+  the full PK; an FK violation on that insert means the entity is gone and maps to not-found.
+  Entity cleanup is the entity's own delete, cascading through the partition FK.
 - **`locked` is subtree-scoped**: it refuses new replies anywhere under the row — one ancestor
   check via `path` (`@>` on the GiST index) at write time. Stronger and simpler than v1's
   one-level propagation; note it in the moderation section.
@@ -555,8 +552,9 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   accepted on upsert input but read nowhere in the v2 UI, v1's NSFW comment filter is commented
   out, and prod has 12 true rows between both tables. Both stay dropped; the upsert input's `nsfw`
   field is removed with the service rewrite.
-- **`CommentTopic` has no surrogate id** — nothing references it; `(entityType, entityId)` is the
-  natural PK and saves a sequence plus a second unique index.
+- **`CommentTopic` has no surrogate id** — nothing references it; `("entityId", "entityType")` is
+  the natural PK (`entityId` leads for the FK cascade lookup, see _Entity deletion_) and saves a
+  sequence plus a second unique index.
 - **`userId` cascade is a backstop, not the deletion path.** User rows are soft-deleted in
   practice; comment removal on account deletion goes through `user.service.ts`, which is where the
   tombstone decision (above) gets applied. The FK cascade only fires on a hard User delete.
@@ -665,19 +663,21 @@ topic alone — the entity still exists.
   adopted 2026-10-20: `CommentTopic` is `PARTITION BY LIST ("entityType")`, one partition per
   enum value, and each partition has an ordinary `ON DELETE CASCADE` FK to its entity table (DDL
   under _Target data model_). The app still sees one table. Over the trigger it buys:
-  - the link is visible — `\d "Image"` lists `CommentTopic_image` under "Referenced by";
+  - the link is a constraint on the entity table itself (expected under "Referenced by" in `\d`;
+    confirm on dev);
   - a topic for an entity that does not exist is rejected, which the trigger never checked;
   - a new entity type that gets its enum value but not its partition fails on the first insert
-    ("no partition found"), so forgetting it is loud; the migration loops over the enum, so a
-    missing table mapping fails at migration time instead.
-- Rules that come with it: always filter on both `entityType` and `entityId` (without the type
-  Postgres has to search all 13 partitions — every v3 query in this plan already has both); a
-  new entity type is enum value + partition + FK in the same migration; no DEFAULT partition,
-  because it would swallow a forgotten type; the migration is raw SQL (Prisma cannot describe
-  partitions, and `schema.full.prisma` keeps the single `CommentTopic` model, which is all the
-  Kysely type generation needs under decision 8). The PK is `("entityId", "entityType")` so the
-  cascade's lookup inside a partition is a plain index probe, not a skip scan; reads always
-  supply both columns.
+    (Postgres: "no partition of relation … found for row"), so forgetting it is loud.
+- Rules that come with it: always filter on `entityType` (the partition key; without it
+  Postgres searches all 13 partitions) and `entityId` (the index inside the partition) — every
+  v3 query in this plan already has both; a new entity type is enum value + partition + FK in
+  the same migration; no DEFAULT partition, because it would swallow a forgotten type; the
+  migration is raw SQL, since Prisma has no partition syntax, and `schema.full.prisma` is
+  expected to declare one `CommentTopic` model with `@@id([entityId, entityType])` matching the
+  DDL — unverified: confirm on the Phase 1 dev apply that `db:generate`, `db:check-generated`
+  and the moderator introspection tolerate the partition children. The PK is
+  `("entityId", "entityType")` so the cascade's lookup inside a partition is a plain
+  leading-column index probe, with no reliance on skip scan; reads always supply both columns.
 - Keying: `ComicChapter` by its unique SERIAL `id` (its PK is composite); app listings by
   `app_listings.serial_id`, because the store `id` is a text ULID — the trigger draft compared
   `OLD.id` and would have failed on the first listing delete. `Thread.appListingId` already holds
@@ -1007,7 +1007,10 @@ Idempotent, batched copy jobs:
   sequence for pre-existing rows (rows the mirror already copied keep the id it gave them — the
   `legacyV1Id` conflict no-ops). `createdAt` is copied verbatim and is what the Newest sort reads,
   so the order the backfill hands out ids in does not matter (_ID strategy_).
-- Topics: one `CommentTopic` per entity-bearing Thread, copying `locked`; `commentCount` recomputed
+- Topics: one `CommentTopic` per entity-bearing Thread whose entity row exists (join to the
+  entity table; a Thread whose entity is gone is skipped and counted, like orphaned threads —
+  the partition FK would otherwise abort the batch), inserted with `ON CONFLICT DO NOTHING` on
+  the full PK, copying `locked`; `commentCount` recomputed
   by trigger-equivalent count. **The counted set must match today's trigger exactly — all rows,
   including hidden and self-authored** — because `challenge.service.ts` and `getCommentCount` read
   it raw.
@@ -1125,7 +1128,9 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 - Raw-SQL stragglers found in the full sweep, each a contained rewrite:
   `src/server/services/resourceReview.service.ts` (**owns** its Thread — creates one eagerly on
   review create and reads `thread.commentCount` through `resourceReview.selector.ts` into
-  `ResourceReviewCard`/`ResourceReviewDetail`; replace with lazy `CommentTopic` + `COALESCE(0)`,
+  `ResourceReviewCard`/`ResourceReviewDetail`; replace with lazy `CommentTopic` joined on
+  `entityType = 'review' AND entityId = r.id` (both columns, so the join prunes to one
+  partition) + `COALESCE(0)`,
   a client-visible shape change), `src/server/services/collection.service.ts` (Thread-join
   count), `src/server/services/challenge.service.ts` (four raw `Thread.commentCount` reads by
   `challengeId`), `src/server/metrics/post.metrics-old.ts` (live sibling of `post.metrics.ts`
