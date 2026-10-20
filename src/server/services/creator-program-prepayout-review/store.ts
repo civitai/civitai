@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { PayoutReviewFlag, RunOutcome } from './run';
 
 type Db = Pick<PrismaClient, 'creatorProgramPayoutReview' | 'creatorProgramPayoutReviewRun'>;
@@ -15,10 +15,17 @@ export function createPayoutReviewStore(db: Db) {
       select: { status: true, signals: true },
     });
     if (!existing) {
-      await db.creatorProgramPayoutReview.create({
-        data: { period, userId, signals, payoutCents, evidence: json },
-      });
-      return { created: true, reopened: false };
+      try {
+        await db.creatorProgramPayoutReview.create({
+          data: { period, userId, signals, payoutCents, evidence: json },
+        });
+        return { created: true, reopened: false };
+      } catch (e) {
+        // An overlapping run filed it first; update that row instead.
+        const duplicate = e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
+        if (!duplicate || attempt >= 2) throw e;
+        return saveFlag({ period, userId, signals, payoutCents, evidence }, attempt + 1);
+      }
     }
 
     const seen = new Set(existing.signals);

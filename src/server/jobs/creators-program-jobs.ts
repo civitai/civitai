@@ -215,6 +215,16 @@ export const creatorsProgramSettleCash = createJob(
     const { settle: positiveBalances, held } = splitHeldBalances(balances, heldUserIds);
     if (held.length)
       await logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
+    const participantIds = new Set(participants.map((p) => p.userId));
+    const lateCleared = positiveBalances.filter((b) => !participantIds.has(b.accountId));
+    // Their pending cash predates this period, so this period's review says nothing about it.
+    if (lateCleared.length)
+      await logToAxiom({
+        name: 'creator-program-settle-cleared',
+        type: 'info',
+        period,
+        lateCleared,
+      });
     if (positiveBalances.length === 0) return;
 
     // Settle pending cash transactions from bank with retry

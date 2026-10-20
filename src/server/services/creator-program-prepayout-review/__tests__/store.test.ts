@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createPayoutReviewStore } from '../store';
@@ -77,6 +78,24 @@ describe('saveFlag', () => {
     reviews.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
 
     expect(await store.saveFlag(flag(['restricted']))).toEqual({ created: false, reopened: true });
+  });
+
+  it('updates the row an overlapping run created first', async () => {
+    reviews.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ status: 'open', signals: ['counterparty'] });
+    reviews.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('duplicate', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+
+    expect(await store.saveFlag(flag(['counterparty']))).toEqual({
+      created: false,
+      reopened: false,
+    });
+    expect(reviews.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('gives up rather than looping when the row keeps changing', async () => {

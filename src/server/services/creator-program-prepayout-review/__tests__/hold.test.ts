@@ -11,11 +11,12 @@ const review = (over: Record<string, unknown> = {}) => ({
   period: '2026-10',
   status: 'open',
   askRef: null,
+  evaluations: 3,
   ...over,
 });
 
 const decide = (action: 'escalate' | 'clear' | 'withhold') =>
-  decidePayoutReview({ id: 41, action, decidedBy: 'ag_test', askRef: 'card-1' });
+  decidePayoutReview({ id: 41, action, evaluations: 3, decidedBy: 'ag_test', askRef: 'card-1' });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -55,7 +56,7 @@ describe('decidePayoutReview', () => {
 
     expect(await decide('clear')).toEqual({ id: 41, status: 'cleared' });
     expect(reviews.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, status: 'open' },
+      where: { id: 41, status: 'open', evaluations: 3 },
       data: expect.objectContaining({ status: 'cleared', hold: false, decidedBy: 'ag_test' }),
     });
   });
@@ -82,6 +83,14 @@ describe('decidePayoutReview', () => {
     reviews.findUnique.mockResolvedValue(review({ status }));
 
     await expect(decide(action)).rejects.toMatchObject({ status: 409 });
+    expect(reviews.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a decision made on evidence a later run has added to', async () => {
+    // The decider read evaluation 3; the 06:00 run has since re-evaluated it with a new signal.
+    reviews.findUnique.mockResolvedValue(review({ evaluations: 4 }));
+
+    await expect(decide('clear')).rejects.toMatchObject({ status: 409 });
     expect(reviews.updateMany).not.toHaveBeenCalled();
   });
 

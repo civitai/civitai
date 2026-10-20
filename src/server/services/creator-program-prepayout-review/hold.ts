@@ -76,6 +76,8 @@ export function splitHeldBalances<T extends { accountId: number; balance: number
 export const payoutReviewDecisionSchema = z.object({
   id: z.number().int().positive(),
   action: z.enum(['escalate', 'clear', 'withhold']),
+  /** The row's `evaluations` when the decider read its evidence. */
+  evaluations: z.number().int().positive(),
   decidedBy: z.string().min(1),
   note: z.string().optional(),
   askRef: z.string().optional(),
@@ -100,13 +102,19 @@ export async function decidePayoutReview(input: PayoutReviewDecision, now = new 
   const review = await dbWrite.creatorProgramPayoutReview.findUnique({ where: { id: input.id } });
   if (!review) throw new PayoutReviewError(404, `No review ${input.id}`);
 
+  if (review.evaluations !== input.evaluations)
+    throw new PayoutReviewError(
+      409,
+      `Review ${review.id} has newer evidence (evaluation ${review.evaluations}); read it again`
+    );
   if (!TRANSITIONS[input.action].includes(review.status))
     throw new PayoutReviewError(409, `Cannot ${input.action} a review that is ${review.status}`);
 
   const status = { escalate: 'escalated', clear: 'cleared', withhold: 'withheld' }[input.action];
-  // Conditional on the status read above, so two decisions racing cannot both apply.
+  // Conditional on what was read, so neither a racing decision nor a re-run adding evidence the
+  // decider never saw can slip in between.
   const { count } = await dbWrite.creatorProgramPayoutReview.updateMany({
-    where: { id: review.id, status: review.status },
+    where: { id: review.id, status: review.status, evaluations: input.evaluations },
     data: {
       status,
       hold: input.action !== 'clear',
