@@ -1,10 +1,11 @@
 import Stripe from 'stripe';
+import { isTestKey, LIVE_ID_KEY } from '../../src/server/utils/stripe-key-mode';
 
 export const STRIPE_API_VERSION = '2022-11-15' as const;
-export const LIVE_ID_KEY = 'live_id';
+export { LIVE_ID_KEY };
 
 export function assertSandboxKey(key: string | undefined): asserts key is string {
-  if (!key || !/^(sk|rk)_test_/.test(key)) {
+  if (!isTestKey(key)) {
     const prefix = key ? key.slice(0, 8) : '(empty)';
     throw new Error(
       `Refusing to write to Stripe with a ${prefix}... key: the sandbox writer only accepts sk_test_/rk_test_ keys.`

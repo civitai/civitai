@@ -1,6 +1,7 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { inStripeKeyMode, stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
   subscriptionProductMetadataSchema,
   type GetUserSubscriptionInput,
@@ -82,8 +83,11 @@ export const getPlans = async ({
     },
   });
 
+  // Before the metadata parse, which drops `live_id`.
+  const mode = stripeKeyMode(env.STRIPE_SECRET_KEY);
   // Only show the default price for a subscription product
   return products
+    .filter((product) => inStripeKeyMode(product, mode))
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
       const price = prices.filter((x) => x.id === product.defaultPriceId)[0] ?? prices[0];
