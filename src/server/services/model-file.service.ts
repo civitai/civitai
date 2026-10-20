@@ -157,7 +157,11 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
-  await throwOnBlockedUserContent(data.overrideName, { isModerator, surface: 'model-file' });
+  // `name` is the uploaded file name, which some model types publish as the download name.
+  await throwOnBlockedUserContent([data.overrideName, data.name], {
+    isModerator,
+    surface: 'model-file',
+  });
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
     where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
@@ -206,10 +210,14 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // Only a changed name: the editor re-sends the stored one with every file save, and scanning it
+  // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
   // would leave a file whose name trips a list impossible to edit in any other way.
-  if (inputData.overrideName && inputData.overrideName !== modelFile.overrideName)
-    await throwOnBlockedUserContent(inputData.overrideName, { isModerator, surface: 'model-file' });
+  const changedNames = [
+    inputData.overrideName !== modelFile.overrideName ? inputData.overrideName : undefined,
+    inputData.name !== modelFile.name ? inputData.name : undefined,
+  ].filter(Boolean);
+  if (changedNames.length)
+    await throwOnBlockedUserContent(changedNames, { isModerator, surface: 'model-file' });
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
 

@@ -9,7 +9,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const { throwOnBlockedUserContent } = vi.hoisted(() => ({
   // Stands in for the blocklist: refuses any string containing BLOCKED.
   throwOnBlockedUserContent: vi.fn(async (value: unknown) => {
-    if (typeof value === 'string' && value.includes('BLOCKED')) throw new Error('blocked');
+    const values = Array.isArray(value) ? value : [value];
+    if (values.some((v) => typeof v === 'string' && v.includes('BLOCKED')))
+      throw new Error('blocked');
   }),
 }));
 
@@ -69,7 +71,7 @@ describe('updateFile — the display name', () => {
 
   it('saves a changed name the blocklist accepts', async () => {
     await expect(save('clean name')).resolves.toBeDefined();
-    expect(throwOnBlockedUserContent).toHaveBeenCalledWith('clean name', expect.anything());
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['clean name'], expect.anything());
   });
 });
 
@@ -88,5 +90,37 @@ describe('createFile — the display name', () => {
       } as never)
     ).rejects.toThrow('blocked');
     expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the uploaded file name, published as the download name for some model types', () => {
+  it('refuses a changed upload name the blocklist refuses', async () => {
+    await expect(
+      updateFile({ id: 1, userId: 7, name: 'BLOCKED.safetensors' } as never)
+    ).rejects.toThrow('blocked');
+  });
+
+  it('does not rescan the stored upload name', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValueOnce({
+      ...(await dbMock.dbWrite.modelFile.findUnique()),
+      name: 'stored BLOCKED.safetensors',
+    });
+    await expect(
+      updateFile({ id: 1, userId: 7, name: 'stored BLOCKED.safetensors' } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses a new file whose upload name the blocklist refuses', async () => {
+    await expect(
+      createFile({
+        select: { id: true },
+        userId: 7,
+        modelVersionId: 10,
+        name: 'BLOCKED.safetensors',
+        url: 'https://example.test/a.safetensors',
+        type: 'Model',
+        sizeKB: 1,
+      } as never)
+    ).rejects.toThrow('blocked');
   });
 });
