@@ -236,6 +236,7 @@
           </a>
         {/if}
       </div>
+      <p class="m-0 px-2 text-[11px] tabular-nums text-dark-2">v{__APP_VERSION__}</p>
     </SidebarFooter>
   </Sidebar>
 
