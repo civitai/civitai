@@ -132,6 +132,7 @@ import {
   sleep,
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -560,6 +561,29 @@ async function withExistingTurboLora<T extends ModelVersionUpsertInput['settings
   return { ...settings, generation: { ...settings?.generation, turboLora: null } };
 }
 
+type VersionText = { name: string; trainedWords: string[] };
+
+/** The name and trained words a write would change: everything, for a version not yet stored. */
+function changedVersionText(
+  next: { name?: string | null; trainedWords?: string[] | null },
+  stored: VersionText | null
+) {
+  if (!stored) return [next.name, ...(next.trainedWords ?? [])];
+  const storedWords = new Set(stored.trainedWords);
+  return [
+    next.name !== stored.name ? next.name : undefined,
+    ...(next.trainedWords ?? []).filter((word) => !storedWords.has(word)),
+  ];
+}
+
+function sameVersionText(a: VersionText, b: VersionText) {
+  return (
+    a.name === b.name &&
+    a.trainedWords.length === b.trainedWords.length &&
+    a.trainedWords.every((word, i) => word === b.trainedWords[i])
+  );
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -590,18 +614,28 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  // Description only. `data.name` and `data.trainedWords` are both deliberately absent, for one
-  // reason: `requestReviewHandler` and `declineReviewHandler` select BOTH and replay the stored row
-  // through here with no moderator flag. The link half never exempts moderators and is not behind
-  // the enforcement flag, so scanning either field would let a version that trips a list become
-  // impossible to decline or resubmit — the guard would block the remedy for the abuse it found.
-  //
-  // So a version's name and trained words are scanned NOWHERE, while a model's name IS scanned in
-  // `upsertModel`. That is a known gap rather than a rule, tracked on 868kz1yt1.
-  //
-  // 🔴 Adding either field here looks obviously right and was tried. Closing it needs the replay
-  // callers to say they are replaying, not a wider argument list.
   await throwOnBlockedUserContent(data.description, {
+    isModerator,
+    surface: 'modelVersion',
+  });
+
+  // Name and trained words are scanned only where they DIFFER from the stored row.
+  // `requestReviewHandler` and `declineReviewHandler` replay the stored row through here with no
+  // moderator flag, and the link half exempts nobody, so scanning the full values would make a
+  // version that trips a list impossible to decline or resubmit: the guard would block the remedy
+  // for the abuse it found. A replay changes nothing, so it scans nothing.
+  //
+  // 🔴 Do not "simplify" this to scanning `data.name` and `data.trainedWords` outright. That was
+  // tried, and it is the defect above. The transaction below re-reads the row under a lock and
+  // refuses if it moved, so a concurrent edit cannot change what this diff was taken against.
+  const storedText =
+    id && !templateId
+      ? await dbWrite.modelVersion.findUnique({
+          where: { id },
+          select: { name: true, trainedWords: true },
+        })
+      : null;
+  await throwOnBlockedUserContent(changedVersionText(data, storedText), {
     isModerator,
     surface: 'modelVersion',
   });
@@ -999,6 +1033,16 @@ export const upsertModelVersion = async ({
 
     const version = await dbWrite.$transaction(
       async (tx) => {
+        // The name and trained words were scanned as a diff against `storedText`. Lock the row and
+        // refuse if either moved since, or a concurrent edit could slip an unscanned value past.
+        const [locked] = await tx.$queryRaw<{ name: string; trainedWords: string[] }[]>`
+          SELECT name, "trainedWords" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+        `;
+        if (storedText && locked && !sameVersionText(locked, storedText))
+          throw throwConflictError(
+            'This version changed while you were saving. Reload and try again.'
+          );
+
         const updated = await tx.modelVersion.update({
           where: { id },
           data: {
