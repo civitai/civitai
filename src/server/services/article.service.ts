@@ -1557,9 +1557,50 @@ export async function applyArticleContentChange({
   return true;
 }
 
-/** An image an article's cleanup may delete: the author's own, in no post, connected to nothing else. */
+/**
+ * An image an article's cleanup may delete: the author's own, in no post, and shown nowhere else.
+ * Most of these relations null out on delete, so a missed one silently blanks that surface:
+ * a new relation that displays an image belongs here.
+ */
 const unusedAuthorImage = (ownerId: number) =>
-  ({ userId: ownerId, postId: null, connections: { none: {} } } satisfies Prisma.ImageWhereInput);
+  ({
+    userId: ownerId,
+    postId: null,
+    article: { is: null },
+    assignedUser: { is: null },
+    connections: { none: {} },
+    collectionItems: { none: {} },
+    collections: { none: {} },
+    UserProfile: { none: {} },
+    userProfileSfwCover: { none: {} },
+    announcementCovers: { none: {} },
+    clubCover: { none: {} },
+    clubHeader: { none: {} },
+    clubAvatar: { none: {} },
+    clubTierCover: { none: {} },
+    clubPostCoverImage: { none: {} },
+    purchasableRewards: { none: {} },
+    CosmeticShopSection: { none: {} },
+    comicPanels: { none: {} },
+    comicReferenceImages: { none: {} },
+    comicProjectCover: { none: {} },
+    comicProjectHero: { none: {} },
+    challengesCover: { none: {} },
+    challengeWins: { none: {} },
+    challengeEventCovers: { none: {} },
+    model3dThumbnails: { none: {} },
+    model3dSources: { none: {} },
+    appListingIcons: { none: {} },
+    appListingCovers: { none: {} },
+    appListingScreenshots: { none: {} },
+    appSubListingImages: { none: {} },
+    appSubListingPendingImages: { none: {} },
+    crucibles: { none: {} },
+    crucibleHeroes: { none: {} },
+    crucibleEntries: { none: {} },
+    storylineCovers: { none: {} },
+    storylineHeroes: { none: {} },
+  } satisfies Prisma.ImageWhereInput);
 
 export const deleteArticleById = async ({
   id,

@@ -50,21 +50,33 @@ const AUTHOR = 7;
 const SOMEONE_ELSE = 8;
 const MODERATOR = 99;
 
-type Row = { id: number; userId: number; postId: number | null; otherConnections: number };
+/** `uses`: the other relations that show this image, by their Prisma relation name. */
+type Row = { id: number; userId: number; postId: number | null; uses: string[] };
 
-// Every image below was linked into the article and has just been removed from its content.
-const UNUSED_OWN: Row = { id: 1, userId: AUTHOR, postId: null, otherConnections: 0 };
-const SOMEONE_ELSES: Row = { id: 2, userId: SOMEONE_ELSE, postId: null, otherConnections: 0 };
-const IN_A_POST: Row = { id: 3, userId: AUTHOR, postId: 500, otherConnections: 0 };
-const LINKED_ELSEWHERE: Row = { id: 4, userId: AUTHOR, postId: null, otherConnections: 1 };
-const UNLINKED = [UNUSED_OWN, SOMEONE_ELSES, IN_A_POST, LINKED_ELSEWHERE];
+// Every image below was linked into the article and leaves it in the same edit.
+const UNUSED_OWN: Row = { id: 1, userId: AUTHOR, postId: null, uses: [] };
+const SOMEONE_ELSES: Row = { id: 2, userId: SOMEONE_ELSE, postId: null, uses: [] };
+const IN_A_POST: Row = { id: 3, userId: AUTHOR, postId: 500, uses: [] };
+const LINKED_ELSEWHERE: Row = { id: 4, userId: AUTHOR, postId: null, uses: ['connections'] };
+const ANOTHER_ARTICLES_COVER: Row = { id: 5, userId: AUTHOR, postId: null, uses: ['article'] };
+const A_CHALLENGE_COVER: Row = { id: 6, userId: AUTHOR, postId: null, uses: ['challengesCover'] };
+const UNLINKED = [
+  UNUSED_OWN,
+  SOMEONE_ELSES,
+  IN_A_POST,
+  LINKED_ELSEWHERE,
+  ANOTHER_ARTICLES_COVER,
+  A_CHALLENGE_COVER,
+];
 
-/** Applies the filters the orphan query uses, so a dropped filter widens the result as in Prisma. */
+/** Applies the query's filters, so a dropped filter widens the result as it would in Prisma. */
 const matches = (row: Row, where: Record<string, any>) =>
-  (!where.id?.in || where.id.in.includes(row.id)) &&
-  (where.userId === undefined || row.userId === where.userId) &&
-  (where.postId === undefined || row.postId === where.postId) &&
-  (where.connections?.none === undefined || row.otherConnections === 0);
+  Object.entries(where).every(([key, cond]) => {
+    if (key === 'id') return cond.in.includes(row.id);
+    if (key === 'userId' || key === 'postId') return row[key] === cond;
+    // `{ none: {} }` on a list relation, `{ is: null }` on a single one: the image is not used there.
+    return !row.uses.includes(key);
+  });
 
 beforeEach(() => {
   vi.clearAllMocks();
