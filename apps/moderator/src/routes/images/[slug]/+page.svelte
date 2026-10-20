@@ -7,7 +7,7 @@
 </script>
 
 {#if data.kind === 'csam-users'}
-  <CsamUserGroups {data} />
+  <CsamUserGroups {data} {form} />
 {:else}
   <ImageQueuePage {data} {form} />
 {/if}

@@ -19,6 +19,7 @@ import {
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
+import { clearUserCsamFlags } from '$lib/server/csam-flag-clear';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead } from '$lib/server/db';
 import { approvedAppealOf } from '$lib/server/removal-hold';
@@ -280,6 +281,30 @@ export const imageQueueActions = {
         imageId,
       });
     return { success: true, imageId };
+  },
+
+  // `dismissFlag` for every one of one user's removed images, from the by-user view of the same queue.
+  dismissUserFlags: async ({ request, locals, params }) => {
+    if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
+    const input = parseForm(
+      z.object({ userId: int4Id, expectedCount: z.coerce.number().int().positive() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await clearUserCsamFlags({ ...input, moderatorId: locals.user.id });
+    if (!result.ok)
+      return fail(409, {
+        error:
+          result.reason === 'held'
+            ? `User #${input.userId}'s flags cannot be cleared in bulk. Review the images one by one.`
+            : `User #${input.userId}'s queue changed since it was shown. Nothing was cleared. Reload.`,
+      });
+    return {
+      success: true,
+      cleared: `Cleared ${result.cleared} flag${result.cleared === 1 ? '' : 's'} for user #${
+        input.userId
+      }.${result.remaining ? ` ${result.remaining} still need a verdict.` : ''}`,
+    };
   },
 
   resolveAppeal: async ({ request, locals }) => {

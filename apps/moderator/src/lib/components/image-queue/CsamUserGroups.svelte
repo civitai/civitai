@@ -10,10 +10,14 @@
   import { csamReportUrl } from '$lib/entity-url';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
+  import { enhance } from '$app/forms';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
 
   let {
     data,
+    form,
   }: {
     data: {
       title: string;
@@ -22,15 +26,38 @@
       users: CsamQueueUser[];
       truncated: boolean;
     };
+    form: { error?: string; cleared?: string } | null;
   } = $props();
 
   const queueHref = (userId: number) => `/images/csam?userId=${userId}&level=${data.level}`;
+
+  let pending = $state<number | null>(null);
+  const clearSubmit =
+    (userId: number): SubmitFunction =>
+    () => {
+      pending = userId;
+      return async ({ update }) => {
+        await update();
+        pending = null;
+      };
+    };
 </script>
 
 <header class="page-header flex flex-wrap items-center justify-between gap-2">
   <h1>{data.title}</h1>
   <CsamQueueTabs active="user" level={data.level} />
 </header>
+
+{#if form?.error}
+  <div
+    class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+    role="alert"
+  >
+    {form.error}
+  </div>
+{:else if form?.cleared}
+  <p class="mb-3 text-sm text-emerald-300" role="status">{form.cleared}</p>
+{/if}
 
 {#if data.truncated}
   <p class="mb-3 text-sm text-amber-300" role="status">
@@ -48,6 +75,7 @@
         <TableHead class="text-right">Flagged</TableHead>
         <TableHead>CSAM report</TableHead>
         <TableHead></TableHead>
+        <TableHead>Removed images</TableHead>
       </TableRow>
     </TableHeader>
     <TableBody>
@@ -76,6 +104,29 @@
               rel="noreferrer"
               class={LINK_CLASS}>Report page</a
             >
+          </TableCell>
+          <TableCell class="whitespace-nowrap text-sm">
+            {#if user.held}
+              <span class="text-xs text-dark-2">Review one by one</span>
+            {:else if user.removed > 0}
+              <form
+                method="POST"
+                action="?/dismissUserFlags"
+                class="flex items-center gap-2"
+                use:enhance={clearSubmit(user.userId)}
+              >
+                <input type="hidden" name="userId" value={user.userId} />
+                <input type="hidden" name="expectedCount" value={user.removed} />
+                <ConfirmSubmit
+                  label="Clear"
+                  name="op"
+                  value="clear"
+                  count={user.removed}
+                  noun="removed-image flag"
+                  submitting={pending === user.userId}
+                />
+              </form>
+            {/if}
           </TableCell>
         </TableRow>
       {/each}
