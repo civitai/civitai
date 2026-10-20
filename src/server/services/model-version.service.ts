@@ -136,7 +136,14 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { assertFileTypeChangeAllowed } from '~/server/utils/model-file-replace';
+import {
+  assertFileTypeChangeAllowed,
+  versionAcceptsNewTrainingData,
+} from '~/server/utils/model-file-replace';
+import {
+  isDatasetEditable,
+  versionRemovalLockedTrainingStatuses,
+} from '~/shared/constants/training.constants';
 import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
@@ -517,7 +524,9 @@ function toMonetizationAuditShape(
 }
 
 // Denied and Paused are moderation decisions: an owner can neither set them nor move a version out
-// of them. Every other transition, replay included, is the training wizard's to make.
+// of them. Once a run has started, an owner can't move the version back to a status that takes a new
+// dataset either; only the run itself (failing, expiring) does that. Every other transition, replay
+// included, is the training wizard's to make.
 const MODERATOR_ONLY_TRAINING_STATUSES: (TrainingStatus | null)[] = [
   TrainingStatus.Denied,
   TrainingStatus.Paused,
@@ -529,7 +538,8 @@ function assertOwnerTrainingStatusChange(
   if (next === undefined || next === stored) return;
   if (
     MODERATOR_ONLY_TRAINING_STATUSES.includes(stored) ||
-    MODERATOR_ONLY_TRAINING_STATUSES.includes(next)
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(next) ||
+    (!isDatasetEditable(stored) && isDatasetEditable(next))
   )
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
@@ -1035,13 +1045,18 @@ export const upsertModelVersion = async ({
       async (tx) => {
         // The name and trained words were scanned as a diff against `storedText`. Lock the row and
         // refuse if either moved since, or a concurrent edit could slip an unscanned value past.
-        const [locked] = await tx.$queryRaw<{ name: string; trainedWords: string[] }[]>`
-          SELECT name, "trainedWords" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+        const [locked] = await tx.$queryRaw<
+          { name: string; trainedWords: string[]; trainingStatus: TrainingStatus | null }[]
+        >`
+          SELECT name, "trainedWords", "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
         `;
         if (storedText && locked && !sameVersionText(locked, storedText))
           throw throwConflictError(
             'This version changed while you were saving. Reload and try again.'
           );
+        // A run can start between the read above and this lock.
+        if (!isModerator && locked)
+          assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
 
         const updated = await tx.modelVersion.update({
           where: { id },
@@ -1430,6 +1445,19 @@ export const deleteVersionById = async ({
   let modelFileHashes: string[] = [];
 
   const version = await dbWrite.$transaction(async (tx) => {
+    // Locked, so a run can't enter a locked status between this check and the delete.
+    const [run] = await tx.$queryRaw<{ trainingStatus: TrainingStatus | null }[]>`
+      SELECT "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+    `;
+    if (
+      !isModerator &&
+      run?.trainingStatus &&
+      versionRemovalLockedTrainingStatuses.includes(run.trainingStatus)
+    )
+      throw throwBadRequestError(
+        "This version's training run is in progress, under review or denied, so it can't be deleted."
+      );
+
     // Snapshot URLs + hashes inside the tx — must read before the cascade nukes
     // the ModelFile / ModelFileHash rows.
     const files = await tx.modelFile.findMany({
@@ -3464,6 +3492,41 @@ export const mergeVersions = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
+      // 0. Lock the rows, in id order, so a run can't change status under these checks.
+      const runs = await tx.$queryRaw<
+        { id: number; name: string; status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+      >`
+        SELECT id, name, status, "trainingStatus" FROM "ModelVersion"
+        WHERE id IN (${Prisma.join([targetVersionId, ...sourceVersionIds])})
+        ORDER BY id
+        FOR UPDATE
+      `;
+      const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
+      const lockedSource = sourceRuns.find(
+        (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
+      );
+      if (lockedSource)
+        throw throwBadRequestError(
+          `Version "${lockedSource.name}" has a training run in progress, under review or denied, and can't be merged.`
+        );
+      // A trained dataset stays fixed: its run's results live in the file's metadata, so it can't
+      // move to a version that still takes a new dataset.
+      const target = runs.find((r) => r.id === targetVersionId);
+      const trainedSourceIds = sourceRuns
+        .filter((r) => !isDatasetEditable(r.trainingStatus))
+        .map((r) => r.id);
+      if (target && versionAcceptsNewTrainingData(target) && trainedSourceIds.length) {
+        const dataset = await tx.modelFile.findFirst({
+          where: { modelVersionId: { in: trainedSourceIds }, type: 'Training Data' },
+          select: { modelVersionId: true },
+        });
+        const trainedSource = dataset && sourceRuns.find((r) => r.id === dataset.modelVersionId);
+        if (trainedSource)
+          throw throwBadRequestError(
+            `Version "${trainedSource.name}" has a finished training run, so its training data can't move to a version that still accepts new training data.`
+          );
+      }
+
       // 1. Remap file types and metadata if provided. Only files of the versions being merged, of
       // the caller's own model, re-checked here in the transaction that writes them.
       if (fileTypeMappings?.length) {
