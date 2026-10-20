@@ -72,3 +72,32 @@ export const TYPING_SELECTOR = [
 /** Focus is somewhere a key means something else: a field, or an open dialog, menu or list. */
 export const isTypingTarget = (target: { closest?: (selector: string) => unknown } | null) =>
   !!target?.closest?.(TYPING_SELECTOR);
+
+export type RevealKeyEvent = {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  repeat: boolean;
+  defaultPrevented: boolean;
+  isComposing: boolean;
+  typing: boolean;
+  /** A dialog or alert dialog is open: the key belongs to what is behind it only once it closes. */
+  dialogOpen: boolean;
+};
+
+/** V toggles the page's image reveal. */
+export const isRevealKey = (e: RevealKeyEvent) =>
+  (e.key === 'v' || e.key === 'V') &&
+  !(
+    e.ctrlKey ||
+    e.metaKey ||
+    e.altKey ||
+    e.repeat ||
+    e.defaultPrevented ||
+    e.isComposing ||
+    e.typing ||
+    e.dialogOpen
+  );
+
+export const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';

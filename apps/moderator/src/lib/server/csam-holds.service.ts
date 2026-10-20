@@ -7,6 +7,7 @@ export {
   countPendingCsamHolds,
   csamHoldSearch,
   getCsamHoldRef,
+  getHoldCoverUrls,
   getPostHoldImages,
   listCsamHolds,
   type CsamHoldImage,

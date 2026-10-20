@@ -181,6 +181,71 @@ export async function getPostHoldImages(
   };
 }
 
+const stillsOnly = sql<boolean>`i.type::text = 'image'`;
+
+/** A post's first still: lowest `index`, then id. One row per post. */
+async function getPostCovers(postIds: number[]): Promise<Map<number, string>> {
+  const rows = await dbRead
+    .selectFrom('Image as i')
+    .distinctOn('i.postId')
+    .select(['i.postId', 'i.url'])
+    .where('i.postId', 'in', postIds)
+    .where(stillsOnly)
+    .orderBy('i.postId')
+    .orderBy(sql`i.index asc nulls last`)
+    .orderBy('i.id', 'asc')
+    .execute();
+  return new Map(rows.flatMap((r) => (r.postId === null ? [] : [[r.postId, r.url] as const])));
+}
+
+/** A model's first still, chosen as the model flags queues choose theirs: the owner's posts on its
+ *  versions, published before unpublished, then version, post and image order. One row per model. */
+async function getModelCovers(modelIds: number[]): Promise<Map<number, string>> {
+  const rows = await dbRead
+    .selectFrom('Model as m')
+    .innerJoin('ModelVersion as mv', 'mv.modelId', 'm.id')
+    .innerJoin('Post as p', (join) =>
+      join.onRef('p.modelVersionId', '=', 'mv.id').onRef('p.userId', '=', 'm.userId')
+    )
+    .innerJoin('Image as i', 'i.postId', 'p.id')
+    .distinctOn('m.id')
+    .select(['m.id as modelId', 'i.url'])
+    .where('m.id', 'in', modelIds)
+    .where(stillsOnly)
+    .orderBy('m.id')
+    .orderBy(sql`p."publishedAt" is null`)
+    .orderBy(sql`mv.index asc nulls last`)
+    .orderBy('p.id', 'asc')
+    .orderBy(sql`i.index asc nulls last`)
+    .orderBy('i.id', 'asc')
+    .execute();
+  return new Map(rows.map((r) => [r.modelId, r.url]));
+}
+
+/** The thumbnail key of each post or model hold on a page, by hold id: two reads at most however many
+ *  rows there are. Holds with no still, and other types, have no entry. */
+export async function getHoldCoverUrls(
+  holds: { id: number; entityType: string; entityId: number }[]
+): Promise<Map<number, string>> {
+  const idsOf = (type: string) => [
+    ...new Set(holds.filter((h) => h.entityType === type).map((h) => h.entityId)),
+  ];
+  const postIds = idsOf('Post');
+  const modelIds = idsOf('Model');
+  const [posts, models] = await Promise.all([
+    postIds.length ? getPostCovers(postIds) : new Map<number, string>(),
+    modelIds.length ? getModelCovers(modelIds) : new Map<number, string>(),
+  ]);
+  const covers = new Map<number, string>();
+  for (const h of holds) {
+    const url = (h.entityType === 'Post' ? posts : h.entityType === 'Model' ? models : null)?.get(
+      h.entityId
+    );
+    if (url) covers.set(h.id, url);
+  }
+  return covers;
+}
+
 /** What a hold points at, for reading its content; null when the id is not a csam hold. */
 export async function getCsamHoldRef(
   holdId: number

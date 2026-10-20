@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isTypingTarget, reasonPickerKeyAction, TYPING_SELECTOR, triageKeyAction } from '../keys';
+import {
+  isRevealKey,
+  isTypingTarget,
+  reasonPickerKeyAction,
+  TYPING_SELECTOR,
+  triageKeyAction,
+} from '../keys';
 
 const key = (k: string, over: Partial<Parameters<typeof triageKeyAction>[0]> = {}) =>
   triageKeyAction({
@@ -133,5 +139,38 @@ describe('isTypingTarget', () => {
     expect(isTypingTarget({ closest: () => null })).toBe(false);
     expect(isTypingTarget(null)).toBe(false);
     expect(isTypingTarget({})).toBe(false);
+  });
+});
+
+describe('isRevealKey', () => {
+  const press = (over: Partial<Parameters<typeof isRevealKey>[0]> = {}) =>
+    isRevealKey({
+      key: 'v',
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      repeat: false,
+      defaultPrevented: false,
+      isComposing: false,
+      typing: false,
+      dialogOpen: false,
+      ...over,
+    });
+
+  it('takes V in either case', () => {
+    expect(press()).toBe(true);
+    expect(press({ key: 'V' })).toBe(true);
+    expect(press({ key: 'x' })).toBe(false);
+  });
+
+  it.each([
+    ['a modifier', { metaKey: true }],
+    ['a held key', { repeat: true }],
+    ['typing', { typing: true }],
+    ['an open dialog', { dialogOpen: true }],
+    ['a handled event', { defaultPrevented: true }],
+    ['composition', { isComposing: true }],
+  ])('ignores V with %s', (_label, over) => {
+    expect(press(over)).toBe(false);
   });
 });

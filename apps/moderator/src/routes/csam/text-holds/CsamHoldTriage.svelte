@@ -12,6 +12,8 @@
   import { LINK_CLASS } from '$lib/format';
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
+  import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
+  import { DIALOG_SELECTOR, isRevealKey, isTypingTarget } from '$lib/triage/keys';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
@@ -38,6 +40,21 @@
     canStrike: boolean;
     canBan: boolean;
   } = $props();
+
+  const onkeydown = (e: KeyboardEvent) => {
+    const revealKey = isRevealKey({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      altKey: e.altKey,
+      repeat: e.repeat,
+      defaultPrevented: e.defaultPrevented,
+      isComposing: e.isComposing,
+      typing: isTypingTarget(e.target as Element | null),
+      dialogOpen: document.querySelector(DIALOG_SELECTOR) !== null,
+    });
+    if (revealKey) imageReveal.toggle();
+  };
 
   const parseKey = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : null);
 
@@ -68,6 +85,8 @@
       : `${CSAM_HOLD_STATUS_LABELS[data.holdFilters.status].toLowerCase()} `
   );
 </script>
+
+<svelte:window {onkeydown} />
 
 {#snippet empty()}
   <div class="p-5 text-sm text-dark-0">
@@ -114,6 +133,8 @@
       href={state.href}
       selected={state.selected}
       title={holdTitle(row)}
+      coverUrl={row.coverUrl ?? undefined}
+      coverBlurred={!imageReveal.on}
       meta={holdMeta(row)}
       verdict={state.verdict}
       error={state.error}

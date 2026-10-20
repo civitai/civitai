@@ -25,6 +25,7 @@ const {
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  getHoldCoverUrls,
   getPostHoldImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
@@ -92,8 +93,11 @@ beforeEach(async () => {
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
   await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
   await db.exec(`
-    CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP);
-    CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL);
+    CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP,
+      "userId" INTEGER, "modelVersionId" INTEGER);
+    CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL,
+      "userId" INTEGER);
+    CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
       "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
     INSERT INTO "Image" VALUES
@@ -352,5 +356,62 @@ describe('getPostHoldImages', () => {
 
   it('is empty for a post with no images or no row', async () => {
     expect(await getPostHoldImages(30, 4)).toEqual({ images: [], total: 0 });
+  });
+});
+
+describe('getHoldCoverUrls', () => {
+  const hold = (id: number, entityType: string, entityId: number) => ({ id, entityType, entityId });
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" VALUES (71, 'Owned', 'Published', 10), (72, 'Drafty', 'Draft', 10),
+        (73, 'Bare', 'Published', 10);
+      INSERT INTO "ModelVersion" VALUES (710, 71, 1), (711, 71, 0), (720, 72, 0), (721, 72, 1),
+        (730, 73, 0);
+      INSERT INTO "Post" VALUES
+        (801, NULL, '2026-10-01', 10, 710), (802, NULL, '2026-10-01', 10, 711),
+        (803, NULL, '2026-10-01', 11, 711),
+        (804, NULL, NULL, 10, 720), (805, NULL, '2026-10-01', 10, 721),
+        (806, NULL, '2026-10-01', 11, 730);
+      INSERT INTO "Image" VALUES
+        (90, 'v-clip', 'video', 802, 0, 1), (91, 'm-first', 'image', 802, 1, 1),
+        (92, 'm-later', 'image', 801, 0, 1), (93, 'm-review', 'image', 803, 0, 1),
+        (94, 'u-draft', 'image', 804, 0, 1), (95, 'p-live', 'image', 805, 0, 1),
+        (96, 'm-other-only', 'image', 806, 0, 1);
+    `);
+  });
+
+  it("picks a post's first still, skipping videos, one per post", async () => {
+    const covers = await getHoldCoverUrls([hold(1, 'Post', 10), hold(2, 'Post', 60)]);
+    expect(covers.get(1)).toBe('k-b');
+    expect(covers.get(2)).toBe('k-g');
+  });
+
+  it("picks a model's first owner still by version then post order, ignoring other users' posts and videos", async () => {
+    const covers = await getHoldCoverUrls([hold(3, 'Model', 71)]);
+    expect(covers.get(3)).toBe('m-first');
+  });
+
+  it('prefers a published post over an unpublished one', async () => {
+    const covers = await getHoldCoverUrls([hold(4, 'Model', 72)]);
+    expect(covers.get(4)).toBe('p-live');
+  });
+
+  it('has no cover for a post or model without images, or a type with none', async () => {
+    const covers = await getHoldCoverUrls([
+      hold(5, 'Post', 30),
+      hold(6, 'Model', 73),
+      hold(7, 'ChatMessage', 1),
+    ]);
+    expect(covers.size).toBe(0);
+  });
+
+  it('gives every hold its own entry when two holds share an entity', async () => {
+    const covers = await getHoldCoverUrls([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
+    expect([covers.get(1), covers.get(8)]).toEqual(['k-b', 'k-b']);
+  });
+
+  it('reads nothing for an empty page', async () => {
+    expect((await getHoldCoverUrls([])).size).toBe(0);
   });
 });

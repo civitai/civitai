@@ -12,6 +12,7 @@ import {
   countPendingCsamHolds,
   csamHoldSearch,
   decideCsamHold,
+  getHoldCoverUrls,
   listCsamHolds,
 } from '$lib/server/csam-holds.service';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
@@ -52,6 +53,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       return null;
     }),
   ]);
+  // Thumbnails are decoration: a failure leaves the rows on their icons.
+  const covers = await getHoldCoverUrls(queue.items).catch((err) => {
+    console.error('CSAM hold thumbnails failed', err);
+    return new Map<number, string>();
+  });
+  const items = queue.items.map((hold) => ({ ...hold, coverUrl: covers.get(hold.id) ?? null }));
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,
     all: Object.values(byType).reduce((sum, n) => sum + n, 0),
@@ -67,7 +74,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     typeCounts,
     pendingCount,
     total,
-    ...queue,
+    items,
+    hasMore: queue.hasMore,
     fullBleed: true,
     // The page's own header shares the sidebar trigger's row.
     headerInline: true,

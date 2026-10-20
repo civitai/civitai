@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listCsamHolds, countCsamHoldsByType, countPendingCsamHolds, decideCsamHold } = vi.hoisted(
-  () => ({
-    listCsamHolds: vi.fn(),
-    countCsamHoldsByType: vi.fn(),
-    countPendingCsamHolds: vi.fn(),
-    decideCsamHold: vi.fn(),
-  })
-);
+const {
+  listCsamHolds,
+  countCsamHoldsByType,
+  countPendingCsamHolds,
+  decideCsamHold,
+  getHoldCoverUrls,
+} = vi.hoisted(() => ({
+  getHoldCoverUrls: vi.fn(),
+  listCsamHolds: vi.fn(),
+  countCsamHoldsByType: vi.fn(),
+  countPendingCsamHolds: vi.fn(),
+  decideCsamHold: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/csam-holds.service', async () => ({
@@ -21,6 +26,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  getHoldCoverUrls,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -55,6 +61,7 @@ beforeEach(() => {
   countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
   countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
+  getHoldCoverUrls.mockResolvedValue(new Map());
 });
 
 describe('csam text holds load', () => {
@@ -136,6 +143,33 @@ describe('csam text holds load', () => {
     countPendingCsamHolds.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
     expect(data).toMatchObject({ items: [{ id: 1 }], pendingCount: null });
+  });
+
+  it('hands each row its thumbnail key from one batched read of the page', async () => {
+    listCsamHolds.mockResolvedValue({
+      items: [
+        { id: 1, entityType: 'Post', entityId: 10 },
+        { id: 2, entityType: 'ChatMessage', entityId: 20 },
+      ],
+      hasMore: false,
+    });
+    getHoldCoverUrls.mockResolvedValue(new Map([[1, 'k-1']]));
+    const data = await loadAt('');
+    expect(getHoldCoverUrls).toHaveBeenCalledTimes(1);
+    expect(getHoldCoverUrls).toHaveBeenCalledWith([
+      { id: 1, entityType: 'Post', entityId: 10 },
+      { id: 2, entityType: 'ChatMessage', entityId: 20 },
+    ]);
+    expect(data.items).toMatchObject([
+      { id: 1, coverUrl: 'k-1' },
+      { id: 2, coverUrl: null },
+    ]);
+  });
+
+  it('still lists the queue, with icons, when the thumbnails fail', async () => {
+    getHoldCoverUrls.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data.items).toMatchObject([{ id: 1, coverUrl: null }]);
   });
 
   it('still lists the queue when the counts fail', async () => {

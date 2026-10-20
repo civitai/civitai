@@ -3,8 +3,6 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
   import {
-    IconEye,
-    IconEyeOff,
     IconExternalLink,
     IconFileAlert,
     IconLock,
@@ -24,11 +22,11 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { browser } from '$app/environment';
+  import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { fetchHoldImages } from '$lib/csam-holds/hold-images';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import { dateTime, shortAge } from '$lib/format';
   import type { CsamHoldRow } from '$lib/server/csam-holds.service';
-  import { isTypingTarget } from '$lib/triage/keys';
   import type { Outcome } from '$lib/triage/queue';
   import {
     CSAM_HOLD_CONFIRMS,
@@ -80,22 +78,11 @@
   const phrases = $derived(quotedPhrases(row.reason));
   const typeName = $derived(entityLabel(row.entityType));
 
-  // Pictures stay blurred until asked for, and each hold starts blurred again.
-  let revealedHold = $state<number | null>(null);
-  const revealed = $derived(revealedHold === row.id);
-  const toggleReveal = () => (revealedHold = revealed ? null : row.id);
   // Read when a hold opens, not with the page: the shell switches holds without navigating, and only
   // posts and models have any. The shell keys this component per hold, so a late reply cannot land on another.
   const images = $derived(
     browser && holdHasImages(row.entityType) ? fetchHoldImages(row.id) : null
   );
-  const onkeydown = (e: KeyboardEvent) => {
-    if (e.key !== 'v' && e.key !== 'V') return;
-    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.defaultPrevented || e.isComposing) return;
-    if (!holdHasImages(row.entityType) || isTypingTarget(e.target as Element | null)) return;
-    toggleReveal();
-  };
-
   const LINK_BUTTON =
     'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
 
@@ -154,8 +141,6 @@
     };
   };
 </script>
-
-<svelte:window {onkeydown} />
 
 <TriageDetailFrame {verdict} {error}>
   {#snippet children()}
@@ -225,27 +210,10 @@
       {#await images then found}
         {#if found}
           <TriageCard dense title={row.entityType === 'Model' ? 'Model images' : 'Post images'}>
-            <div class="mb-2 flex items-center justify-between gap-3 text-[11px] text-dark-2">
-              <span>{revealed ? 'Images are visible.' : 'Images are blurred.'}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                class={LINK_BUTTON}
-                aria-pressed={revealed}
-                onclick={toggleReveal}
-              >
-                {#if revealed}
-                  <IconEyeOff aria-hidden="true" /> Hide images
-                {:else}
-                  <IconEye aria-hidden="true" /> Reveal images
-                {/if}
-                <kbd class="rounded border border-dark-4 px-1 text-[10px] text-dark-2">V</kbd>
-              </Button>
-            </div>
             <PreviewImagesCard
               images={found.images}
               total={found.total}
-              blurred={!revealed}
+              blurred={!imageReveal.on}
               allHref={entityHref ?? undefined}
             />
           </TriageCard>

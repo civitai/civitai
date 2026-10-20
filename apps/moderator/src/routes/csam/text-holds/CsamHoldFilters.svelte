@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { IconChevronDown } from '@tabler/icons-svelte';
+  import { IconChevronDown, IconEye, IconEyeOff } from '@tabler/icons-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import TriageFilterChips, {
     type ChipGroup,
@@ -14,6 +15,7 @@
     DEFAULT_CSAM_HOLD_FILTERS,
     type CsamHoldFilters,
   } from '$lib/csam-holds/hold-filters';
+  import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { chipHref } from '$lib/triage/filters';
   import { CSAM_HOLD_ENTITY_TYPES, entityLabel, splitEmptyTypes } from './hold-entity';
 
@@ -69,7 +71,6 @@
 </script>
 
 <div class="flex flex-col gap-1.5">
-
   <TriageFilterChips groups={[typeGroup]} selectionParam={SELECTION}>
     {#snippet trailing()}
       {#if split.empty.length}
@@ -103,5 +104,19 @@
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
     <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+    <Button
+      variant="outline"
+      size="sm"
+      class="ml-auto h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1"
+      aria-pressed={imageReveal.on}
+      onclick={imageReveal.toggle}
+    >
+      {#if imageReveal.on}
+        <IconEyeOff aria-hidden="true" /> Hide images
+      {:else}
+        <IconEye aria-hidden="true" /> Reveal images
+      {/if}
+      <kbd class="rounded border border-dark-4 px-1 text-[10px] text-dark-2">V</kbd>
+    </Button>
   </div>
 </div>
