@@ -16,6 +16,7 @@ const { purgeCache, invalidateHub } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
   invalidateHub: vi.fn(),
 }));
+vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
   ...(await importOriginal<typeof Cloudflare>()),
   purgeCache,
