@@ -98,6 +98,7 @@ import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -881,7 +882,7 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
         description: truncate(removeTags(model.description ?? ''), { length: 150 }),
         images: versionImages,
-        ogEndpoint: `/api/og?type=model&id=${model.id}`,
+        ogEndpoint: modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
