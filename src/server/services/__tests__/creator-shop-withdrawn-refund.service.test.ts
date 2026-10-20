@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { BuzzApiError } from '@civitai/buzz';
 import { PGlite } from '@electric-sql/pglite';
 import { NotificationCategory } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -876,5 +877,59 @@ describe('the history append, run against Postgres', () => {
       purchases: 0,
       history: [expect.objectContaining({ kind: 'refunded' })],
     });
+  });
+});
+
+describe('money, as the ledger keeps it', () => {
+  // The ledger exempts refunds from its own balance check, so reversing a payout the creator has
+  // already spent takes them negative. This models exactly that and nothing more: the point is that
+  // this code reverses every leg without a balance precondition of its own.
+  it('leaves a creator who spent the payouts negative by exactly what was reversed', async () => {
+    const balances = new Map<number, number>([
+      [CREATOR, 0],
+      [101, 0],
+      [102, 0],
+    ]);
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      const row = [...ledger.rows.values()].flat().find((r) => r.transactionId === transactionId)!;
+      if (row.externalTransactionId.includes(':sell:'))
+        balances.set(CREATOR, balances.get(CREATOR)! - row.amount);
+      else balances.set(row.accountId, balances.get(row.accountId)! + row.amount);
+      ledger.refunded.add(transactionId);
+    });
+    itemMeta = { purchases: 0, withdrawnRefund: { ...marker('archive'), clawback: true } };
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(Object.fromEntries(balances)).toEqual({ [CREATOR]: -1400, 101: 1000, 102: 1000 });
+  });
+});
+
+describe('each leg is refunded once', () => {
+  it('skips a leg whose refund is already on the ledger', async () => {
+    ledger.refunded.add('p-1-debit');
+    ledger.refunded.add('p-1-payout');
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(refundedIds()).toEqual(['p-2-debit', 'p-2-payout']);
+    expect(purchases.map((p) => p.refunded)).toEqual([true, true]);
+  });
+
+  // A refund that landed but whose response was lost comes back as a 409 on the retry.
+  it('counts a 409 as done when the refund is on the ledger, and as a failure when it is not', async () => {
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (transactionId === 'p-1-debit') {
+        ledger.refunded.add(transactionId);
+        throw new BuzzApiError(409, 'Conflict');
+      }
+      if (transactionId === 'p-2-debit') throw new BuzzApiError(409, 'Conflict');
+      ledger.refunded.add(transactionId);
+    });
+
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(result).toEqual({ purchases: 2, refunded: 1, failures: 1 });
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
   });
 });
