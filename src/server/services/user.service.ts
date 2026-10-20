@@ -3066,10 +3066,18 @@ export async function amIBlockedByUser({
   userId,
   targetUserId,
   targetUsername,
+  confirmOnPrimary = false,
 }: {
   userId: number;
   targetUserId?: number;
   targetUsername?: string;
+  /**
+   * Interaction gates (comment, reaction, tip) pass true: when the cache says "not
+   * blocked", confirm against the primary. A cache entry can miss a block that just
+   * landed (see the comment below), and a write path must not let a blocked user
+   * through for that window. Page views leave it off and stay cache-only.
+   */
+  confirmOnPrimary?: boolean;
 }) {
   if (!(targetUserId || targetUsername)) return false;
   if (!targetUserId && targetUsername)
@@ -3080,13 +3088,22 @@ export async function amIBlockedByUser({
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
-  // The cache is the answer. `BlockedByUsers` is invalidated for the blocked user by the
-  // only writer that creates a Block (`toggleBlockUser`), and its hash carries a TTL as a
-  // backstop. There used to be a per-request `userEngagement` lookup here on a cache miss;
-  // it ran on every logged-in detail view and only ever caught a missed invalidation —
-  // which now persists until the hash TTL instead.
+  // For page views the cache is the answer. `BlockedByUsers` is invalidated for the blocked
+  // user by the only writer that creates a Block (`toggleBlockUser`), refills from the
+  // primary, and its hash carries a TTL as a backstop. There used to be a per-request
+  // `userEngagement` lookup here on every cache miss; it ran on every logged-in detail view
+  // and only caught a missed invalidation, which on a page view now persists until the
+  // hash TTL instead. The remaining window: a refill that read before the block committed
+  // and wrote after the invalidation.
   const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  return cachedBlockedBy.some((user) => user.id === targetUserId);
+  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+  if (!confirmOnPrimary) return false;
+
+  const engagement = await dbWrite.userEngagement.findFirst({
+    where: { userId: targetUserId, targetUserId: userId, type: 'Block' },
+    select: { userId: true },
+  });
+  return !!engagement;
 }
 
 export async function requestAdToken({ userId }: { userId: number }) {

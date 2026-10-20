@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
-// `amIBlockedByUser` runs on every logged-in detail view. It answers from the
-// `BlockedByUsers` cache, which the block toggle invalidates for the blocked user.
-// It used to also query `userEngagement` on every cache miss, which only caught a
-// missed invalidation; that query is gone.
+// `amIBlockedByUser` runs on every logged-in detail view. Page views answer from the
+// `BlockedByUsers` cache alone. Interaction gates (comment, reaction, tip) pass
+// `confirmOnPrimary`, which confirms a cache "not blocked" against the primary.
 
 const { getCached } = vi.hoisted(() => ({
   getCached: vi.fn(async (..._a: unknown[]): Promise<{ id: number; username: string }[]> => []),
@@ -20,6 +19,7 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 });
 
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 
 const VIEWER = 101;
 const BLOCKER = 202;
@@ -28,13 +28,11 @@ const OTHER = 303;
 beforeEach(() => {
   vi.clearAllMocks();
   getCached.mockResolvedValue([]);
-  // If anything still queried the table, this row would say "blocked" — so a
-  // returned `false` below can only come from the cache.
-  dbMock.dbRead.userEngagement.findFirst.mockResolvedValue({
-    userId: BLOCKER,
-    targetUserId: VIEWER,
-    type: 'Block',
-  });
+  // If a cache-only path still queried the table, either client would say "blocked",
+  // so a `false` from a cache-only call can only come from the cache.
+  const blockRow = { userId: BLOCKER, targetUserId: VIEWER, type: 'Block' as const };
+  dbMock.dbRead.userEngagement.findFirst.mockResolvedValue(blockRow);
+  dbMock.dbWrite.userEngagement.findFirst.mockResolvedValue(blockRow);
 });
 
 describe('amIBlockedByUser', () => {
@@ -86,5 +84,68 @@ describe('amIBlockedByUser', () => {
     );
     // An unresolved username is answered before the cache is read.
     expect(getCached).not.toHaveBeenCalled();
+  });
+});
+
+describe('amIBlockedByUser — confirmOnPrimary (interaction gates)', () => {
+  it('returns true when the primary has a Block the cache lacks', async () => {
+    await expect(
+      amIBlockedByUser({ userId: VIEWER, targetUserId: BLOCKER, confirmOnPrimary: true })
+    ).resolves.toBe(true);
+    expect(dbMock.dbWrite.userEngagement.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: BLOCKER, targetUserId: VIEWER, type: 'Block' },
+      })
+    );
+    expect(dbMock.dbRead.userEngagement.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('returns false when neither the cache nor the primary has a Block', async () => {
+    dbMock.dbWrite.userEngagement.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      amIBlockedByUser({ userId: VIEWER, targetUserId: BLOCKER, confirmOnPrimary: true })
+    ).resolves.toBe(false);
+  });
+
+  it('does not query when the cache already says blocked', async () => {
+    getCached.mockResolvedValue([{ id: BLOCKER, username: 'blocker' }]);
+
+    await expect(
+      amIBlockedByUser({ userId: VIEWER, targetUserId: BLOCKER, confirmOnPrimary: true })
+    ).resolves.toBe(true);
+    expect(dbMock.dbWrite.userEngagement.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('never queries for a self pair', async () => {
+    await expect(
+      amIBlockedByUser({ userId: VIEWER, targetUserId: VIEWER, confirmOnPrimary: true })
+    ).resolves.toBe(false);
+    expect(dbMock.dbWrite.userEngagement.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('throwIfBlockedByOwners — a comment/reaction gate', () => {
+  it('denies when the primary has a Block the cache lacks', async () => {
+    await expect(
+      throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [BLOCKER] })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('allows when neither the cache nor the primary has a Block', async () => {
+    dbMock.dbWrite.userEngagement.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [BLOCKER] })
+    ).resolves.toBeUndefined();
+  });
+
+  it('denies from the cache without querying the primary', async () => {
+    getCached.mockResolvedValue([{ id: BLOCKER, username: 'blocker' }]);
+
+    await expect(
+      throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [BLOCKER] })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(dbMock.dbWrite.userEngagement.findFirst).not.toHaveBeenCalled();
   });
 });

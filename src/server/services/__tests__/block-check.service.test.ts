@@ -229,7 +229,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: 1 })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   // `commentOld` has one consumer, `toggleReaction` (reaction.service.ts) — the legacy comment
@@ -246,7 +250,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   it('allows that reaction when neither the author nor the model owner blocks', async () => {
@@ -256,7 +264,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
     ).resolves.toBeUndefined();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   it('rejects a blocked user creating a model3d comment', async () => {
@@ -500,10 +512,15 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'comment', entityId: REPLY })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
     expect(amIBlockedByUser).not.toHaveBeenCalledWith({
       userId: VIEWER,
       targetUserId: OTHER_OWNER,
+      confirmOnPrimary: true,
     });
   });
 
