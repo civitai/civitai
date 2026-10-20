@@ -36,7 +36,12 @@ import {
   type TrainingStudioMeta,
   workflowToRow,
 } from '$lib/data/trainingRows';
-import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
+import {
+  EXTRA_PARAM_FIELDS,
+  TARGET_STEPS,
+  ecosystemAllowsCustomBase,
+  isRetiredBaseAir,
+} from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
@@ -334,6 +339,13 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
   if (run.meta.name !== undefined && !isString(run.meta.name))
     fail(`${field}.meta.name`, 'must be a string.');
+  // A sweep row or restored selection can still carry one; submitting it would bill a run that
+  // trains on the official base.
+  if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
+    fail(`${field}.customModel`, 'is not supported for this model.');
+  // A restored selection or sweep row can still name a retired card's base.
+  if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
+    fail(`${field}.model`, 'is no longer offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -481,6 +493,9 @@ async function buildContinuation(
   const continuedInput = {
     engine: 'ai-toolkit',
     ecosystem: input.ecosystem,
+    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+    // on the ecosystem's default base and publishes as that base.
+    ...(input.model ? { model: input.model } : {}),
     ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
     ...(input.version ? { version: input.version } : {}),
     ...(steps ? { steps } : {}),
@@ -528,8 +543,11 @@ export async function continueTraining(
   submitOpts: SubmitOptions = {}
 ): Promise<string> {
   const { body } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { wait: 0 } });
-  if (!data?.id) throw new Error(`keep training: submit failed (${describeSubmitError(error)})`);
+  const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
+  if (!data?.id)
+    throw new Error(
+      `keep training: submit failed (${describeSubmitError(error, response?.status)})`
+    );
   return data.id;
 }
 
@@ -541,8 +559,9 @@ export async function continueTrainingWhatIf(
   submitOpts: SubmitOptions = {}
 ): Promise<{ cost: number | null; steps: number | undefined }> {
   const { body, steps } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { whatif: true } });
-  if (!data) throw new Error(`keep training quote failed: ${describeSubmitError(error)}`);
+  const { data, error, response } = await submitWorkflow({ client, body, query: { whatif: true } });
+  if (!data)
+    throw new Error(`keep training quote failed: ${describeSubmitError(error, response?.status)}`);
   return { cost: data.cost?.total ?? null, steps };
 }
 

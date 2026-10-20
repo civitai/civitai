@@ -21,6 +21,7 @@ import {
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
+import { modelsRankingRules } from '~/server/search-index/ranking-rules';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
@@ -114,17 +115,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 
-  const rankingRules = [
-    'sort',
-    'attribute',
-    'metrics.thumbsUpCount:desc',
-    'words',
-    'proximity',
-    'exactness',
-  ];
-
-  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
-    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+  if (JSON.stringify(modelsRankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(modelsRankingRules);
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
@@ -524,6 +516,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             ...x,
             // Keeps the column's name but holds readiness — the loaded-only filter reads this.
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
+            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
+            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
             pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),

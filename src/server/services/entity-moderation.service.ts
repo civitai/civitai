@@ -2,7 +2,11 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-scan/types';
+import type {
+  PromptIds,
+  TextScanOutcome,
+  TextScanSubject,
+} from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type SlimMatchedTermsText = { text: string[] };
@@ -265,6 +269,8 @@ export type ModerationAdapter = {
     subject: TextScanSubject;
     /** `textScanTextHash` of the subject as submitted; `subject` is reloaded at callback. */
     textHash: string;
+    /** Per-label prompt ids the workflow was submitted with. */
+    promptIds?: PromptIds;
   }) => Promise<void>;
 
   /**

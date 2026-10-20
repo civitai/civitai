@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -6,6 +7,7 @@ const { cleanupTextScanRows, TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES } = await import(
 );
 
 const em = dbMock.dbWrite.entityModeration;
+const holds = dbMock.dbWrite.textScanHold;
 const ids = (n: number, from = 1) => Array.from({ length: n }, (_, i) => ({ id: from + i }));
 
 beforeEach(() => {
@@ -17,6 +19,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
   em.findMany.mockResolvedValue([]);
   em.deleteMany.mockImplementation(async ({ where }: any) => ({ count: where.id.in.length }));
+  holds.updateMany.mockResolvedValue({ count: 0 });
 });
 afterEach(() => vi.useRealTimers());
 
@@ -38,7 +41,7 @@ describe('cleanupTextScanRows', () => {
       take: 10,
     });
     expect(em.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [1, 2, 3] } } });
-    expect(result).toEqual({ shadowDeleted: 3, cleanDeleted: 0, exhausted: false });
+    expect(result).toMatchObject({ shadowDeleted: 3, cleanDeleted: 0, exhausted: false });
   });
 
   it('deletes old web-search shadow rows of graduated entities, never the live search rows', async () => {
@@ -82,7 +85,7 @@ describe('cleanupTextScanRows', () => {
       maxBatches: 3,
     });
     expect(em.deleteMany).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ shadowDeleted: 15, cleanDeleted: 0, exhausted: true });
+    expect(result).toMatchObject({ shadowDeleted: 15, cleanDeleted: 0, exhausted: true });
   });
 
   it('deletes only the web-search shadow rows when no main entity type has graduated', async () => {
@@ -97,7 +100,25 @@ describe('cleanupTextScanRows', () => {
       entityType: { in: ['Model:search-shadow'] },
       updatedAt: { lt: new Date('2026-09-17T00:00:00Z') },
     });
-    expect(result).toEqual({ shadowDeleted: 2, cleanDeleted: 0, exhausted: false });
+    expect(result).toMatchObject({ shadowDeleted: 2, cleanDeleted: 0, exhausted: false });
+  });
+
+  it('clears the text and meta of holds decided over 30 days ago, keeping the row', async () => {
+    holds.updateMany.mockResolvedValue({ count: 4 });
+    const result = await cleanupTextScanRows({
+      graduatedEntityTypes: [],
+      cleanRowEntityTypes: [],
+      olderThanDays: 1,
+    });
+    expect(holds.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: 'Dismissed',
+        decidedAt: { lt: new Date('2026-09-01T00:00:00Z') },
+        text: { not: '' },
+      },
+      data: { text: '', meta: Prisma.DbNull },
+    });
+    expect(result.holdTextCleared).toBe(4);
   });
 
   it('does nothing when no entity types are named', async () => {

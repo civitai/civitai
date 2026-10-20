@@ -30,7 +30,10 @@ const reportNamesImage = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE c.images @> jsonb_build_array(jsonb_build_object('id', ${imageId}))
 )`;
 
-/** An excluded image, judged on its live row. */
+/**
+ * An excluded image, judged on its live row. Restated in sweepLabelStore and in
+ * `label_store.image_excluded` (label store migration); edit all three together.
+ */
 export const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
   ${i}."needsReview" = 'csam'
   OR ${i}."blockedFor" = 'CSAM'
@@ -103,6 +106,83 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
     ...retries.map((row) => row.key),
   ]);
   return { swept, labels, expired: expiredRows.length, objects };
+}
+
+/**
+ * Takes the label store's subjects of excluded images out of training, by the rule the records use,
+ * and drops the stored text of models deleted since they were judged. Inert until the label store
+ * migration is applied.
+ */
+export async function sweepLabelStore() {
+  const [{ present }] = await dbWrite.$queryRaw<{ present: boolean }[]>`
+    SELECT to_regclass('label_store.subject') IS NOT NULL AS present
+  `;
+  if (!present) return 0;
+  // excludedImageRow's rule (also label_store.image_excluded), with the report sets read once: per
+  // subject, it scans CsamReport twice.
+  const [{ excluded }] = await dbWrite.$queryRaw<{ excluded: number }[]>`
+    WITH reported_images AS (
+      SELECT DISTINCT e->>'id' AS id
+      FROM "CsamReport" c,
+        jsonb_array_elements(CASE WHEN jsonb_typeof(c.images) = 'array' THEN c.images ELSE '[]' END) e
+    ),
+    reported_users AS (
+      SELECT DISTINCT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL
+    ),
+    subjects AS (
+      SELECT s."subjectId", s."ownerHash", s.snapshot->>'url' AS url,
+        CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
+          THEN s."subjectId"::int END AS "imageId"
+      FROM label_store.subject s
+      WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL
+    ),
+    hit AS (
+      SELECT DISTINCT s."subjectId"
+      FROM subjects s
+      WHERE s."subjectId" IN (SELECT id FROM reported_images)
+        OR s."ownerHash" IN (SELECT label_store.person_hash('owner', "userId") FROM reported_users)
+        OR EXISTS (
+          SELECT 1 FROM "Image" li
+          WHERE li.id = s."imageId"
+            AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
+              OR li."userId" IN (SELECT "userId" FROM reported_users))
+        )
+        -- Another image sharing the stored file, found by the snapshot's url once the subject's own
+        -- image row is gone.
+        OR EXISTS (
+          SELECT 1 FROM "Image" so
+          WHERE so.url = coalesce((SELECT li.url FROM "Image" li WHERE li.id = s."imageId"), s.url)
+            AND so.id IS DISTINCT FROM s."imageId"
+            AND (so."needsReview" = 'csam' OR so."blockedFor" = 'CSAM'
+              OR so."userId" IN (SELECT "userId" FROM reported_users)
+              OR so.id::text IN (SELECT id FROM reported_images))
+        )
+    )
+    SELECT coalesce(sum(label_store.exclude('image', "subjectId", 'safety')), 0)::int AS excluded FROM hit
+  `;
+  return excluded + (await sweepRemovedModelText());
+}
+
+// A model's judged text is its owner's, and may name a real person: once the model is deleted, the
+// store keeps the judgements and drops the text ('removed'). Bounded per run; the next run continues.
+async function sweepRemovedModelText() {
+  const [{ removed }] = await dbWrite.$queryRaw<{ removed: number }[]>`
+    WITH gone AS (
+      SELECT DISTINCT s."subjectId"
+      FROM label_store.subject s
+      WHERE s."subjectType" = 'model_text' AND s."excludedAt" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "Model" m
+          WHERE m.id = CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
+              THEN s."subjectId"::int END
+            AND m."deletedAt" IS NULL
+        )
+      LIMIT ${BATCH}
+    )
+    SELECT coalesce(sum(label_store.exclude('model_text', "subjectId", 'removed')), 0)::int AS removed
+    FROM gone
+  `;
+  return removed;
 }
 
 const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
@@ -505,10 +585,20 @@ export async function recordRestoredLevels() {
 }
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
+  // The store first: deleting a record also excludes its image from the store, under a vaguer reason.
+  const storeExcluded = await sweepLabelStore().catch((e: Error) => {
+    logToAxiom({
+      type: 'error',
+      name: JOB_LOG_NAME,
+      message: 'Label store sweep failed',
+      details: { error: e.message },
+    });
+    return 0;
+  });
   const { swept, labels, expired, objects } = await sweepExcludedRecords();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
-  return { swept, labels, expired, objects, labelled, restored, corrected };
+  return { swept, labels, expired, objects, storeExcluded, labelled, restored, corrected };
 }
 
 export const appealDecisionRecordsJob = createJob('appeal-decision-records', '40 4 * * *', () =>

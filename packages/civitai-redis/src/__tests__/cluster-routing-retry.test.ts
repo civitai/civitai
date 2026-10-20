@@ -19,10 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // default-on and disabled branches are deterministic without any env mock (a package CANNOT import
 // the app's `~/env/server`; cluster-selfheal.ts follows the same caller-supplied-config pattern).
 
-import {
-  isTransientClusterRoutingError,
-  withClusterRoutingRetry,
-} from '../cluster-routing-retry';
+import { ClientClosedError, ClientOfflineError } from 'redis';
+import { isTransientClusterRoutingError, withClusterRoutingRetry } from '../cluster-routing-retry';
 
 // The exact fleet-wide throw measured during a live rolling update (getSlotRandomNode reads
 // `.replicas` off an undefined slot entry while the slot map is mid-rediscovery).
@@ -128,7 +126,7 @@ describe('isTransientClusterRoutingError', () => {
     expect(isTransientClusterRoutingError(nodeClientConnectPromiseThrow())).toBe(true);
   });
 
-  it("is TRUE for a bare \"Cannot read properties of undefined (reading 'connectPromise')\" TypeError", () => {
+  it('is TRUE for a bare "Cannot read properties of undefined (reading \'connectPromise\')" TypeError', () => {
     expect(
       isTransientClusterRoutingError(
         new TypeError("Cannot read properties of undefined (reading 'connectPromise')")
@@ -289,6 +287,32 @@ describe('withClusterRoutingRetry', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
+  // node-redis 6 rejects commands with ClientOfflineError while the cluster (re)discovers its slot
+  // map (boot, and every destroy-then-connect self-heal). It is thrown before the command is
+  // queued, so a retry cannot double-apply a write.
+  it('is TRUE for the real ClientOfflineError, and FALSE for the real ClientClosedError', () => {
+    expect(isTransientClusterRoutingError(new ClientOfflineError())).toBe(true);
+    expect(isTransientClusterRoutingError(new ClientClosedError())).toBe(false);
+    // a look-alike by message only is not the library's error, so it is not matched
+    expect(isTransientClusterRoutingError(new Error('The client is offline'))).toBe(false);
+  });
+
+  it('ClientOfflineError during rediscovery is retried and recovers', async () => {
+    const exec = vi
+      .fn()
+      .mockRejectedValueOnce(new ClientOfflineError())
+      .mockResolvedValueOnce('OK');
+    const rediscover = vi.fn();
+    const onResult = vi.fn();
+
+    await expect(
+      withClusterRoutingRetry(exec, { rediscover, onResult, sleep: noSleep })
+    ).resolves.toBe('OK');
+
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(onResult).toHaveBeenCalledWith('recovered');
+  });
+
   it('disabled via env-style flag → pure pass-through (no retry, no rediscover) even on a transient error', async () => {
     const original = getSlotRandomNodeThrow();
     const exec = vi.fn().mockRejectedValue(original);
@@ -415,9 +439,9 @@ describe('withClusterRoutingRetry', () => {
     const exec = vi.fn().mockRejectedValue(original);
     const rediscover = vi.fn().mockRejectedValue(new Error('rediscover failed'));
 
-    await expect(
-      withClusterRoutingRetry(exec, { rediscover, sleep: noSleep })
-    ).rejects.toBe(original); // still the ORIGINAL routing error, not the rediscover error
+    await expect(withClusterRoutingRetry(exec, { rediscover, sleep: noSleep })).rejects.toBe(
+      original
+    ); // still the ORIGINAL routing error, not the rediscover error
   });
 
   it('works without a rediscover hook (retries still occur)', async () => {

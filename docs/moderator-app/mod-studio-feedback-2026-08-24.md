@@ -755,6 +755,11 @@ there is still exactly one list with open boxes; each item carries the date it w
       Manager)*. The reporter had already narrowed it themselves: the user-report removal tool keeps its
       selection correctly and the User Lookup one did not, which is where to look when this shape
       recurs.
+      **Reversed 2026-10-16** by the owner: a selection holds only what is on screen (`ImageActionBar`),
+      so a bulk action can never reach images nobody is looking at. **Partly reversed back 2026-10-19:**
+      User Reports (`/reports/user`) and the collection report queue keep the selection across page
+      turns (`keepOffScreen`; the bar shows "N on other pages"). Bulk Image Manager, the one this item
+      is about, still holds only what is on screen, so a sweep there is one page at a time.
 
 - [x] **Actioned reports come back on the dashboard.** *(08-27)* "I action, hit refresh, see something
       else — refresh again and the ones I initially actioned are back." Fixed in **89e18fe73a**

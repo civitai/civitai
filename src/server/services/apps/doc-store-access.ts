@@ -35,9 +35,13 @@ import {
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { reviewNamespace } from '~/server/services/apps/doc-store';
+import { PUBLISHED_NS, reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
-import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import {
+  docStoreDependency,
+  docStoreUnavailable,
+  DocStoreError,
+} from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
 import {
   APP_STORAGE_ENABLED_FEATURES,
@@ -58,20 +62,8 @@ export type StorageAccess = {
 const notEligible = (reason: string, message: string) =>
   new DocStoreError('not_eligible', message, { reason });
 
-const unavailable = () =>
-  new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
-    retryAfter: 1,
-  });
-
-/** A read the resolver depends on: a failure is retryable, never a refusal about the caller. */
-async function dependency<T>(read: Promise<T>): Promise<T> {
-  try {
-    return await read;
-  } catch (err) {
-    if (err instanceof DocStoreError) throw err;
-    throw unavailable();
-  }
-}
+const unavailable = docStoreUnavailable;
+const dependency = docStoreDependency;
 
 /**
  * Every phased feature ON: a reviewed manifest is parsed for SHAPE only, so what was approved
@@ -85,7 +77,7 @@ const ALL_FEATURES = Object.fromEntries(
 const loggedUnparseable = new Set<string>();
 
 /** The declared collections, or a retryable 503 (logged once per app, counted every time). */
-function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
+export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
   if (parsed.errors.length === 0) return parsed.collections;
   recordStorageManifestUnparseable();
@@ -170,7 +162,7 @@ export async function resolveStorageAccess(
   }
   if (viewerUid !== null) await assertRunEnabled(viewerUid);
 
-  let ns = 'prod';
+  let ns = PUBLISHED_NS;
   if (claims.dev === true) {
     // The dev namespace is per developer, so it needs one.
     if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');

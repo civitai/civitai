@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> } as
     | { enough: boolean; total: number; minChoices: number; shares: Record<number, number> }
     | undefined,
-  // What the image guard decides: true shows the picture, false the blurred hash.
   safe: true,
   trackCreateClick: vi.fn(),
   trigger: vi.fn(),
@@ -217,6 +216,8 @@ describe('StorylineEndOfChapter', () => {
     ]).toEqual([true, false, true, true]);
   });
 
+  // Numbered on from the chapter that ends here (chapter 4), not by the ways' own depth, which for
+  // a chapter where branches rejoin is its distance along another branch.
   it('names each way with its title and who wrote which chapter', () => {
     mocks.children = [child(5, 'canon', 'The thrift store', 5), child(6, 'community', null, 5)];
     const [lead, other] = forks(render());
@@ -225,7 +226,7 @@ describe('StorylineEndOfChapter', () => {
       within(lead, 'storyline-fork-byline')?.textContent,
       within(lead, 'storyline-read-next')?.textContent,
       within(other, 'storyline-fork-byline')?.textContent,
-    ]).toEqual(['The thrift store', 'Chapter 6 by user5', 'Read chapter 6', 'Chapter 6']);
+    ]).toEqual(['The thrift store', 'Chapter 5 by user5', 'Read chapter 5', 'Chapter 5']);
   });
 
   // An untitled chapter is named "Chapter N", so its byline does not say the number twice.
@@ -235,7 +236,7 @@ describe('StorylineEndOfChapter', () => {
     expect([
       within(lead, 'storyline-fork-name')?.textContent,
       within(lead, 'storyline-fork-byline')?.textContent,
-    ]).toEqual(['Chapter 6', 'by user5']);
+    ]).toEqual(['Chapter 5', 'by user5']);
   });
 
   it('counts the other paths, and has no such header when there is only one way', () => {
@@ -315,7 +316,8 @@ describe('StorylineEndOfChapter', () => {
     ]);
   });
 
-  // Settled with Justin: shares show from the first recorded choice; the minimum is copy only.
+  // The UI shows the shares it is given and does not gate on `enough`; the server withholds them
+  // below `minChoices` (default 1: from the first choice).
   it('shows each way share from the first choice, with the readers behind the lead', () => {
     mocks.children = [
       child(5, 'canon', 'Kept'),
@@ -407,14 +409,14 @@ describe('StorylineEndOfChapter', () => {
   });
 
   // The owner adds their own chapter through the picker, parented on the chapter they are at the
-  // end of; the button is theirs alone, and nobody else gets it.
+  // end of.
   it('offers the owner the picker, parented on this chapter, and nobody else', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };
     const sel = '[data-testid="storyline-add-own-chapter"]';
     const owned = render({ parentPostId: 15, isOwner: true });
     const button = owned.querySelector<HTMLButtonElement>(sel);
-    expect(button?.textContent).toBe('Use a post you made');
+    expect(button?.textContent).toBe('Add the next chapter');
     act(() => button?.click());
     expect(mocks.openContinue.mock.calls).toEqual([[{ parentPostId: 15, parentChapterId: 4 }]]);
     document.body.innerHTML = '';

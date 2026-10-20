@@ -1,16 +1,12 @@
 /**
- * The shapes the storyline continuation API returns, shared by the server and
- * the UI so both build against one definition.
- *
- * A continuation is a placement on the `storyline` surface: someone offers a
- * post of theirs as the next chapter after a chapter post of someone's
- * storyline, and the storyline's creator accepts or declines it.
+ * A continuation is a placement on the `storyline` surface: someone offers a post of theirs as the
+ * next chapter after a chapter post of someone's storyline, and the storyline's creator accepts or
+ * declines it.
  */
 
 /** What may happen to a storyline's continuations. Never `auto`: see the surface table. */
 export type StorylineSpaceMode = 'off' | 'review';
 
-/** A storyline's continuation settings, as its creator edits them. */
 export type StorylineSpace = {
   storylineId: number;
   mode: StorylineSpaceMode;
@@ -24,7 +20,6 @@ export type StorylineSpace = {
   inherited: boolean;
 };
 
-/** What a contributor sees before submitting. */
 export type StorylineContinuePrice = {
   /** Whether this chapter accepts a continuation from THIS viewer right now. */
   open: boolean;
@@ -67,7 +62,6 @@ export type StorylineContinuationQueueItem = {
   storyline: { id: number; title: string; maxNsfwLevel: number };
 };
 
-/** One of the placer's own continuations, for their sent list. */
 export type MyStorylineContinuation = {
   id: number;
   status: StorylineContinuationStatus;
@@ -83,12 +77,11 @@ export type MyStorylineContinuation = {
 export type StorylineContinuationPage<T> = { items: T[]; nextCursor: string | null };
 
 /**
- * The refusals a submission can meet, so the UI can match them and say them up
- * front. Each is the message of a 400; the `storyline:` prefix is how every
- * storyline placement refusal reads.
+ * The refusals a submission can meet, so the UI can match them and say them up front. All but
+ * `notAvailable` are the message of a 400; `notAvailable` is an authorization error.
  *
- * Match with `startsWith`: `priceChanged` is followed by the new price
- * (`… deciding: now 100 Buzz`), so the contributor is told what it is.
+ * Match with `startsWith`: `priceChanged` is followed by the new price (`… deciding: now 100
+ * Buzz`), so the contributor is told what it is.
  */
 export const STORYLINE_REFUSALS = {
   notAvailable: 'storylines: this is not available yet',

@@ -266,3 +266,65 @@ describe('toggleBan -> model takedown', () => {
     expect(modelUpdates[0]).toContain('"updatedAt" = now() WHERE id IN');
   });
 });
+
+// Minor-safety bans always remove media: a moderator cannot opt out with `removeMedia: false`.
+// Every other reason keeps media opt-in.
+describe('toggleBan -> removeMedia', () => {
+  const ban = (reasonCode: string, removeMedia?: boolean) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode,
+      userId: ACTOR_ID,
+      isModerator: true,
+      removeMedia,
+    } as Parameters<typeof toggleBan>[0]);
+
+  // The Moderated block's own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
+  const moderatedBlocks = () =>
+    imageUpdateMany.mock.calls.filter(
+      ([args]) =>
+        JSON.stringify(args?.where) ===
+          JSON.stringify({ userId: USER_ID, ingestion: { not: 'Blocked' } }) &&
+        args?.data?.blockedFor === 'moderated'
+    ).length;
+
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  const minorSafetyCodes = ['SexualMinor', 'SexualMinorGenerator', 'SexualMinorTraining'];
+  it.each(
+    minorSafetyCodes.flatMap((code) => [false, undefined, true].map((rm) => [code, rm] as const))
+  )('a %s ban blocks the media with removeMedia=%s', async (code, removeMedia) => {
+    await ban(code, removeMedia);
+    expect(moderatedBlocks(), `${code} ban with removeMedia=${removeMedia} left media up`).toBe(1);
+  });
+
+  it.each([
+    [false, 0],
+    [undefined, 0],
+    [true, 1],
+  ] as const)('a Harassment ban with removeMedia=%s blocks media %i time(s)', async (rm, n) => {
+    await ban('Harassment', rm);
+    expect(moderatedBlocks()).toBe(n);
+  });
+
+  // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
+  // block right after `toggleBan`, so a Moderated block first is a wasted write over the whole
+  // library. It skips it with `mediaBlockedByCaller`, which no request input can set.
+  it('softDeleteUser skips the Moderated block because it CSAM-blocks the media itself', async () => {
+    const { softDeleteUser } = await import('~/server/services/user.service');
+    await softDeleteUser({ id: USER_ID, userId: ACTOR_ID }).catch(() => undefined);
+
+    expect(moderatedBlocks()).toBe(0);
+    expect(
+      imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
+      'positive control: softDeleteUser never reached its own CSAM block'
+    ).toBe(true);
+  });
+});

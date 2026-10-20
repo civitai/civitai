@@ -159,3 +159,32 @@ describe('updatePost text scan', () => {
     expect(scanned()).toBe(false);
   });
 });
+
+describe('updatePost title and detail writes', () => {
+  const update = (data: Record<string, unknown>) => {
+    tx.post.update.mockResolvedValue({ id: POST_ID, userId: 5, publishedAt: null });
+    return updatePost({ id: POST_ID, user: USER, ...data } as never);
+  };
+  const written = () => tx.post.update.mock.calls[0][0].data;
+
+  it('clearing the title writes null', async () => {
+    await update({ title: '' });
+    expect(written().title).toBeNull();
+  });
+
+  it('clearing the detail writes null', async () => {
+    await update({ detail: '' });
+    expect(written().detail).toBeNull();
+  });
+
+  it('a non-empty title and detail are written as sent', async () => {
+    await update({ title: 'Title', detail: '<p>Detail</p>' });
+    expect(written()).toMatchObject({ title: 'Title', detail: '<p>Detail</p>' });
+  });
+
+  it('an omitted title and detail are left untouched', async () => {
+    await update({ collectionId: 3 });
+    expect(written().title).toBeUndefined();
+    expect(written().detail).toBeUndefined();
+  });
+});

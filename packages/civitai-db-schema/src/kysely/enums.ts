@@ -368,6 +368,12 @@ export const EntityModerationStatus = {
 } as const;
 export type EntityModerationStatus =
   (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
+export const TextScanHoldStatus = {
+  Pending: 'Pending',
+  Dismissed: 'Dismissed',
+  Confirmed: 'Confirmed',
+} as const;
+export type TextScanHoldStatus = (typeof TextScanHoldStatus)[keyof typeof TextScanHoldStatus];
 export const ImageEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',
@@ -777,6 +783,13 @@ export const AppealStatus = {
   Void: 'Void',
 } as const;
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
+export const AppealCategory = {
+  Account: 'Account',
+  Article: 'Article',
+  Model: 'Model',
+  Other: 'Other',
+} as const;
+export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',

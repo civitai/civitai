@@ -29,10 +29,9 @@ export type StorylineContinuePost = {
   cover?: StorylineThumbImage | null;
 };
 
-/** What happened after a submit, as the server reported it. */
 export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
 
-/** A grid tile at its widest: a third of the modal. */
+/** Sizes the tile's image request. */
 const TILE_WIDTH = 140;
 
 const refusalCopy = {
@@ -73,13 +72,11 @@ export function StorylineContinueForm({
   };
   /** The storyline's card picture from its read; `null` when none may be shown. */
   cover?: StorylineThumbImage | null;
-  /** The chapter being continued, by name. */
   parentName: string | null;
   /** From the server's read for this viewer; `null` when they may continue. */
   closedReason: StorylineClosedReason | null;
   price: number;
   isCollaborator: boolean;
-  /** The viewer's own posts to choose from. */
   posts: StorylineContinuePost[];
   postsLoading?: boolean;
   postsError?: boolean;
@@ -122,7 +119,6 @@ export function StorylineContinueForm({
 
   if (outcome) return <StorylineSubmitted outcome={outcome} price={price} />;
 
-  // Refusals that do not depend on the post are said before any post is picked.
   if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
     return (
       <Alert color="gray" icon={<IconAlertTriangle size={18} />}>

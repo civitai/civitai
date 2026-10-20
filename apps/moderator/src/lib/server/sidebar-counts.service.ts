@@ -12,7 +12,11 @@ import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
+import { countSiteAppeals } from './site-appeals.service';
+import { siteAppealCountKey } from '$lib/site-appeals';
+import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingCsamHolds } from './csam-holds.queries';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getMinorFlagAppealGroups,
@@ -47,6 +51,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppealGroups,
     heldDetections,
     strikeReview,
+    csamTextHolds,
+    siteAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -90,6 +96,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getRedetectedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
+    bounded(countPendingCsamHolds),
+    // One grouped count over the partial queue index for all four queues; bounded so a failure drops
+    // only these badges.
+    bounded(countSiteAppeals),
   ]);
   return {
     ...modes,
@@ -104,8 +114,14 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
+    ...(siteAppeals != null
+      ? Object.fromEntries(
+          SITE_APPEAL_CATEGORIES.map((c) => [siteAppealCountKey(c), siteAppeals[c]])
+        )
+      : {}),
     ...(heldDetections != null ? { heldDetections } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
+    ...(csamTextHolds != null ? { csamTextHolds } : {}),
     ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

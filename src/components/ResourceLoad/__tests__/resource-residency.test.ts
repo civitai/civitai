@@ -58,6 +58,17 @@ describe('describeResidency', () => {
     expect(residency?.description).toContain('Ready in about 10 minutes.');
   });
 
+  // Only a checkpoint (base weights) can be boosted, and this note is shown for every resource, so a
+  // LoRA reading it would be promised a boost the generator never offers.
+  it.each([
+    [{ status: 'loading', progress: 0.5, workers: 1, lane: 'low' }],
+    [{ status: 'queued', queuePosition: 1, lane: 'low' }],
+    [{ status: 'unavailable', queuePosition: 2 }],
+    [{ status: 'unavailable' }],
+  ] as const)('does not promise a boost for %o', (availability) => {
+    expect(describeResidency(availability)?.description).not.toMatch(/boost/i);
+  });
+
   it('never advertises sooner than the floor', () => {
     const residency = describeResidency({
       status: 'queued',

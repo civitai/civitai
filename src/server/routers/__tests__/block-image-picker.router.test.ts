@@ -66,6 +66,46 @@ describe('blockImagePicker.getPosted', () => {
     expect(queriedWhere().nsfwLevel).toEqual({ in: [1, 2] });
   });
 
+  it('lists only posts that are not Private when the picker asks for publicOnly', async () => {
+    await caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+      publicOnly: true,
+    });
+
+    expect(queriedWhere().post.availability).toEqual({ not: 'Private' });
+    expect(queriedWhere().post.publishedAt.lte).toBeInstanceOf(Date);
+  });
+
+  it('lists Private posts as before when publicOnly is absent or false', async () => {
+    const viewer = { showNsfw: true, browsingLevel: 3 };
+    await caller(viewer, { canViewNsfw: true }).getPosted({});
+    await caller(viewer, { canViewNsfw: true }).getPosted({ publicOnly: false });
+
+    for (const [args] of dbMock.dbRead.image.findMany.mock.calls) {
+      expect(Object.keys(args.where.post)).toEqual(['publishedAt']);
+    }
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a publicOnly that is not a boolean', async () => {
+    await expect(
+      caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+        publicOnly: 'true',
+      } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps publicOnly when it jumps to a date', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({ id: 9000 });
+    await caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+      toDate: new Date('2024-06-30T23:59:59.999Z'),
+      publicOnly: true,
+    });
+
+    expect(queriedWhere().id).toEqual({ lte: 9000 });
+    expect(queriedWhere().post.availability).toEqual({ not: 'Private' });
+  });
+
   it('passes a jump-to date through to the query, as an id bound', async () => {
     dbMock.dbRead.image.findFirst.mockResolvedValue({ id: 9000 });
     const toDate = new Date('2024-06-30T23:59:59.999Z');

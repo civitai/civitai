@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type { ListingEditContext } from './offsiteEditConfig';
 
 /**
@@ -34,19 +34,26 @@ const mocks = vi.hoisted(() => ({
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
   removeScreenshot: vi.fn(),
+  setRedMedia: vi.fn(),
   invalidate: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', () => {
-  const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
-  const recording = (fn: (v: unknown) => void, result: unknown = {}) => () => ({
+  const noopMutation = () => ({
     mutate: vi.fn(),
-    mutateAsync: (vars: unknown) => {
-      fn(vars);
-      return Promise.resolve(result);
-    },
+    mutateAsync: vi.fn().mockResolvedValue({}),
     isPending: false,
   });
+  const recording =
+    (fn: (v: unknown) => void, result: unknown = {}) =>
+    () => ({
+      mutate: vi.fn(),
+      mutateAsync: (vars: unknown) => {
+        fn(vars);
+        return Promise.resolve(result);
+      },
+      isPending: false,
+    });
   return {
     setTrpcBatchingEnabled: vi.fn(),
     trpc: {
@@ -64,6 +71,7 @@ vi.mock('~/utils/trpc', () => {
         removeScreenshot: { useMutation: recording(mocks.removeScreenshot) },
         // ListingAssetStep procs not otherwise exercised.
         persistAssetImage: { useMutation: noopMutation },
+        setRedMedia: { useMutation: recording(mocks.setRedMedia) },
         ingestAssetFromUrl: { useMutation: noopMutation },
         ingestAssetFromDataUri: { useMutation: noopMutation },
         setIcon: { useMutation: noopMutation },
@@ -75,7 +83,12 @@ vi.mock('~/utils/trpc', () => {
 });
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
+  useCFImageUpload: () => ({
+    uploadToCF: vi.fn(),
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -103,7 +116,9 @@ function makeCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContex
     assets: {
       icon: { imageId: 10, url: 'https://cdn/icon.png' },
       cover: { imageId: 20, url: 'https://cdn/cover.png' },
-      screenshots: [{ id: 'ss_row', imageId: 30, url: 'https://cdn/s1.png', caption: null, order: 0 }],
+      screenshots: [
+        { id: 'ss_row', imageId: 30, url: 'https://cdn/s1.png', caption: null, order: 0 },
+      ],
     },
     ...overrides,
   };
@@ -122,7 +137,13 @@ function makeApprovedCtx(overrides: Partial<ListingEditContext> = {}): ListingEd
       icon: { imageId: 11, url: 'https://cdn/shadow-icon.png' },
       cover: { imageId: 21, url: 'https://cdn/shadow-cover.png' },
       screenshots: [
-        { id: 'shadow-ss-1', imageId: 31, url: 'https://cdn/shadow-s1.png', caption: null, order: 0 },
+        {
+          id: 'shadow-ss-1',
+          imageId: 31,
+          url: 'https://cdn/shadow-s1.png',
+          caption: null,
+          order: 0,
+        },
       ],
     },
     ...overrides,
@@ -136,6 +157,7 @@ beforeEach(() => {
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
   mocks.removeScreenshot.mockClear();
+  mocks.setRedMedia.mockClear();
   mocks.invalidate.mockClear();
 });
 
@@ -157,9 +179,7 @@ describe('ExternalSubmitForm — edit mode', () => {
     // URL → Details → Assets.
     await page.getByRole('button', { name: 'Next' }).click();
     await page.getByRole('button', { name: 'Next' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-current-icon-preview'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-current-icon-preview')).toBeInTheDocument();
     await expect
       .element(page.getByTestId('apps-offsite-current-cover-preview'))
       .toBeInTheDocument();
@@ -179,18 +199,48 @@ describe('ExternalSubmitForm — edit mode', () => {
     expect(mocks.submitRevision).not.toHaveBeenCalled();
   });
 
+  test('🔴 an APPROVED edit clears a civitai.red cover ON THE SHADOW, and Save submits that revision for review', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm
+        edit={makeApprovedCtx({
+          redMedia: {
+            available: true,
+            icon: { imageId: null, url: null },
+            cover: { imageId: 41, url: LOADABLE_IMAGE_DATA_URI },
+          },
+        })}
+      />
+    );
+    // URL → Details → Assets.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('apps-offsite-remove-red-cover').click();
+    await vi.waitFor(() =>
+      expect(mocks.setRedMedia).toHaveBeenCalledWith({
+        listingId: 'shadow-1',
+        slot: 'cover',
+        imageId: null,
+      })
+    );
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() =>
+      expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' })
+    );
+    expect(mocks.updateListing).not.toHaveBeenCalled();
+  });
+
   test('an APPROVED edit writes the scalar patch to the SHADOW and submits the revision', async () => {
     renderWithProviders(<ExternalSubmitForm edit={makeApprovedCtx()} />);
     // The approved-notice renders.
-    await expect
-      .element(page.getByTestId('apps-offsite-edit-approved-notice'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-edit-approved-notice')).toBeInTheDocument();
 
     await page.getByRole('button', { name: 'Next' }).click();
     await page.getByRole('textbox', { name: /^Name/ }).fill('Vitrine Live Edit');
     await page.getByTestId('apps-offsite-edit-save').click();
 
-    await vi.waitFor(() => expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' }));
+    await vi.waitFor(() =>
+      expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' })
+    );
     // The scalar patch targeted the SHADOW, not the live parent (no updateListing).
     expect(mocks.updateRevision).toHaveBeenCalledWith(
       expect.objectContaining({ shadowId: 'shadow-1', patch: { name: 'Vitrine Live Edit' } })
@@ -305,7 +355,12 @@ describe('ExternalSubmitForm — edit mode', () => {
   test('the OG auto-pull re-fire is non-destructive (a prefilled name is not clobbered)', async () => {
     // Simulate the auto-pull returning a different name suggestion.
     mocks.meta = {
-      data: { name: 'Some OG Title', tagline: '', coverImageUrl: undefined, iconImageUrl: undefined },
+      data: {
+        name: 'Some OG Title',
+        tagline: '',
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
       isFetching: false,
       isSuccess: true,
     };
@@ -316,7 +371,6 @@ describe('ExternalSubmitForm — edit mode', () => {
     await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
   });
 });
-
 
 /**
  * Auto-trigger + assets-step "Re-pull from site" (edit wizard). The manual "Autofill
@@ -375,9 +429,7 @@ describe('ExternalSubmitForm — edit mode auto-trigger + re-pull', () => {
     renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
     await page.getByTestId('apps-offsite-edit-url').fill('https://new-url.example.com');
     await page.getByTestId('apps-offsite-edit-url').element().blur();
-    await expect
-      .element(page.getByTestId('apps-offsite-edit-autofill-empty'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-empty')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-autofill-applied').elements()).toHaveLength(0);
   });
 
@@ -400,9 +452,7 @@ describe('ExternalSubmitForm — edit mode auto-trigger + re-pull', () => {
     renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
     await page.getByTestId('apps-offsite-edit-url').fill('https://broken.example.com');
     await page.getByTestId('apps-offsite-edit-url').element().blur();
-    await expect
-      .element(page.getByTestId('apps-offsite-edit-autofill-error'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-error')).toBeInTheDocument();
   });
 });
 
@@ -426,9 +476,7 @@ describe('ExternalSubmitForm (edit) — kind-aware wizard shape', () => {
     );
     // The DETAILS step is the commit proof — it must render, and it is where an on-site
     // edit now opens (there is no earlier step to sit on).
-    await expect
-      .element(page.getByTestId('apps-offsite-wizard-step-details'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-wizard-step-details')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-wizard-step-url').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-offsite-scope-disclosure').elements()).toHaveLength(0);
   });

@@ -27,11 +27,13 @@ type LoadReportQueueOptions = {
 
 /**
  * One report queue's rows and the filter state they were read with — the ONE reader of a queue's URL,
- * for the `/reports/[slug]` tables and the user and model queue layouts. Filter parsing is
+ * for the `/reports/[slug]` tables and the queue layouts (user, model, post, and the shared
+ * `/reports/[queue=entityQueue]`). Filter parsing is
  * `parseReportQueueFilters`, shared with the Retool post-report queue.
  *
  * 🔴 Reads the URL through `searchParams.get`/`getAll`/`has` only. SvelteKit tracks those per key, and
- * the user and model queues are LAYOUTS so they do not rerun when the open item (the path) changes.
+ * every queue layout (user, model, post, the shared entity route) is a LAYOUT so it does not rerun
+ * when the open item (the path) changes.
  * Iterating the query string or reading the path here would make them rerun on every click.
  */
 export async function loadReportQueue(

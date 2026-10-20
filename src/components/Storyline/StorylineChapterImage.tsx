@@ -29,10 +29,8 @@ const STRIPES = clsx(
 );
 
 /**
- * Portrait chapter art: the cover through the normal image guard; a striped placeholder for a
- * chapter the reader cannot open; and, when `emptyIcon` is set and there is no picture the reader
- * may see, the storyline gradient with that icon, so the two empty states never read alike. The
- * overlay (a rank chip) shows on all three.
+ * Hidden chapters get stripes; with `emptyIcon`, a missing picture gets the storyline gradient, so
+ * the two empty states never read alike. `overlay` shows on all three.
  */
 export function StorylineChapterImage({
   image,
@@ -52,11 +50,10 @@ export function StorylineChapterImage({
   /** The guard's "This image is rated / Show" overlay; too big for a small thumb. */
   explain?: boolean;
   /**
-   * The guard's rating pill and blur toggle. It truncates to "P..." on a thumb under ~60px, so
-   * the map's thumbs drop it; a blurred thumb stays blurred.
+   * The guard's rating pill and blur toggle. Too wide for a small thumb, so the map's thumbs drop
+   * it; a blurred thumb stays blurred.
    */
   ratingBadge?: boolean;
-  /** Draw a missing picture as the storyline gradient with this icon (otherwise a plain surface). */
   emptyIcon?: 'route' | 'photo';
 }) {
   if (hidden)
@@ -112,7 +109,6 @@ export function StorylineChapterImage({
               ) : image.hash && image.width && image.height ? (
                 <MediaHash {...image} />
               ) : (
-                // Blurred with nothing for MediaHash to draw: stripes, not a blank box.
                 <div
                   className={clsx('absolute inset-0', STRIPES)}
                   data-testid="storyline-chapter-image-blurred"

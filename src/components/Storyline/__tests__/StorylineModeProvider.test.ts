@@ -20,13 +20,13 @@ const mocks = vi.hoisted(() => {
     replace: vi.fn(),
     trackBranchChoice: vi.fn(),
     hiddenUserIds: new Set<number>(),
-    /** Path read by end chapter id. */
     paths: {} as Record<number, Chapter[]>,
     /** Images by post id; a post absent here has no image this reader can see. */
     imagesByPost: {} as Record<number, Image[]>,
     imagesFetching: false,
     /** Chapter whose path read still shows another chapter's data (keepPreviousData). */
     placeholder: {} as Record<number, number>,
+    pathVia: undefined as number[] | undefined,
     bump: () => undefined as void,
   };
 });
@@ -70,7 +70,8 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     trackBranchChoice: mocks.trackBranchChoice,
     trackCreateClick: vi.fn(),
   }),
-  useStorylinePath: (requested: number | undefined) => {
+  useStorylinePath: (requested: number | undefined, via?: number[]) => {
+    mocks.pathVia = via;
     const chapterId = (requested && mocks.placeholder[requested]) || requested;
     return {
       data:
@@ -203,6 +204,23 @@ describe('StorylineModeProvider', () => {
       '/images/40'
     );
     expect(active().chapterId).toBe(4);
+  });
+
+  it('carries the way in to a chapter where branches rejoin, and reads its path that way', () => {
+    open(30, 3);
+    act(() => active().continueTo({ chapterId: 4, parentCount: 2 }));
+    expect(mocks.replace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ imageId: 40, storylineChapter: 4, storylineVia: '3' }),
+      '/images/40'
+    );
+    expect(mocks.pathVia).toEqual([3]);
+  });
+
+  it('adds no way in for a chapter with one parent, so its links stay as they were', () => {
+    open(30, 3);
+    act(() => active().continueTo({ chapterId: 4, parentCount: 1 }));
+    expect(mocks.replace.mock.calls.at(-1)?.[0]).not.toHaveProperty('storylineVia');
+    expect(mocks.pathVia).toEqual([]);
   });
 
   it('waits for the branch images before opening one', () => {

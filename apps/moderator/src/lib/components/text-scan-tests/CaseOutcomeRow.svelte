@@ -11,7 +11,7 @@
     type VerdictSource,
   } from '$lib/text-scan-lab/labels';
   import { LAB_LABELS, type LabLabel, type LabRule } from '$lib/text-scan-lab/types';
-  import { scoredLabels, type Expected } from '$lib/text-scan-tests/expected';
+  import { scoredLabels, type Expected, type FlagLabel } from '$lib/text-scan-tests/expected';
   import type { Flip } from '$lib/text-scan-tests/score';
   import ExpectedEditor from './ExpectedEditor.svelte';
 
@@ -78,7 +78,7 @@
       return e.nsfw.min === e.nsfw.max ? e.nsfw.min : `${e.nsfw.min}–${e.nsfw.max}`;
     if (label === 'modelRules' && e.modelRules)
       return e.modelRules.ruleIds.map(ruleName).join(', ') || 'no match';
-    const flag = e[label as 'poi' | 'minor' | 'scam'];
+    const flag = e[label as FlagLabel];
     return flag === undefined ? '—' : flag ? 'yes' : 'no';
   }
 

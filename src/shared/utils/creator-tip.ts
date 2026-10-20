@@ -23,7 +23,8 @@ export function isCreatorTipEligible({
  * A selection is tip-eligible when any selected resource is. `tipsEnabled` absent means "not known"
  * (resource data still loading, or a cache entry from before the field existed) and counts as
  * eligible, so the tip is never withheld on missing data; the submit path re-decides on the server.
+ * A resource the generating user owns never counts: the orchestrator never tips its own user.
  */
-export function anyTipEligible(resources: { tipsEnabled?: boolean }[]) {
-  return resources.some((r) => r.tipsEnabled !== false);
+export function anyTipEligible(resources: { tipsEnabled?: boolean; isOwnedByUser?: boolean }[]) {
+  return resources.some((r) => r.tipsEnabled !== false && r.isOwnedByUser !== true);
 }

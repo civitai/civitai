@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // The replica/primary distinction is the point of these two: `resolveMinorFlagAppeal` re-reads
@@ -1108,10 +1110,11 @@ describe('dismissMinorHashMatch', () => {
     await dismissMinorHashMatch({ modelId: 100, userId: 7 });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('COALESCE(meta');
-    expect(text).toContain('|| jsonb_build_object');
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Prisma.sql(strings as TemplateStringsArray, ...values).sql;
+    expect(text.replace(/\s+/g, ' ')).toContain(
+      `meta = ${asJsonbObject('meta')} || jsonb_build_object('minorHashDismissed'`
+    );
     expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
       entityType: 'model',
       entityId: 100,
@@ -1496,20 +1499,8 @@ describe('rollbackMinorHashAutoFlags', () => {
 });
 
 describe('acceptExpiredMinorAutoFlags', () => {
-  // A resolved appeal already had a human look at it; sweeping it up as "nobody
-  // objected" would overwrite that decision with a presumption.
-  it('skips any model with an appeal of any status', async () => {
-    mockDbWrite.$executeRaw.mockResolvedValue(0);
-
-    await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 500 });
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('"Appeal"');
-    expect(text).toContain('NOT EXISTS');
-    expect(text).not.toContain(`status = 'Pending'`);
-  });
-
+  // Which appeals hold a model back is covered against Postgres in
+  // minor-hash-accept-sweep.behavior.test.ts.
   it('writes nothing on a dry run', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ count: 4 }]);
 
@@ -1521,6 +1512,15 @@ describe('acceptExpiredMinorAutoFlags', () => {
 });
 
 describe('getMinorFlagAppealsForReview', () => {
+  // A text pin: it sees the predicate is written, not that it selects the right rows. The moderator
+  // app's twin of this query has the behavioural case (minor-flag-appeals.pglite.test.ts).
+  it('lists in-app appeals only, never a site-form appeal on the model', async () => {
+    await getMinorFlagAppealsForReview({ limit: 10 });
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toMatch(/WHERE a\."entityType" = 'Model' AND a\.category IS NULL\n/);
+  });
+
   it('returns poi and the text-scan verdict so a moderator can read the reason', async () => {
     await getMinorFlagAppealsForReview({ limit: 10 });
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
@@ -1606,6 +1606,27 @@ describe('resolveMinorFlagAppeal', () => {
         internalNotes: 'school uniform tag',
         userId: 7,
       })
+    );
+  });
+
+  // Each stamp records one label-store label; a moderator-kind one would count the appeal outcome
+  // toward consensus.
+  it('records an upheld minor appeal once, as the appeal outcome', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { textScanFlags: { minor: { workflowId: 'wf-1', textHash: 'h-1' } } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledTimes(1);
+    const [stamp] = mockStampModelTextScanAppeal.mock.calls[0] as [{ via?: string }];
+    expect(stamp).toMatchObject({ decision: 'appealUpheld', labels: ['minor'] });
+    expect(stamp.via ?? 'appeal').toBe('appeal');
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ entityId: 42, activity: 'setMinor' })
     );
   });
 

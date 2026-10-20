@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -39,7 +40,8 @@ CREATE TABLE "Model" (
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
   "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Pending',
-  "appealMessage" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMPTZ NOT NULL
+  "appealMessage" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMPTZ NOT NULL,
+  "category" TEXT
 );
 CREATE TABLE "ModelVersion" (
   "id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER, "baseModel" TEXT NOT NULL,
@@ -137,7 +139,7 @@ const MODELS: Seed[] = [
 let db: PGlite;
 
 beforeEach(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   for (const [id, username] of [
     [10, 'owner'],
@@ -550,5 +552,40 @@ describe('latest scan', () => {
     ]);
     expect(await scanFor(3)).toBeNull();
     expect(await scanFor(1)).toBeNull();
+  });
+});
+
+// A site-form appeal on a model (category set) is about an unpublish, not a flag: it must not be
+// worked here, counted here, or read as the owner's flag-appeal history.
+describe('site appeal form rows', () => {
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" ("id","name","userId","minor","poi","meta") VALUES
+        (8, 'model 8', 10, true, false, '${JSON.stringify(
+          snapshot('moderator', '2026-09-20')
+        )}'::jsonb);
+      INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","category") VALUES
+        (60, 10, 'Model', 8, 'Pending', '2026-10-08', 'Model'),
+        (61, 10, 'Model', 1, 'Pending', '2026-10-08', 'Model');
+    `);
+  });
+
+  it('are not listed, even on a flagged model or one with a flag appeal', async () => {
+    expect(await ids({ source: 'all' })).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('are not counted in the facets', async () => {
+    const f = appealFacets(await getMinorFlagAppealGroups({}), DEFAULT_APPEAL_FILTERS);
+    expect(f.source.all).toBe(7);
+  });
+
+  it("are not counted in the owner's past appeals", async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 1)!.pastAppeals).toEqual({
+      approved: 0,
+      rejected: 0,
+      void: 0,
+      pending: 1,
+    });
   });
 });

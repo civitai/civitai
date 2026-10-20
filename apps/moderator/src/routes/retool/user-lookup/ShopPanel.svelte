@@ -9,30 +9,50 @@
   import ListCard from './ListCard.svelte';
   import { denied } from '$lib/permissions';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
+  import GrantedBoxesCard from './GrantedBoxesCard.svelte';
 
   let {
     account,
     userId,
     canAct,
     canGrantCosmetics,
+    canGrantBoxes,
     onSuccess,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
     canGrantCosmetics: boolean;
+    canGrantBoxes: boolean;
     onSuccess: () => void;
   } = $props();
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
   const form = new FormState({ onSuccess: () => onSuccess() });
-  let grantId = $state('');
+  let badgeId = $state('');
+  // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
+  const boxGranting = new FormState({ onSuccess: () => onSuccess(), reset: false });
+  // Separate from boxGranting: that one sets reset: false, this one needs the default reset.
+  const boxTakingBack = new FormState({ onSuccess: () => onSuccess() });
 </script>
 
 {#if form.error}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
+{#if form.warning}
+  <WarningAlert class="mb-4" message={form.warning} />
+{/if}
+<!-- Above the account load, as `form`'s are: a write reloads it, and an alert inside would go too. -->
+{#each [boxGranting, boxTakingBack] as state, i (i)}
+  {#if state.error}
+    <ErrorAlert class="mb-4" message={state.error} />
+  {/if}
+  {#if state.warning}
+    <WarningAlert class="mb-4" message={state.warning} />
+  {/if}
+{/each}
 
 {#await account}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -45,7 +65,7 @@
         title="Shop purchases"
         total={result.shopPurchases.items.length} capped={result.shopPurchases.truncated}
         shown={10}
-        hint="Refunding flags the purchase and removes the cosmetic. The Buzz is not returned automatically — use the Buzz section."
+        hint="Refunding flags the purchase and takes back what it granted: the cosmetic, a pack's cosmetics, or the box (its reward, once opened). The Buzz is not returned automatically — use the Buzz section."
       >
         {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
@@ -88,9 +108,9 @@
           <form method="POST" action="?/grantCosmetic" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <div class="flex flex-wrap items-end gap-2">
-              <Select.Root type="single" name="cosmeticId" bind:value={grantId}>
+              <Select.Root type="single" name="cosmeticId" bind:value={badgeId}>
                 <Select.Trigger class="min-w-56 flex-1">
-                  {result.availableBadges.find((b) => String(b.id) === grantId)?.name ??
+                  {result.availableBadges.find((b) => String(b.id) === badgeId)?.name ??
                     'Choose a badge'}
                 </Select.Trigger>
                 <Select.Content>
@@ -99,12 +119,21 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <Button type="submit" size="sm" disabled={!grantId || form.submitting}>Grant</Button>
+              <Button type="submit" size="sm" disabled={!badgeId || form.submitting}>Grant</Button>
             </div>
           </form>
         {/if}
       </div>
     </section>
+
+    <GrantedBoxesCard
+      grantedBoxes={result.grantedBoxes}
+      grantableBoxes={result.grantableBoxes}
+      {userId}
+      {canGrantBoxes}
+      granting={boxGranting}
+      takingBack={boxTakingBack}
+    />
   {/if}
 {:catch}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">

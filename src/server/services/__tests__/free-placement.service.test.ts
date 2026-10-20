@@ -215,9 +215,8 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
 });
 
 describe('createFreePlacement — a surface with no free tier', () => {
-  // A storyline may be priced at zero, and its zero-priced continuations are
-  // ordinary rows that spend nothing. A `free` row there would spend the
-  // placer's daily allowance, which is shared with stickers and remix galleries.
+  // A `free` row on a zero-priceable surface would spend the daily allowance shared with stickers
+  // and remix galleries.
   it('refuses a storyline before resolving anything', async () => {
     await expect(
       createFreePlacement({
@@ -458,13 +457,22 @@ describe('the advisory locks have exactly one call site', () => {
   // the only lock in its transaction and is never taken alongside the free path's.
   // scan-label-flag takes one per post (0x5c1a0001) for the scan label queue's per-post cap
   // count-then-insert; the only lock in its transaction.
+  // item-holder-lock takes one per user (0x49480001) in the shop and pack grant transactions, after
+  // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
+  // never nested inside another advisory lock.
+  // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
+  // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
+    'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
+    'services/item-holder-lock.ts',
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',

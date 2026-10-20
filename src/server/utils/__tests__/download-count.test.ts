@@ -55,6 +55,13 @@ describe('fetchDownloadCount — accepted key shapes', () => {
     expect(lastQuery()).toContain("AND ip = '2001:db8::1'");
   });
 
+  // Every resume of a download records another event; a reseed counting them all would charge the
+  // repeats the route lets through for free.
+  it('counts each version once, however many times it was downloaded', async () => {
+    await fetchDownloadCount('4242');
+    expect(lastQuery()).toMatch(/SELECT\s+COUNT\(DISTINCT modelVersionId\) as count\s+FROM/);
+  });
+
   it('an empty result set reads as zero', async () => {
     mockQuery.mockResolvedValue([]);
     await expect(fetchDownloadCount('4242')).resolves.toBe(0);

@@ -82,6 +82,12 @@ this repo is public (CLAUDE.md → Security). The private triage keeps attributi
       changes — a new subject or a new filter — not when the page turns, keyed on the non-paging part
       of the query string. The action bar carries the consequence: "Select all N **on screen**", and
       "N selected but not on screen" when the selection reaches past the current page.
+      **Reversed 2026-10-16** by the owner: a selection holds only what is on screen (`ImageActionBar`);
+      the "not on screen" warning went and a sweep across pages was one page at a time. **Restored
+      2026-10-19 for User Reports and the collection report queue only** (`keepOffScreen`): selection
+      survives an image page turn and nothing else — any other URL change (a filter, a tab, the queue
+      beside the grid) clears it — and the bar shows "N on other pages". Bulk Image Manager still
+      prunes.
 
 - [x] **The "banned" flag was buried behind long usernames.** It sat in the same wrapping run of badges
       as the status, reason and username, so on a long name it wrapped to a second line — and banned is

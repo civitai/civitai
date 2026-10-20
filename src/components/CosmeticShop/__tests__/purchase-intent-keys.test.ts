@@ -145,6 +145,8 @@ describe('purchase intent keys', () => {
   for (const [what, failure] of [
     ['a 5xx', () => httpError(500)],
     ['a 408', () => httpError(408)],
+    // Refused while another of the buyer's purchases runs, possibly this intent's own.
+    ['a 429', () => httpError(429)],
     ['a network error', () => new TypeError('fetch failed')],
   ] as const) {
     it(`holds the key after ${what}`, async () => {

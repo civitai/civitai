@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -89,7 +90,7 @@ let db: PGlite;
 
 // One instance per file: a fresh PGlite per case is what times out under a full-suite run.
 beforeAll(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });

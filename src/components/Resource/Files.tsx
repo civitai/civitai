@@ -1084,7 +1084,11 @@ function FileEditForm({
           placeholder="Type"
           error={error?.type?._errors[0]}
           data={getModelFileTypeOptions(versionFile.name, {
-            types: fileTypes,
+            // A saved file can't become training data; only an upload can (assertFileTypeChangeAllowed).
+            types:
+              versionFile.id && initialFile.type !== 'Training Data'
+                ? fileTypes.filter((type) => type !== 'Training Data')
+                : fileTypes,
             currentType: versionFile.type,
             modelType: versionFile.modelType,
           })}

@@ -2,6 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { getStorylinePathLanes } from '~/components/Storyline/storyline-lane-map.utils';
 import {
   canonAheadForkStops,
   getPathImagesPaging,
@@ -38,11 +39,11 @@ export function useHiddenUserIds() {
 /** The drawer reads forks for the stops nearest the end only, so a long path is not N reads. */
 export const STORYLINE_DRAWER_FORK_STOPS = 10;
 
-export function useStorylinePath(chapterId: number | undefined) {
+export function useStorylinePath(chapterId: number | undefined, via: number[] = []) {
   const enabled = useStorylinesEnabled();
   const browsingLevel = useViewerBrowsingLevelDebounced();
   return trpc.storyline.getPath.useQuery(
-    { chapterId: chapterId as number, browsingLevel },
+    { chapterId: chapterId as number, browsingLevel, ...(via.length ? { via } : {}) },
     { enabled: enabled && !!chapterId, placeholderData: keepPreviousData }
   );
 }
@@ -67,11 +68,11 @@ export function useStorylineChildren(
 
 /**
  * The canon line after a chapter, in one read, with the ways off it for the stops that have
- * any (at most `STORYLINE_DRAWER_FORK_STOPS`, nearest first).
+ * any (at most `STORYLINE_DRAWER_FORK_STOPS`, nearest first). `forks: false` skips those reads.
  */
 export function useStorylineCanonAhead(
   chapterId: number | undefined,
-  options: { enabled: boolean }
+  options: { enabled: boolean; forks?: boolean }
 ) {
   const enabled = useStorylinesEnabled() && options.enabled && !!chapterId;
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -88,15 +89,47 @@ export function useStorylineCanonAhead(
     () => canonAheadForkStops(query.data ?? [], STORYLINE_DRAWER_FORK_STOPS),
     [query.data]
   );
-  const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled });
+  const childrenByChapterId = useStorylinePathChildren(forkStopIds, {
+    enabled: enabled && (options.forks ?? true),
+  });
   const isLoading = enabled && query.isLoading;
+  const isSuccess = enabled && query.isSuccess;
   return useMemo(
-    () => ({ ahead, childrenByChapterId, isLoading }),
-    [ahead, childrenByChapterId, isLoading]
+    () => ({ ahead, childrenByChapterId, isLoading, isSuccess }),
+    [ahead, childrenByChapterId, isLoading, isSuccess]
   );
 }
 
-/** One children read per chapter on the path, for the forks the drawer draws beside it. */
+export function useStorylineGraph(id: number, options: { enabled: boolean }) {
+  const enabled = useStorylinesEnabled() && options.enabled;
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const hiddenUserIds = useHiddenUserIds();
+  const query = trpc.storyline.getGraph.useQuery({ id, browsingLevel }, { enabled });
+  const data = useMemo(
+    () =>
+      query.data && {
+        ...query.data,
+        chapters: hideHiddenUsersChapters(query.data.chapters, hiddenUserIds),
+      },
+    [query.data, hiddenUserIds]
+  );
+  return { data, isLoading: enabled && query.isLoading };
+}
+
+/**
+ * Reads the graph only when some chapter of the path is off the main route, so a reader on the main
+ * route makes no request for it.
+ */
+export function useStorylinePathLanes(
+  storylineId: number,
+  path: { chapterId: number; onMain: boolean }[]
+) {
+  const offMain = path.some((chapter) => !chapter.onMain);
+  const { data: graph } = useStorylineGraph(storylineId, { enabled: offMain });
+  return useMemo(() => getStorylinePathLanes(graph, path), [graph, path]);
+}
+
+/** One children read per given chapter id, for the forks the drawer draws beside them. */
 export function useStorylinePathChildren(chapterIds: number[], options: { enabled: boolean }) {
   const enabled = useStorylinesEnabled() && options.enabled;
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -113,7 +146,7 @@ export function useStorylinePathChildren(chapterIds: number[], options: { enable
         byChapterId.set(chapterIds[i], hideHiddenUsersChapters(query.data, hiddenUserIds));
     });
     return byChapterId;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unstable arrays; their keys stand in
   }, [chapterIds.join(','), hiddenUserIds, queries.map((q) => q.dataUpdatedAt).join(',')]);
 }
 
@@ -152,7 +185,6 @@ export function useStorylinePathImages(chapters: StorylinePathChapter[] | undefi
   };
 }
 
-/** Whether this reader may continue a chapter with a post of theirs, and at what price. */
 export function useStorylineContinueTerms(parentPostId: number | undefined) {
   const enabled = useStorylinesEnabled() && !!parentPostId;
   const query = trpc.placement.getStorylineContinuePrice.useQuery(
@@ -179,7 +211,8 @@ export function useStorylineTracking() {
   const browsingLevel = useViewerBrowsingLevelDebounced();
   const utils = trpc.useUtils();
   const branchChoice = trpc.storyline.trackBranchChoice.useMutation({
-    // The server drops its cached shares before answering, so this read sees the new choice.
+    // The server writes the new count through to its cache before answering, so this read sees the
+    // new choice.
     onSuccess: (_, { fromChapterId }) =>
       utils.storyline.getForkShares.invalidate({ chapterId: fromChapterId }),
   });

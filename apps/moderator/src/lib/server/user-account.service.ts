@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
@@ -19,6 +20,7 @@ import { escapeLike } from './like';
 import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
+import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -615,6 +617,61 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Capp
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
+}
+
+// MYSTERY BOXES a moderator granted this user. A grant has no purchase row, so they are found by
+// sourceKey prefix.
+export type GrantedBox = {
+  sourceKey: string;
+  boxName: string;
+  /** When it was granted, or, once opened, when it was opened. */
+  at: Date;
+  state: 'held' | 'opened' | 'takenBack';
+  /** What it gave, once opened. */
+  reward: string | null;
+};
+
+export async function getGrantedBoxes(userId: number, limit = 50): Promise<Capped<GrantedBox>> {
+  const prefix = `${escapeLike(MOD_GRANT_SOURCE_PREFIX)}%`;
+  const [held, opened] = await Promise.all([
+    dbRead
+      .selectFrom('Item as i')
+      .innerJoin('ItemDefinition as box', 'box.id', 'i.itemDefinitionId')
+      .select(['i.sourceKey', 'box.name as boxName', 'i.createdAt as at'])
+      .where('i.holderType', '=', 'user')
+      .where('i.holderId', '=', userId)
+      .where('i.sourceKey', 'like', prefix)
+      .orderBy('i.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('BoxOpening as o')
+      .innerJoin('ItemDefinition as box', 'box.id', 'o.boxDefinitionId')
+      .leftJoin('ItemDefinition as reward', 'reward.id', 'o.rewardDefinitionId')
+      .select([
+        'o.boxSourceKey as sourceKey',
+        'box.name as boxName',
+        'o.createdAt as at',
+        'o.rewardStatus',
+        'reward.name as reward',
+      ])
+      .where('o.userId', '=', userId)
+      .where('o.boxSourceKey', 'like', prefix)
+      .orderBy('o.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+  ]);
+  const rows: GrantedBox[] = [
+    ...held.map((row) => ({ ...row, state: 'held' as const, reward: null })),
+    ...opened.map(({ rewardStatus, ...row }) => ({
+      ...row,
+      state:
+        rewardStatus === BOX_OPENING_REWARD_STATUS.granted
+          ? ('opened' as const)
+          : ('takenBack' as const),
+    })),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
+  return capped(rows, limit);
 }
 
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
@@ -1351,9 +1408,8 @@ const BUZZ_COLORS: Record<string, string> = {
   green: 'Green',
 };
 
-/** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzLedgerSide`. */
-const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
+/** See `USER_ACCOUNT_TYPES` in `buzz-accounts.ts`. */
+const USER_ACCOUNT_TYPES = new Set<string>(USER_ACCOUNT_TYPE_LIST);
 
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;

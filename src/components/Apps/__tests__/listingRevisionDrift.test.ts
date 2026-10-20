@@ -7,6 +7,7 @@ import {
   driftPanelState,
   identicalAssetsNotice,
   listingAssetSnapshot,
+  proposedWithUnstagedRedSlots,
   revisionApplyScope,
   screenshotDriftSummary,
   uncomparedApplyFieldsSentence,
@@ -28,7 +29,14 @@ import {
  */
 
 function snap(overrides: Partial<ListingAssetSnapshot> = {}): ListingAssetSnapshot {
-  const merged = { iconId: 10, coverId: 20, screenshotImageIds: [30, 31], ...overrides };
+  const merged = {
+    iconId: 10,
+    coverId: 20,
+    redIconId: null,
+    redCoverId: null,
+    screenshotImageIds: [30, 31],
+    ...overrides,
+  };
   return {
     ...merged,
     // Captions default to "none", aligned 1:1 with whatever image set the test chose.
@@ -54,6 +62,9 @@ describe('listingAssetSnapshot', () => {
     expect(s).toEqual({
       iconId: 1,
       coverId: 2,
+      // No civitai.red overrides on the payload: none.
+      redIconId: null,
+      redCoverId: null,
       screenshotImageIds: [31, 33],
       // Captions stay aligned with the SURVIVING rows — a deleted-Image row must not
       // shift them, or a caption comparison would report phantom drift.
@@ -76,6 +87,61 @@ describe('listingAssetSnapshot', () => {
     // signal worthless.
     expect(listingAssetSnapshot(undefined)).toBeNull();
     expect(listingAssetSnapshot(null)).toBeNull();
+  });
+});
+
+describe('the civitai.red icon / cover overrides', () => {
+  it('reads them off the payload', () => {
+    expect(
+      listingAssetSnapshot({ iconId: 1, coverId: 2, redIconId: 7, redCoverId: 8, screenshots: [] })
+    ).toMatchObject({ redIconId: 7, redCoverId: 8 });
+  });
+
+  it('🔴 an override change alone is a change — never "approving changes nothing"', () => {
+    for (const [live, proposed, slot, verdict] of [
+      [snap(), snap({ redIconId: 70 }), 'redIcon', 'added'],
+      [snap({ redCoverId: 80 }), snap(), 'redCover', 'removed'],
+      [snap({ redIconId: 70 }), snap({ redIconId: 71 }), 'redIcon', 'changed'],
+    ] as const) {
+      const drift = computeListingRevisionDrift(live, proposed, ONSITE);
+      expect(drift[slot]).toBe(verdict);
+      expect(drift.assetsChanged).toBe(true);
+      expect(drift.noOpApproval).toBe(false);
+    }
+  });
+
+  it('does not confuse the two overrides (a swap of the two is a change to both)', () => {
+    const drift = computeListingRevisionDrift(
+      snap({ redIconId: 70, redCoverId: 80 }),
+      snap({ redIconId: 80, redCoverId: 70 }),
+      ONSITE
+    );
+    expect(drift).toMatchObject({ redIcon: 'changed', redCover: 'changed' });
+  });
+
+  it('🔴 a revision that staged no overrides row reads as the live overrides, not as "removed"', () => {
+    const live = snap({ redIconId: 70, redCoverId: 80 });
+    const proposed = proposedWithUnstagedRedSlots(snap(), live, { redSlotsStaged: false });
+    expect(proposed).toMatchObject({ redIconId: 70, redCoverId: 80 });
+    expect(computeListingRevisionDrift(live, proposed, ONSITE)).toMatchObject({
+      redIcon: 'same',
+      redCover: 'same',
+    });
+    // A row that IS staged (both cleared) is what it says, and so is an older payload.
+    expect(proposedWithUnstagedRedSlots(snap(), live, { redSlotsStaged: true })).toMatchObject({
+      redIconId: null,
+      redCoverId: null,
+    });
+    expect(proposedWithUnstagedRedSlots(snap(), live, {})).toMatchObject({ redIconId: null });
+  });
+
+  it('positive control: identical overrides on both sides are no change', () => {
+    const drift = computeListingRevisionDrift(
+      snap({ redIconId: 70, redCoverId: 80 }),
+      snap({ redIconId: 70, redCoverId: 80 }),
+      ONSITE
+    );
+    expect(drift).toMatchObject({ redIcon: 'same', redCover: 'same', noOpApproval: true });
   });
 });
 

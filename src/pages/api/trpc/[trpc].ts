@@ -27,7 +27,16 @@ import {
   runWithResponseWriteFormat,
 } from '~/server/trpc/response-write-format';
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
+
+/**
+ * The longest input an error log line carries: in JSON characters, and in values (so the measure
+ * that checks it stays cheap next to the log line). A longer input is logged as a marker.
+ */
+const LOGGED_INPUT_MAX_CHARS = 256 * 1024;
+const LOGGED_INPUT_MAX_VALUES = 16 * 1024;
+const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} characters or ${LOGGED_INPUT_MAX_VALUES} values, not logged]`;
 
 export const config = {
   api: {
@@ -179,11 +188,20 @@ const trpcHandler = createNextApiHandler({
       let axInput: string | undefined;
       if (!!input) {
         try {
-          // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
-          // Stringify first and redact only when the key appears, so the common case pays one
-          // walk of the input rather than two.
-          const raw = JSON.stringify(input);
-          axInput = raw?.includes('"blockToken"') ? JSON.stringify(redactBlockTokens(input)) : raw;
+          // Measured before it is serialized, without building the string; an input over the
+          // limits is logged as a marker instead. An unserializable one throws below, as before.
+          const meter = { visits: 0, chars: 0, scanned: 0, maxVisits: LOGGED_INPUT_MAX_VALUES };
+          if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
+            axInput = LOGGED_INPUT_OVER_LIMIT;
+          } else {
+            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Stringify first and redact only when the key appears, so only an input that carries
+            // one is serialized twice.
+            const raw = JSON.stringify(input);
+            axInput = raw?.includes('"blockToken"')
+              ? JSON.stringify(redactBlockTokens(input))
+              : raw;
+          }
         } catch {
           axInput = undefined;
         }

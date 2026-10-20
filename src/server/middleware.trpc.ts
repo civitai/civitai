@@ -9,9 +9,12 @@ import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '~/server/services/item-holder-lock';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
+import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -273,6 +276,68 @@ export function rateLimit<TInput = any>(
     return await next();
   });
 }
+
+export type InFlightLimit = {
+  /** Procedures given the same bucket share one per-user limit. */
+  bucket: string;
+  limit: number;
+  /** A request still running after this stops counting against the limit. */
+  ttlMs: number;
+  /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
+  acquireTimeoutMs: number;
+  errorMessage: string;
+};
+const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
+/**
+ * Caps a user's concurrent requests (`rateLimit` caps rate). Admits when the store fails or takes
+ * longer than `acquireTimeoutMs`.
+ */
+export function inFlightLimit({
+  bucket,
+  limit,
+  ttlMs,
+  acquireTimeoutMs,
+  errorMessage,
+}: InFlightLimit) {
+  return middleware(async ({ ctx, next }) => {
+    if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+    const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
+    const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
+    const slot = await withTimeoutFallback(acquiring, acquireTimeoutMs, ACQUIRE_TIMED_OUT, () => {
+      // A slot granted after we stopped waiting would otherwise count until its TTL.
+      void acquiring.then((late) => (late.acquired ? late.release() : undefined));
+    });
+    if (!slot.acquired) {
+      if (slot.reason === 'full')
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
+      logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
+        bucket,
+        userId: ctx.user.id,
+      });
+      return await next();
+    }
+
+    try {
+      return await next();
+    } finally {
+      // Not awaited: the work is done, and a stalled store must not hold the response.
+      void slot.release();
+    }
+  });
+}
+
+/**
+ * Purchases and box opens each hold a pooled connection while waiting on the buyer's
+ * `lockItemHolder` (at most `ITEM_HOLDER_LOCK_TIMEOUT`), so they share one bucket.
+ */
+export const itemHolderInFlightLimit = inFlightLimit({
+  bucket: 'item-holder',
+  limit: 2,
+  ttlMs: 60_000,
+  acquireTimeoutMs: 500,
+  errorMessage: ITEM_HOLDER_BUSY_MESSAGE,
+});
 
 export type EdgeCacheItProps = {
   ttl?: number;

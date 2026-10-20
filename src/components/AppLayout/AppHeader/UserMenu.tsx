@@ -21,6 +21,7 @@ import {
   IconLogout,
   IconLogout2,
   IconMoonStars,
+  IconScreenShare,
   IconSettings,
   IconSun,
   IconX,
@@ -44,11 +45,13 @@ import {
   type CivitaiAccount,
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
+import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useSupportOption } from '~/components/SupportButton/SupportButton';
 import { HeaderUserBuzz } from '~/components/AppLayout/AppHeader/HeaderUserBuzz';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { Username } from '~/components/User/Username';
@@ -86,11 +89,14 @@ export function UserMenu() {
           onClick={() => setOpen((o) => !o)}
         >
           <div
-            className={clsx('flex items-center gap-2 @max-md:hidden', {
+            className={clsx('flex items-center gap-2', {
               ['hidden']: !currentUser,
+              ['@max-md:hidden']: !features.buzzSpendPop,
             })}
           >
-            <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+            <div className="@max-md:hidden">
+              <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+            </div>
             {features.buzz && currentUser && <HeaderUserBuzz />}
           </div>
           <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
@@ -175,6 +181,7 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
         {currentUser && <BuzzMenuItem />}
         <div className="@md:hidden">
           <UserMenuItems items={actionItems} />
+          <PhoneHeaderShortcuts />
           <Divider />
         </div>
         {groups.map((group, i) => {
@@ -240,6 +247,29 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
       </div>
     </>
   );
+}
+
+function PhoneHeaderShortcuts() {
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const support = useSupportOption();
+  const { handleClose } = useUserMenuContext();
+
+  if (!currentUser || !features.buzzSpendPop) return null;
+
+  const items: UserMenuItem[] = [
+    { href: support.href, icon: support.icon, label: support.text, visible: features.canWrite },
+    {
+      icon: IconScreenShare,
+      label: 'Civitai Link',
+      onClick: () => {
+        handleClose();
+        openCivitaiLinkDialog();
+      },
+    },
+  ];
+
+  return <UserMenuItems items={items} />;
 }
 
 function UserMenuItems({ items }: { items: UserMenuItem[] }) {
@@ -503,6 +533,7 @@ function BuzzMenuItem() {
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
         <UserBuzz
+          animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
@@ -510,6 +541,7 @@ function BuzzMenuItem() {
           accountTypes={['blue']}
         />
         <UserBuzz
+          animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}

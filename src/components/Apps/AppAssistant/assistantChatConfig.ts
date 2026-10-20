@@ -1,4 +1,4 @@
-import type { ChatConfig, CivitaiChat } from '@civitai/components-chat/civitai-chat';
+import type { ChatConfig, ChatExample, CivitaiChat } from '@civitai/components-chat/civitai-chat';
 
 /**
  * Each step is one paid model request. The tool-call limit in `assistantGate` ends a reply first when its
@@ -22,7 +22,17 @@ export const APP_ASSISTANT_EXCLUDED_TOOLS = [
   'web_search',
 ] as const;
 
+/**
+ * The model App Assistant's replies use unless the viewer picks another. An OpenRouter id: the
+ * orchestrator routes any id that is not an AIR to OpenRouter, where no free allowance applies, so
+ * every step is paid. `configureChat` is page-wide and never reset, so a chat opened anywhere after App
+ * Assistant would inherit it too; today App Assistant is the only chat on the site.
+ */
+export const APP_ASSISTANT_MODEL = 'openai/gpt-6-luna';
+
 export const APP_ASSISTANT_CHAT_CONFIG = {
+  name: 'App Assistant',
+  model: APP_ASSISTANT_MODEL,
   maxSteps: APP_ASSISTANT_MAX_STEPS,
   contextBudgetTokens: APP_ASSISTANT_CONTEXT_BUDGET_TOKENS,
 } satisfies Partial<ChatConfig>;
@@ -30,3 +40,32 @@ export const APP_ASSISTANT_CHAT_CONFIG = {
 export const APP_ASSISTANT_MCP: CivitaiChat['mcp'] = {
   orchestration: { exclude: APP_ASSISTANT_EXCLUDED_TOOLS },
 };
+
+/**
+ * Replaces the chat's own examples, which are about media-making tools this page excludes. Each is an
+ * app built on something the Civitai App SDK gives a block, so a first app shows what only a Civitai
+ * app can do.
+ */
+export const APP_ASSISTANT_EXAMPLES: ChatExample[] = [
+  {
+    title: 'Character card maker',
+    prompt:
+      'Build a character card maker: I give a name and a few traits, it generates a portrait, and I can post the card to Civitai',
+  },
+  {
+    title: 'LoRA tester',
+    prompt:
+      'Make an app where I pick a checkpoint and a LoRA from Civitai and see the same prompt generated with and without the LoRA',
+  },
+  {
+    title: 'Daily prompt challenge',
+    prompt:
+      'Run a daily challenge with a new theme each day, where people generate an image for it and vote for their favourite entry',
+  },
+  {
+    title: 'Buzz tracker',
+    prompt: 'Show my Buzz balance and recent transactions, with a chart of what I spent this week',
+  },
+];
+
+export const APP_ASSISTANT_PLACEHOLDER = 'Describe the app you want to build';

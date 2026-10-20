@@ -380,10 +380,6 @@ export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
 
-// ---------------------------------------------------------------------------
-// Storyline continuations
-// ---------------------------------------------------------------------------
-
 const storylineSpaceModeSchema = z.enum(['off', 'review']);
 
 export const storylineIdSchema = z.object({ storylineId: z.number().int().positive() });

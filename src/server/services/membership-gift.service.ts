@@ -12,6 +12,7 @@ import type {
 } from '~/server/schema/membership-gift.schema';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { createCustomer } from '~/server/services/stripe.service';
@@ -153,6 +154,8 @@ export async function createMembershipGiftCheckout({
   });
   if (!recipient || recipient.deletedAt) throw throwNotFoundError('Recipient not found');
   if (recipient.bannedAt) throw throwBadRequestError('This user cannot receive gifts');
+  // The message is emailed to the recipient, another user.
+  await throwOnBlockedUserContent(message, { surface: 'membership-gift' });
 
   // No tier-match check. A gift is N months of a tier; what it buys the recipient is decided
   // when they accept it, against whatever membership they hold then.
@@ -497,6 +500,9 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
     return mintResidualSubscription({ stripe, giftId: gift.id });
   if (!EXTENDABLE_STATUSES.includes(stripeSub.status))
     return { armed: false as const, reason: `subscription-status-${stripeSub.status}` };
+  // A held upgrade changes the plan when it is paid, so a month armed now would be priced for the
+  // wrong plan. The webhook that applies or drops the change, or the sweep, arms it afterwards.
+  if (stripeSub.pending_update) return { armed: false as const, reason: 'plan-change-pending' };
 
   // Applying a coupon REPLACES whatever discount is there, with no error and no warning
   // from Stripe. Refuse rather than destroy someone's existing discount.

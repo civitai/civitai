@@ -51,6 +51,26 @@ export type EcosystemSupport = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
+/** A recommended value with the advisory band the generator paints around it. */
+export type RecommendedRange = { min: number; max: number; default: number };
+
+/** The settings a turbo LoRA applies when it is on. */
+export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
+
+/** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
+export const TURBO_PRESETS = {
+  /** The MOSS Image DMD LoRAs, designed to run without CFG. */
+  mossDmd: {
+    steps: { min: 4, max: 8, default: 8 },
+    cfgScale: { min: 1, max: 1, default: 1 },
+  },
+  /** The Anima turbo / DMD2 LoRAs: CFG stays at 1 unless the step count goes up. */
+  animaDmd2: {
+    steps: { min: 8, max: 16, default: 12 },
+    cfgScale: { min: 1, max: 1.4, default: 1 },
+  },
+} as const satisfies Record<string, TurboSettings>;
+
 export type EcosystemSettings = {
   ecosystemId: number;
   defaults?: {
@@ -59,6 +79,13 @@ export type EcosystemSettings = {
     modelLocked?: boolean;
     /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
     engine?: string;
+    /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
+    turbo?: {
+      /** The LoRA the generator's Turbo picker starts on. */
+      lora?: { id: number };
+      /** Prefills a LoRA version's turbo block; the generator's fallback for anything it left unset. */
+      settings: TurboSettings;
+    };
   };
 };
 
@@ -204,6 +231,7 @@ export const ECO = {
   Flux3: 92,
   Flux3Klein: 94,
   Flux3Klein_base: 95,
+  MossImage: 96,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -907,6 +935,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 271,
   },
 
+  // OpenMOSS
+  {
+    id: ECO.MossImage,
+    key: 'MossImage',
+    displayName: 'MOSS Image',
+    familyId: 29,
+    sortOrder: 272,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -997,7 +1034,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
  * than an external provider. Single source of truth for the self-hosted
  * generation toggle; derived from the handlers in
- * `src/server/services/orchestrator/ecosystems/`, which are authoritative for which
+ * `src/server/services/orchestrator/form-graph/*.handler.ts`, which are authoritative for which
  * input type each ecosystem produces.
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
@@ -1027,6 +1064,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Qwen',
   'Flux3Klein',
   'Flux3Klein_base',
+  // ComfyMossImage{Sft,Base}CreateImageInput
+  'MossImage',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1261,6 +1300,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Flux.3 Klein - open weights, checkpoint and LoRA
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
+  // MOSS Image - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1441,6 +1482,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2945208 },
+      turbo: { settings: TURBO_PRESETS.animaDmd2 },
     },
   },
   {
@@ -1775,6 +1817,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 3407485 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MossImage,
+    defaults: {
+      model: { id: 3409867 },
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -2384,6 +2433,7 @@ export const BM = {
   Krea3: 114,
   Flux3Klein: 115,
   Flux3Klein_base: 116,
+  MossImage: 117,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2885,6 +2935,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Sonilo',
     description: "Sonilo's music and sound-effect generation models",
   },
+  {
+    id: 29,
+    name: 'OpenMOSS',
+    description: "OpenMOSS's image generation models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -3042,6 +3097,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux3Klein_base,
     licenseId: 49,
+  },
+  {
+    id: BM.MossImage,
+    name: 'MOSS Image',
+    description: "OpenMOSS's 5B text-to-image model, the Base and SFT releases",
+    type: 'image',
+    ecosystemId: ECO.MossImage,
+    licenseId: 13,
   },
   {
     id: BM.Flux3Video,
@@ -4434,6 +4497,11 @@ export function getEcosystemDefaults(
     ...parentDefaults,
     ...settings?.defaults,
   };
+}
+
+/** The turbo numbers for an ecosystem, or undefined where turbo LoRAs are not a thing. */
+export function getEcosystemTurboSettings(ecosystemId: number): TurboSettings | undefined {
+  return getEcosystemDefaults(ecosystemId)?.turbo?.settings;
 }
 
 // =============================================================================

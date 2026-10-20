@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
+import { isFinalsMalwareScanOn } from '~/server/services/creator-service-deal-file-scan';
 import {
   throwBadRequestError,
   throwConflictError,
@@ -395,7 +396,7 @@ export async function deleteServiceDealFile({
 /**
  * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
  * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
- * scan passed and every image passed. A Failed Final sends a delivered deal to the moderators; one not
+ * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a delivered deal to the moderators; one not
  * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
@@ -405,6 +406,9 @@ export async function recordFinalScanResult({
   fileId: number;
   verdict: 'Passed' | 'Failed';
 }) {
+  // A skipped malware scan stands in for a passed one only while the scan is off, so turning it on
+  // stops passing the Finals it skipped until they are scanned (see `settleFinals`).
+  const malwareScanOn = verdict === 'Passed' ? await isFinalsMalwareScanOn() : true;
   const [file] = await dbWrite.$queryRaw<{ dealId: number }[]>`
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
     WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
@@ -413,7 +417,8 @@ export async function recordFinalScanResult({
         "unpackedAt" IS NOT NULL
         AND "repackedAt" IS NOT NULL
         AND "failReason" IS NULL
-        AND "malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+        AND ("malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+          OR ("malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}))
         AND NOT EXISTS (
           SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = "ServiceDealFile"."id"

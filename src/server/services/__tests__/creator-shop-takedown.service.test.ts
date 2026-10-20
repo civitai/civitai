@@ -22,6 +22,41 @@ const { mocks } = vi.hoisted(() => ({
     shopItemUpdateMany: vi.fn(),
     packMemberFindMany: vi.fn(),
     createNotification: vi.fn(),
+    getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
+  },
+}));
+
+// A real mutex that honours `maxRetries`: 0 gives up at once, anything else waits its turn.
+// `onWait` lets a test see that a caller is queued behind the holder; `calls` records the options
+// each caller asked for.
+const lockState = vi.hoisted(() => ({
+  held: new Map<string, Promise<void>>(),
+  onWait: undefined as undefined | ((key: string) => void),
+  // A waiting caller gives up as the real lock does once its retries run out.
+  exhausted: false,
+  calls: [] as Record<string, unknown>[],
+}));
+vi.mock('~/server/utils/distributed-lock', () => ({
+  withDistributedLock: async (
+    options: { key: string; maxRetries?: number },
+    operation: () => Promise<unknown>
+  ) => {
+    const { key, maxRetries } = options;
+    lockState.calls.push(options);
+    while (lockState.held.has(key)) {
+      if (maxRetries === 0 || lockState.exhausted) return null;
+      lockState.onWait?.(key);
+      await lockState.held.get(key);
+    }
+    let release!: () => void;
+    lockState.held.set(key, new Promise((resolve) => (release = resolve)));
+    try {
+      return await operation();
+    } finally {
+      lockState.held.delete(key);
+      release();
+    }
   },
 }));
 
@@ -30,6 +65,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
   refundMultiAccountTransaction: mocks.refundMultiAccountTransaction,
   refundTransaction: mocks.refundTransaction,
+  getMultiAccountTransactionsByPrefix: mocks.getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId: mocks.getTransactionByExternalId,
 }));
 vi.mock('~/server/services/cosmetic.service', () => ({
   revokeCosmeticsFromUsers: mocks.revokeCosmeticsFromUsers,
@@ -55,6 +92,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
 });
 
 import { takedownCosmeticShopItem, unarchiveCreatorShopItem } from '../creator-shop.service';
+import { refundShopPurchases } from '../creator-shop-withdrawn-refund.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
@@ -134,6 +172,29 @@ const yellowRefund = (amount: number) => ({
   ],
   totalRefunded: amount,
   externalTransactionIdPrefix: 'p',
+});
+
+describe('takedownCosmeticShopItem on a mystery box listing', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+  });
+
+  // The pack path would refund every box buyer and revoke nothing: a box has no members.
+  it('refuses before stopping sales or refunding anyone', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      cosmeticId: null,
+      cosmetic: null,
+      itemDefinitionId: 9,
+    });
+
+    await expect(
+      takedownCosmeticShopItem({ id: 42, reason: 'r', moderatorId: 999 })
+    ).rejects.toThrow('Mystery box listings cannot be taken down here');
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+    expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe('takedownCosmeticShopItem', () => {
@@ -402,6 +463,54 @@ describe('takedownCosmeticShopItem', () => {
     });
   });
 
+  // Payouts are written under the purchase prefix (`<prefix>:sell:...`), so the buyer's prefix
+  // refund can already have reversed them. Refunding one again by id asks the creator for it twice.
+  it('does not refund a payout the prefix refund already reversed', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: {
+          payouts: [
+            { userId: 11, amount: 500, color: 'yellow', transactionId: 'sell-tx-creator' },
+            { userId: 55, amount: 200, color: 'yellow', transactionId: 'sell-tx-reseller' },
+          ],
+          platformCut: 300,
+        },
+      },
+    ]);
+    mocks.refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [
+        {
+          originalTransactionId: 'buyer-debit',
+          refundTransactionId: 'r-1',
+          accountType: 'yellow',
+          amount: 1000,
+          originalExternalTransactionId: 'purchase-1-yellow',
+        },
+        {
+          originalTransactionId: 'sell-tx-creator',
+          refundTransactionId: 'r-2',
+          accountType: 'yellow',
+          amount: 500,
+          originalExternalTransactionId: 'purchase-1:sell:11:yellow',
+        },
+      ],
+      totalRefunded: 1500,
+      externalTransactionIdPrefix: 'purchase-1',
+    });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundTransaction.mock.calls).toEqual([
+      ['sell-tx-reseller', expect.stringContaining('Cosmetic removed')],
+    ]);
+    expect(result).toMatchObject({ owedBack: 700, clawedBack: 700, failures: [] });
+  });
+
   it('claws nothing back from a creator who bought their own sticker and was paid nothing', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {
@@ -459,6 +568,25 @@ describe('takedownCosmeticShopItem', () => {
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
+  });
+
+  // A withdrawn-item refund that began on a purchase may have reversed some of its legs, and the
+  // prefix refund is refused whole over those: that run finishes it, not this one.
+  it('leaves a purchase a withdrawn-item refund has begun to that refund', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: { withdrawnRefund: { trigger: 'archive', clawback: true, userId: 11, at: 'then' } },
+      },
+      purchases[1],
+    ]);
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundMultiAccountTransaction.mock.calls).toEqual([
+      [expect.objectContaining({ externalTransactionIdPrefix: 'purchase-2' })],
+    ]);
+    expect(result).toMatchObject({ refunded: 1, failures: [] });
   });
 
   it('falls back to a reversing charge when a recorded payout has no transaction id', async () => {
@@ -595,5 +723,226 @@ describe('unarchiveCreatorShopItem', () => {
 
     await expect(unarchiveCreatorShopItem({ userId: 11, id: 42 })).rejects.toThrow(/taken down/);
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('takedownCosmeticShopItem against a moderator refund of the same item', () => {
+  type Row = {
+    userId: number;
+    shopItemId: number;
+    buzzTransactionId: string;
+    unitAmount: number;
+    refunded: boolean;
+    meta: Record<string, unknown> | null;
+  };
+  let itemMeta: Record<string, unknown>;
+  let rows: Row[];
+  const reversed = new Set<string>();
+
+  const ledgerRows = [
+    {
+      transactionId: 'purchase-1-debit',
+      externalTransactionId: 'purchase-1-yellow',
+      accountId: 101,
+      amount: 1000,
+    },
+    {
+      transactionId: 'purchase-1-payout',
+      externalTransactionId: 'purchase-1:sell:11:yellow',
+      accountId: 0,
+      amount: 700,
+    },
+  ];
+
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    lockState.held.clear();
+    lockState.onWait = undefined;
+    lockState.exhausted = false;
+    lockState.calls = [];
+    reversed.clear();
+    itemMeta = { purchases: 1 };
+    rows = [
+      {
+        userId: 101,
+        shopItemId: 42,
+        buzzTransactionId: 'purchase-1',
+        unitAmount: 1000,
+        refunded: false,
+        meta: {
+          payouts: [
+            { userId: 11, amount: 700, color: 'yellow', transactionId: 'purchase-1-payout' },
+          ],
+        },
+      },
+    ];
+
+    mocks.shopItemFindUnique.mockImplementation(async () => ({ ...shopItemRow, meta: itemMeta }));
+    mocks.shopItemUpdate.mockImplementation(
+      async ({ data }: { data: { meta: Record<string, unknown> } }) => {
+        itemMeta = data.meta;
+        return { id: 42, ...data };
+      }
+    );
+    mocks.purchaseFindMany.mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { shopItemId?: number; refunded?: boolean; buzzTransactionId?: { in: string[] } };
+      }) =>
+        rows
+          .filter(
+            (r) =>
+              (where.shopItemId === undefined || r.shopItemId === where.shopItemId) &&
+              (where.refunded === undefined || r.refunded === where.refunded) &&
+              (where.buzzTransactionId === undefined ||
+                where.buzzTransactionId.in.includes(r.buzzTransactionId))
+          )
+          .map((r) => ({ ...r }))
+    );
+    mocks.purchaseUpdate.mockImplementation(
+      async ({ where, data }: { where: { buzzTransactionId: string }; data: Partial<Row> }) => {
+        const row = rows.find((r) => r.buzzTransactionId === where.buzzTransactionId)!;
+        Object.assign(row, data);
+        return row;
+      }
+    );
+    dbMock.dbWrite.userCosmeticShopPurchases.updateMany.mockImplementation(
+      async ({ where }: { where: { buzzTransactionId: string; refunded: boolean } }) => {
+        const row = rows.find(
+          (r) => r.buzzTransactionId === where.buzzTransactionId && r.refunded === where.refunded
+        );
+        if (row) row.refunded = true;
+        return { count: row ? 1 : 0 };
+      }
+    );
+    // The refund's history append: one statement adding to the meta as it stands now.
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (_sql: TemplateStringsArray, entries: string) => {
+        const history = (itemMeta.history as unknown[]) ?? [];
+        itemMeta = { ...itemMeta, history: [...history, ...JSON.parse(entries)] };
+        return 1;
+      }
+    );
+
+    // The ledger: a leg is refunded once; the takedown's prefix refund is refused whole if any
+    // leg already was, as the Buzz service does.
+    mocks.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+      prefix === 'purchase-1' ? ledgerRows : []
+    );
+    mocks.getTransactionByExternalId.mockImplementation(async (externalId: string) =>
+      reversed.has(externalId.replace(/^refund-/, '')) ? { amount: 1 } : null
+    );
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (reversed.has(transactionId)) throw new Error('duplicate refund');
+      reversed.add(transactionId);
+      return { transactionId: `refund-${transactionId}` };
+    });
+    mocks.refundMultiAccountTransaction.mockImplementation(async () => {
+      if (ledgerRows.some((l) => reversed.has(l.transactionId))) throw new Error('409 Conflict');
+      ledgerRows.forEach((l) => reversed.add(l.transactionId));
+      return {
+        refundedTransactions: ledgerRows.map((l) => ({
+          originalTransactionId: l.transactionId,
+          refundTransactionId: `refund-${l.transactionId}`,
+          accountType: 'yellow',
+          amount: l.amount,
+          originalExternalTransactionId: l.externalTransactionId,
+        })),
+        totalRefunded: 1700,
+        externalTransactionIdPrefix: 'purchase-1',
+      };
+    });
+
+    mocks.userCosmeticFindMany.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ settings: {} });
+    mocks.resaleFindMany.mockResolvedValue([]);
+    mocks.shopItemFindFirst.mockResolvedValue(null);
+    mocks.packMemberFindMany.mockResolvedValue([]);
+    mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.logToAxiom.mockResolvedValue(undefined);
+    mocks.createNotification.mockResolvedValue(undefined);
+    mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 1 });
+    mocks.removePlacementsByCosmetic.mockResolvedValue({
+      considered: 0,
+      settled: 0,
+      failed: [],
+      takenDown: 0,
+      hasMore: false,
+    });
+  });
+
+  // The takedown lands as the moderator call stamps the purchase. Before the stamp commits, the
+  // takedown either reaches its own read of the purchases (no lock: the race) or is queued behind
+  // the refund lock; `landed` fires on whichever comes first.
+  it('waits for the refund that holds the lock, so one run refunds the purchase', async () => {
+    let takedown: ReturnType<typeof takedownCosmeticShopItem> | undefined;
+    const stamp = mocks.purchaseUpdate.getMockImplementation()!;
+    mocks.purchaseUpdate.mockImplementation(async (args) => {
+      if (!takedown && args.data.meta?.withdrawnRefund) {
+        let landed!: () => void;
+        const reachedOrQueued = new Promise<void>((resolve) => (landed = resolve));
+        lockState.onWait = () => landed();
+        const read = mocks.purchaseFindMany.getMockImplementation()!;
+        mocks.purchaseFindMany.mockImplementation(async (findArgs) => {
+          if (findArgs.where.shopItemId !== undefined) landed();
+          return read(findArgs);
+        });
+        takedown = takedownCosmeticShopItem({ id: 42, reason: 'tos', moderatorId: 999 });
+        // Or a takedown that gave up, so a broken lock fails the test instead of hanging it.
+        takedown.catch(() => undefined).finally(landed);
+        await reachedOrQueued;
+      }
+      return stamp(args);
+    });
+
+    const manual = await refundShopPurchases({
+      buzzTransactionIds: ['purchase-1'],
+      clawback: false,
+      reason: 'chargeback',
+      dryRun: false,
+      moderatorId: 998,
+    });
+    const takenDown = await takedown!;
+
+    // The moderator's refund finished on its own terms before the takedown began; the takedown
+    // then found nothing left to refund.
+    expect(manual.results[0]).toMatchObject({ status: 'refunded', clawedBack: 0 });
+    expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundTransaction.mock.calls.map(([id]) => id)).toEqual(['purchase-1-debit']);
+    expect(takenDown.purchases).toBe(0);
+    expect(mocks.logToAxiom.mock.calls.map(([entry]) => entry.message)).not.toContain(
+      'Buyer refund failed'
+    );
+    // One lock for both, which the moderator call never waits on and the takedown does.
+    expect(lockState.calls).toEqual([
+      { key: 'creator-shop-withdrawn-refund:42', ttl: 60, autoRenew: true, maxRetries: 0 },
+      {
+        key: 'creator-shop-withdrawn-refund:42',
+        ttl: 60,
+        autoRenew: true,
+        retryDelay: 500,
+        maxRetries: 60,
+      },
+    ]);
+    // The refund's history entry survives the takedown's write of the item.
+    expect((itemMeta.history as { kind: string }[]).map((e) => e.kind)).toEqual([
+      'refunded',
+      'takedown',
+    ]);
+  });
+
+  it('still takes the item down, logged, when the refund lock cannot be had', async () => {
+    lockState.held.set('creator-shop-withdrawn-refund:42', new Promise(() => undefined));
+    lockState.exhausted = true;
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'tos', moderatorId: 999 });
+
+    expect(itemMeta.takedown).toMatchObject({ reason: 'tos' });
+    expect(result.refunded).toBe(1);
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.logToAxiom.mock.calls.map(([entry]) => entry.message)).toContain(
+      'Takedown ran without the refund lock'
+    );
   });
 });

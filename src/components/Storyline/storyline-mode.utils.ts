@@ -1,4 +1,6 @@
+import { PG_INT4_MAX } from '~/server/common/constants';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
+import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
 
 /**
  * Storyline mode lives in the URL, as the end chapter of the path being read. Image detail
@@ -6,11 +8,69 @@ import type { StorylinePathChapter } from '~/server/services/storyline.service';
  * link opens in the storyline; dropping the param is what leaving does.
  */
 export const STORYLINE_CHAPTER_PARAM = 'storylineChapter';
+/**
+ * The way the reader came into each chapter on their path where branches rejoin, as a comma list
+ * of the chapters before them. Absent on a path with no rejoin, so those links are unchanged.
+ */
+export const STORYLINE_VIA_PARAM = 'storylineVia';
 
 export function parseIdParam(value: unknown) {
   const raw = Array.isArray(value) ? value[0] : value;
   const id = typeof raw === 'number' ? raw : Number(raw);
   return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+export function parseIdListParam(value: unknown) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return [];
+  // Within what getPath accepts, so a hand-edited link cannot fail the whole read.
+  return String(raw)
+    .split(',')
+    .flatMap((part) => {
+      const id = parseIdParam(part);
+      return id && id <= PG_INT4_MAX ? [id] : [];
+    })
+    .slice(0, STORYLINE_PATH_LIMIT);
+}
+
+/**
+ * The `via` that reproduces a route. The server takes the oldest link wherever `via` says nothing,
+ * so only chapters with several parents are named.
+ */
+export function routeVia(route: { chapterId: number; parentCount?: number }[]) {
+  return route.flatMap((chapter, i) =>
+    i > 0 && (chapter.parentCount ?? 0) > 1 ? [route[i - 1].chapterId] : []
+  );
+}
+
+export function storylineReadHref({
+  imageId,
+  chapterId,
+  via = [],
+}: {
+  imageId: number;
+  chapterId: number;
+  via?: number[];
+}) {
+  const query = new URLSearchParams({ [STORYLINE_CHAPTER_PARAM]: String(chapterId) });
+  if (via.length) query.set(STORYLINE_VIA_PARAM, via.join(','));
+  return `/images/${imageId}?${query.toString().replace(/%2C/g, ',')}`;
+}
+
+export type StorylineReadTarget = { imageId: number; chapterId: number; via: number[] };
+
+/**
+ * Where a chapter link goes: storyline mode at its first image on the route `via` names, or its
+ * post when this reader sees none of its images. Null for a chapter this reader may not see.
+ */
+export function storylineChapterLink(
+  chapter: { chapterId: number; post: { id: number } | null; firstImage: { id: number } | null },
+  via: number[]
+): { href: string; read: StorylineReadTarget | null } | null {
+  if (!chapter.post) return null;
+  if (!chapter.firstImage) return { href: `/posts/${chapter.post.id}`, read: null };
+  const read = { imageId: chapter.firstImage.id, chapterId: chapter.chapterId, via };
+  return { href: storylineReadHref(read), read };
 }
 
 /** Path order first, then each post's own image order: the image query itself orders by recency. */
@@ -149,7 +209,10 @@ export function getPathImagesPaging({
   return { fetchNext: wantsMore && !isFetching, loading: isFetching || wantsMore };
 }
 
-/** A chapter's name: its post's title, else its number (and author, where nothing else shows it). */
+/**
+ * A chapter's name: its post's title, else its number (and author, where nothing else shows it); a
+ * tombstone reads as its reason.
+ */
 export function getStorylineChapterName(
   chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
   { withAuthor = false }: { withAuthor?: boolean } = {}
@@ -160,18 +223,25 @@ export function getStorylineChapterName(
   return chapter.post.title || `${number}${author}`;
 }
 
-type SubwayChapter = Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post' | 'tombstone'>;
+type SubwayChapter = Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post' | 'tombstone'> & {
+  parentCount?: number;
+  /** Branches that join the line here: the stop's parents other than the stop before it. */
+  joins?: Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post' | 'tombstone'>[];
+};
 export type SubwayStop<T extends SubwayChapter> = {
   chapter: SubwayChapter;
   /** On the path being read (walked), or on the canon line ahead of its end. */
   kind: 'path' | 'ahead';
   /** Continuations leaving this stop other than the next stop on the line. */
   branches: T[];
+  joins: NonNullable<SubwayChapter['joins']>;
 };
 
 /**
  * The drawer's line: the path being read, then the canon chapters after its end, with every
- * other continuation hung off the stop it leaves from.
+ * other continuation hung off the stop it leaves from and every branch that joins it marked.
+ * Numbers run along the line, so a chapter where branches rejoin is numbered by the way the
+ * reader came, and so are the ways off it.
  */
 export function buildSubwayStops<T extends SubwayChapter>(
   path: SubwayChapter[],
@@ -182,12 +252,18 @@ export function buildSubwayStops<T extends SubwayChapter>(
     ...path.map((chapter) => ({ chapter, kind: 'path' as const })),
     ...ahead.map((chapter) => ({ chapter, kind: 'ahead' as const })),
   ];
+  const firstDepth = line[0]?.chapter.depth ?? 0;
   return line.map((stop, i) => {
     const next = line[i + 1]?.chapter.chapterId;
-    const branches = (childrenByChapterId.get(stop.chapter.chapterId) ?? []).filter(
-      (child) => child.chapterId !== next
-    );
-    return { ...stop, branches };
+    const branches = (childrenByChapterId.get(stop.chapter.chapterId) ?? [])
+      .filter((child) => child.chapterId !== next)
+      .map((child) => ({ ...child, depth: firstDepth + i + 1 }));
+    return {
+      ...stop,
+      chapter: { ...stop.chapter, depth: firstDepth + i },
+      branches,
+      joins: stop.chapter.joins ?? [],
+    };
   });
 }
 
@@ -204,6 +280,24 @@ export function canonAheadForkStops(
     .filter((stop, i) => stop.childCount > (i === ahead.length - 1 ? 0 : 1))
     .slice(0, limit)
     .map((stop) => stop.chapterId);
+}
+
+/**
+ * The line is the reader's path then the canon ahead of its end, so it is "the canon path" only
+ * while every chapter of the path is on the main route (`onMain` absent counts as on). `length` is
+ * undefined until the canon ahead is known.
+ */
+export function storylinePositionLabel({
+  number,
+  length,
+  path,
+}: {
+  number: number;
+  length: number | undefined;
+  path: { onMain?: boolean }[];
+}) {
+  const line = path.some((chapter) => chapter.onMain === false) ? 'this path' : 'the canon path';
+  return `Chapter ${number}${length ? ` of ${length} on ${line}` : ''}`;
 }
 
 export type StorylineShares = { total: number; shares: Record<number, number> } | undefined;

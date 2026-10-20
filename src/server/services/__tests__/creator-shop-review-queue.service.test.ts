@@ -95,4 +95,72 @@ describe('getCreatorShopReviewQueue', () => {
     const { where } = findManyArg();
     expect(mocks.shopItemCount).toHaveBeenCalledWith({ where });
   });
+
+  // A mystery box listing has no cosmetic and a moderator lister, the pack arm's exact shape.
+  it('keeps mystery box listings out of the pack arm', async () => {
+    await getCreatorShopReviewQueue(baseInput);
+    const { where } = findManyArg();
+    const arms = (where.OR ?? []) as Record<string, unknown>[];
+    const packArm = arms.find((arm) => 'cosmeticId' in arm && arm.cosmeticId === null);
+    expect(packArm).toBeDefined();
+    expect(packArm).toMatchObject({ itemDefinitionId: null });
+  });
+
+  const armsOf = () => (findManyArg().where.OR ?? []) as Record<string, unknown>[];
+  const mysteryArm = () =>
+    armsOf().find((arm) => 'itemDefinition' in arm && !('cosmeticId' in arm));
+
+  it("matches a creator's mystery packs by their box's seller, and only them under the filter", async () => {
+    await getCreatorShopReviewQueue({ ...baseInput, cosmeticTypes: ['MysteryPack'], userId: 42 });
+    expect(armsOf()).toEqual([
+      {
+        itemDefinition: { sellerId: 42 },
+        status: { not: 'Archived' },
+      },
+    ]);
+  });
+
+  it('leaves mystery packs out when another type is picked', async () => {
+    await getCreatorShopReviewQueue({ ...baseInput, cosmeticTypes: ['Pack', 'Badge'] });
+    expect(mysteryArm()).toBeUndefined();
+    expect(armsOf()).toHaveLength(2);
+  });
+
+  it('includes mystery packs in the unfiltered view', async () => {
+    await getCreatorShopReviewQueue(baseInput);
+    expect(mysteryArm()).toEqual({
+      itemDefinition: { sellerId: { not: null } },
+      status: { not: 'Archived' },
+    });
+    expect(armsOf()).toHaveLength(3);
+  });
+
+  it("filters mystery packs by their creator's username", async () => {
+    await getCreatorShopReviewQueue({
+      ...baseInput,
+      cosmeticTypes: ['MysteryPack'],
+      username: 'ann',
+    });
+    expect(mysteryArm()).toMatchObject({
+      addedBy: { username: { contains: 'ann', mode: 'insensitive' } },
+    });
+  });
+
+  it('shows a mystery pack on sale with an edit waiting in the PendingReview view', async () => {
+    await getCreatorShopReviewQueue({
+      ...baseInput,
+      status: 'PendingReview',
+      cosmeticTypes: ['MysteryPack', 'Pack'],
+    });
+    expect(mysteryArm()).toEqual({
+      itemDefinition: { sellerId: { not: null } },
+      OR: [
+        { status: 'PendingReview' },
+        { status: 'Published', itemDefinition: { revisions: { some: { status: 'pending' } } } },
+      ],
+    });
+    // Every other arm keeps the plain status filter.
+    for (const arm of armsOf().filter((arm) => arm !== mysteryArm()))
+      expect(arm).toMatchObject({ status: 'PendingReview' });
+  });
 });

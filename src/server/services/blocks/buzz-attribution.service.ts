@@ -311,7 +311,7 @@ export type RecordSpendAttributionInput = {
   /**
    * Optional GENERIC published-content-author basis. The opaque shared-storage
    * `key` of the cross-user published content this generation is running on
-   * behalf of (the app supplies it from its own `app_<slug>.shared_kv`). When
+   * behalf of (an item in the app's own shared data). When
    * present, the CONTENT AUTHOR is resolved SERVER-SIDE from this key against
    * the calling app's shared storage (NEVER trusted from the client) and
    * recorded as the future-payout basis. Omit when N/A. FULLY GENERIC — works
@@ -493,26 +493,27 @@ export type RecordSpendAttributionResult = {
  * SERVER-SIDE, from the opaque `sharedContentKey` the app supplied.
  *
  * FORGE-SAFETY: the author is NEVER taken from client input. It is looked up
- * from the calling app's OWN shared storage — the per-app Postgres schema
- * `app_<slug>.shared_kv` (the same store `apps.shared.list` reads) — via
- * `author_user_id WHERE key = $1 AND hidden_at IS NULL`. The app slug is
- * derived from the AppBlock row addressed by the SERVER-derived `appBlockId`
- * (itself from the verified block token), so app A can only ever resolve keys
- * in app A's schema. A forged/bogus key at worst points at a non-existent row
- * → NULL (no attribution).
+ * from the calling app's OWN shared data — the App Blocks document store when
+ * its approved manifest declares an item collection (shared and viewer-authored),
+ * else the legacy per-app
+ * `app_<slug>.shared_kv` (`resolveSharedItem`) — addressed
+ * by the SERVER-derived `appBlockId` (itself from the verified block token),
+ * so app A can only ever resolve keys in app A's data. A forged/bogus key at
+ * worst points at a non-existent item → NULL (no attribution).
  *
  * FAIL-OPEN — returns NULL (leaving content_author_user_id unset, app-owner
- * attribution untouched) when: the AppBlock/slug can't be resolved, the shared
- * datastore is unavailable, the row is missing or hidden, or the resolved
- * author is the spender (self) or the app owner. Any error is swallowed → NULL.
- * A resolution failure must NEVER throw into the (fire-and-forget) attribution
- * path and NEVER add latency to the user's submit response.
+ * attribution untouched) when: the AppBlock can't be resolved, a store is
+ * unavailable, the item is missing or hidden, the key does not name one item,
+ * the item has no user author, or the resolved author is the spender (self)
+ * or the app owner. Any error is swallowed → NULL. A resolution failure must
+ * NEVER throw into the (fire-and-forget) attribution path. A document-store
+ * failure does not fall back to the legacy store.
  *
  * FULLY GENERIC: this works for ANY app whose users publish cross-user shared
  * content that drives generation spend — not tied to any one app kind.
  */
 export async function resolvePublishedContentAuthorUserId(args: {
-  /** Server-derived AppBlock PK (from the verified token) — selects the schema. */
+  /** Server-derived AppBlock PK (from the verified token) — selects the app's data. */
   appBlockId: string;
   /** The opaque shared-storage key the app supplied (bounded upstream). */
   sharedContentKey: string;
@@ -522,31 +523,22 @@ export async function resolvePublishedContentAuthorUserId(args: {
   appOwnerUserId: number;
 }): Promise<number | null> {
   try {
-    // Derive the app's shared-storage schema from the SERVER-derived appBlockId
-    // (never a client value): AppBlock.blockId → sanitizeAppSlug → app_<slug>.
-    // This is the identical slug the shared-storage writer/reader use.
     const block = await dbRead.appBlock.findUnique({
       where: { id: args.appBlockId },
-      select: { blockId: true },
+      select: { blockId: true, manifest: true },
     });
     if (!block?.blockId) return null;
-    const { sanitizeAppSlug, appSchemaIdent } = await import('~/server/utils/apps-slug');
-    const slug = sanitizeAppSlug(block.blockId);
-    if (!slug) return null;
-    const schema = appSchemaIdent(slug);
 
-    // The shared datastore lives in cnpg-cluster-apps; requireAppsDb throws in
-    // environments without it (PR previews / dev) — caught below → NULL.
-    const { requireAppsDb } = await import('~/server/db/appsDb');
-    const pool = requireAppsDb();
-    const rows = (
-      await pool.query<{ author_user_id: number }>(
-        `SELECT author_user_id FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL LIMIT 1`,
-        [args.sharedContentKey]
-      )
-    ).rows;
-
-    const authorUserId = rows[0]?.author_user_id ?? null;
+    // Throws where a store is unavailable (PR previews / dev without the apps
+    // datastore included) — caught below → NULL.
+    const { resolveSharedItem } = await import('~/server/services/apps/shared-item-key');
+    const item = await resolveSharedItem({
+      appBlockId: args.appBlockId,
+      blockId: block.blockId,
+      manifest: block.manifest,
+      key: args.sharedContentKey,
+    });
+    const authorUserId = item.kind === 'found' && !item.hidden ? item.authorUid : null;
     if (authorUserId == null) return null;
     // Fail-open: self-author (the spender published it) or owner-author (the
     // app owner published it — already credited via the app-owner attribution).
@@ -668,7 +660,7 @@ export async function recordSpendAttribution(
 
   // GENERIC published-content-author basis (track-only). When the app supplied
   // an opaque `sharedContentKey`, resolve the content AUTHOR SERVER-SIDE from
-  // the app's own shared storage and record it as the future-payout basis. This
+  // the app's own shared data and record it as the future-payout basis. This
   // is off the submit critical path (recordSpendAttribution is fire-and-forget)
   // and fail-open: any miss/failure/self/owner degrades to NULL, leaving the
   // existing app-owner attribution untouched. NEVER trusts a client-supplied

@@ -4,6 +4,7 @@ import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
   MAX_MANUAL_RESOURCES_PER_IMAGE,
 } from '~/server/common/constants';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import type * as CommonService from '~/server/services/common.service';
 import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
@@ -264,6 +265,46 @@ describe('addResourceToPostImage manual resource limits', () => {
  * image, and creating a post on a version. A version the caller may not view must be refused with
  * exactly the error a nonexistent id gets.
  */
+describe('addResourceToPostImage post cache busting', () => {
+  it('busts each post once, however many of its images were credited', async () => {
+    const imageIds = [IMAGE_ID, OTHER_IMAGE_ID, 103];
+    arrange({ adding: ModelType.LORA, existing: [], imageIds });
+    mockImageFindMany.mockResolvedValue([
+      { postId: 7, meta: null, type: 'image' },
+      { postId: 7, meta: null, type: 'image' },
+      { postId: 8, meta: null, type: 'image' },
+    ]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await add(imageIds);
+    expect(vi.mocked(preventReplicationLag).mock.calls).toEqual([
+      ['postImages', 7],
+      ['postImages', 8],
+    ]);
+    // bustCachesForPosts reads every post in one query.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // The post ids reach the query as one joined parameter.
+    const params = (dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]).slice(1);
+    expect(params).toContainEqual(expect.objectContaining({ values: [7, 8] }));
+  });
+});
+
+describe('addResourceToPostImage on-site generations', () => {
+  const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
+
+  it('refuses an on-site generated image, and writes nothing', async () => {
+    arrange({ adding: ModelType.LORA, existing: [] });
+    mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'image' }]);
+    await expect(add()).rejects.toThrow('Cannot add resources to on-site generations.');
+    expectNothingWritten();
+  });
+
+  it('accepts a video carrying the same metadata', async () => {
+    arrange({ adding: ModelType.LORA, existing: [] });
+    mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'video' }]);
+    await expect(add()).resolves.toBeDefined();
+  });
+});
+
 describe('model version visibility on caller-supplied version ids', () => {
   const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const moderator = { id: 3, isModerator: true } as typeof user;

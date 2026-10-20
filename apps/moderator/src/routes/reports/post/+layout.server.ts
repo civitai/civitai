@@ -1,5 +1,4 @@
 import type { LayoutServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
 import { postsByIds } from '$lib/server/image-lookup.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { ReportEntity } from '$lib/reports';
@@ -10,7 +9,7 @@ import { ReportEntity } from '$lib/reports';
 // 🔴 The URL only through `loadReportQueue`, which reads it key by key. Iterating the query string or
 // reading `url.pathname`/`params` here makes it rerun on every click again, and nothing would look
 // broken except the speed. See `docs/moderator-app/report-queue-pattern.md`.
-export const load: LayoutServerLoad = async ({ url, locals }) => {
+export const load: LayoutServerLoad = async ({ url }) => {
   const queue = await loadReportQueue(ReportEntity.Post, url, {
     statusCounts: true,
     canonicalize: false,
@@ -22,13 +21,9 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   // gone come from the post.
   const posts = await postsByIds(queue.items.map((r) => r.entityId ?? 0));
 
-  // Reaching the queue is an investigation permission; acting on a report or an account is not.
-  const canAct = canAccess(locals.user, '/users');
-
   return {
     ...queue,
     items: queue.items.map((r) => ({ ...r, post: posts.get(r.entityId ?? 0) ?? null })),
-    canAct,
     fullBleed: true,
   };
 };

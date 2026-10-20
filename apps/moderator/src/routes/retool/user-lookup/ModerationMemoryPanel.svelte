@@ -17,7 +17,14 @@
   let {
     userId,
     canAct,
-  }: { userId: number; canAct: boolean } = $props();
+    canStrike,
+  }: {
+    userId: number;
+    /** The moderation flags: the `/users` page. */
+    canAct: boolean;
+    /** Issue strike: the `user.strike` action grant. */
+    canStrike: boolean;
+  } = $props();
 
   const FLAGS = [
     ['spamWhitelist', 'Spam whitelist', 'Exempt from spam heuristics.'],
@@ -141,7 +148,7 @@
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <div class="mb-1 flex items-baseline justify-between gap-3">
       <h3 class="text-sm font-semibold text-white">Strikes</h3>
-      {#if canAct && !striking}
+      {#if canStrike && !striking}
         <Button size="sm" onclick={() => (striking = true)}>Issue strike</Button>
       {/if}
     </div>

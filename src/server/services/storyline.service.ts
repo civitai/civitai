@@ -22,7 +22,11 @@ import {
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
-import { getStorylineAppealRefusal } from '~/shared/utils/appeal';
+import {
+  DIRECT_LIFT_APPEAL_NOTE,
+  DIRECT_LIFT_APPEAL_REASON,
+  getStorylineAppealRefusal,
+} from '~/shared/utils/appeal';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getAllHiddenForUser,
@@ -41,6 +45,7 @@ import type {
 } from '~/shared/utils/storyline';
 import {
   STORYLINE_CHILDREN_LIMIT,
+  STORYLINE_GRAPH_LIMIT,
   STORYLINE_MAX_COLLABORATORS,
   STORYLINE_MAX_CONTRIBUTORS,
   STORYLINE_PATH_LIMIT,
@@ -57,6 +62,7 @@ import {
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
   allBrowsingLevelsFlag,
   getHighestBrowsingLevelBit,
@@ -134,10 +140,6 @@ const storylineReadSelect = {
   },
 } satisfies Prisma.StorylineSelect;
 
-// ---------------------------------------------------------------------------
-// Guards
-// ---------------------------------------------------------------------------
-
 /**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
  * caller inside a transaction reads through it.
@@ -163,10 +165,6 @@ async function getOwnedStoryline({
   return storyline;
 }
 
-/**
- * Hidden from this viewer entirely: taken down, its owner is banned or deleted, or the viewer and
- * the owner have blocked one another. Owners and moderators still see it.
- */
 function isStorylineHidden(
   storyline: {
     userId: number;
@@ -188,11 +186,10 @@ function isStorylineHidden(
 
 /**
  * Users whose work this viewer does not see: either side of a block, and anyone the viewer has
- * hidden. Their storylines are hidden and their chapters are tombstones.
+ * hidden.
  */
 async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
   if (!viewer) return new Set();
-  // The hidden-users cache alone, not the whole hidden-preferences object.
   const [blocked, hidden] = await Promise.all([
     getBlockedPairIds(viewer.id),
     HiddenUsers.getCached({ userId: viewer.id }),
@@ -206,9 +203,8 @@ const outsideBrowsingLevel = (nsfwLevel: number, browsingLevel: number) =>
 
 /**
  * Whether the story as a whole is outside the reader's browsing level, in which case nothing of
- * it is served: not its title, its cast, its path or its forks. The story is judged by its first
- * chapter's level (its ceiling when that chapter is gone or unrated), raised to its title's rating.
- * The owner and moderators are exempt, as they are from every storyline-level hide.
+ * it is served. The story is judged by its first chapter's level (its ceiling when that chapter
+ * is gone or unrated), raised to its title's rating.
  */
 function isStorylineOutsideLevel(
   storyline: {
@@ -247,13 +243,8 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
 
-// ---------------------------------------------------------------------------
-// Chapter writes
-// ---------------------------------------------------------------------------
-
 /**
- * Checks a post may become a chapter of this storyline, written by `authorId`. Shared by every
- * path that adds a chapter, so the rules cannot drift between them.
+ * Shared by every path that adds a chapter, so the rules cannot drift between them.
  */
 async function assertPostCanBeChapter(
   db: Db,
@@ -297,10 +288,20 @@ async function assertPostCanBeChapter(
 const lockParentChapter = (db: Db, parentChapterId: number) =>
   db.$queryRaw`SELECT id FROM "StorylineChapter" WHERE id = ${parentChapterId} FOR NO KEY UPDATE`;
 
+/** Also locks the parent (see `lockParentChapter`); true when it has no canon child yet. */
+async function takesCanonSlot(db: Db, parentChapterId: number) {
+  await lockParentChapter(db, parentChapterId);
+  const existingCanon = await db.storylineChapterEdge.findFirst({
+    where: { parentChapterId, canon: true },
+    select: { chapterId: true },
+  });
+  return !existingCanon;
+}
+
 /**
- * Inserts a chapter under a parent, and marks it canon when the storyline's owner wrote it and
- * the parent has no canon child yet. Edges always point at the parent CHAPTER, never its post,
- * so a later takedown of the parent's post leaves this chapter attached.
+ * Inserts a chapter under a parent, canon when the storyline's owner wrote it and the parent has
+ * no canon child yet. Edges point at the parent CHAPTER, never its post, so a later takedown of
+ * the parent's post leaves this chapter attached.
  */
 async function insertChildChapter(
   db: Db,
@@ -329,15 +330,7 @@ async function insertChildChapter(
     select: { id: true },
   });
 
-  let canon = false;
-  if (authorId === ownerId) {
-    await lockParentChapter(db, parent.id);
-    const existingCanon = await db.storylineChapterEdge.findFirst({
-      where: { parentChapterId: parent.id, canon: true },
-      select: { chapterId: true },
-    });
-    canon = !existingCanon;
-  }
+  const canon = authorId === ownerId && (await takesCanonSlot(db, parent.id));
 
   await db.storylineChapterEdge.create({
     data: {
@@ -352,15 +345,12 @@ async function insertChildChapter(
 }
 
 /**
- * Called by the placement layer when a storyline placement is approved, inside the transaction
- * that flips it to approved: `parentPostId` is the placement's target and `postId` the
- * continuation from its payload. Touches Postgres only, through `db`, so it is safe inside that
- * transaction; a refusal throws a 400 and rolls the approval back.
+ * Called inside the transaction that flips a storyline placement to approved (`settlePlacement`'s
+ * `inTransaction`); a refusal throws a 400 and rolls the approval back. Postgres only, through
+ * `db`.
  *
  * Idempotent on `placementId`: a replay returns the chapter the first call wrote, with
- * `created: false`. Concurrent approvals of one placement are serialised by the placement
- * layer's status flip, so only one call gets this far. An expired, declined or removed placement
- * never calls this, so it writes nothing.
+ * `created: false`.
  */
 export async function writeChapterEdgeForPlacement(
   {
@@ -412,9 +402,7 @@ export async function writeChapterEdgeForPlacement(
 
 /**
  * Whether `placerId` may continue the chapter that is `parentPostId`, for the placement layer at
- * submission and for `writeChapterEdgeForPlacement` at approval. Throws a 400 when the post is
- * not a chapter of a live storyline, when the storyline's owner or the chapter's author and the
- * placer are in a block, or when only collaborators may continue and the placer is not one.
+ * submission and for `writeChapterEdgeForPlacement` at approval; throws a 400 otherwise.
  * Postgres only, through `db`. Closing a storyline to everyone (mode 'off') is the placement
  * layer's own check.
  */
@@ -471,10 +459,6 @@ export async function isOpenStorylineChapter(postId: number, placerId: number) {
     () => false
   );
 }
-
-// ---------------------------------------------------------------------------
-// Storyline writes
-// ---------------------------------------------------------------------------
 
 const isUniqueViolation = (error: unknown) =>
   typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
@@ -615,15 +599,22 @@ export async function updateStoryline({
  * made, for the title the moderator reviewed, and records that text so a scan of it, a redelivered
  * verdict included, does not take it down again. Refused if the title has changed since: the new
  * one was never reviewed. A moderator's own takedown is not lifted here, and keeps it down.
+ *
+ * A lift that leaves the storyline up also approves the owner's open appeal of the takedown, marked
+ * as a direct lift (`DIRECT_LIFT_APPEAL_REASON`) rather than a reviewed appeal. While a moderator's
+ * takedown still holds, the appeal stays open: approving it would say the story is back up.
+ * `leaveAppealOpen` is for a caller that rules on that appeal itself.
  */
 export async function moderateStorylineTitle({
   id,
   moderatorNsfwLevel,
   liftScanTakedown,
+  moderatorId,
 }: {
   id: number;
   moderatorNsfwLevel?: number | null;
-  liftScanTakedown?: { reviewedTitle: string };
+  liftScanTakedown?: { reviewedTitle: string; leaveAppealOpen?: boolean };
+  moderatorId?: number;
 }) {
   if (moderatorNsfwLevel != null && !isStorylineCeilingLevel(moderatorNsfwLevel))
     throw throwBadRequestError('Invalid rating');
@@ -680,10 +671,39 @@ export async function moderateStorylineTitle({
         `moderator-${Date.now()}`
       );
   }
-  return dbWrite.storyline.findUniqueOrThrow({
+  const result = await dbWrite.storyline.findUniqueOrThrow({
     where: { id },
     select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
   });
+  if (liftScanTakedown && !liftScanTakedown.leaveAppealOpen && !result.tosViolation)
+    await approveAppealOfDirectLift(id, moderatorId);
+  return result;
+}
+
+/**
+ * The lift has already landed, so a failure here is logged and not thrown: failing the request
+ * would send the moderator back to a lift that now answers "not taken down by its title scan".
+ * The appeal stays on the title-appeals page, where a grant with nothing left to lift closes it.
+ */
+async function approveAppealOfDirectLift(id: number, moderatorId?: number) {
+  try {
+    await resolveEntityAppeal({
+      ids: [id],
+      entityType: EntityType.Storyline,
+      status: AppealStatus.Approved,
+      resolvedReason: DIRECT_LIFT_APPEAL_REASON,
+      internalNotes: DIRECT_LIFT_APPEAL_NOTE,
+      userId: moderatorId,
+    });
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-lift-appeal-close',
+      type: 'error',
+      message: 'takedown lifted, but its open appeal was not closed',
+      storylineId: id,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
 }
 
 const storylineTakedownSelect = {
@@ -767,7 +787,11 @@ export async function resolveStorylineTitleAppeal({
   // With nothing left to lift (an edited title rescanned clean, or a lift elsewhere), a grant only
   // closes the appeal.
   const lifted = grant && storyline.tosViolationByScan;
-  if (lifted) await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
+  if (lifted)
+    await moderateStorylineTitle({
+      id,
+      liftScanTakedown: { reviewedTitle, leaveAppealOpen: true },
+    });
 
   const closed = await resolveEntityAppeal({
     ids: [id],
@@ -926,25 +950,39 @@ export async function addOwnerChapter({
   });
 }
 
-/** Makes one child the owner's main route out of its parent, replacing the previous one. */
+/**
+ * Makes one child the owner's main route out of its parent, replacing the previous one. A chapter
+ * with several parents needs `parentChapterId` to say which parent's route it becomes.
+ */
 export async function setCanonChapter({
   chapterId,
+  parentChapterId,
   userId,
   isModerator,
 }: {
   chapterId: number;
+  parentChapterId?: number;
   userId: number;
   isModerator?: boolean;
 }) {
-  const edge = await dbWrite.storylineChapterEdge.findFirst({
-    where: { chapterId },
+  const edges = await dbWrite.storylineChapterEdge.findMany({
+    where: { chapterId, parentChapterId },
     select: {
       parentChapterId: true,
       storylineId: true,
       chapter: { select: { removedAt: true } },
     },
+    take: 2,
   });
-  if (!edge) throw throwBadRequestError('The first chapter is always the main route');
+  const [edge] = edges;
+  if (!edge)
+    throw throwBadRequestError(
+      parentChapterId
+        ? 'That chapter does not continue from this one'
+        : 'The first chapter is always the main route'
+    );
+  if (edges.length > 1)
+    throw throwBadRequestError('This chapter continues several chapters: choose which one');
   await getOwnedStoryline({ storylineId: edge.storylineId, userId, isModerator });
   if (edge.chapter.removedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
@@ -960,6 +998,191 @@ export async function setCanonChapter({
       data: { canon: true },
     });
   });
+}
+
+const storylineEdges = (db: Db | typeof dbRead, storylineId: number) =>
+  db.storylineChapterEdge.findMany({
+    where: { storylineId },
+    select: { chapterId: true, parentChapterId: true },
+  });
+
+/**
+ * Takes the share lock on the live chapters among `ids`, held to the end of the transaction, and
+ * says which they are. A removal's update of one waits for it, and one that has already committed
+ * is not among them, so what is joined is live from here to the commit. In id order, so two
+ * writers locking the same chapters ask for them in the same order.
+ */
+export const lockLiveChapters = async (db: Db, ids: number[]) =>
+  (
+    await db.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "StorylineChapter"
+      WHERE id = ANY(${ids}::int[]) AND "removedAt" IS NULL
+      ORDER BY id
+      FOR SHARE
+    `
+  ).map((row) => row.id);
+
+/**
+ * Whether a chapter may be joined: the storyline's owner is shown it. The owner's view, not the
+ * one of whoever is asking, so a moderator choosing for them is offered, and refused, exactly what
+ * the owner would be. The picker and the link both ask this, so they cannot disagree.
+ */
+async function createChapterJoinable(storyline: {
+  userId: number;
+  maxNsfwLevel: number;
+  minorByScan: boolean;
+}) {
+  const viewer = { id: storyline.userId };
+  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const maxNsfwLevel = storylineCeiling(storyline);
+  return (chapter: {
+    removedAt: Date | null;
+    post: Parameters<typeof getStorylineChapterTombstone>[0]['post'];
+  }) =>
+    getStorylineChapterTombstone({
+      post: chapter.post,
+      removed: !!chapter.removedAt,
+      viewer,
+      maxNsfwLevel,
+      browsingLevel: allBrowsingLevelsFlag,
+      blockedUserIds,
+    }) === null;
+}
+
+/**
+ * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
+ * two branches rejoin at it. The chapter gains a parent and keeps its depth.
+ */
+export async function linkStorylineChapter({
+  parentChapterId,
+  chapterId,
+  userId,
+  isModerator,
+}: {
+  parentChapterId: number;
+  chapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  if (parentChapterId === chapterId) throw throwBadRequestError('A chapter cannot continue itself');
+  const parent = await dbWrite.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: { storylineId: true },
+  });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  const { storylineId } = parent;
+  await getOwnedStoryline({ storylineId, userId, isModerator });
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // The whole storyline, not the parent: two links judged at once could each pass the loop
+      // check alone and make a loop together.
+      await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE`;
+      const storyline = await tx.storyline.findUnique({
+        where: { id: storylineId },
+        select: { tosViolation: true, userId: true, maxNsfwLevel: true, minorByScan: true },
+      });
+      if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      // Before the reads below, so what they find stays true until the edge is written.
+      const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
+      const chapters = await tx.storylineChapter.findMany({
+        where: { id: { in: [parentChapterId, chapterId] }, storylineId },
+        select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+      });
+      const target = chapters.find((c) => c.id === chapterId);
+      if (chapters.length < 2 || !target || !storyline)
+        throw throwNotFoundError('Chapter not found');
+      if (live.length < 2 || chapters.some((c) => c.removedAt))
+        throw throwBadRequestError('A removed chapter cannot be joined');
+      if (target.depth === 0)
+        throw throwBadRequestError('The first chapter cannot continue another chapter');
+      if (!(await createChapterJoinable(storyline))(target))
+        throw throwBadRequestError('That chapter cannot be joined');
+      const judge = createStorylineLinkJudge(
+        await storylineEdges(tx, storylineId),
+        parentChapterId
+      );
+      const refusal = judge(chapterId);
+      if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
+
+      await tx.storylineChapterEdge.create({
+        data: {
+          storylineId,
+          chapterId,
+          parentChapterId,
+          canon: await takesCanonSlot(tx, parentChapterId),
+        },
+      });
+    });
+  } catch (error) {
+    // Until the rejoin migration is applied, the old one-parent index refuses a second parent.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+      throw throwBadRequestError('Joining chapters is not available yet');
+    throw error;
+  }
+}
+
+const STORYLINE_LINK_TARGETS_LIMIT = 100;
+
+/**
+ * The chapters `linkStorylineChapter` would accept from `parentChapterId`, for the owner's picker:
+ * the `STORYLINE_LINK_TARGETS_LIMIT` nearest the parent. Chapters the owner is shown a tombstone
+ * for are left out.
+ */
+export async function getStorylineLinkTargets({
+  parentChapterId,
+  userId,
+  isModerator,
+}: {
+  parentChapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const parent = await dbRead.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: { storylineId: true, removedAt: true, depth: true },
+  });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be joined');
+  const storyline = await getOwnedStoryline({
+    storylineId: parent.storylineId,
+    userId,
+    isModerator,
+  });
+  const viewer = { id: userId, isModerator };
+  const [chapters, edges, joinable, blockedUserIds] = await Promise.all([
+    dbRead.storylineChapter.findMany({
+      where: { storylineId: storyline.id, removedAt: null, depth: { gt: 0 } },
+      select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+      orderBy: [{ depth: 'asc' }, { id: 'asc' }],
+    }),
+    storylineEdges(dbRead, storyline.id),
+    createChapterJoinable(storyline),
+    getViewerExcludedIds(viewer),
+  ]);
+  const judge = createStorylineLinkJudge(edges, parentChapterId);
+  // The nearest to the parent first, ahead of it before behind: a rejoin is nearly always a few
+  // chapters on, so the cap keeps those and not the shallowest. The judging stops at the cap.
+  const nearest = chapters
+    .filter((chapter) => chapter.id !== parentChapterId && joinable(chapter))
+    .sort(
+      (a, b) =>
+        Math.abs(a.depth - parent.depth) - Math.abs(b.depth - parent.depth) ||
+        b.depth - a.depth ||
+        a.id - b.id
+    );
+  const accepted: typeof nearest = [];
+  for (const chapter of nearest) {
+    if (accepted.length === STORYLINE_LINK_TARGETS_LIMIT) break;
+    if (!judge(chapter.id)) accepted.push(chapter);
+  }
+  const targets = accepted
+    .sort((a, b) => a.depth - b.depth || a.id - b.id)
+    .map((chapter) => toPathChapter(chapter, chapter.post, null));
+  return withFirstImages(
+    getStorylineImageGate(viewer, allBrowsingLevelsFlag, blockedUserIds),
+    targets
+  );
 }
 
 export async function addStorylineCollaborator({
@@ -1014,17 +1237,12 @@ export async function removeStorylineCollaborator({
   await dbWrite.storylineCollaborator.deleteMany({ where: { storylineId, userId: targetUserId } });
 }
 
-// ---------------------------------------------------------------------------
-// Reads
-// ---------------------------------------------------------------------------
-
 /**
- * A storyline's header. Not found when it is hidden from this viewer, or when the story is
- * outside their browsing level: the title and cast belong to a story they could not open. The
- * story is judged by its first chapter, or by its ceiling when that chapter is gone or unrated.
+ * A storyline's header. Not found when it is hidden from this viewer or outside their browsing
+ * level (see `isStorylineOutsideLevel`): the title and cast belong to a story they could not
+ * open.
  *
- * The storyline's discussion is the comment thread of its first chapter's post (`rootPostId`);
- * a discussion separate from each chapter's own comments would need a schema change.
+ * The storyline's discussion is the comment thread of its first chapter's post (`rootPostId`).
  */
 export async function getStoryline({
   id,
@@ -1086,7 +1304,6 @@ export async function getStoryline({
       LEFT JOIN "Post" p ON p.id = c."postId"
       WHERE c."storylineId" = ${id}
     `,
-    // Everyone else credited, most visible chapters first.
     dbRead.$queryRaw<{ userId: number; chapterCount: number }[]>`
       SELECT c."userId", COUNT(*)::int AS "chapterCount" FROM "StorylineChapter" c
       JOIN "Post" p ON p.id = c."postId"
@@ -1125,7 +1342,6 @@ export async function getStoryline({
       })
     : [];
   const contributorById = new Map(contributorUsers.map((u) => [u.id, u]));
-  // Chapters this reader is shown, by author, as the credits count them.
   const chapterCountById = new Map(
     [...authors, ...castCounts].map((row) => [row.userId, row.chapterCount])
   );
@@ -1161,15 +1377,12 @@ export async function getStoryline({
     // a minor. The owner's own setting, for their settings form, is `ownerMaxNsfwLevel`.
     maxNsfwLevel: storylineCeiling({ maxNsfwLevel: rest.maxNsfwLevel, minorByScan }),
     ownerMaxNsfwLevel: isOwnerView ? rest.maxNsfwLevel : null,
-    // The banner: the owner's banner pick, else their cover pick, else chapter 1's first image,
-    // each only if this reader may see it. Never a hidden pick shown blurred.
+    // A pick this reader may not see falls through to the next, never shown blurred.
     heroImage: banner ?? chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
     // Whether heroImage is the banner pick, so the page shows it as a wide banner at its focus
     // rather than a portrait it must blur. Readers get no pick ids to compare.
     heroIsBanner: !!banner,
-    // The card's picture, as the feed shows it: the cover pick, else chapter 1's first image.
     coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
-    // The raw picks, for the owner's picker only.
     coverImageId: isOwnerView ? coverImageId : null,
     heroImageId: isOwnerView ? heroImageId : null,
     titleAppealable,
@@ -1208,6 +1421,85 @@ export async function getStoryline({
   };
 }
 
+/** A route's row, with its parents oldest link first. */
+type RouteRow = {
+  id: number;
+  postId: number | null;
+  depth: number;
+  removedAt: Date | null;
+  parentIds: number[];
+};
+
+/** Where other branches join a route: each chapter's parents other than the chapter before it. */
+async function getRouteJoins(
+  rows: RouteRow[],
+  tombstoneOf: (
+    post: StorylineChapterPost | null,
+    removed: boolean
+  ) => StorylineTombstoneReason | null
+) {
+  const joinIds = new Map<number, number[]>();
+  rows.forEach((row, i) => {
+    const others = i > 0 ? row.parentIds.filter((id) => id !== rows[i - 1].id) : [];
+    if (others.length) joinIds.set(row.id, others);
+  });
+  const joins = new Map<number, StorylinePathChapter[]>();
+  const ids = [...new Set([...joinIds.values()].flat())];
+  if (!ids.length) return joins;
+
+  const parents = await dbRead.storylineChapter.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+  });
+  const byId = new Map(
+    parents.map((p) => [p.id, toPathChapter(p, p.post, tombstoneOf(p.post, !!p.removedAt))])
+  );
+  for (const [id, parentIds] of joinIds)
+    joins.set(
+      id,
+      parentIds.flatMap((parentId) => byId.get(parentId) ?? [])
+    );
+  return joins;
+}
+
+/**
+ * A route's chapters with their numbers on it: `depth` counts from the route's first row, so a
+ * chapter with several parents is numbered by the way the reader came, not by its first parent.
+ */
+const onRoute = <T extends { depth: number }>(rows: RouteRow[], chapters: T[]) =>
+  chapters.map((chapter, i) => ({
+    ...chapter,
+    depth: (rows[0]?.depth ?? 0) + i,
+    parentCount: rows[i].parentIds.length,
+  }));
+
+/**
+ * The walk that defines a storyline's main route: from `rootChapterId`, each chapter's canon child
+ * in turn, at most `STORYLINE_PATH_LIMIT` chapters. Every reader of the main route goes through
+ * it, so the route the page draws and the one the viewer's rail marks are the same chapters.
+ */
+const canonRouteWalk = (rootChapterId: number) => Prisma.sql`
+    WITH RECURSIVE main AS (
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
+      FROM "StorylineChapter" c
+      WHERE c.id = ${rootChapterId}
+      UNION ALL
+      SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1
+      FROM main
+      JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+      JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
+      WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
+    )`;
+
+/** The chapters on the main route from `rootChapterId`, by id alone: no posts, images or counts. */
+async function getStorylineMainRouteIds(rootChapterId: number) {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    ${canonRouteWalk(rootChapterId)}
+    SELECT main.id FROM main
+  `;
+  return new Set(rows.map((row) => row.id));
+}
+
 /**
  * The owner's main route from the first chapter: each chapter's canon child in turn, at most
  * `STORYLINE_PATH_LIMIT` chapters, with tombstones as in the reading path and how many ways on
@@ -1231,27 +1523,29 @@ async function getStorylineMainPath({
   /** A caller reading other images for the same reader passes its own. */
   gate?: StorylineImageGateSource;
 }) {
-  const rows = await dbRead.$queryRaw<
-    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
-  >`
-    WITH RECURSIVE main AS (
-      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
-      FROM "StorylineChapter" c
-      WHERE c.id = ${rootChapterId}
-      UNION ALL
-      SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1
-      FROM main
-      JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-      JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
-      WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
-    )
-    SELECT id, "postId", depth, "removedAt" FROM main ORDER BY depth
+  const rows = await dbRead.$queryRaw<RouteRow[]>`
+    ${canonRouteWalk(rootChapterId)}
+    SELECT main.id, main."postId", main.depth, main."removedAt",
+      ARRAY(
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = main.id ORDER BY e."createdAt", e."parentChapterId"
+      )::int[] AS "parentIds"
+    FROM main ORDER BY hops
   `;
   if (!rows.length) return [];
 
   const chapterIds = rows.map((r) => r.id);
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const [posts, childCounts] = await Promise.all([
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
+      post,
+      removed,
+      viewer,
+      maxNsfwLevel: ceiling,
+      browsingLevel,
+      blockedUserIds,
+    });
+  const [posts, childCounts, joins] = await Promise.all([
     postIds.length
       ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: castChapterPostSelect })
       : [],
@@ -1260,29 +1554,22 @@ async function getStorylineMainPath({
       where: { parentChapterId: { in: chapterIds } },
       _count: { _all: true },
     }),
+    getRouteJoins(rows, tombstoneOf),
   ]);
   const postById = new Map(posts.map((p) => [p.id, p]));
   const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
 
   const route = rows.map((row) => {
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
-    const tombstone = getStorylineChapterTombstone({
-      post,
-      removed: !!row.removedAt,
-      viewer,
-      maxNsfwLevel: ceiling,
-      browsingLevel,
-      blockedUserIds,
-    });
-    const chapter = toPathChapter(row, post, tombstone);
+    const chapter = toPathChapter(row, post, tombstoneOf(post, !!row.removedAt));
     return {
       ...chapter,
-      // The author as the page's cast shows them, on a chapter the reader is shown.
       post: chapter.post && post ? { ...chapter.post, user: toCastUser(post.user) } : null,
       childCount: childCountById.get(row.id) ?? 0,
+      joins: joins.get(row.id) ?? [],
     };
   });
-  return withFirstImages(gate, route);
+  return withFirstImages(gate, onRoute(rows, route));
 }
 
 /**
@@ -1321,8 +1608,60 @@ export async function getStorylineCanonAhead({
 }
 
 /**
+ * Every chapter of a storyline and every link between them, for the Story page's map, with
+ * tombstones as in the reading path. At most `STORYLINE_GRAPH_LIMIT` chapters, nearest chapter 1
+ * first, so each one returned has its first parent too; `truncated` says there are more. Links
+ * come oldest first, only between chapters returned.
+ */
+export async function getStorylineGraph({
+  id,
+  viewer,
+  browsingLevel,
+}: {
+  id: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const { storyline, blockedUserIds } = await getStorylineForRead(id, viewer, browsingLevel);
+  const rows = await dbRead.storylineChapter.findMany({
+    where: { storylineId: id },
+    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+    orderBy: [{ depth: 'asc' }, { id: 'asc' }],
+    take: STORYLINE_GRAPH_LIMIT + 1,
+  });
+  const chapters = rows.slice(0, STORYLINE_GRAPH_LIMIT);
+  const ids = new Set(chapters.map((c) => c.id));
+  const edges = ids.size
+    ? await dbRead.storylineChapterEdge.findMany({
+        where: { storylineId: id, chapterId: { in: [...ids] } },
+        select: { chapterId: true, parentChapterId: true, canon: true },
+        orderBy: [{ createdAt: 'asc' }, { parentChapterId: 'asc' }],
+      })
+    : [];
+
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
+      post,
+      removed,
+      viewer,
+      maxNsfwLevel: storyline.maxNsfwLevel,
+      browsingLevel,
+      blockedUserIds,
+    });
+  return {
+    rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
+    chapters: await withFirstImages(
+      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
+      chapters.map((c) => toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)))
+    ),
+    edges: edges.filter((e) => ids.has(e.parentChapterId)),
+    truncated: rows.length > STORYLINE_GRAPH_LIMIT,
+  };
+}
+
+/**
  * Chapter ratings for the owner choosing a ceiling, so the settings can warn how many chapters a
- * lower one would hide. Owner and moderators only, and always as the owner sees the story: a
+ * lower one would hide. Judged as the owner sees the story: a
  * chapter the owner is shown as a tombstone (taken down, unpublished, by a banned author or one in
  * a block with them) is left out, its rating not theirs to see and not hidden by any ceiling.
  *
@@ -1384,9 +1723,9 @@ export async function getStorylineChapterLevels({
 }
 
 /**
- * Storyline membership for a page of posts, for the storyline pill on cards. One query for the
- * whole page. A post is left out when its storyline is hidden from this viewer or the post itself
- * is outside their browsing level, so the call cannot list stories the viewer could not open.
+ * Storyline membership for a page of posts, for the storyline pill on cards. A post is left out
+ * when its storyline is hidden from this viewer or the post itself is outside their browsing
+ * level, so the call cannot list stories the viewer could not open.
  */
 export async function getStorylinesForPosts({
   postIds,
@@ -1503,7 +1842,7 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   // reads are public, and the flag is a content classification.
   const {
     user: _user,
-    chapters: _chapters,
+    chapters: firstChapters,
     minorByScan,
     nsfwLevel: _nsfwLevel,
     moderatorNsfwLevel: _moderatorNsfwLevel,
@@ -1512,81 +1851,116 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   return {
     storyline: { ...rest, maxNsfwLevel: storylineCeiling({ ...rest, minorByScan }) },
     blockedUserIds,
+    /** Chapter 1, where the main route starts. */
+    rootChapterId: firstChapters[0]?.id ?? null,
   };
 }
 
 /**
  * The reading path ending at `chapterId`, in order. A chapter this reader may not see is a
- * tombstone carrying the reason, never an error, so the chapters after it stay reachable. v1
- * chapters have one parent, so the path is unique.
+ * tombstone carrying the reason, never an error, so the chapters after it stay reachable.
+ *
+ * A chapter where branches rejoin has several parents. The path takes the one in `via` (the way
+ * the reader came), else the oldest link, so a path is still one line; a `via` on no route to the
+ * chapter changes nothing. Each chapter's `joins` are the other parents, and `depth` is its place
+ * on this route.
  *
  * At most `STORYLINE_PATH_LIMIT` chapters, the ones nearest `chapterId`; `hasEarlier` says the
  * path starts further back, and the reader pages back by asking for the first chapter returned.
  */
 export async function getStorylinePath({
   chapterId,
+  via = [],
   viewer,
   browsingLevel,
 }: {
   chapterId: number;
+  via?: number[];
   viewer: Viewer;
   browsingLevel: number;
 }) {
   const target = await dbRead.storylineChapter.findUnique({
     where: { id: chapterId },
-    select: { storylineId: true, depth: true },
+    select: { storylineId: true },
   });
   if (!target) throw throwNotFoundError('Chapter not found');
-  const { storyline, blockedUserIds } = await getStorylineForRead(
+  const { storyline, blockedUserIds, rootChapterId } = await getStorylineForRead(
     target.storylineId,
     viewer,
     browsingLevel
   );
 
-  // Bounded by the target's depth and the window, so a corrupt edge cannot loop forever.
-  const maxHops = Math.min(target.depth, STORYLINE_PATH_LIMIT - 1);
-  const rows = await dbRead.$queryRaw<
-    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
-  >`
+  // Not bounded by the target's depth: a route through a longer branch exceeds its first-parent
+  // distance. The window and `seen` bound the walk.
+  const rows = await dbRead.$queryRaw<RouteRow[]>`
     WITH RECURSIVE path AS (
-      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops, ARRAY[c.id] AS seen
       FROM "StorylineChapter" c
       WHERE c.id = ${chapterId}
       UNION ALL
-      SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1
+      SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1, path.seen || p.id
       FROM path
-      JOIN "StorylineChapterEdge" e ON e."chapterId" = path.id
-      JOIN "StorylineChapter" p ON p.id = e."parentChapterId"
-      WHERE path.hops < ${maxHops}
+      CROSS JOIN LATERAL (
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = path.id
+        ORDER BY e."parentChapterId" = ANY(${via}::int[]) DESC, e."createdAt", e."parentChapterId"
+        LIMIT 1
+      ) pick
+      JOIN "StorylineChapter" p ON p.id = pick."parentChapterId"
+      WHERE path.hops < ${STORYLINE_PATH_LIMIT - 1} AND p.id <> ALL(path.seen)
     )
-    SELECT id, "postId", depth, "removedAt" FROM path ORDER BY depth
+    SELECT path.id, path."postId", path.depth, path."removedAt",
+      ARRAY(
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = path.id ORDER BY e."createdAt", e."parentChapterId"
+      )::int[] AS "parentIds"
+    FROM path ORDER BY hops DESC
   `;
 
-  const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const posts = postIds.length
-    ? await dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
-    : [];
-  const postById = new Map(posts.map((p) => [p.id, p]));
-
-  const chapters = rows.map((row) => {
-    const post = row.postId != null ? postById.get(row.postId) ?? null : null;
-    const tombstone = getStorylineChapterTombstone({
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
       post,
-      removed: !!row.removedAt,
+      removed,
       viewer,
       // Already the ceiling chapters are held to: `getStorylineForRead` applies it.
       maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
       blockedUserIds,
     });
-    return toPathChapter(row, post, tombstone);
+  const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
+  const [posts, childCounts, joins, mainRouteIds] = await Promise.all([
+    postIds.length
+      ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
+      : [],
+    rows.length
+      ? dbRead.storylineChapterEdge.groupBy({
+          by: ['parentChapterId'],
+          where: { parentChapterId: { in: rows.map((r) => r.id) } },
+          _count: { _all: true },
+        })
+      : [],
+    getRouteJoins(rows, tombstoneOf),
+    rootChapterId ? getStorylineMainRouteIds(rootChapterId) : new Set<number>(),
+  ]);
+  const postById = new Map(posts.map((p) => [p.id, p]));
+  const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
+
+  const chapters = rows.map((row) => {
+    const post = row.postId != null ? postById.get(row.postId) ?? null : null;
+    return {
+      ...toPathChapter(row, post, tombstoneOf(post, !!row.removedAt)),
+      childCount: childCountById.get(row.id) ?? 0,
+      joins: joins.get(row.id) ?? [],
+      // On the owner's main route, which the viewer's rail leaves uncoloured.
+      onMain: mainRouteIds.has(row.id),
+    };
   });
 
   return {
     storyline,
     chapters: await withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      chapters
+      onRoute(rows, chapters)
     ),
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
@@ -1602,6 +1976,7 @@ const childEdgeSelect = {
       createdAt: true,
       removedAt: true,
       post: { select: chapterPostSelect },
+      _count: { select: { parents: true } },
     },
   },
 } satisfies Prisma.StorylineChapterEdgeSelect;
@@ -1613,7 +1988,7 @@ const childEdgeSelect = {
  *
  * The canon child and collaborators' children are read on their own, so a parent with more
  * than `STORYLINE_CHILDREN_LIMIT` children still lists them first; the rest are the oldest up to
- * the limit. Readers are counted outside Postgres, so ordering by them happens here.
+ * the limit. Reader counts come from a separate cached read, so ordering by them happens here.
  */
 export async function getStorylineChildren({
   chapterId,
@@ -1689,6 +2064,7 @@ export async function getStorylineChildren({
     });
     return {
       ...toPathChapter(chapter, chapter.post, tombstone),
+      parentCount: chapter._count.parents,
       rank,
       readers: readers.get(chapter.id) ?? 0,
       createdAt: chapter.createdAt,
@@ -1704,14 +2080,10 @@ export async function getStorylineChildren({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Engagement: which way readers went, and who wants the "Create next section" tool
-// ---------------------------------------------------------------------------
-//
-// In Postgres, one row per signed-in reader: a reader counts once per fork point by their latest
-// choice, which is a primary key here. The direct ClickHouse writer skips every non-production
-// deployment (`isProductionDeployment`, src/server/services/blocks/block-event-ingest.service.ts:80),
-// so counts kept there would never move on a preview or dev deployment.
+// Reader counts live in Postgres: one row per signed-in reader, a reader counting once per fork
+// point by their latest choice, which is a primary key here. The direct ClickHouse writer skips
+// every non-production deployment (`isProductionDeployment`), so counts kept there would never
+// move on a preview or dev deployment.
 
 const forkCountsKey = (chapterId: number) =>
   `${REDIS_KEYS.CACHES.STORYLINE_FORK_COUNTS}:${chapterId}` as const;
@@ -1738,7 +2110,6 @@ export async function getStorylineReaderCounts(chapterId: number) {
   return new Map(await getForkCounts(chapterId));
 }
 
-/** Not found unless this reader can see the storyline `chapterId` belongs to. */
 async function assertStorylineReadableByChapter(
   chapterId: number,
   viewer: Viewer,
@@ -1756,7 +2127,7 @@ async function assertStorylineReadableByChapter(
 
 /**
  * How the readers who chose at the end of a chapter went: each way on's count and share, once
- * `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been made; below that, only the total.
+ * enough choices (`STORYLINE_SHARE_MIN_CHOICES`) have been made; below that, only the total.
  */
 export async function getStorylineForkShares({
   chapterId,
@@ -1802,7 +2173,7 @@ export async function recordStorylineBranchChoice({
   });
   // Written through rather than marked stale, so the reader's next read counts their choice even
   // when it loses the refill lock to a read beside it. The choice is saved by now: if the count
-  // cannot be read, mark the entry stale as before rather than fail the request.
+  // cannot be read, mark the entry stale rather than fail the request.
   const key = forkCountsKey(fromChapterId);
   try {
     await setFetchThroughCache(key, await readForkCounts(fromChapterId));
@@ -1821,7 +2192,7 @@ export async function recordStorylineBranchChoice({
 /**
  * A signed-in reader asked for the "Create next section" tool at the end of a chapter. Counted
  * once per reader per chapter (how many people want it, not how many clicks); signed-out clicks
- * are not counted in v1.
+ * are not counted.
  */
 export async function recordStorylineCreateClick({
   viewer,
@@ -1875,10 +2246,6 @@ export async function getStorylineEarlyAccessStats() {
   return { signups, createClickReaders: clicks?.readers ?? 0, createClicks: clicks?.clicks ?? 0 };
 }
 
-// ---------------------------------------------------------------------------
-// Discover
-// ---------------------------------------------------------------------------
-
 export type StorylineFeedCover = {
   id: number;
   url: string;
@@ -1892,7 +2259,6 @@ export type StorylineFeedCover = {
   poi: boolean;
 };
 
-/** What decides which storyline images one reader may be shown. */
 type StorylineImageGate = {
   viewer: Viewer;
   browsingLevel: number;
@@ -1940,11 +2306,8 @@ function getStorylineImageGate(
 }
 
 /**
- * An image this reader may be shown from a storyline chapter: scanned, not taken down or awaiting
- * review, rated, inside the reader's level and the story's ceiling, not one they hid and not
- * carrying a tag they hid or the site excludes at their level, never a minor or real-person image,
- * and not from a private post that is not theirs. Expects `i` (Image), `p` (its Post) and `st`
- * (the Storyline its chapter is in).
+ * An image this reader may be shown from a storyline chapter. Expects `i` (Image), `p` (its Post)
+ * and `st` (the Storyline its chapter is in).
  */
 function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
@@ -2093,13 +2456,13 @@ export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
 /**
- * Storylines a reader may open, newest or with most chapters first. Hidden ones (taken down,
- * banned or deleted owner, an owner the reader blocked, was blocked by or hid) are left out, and
- * so is a story outside the reader's browsing level, judged as everywhere else by its first
- * chapter (or its ceiling when that chapter is gone or unrated).
+ * Storylines a reader may open, newest or with most chapters first. Hidden ones and stories
+ * outside the reader's browsing level are left out, judged as everywhere else (see
+ * `isStorylineHidden`, `isStorylineOutsideLevel`).
  *
- * "open" means accepting continuations: the placement layer's mode for the storyline, falling
- * back to its owner's and then to the default 'review', is not 'off'.
+ * "open" means accepting continuations from this reader: not Complete, the placement layer's
+ * mode (the storyline's, else its owner's, else 'review') not 'off', and the reader among those
+ * it takes them from.
  */
 export async function getStorylinesInfinite({
   filter,
@@ -2289,13 +2652,10 @@ export async function getStorylinesInfinite({
         // The ceiling chapters are held to, which the card's rating chip shows.
         maxNsfwLevel: storylineCeiling({ maxNsfwLevel: row.maxNsfwLevel, minorByScan }),
         user: ownerById.get(userId) ?? { id: userId, username },
-        // The owner's pick when this reader may see it, else chapter 1's first image they may.
         coverImage:
           chosen(row.id, coverImageId) ??
           (row.rootPostId != null ? covers.get(row.rootPostId) ?? null : null),
-        // What the "open" filter means, per card: the storyline accepts continuations and this
-        // reader is among those it takes them from (its owner counts, as in the filter). A
-        // Complete storyline takes none, whatever its space says, as the placement layer reads it.
+        // The "open" filter, per card (its owner counts, as in the filter).
         open: row.status !== 'Complete' && space.mode !== 'off' && mayContinue,
         // In Buzz, what a continuation costs now; null when the space is unpriced or the owner's
         // cap could not be read.

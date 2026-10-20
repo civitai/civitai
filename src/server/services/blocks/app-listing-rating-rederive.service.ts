@@ -8,6 +8,10 @@ import {
   resolveReDerivedListingRating,
 } from '~/server/services/blocks/app-listing-rating';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import {
+  listListingIdsWithRedSlotImage,
+  readListingMediaSplit,
+} from '~/server/services/blocks/listing-media-split.service';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { appDeclaredListingRating } from '~/shared/utils/listing-rating-display';
 
@@ -63,8 +67,9 @@ export async function reDeriveListingRatingInTx(
 ): Promise<ReDeriveOutcome | null> {
   // The row lock stops the assets read below gaining an image before the write: every writer
   // that can ADD one to a live listing's asset set either updates this row (icon, cover, a
-  // revision apply) or inserts a screenshot whose foreign key takes a share lock on it. A
-  // removal takes no lock, but it only shrinks the set, so a stale read errs toward keeping
+  // revision apply), inserts a screenshot whose foreign key takes a share lock on it, or sets a
+  // civitai.red override slot, which takes a key-share lock on it first (`writeListingRedSlot`).
+  // A removal takes no lock, but it only shrinks the set, so a stale read errs toward keeping
   // the rating.
   // It is also the authority on "live": a listing that left `approved`, or a shadow
   // revision, matches nothing and is left to its own approve to rate.
@@ -100,6 +105,7 @@ export async function reDeriveListingRatingInTx(
     reratedImageId: args.imageId,
     previousNsfwLevel: args.previousNsfwLevel,
     reviewedRating: await readReviewedRating(tx, args.appListingId),
+    mediaSplit: await readListingMediaSplit(tx, args.appListingId),
   });
   if (after == null) return null;
 
@@ -123,7 +129,7 @@ export async function reDeriveListingRatingInTx(
 
 /**
  * A moderator set an image's level: bring the rating of every live listing that uses the
- * image (as icon, cover or screenshot) back in line with it. See `resolveReDerivedListingRating` for when a rating may move, and in which direction.
+ * image (as icon, cover, screenshot or civitai.red icon / cover override) back in line with it. See `resolveReDerivedListingRating` for when a rating may move, and in which direction.
  *
  * Never throws. Each listing gets its own transaction; a failure leaves that one listing
  * exactly as it was and is logged. The caller's image write has already committed and must
@@ -148,7 +154,15 @@ export async function reDeriveListingRatingsForModeratedImage(
       },
       select: { id: true },
     });
-    for (const { id: appListingId } of candidates) {
+    // The overrides live outside `app_listings`; `reDeriveListingRatingInTx` itself skips any
+    // that is not a live, non-shadow listing.
+    const ids = [
+      ...new Set([
+        ...candidates.map((c) => c.id),
+        ...(await listListingIdsWithRedSlotImage(dbWrite, args.imageId)),
+      ]),
+    ];
+    for (const appListingId of ids) {
       try {
         const outcome = await dbWrite.$transaction((tx) =>
           reDeriveListingRatingInTx(tx, { ...args, appListingId })

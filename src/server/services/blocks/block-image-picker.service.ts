@@ -37,6 +37,7 @@ export async function getBlockPickablePostedImages({
   limit,
   cursor,
   toDate,
+  publicOnly,
 }: GetBlockPickablePostedImagesInput & { userId: number; browsingLevel: number }): Promise<{
   items: PostedPickableImage[];
   nextCursor?: number;
@@ -52,7 +53,7 @@ export async function getBlockPickablePostedImages({
   const rows = await dbRead.image.findMany({
     select: postedPickableSelect,
     where: {
-      ...postedPickableWhere(userId, browsingLevel),
+      ...postedPickableWhere(userId, browsingLevel, { publicOnly }),
       ...(maxId !== undefined ? { id: { lte: maxId } } : {}),
     },
     take: limit + 1,

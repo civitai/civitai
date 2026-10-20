@@ -34,6 +34,7 @@ export function assertQuotedFee(quotedFee: number, actualFee: number) {
 export type CreatorShopFeesInput = {
   submission?: Partial<Record<string, number>>;
   pack?: number;
+  mysteryPack?: number;
 };
 
 // Read-before-write (dbKV reads the primary) so setting one type's fee can't drop the rest.
@@ -45,6 +46,7 @@ export async function setCreatorShopFees(
   const next = normalizeCreatorShopFees({
     submission: { ...current.submission, ...input.submission },
     pack: input.pack ?? current.pack,
+    mysteryPack: input.mysteryPack ?? current.mysteryPack,
   });
   await dbKV.set(KEY_VALUE_KEYS.CREATOR_SHOP_FEES, next);
   // A log failure must not fail the caller: the row is already changed, and a 500 here

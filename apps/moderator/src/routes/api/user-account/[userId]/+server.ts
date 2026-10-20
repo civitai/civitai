@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
+import { listGrantableBoxes } from '$lib/server/mystery-box-builder.service';
 import {
   getAvailableBadges,
   getBounties,
@@ -9,6 +10,7 @@ import {
   getComments,
   getCommentsV2,
   getCosmetics,
+  getGrantedBoxes,
   getReceivedReviews,
   getReviews,
   getTrainingRuns,
@@ -34,6 +36,8 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bountyEntries,
     shopPurchases,
     availableBadges,
+    grantedBoxes,
+    grantableBoxes,
   ] = await Promise.all([
     getReviews(userId),
     getReceivedReviews(userId),
@@ -45,6 +49,8 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getBountyEntries(userId),
     getShopPurchases(userId),
     getAvailableBadges(userId),
+    getGrantedBoxes(userId),
+    listGrantableBoxes(),
   ]);
 
   return json({
@@ -58,5 +64,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bountyEntries,
     shopPurchases,
     availableBadges,
+    grantedBoxes,
+    grantableBoxes,
   });
 };

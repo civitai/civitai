@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import type { Sql } from '@prisma/client/runtime/library';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PostService from '~/server/services/post.service';
@@ -67,6 +67,17 @@ import {
 } from '~/server/services/post-planner.service';
 
 const DAY = 86_400_000;
+
+// Pin the clock. The fixtures below are `Date.now()` plus whole days, so they inherit the wall
+// clock's UTC minute, and the schedule validator refuses any time on :00 ("lands exactly on the
+// hour") — an unpinned run started in the first minute of any hour failed every move to `target`.
+// Only `Date` is faked; timers and promises stay real. Pinned before the fixtures are built.
+const NOW = new Date('2026-03-10T12:34:00.000Z');
+vi.useFakeTimers({ toFake: ['Date'], now: NOW });
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 const OWNER = { id: 7, onboarding: 0xff, muted: false } as ProtectedContext['user'];
 // Release moves run the real `model.publish` / `modelVersion.publish` procedures, so the context
 // carries what their middleware reads: the origin flag, the scope, the user.

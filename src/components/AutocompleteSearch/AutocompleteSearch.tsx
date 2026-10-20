@@ -26,9 +26,8 @@ import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 import { withUserHydration } from '~/components/Search/userHydration';
-import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
   shouldRefineSearchQuery,
@@ -80,11 +79,7 @@ import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
 type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   onClear?: VoidFunction;

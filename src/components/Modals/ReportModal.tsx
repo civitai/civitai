@@ -31,7 +31,6 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { getDisplayName } from '~/utils/string-helpers';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
@@ -185,6 +184,23 @@ const reports = [
   },
 ];
 
+/**
+ * The dialog's title. Names the entity from `reportEntityLabels`, never `getDisplayName`, which
+ * leaves camelCase half-split ("Report service Offering"); see the note on `reportEntityLabels`.
+ */
+export const reportModalTitle = ({
+  entityType,
+  selected,
+  placementTarget,
+}: {
+  entityType: ReportEntity;
+  selected: { key: string; label: string } | null;
+  placementTarget?: ReportModalProps['placementTarget'];
+}) =>
+  selected?.key === 'sticker-placement' && placementTarget === 'comment'
+    ? 'Report this note'
+    : selected?.label ?? `Report ${reportEntityLabels[entityType]}`;
+
 /** The reasons offered for an entity, in display order. */
 export const reportOptionsFor = (entityType: ReportEntity) =>
   reports.filter(({ availableFor }) => availableFor.includes(entityType));
@@ -237,10 +253,7 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title =
-    selected?.key === 'sticker-placement' && placementTarget === 'comment'
-      ? 'Report this note'
-      : selected?.label ?? `Report ${getDisplayName(entityType)}`;
+  const title = reportModalTitle({ entityType, selected, placementTarget });
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
   const queryUtils = trpc.useUtils();

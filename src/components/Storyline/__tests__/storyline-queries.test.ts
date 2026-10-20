@@ -11,6 +11,7 @@ import {
   useStorylineCanonAhead,
   useStorylineEarlyAccess,
   useStorylineForkShares,
+  useStorylinePathLanes,
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
 
@@ -29,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   invalidateShares: vi.fn(),
   setStatusData: vi.fn(),
   canonAheadQuery: vi.fn(),
+  graphQuery: vi.fn(),
+  graphData: undefined as unknown,
   canonAheadData: undefined as unknown[] | undefined,
   canonAheadLoading: false,
   childrenByChapter: {} as Record<number, unknown[]>,
@@ -48,6 +51,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.forkSharesQuery(input, opts);
             return { data: undefined };
+          },
+        },
+        'storyline.getGraph': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.graphQuery(input, opts);
+            return { data: mocks.graphData, isLoading: false };
           },
         },
         'storyline.getCanonAhead': {
@@ -94,7 +103,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
       },
       {
-        // Records which chapters the drawer reads children for, and answers from childrenByChapter.
         useQueries: (
           build: (t: { storyline: { getChildren: (input: unknown) => unknown } }) => unknown[]
         ) => {
@@ -152,6 +160,8 @@ beforeEach(() => {
   mocks.childrenReads = [];
   mocks.hiddenUsers = [];
   mocks.canonAheadQuery.mockClear();
+  mocks.graphQuery.mockClear();
+  mocks.graphData = undefined;
   mocks.joinMutateAsync.mockReset();
   mocks.joinMutateAsync.mockResolvedValue(undefined);
   mocks.branchMutate.mockReset();
@@ -350,5 +360,62 @@ describe('useStorylineCanonAhead', () => {
     expect(result.current.ahead.map((c) => [c.chapterId, c.tombstone, c.post])).toEqual([
       [5, 'unavailable', null],
     ]);
+  });
+});
+
+describe('useStorylinePathLanes', () => {
+  // Trunk 1, then a branch 2 -> 3 off it, beside the canon chapter 4.
+  const graph = {
+    rootChapterId: 1,
+    chapters: [1, 2, 3, 4].map((chapterId) => ({
+      chapterId,
+      depth: 0,
+      tombstone: null,
+      post: { id: chapterId, title: null, userId: 1, username: 'u' },
+    })),
+    edges: [
+      { chapterId: 4, parentChapterId: 1, canon: true },
+      { chapterId: 2, parentChapterId: 1, canon: false },
+      { chapterId: 3, parentChapterId: 2, canon: true },
+    ],
+    truncated: false,
+  };
+  const main = [
+    { chapterId: 1, onMain: true },
+    { chapterId: 4, onMain: true },
+  ];
+  const branch = [
+    { chapterId: 1, onMain: true },
+    { chapterId: 2, onMain: false },
+    { chapterId: 3, onMain: false },
+  ];
+
+  it('does not read the graph for a reader on the main route', () => {
+    mocks.graphData = graph;
+    const lanes = renderHook(() => useStorylinePathLanes(5, main));
+    expect(mocks.graphQuery.mock.calls.map((c) => c[1])).toEqual([{ enabled: false }]);
+    expect(lanes.current.size).toBe(0);
+  });
+
+  it('reads the graph at the reader browsing level once the path leaves the main route', () => {
+    mocks.graphData = graph;
+    const lanes = renderHook(() => useStorylinePathLanes(5, branch));
+    expect(mocks.graphQuery.mock.calls).toEqual([[{ id: 5, browsingLevel: 7 }, { enabled: true }]]);
+    expect([...lanes.current]).toEqual([
+      [2, 1],
+      [3, 1],
+    ]);
+  });
+
+  it('colours nothing while the graph has not arrived', () => {
+    const lanes = renderHook(() => useStorylinePathLanes(5, branch));
+    expect(mocks.graphQuery.mock.calls.map((c) => c[1])).toEqual([{ enabled: true }]);
+    expect(lanes.current.size).toBe(0);
+  });
+
+  it('does not read with the flag off', () => {
+    mocks.storylines = false;
+    renderHook(() => useStorylinePathLanes(5, branch));
+    expect(mocks.graphQuery.mock.calls.map((c) => c[1])).toEqual([{ enabled: false }]);
   });
 });

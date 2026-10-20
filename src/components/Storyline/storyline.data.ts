@@ -17,7 +17,6 @@ export const isStorylineNotAvailable = (error: { message: string } | null | unde
 const showError = (title: string) => (error: { message: string }) =>
   showErrorNotification({ title, error: new Error(error.message) });
 
-/** The storyline's price, for its owner. */
 export function useStorylineSpace(
   storylineId: number,
   { enabled }: { enabled: boolean }
@@ -52,7 +51,6 @@ export function useStorylineSpace(
   };
 }
 
-/** What a contributor is told before submitting: the price, and whether they may continue. */
 export function useStorylineContinueTerms(
   parentPostId: number,
   { enabled }: { enabled: boolean }
@@ -118,7 +116,6 @@ export function useSubmitStorylineContinuation({
   };
 }
 
-/** The owner adding one of their own posts as the next chapter: no review, no price. */
 export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
@@ -139,7 +136,26 @@ export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => vo
   };
 }
 
-/** Continuations waiting on the viewer's storylines, one page at a time. */
+export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
+  isPending: boolean;
+  error: string | null;
+  mutate: (input: { parentChapterId: number; chapterId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.linkChapter.useMutation();
+  return {
+    isPending: mutation.isPending,
+    error: mutation.error?.message ?? null,
+    mutate: (input) =>
+      mutation.mutate(input, {
+        onSuccess: () => {
+          void utils.storyline.invalidate();
+          onSuccess();
+        },
+      }),
+  };
+}
+
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   unavailable: boolean;
   rows: StorylineQueueRow[];
@@ -165,7 +181,7 @@ export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   };
 }
 
-/** Accept or decline one continuation. Rejects with the server's message on refusal. */
+/** Rejects with the server's message on refusal. */
 export function useActOnStorylineContinuation(): {
   act: (input: { placementId: number; action: 'approve' | 'decline' }) => Promise<void>;
 } {
@@ -177,7 +193,6 @@ export function useActOnStorylineContinuation(): {
   };
 }
 
-/** What became of a submitted continuation, from the contributor's own list (read uncached). */
 export async function readSubmitOutcome(
   id: number,
   awaitingScan: boolean,

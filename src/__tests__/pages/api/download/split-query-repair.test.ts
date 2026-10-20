@@ -131,6 +131,9 @@ beforeEach(() => {
   mockGetFileForModelVersion.mockResolvedValue({
     status: 'success',
     url: REDIRECT_URL,
+    // Read by the route's sampled url-expiry log before it redirects.
+    urlExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    sizeKB: 1024,
     metadata: {},
     isDownloadable: true,
     published: true,

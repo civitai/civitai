@@ -27,7 +27,6 @@ import type {
   TagsPatchSchema,
   workflowIdSchema,
   workflowQuerySchema,
-  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
@@ -719,11 +718,23 @@ export async function deleteManyWorkflows({
 export async function updateWorkflow({
   workflowId,
   token,
+  throwOnError,
   ...body
-}: UpdateWorkflowRequest & { token: string; workflowId: string }) {
+}: UpdateWorkflowRequest & {
+  token: string;
+  workflowId: string;
+  /**
+   * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
+   * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
+   * resolves on an HTTP error, and the metadata writers have always treated a failed write as done.
+   */
+  throwOnError?: boolean;
+}) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  if (throwOnError && !response?.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
 }
 
@@ -831,22 +842,6 @@ export function throwOrchestratorFailure({
         error ?? new Error('orchestrator returned no data', { cause: error })
       );
   }
-}
-
-export async function updateManyWorkflows({
-  workflows,
-  token,
-}: {
-  workflows: z.infer<typeof workflowUpdateSchema>[];
-  token: string;
-}) {
-  const client = createOrchestratorClient(token);
-
-  await Promise.all(
-    workflows.map(({ workflowId, metadata }) =>
-      clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
-    )
-  );
 }
 
 export async function patchWorkflows({

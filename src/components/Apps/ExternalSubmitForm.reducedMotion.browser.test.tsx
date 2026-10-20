@@ -51,6 +51,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
         removeScreenshot: { useMutation: mutation },
+        setRedMedia: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },
@@ -72,7 +73,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
+  useCFImageUpload: () => ({
+    uploadToCF: vi.fn(),
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
 }));
 
 vi.mock('~/utils/notifications', () => ({

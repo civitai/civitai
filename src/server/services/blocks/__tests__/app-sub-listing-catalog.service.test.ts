@@ -791,4 +791,69 @@ describe('moderation of an off-site parent’s items', () => {
     ]);
     expect(items[0].parent).toEqual({ id: PARENT, slug: 'civitai-games', name: 'Games' });
   });
+
+  // The review's click-to-reveal decides on each image's level, so the queue must carry the
+  // level of the LIVE image and of the PROPOSED one separately — they are different images.
+  it('🔴 the queue carries the live and the proposed image’s own levels', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce([
+      {
+        ...itemRow({
+          imageId: CREATOR_IMAGE,
+          pendingTitle: 'Neon Drift 2',
+          pendingSubPath: 'neon-drift',
+          pendingImageId: CREATOR_IMAGE_2,
+          pendingSubmittedAt: new Date(VERSION),
+        }),
+        image: { url: 'live-key', nsfwLevel: 2 },
+        pendingImage: { url: 'proposed-key', nsfwLevel: 16 },
+        createdAt: new Date(VERSION),
+        moderatedAt: null,
+        parentListing: {
+          id: 'apl_ONSITE',
+          slug: 'custom-generators',
+          name: 'Gens',
+          kind: 'onsite',
+        },
+        author: { id: OWNER, username: 'owner', image: null },
+      },
+    ]);
+    const { items } = await listSubListingQueue({ view: 'queue', limit: 50 });
+    expect(items[0].live).toMatchObject({
+      imageId: CREATOR_IMAGE,
+      imageUrl: 'live-key',
+      imageNsfwLevel: 2,
+    });
+    expect(items[0].pending).toMatchObject({
+      imageId: CREATOR_IMAGE_2,
+      imageUrl: 'proposed-key',
+      imageNsfwLevel: 16,
+    });
+    // The level reaches the row only because the read asks for it — a mocked row would carry it
+    // either way, so the select is the half that proves the column is read.
+    const select = read.appSubListing.findMany.mock.calls.at(-1)?.[0]?.select;
+    expect(select?.image).toEqual({ select: { url: true, nsfwLevel: true } });
+    expect(select?.pendingImage).toEqual({ select: { url: true, nsfwLevel: true } });
+  });
+
+  it('a queue row without an image carries no level', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce([
+      {
+        ...itemRow({ status: 'pending' }),
+        image: null,
+        pendingImage: null,
+        createdAt: new Date(VERSION),
+        moderatedAt: null,
+        parentListing: {
+          id: 'apl_ONSITE',
+          slug: 'custom-generators',
+          name: 'Gens',
+          kind: 'onsite',
+        },
+        author: { id: OWNER, username: 'owner', image: null },
+      },
+    ]);
+    const { items } = await listSubListingQueue({ view: 'queue', limit: 50 });
+    expect(items[0].live.imageNsfwLevel).toBeNull();
+    expect(items[0].pending).toBeNull();
+  });
 });

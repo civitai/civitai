@@ -42,6 +42,8 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
+import type { JsonLengthMeter } from '~/server/schema/blocks/json-length';
 import { isUlidShaped, newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
 import {
@@ -61,7 +63,7 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
+import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -121,6 +123,8 @@ const APP_ROW_LIMIT = 1_000_000;
 // `STORED_SIZE_PROBE_SQL` below, and the units block in `app-storage.service`'s
 // `set` for the full measurements.
 const SHARED_VALUE_BYTE_CAP = 64 * 1024;
+const SHARED_VALUE_OVER_CAP_MESSAGE = 'value exceeds size cap';
+const SHARED_VALUE_UNSERIALIZABLE_MESSAGE = 'value is not serializable';
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
@@ -452,39 +456,36 @@ export const SHARED_REASON_MAX = 500;
 
 const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 
-/**
- * A JSON.stringify'd escape Postgres' jsonb input refuses: NUL (`\u0000`, error 22P05) or an
- * unpaired UTF-16 surrogate (`\ud800`–`\udfff`, error 22P02). Both were measured against
- * Postgres 18 through node-postgres with the stored-size probe's `::jsonb::text` cast, in a string
- * value, an object key and the title; a paired surrogate (an emoji), `\u0001` and the literal six
- * characters `\u0000` all store.
- *
- * JSON.stringify writes these as `\uXXXX` escapes (a paired surrogate is written raw; other
- * control characters are escaped too, hence the specific code points) and every literal backslash
- * as `\\`, so an escape preceded by an EVEN run of backslashes is a real character, while text
- * that spells `\u0000` serializes as `\\u0000` and is not matched.
- */
-const JSONB_UNSTORABLE_ESCAPE = /(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/;
 const JSONB_UNSTORABLE_MESSAGE = 'value contains a NUL character or an unpaired surrogate';
 
 /**
- * Whether a shared value holds text Postgres cannot store (NUL or an unpaired surrogate, at any
- * depth, in a value or an object key). Checks the value as JSON.stringify writes it, which is
- * how it is stored.
+ * One measure of a shared value, in a single bounded pass (`jsonLengthWithin`) over the value as
+ * JSON.stringify would write it, without building that string. Its work is bounded by the cap and
+ * by `measureJsonLength`'s value budget (half the cap).
  *
- * Runs before moderation so a value Postgres will refuse costs no moderation run: the jsonb cast
- * first fails at the stored-size probe, after the content-safety belt. A value JSON.stringify
- * cannot serialize (BigInt, a cycle) returns false here; the serialize guard in
- * `assertSharedValueSafeAndSerialize` refuses it.
+ * - `'over-cap'` — its JSON is longer than SHARED_VALUE_BYTE_CAP in UTF-8 bytes, the unit the cap
+ *   is enforced in, or it holds more values than that budget. Checked FIRST: an
+ *   over-cap value is refused for its size whatever else it holds. (The flag below only covers the
+ *   whole value when the measure finished, so it must never be read before this.)
+ * - `'unserializable'` — JSON.stringify would throw on it (a BigInt, a cycle, a throwing `toJSON`
+ *   or getter) before passing the cap.
+ * - `'unstorable'` — within the cap, but it holds text Postgres' jsonb input refuses: a NUL (error
+ *   22P05) or an unpaired UTF-16 surrogate (error 22P02), at any depth, in a value or an object
+ *   key. Both were measured against Postgres 18 through node-postgres with the stored-size probe's
+ *   `::jsonb::text` cast, in a string value, an object key and the title; a paired surrogate (an
+ *   emoji), `\u0001` and the literal six characters `\u0000` all store.
+ * - `'ok'` otherwise.
+ *
+ * Exported for its tests; `meter` exposes the pass's work to them.
  */
-function hasJsonbUnstorableText(value: unknown): boolean {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    return false;
-  }
-  return serialized !== undefined && JSONB_UNSTORABLE_ESCAPE.test(serialized);
+export function measureSharedValue(
+  value: unknown,
+  meter: JsonLengthMeter = { visits: 0, chars: 0, scanned: 0 }
+): 'ok' | 'over-cap' | 'unserializable' | 'unstorable' {
+  const measured = measureJsonLength([value], SHARED_VALUE_BYTE_CAP, { unit: 'utf8', meter });
+  if (measured === 'over') return 'over-cap';
+  if (measured === 'unserializable') return 'unserializable';
+  return meter.nulOrLoneSurrogate ? 'unstorable' : 'ok';
 }
 
 // Structured append payload (design M3: title ≤200, body ≤ few KB).
@@ -512,14 +513,17 @@ function hasJsonbUnstorableText(value: unknown): boolean {
 // content-safety belt.
 //
 // The refine refuses text Postgres cannot store, before the request reaches the write budget
-// or moderation — see `hasJsonbUnstorableText`.
+// or moderation — see `measureSharedValue`. An over-cap value passes it and is refused with
+// PAYLOAD_TOO_LARGE by `assertSharedValueSafeAndSerialize`, as before.
 export const sharedValueInput = z
   .object({
     title: z.string().min(1).max(SHARED_TITLE_MAX),
     body: z.string().max(SHARED_BODY_MAX).optional(),
     data: z.unknown().optional(),
   })
-  .refine((value) => !hasJsonbUnstorableText(value), { message: JSONB_UNSTORABLE_MESSAGE });
+  .refine((value) => measureSharedValue(value) !== 'unstorable', {
+    message: JSONB_UNSTORABLE_MESSAGE,
+  });
 
 // ── Shared READ surface (tRPC procedures + block REST adapters) ───────────────
 // The three functions below are the ONE implementation of every shared read.
@@ -1362,26 +1366,6 @@ async function withdrawSharedRowUnmetered(
 }
 
 /**
- * The item's store card (an app sub-listing) follows an in-app withdraw or moderator hide,
- * from the server, so the store never depends on the app to clean up. Best-effort: the
- * shared-storage write has already committed in the apps database.
- */
-async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void> {
-  try {
-    const { syncSubListingForSharedRow } = await import(
-      '~/server/services/blocks/app-sub-listing.service'
-    );
-    await syncSubListingForSharedRow(args);
-  } catch (err) {
-    logToAxiom({
-      name: 'app-sub-listing-shared-sync-failed',
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
-  }
-}
-
-/**
  * User report (design M5). Files a shared_kv_reports row for mod review. Requires
  * the write scope + trust gate (only eligible users can report, to bound report
  * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
@@ -1887,10 +1871,19 @@ async function assertSharedValueSafeAndSerialize(params: {
 }> {
   const { schema, slug, appBlockId, uid, subjectUser, value } = params;
 
-  // The schema refuses this already; repeated here, BEFORE the belt, so a caller that skips the
-  // schema still cannot spend a moderation run on a value Postgres will refuse.
-  if (hasJsonbUnstorableText(value)) {
+  // BEFORE the belt, and before anything serializes the value: the size cap, then text Postgres
+  // will refuse (the schema refuses that already; repeated so a caller that skips the schema still
+  // cannot spend a moderation run on it), then a value JSON.stringify would throw on. Measured on the shape that is stored below — the belt
+  // returns title and body unchanged — so the verdict is the one the serialized value gets.
+  const verdict = measureSharedValue(storedShape(value.title, value.body, value.data));
+  if (verdict === 'over-cap') {
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: SHARED_VALUE_OVER_CAP_MESSAGE });
+  }
+  if (verdict === 'unstorable') {
     throw new TRPCError({ code: 'BAD_REQUEST', message: JSONB_UNSTORABLE_MESSAGE });
+  }
+  if (verdict === 'unserializable') {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: SHARED_VALUE_UNSERIALIZABLE_MESSAGE });
   }
 
   let safe: { title: string; body?: string };
@@ -1920,20 +1913,18 @@ async function assertSharedValueSafeAndSerialize(params: {
     throw e;
   }
 
-  const storedValue = {
-    title: safe.title,
-    ...(safe.body != null ? { body: safe.body } : {}),
-    ...(value.data !== undefined ? { data: value.data } : {}),
-  };
+  // Serialized only now that it is known to be within the cap.
   let serialized: string;
   try {
-    serialized = JSON.stringify(storedValue);
+    serialized = JSON.stringify(storedShape(safe.title, safe.body, value.data));
   } catch {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+    throw new TRPCError({ code: 'BAD_REQUEST', message: SHARED_VALUE_UNSERIALIZABLE_MESSAGE });
   }
+  // The cap in its defining unit, on the exact string that is stored. `measureSharedValue` has
+  // already applied it to the same shape.
   const byteSize = Buffer.byteLength(serialized, 'utf8');
   if (byteSize > SHARED_VALUE_BYTE_CAP) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: SHARED_VALUE_OVER_CAP_MESSAGE });
   }
 
   // `data` moderation (see `shared-data-moderation.ts` for the modes). Runs AFTER the title/body
@@ -1964,6 +1955,15 @@ async function assertSharedValueSafeAndSerialize(params: {
     });
   }
   return { serialized, byteSize, moderation: { mode, readStoredData } };
+}
+
+/** The stored form of a shared value: `body` and `data` only when present. */
+function storedShape(title: string, body: string | undefined, data: unknown) {
+  return {
+    title,
+    ...(body != null ? { body } : {}),
+    ...(data !== undefined ? { data } : {}),
+  };
 }
 
 /**

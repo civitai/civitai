@@ -24,6 +24,7 @@ import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.servi
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -2011,10 +2012,15 @@ export async function republishOwnListing(opts: {
     // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
     // safe: tame media can never lower a deliberately higher declaration, and an
     // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
+    // An owner republish never grants a split; it keeps one a moderator granted, exactly as
+    // an image re-rate does. An icon or cover raised above PG-13 since then does not end it:
+    // civitai.com shows the placeholder / another image and `sfw-slot-mature` tells the
+    // author, and the listing stays on civitai.com.
     const flooredRating = await resolveListingRatingFloorInTx(
       tx,
       input.appListingId,
-      listing.contentRating
+      listing.contentRating,
+      await readListingMediaSplit(tx, input.appListingId)
     );
     const ratingChange = {
       slug: listing.slug,

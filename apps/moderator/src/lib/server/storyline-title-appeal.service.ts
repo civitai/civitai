@@ -14,7 +14,6 @@ export type StorylineTitleAppealRow = {
   tosViolationByModerator: boolean;
 };
 
-/** Open storyline appeals, oldest first. */
 export async function getStorylineTitleAppeals({
   limit,
   offset = 0,
@@ -40,8 +39,8 @@ export async function getStorylineTitleAppeals({
 }
 
 /**
- * The main app lifts the takedown for the title the moderator was shown; a title edited since is
- * refused there and the appeal stays open.
+ * `reviewedTitle` is the title the moderator was shown, not a fresh read: the main app refuses a
+ * grant for a title edited since.
  */
 export async function resolveStorylineTitleAppeal(
   storylineId: number,

@@ -106,8 +106,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
-  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys, in SHADOW: scan
-  // after the write commits and record what would have been blocked, without rejecting anything.
+  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys — the legacy
+  // shared-storage surface and the document store's shared writes alike — in SHADOW: scan after
+  // the write commits and record what would have been blocked, without rejecting anything.
   // Same submit/apply split as the XGuard pair above. DEFAULT-OFF.
   //
   // 🔴 EVALUATED PER APP — entityId = the app block id, NO context — so ramp by boolean, by
@@ -115,7 +116,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // context-reading segment (moderators, testers, any cohort) matches nothing here and returns the
   // base value. See `shared-data-moderation.ts`.
   APP_BLOCKS_SHARED_DATA_MODERATION = 'app-blocks-shared-data-moderation',
-  // ENFORCE: reject a hit inline, with the title/body belt's consequences. Implies the scan — with
+  // ENFORCE: reject a hit inline (legacy surface: with the title/body belt's consequences; document
+  // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
@@ -206,6 +208,24 @@ export enum FLIPT_FEATURE_FLAGS {
   // the section, so a rolled-back pod would find the production snapshot unservable.
   // Boolean only.
   RESOURCE_INTENT_COOC_CHECKPOINT_SECTION = 'resource-intent-cooc-checkpoint-section',
+
+  // Runs build-resource-intent-tag-index (the weekly v1 content-tag index build). DEFAULT-OFF. Turn
+  // it on only after the ResourceIntentVocabulary and ResourceIntentTagIndexSnapshot migrations, and
+  // 20261106120000_resource_intent_tag_index_snapshot_payload_cap (without it every production build
+  // refuses before reading anything), are applied in that environment, a vocabulary is frozen, and the
+  // build's env and grants are in place (docs/resource-intent-primitive.md, "v1 content tags").
+  // Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_BUILD = 'resource-intent-tag-index-build',
+
+  // Lets a pod hold the v1 tag index in memory (resource-intent-tags/holder.ts). DEFAULT-OFF: off,
+  // an unknown flag or an unreachable Flipt holds nothing, reads no snapshot, and drops one already
+  // held. On, each pod whose request path asks for the index downloads and keeps the newest ready
+  // snapshot (about 780 MiB per pod decoded at full coverage, October 2026, and about twice that
+  // while reloading; docs/resource-intent-primitive.md, "Holder"), so turn it
+  // on only once a ready snapshot exists and the pods that will serve it have
+  // RESOURCE_INTENT_TAG_INDEX_BUCKET, its RESOURCE_INTENT_TAG_INDEX_B2_* credentials and the memory.
+  // Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_HOLDER = 'resource-intent-tag-index-holder',
 
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).

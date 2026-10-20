@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import type { MantineThemeOverride } from '@mantine/core';
 import { MantineProvider, Modal } from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -113,7 +114,10 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function render(element: React.ReactElement) {
+function render(
+  element: React.ReactElement,
+  { theme, env = 'test' }: { theme?: MantineThemeOverride; env?: 'test' | 'default' } = {}
+) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -122,7 +126,7 @@ function render(element: React.ReactElement) {
       React.createElement(
         MantineProvider,
         // No transitions, so the dropdown is there as soon as it opens.
-        { env: 'test' },
+        { env, theme },
         // Anything above the card that listens for clicks, like a feed's row handler.
         React.createElement('div', { onClick: outerClick, onKeyDown: outerKeyDown }, element)
       )
@@ -451,6 +455,72 @@ describe('a hat not worn on content', () => {
     });
     expect(outerKeyDown).toHaveBeenCalledTimes(1);
     expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+  });
+});
+
+// The app theme sets Popover to render in place, and `env: 'test'` renders every Popover in place
+// too, so the rest of this file cannot see a dropdown that a clipping parent crops: the home block
+// is `overflow: hidden` and cut the popover at its edge.
+describe('under the app theme, outside the test env', () => {
+  it('draws the popover outside a clipping parent', async () => {
+    const { theme } = await import('~/providers/ThemeProvider');
+    render(
+      React.createElement(
+        'div',
+        { 'data-testid': 'clip', style: { overflow: 'hidden' } },
+        React.createElement(
+          FeedCard,
+          {
+            href: '/images/5',
+            eventDecoration: HAT,
+            eventDecorationOn: { entityType: 'Image', entityId: 5 },
+          } as React.ComponentProps<typeof FeedCard>,
+          React.createElement('span', null, 'card body')
+        )
+      ),
+      { theme, env: 'default' }
+    );
+    clickHat();
+    // Outside the test env the dropdown takes its transition to mount.
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    expect(popover()).not.toBeNull();
+    expect(document.querySelector('[data-testid="clip"]')!.contains(popover())).toBe(false);
+  });
+
+  // The popover now sits outside the Modal's DOM, so the Escape arms above need this one to hold.
+  it('still closes only the popover, then the Modal it hangs from, on two Escapes', async () => {
+    const closeModal = vi.fn();
+    const { theme } = await import('~/providers/ThemeProvider');
+    render(
+      React.createElement(
+        Modal,
+        { opened: true, onClose: closeModal, title: 'Picker' },
+        React.createElement(
+          FeedCard,
+          {
+            href: '/images/5',
+            eventDecoration: HAT,
+            eventDecorationOn: { entityType: 'Image', entityId: 5 },
+          } as React.ComponentProps<typeof FeedCard>,
+          React.createElement('span', null, 'card body')
+        )
+      ),
+      { theme, env: 'default' }
+    );
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    clickHat();
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    expect(popover()).not.toBeNull();
+    const escape = () =>
+      act(() => {
+        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+    await escape();
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    expect(popover()).toBeNull();
+    expect(closeModal).not.toHaveBeenCalled();
+    await escape();
+    expect(closeModal).toHaveBeenCalledTimes(1);
   });
 });
 

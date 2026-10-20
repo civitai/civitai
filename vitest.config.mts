@@ -242,19 +242,17 @@ const unitTestConfig = {
     // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
     // load into one chunk, paid once for the run.
     //
-    // 🔴 The list is confined to packages NOTHING mocks, and that is load-bearing rather than
-    // conservative. Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory
-    // that returns only named exports stops satisfying its consumers:
+    // 🔴 A MOCKED package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory that returns only
+    // named exports stops satisfying its consumers, and the file collects zero tests:
     //   Error: [vitest] No "default" export is defined on the "redis" mock.
-    // The `importOriginal` form does NOT protect against this — it guards a different failure
-    // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
-    // here takes four mock-holding files from 92 tests passing to 7 collected.
+    // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
+    // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
+    // below are mocked this way.
     //
-    // Before adding a package, check `vi.mock('<pkg>'` across `src`, `scripts` and `test` returns
-    // nothing — a subpath form (`vi.mock('pg/lib/x')`) counts. `packages/*` and `apps/*` run under
+    // Before adding a package, find its `vi.mock('<pkg>'` callers across `src`, `scripts` and
+    // `test` — a subpath form (`vi.mock('pg/lib/x')`) counts. `packages/*` and `apps/*` run under
     // their own configs, so their mocks (e.g. `pg` in packages/civitai-db) do not see this list.
-    // Excluded on those grounds: `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, which need
-    // `default` added to their mock factories first.
     //
     // 🔴 A zero-mocker package can still be unsafe, for a SECOND reason: a package that loads a
     // non-JS SIDECAR at runtime breaks when it is relocated. `@electric-sql/pglite` passes the
@@ -332,6 +330,9 @@ const unitTestConfig = {
           'superjson',
           'htmlparser2',
           '@discordjs/rest',
+          'redis',
+          '@aws-sdk/client-s3',
+          '@aws-sdk/lib-storage',
         ],
       },
     },

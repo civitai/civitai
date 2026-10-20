@@ -5,6 +5,8 @@ import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type Krea3AspectRatio = NonNullable<Krea3ImageGenInput['aspectRatio']>;
+// The client's union predates Ultra ('instant' | 'medium'); the orchestrator is what accepts 'ultra'.
+type Krea3ThinkingMode = Krea3ImageGenInput['thinkingMode'];
 
 export const createKrea3Input = defineHandler<EcosystemData<'Krea3'>, [ImageGenStepTemplate]>(
   (data) => [
@@ -16,7 +18,7 @@ export const createKrea3Input = defineHandler<EcosystemData<'Krea3'>, [ImageGenS
           prompt: data.prompt ?? '',
           quantity: data.quantity ?? 1,
           resolution: data.resolution,
-          thinkingMode: data.thinkingMode,
+          thinkingMode: data.thinkingMode as Krea3ThinkingMode,
           aspectRatio: data.aspectRatio?.value as Krea3AspectRatio | undefined,
         }),
         // Required even for text-to-image, where it is empty.

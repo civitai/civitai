@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { deserialize, enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -21,12 +22,15 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { unwiredRulingReason } from '$lib/restriction-types';
-  import { originSummary, sourceState } from '$lib/restrictions/origin';
+  import { sourceState } from '$lib/restrictions/origin';
+  import { countNotBlocking, planRecheck, type Recheck } from '$lib/restrictions/recheck';
+  import { groupRepeats } from '$lib/restrictions/trigger-groups';
   import { rulingLabel } from '$lib/restrictions/verdict-label';
   import type { RemixSource, RestrictionRow } from '$lib/server/user-restriction.service';
   import type { Outcome } from '$lib/triage/queue';
   import StatusBadge from './StatusBadge.svelte';
   import TriageTriggerCard from './TriageTriggerCard.svelte';
+  import TriggerSummary from './TriggerSummary.svelte';
 
   type Verdict = 'Upheld' | 'Overturned';
 
@@ -61,15 +65,49 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  const summary = $derived(originSummary(row.triggers));
+  const groups = $derived(groupRepeats(row.triggers));
   const pending = $derived(row.status === 'Pending');
   // The server refuses these rows too; this only stops the moderator being invited to click a control
   // whose one possible outcome is a 400.
   const unwiredReason = $derived(unwiredRulingReason(row.type));
   const name = $derived(row.username ?? `#${row.userId}`);
 
+  // Fetched on open, per restriction: `load` does not re-run when the selection changes.
+  let rechecks = $state<Record<number, Recheck | 'loading' | 'failed'>>({});
+  const recheck = $derived(rechecks[row.id]);
+  const notBlocking = $derived(typeof recheck === 'object' ? countNotBlocking(recheck) : 0);
+  const needsRecheck = $derived(planRecheck(row.triggers).inputs.length > 0);
+
+  $effect(() => {
+    const id = row.id;
+    if (!needsRecheck || untrack(() => rechecks[id])) return;
+    rechecks[id] = 'loading';
+    const body = new FormData();
+    body.set('userRestrictionId', String(id));
+    fetch(actionHref('recheck'), {
+      method: 'POST',
+      body,
+      headers: { 'x-sveltekit-action': 'true' },
+    })
+      .then(async (res) => {
+        const result = deserialize(await res.text());
+        rechecks[id] =
+          result.type === 'success' && result.data?.recheck
+            ? (result.data.recheck as Recheck)
+            : 'failed';
+      })
+      .catch(() => (rechecks[id] = 'failed'));
+  });
+
   const selected = new SvelteSet<string>();
-  const toggle = (key: string) => (selected.has(key) ? selected.delete(key) : selected.add(key));
+  // A repeat group is one card: ticking it ticks every attempt in it, and the form still posts each key.
+  const toggle = (keys: string[]) => {
+    const all = keys.every((k) => selected.has(k));
+    for (const k of keys) {
+      if (all) selected.delete(k);
+      else selected.add(k);
+    }
+  };
 
   const flag = new FormState({
     // The server's count: it drops any trigger that no longer exists.
@@ -187,9 +225,6 @@
         {/if}
         · <a href={userLookupUrl(row.username ?? row.userId)} class={LINK_CLASS}>User lookup</a>
       </p>
-      {#if summary.verdict}
-        <p class="m-0 text-base font-medium text-white">{summary.verdict}</p>
-      {/if}
       {#if unwiredReason && pending}
         <p
           class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200"
@@ -199,19 +234,38 @@
       {/if}
     </header>
 
+    {#if row.triggers.length > 1}
+      <TriggerSummary
+        triggers={row.triggers}
+        recheck={typeof recheck === 'object' ? recheck : undefined}
+      />
+    {/if}
+
+    {#if notBlocking > 0}
+      <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+        {notBlocking} of {row.triggers.length}
+        {row.triggers.length === 1 ? 'trigger' : 'triggers'} would not block under the current word
+        list. They were likely warnings counted toward the mute.
+      </div>
+    {/if}
+
     <div class="space-y-4">
-      {#each row.triggers as trigger, i (trigger.key)}
+      {#each groups as group (group.triggers[0].key)}
+        {@const trigger = group.triggers[0]}
         {@const sourceId = trigger.origin?.remix?.imageId ?? trigger.remixOfId}
         <TriageTriggerCard
-          {trigger}
-          index={i}
-          total={row.triggers.length}
+          repeats={group.triggers}
+          index={group.start}
           {civitaiUrl}
           source={sourceId ? sources[sourceId] : undefined}
           sourceState={sourceId
             ? sourceState(sourceId, { sources, failed: sourcesFailed, notLoaded: sourcesNotLoaded })
             : undefined}
-          selected={selected.has(trigger.key)}
+          recheck={typeof recheck === 'object' && recheck.byKey[trigger.key] !== undefined
+            ? recheck.results[recheck.byKey[trigger.key]]
+            : undefined}
+          recheckStatus={recheck === 'loading' || recheck === 'failed' ? recheck : undefined}
+          selected={group.triggers.every((r) => selected.has(r.key))}
           onToggle={toggle}
         />
       {/each}

@@ -46,6 +46,11 @@ replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
 
+ChatMessage, Comment, CommentV2, UserProfile, Post and Model also list `csam`, asked only while its
+gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
+in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
+workflow per window.
+
 ### Model rules
 
 `ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
@@ -109,7 +114,25 @@ only, so a Model rule can only be managed on `/text-scan/model-rules`.
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
 the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
-(a storyline title appeal is on Storylines > Title Appeals); text scan adds no queue of its own.
+(a storyline title appeal is on Storylines > Title Appeals).
+
+`csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
+and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
+same text adds nothing; changed text adds a new row. A chat window adds nothing when the sender's
+newest Pending hold in that chat, or the newest decided one, already covered every message in it.
+A verdict requested in `review` is held even if the gate turned off before it landed. The scam, Post
+and Model adapters write the hold before their own action. A failed hold write is logged as an error and fails the callback before
+that action runs, so the row is marked Failed and the retry cron rescans it; the action has not run,
+so it is not applied twice. Moderators work the holds on the moderator
+app's CSAM text holds queue; see [text-scan-csam-holds.md](text-scan-csam-holds.md).
+
+Every moderator ruling on a Model's `minor` or `poi` flag that carries a text-scan verdict (keep,
+lift, confirm, revert, appeal, held-detection keep or dismiss) is also recorded in the label store, in
+the same transaction as the ruling: family `text_scan`, questions `text_scan.model.minor` /
+`text_scan.model.poi`, values `flag` / `clear`, with the scanned text when it is unchanged
+(`text-scan/label-capture.ts`; see `docs/features/label-store.md`). A flag with no verdict records
+nothing, and a store that is missing, refuses or is slow never fails the ruling: the label is dropped
+and logged.
 
 ## Modes
 
@@ -176,6 +199,16 @@ is a per-label field, set with `putLabelModes` (`{ "action": "putLabelModes", "l
 `"auto"` removes it) and returned by `getPrompts` as `labelModes`. See
 [minor-detection-review.md](minor-detection-review.md).
 
+`csam` has its own field in the same hash, with modes `off` and `review` only; it never acts on its
+own, so `putLabelModes` refuses `auto` for it. A missing or unreadable field reads as `off`. While
+it is off, every scan drops `csam` from the profile's labels before prompts are looked up and the
+content hash is computed, so no `label:csam` prompt is needed and no hash changes; switching it to
+`review` changes the hash of the profiles that list it, and each of those entities is rescanned once.
+`putLabelModes` refuses `review` until an active `label:csam` prompt exists; if one goes missing
+later, scans drop `csam` alone (logged as a missing prompt) and keep the other labels. A shadow scan
+never asks for `csam`, since only an active verdict reaches the adapter that holds it.
+A harness `labels` override is never filtered. `getPrompts` returns it as `csamMode`.
+
 ## Comparing with the existing systems
 
 Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `system` = `text-scan`
@@ -207,7 +240,10 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
   (`sampleShadow`). `scanEntity` and `scanTexts` also take lab-only `ruleOverrides` (a positive id
-  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it). A scan
+  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it).
+  `batchEntities` and `scanTexts` take an optional `labels` list that replaces the profile's labels,
+  so a label no profile requests yet can be scanned; a label without a prompt row or override comes
+  back as that item's missing-prompt error. A scan
   returns the `system` prompt it sent and, for `ModelRules`, the `rules` listed and the
   `literalRuleIds`; `batchEntities` and `scanTexts` return `{ results, system, rules, ... }`, carrying
   `system` and `rules` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a

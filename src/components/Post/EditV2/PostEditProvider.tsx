@@ -58,6 +58,9 @@ type State = {
   post?: PostDetailEditable;
   images: ControlledImage[];
   isReordering: boolean;
+  /** A title from Apply preset, for the post form to take only if its field is still empty. */
+  presetTitle: string | null;
+  setPresetTitle: (title: string | null) => void;
   collectionId?: number | null;
   collectionTagId: number | null;
   collectionItemExists?: boolean;
@@ -96,6 +99,8 @@ const createContextStore = (post?: PostDetailEditable) => {
             data: { ...data, index },
           })) ?? [],
         isReordering: false,
+        presetTitle: null,
+        setPresetTitle: (presetTitle) => set({ presetTitle }),
         collectionId: post?.collectionId,
         collectionTagId: post?.collectionTagId ?? null,
         collectionItemExists: post?.collectionItemExists,
@@ -166,10 +171,7 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
  */
 export function usePendingSave(key: string, debouncer: Debouncer) {
   const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
-  useEffect(
-    () => registerPendingSave(key, debouncer.flush),
-    [registerPendingSave, key, debouncer]
-  );
+  useEffect(() => registerPendingSave(key, debouncer.flush), [registerPendingSave, key, debouncer]);
 }
 // #endregion
 

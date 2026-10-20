@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+/** Hand-made team assignments, as sysRedis answers getUserTeam's per-user field read. */
+const assignTeams = (teams: Record<string, string>) =>
+  redisMock.sysRedis.hGet.mockImplementation(
+    async (_key: string, field: string) => teams[field] ?? null
+  );
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
@@ -200,7 +206,7 @@ describe('event registration', () => {
     // Team = seeded PRNG over (name + userId) indexing the teams array. If this changes after
     // launch, every participant changes team. Do not "update the expected values" to make it
     // pass: find out what moved the name, the seed or the array.
-    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    assignTeams({});
     const teams = await Promise.all(GOLDEN_USER_IDS.map((id) => birthday2026.getUserTeam(id)));
     expect(teams).toEqual(GOLDEN_TEAMS);
   });
@@ -210,7 +216,7 @@ describe('event registration', () => {
   // only; if you are adding the date, the flag or the preview to it, the hats testers bought
   // become the wrong colour at launch.
   it('assigns the same team during the preview, at launch and after, whatever the flag says', async () => {
-    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    assignTeams({});
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const moments = [
@@ -565,7 +571,7 @@ describe('join', () => {
   });
 
   it('grants the team cosmetic under the join claimKey at the window edges', async () => {
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue' });
+    assignTeams({ '7': 'Blue' });
     const first = await join(BIRTHDAY_2026_STARTS_AT);
     const last = await join(new Date(BIRTHDAY_2026_ENDS_AT.getTime() - 1));
 
@@ -578,7 +584,7 @@ describe('join', () => {
 
   it('reports a repeat join as not joined, with the cosmetic actually held', async () => {
     // Joined as Blue, since reassigned to Pink by hand.
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
+    assignTeams({ '7': 'Pink' });
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ cosmeticId: 22 }]);
     expect(await join(BIRTHDAY_2026_STARTS_AT)).toEqual({
@@ -591,7 +597,7 @@ describe('join', () => {
 
 describe('join team lookup', () => {
   it('refuses to join when the manual team assignments cannot be read', async () => {
-    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('ECONNREFUSED'));
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(
       eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT)
     ).rejects.toThrow('ECONNREFUSED');
@@ -609,7 +615,9 @@ describe('join balancing', () => {
   beforeEach(() => {
     lua = createLuaRedis(0);
     redisMock.sysRedis.eval.mockImplementation(lua.eval);
-    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => lua.hash(key) ?? {});
+    redisMock.sysRedis.hGet.mockImplementation(
+      async (key: string, field: string) => lua.hash(key)?.[field] ?? null
+    );
     lua.setHash(keys.list, { '7': '500', '8': '400', '9': '300', '10': '200' });
     // Not joined yet: no team cosmetic held.
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
@@ -617,7 +625,7 @@ describe('join balancing', () => {
   // clearAllMocks keeps implementations, and later describes expect the default sysRedis.
   afterEach(() => {
     redisMock.sysRedis.eval.mockReset();
-    redisMock.sysRedis.hGetAll.mockReset();
+    redisMock.sysRedis.hGet.mockReset();
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   });
 
@@ -816,7 +824,7 @@ describe('scoring behind the flag', () => {
 
   it('lets a tester join during the preview, and nobody else', async () => {
     testerFlag.reset({ public: false, testers: [7] });
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue', '8': 'Blue' });
+    assignTeams({ '7': 'Blue', '8': 'Blue' });
     expect(await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, PREVIEW)).toMatchObject({
       joined: true,
     });

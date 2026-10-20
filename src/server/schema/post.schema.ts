@@ -8,6 +8,7 @@ import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -151,6 +152,7 @@ export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
     cursor: z.union([z.number(), z.string()]).optional(),
+    jumpTo: jumpToMonthSchema.optional(),
     query: z.string().optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
@@ -403,6 +405,8 @@ export const scheduleBatchImageSchema = addPostImageSchema
   .extend({ url: z.string().uuid() });
 
 export const scheduleBatchPostSchema = z.object({
+  /** Stable for one post across every attempt to create it, so a retry is recognised. */
+  clientKey: z.string().uuid().optional(),
   title: z.string().trim().max(255).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
@@ -410,7 +414,8 @@ export const scheduleBatchPostSchema = z.object({
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
 export const scheduleBatchSchema = z.object({
-  /** One per chunk per attempt; the server refuses a repeat so a re-sent request cannot double-post. */
+  /** One per chunk per attempt; the server refuses a repeat. Superseded by `posts[].clientKey`,
+   *  kept for bundles that predate it. */
   idempotencyKey: z.string().uuid().optional(),
   modelVersionId: z.number().int().positive().nullish(),
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),

@@ -26,6 +26,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-search-filter';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -159,7 +160,9 @@ export function ModelsHitList() {
 
   // Must stay above every early return below — a hook called after one changes the hook
   // count between the loading and loaded renders (React error #310).
-  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+  const itemIds = (items as { id: number }[]).map((x) => x.id);
+  const salesByModelId = useModelSaleBadges(itemIds);
+  useEngagedModelsPrefetch(itemIds);
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Model' });
 
   if (hits.length === 0) {

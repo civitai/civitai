@@ -10,13 +10,13 @@
   import { dateTime, num } from '$lib/format';
   import {
     CREATOR_SCORE_GRANT_DAILY_CAP,
-    CREATOR_SCORE_GRANT_MAX_AMOUNT,
     CREATOR_SCORE_GRANT_REASON_MAX,
     type CreatorScoreGrantResult,
   } from '$lib/creator-score-grant';
   import { fetchCreatorScoreGrants } from './creator-score-grants';
 
-  let { userId }: { userId: number } = $props();
+  // The page passes the larger ceiling to holders of `user.creatorScore.grantLarge`.
+  let { userId, maxAmount }: { userId: number; maxAmount: number } = $props();
 
   let amount = $state('');
   let reason = $state('');
@@ -32,7 +32,7 @@
 
   const amountValue = $derived(Number(amount));
   const amountValid = $derived(
-    Number.isInteger(amountValue) && amountValue >= 1 && amountValue <= CREATOR_SCORE_GRANT_MAX_AMOUNT
+    Number.isInteger(amountValue) && amountValue >= 1 && amountValue <= maxAmount
   );
 
   // reload: the Reputation panel's score comes from the page load. reset: false: the inputs are bound
@@ -82,7 +82,7 @@
   <h3 class="mb-1 text-sm font-semibold text-white">Grant Creator Score</h3>
   <p class="mb-3 text-xs text-dark-2">
     Adds points to this account's Creator Score as "Staff awarded", which the owner sees in their
-    score breakdown. They do not see the reason. Up to {num(CREATOR_SCORE_GRANT_MAX_AMOUNT)} points per
+    score breakdown. They do not see the reason. Up to {num(maxAmount)} points per
     grant, at most {CREATOR_SCORE_GRANT_DAILY_CAP} grants per moderator per day. A revoke takes the points
     back; a tier the grant already earned stays earned.
   </p>
@@ -115,7 +115,7 @@
         name="amount"
         type="number"
         min={1}
-        max={CREATOR_SCORE_GRANT_MAX_AMOUNT}
+        max={maxAmount}
         step={1}
         bind:value={amount}
         class="mt-1"

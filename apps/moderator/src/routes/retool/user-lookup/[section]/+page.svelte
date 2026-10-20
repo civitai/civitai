@@ -4,7 +4,10 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import { fetchAccountLinks } from '../account-links';
+  import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
+  import LinkedAccountsPanel from '../LinkedAccountsPanel.svelte';
   import BountiesPanel from '../BountiesPanel.svelte';
   import BuzzBalances from '../BuzzBalances.svelte';
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
@@ -30,7 +33,12 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
+  import {
+    CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
+    CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  } from '$lib/creator-score-grant';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -50,6 +58,9 @@
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
+  const links = $derived(
+    browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
+  );
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -80,8 +91,14 @@
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
-      <AddressesPanel {signals} accountId={result.identity.id} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
+      <LinkedAccountsPanel {links} accountId={result.identity.id} />
+      <AddressesPanel {signals} />
+      <AccountHistoryPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel
@@ -131,6 +148,7 @@
         userId={result.identity.id}
         canAct={data.canAct}
         canGrantCosmetics={!!data.grants['user.cosmetics.grant']}
+        canGrantBoxes={!!data.grants['items.boxes.grant']}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'generation'}
@@ -175,7 +193,12 @@
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
       {#if data.grants['user.creatorScore.grant']}
-        <CreatorScoreGrantPanel userId={result.identity.id} />
+        <CreatorScoreGrantPanel
+          userId={result.identity.id}
+          maxAmount={data.grants['user.creatorScore.grantLarge']
+            ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+            : CREATOR_SCORE_GRANT_MAX_AMOUNT}
+        />
       {/if}
     {:else if section === 'reports'}
       <ReportsPanel
@@ -208,11 +231,15 @@
         <UserChatMessages userId={result.identity.id} />
       {/if}
     {:else if section === 'notes'}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
     {:else if section === 'notifications'}
       <NotificationsPanel
         userId={result.identity.id}
-        canAct={data.canAct}
+        canAct={data.canStrike}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'mutes'}
@@ -225,6 +252,9 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
       />
+      {#if data.grants['user.removeReactions']}
+        <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
+      {/if}
     {/if}
   {/key}
 {/if}

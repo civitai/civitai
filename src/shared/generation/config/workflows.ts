@@ -30,6 +30,7 @@ import {
   viduVersionIds,
 } from '~/shared/generation/version-ids';
 import {
+  OUTPUT_USES,
   type WorkflowCategory,
   type WorkflowConfig,
   type WorkflowConfigs,
@@ -100,6 +101,7 @@ const TXT2IMG_IDS = [
   ECO.Flux3Klein_base,
   // Other image ecosystems
   ECO.Anima,
+  ECO.MossImage,
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
@@ -179,6 +181,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   txt2img: {
+    outputUses: OUTPUT_USES,
     label: 'Create Image',
     modeLabel: 'Text to Image',
     description: 'Generate an AI image from text',
@@ -189,6 +192,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'txt2img:draft': {
+    outputUses: OUTPUT_USES,
     label: 'Draft',
     description: 'Fast generation for quick iterations',
     category: 'image',
@@ -196,6 +200,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'txt2img:face-fix': {
+    outputUses: OUTPUT_USES,
     label: 'Create + Face Fix',
     modeLabel: 'Text to Image',
     description: 'Generate with automatic face correction',
@@ -204,6 +209,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'txt2img:hires-fix': {
+    outputUses: OUTPUT_USES,
     label: 'Create + Hires Fix',
     modeLabel: 'Text to Image',
     description: 'Generate with upscaling for higher detail',
@@ -212,6 +218,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   img2img: {
+    outputUses: OUTPUT_USES,
     label: 'Image Variations',
     description: 'Generate a variation of an existing image',
     category: 'image',
@@ -219,6 +226,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:edit': {
+    outputUses: OUTPUT_USES,
     label: 'Image to Image',
     description: 'Generate or edit using reference images',
     category: 'image',
@@ -227,6 +235,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:face-fix': {
+    outputUses: OUTPUT_USES,
     label: 'Image Face Fix',
     modeLabel: 'Image to Image',
     description: 'Fix faces in an existing image',
@@ -235,6 +244,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:hires-fix': {
+    outputUses: OUTPUT_USES,
     label: 'Image Hires Fix',
     modeLabel: 'Image to Image',
     description: 'Hires fix from an existing image',
@@ -247,6 +257,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   'img2img:upscale': {
+    outputUses: OUTPUT_USES,
     label: 'Upscale',
     description: 'Increase image resolution',
     category: 'image',
@@ -257,6 +268,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:remove-background': {
+    outputUses: OUTPUT_USES,
     label: 'Remove Background',
     description: 'Remove the background from an image',
     category: 'image',
@@ -268,6 +280,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2img:preprocess': {
+    outputUses: OUTPUT_USES,
     label: 'Control Preprocessor',
     description: 'Run a ControlNet preprocessor on an image (canny, openpose, depth, etc.)',
     category: 'image',
@@ -279,11 +292,25 @@ export const workflowConfigs: WorkflowConfigs = {
     isNew: true,
   },
 
+  'img2img:avatar': {
+    // Avatars depict a real person. The TOS allows generating their likeness, not posting it, and
+    // results aren't fed to other workflows or used for training either.
+    outputUses: [],
+    label: 'Avatar',
+    description: 'Turn a portrait photo into a stylized avatar',
+    category: 'image',
+    ecosystemIds: [],
+    isNew: true,
+    hideDetails: true,
+    sfwOnly: true,
+  },
+
   // ===========================================================================
   // Image Utility Workflows (Standalone, no generation)
   // ===========================================================================
 
   img2meta: {
+    outputUses: OUTPUT_USES,
     label: 'Extract Metadata',
     description: 'Extract generation parameters from an image',
     category: 'image',
@@ -296,6 +323,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   txt2vid: {
+    outputUses: OUTPUT_USES,
     label: 'Create Video',
     modeLabel: 'Text to Video',
     description: 'Generate video from text',
@@ -306,6 +334,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   img2vid: {
+    outputUses: OUTPUT_USES,
     label: 'Image to Video',
     description: 'Generate video from an image',
     category: 'video',
@@ -314,6 +343,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2vid:first-last': {
+    outputUses: OUTPUT_USES,
     label: 'First/Last Frame',
     description: 'Generate video from start and end images',
     category: 'video',
@@ -340,6 +370,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'img2vid:ref2vid': {
+    outputUses: OUTPUT_USES,
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
@@ -364,6 +395,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   'vid2vid:upscale': {
+    outputUses: OUTPUT_USES,
     label: 'Upscale',
     description: 'Increase video resolution',
     category: 'video',
@@ -372,6 +404,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'vid2vid:interpolate': {
+    outputUses: OUTPUT_USES,
     label: 'Interpolate',
     description: 'Smooth video by adding frames',
     category: 'video',
@@ -380,6 +413,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'vid2vid:preprocess': {
+    outputUses: OUTPUT_USES,
     label: 'Control Preprocessor',
     description: 'Run a ControlNet preprocessor on a video (canny, pose, depth, etc.)',
     category: 'video',
@@ -389,6 +423,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   'vid2vid:edit': {
+    outputUses: OUTPUT_USES,
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
@@ -417,6 +452,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   txt2music: {
+    outputUses: OUTPUT_USES,
     label: 'Create Music',
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
@@ -436,6 +472,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // `model3dGenerator`.
 
   txt2model3d: {
+    outputUses: OUTPUT_USES,
     label: 'Create 3D Model',
     modeLabel: 'Text to 3D',
     description: 'Generate a 3D model from a text prompt (PolyGen via Meshy)',
@@ -446,6 +483,7 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   img2model3d: {
+    outputUses: OUTPUT_USES,
     // Shares the `txt2model3d` label so the in-form title row reads the
     // same "Create 3D Model" regardless of the selected mode (mirrors the
     // Image segment, where txt2img/img2img both title as "Create Image").
@@ -468,6 +506,7 @@ export const workflowConfigs: WorkflowConfigs = {
   // ===========================================================================
 
   'prompt:enhance': {
+    outputUses: OUTPUT_USES,
     label: 'Enhance Prompt',
     description: 'Improve your prompt with AI suggestions',
     category: 'image',

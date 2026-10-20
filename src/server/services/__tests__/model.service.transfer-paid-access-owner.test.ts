@@ -353,6 +353,18 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect(order.indexOf('lag')).toBeLessThan(order.indexOf('del'));
   });
 
+  // Owner checks that read one version at a time (App Blocks `ownedModelVersions`) route on the
+  // 'modelVersion' key; flagging only 'model' leaves them reading the previous owner off a replica.
+  it("flags every transferred version under the 'modelVersion' key too", async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockPreventModelLag).toHaveBeenCalledWith('modelVersion', VERSION_IDS);
+  });
+
   it('moves DonationGoal.userId in the same transaction, on both target spellings', async () => {
     await transferModelOwnership({
       modelIds: MODEL_IDS,

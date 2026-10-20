@@ -616,8 +616,7 @@ export async function holdPlacementEscrow({
  * won the flip, with the row as it stood while pending. It is for a write that
  * must exist exactly when the new status does (a storyline approval's chapter
  * edge): a throw rolls the flip and the payout plan back, so the placement stays
- * pending and no money moves. A replay loses the flip and never runs it.
- * Postgres only, through `tx` (`no-io-in-transaction`).
+ * pending and no money moves. Postgres only, through `tx` (`no-io-in-transaction`).
  */
 export async function settlePlacement({
   placementId,

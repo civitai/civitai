@@ -28,6 +28,7 @@ import {
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -785,7 +786,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -868,7 +869,9 @@ export async function resolveMinorFlagAppeal({
     grantHashes[label] = hash;
   }
 
-  if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
+  // The sign-off only: the appeal's own upheld stamp below is the ruling.
+  if (upheld.includes('minor'))
+    await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({
@@ -921,7 +924,7 @@ export async function dismissMinorHashMatch({
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = COALESCE(meta, '{}'::jsonb)
+    SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object('minorHashDismissed', jsonb_build_object('at', now(), 'by', ${userId}))
     WHERE id = ${modelId}
   `;
@@ -1156,9 +1159,11 @@ export async function rollbackMinorHashAutoFlags({
 // The 30-day window hides an unreviewed flag from the queue; this makes that
 // durable. Kept as `source: 'auto'` on purpose — moderatorMinorSeedPredicate
 // excludes 'auto', so a flag no human ever looked at never becomes the seed for
-// further automated flags. No status filter on the Appeal check: any appeal at
-// all means a human already looked, so sweeping it up as "nobody objected"
-// would overwrite that decision with a presumption.
+// further automated flags. No status filter for an in-app appeal: any one at all
+// means a human already looked, so sweeping it up as "nobody objected" would
+// overwrite that decision with a presumption. A site-form appeal (category set) is
+// decided in a queue that rules on the unpublish, not the flag, so it holds the
+// sweep only while Pending.
 export async function acceptExpiredMinorAutoFlags({
   dryRun,
   limit,
@@ -1178,13 +1183,14 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
     `;
     return { accepted: row?.count ?? 0 };
   }
 
   const accepted = await dbWrite.$executeRaw`
-    UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb)
+    UPDATE "Model" SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object(${MINOR_HASH_ACCEPTED_KEY}, jsonb_build_object('at', now()))
     WHERE id IN (
       SELECT m.id
@@ -1197,6 +1203,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
       ORDER BY m.id
       LIMIT ${limit}

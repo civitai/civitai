@@ -10,8 +10,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as SessionClientModule from '~/server/auth/session-client';
 import type * as Moderation from '~/server/services/apps/shared-data-moderation';
+import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 import type { SharedTextScan } from '~/server/services/apps/shared-data-moderation';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
@@ -49,7 +52,47 @@ const h = vi.hoisted(() => ({
   users: new Map<number, unknown>(),
   runEnabled: true,
   authorEnabled: true,
+  /**
+   * The app's shared-data moderation mode, as the two per-app Flipt flags give it. The contract's
+   * moderation cases describe ENFORCE, so that is every test's default (reset in `beforeEach`).
+   */
+  moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
+  isFlipt: undefined as unknown as ReturnType<
+    typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
+  >,
+  /** ClickHouse inserts, captured only while a test sets `capture` (otherwise the real client). */
+  ch: { capture: false, inserts: [] as { table: string; values: unknown[] }[] },
 }));
+
+const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
+const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const real = await importOriginal<typeof FliptClient>();
+  h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
+    if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
+    if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
+    return real.isFlipt(flag, entityId, context as never);
+  });
+  return {
+    ...real,
+    isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+      h.isFlipt(flag, entityId, context),
+  };
+});
+vi.mock('~/server/clickhouse/client', async (importOriginal) => {
+  const real = await importOriginal<typeof ClickhouseClient>();
+  const capture = {
+    insert: async (args: { table: string; values: unknown[] }) => {
+      h.ch.inserts.push({ table: args.table, values: args.values });
+    },
+  };
+  return {
+    ...real,
+    get clickhouse() {
+      return h.ch.capture ? capture : real.clickhouse;
+    },
+  };
+});
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
@@ -62,6 +105,16 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
   sessionClient: { getSessionUserById: vi.fn(async (id: number) => h.users.get(id) ?? null) },
 }));
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
+// The App Store card sync is recorded at its entry point (its own effect on the card rows is
+// covered in `app-sub-listing.service.test.ts`).
+const cardSync = vi.hoisted(() => ({ calls: [] as unknown[], fail: false }));
+vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubListingService>()),
+  syncSubListingForSharedRow: vi.fn(async (args: unknown) => {
+    cardSync.calls.push(args);
+    if (cardSync.fail) throw new Error('store card sync unavailable');
+  }),
+}));
 // The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
@@ -70,10 +123,12 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
   const SECRET_LABEL = 'scanner-label-zq82';
   const verdict = (text: string): SharedTextScan => {
     if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
+    // The leaf is the scanned text, so a shadow record's `leafText` can be checked.
+    const leaf = { raw: text, path: 't', segments: ['t'], kind: 'value' as const };
     const hit = (category: 'audit_regex' | 'link') => ({
       leafCount: 1,
       overflow: null,
-      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf: null }],
+      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }],
     });
     if (text.includes('https://contract-blocked.example')) return hit('link');
     if (text.includes('contract-blocked-term')) return hit('audit_regex');
@@ -591,6 +646,9 @@ beforeEach(() => {
   publishRequests = [];
   h.runEnabled = true;
   h.authorEnabled = true;
+  h.moderationMode = 'enforce';
+  h.ch.capture = false;
+  h.ch.inserts = [];
   h.users.clear();
   for (const [name, v] of Object.entries(contract.viewers))
     h.users.set(VIEWER_IDS[name], user(name, v.trusted));
@@ -627,6 +685,8 @@ describe('the contract file', () => {
       index_building: 'declared indexes are backfilled inline; nothing raises it yet',
       cursor_expired: 'change feed, a later phase',
       internal_error: 'an unexpected fault; its own test below',
+      resource_not_owned:
+        'needs model-version rows the request table cannot express; the ownedModelVersions block below',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
@@ -1678,5 +1738,578 @@ describe('round 1: approved manifests, dot keys, CORS default, failures, deletes
     expect(lua.calls.length).toBe(evalsBefore);
     expect(vi.mocked(scanSharedData)).not.toHaveBeenCalled();
     expect(vi.mocked(scanCounterKey)).not.toHaveBeenCalled();
+  });
+});
+
+describe('the App Store card follows the author deleting a shared document', () => {
+  beforeEach(() => {
+    cardSync.calls = [];
+    cardSync.fail = false;
+  });
+  const put = (token: string, path: string) =>
+    call({ token, method: 'PUT', path, body: { data: { title: path } } });
+  const del = (token: string, path: string) => call({ token, method: 'DELETE', path });
+
+  it("withdraws the author's card for that key in that app", async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/posts/card-1')).status).toBe(200);
+    const out = await del(t, '/posts/card-1');
+    expect(out).toMatchObject({ status: 200, body: { deleted: true } });
+    expect(cardSync.calls).toEqual([
+      { appBlockId: A.id, itemKey: 'card-1', change: 'withdrawn', authorUserId: VIEWER_IDS.v1 },
+    ]);
+  });
+
+  it("another app's delete of the same key names only that app's card", async () => {
+    const { A, B } = freshApps();
+    const ta = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const tb = await mint({ app: B, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(ta, '/posts/card-2')).status).toBe(200);
+    expect((await put(tb, '/posts/card-2')).status).toBe(200);
+    expect((await del(tb, '/posts/card-2')).body).toEqual({ deleted: true });
+    expect(cardSync.calls).toEqual([
+      { appBlockId: B.id, itemKey: 'card-2', change: 'withdrawn', authorUserId: VIEWER_IDS.v1 },
+    ]);
+  });
+
+  it('a private document, a dev-namespace document and a delete that removed nothing leave cards alone', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/prefs/card-3')).status).toBe(200);
+    expect((await del(t, '/prefs/card-3')).body).toEqual({ deleted: true });
+    const dev = await mintDevReal(A, VIEWER_IDS.v1, contract.defaultScopes);
+    expect((await put(dev, '/posts/card-4')).status).toBe(200);
+    expect((await del(dev, '/posts/card-4')).body).toEqual({ deleted: true });
+    expect((await del(t, '/posts/never-written')).body).toEqual({ deleted: false });
+    expect(cardSync.calls).toEqual([]);
+    // Positive control: the same token's shared prod delete does sync.
+    expect((await put(t, '/posts/card-5')).status).toBe(200);
+    expect((await del(t, '/posts/card-5')).body).toEqual({ deleted: true });
+    expect(cardSync.calls).toHaveLength(1);
+  });
+
+  it('a failing card sync never fails the delete', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/posts/card-6')).status).toBe(200);
+    cardSync.fail = true;
+    expect(await del(t, '/posts/card-6')).toMatchObject({ status: 200, body: { deleted: true } });
+    expect(cardSync.calls).toHaveLength(1);
+    expect((await call({ token: t, method: 'GET', path: '/posts/card-6' })).status).toBe(404);
+  });
+});
+
+describe('ownedModelVersions: a manifest-declared ownership rule on document data', () => {
+  const POINTER = '/workflow/modelVersionId';
+  // Model version id → owner. Distinct from every viewer id, and from each other.
+  const V1_OWN = 4401;
+  const V1_OWN_2 = 4402;
+  const V2_OWN = 4403;
+  const V1_DELETED_MODEL = 4404;
+  const ruled = {
+    visibility: 'shared',
+    write: 'own',
+    marks: ['vote'],
+    counters: ['views'],
+    ownedModelVersions: [POINTER],
+  };
+  const MANIFEST_OWNED = {
+    scopes: contract.defaultScopes,
+    storage: {
+      collections: {
+        picks: ruled,
+        plain: { visibility: 'shared', write: 'own' },
+      },
+    },
+  };
+  const pick = (id: unknown) => ({ data: { title: 'mine', workflow: { modelVersionId: id } } });
+
+  let lookups: number[][];
+  beforeEach(() => {
+    lookups = [];
+    const rows = [
+      { id: V1_OWN, owner: VIEWER_IDS.v1, deletedAt: null },
+      { id: V1_OWN_2, owner: VIEWER_IDS.v1, deletedAt: null },
+      { id: V2_OWN, owner: VIEWER_IDS.v2, deletedAt: null },
+      { id: V1_DELETED_MODEL, owner: VIEWER_IDS.v1, deletedAt: new Date('2030-01-01Z') },
+    ];
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => {
+      lookups.push(where.id.in);
+      return rows
+        .filter((r) => where.id.in.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          status: 'Published',
+          model: { userId: r.owner, status: 'Published', deletedAt: r.deletedAt },
+        }));
+    }) as never);
+  });
+
+  async function setup() {
+    const { scanSharedData } = await import('~/server/services/apps/shared-data-moderation');
+    const { A } = freshApps('approved', MANIFEST_OWNED);
+    const tokenOf = (uid: number) => mint({ app: A, uid, scopes: contract.defaultScopes });
+    const scans = vi.mocked(scanSharedData);
+    /** What a request spent: moderation scans, write-budget evals, rate-limit counters. */
+    const spend = async <T>(fn: () => Promise<T>) => {
+      scans.mockClear();
+      const evals = lua.calls.length;
+      const counters = [...kv.keys()].filter((k) => k.includes(':docs-')).length;
+      const result = await fn();
+      return {
+        result,
+        spent: {
+          scans: scans.mock.calls.length,
+          budgetEvals: lua.calls.length - evals,
+          rateCounters: [...kv.keys()].filter((k) => k.includes(':docs-')).length - counters,
+        },
+      };
+    };
+    return { A, tokenOf, spend };
+  }
+
+  const NOTHING_SPENT = { scans: 0, budgetEvals: 0, rateCounters: 0 };
+  const refusedBody = {
+    code: 'resource_not_owned',
+    message: 'the model version at this field is not one the author owns',
+    error: 'the model version at this field is not one the author owns',
+    details: { pointer: POINTER },
+  };
+
+  it("create: another user's version is refused 403 before moderation or any budget; the author's own lands", async () => {
+    const { A, tokenOf, spend } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+
+    for (const [method, path] of [
+      ['POST', '/picks'],
+      ['PUT', '/picks/new-key'],
+    ] as const) {
+      const { result, spent } = await spend(() =>
+        call({ token: v1, method, path, body: pick(V2_OWN) })
+      );
+      expect(result.status, `${method} ${path}`).toBe(403);
+      expect(result.body).toEqual(refusedBody);
+      expect(spent, `${method} ${path}`).toEqual(NOTHING_SPENT);
+    }
+    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [A.id])).toEqual([]);
+
+    // Positive control: the same instruments see an accepted shared write spend.
+    const { result, spent } = await spend(() =>
+      call({ token: v1, method: 'POST', path: '/picks', body: pick(V1_OWN) })
+    );
+    expect(result.status).toBe(201);
+    expect(spent.scans).toBe(1);
+    expect(spent.budgetEvals).toBeGreaterThan(0);
+    expect(lookups).toContainEqual([V1_OWN]);
+  });
+
+  it("update: swapping someone else's version into the author's own document is refused, and the document is unchanged", async () => {
+    const { tokenOf, spend } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const created = await call({ token: v1, method: 'PUT', path: '/picks/k', body: pick(V1_OWN) });
+    expect(created.status).toBe(200);
+
+    const { result, spent } = await spend(() =>
+      call({ token: v1, method: 'PUT', path: '/picks/k', body: { ...pick(V2_OWN), ifVersion: 1 } })
+    );
+    expect(result.status).toBe(403);
+    expect(result.body).toEqual(refusedBody);
+    expect(spent).toEqual(NOTHING_SPENT);
+    const after = await call({ token: v1, method: 'GET', path: '/picks/k' });
+    expect(after.body).toMatchObject({ version: 1, data: pick(V1_OWN).data });
+
+    const swapOwn = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/picks/k',
+      body: pick(V1_OWN_2),
+    });
+    expect(swapOwn.status).toBe(200);
+    expect(swapOwn.body).toMatchObject({ version: 2, data: pick(V1_OWN_2).data });
+  });
+
+  it('an ownership lookup that fails is a retryable 503 with Retry-After: nothing written, nothing spent', async () => {
+    const { A, tokenOf, spend } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    dbMock.dbRead.modelVersion.findMany.mockRejectedValueOnce(new Error('replica unreachable'));
+    const { result, spent } = await spend(() =>
+      call({ token: v1, method: 'POST', path: '/picks', body: pick(V1_OWN) })
+    );
+    expect(result.status).toBe(503);
+    expect(result.body).toMatchObject({
+      code: 'service_unavailable',
+      details: { retryAfter: 1 },
+    });
+    expect(result.headers['retry-after']).toBe('1');
+    expect(spent).toEqual(NOTHING_SPENT);
+    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [A.id])).toEqual([]);
+    // Control: the same write lands once the lookup answers.
+    const ok = await call({ token: v1, method: 'POST', path: '/picks', body: pick(V1_OWN) });
+    expect(ok.status).toBe(201);
+  });
+
+  it('a missing version, a deleted model and a value that is not an id are refused exactly like a stranger', async () => {
+    const { tokenOf } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const stranger = await call({ token: v1, method: 'POST', path: '/picks', body: pick(V2_OWN) });
+    expect(stranger.status).toBe(403);
+    lookups = [];
+    for (const id of [
+      987_654,
+      V1_DELETED_MODEL,
+      String(V1_OWN),
+      V1_OWN + 0.5,
+      -V1_OWN,
+      0,
+      2_147_483_648,
+      null,
+      true,
+      [V1_OWN],
+      { id: V1_OWN },
+    ]) {
+      const r = await call({ token: v1, method: 'POST', path: '/picks', body: pick(id) });
+      expect({ status: r.status, body: r.body }, JSON.stringify(id)).toEqual({
+        status: stranger.status,
+        body: stranger.body,
+      });
+    }
+    // Only well-formed ids reach the database; every malformed value was refused before it.
+    expect(lookups).toEqual([[987_654], [V1_DELETED_MODEL]]);
+  });
+
+  it('a document without the declared field is accepted, without a lookup', async () => {
+    const { tokenOf } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const r = await call({
+      token: v1,
+      method: 'POST',
+      path: '/picks',
+      body: { data: { title: 'no workflow yet' } },
+    });
+    expect(r.status).toBe(201);
+    expect(lookups).toEqual([]);
+  });
+
+  it('refuses before the trust gate: an untrusted viewer gets resource_not_owned, not not_eligible', async () => {
+    const { tokenOf } = await setup();
+    const newbie = await tokenOf(VIEWER_IDS.newbie);
+    const refused = await call({
+      token: newbie,
+      method: 'POST',
+      path: '/picks',
+      body: pick(V2_OWN),
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toEqual(refusedBody);
+    // Control: without a declared field the same viewer reaches the trust gate.
+    const gated = await call({ token: newbie, method: 'POST', path: '/picks', body: { data: {} } });
+    expect(gated.status).toBe(403);
+    expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+
+  it('a moderator writing is not exempt', async () => {
+    const { tokenOf } = await setup();
+    h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });
+    const mod = await tokenOf(VIEWER_IDS.v3);
+    const r = await call({ token: mod, method: 'POST', path: '/picks', body: pick(V1_OWN) });
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual(refusedBody);
+  });
+
+  it('marks and counters never touch data, so they work on a document holding any version', async () => {
+    const { tokenOf } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const v2 = await tokenOf(VIEWER_IDS.v2);
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/picks/k', body: pick(V1_OWN) })).status
+    ).toBe(200);
+    lookups = [];
+    expect((await call({ token: v2, method: 'PUT', path: '/picks/k/marks/vote' })).status).toBe(
+      200
+    );
+    expect(
+      (await call({ token: v2, method: 'POST', path: '/picks/k/counters/views' })).status
+    ).toBe(200);
+    expect(lookups).toEqual([]);
+  });
+
+  it("[invariant guard] a collection that does not declare the rule stores another user's version unchecked", async () => {
+    const { tokenOf } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const r = await call({ token: v1, method: 'POST', path: '/plain', body: pick(V2_OWN) });
+    expect(r.status).toBe(201);
+    expect(lookups).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared-data moderation follows the per-app shadow/enforce flags
+// ---------------------------------------------------------------------------
+
+describe('shared-data moderation follows the per-app shadow / enforce flags', () => {
+  const HITS_TABLE = 'appBlocksSharedDataHits';
+  const SCANS_TABLE = 'appBlocksSharedDataScans';
+  const BLOCK_ALERTS = [
+    'app-blocks-shared-storage-legal-block',
+    'app-blocks-shared-storage-content-block',
+  ];
+  const rowsOf = (table: string) =>
+    h.ch.inserts.filter((i) => i.table === table).flatMap((i) => i.values) as Record<
+      string,
+      unknown
+    >[];
+  const eventNames = () =>
+    loggingMock.logToAxiom.mock.calls.map((c) => String((c[0] as { name?: string }).name));
+  const flushImmediates = async () => {
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const scanner = async () => {
+    const m = await import('~/server/services/apps/shared-data-moderation');
+    return { data: vi.mocked(m.scanSharedData), key: vi.mocked(m.scanCounterKey) };
+  };
+
+  async function setup(mode: 'off' | 'shadow' | 'enforce') {
+    h.moderationMode = mode;
+    h.ch.capture = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    loggingMock.logToAxiom.mockClear();
+    h.isFlipt.mockClear();
+    const s = await scanner();
+    s.data.mockClear();
+    s.key.mockClear();
+    return { A, v1, ...s };
+  }
+
+  describe('SHADOW', () => {
+    it('🔴 REGRESSION: a hit on a shared PUT does not refuse the write; it is recorded as shadow, unblocked, with no alert', async () => {
+      const { A, v1 } = await setup('shadow');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(r.status).toBe(200);
+      const stored = await call({ token: v1, method: 'GET', path: '/posts/p1' });
+      expect(stored.status).toBe(200);
+      expect(stored.body).toMatchObject({ data: { t: 'contract-blocked-term' } });
+
+      await vi.waitFor(() => expect(rowsOf(HITS_TABLE).length).toBeGreaterThan(0));
+      // The legacy surface's own row shape: shadow keeps the user text (the leaf, the matched term).
+      expect(rowsOf(HITS_TABLE)).toEqual([
+        expect.objectContaining({
+          appBlockId: A.id,
+          rowKey: 'p1',
+          surface: 'update',
+          mode: 'shadow',
+          blocked: 0,
+          category: 'audit_regex',
+          matched: 'scanner-matched-text-zq81',
+          leafText: JSON.stringify({ t: 'contract-blocked-term' }),
+        }),
+      ]);
+      // One denominator row per scan: the data blob, and the app-chosen key.
+      await vi.waitFor(() => expect(rowsOf(SCANS_TABLE)).toHaveLength(2));
+      expect(rowsOf(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'update', mode: 'shadow', blocked: 0 }),
+        expect.objectContaining({ surface: 'update', mode: 'shadow', blocked: 0 }),
+      ]);
+      await flushImmediates();
+      for (const alert of BLOCK_ALERTS) expect(eventNames()).not.toContain(alert);
+    });
+
+    it('🔴 REGRESSION: a hit on a create and on a counter-created key is recorded after the write, never refused', async () => {
+      const { v1 } = await setup('shadow');
+      const created = await call({
+        token: v1,
+        method: 'POST',
+        path: '/posts',
+        body: { data: { 'contract-blocked-term': 'in a key' } },
+      });
+      expect(created.status).toBe(201);
+      const createdKey = (created.body as { key: string }).key;
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(200);
+
+      await vi.waitFor(() => expect(rowsOf(HITS_TABLE)).toHaveLength(2));
+      expect(rowsOf(HITS_TABLE)).toEqual(
+        expect.arrayContaining([
+          // A create's row carries the key the store gave it, once it exists.
+          expect.objectContaining({
+            rowKey: createdKey,
+            surface: 'append',
+            mode: 'shadow',
+            blocked: 0,
+          }),
+          expect.objectContaining({
+            rowKey: 'contract-blocked-term',
+            surface: 'counter',
+            mode: 'shadow',
+            blocked: 0,
+          }),
+        ])
+      );
+      await flushImmediates();
+      for (const alert of BLOCK_ALERTS) expect(eventNames()).not.toContain(alert);
+    });
+
+    it('🔴 REGRESSION: a scanner outage does not refuse the write (no 503); it is only logged', async () => {
+      const { v1 } = await setup('shadow');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-scanner-down' } },
+      });
+      expect(r.status).toBe(200);
+      await vi.waitFor(() =>
+        expect(eventNames()).toContain('app-blocks-shared-data-moderation-shadow-failed')
+      );
+      expect(rowsOf(HITS_TABLE)).toEqual([]);
+    });
+
+    it('the write does not wait for the scan — a scanner that never settles cannot hold it', async () => {
+      const { v1, data } = await setup('shadow');
+      data.mockImplementationOnce(() => new Promise<SharedTextScan>(() => undefined));
+      try {
+        const r = await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
+        expect(r.status).toBe(200);
+      } finally {
+        // Drops the never-settling scanner if it went unused, back to the mock's own verdicts.
+        data.mockReset();
+      }
+    }, 5_000);
+
+    it('a write that fails in the store schedules no scan', async () => {
+      const { A, v1, data, key } = await setup('shadow');
+      const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+      expect(
+        (await call({ token: v1, method: 'PUT', path: '/posts/owned', body: { data: {} } })).status
+      ).toBe(200);
+      await flushImmediates();
+      data.mockClear();
+      key.mockClear();
+      // v2 is not the author: the store refuses, so nothing landed and nothing is scanned.
+      const refused = await call({
+        token: v2,
+        method: 'PUT',
+        path: '/posts/owned',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(refused.status).toBe(403);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+    });
+
+    it('a create or a counter increment that fails in the store schedules no scan', async () => {
+      const { v1, data, key } = await setup('shadow');
+      h.store = {
+        ...liveStore,
+        create: async () => {
+          throw new Error('store create failed');
+        },
+        increment: async () => {
+          throw new Error('store increment failed');
+        },
+      } as DocStore;
+      const created = await call({
+        token: v1,
+        method: 'POST',
+        path: '/posts',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(created.status).toBe(500);
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(500);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT GUARD: moderators keep their pattern-list exemption in shadow too', async () => {
+      const { A, data, key } = await setup('shadow');
+      h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });
+      const mod = await mint({ app: A, uid: VIEWER_IDS.v3, scopes: contract.defaultScopes });
+      expect(
+        (await call({ token: mod, method: 'PUT', path: '/posts/m', body: { data: {} } })).status
+      ).toBe(200);
+      await vi.waitFor(() => expect(key).toHaveBeenCalled());
+      expect(data.mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+      expect(key.mock.calls.at(-1)?.[1]).toEqual({ isModerator: true });
+    });
+  });
+
+  describe('OFF', () => {
+    it('nothing is scanned or recorded, and a would-be hit is stored', async () => {
+      const { v1, data, key } = await setup('off');
+      const put = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(put.status).toBe(200);
+      const counted = await call({
+        token: v1,
+        method: 'POST',
+        path: '/plays/contract-blocked-term/counters/plays',
+      });
+      expect(counted.status).toBe(200);
+      await flushImmediates();
+      expect(data).not.toHaveBeenCalled();
+      expect(key).not.toHaveBeenCalled();
+      expect(h.ch.inserts).toEqual([]);
+      expect(eventNames()).not.toContain('app-blocks-shared-data-moderation-scan');
+    });
+  });
+
+  describe('ENFORCE (unchanged)', () => {
+    it('INVARIANT GUARD: a hit is refused with 422 content_rejected and raises the block alert', async () => {
+      const { v1 } = await setup('enforce');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-blocked-term' } },
+      });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect(eventNames()).toContain('app-blocks-shared-storage-content-block');
+      expect((await call({ token: v1, method: 'GET', path: '/posts/p1' })).status).toBe(404);
+    });
+
+    it('INVARIANT GUARD: a scanner outage is refused with 503 moderation_unavailable', async () => {
+      const { v1 } = await setup('enforce');
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/p1',
+        body: { data: { t: 'contract-scanner-down' } },
+      });
+      expect(r.status).toBe(503);
+      expect(r.body).toMatchObject({ code: 'moderation_unavailable' });
+    });
+  });
+
+  it('the mode is resolved per APP: entity id = the app block id, no context', async () => {
+    const { A, v1 } = await setup('shadow');
+    await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
+    expect(h.isFlipt).toHaveBeenCalledWith(SHADOW_FLAG, A.id, undefined);
+    expect(h.isFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, A.id, undefined);
   });
 });

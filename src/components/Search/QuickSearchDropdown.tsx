@@ -1,7 +1,7 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,7 +21,6 @@ import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/searc
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import { IndexToLabel } from '~/components/Search/useSearchState';
-import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
@@ -56,11 +55,7 @@ const IMAGE_SEARCH_MAINTENANCE_VALUE = '__image-search-maintenance__';
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
-  createResilientSearchClient(
-    instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
-      primaryKey: 'id',
-    })
-  )
+  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.

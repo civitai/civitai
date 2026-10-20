@@ -30,6 +30,11 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
+import {
+  metricVisibilityChoicesSchema,
+  metricVisibilityMetaFromChoices,
+  type MetricVisibilitySettings,
+} from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
@@ -249,8 +254,14 @@ export const modelUpsertSchema = z.object({
       hideBuzz: z.boolean().nullish(),
       hideDownloads: z.boolean().nullish(),
       hideGenerations: z.boolean().nullish(),
+      metricVisibility: metricVisibilityChoicesSchema.optional(),
     })
-    .transform((val) => val as ModelMeta | null)
+    .transform(
+      ({ metricVisibility, ...val }) =>
+        (metricVisibility
+          ? { ...val, ...metricVisibilityMetaFromChoices(metricVisibility) }
+          : val) as ModelMeta | null
+    )
     .nullish(),
   availability: z.enum(Availability).optional(),
 });
@@ -414,9 +425,11 @@ export type ModelMeta = Partial<{
   modelRulesCleared: { ruleIds: number[]; textHash: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
+  // Legacy: read as `true` = hide, otherwise inherit. Saves now write `metricVisibility` and clear these.
   hideBuzz: boolean | null;
   hideDownloads: boolean | null;
   hideGenerations: boolean | null;
+  metricVisibility: MetricVisibilitySettings;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
@@ -559,6 +572,7 @@ export const getResourceSelectSchema = z.object({
   filterTypes: z.enum(ModelType).array().default([]),
   filterBaseModels: z.string().array().default([]),
   filterLoaded: z.boolean().default(false),
+  filterTurbo: z.boolean().default(false),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
   hidePaid: z.boolean().optional(),

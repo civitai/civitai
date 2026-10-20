@@ -63,7 +63,6 @@ const PROPS = {
   scopes: DECLARED,
   isBeta: false,
   betaMessage: null,
-  iconUrl: null,
   audience: null,
   privateRunStatus: null,
 };

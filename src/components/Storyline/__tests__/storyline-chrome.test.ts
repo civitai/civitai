@@ -4,6 +4,8 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as NextRouterModule from 'next/router';
+import type * as DialogProviderModule from '~/components/Dialog/DialogProvider';
 import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as ModeModule from '~/components/Storyline/StorylineModeProvider';
@@ -24,6 +26,22 @@ const mocks = vi.hoisted(() => ({
   mobile: false,
   narrowStage: false,
   mode: { active: false } as unknown,
+  dialog: { opened: false, onClose: vi.fn() },
+  asPath: '/images/10',
+}));
+
+vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof DialogProviderModule>()),
+  useDialogContext: () => mocks.dialog,
+}));
+// The page under the dialog: Next's router keeps it while the reader is a routed dialog.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  default: {
+    get asPath() {
+      return mocks.asPath;
+    },
+  },
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -79,6 +97,8 @@ beforeEach(() => {
   mocks.mobile = false;
   mocks.narrowStage = false;
   mocks.mode = { active: false };
+  mocks.dialog = { opened: false, onClose: vi.fn() };
+  mocks.asPath = '/images/10';
 });
 
 const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
@@ -120,6 +140,9 @@ function renderMap({
 }
 
 const flush = () => act(() => new Promise((r) => setTimeout(r, 50)));
+
+const lineIds = (options: { line?: { chapterId: number }[] } | undefined) =>
+  options?.line?.map((stop) => stop.chapterId);
 
 const branch = (chapterId: number) => ({
   ...chapter(chapterId, 1, `Way ${chapterId}`),
@@ -164,8 +187,8 @@ describe('StorylineModeChip', () => {
     expect(renderChip(true).chip?.getAttribute('aria-expanded')).toBe('true');
   });
 
-  // Sunita, 2026-10-14: the chip has no x. Leaving lives at the foot of the map sheet, and closing
-  // the image leaves too. Do not put a second control back on the chip.
+  // The chip has no x. Leaving lives at the foot of the map sheet, and closing the image leaves
+  // too. Do not put a second control back on the chip.
   it('is one button that toggles the map, with no leave control of its own', () => {
     const { c, chip, onToggleMap } = renderChip(true);
     act(() => chip?.click());
@@ -305,8 +328,8 @@ describe('where the chip goes', () => {
   });
 });
 
-// Sunita, 2026-10-14: the guard's rating pill truncates to "P..." on thumbs this small and reads as
-// broken. The map drops it; the blur stays. The end card's larger covers keep theirs.
+// The guard's rating pill truncates to "P..." on thumbs this small and reads as broken. The map
+// drops it; the blur stays. The end card's larger covers keep theirs.
 describe('the map thumbs', () => {
   it('stay blurred but carry no rating pill', () => {
     const image = { id: 9, url: 'u', nsfwLevel: 4 };
@@ -351,6 +374,63 @@ describe('the map', () => {
     ]);
   });
 
+  // The line the map counts is the reader's path then the canon ahead of its end: off the main
+  // route it is not the canon path, whatever number it counts.
+  it('says this path, with the same count, once the reader has left the main route', () => {
+    mocks.ahead = [chapter(4, 3)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+      { ...chapter(7, 2), onMain: false },
+    ];
+    renderMap({ chapters, current: 7 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 3 of 4 on this path');
+  });
+
+  it('still says the canon path for a reader on the main route', () => {
+    mocks.ahead = [chapter(3, 2)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+    ];
+    renderMap({ chapters, current: 2 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 2 of 3 on the canon path');
+  });
+
+  // A long path is read from a window that starts deeper than chapter 1: the total counts from
+  // chapter 1 like the number does, and the bar stays within its track.
+  describe('on a path read from a window that starts at depth 30', () => {
+    const windowed = () => [
+      { ...chapter(31, 30), onMain: true },
+      { ...chapter(32, 31), onMain: true },
+      { ...chapter(33, 32), onMain: true },
+    ];
+    const barValue = () =>
+      document.body.querySelector('.mantine-Progress-section')?.getAttribute('aria-valuenow');
+
+    it('counts the total from chapter 1', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 33 on the canon path');
+    });
+
+    it('counts the chapters ahead on top of that', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 34 on the canon path');
+    });
+
+    it('fills the bar to the reader place in it', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 31 });
+      expect(parseFloat(barValue() ?? 'x')).toBeCloseTo((31 / 34) * 100, 5);
+    });
+
+    it('is full, not past full, at the end of the line', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(parseFloat(barValue() ?? 'x')).toBe(100);
+    });
+  });
+
   it('gives no total while the canon path is still being read', () => {
     mocks.aheadLoading = true;
     renderMap({ chapterIds: [1, 2], current: 2 });
@@ -379,8 +459,8 @@ describe('the map', () => {
     act(() => q('storyline-map-read-next')?.click());
     expect([
       calls(storyline.jumpToChapter),
-      calls(storyline.continueTo).map(([c, o]) => [c.chapterId, o]),
-    ]).toEqual([[], [[3, { track: false }]]]);
+      calls(storyline.continueTo).map(([c, o]) => [c.chapterId, { ...o, line: lineIds(o) }]),
+    ]).toEqual([[], [[3, { track: false, from: 2, line: [1, 2, 3] }]]]);
   });
 
   it('links to the story page, and has no Read when there is nothing after', () => {
@@ -389,6 +469,26 @@ describe('the map', () => {
       q('storyline-map-story-page')?.getAttribute('href'),
       q('storyline-map-read-next'),
     ]).toEqual(['/storylines/2', null]);
+  });
+
+  it('closes the reader when it is a dialog over its own story page, instead of stacking it', () => {
+    mocks.dialog = { opened: true, onClose: vi.fn() };
+    mocks.asPath = '/storylines/2';
+    renderMap();
+    const link = q('storyline-map-story-page');
+    const click = () => {
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      act(() => void link?.dispatchEvent(event));
+      return event.defaultPrevented;
+    };
+    expect(click()).toBe(true);
+    expect(mocks.dialog.onClose).toHaveBeenCalledTimes(1);
+
+    // Over any other page (the feed it was opened from), it is a plain link to the story page.
+    mocks.asPath = '/images';
+    mocks.dialog.onClose.mockReset();
+    click();
+    expect(mocks.dialog.onClose).not.toHaveBeenCalled();
   });
 
   it('leaves the storyline from the foot of the sheet', () => {
@@ -436,9 +536,23 @@ describe('the map', () => {
     mocks.pathChildren = new Map([[1, [branch(2)]]]);
     const storyline = renderMap();
     act(() => q('storyline-branch')?.click());
-    expect(calls(storyline.continueTo).map(([c, o]) => [c.chapterId, o])).toEqual([
-      [2, { from: 1 }],
+    expect(
+      calls(storyline.continueTo).map(([c, o]) => [c.chapterId, { ...o, line: lineIds(o) }])
+    ).toEqual([[2, { from: 1, line: [1] }]]);
+  });
+
+  it('marks the stop where another branch joins, and reads that branch from it', () => {
+    const joined = { ...chapter(3, 2, 'He is back'), joins: [chapter(9, 3, 'The parade')] };
+    const storyline = renderMap({ chapters: [chapter(1, 0), chapter(2, 1), joined] });
+    const marks = [...document.body.querySelectorAll('[data-testid="storyline-join"]')];
+    expect(marks.map((m) => [m.getAttribute('data-chapter-id'), text(m)])).toEqual([
+      ['9', 'Another branch joins here, after The parade'],
     ]);
+    act(() => (marks[0] as HTMLElement).click());
+    // A fresh route to the other branch: nothing of this line carries over.
+    expect(
+      calls(storyline.continueTo).map(([c, o]) => [c.chapterId, { ...o, line: lineIds(o) }])
+    ).toEqual([[9, { track: false, line: [] }]]);
   });
 
   it('invites the first choice when nobody has chosen', () => {

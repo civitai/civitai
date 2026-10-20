@@ -14,11 +14,15 @@ import {
   IconBook2,
   IconCrown,
   IconGitFork,
+  IconGitMerge,
   IconRosetteDiscountCheck,
   IconRoute,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import Router from 'next/router';
+import type { MouseEvent } from 'react';
 import { useId, useMemo } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import type { StorylineCoverImage } from '~/components/Storyline/StorylineChapterImage';
@@ -31,12 +35,14 @@ import {
   useStorylineForkShares,
   useStorylinePathChildren,
 } from '~/components/Storyline/storyline.queries';
+import { isModifiedClick } from '~/components/Storyline/storyline-read-link';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import type { SubwayStop } from '~/components/Storyline/storyline-mode.utils';
 import {
   buildSubwayStops,
   getForkShare,
   getStorylineChapterName,
+  storylinePositionLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -44,10 +50,8 @@ type WithCover = { firstImage?: StorylineCoverImage | null };
 const coverOf = (chapter: unknown) => (chapter as WithCover).firstImage;
 
 /**
- * The storyline chip in the stage toolbar and the map that drops from it. On desktop the map is a
- * sheet anchored under the chip, with no backdrop: the image and its arrows stay live, and Esc, a
- * click outside or the chip closes it. On a phone it is a bottom sheet over the lower part of the
- * page, again without dimming, with the image visible above it.
+ * The chip in the stage toolbar and the map that drops from it. Neither layout dims the stage: the
+ * image and its arrows stay live while the map is open.
  */
 export function StorylineMapControl({
   storyline,
@@ -141,6 +145,7 @@ function StorylineMap({
   titleId: string;
 }) {
   const { path, drawerOpen, setDrawerOpen, jumpToChapter, continueTo, leave } = storyline;
+  const dialog = useDialogContext();
   const forkStopIds = useMemo(
     () => path.chapters.slice(-STORYLINE_DRAWER_FORK_STOPS).map((c) => c.chapterId),
     [path.chapters]
@@ -160,15 +165,18 @@ function StorylineMap({
     [path.chapters, canonAhead, pathChildren]
   );
 
+  const line = useMemo(() => stops.map((stop) => stop.chapter), [stops]);
   const currentIndex = stops.findIndex((s) => s.chapter.chapterId === currentChapterId);
   const current = stops[currentIndex];
   const next = currentIndex >= 0 ? stops[currentIndex + 1] : undefined;
-  // The canon line's length once it is known: the path then the chapters ahead of its end.
-  const length = canonAhead.isLoading ? undefined : stops.length;
-  const open = (stop: SubwayStop<StorylineChild>) =>
-    stop.kind === 'path'
-      ? jumpToChapter(stop.chapter.chapterId)
-      : continueTo(stop.chapter, { track: false });
+  // The line's length once it is known: the path then the chapters ahead of its end, counted from
+  // chapter 1 like a chapter's number, since a long path is read from a window that starts deeper.
+  const length = canonAhead.isLoading ? undefined : (path.chapters[0]?.depth ?? 0) + stops.length;
+  const open = (stop: SubwayStop<StorylineChild>) => {
+    if (stop.kind === 'path') return jumpToChapter(stop.chapter.chapterId);
+    const before = line[line.indexOf(stop.chapter) - 1];
+    continueTo(stop.chapter, { track: false, from: before?.chapterId, line });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -199,8 +207,11 @@ function StorylineMap({
           </Text>
           {current && (
             <Text size="xs" c="dimmed" data-testid="storyline-map-position">
-              Chapter {current.chapter.depth + 1}
-              {length ? ` of ${length} on the canon path` : ''}
+              {storylinePositionLabel({
+                number: current.chapter.depth + 1,
+                length,
+                path: path.chapters,
+              })}
             </Text>
           )}
           {current && length ? (
@@ -228,7 +239,7 @@ function StorylineMap({
             className="absolute inset-y-6 left-[15px] w-0.5 bg-blue-5/50 dark:bg-blue-4/50"
           />
           {stops.map((stop) => {
-            const { chapter, kind, branches } = stop;
+            const { chapter, kind, branches, joins } = stop;
             const isEnd = chapter.chapterId === endChapterId;
             const isCurrent = chapter.chapterId === currentChapterId;
             return (
@@ -286,6 +297,22 @@ function StorylineMap({
                     )}
                   </div>
                 </UnstyledButton>
+                {joins.map((join) => (
+                  <UnstyledButton
+                    key={join.chapterId}
+                    // A fresh route to the other branch's chapter: the reader is leaving this line.
+                    onClick={() => continueTo(join, { track: false, line: [] })}
+                    disabled={!join.post}
+                    className="ml-[34px] mt-1 flex items-center gap-1 rounded text-left text-xs font-semibold text-[var(--mantine-color-violet-7)] dark:text-[var(--mantine-color-violet-3)]"
+                    data-testid="storyline-join"
+                    data-chapter-id={join.chapterId}
+                  >
+                    <IconGitMerge size={13} className="shrink-0" />
+                    {join.post
+                      ? `Another branch joins here, after ${getStorylineChapterName(join)}`
+                      : 'Another branch joins here'}
+                  </UnstyledButton>
+                ))}
                 {branches.length > 0 && (
                   <div className="pl-[34px]">
                     <Text
@@ -306,7 +333,7 @@ function StorylineMap({
                           share={
                             isEnd ? getForkShare(endShares, child.chapterId)?.percent : undefined
                           }
-                          onClick={() => continueTo(child, { from: chapter.chapterId })}
+                          onClick={() => continueTo(child, { from: chapter.chapterId, line })}
                         />
                       ))}
                     </ul>
@@ -349,6 +376,13 @@ function StorylineMap({
           variant="default"
           component={Link}
           href={storylineUrl(path.storyline.id)}
+          onClick={(e: MouseEvent<HTMLElement>) => {
+            // Over its own story page, the reader is a dialog: close it rather than stack the page.
+            if (isModifiedClick(e)) return;
+            if (Router.asPath.split('?')[0] !== storylineUrl(path.storyline.id)) return;
+            e.preventDefault();
+            dialog.onClose();
+          }}
           leftSection={<IconBook2 size={16} />}
           className={clsx(!next && 'flex-1')}
           data-testid="storyline-map-story-page"
@@ -356,7 +390,6 @@ function StorylineMap({
           Story page
         </Button>
       </div>
-      {/* What the chip's x used to do: back to browsing this post's images, out of the mode. */}
       <Button
         variant="subtle"
         color="gray"

@@ -99,7 +99,13 @@ const output = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 function givenWorkflow(outputs: Array<Record<string, unknown>>) {
-  mocks.getWorkflow.mockResolvedValue({ id: 'wf-1', status: 'succeeded' });
+  // The raw read the unlock guard checks: still locked, with an output rated mature.
+  mocks.getWorkflow.mockResolvedValue({
+    id: 'wf-1',
+    status: 'succeeded',
+    allowMatureContent: false,
+    steps: [{ $type: 'comfy', name: '$0', output: { blobs: [output('b0', { nsfwLevel: 'x' })] } }],
+  });
   mocks.formatGenerationResponse2.mockResolvedValue([
     {
       id: 'wf-1',
@@ -222,7 +228,7 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
     expect(mocks.updateWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true })
+      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true, throwOnError: true })
     );
     const [data] = writes();
     expect(data.status).toBe('Generating');
@@ -238,6 +244,23 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(result.status).toBe('Ready');
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses, charging nothing, when the workflow cap blocks every mature output', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    mocks.getWorkflow.mockResolvedValue({
+      id: 'wf-1',
+      status: 'succeeded',
+      allowMatureContent: false,
+      nsfwLevel: 'pg13',
+      steps: [
+        { $type: 'comfy', name: '$0', output: { blobs: [output('b1', { nsfwLevel: 'r' })] } },
+      ],
+    });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/PG-13/);
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
   });
 
   it('keeps an unrated candidate locked instead of saving it as clean', async () => {

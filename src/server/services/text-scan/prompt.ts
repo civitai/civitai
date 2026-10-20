@@ -10,10 +10,13 @@ import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/ser
 import {
   isTextScanWebSearchEntityType,
   parseTextScanRollout,
+  readTextScanCsamMode,
   readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
   resetTextScanRolloutCache,
+  TEXT_SCAN_CSAM_MODE_FIELD,
+  type TextScanCsamMode,
   type TextScanLabelMode,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
@@ -35,8 +38,8 @@ import {
   throwConflictError,
 } from '~/server/utils/errorHandling';
 
-export const DEFAULT_TEXT_SCAN_MODEL =
-  'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
+/** An orchestrator alias: it can be repointed without a deploy, and the content hash will not see it move. */
+export const DEFAULT_TEXT_SCAN_MODEL = 'civitai/qwen3.8';
 const DEFAULT_MAX_INPUT_CHARS = 200000;
 const DEFAULT_MAX_SEGMENTS = 10;
 /** Each segment is a billed call; bounds a bad config override. */
@@ -193,9 +196,34 @@ export async function setTextScanLabelMode(
   return readTextScanLabelModes();
 }
 
+/** `off` removes the field, so a missing field and an explicit off read the same. */
+export async function setTextScanCsamMode(
+  mode: TextScanCsamMode,
+  { moderatorId }: { moderatorId: number }
+) {
+  if (mode !== 'off' && mode !== 'review')
+    throw throwBadRequestError(`csam has no ${String(mode)} mode: only off and review`);
+  await assertActiveModerator(moderatorId);
+  if (mode === 'review' && !(await getActiveTextScanPrompts())['label:csam']?.content?.trim())
+    throw throwBadRequestError('csam review needs an active label:csam prompt; save one first');
+  if (mode === 'review')
+    await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD, 'review');
+  else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD);
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'label mode updated',
+    moderatorId,
+    label: TEXT_SCAN_CSAM_MODE_FIELD,
+    mode,
+  });
+  return readTextScanCsamMode();
+}
+
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|modelRules))$/;
+export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam|modelRules))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(

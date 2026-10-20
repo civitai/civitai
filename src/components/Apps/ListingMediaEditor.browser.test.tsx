@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   invalidateListing: vi.fn(async () => undefined),
   stepProps: undefined as unknown,
   isModerator: false,
+  setRedMedia: vi.fn(async (input: { slot: string }) => ({ status: 'cleared', slot: input.slot })),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -55,6 +56,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         'appListings.getMyListingForApp': {
           useQuery: () => ({ data: mocks.listing, isLoading: !mocks.listing, error: null }),
+        },
+        'appListings.setRedMedia': {
+          useMutation: () => ({
+            mutate: vi.fn(),
+            mutateAsync: mocks.setRedMedia,
+            isPending: false,
+          }),
         },
         'appListings.getAssets': {
           useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
@@ -112,6 +120,7 @@ beforeEach(() => {
   mocks.invalidateListing.mockClear();
   mocks.stepProps = undefined;
   mocks.isModerator = false;
+  mocks.setRedMedia.mockClear();
 });
 
 describe('ListingMediaEditor — rating visibility', () => {
@@ -323,5 +332,53 @@ describe('ListingMediaEditor — the levels are re-read when they can have chang
       vi.advanceTimersByTime(10_000);
       expect(mocks.invalidateAssets).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('ListingMediaEditor — civitai.red icon / cover overrides', () => {
+  const redMedia = {
+    available: true,
+    icon: { imageId: null, url: null },
+    cover: { imageId: 92, url: LOADABLE_IMAGE_DATA_URI },
+  };
+
+  test('🔴 the edit target’s overrides from the listing read reach the step, with the split', async () => {
+    mocks.listing = listing({ redMedia });
+    mocks.assets = { ...assets, mediaSplitApproved: true };
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    await expect.element(page.getByTestId('apps-listing-red-media')).toBeInTheDocument();
+    expect(stepProps().redMedia).toEqual(redMedia);
+    expect(stepProps().rating?.mediaSplit).toBe(true);
+  });
+
+  test('🔴 an owner clears the live listing’s red cover: setRedMedia on the edit target, then the listing is re-read (the revision it opened)', async () => {
+    mocks.listing = listing({ redMedia });
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    await page.getByTestId('apps-offsite-remove-red-cover').click();
+    await vi.waitFor(() =>
+      expect(mocks.setRedMedia).toHaveBeenCalledWith({
+        listingId: 'apl_live',
+        slot: 'cover',
+        imageId: null,
+      })
+    );
+    await vi.waitFor(() =>
+      expect(mocks.invalidateListing).toHaveBeenCalledWith({ appBlockId: 'ab_1' })
+    );
+  });
+
+  test('🔴 an accepted collaborator gets the same picker (the server applies the icon / cover rules)', async () => {
+    mocks.listing = listing({ role: 'editor', redMedia });
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    await expect.element(page.getByTestId('apps-offsite-remove-red-cover')).toBeInTheDocument();
+  });
+
+  test('🔴 slots unavailable: the editor shows the note, no picker', async () => {
+    mocks.listing = listing({ redMedia: { ...redMedia, available: false } });
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    await expect
+      .element(page.getByTestId('apps-listing-red-media-unavailable'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-remove-red-cover').elements()).toHaveLength(0);
   });
 });

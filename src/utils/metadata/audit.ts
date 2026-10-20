@@ -22,7 +22,7 @@ import {
 } from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { AuditTimer } from '~/utils/metadata/audit-slow-log';
+import { AuditTimer, type AuditTimerOptions } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -66,10 +66,26 @@ export type PromptTriggerCategory =
   // SOFT_BLOCK_CATEGORIES, or a click-through would skip the regex layer for long prompts.
   | 'over_length';
 
-export interface PromptTrigger {
+export type PromptTriggerField = 'prompt' | 'negativePrompt';
+
+/** What one rule matched. Every field past `category` is absent when the rule cannot supply it. */
+export interface PromptTriggerMatch {
+  category: PromptTriggerCategory;
+  matchedWord?: string;
+  /** Source of the regex that matched, for the rules that match by regex. */
+  matchedRegex?: string;
+  /** The literal span found in the audited text, when the match gives one. */
+  matchedText?: string;
+  matchedField?: PromptTriggerField;
+  /** The NSFW-list text that opened the gate a rule needs before it runs. */
+  gateWord?: string;
+}
+
+export interface PromptTrigger extends Omit<PromptTriggerMatch, 'category'> {
   category: PromptTriggerCategory;
   message: string;
-  matchedWord?: string;
+  /** Every rule that matched, the first being this trigger's own fields. Set on the first trigger of a block only; old rows lack it. */
+  matches?: PromptTriggerMatch[];
 }
 
 /**
@@ -164,11 +180,36 @@ export function isBlankAuditInput(prompt?: string | null, negativePrompt?: strin
  *
  * An empty prompt does not skip the audit when the negative prompt is non-empty: the negative
  * prompt then gets every check it gets beside a non-empty prompt, including the length cap.
+ *
+ * `options.privateInput` keeps the text out of the slow-audit log line (see audit-slow-log.ts); the
+ * result is the same either way.
  */
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean
+  checkProfanity?: boolean,
+  options?: AuditTimerOptions
+): EnrichedAuditResult => {
+  const result = auditFirstBlock(prompt, negativePrompt, checkProfanity, options);
+  // Evidence is collected only for a block, not on the passing path.
+  const [first] = result.triggers;
+  if (
+    !result.success &&
+    first &&
+    first.category !== 'over_length' &&
+    first.category !== 'profanity'
+  ) {
+    const matches = collectTriggerMatches(prompt, negativePrompt, first);
+    if (matches.length > 0) first.matches = matches;
+  }
+  return result;
+};
+
+const auditFirstBlock = (
+  prompt: string,
+  negativePrompt?: string,
+  checkProfanity?: boolean,
+  options?: AuditTimerOptions
 ): EnrichedAuditResult => {
   if (isBlankAuditInput(prompt, negativePrompt))
     return { blockedFor: [], triggers: [], success: true };
@@ -202,52 +243,68 @@ export const auditPromptEnriched = (
   // called on every return path below with the (normalized) prompts. The raw text
   // passed to finish() is what was audited; logging it is privacy-gated (see
   // audit-slow-log.ts). See that module's header for the full incident writeup.
-  const timer = new AuditTimer();
+  const timer = new AuditTimer(options);
 
   prompt = timer.time('normalize', () => normalizeText(prompt));
   negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
 
   // 1. Minor age check
-  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
+  const ageCheck = timer.time('minor_age', () => findMinorAge(prompt));
+  const { found, age } = ageCheck;
   if (found && age != null) {
     const message = `${age} year old`;
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
-      triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
+      triggers: [
+        compact({
+          category: 'minor_age' as const,
+          message,
+          matchedWord: String(age),
+          matchedRegex: ageCheck.regex,
+          matchedText: ageCheck.matchedText,
+          matchedField: 'prompt' as const,
+        }),
+      ],
       success: false,
     };
   }
 
   // 2. POI check
-  const poiMatch = timer.time('poi', () => includesPoi(prompt));
+  const poiMatch = timer.time('poi', () => findPoi(prompt));
   if (poiMatch) {
     const message = 'Prompt cannot include celebrity names';
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
-        {
-          category: 'poi',
+        compact({
+          category: 'poi' as const,
           message,
-          matchedWord: typeof poiMatch === 'string' ? poiMatch : undefined,
-        },
+          matchedWord: poiMatch.word,
+          matchedRegex: poiMatch.regex,
+          matchedText: poiMatch.matchedText,
+          matchedField: 'prompt' as const,
+        }),
       ],
       success: false,
     };
   }
-  const negPoiMatch = timer.time('poi', () => includesPoi(negativePrompt));
+  const negPoiMatch = timer.time('poi', () => findPoi(negativePrompt));
   if (negPoiMatch) {
     const message = 'Negative prompt cannot include celebrity names';
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
-        {
-          category: 'poi',
+        compact({
+          category: 'poi' as const,
           message,
-          matchedWord: typeof negPoiMatch === 'string' ? negPoiMatch : undefined,
-        },
+          matchedWord: negPoiMatch.word,
+          matchedRegex: negPoiMatch.regex,
+          matchedText: negPoiMatch.matchedText,
+          matchedField: 'negativePrompt' as const,
+        }),
       ],
       success: false,
     };
@@ -267,7 +324,17 @@ export const auditPromptEnriched = (
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
-      triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
+      triggers: [
+        compact({
+          category,
+          message,
+          matchedWord: inappropriateResult.matchedWord,
+          matchedRegex: inappropriateResult.regex,
+          matchedText: inappropriateResult.matchedText,
+          matchedField: inappropriateResult.field,
+          gateWord: inappropriateResult.gateWord,
+        }),
+      ],
       success: false,
     };
   }
@@ -281,19 +348,27 @@ export const auditPromptEnriched = (
   // be soft. Cost is bounded — the full scan already runs on every clean prompt,
   // and a hard match still exits immediately.
   const nsfwBlock = timer.time('nsfw_blocklist', () => {
-    let softMatch: string | undefined;
-    for (const { word, regex } of blockedNSFWRegexLazy()) {
-      if (!regex.test(prompt)) continue;
-      if (!overridableNsfwWords.has(word)) return word;
-      softMatch ??= word;
+    let softMatch: { word: string; regex: RegExp } | undefined;
+    for (const entry of blockedNSFWRegexLazy()) {
+      if (!entry.regex.test(prompt)) continue;
+      if (!overridableNsfwWords.has(entry.word)) return entry;
+      softMatch ??= entry;
     }
     return softMatch;
   });
   if (nsfwBlock != null) {
     timer.finish(prompt, negativePrompt);
     return {
-      blockedFor: [nsfwBlock],
-      triggers: [{ category: 'nsfw_blocklist', message: nsfwBlock, matchedWord: nsfwBlock }],
+      blockedFor: [nsfwBlock.word],
+      triggers: [
+        {
+          category: 'nsfw_blocklist',
+          message: nsfwBlock.word,
+          matchedWord: nsfwBlock.word,
+          matchedRegex: nsfwBlock.regex.source,
+          matchedField: 'prompt',
+        },
+      ],
       success: false,
     };
   }
@@ -330,14 +405,101 @@ export const auditPromptEnriched = (
   timer.finish(prompt, negativePrompt);
   return { blockedFor: [], triggers: [], success: true };
 };
+
+function compact<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
+}
+
+/**
+ * Every rule that matches a prompt the audit has already blocked, in the order the audit applies
+ * them, so entry 0 is the rule that decided the verdict. Evidence only: it never changes one.
+ */
+function collectTriggerMatches(
+  rawPrompt: string,
+  rawNegativePrompt: string | undefined,
+  decided: PromptTrigger
+): PromptTriggerMatch[] {
+  const prompt = normalizeText(rawPrompt);
+  const negativePrompt = normalizeText(rawNegativePrompt);
+  const matches: PromptTriggerMatch[] = [];
+
+  const age = findMinorAge(prompt);
+  if (age.found && age.age != null) {
+    matches.push(
+      compact({
+        category: 'minor_age' as const,
+        matchedWord: String(age.age),
+        matchedRegex: age.regex,
+        matchedText: age.matchedText,
+        matchedField: 'prompt' as const,
+      })
+    );
+  }
+
+  for (const [text, field] of [
+    [prompt, 'prompt'],
+    [negativePrompt, 'negativePrompt'],
+  ] as const) {
+    const poi = findPoi(text);
+    if (poi) {
+      matches.push(
+        compact({
+          category: 'poi' as const,
+          matchedWord: poi.word,
+          matchedRegex: poi.regex,
+          matchedText: poi.matchedText,
+          matchedField: field,
+        })
+      );
+    }
+  }
+
+  for (const hit of findInappropriateEnriched({ prompt, negativePrompt }, undefined, true)) {
+    matches.push(
+      compact({
+        category:
+          hit.type === 'minor' ? ('inappropriate_minor' as const) : ('inappropriate_poi' as const),
+        matchedWord: hit.matchedWord,
+        matchedRegex: hit.regex,
+        matchedText: hit.matchedText,
+        matchedField: hit.field,
+        gateWord: hit.gateWord,
+      })
+    );
+  }
+
+  for (const { word, regex } of blockedNSFWRegexLazy()) {
+    if (!regex.test(prompt)) continue;
+    matches.push({
+      category: 'nsfw_blocklist',
+      matchedWord: word,
+      matchedRegex: regex.source,
+      matchedField: 'prompt',
+    });
+  }
+
+  // Scan order can differ from verdict order, so move the deciding rule to the front.
+  const decidingIndex = matches.findIndex(
+    (m) => m.category === decided.category && m.matchedWord === decided.matchedWord
+  );
+  if (decidingIndex > 0) matches.unshift(...matches.splice(decidingIndex, 1));
+
+  return matches;
+}
 // #endregion [enriched audit]
 
 export const auditPrompt = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean
+  checkProfanity?: boolean,
+  options?: AuditTimerOptions
 ): { blockedFor: string[]; success: boolean } => {
-  const { blockedFor, success } = auditPromptEnriched(prompt, negativePrompt, checkProfanity);
+  const { blockedFor, success } = auditPromptEnriched(
+    prompt,
+    negativePrompt,
+    checkProfanity,
+    options
+  );
   return { blockedFor, success };
 };
 
@@ -486,6 +648,17 @@ const promptWeightPattern = /:\s*\d+\.\d+(?=\s*[)\]])/g;
 // Age Check Function (Two-Phase Approach)
 // --------------------------------------
 export function includesMinorAge(prompt: string | undefined) {
+  const { found, age } = findMinorAge(prompt);
+  return { found, age };
+}
+
+/** `includesMinorAge` plus the span and regex that matched. */
+function findMinorAge(prompt: string | undefined): {
+  found: boolean;
+  age: number | undefined;
+  matchedText?: string;
+  regex?: string;
+} {
   if (!prompt) return { found: false, age: undefined };
 
   const cleaned = prompt.replace(falsePositiveTagPattern, ' ').replace(promptWeightPattern, '');
@@ -499,8 +672,9 @@ export function includesMinorAge(prompt: string | undefined) {
   // Phase 2: Detailed matching - check each age with smaller per-age patterns
   for (const { age, regexes } of perAgeRegexes) {
     for (const regex of regexes) {
-      if (regex.test(cleaned)) {
-        return { found: true, age };
+      const match = regex.exec(cleaned);
+      if (match) {
+        return { found: true, age, matchedText: match[0], regex: regex.source };
       }
     }
   }
@@ -740,7 +914,7 @@ function includesHarmfulCombinations(prompt: string): 'minor' | 'poi' | false {
 
 function includesHarmfulCombinationsEnriched(
   prompt: string
-): { type: 'minor' | 'poi'; matchedText: string } | false {
+): { type: 'minor' | 'poi'; matchedText: string; regex: string } | false {
   if (!prompt) return false;
 
   const normalizedPrompt = normalizeText(prompt);
@@ -748,7 +922,7 @@ function includesHarmfulCombinationsEnriched(
   for (const combination of harmfulCombinations) {
     const match = combination.pattern.exec(normalizedPrompt);
     if (match) {
-      return { type: combination.type, matchedText: match[0] };
+      return { type: combination.type, matchedText: match[0], regex: combination.pattern.source };
     }
   }
 
@@ -784,67 +958,147 @@ export function includesInappropriate(
   return false;
 }
 
-function includesInappropriateEnriched(
+type InappropriateMatch = {
+  type: 'minor' | 'poi';
+  matchedWord?: string;
+  regex?: string;
+  pattern?: string;
+  matchedText?: string;
+  field: PromptTriggerField;
+  gateWord?: string;
+};
+
+type CheckableHit = string | { matchedText: string; pattern: string; regex: string };
+
+function describeHit(hit: CheckableHit) {
+  return typeof hit === 'object'
+    ? { matchedWord: hit.matchedText, regex: hit.regex, pattern: hit.pattern }
+    : { matchedWord: hit };
+}
+
+/** `includesPoi` plus the regex and span that matched. */
+function findPoi(prompt: string | undefined) {
+  if (!prompt) return false;
+  let found = undefined as { word: string; regex: string; matchedText?: string } | undefined;
+  const matcher = (text: string, checkable: Checkable) => {
+    if (inPromptEdit(text, checkable)) return false;
+    const match = checkable.regex.exec(text);
+    if (!match) return false;
+    found = { word: checkable.word, regex: checkable.regex.source, matchedText: match[0] };
+    return checkable.word;
+  };
+  return words.poi.inPrompt(prompt, matcher) ? found ?? false : false;
+}
+
+/** Every sub-check that matches, in audit order; `collectAll` false stops at the first hit. */
+function findInappropriateEnriched(
   input: { prompt?: string; negativePrompt?: string },
-  nsfw?: boolean
-): { type: 'minor' | 'poi'; matchedWord?: string; regex?: string; pattern?: string } | false {
-  if (!input.prompt) return false;
+  nsfw: boolean | undefined,
+  collectAll: boolean
+): InappropriateMatch[] {
+  const hits: InappropriateMatch[] = [];
+  if (!input.prompt) return hits;
   input.prompt = input.prompt.replace(/'|\.|\-/g, '');
+  const done = () => !collectAll;
 
   // Harmful combinations (with matched text capture)
   const harmfulCombo = includesHarmfulCombinationsEnriched(input.prompt);
-  if (harmfulCombo) return { type: harmfulCombo.type, matchedWord: harmfulCombo.matchedText };
+  if (harmfulCombo) {
+    hits.push({
+      type: harmfulCombo.type,
+      matchedWord: harmfulCombo.matchedText,
+      matchedText: harmfulCombo.matchedText,
+      regex: harmfulCombo.regex,
+      field: 'prompt',
+    });
+    if (done()) return hits;
+  }
 
   // Same gate as in `includesInappropriate` above, and the same consequence: the nsfw word
   // list decides whether the POI and minor checks below run at all.
-  if (!nsfw && !includesNsfw(input.prompt)) return false;
+  let gateWord: string | undefined;
+  if (!nsfw) {
+    const gate = words.nsfw.inPrompt(input.prompt);
+    if (!gate) return hits;
+    gateWord = typeof gate === 'object' ? gate.matchedText : gate;
+  }
 
   // Negative prompt harmful combinations
   if (input.negativePrompt) {
     const negativeHarmfulCombo = includesHarmfulCombinationsEnriched(input.negativePrompt);
-    if (negativeHarmfulCombo)
-      return { type: negativeHarmfulCombo.type, matchedWord: negativeHarmfulCombo.matchedText };
+    if (negativeHarmfulCombo) {
+      hits.push({
+        type: negativeHarmfulCombo.type,
+        matchedWord: negativeHarmfulCombo.matchedText,
+        matchedText: negativeHarmfulCombo.matchedText,
+        regex: negativeHarmfulCombo.regex,
+        field: 'negativePrompt',
+        gateWord,
+      });
+      if (done()) return hits;
+    }
   }
 
-  // POI — includesPoi returns the matched name (string) or false
-  const poiResult = includesPoi(input.prompt);
-  if (poiResult)
-    return { type: 'poi', matchedWord: typeof poiResult === 'string' ? poiResult : undefined };
+  const poi = findPoi(input.prompt);
+  if (poi) {
+    hits.push({
+      type: 'poi',
+      matchedWord: poi.word,
+      matchedText: poi.matchedText,
+      regex: poi.regex,
+      field: 'prompt',
+      gateWord,
+    });
+    if (done()) return hits;
+  }
 
   // Minor — check each sub-check individually to capture the matched word
-  const ageCheck = includesMinorAge(input.prompt);
-  if (ageCheck.found && ageCheck.age != null)
-    return { type: 'minor', matchedWord: `${ageCheck.age} year old` };
+  const ageCheck = findMinorAge(input.prompt);
+  if (ageCheck.found && ageCheck.age != null) {
+    hits.push({
+      type: 'minor',
+      matchedWord: `${ageCheck.age} year old`,
+      matchedText: ageCheck.matchedText,
+      regex: ageCheck.regex,
+      field: 'prompt',
+      gateWord,
+    });
+    if (done()) return hits;
+  }
 
   const youngNoun = words.young.nouns.inPrompt(input.prompt);
   if (youngNoun) {
-    const isObject = typeof youngNoun === 'object';
-    const matchedWord = isObject
-      ? youngNoun.matchedText
-      : typeof youngNoun === 'string'
-      ? youngNoun
-      : undefined;
-    const regex = isObject ? youngNoun.regex : undefined;
-    const pattern = isObject ? youngNoun.pattern : undefined;
-    return { type: 'minor', matchedWord, regex, pattern };
+    hits.push({
+      type: 'minor',
+      ...describeHit(youngNoun),
+      matchedText: typeof youngNoun === 'object' ? youngNoun.matchedText : undefined,
+      field: 'prompt',
+      gateWord,
+    });
+    if (done()) return hits;
   }
 
   if (input.negativePrompt) {
     const negYoung = words.young.negativeNouns.inPrompt(input.negativePrompt);
     if (negYoung) {
-      const isObject = typeof negYoung === 'object';
-      const matchedWord = isObject
-        ? negYoung.matchedText
-        : typeof negYoung === 'string'
-        ? negYoung
-        : undefined;
-      const regex = isObject ? negYoung.regex : undefined;
-      const pattern = isObject ? negYoung.pattern : undefined;
-      return { type: 'minor', matchedWord, regex, pattern };
+      hits.push({
+        type: 'minor',
+        ...describeHit(negYoung),
+        matchedText: typeof negYoung === 'object' ? negYoung.matchedText : undefined,
+        field: 'negativePrompt',
+        gateWord,
+      });
     }
   }
 
-  return false;
+  return hits;
+}
+
+function includesInappropriateEnriched(
+  input: { prompt?: string; negativePrompt?: string },
+  nsfw?: boolean
+): InappropriateMatch | false {
+  return findInappropriateEnriched(input, nsfw, false)[0] ?? false;
 }
 
 // #endregion [inappropriate]

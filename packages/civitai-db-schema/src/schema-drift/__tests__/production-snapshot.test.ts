@@ -186,9 +186,9 @@ describe('production catalog snapshot (2026-08-03)', () => {
  * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
  * for the same reason.
  */
-describe('production catalog snapshot (2026-10-16)', () => {
+describe('production catalog snapshot (2026-10-19)', () => {
   const current = JSON.parse(
-    readFileSync(join(here, 'fixtures/catalog-production-2026-10-16.json'), 'utf8')
+    readFileSync(join(here, 'fixtures/catalog-production-2026-10-19.json'), 'utf8')
   ) as DbCatalog;
   const currentReport = compareSchemaToCatalog(schema, current);
   const currentFound = (kind: DriftKind) =>
@@ -199,7 +199,7 @@ describe('production catalog snapshot (2026-10-16)', () => {
   it('is a catalog the differ could actually read, captured with a real instant', () => {
     expect(() => assertCatalogSanity(current)).not.toThrow();
     expect(assessCoverage(currentReport)).toEqual([]);
-    expect(current.capturedAt).toBe('2026-10-16T02:45:53.108Z');
+    expect(current.capturedAt).toBe('2026-10-19T17:31:16.592Z');
   });
 
   it('compares every referential action (a live capture carries them)', () => {
@@ -209,10 +209,10 @@ describe('production catalog snapshot (2026-10-16)', () => {
     expect(currentReport.counts.referentialActionDrifts).toBeGreaterThan(0);
   });
 
-  it('finds referential-action drift on ON UPDATE only, never ON DELETE', () => {
-    // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on the
-    // hand-written App Blocks tables. Inert while ids are never updated. An ON DELETE
-    // disagreement is a different, live hazard and must not hide inside this batch.
+  it('finds referential-action drift on ON UPDATE only', () => {
+    // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on
+    // hand-written foreign keys (App Blocks, mystery box). Inert while ids are never updated. An
+    // ON DELETE disagreement is a different, live hazard and must not hide inside this batch.
     const actions = currentReport.findings.filter((f) => f.kind === 'referential-action');
     const onDelete = (s: string) => /ON DELETE (\w+)/.exec(s)?.[1];
     const onUpdate = (s: string) => /ON UPDATE (\w+)/.exec(s)?.[1];

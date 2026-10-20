@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -45,7 +46,7 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER
+  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER, "category" TEXT
 );
 `;
 
@@ -54,7 +55,7 @@ const redetected = (at: string) => ({ workflowId: 'wf', reason: 'r', textHash: '
 
 let pg: PGlite;
 beforeEach(async () => {
-  pg = new PGlite();
+  pg = await freshPglite();
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   await pg.exec(SCHEMA);
   await pg.exec(`INSERT INTO "User" VALUES (1, 'owner'), (2, 'other'), (5, 'mod')`);
@@ -117,6 +118,13 @@ describe('getRedetectedModels', () => {
       2: false,
       7: false,
     });
+  });
+
+  it('ignores a site-form appeal, which is about an unpublish rather than the flag', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 1, 'Pending', 1, 'Model')`);
+    const { items } = await getRedetectedModels({ limit: 10 });
+    expect(items.find((r) => r.modelId === 1)?.hasPendingAppeal).toBe(false);
   });
 
   it('pages and reports whether more remain', async () => {

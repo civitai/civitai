@@ -53,3 +53,62 @@ describe('metric-privacy meta toggles', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('metric visibility choices', () => {
+  it('stores hide and show, drops inherit, and clears the legacy flags on a model', () => {
+    const result = modelUpsertSchema.parse({
+      ...baseModelInput,
+      meta: {
+        commentsLocked: false,
+        hideBuzz: true,
+        metricVisibility: { buzz: 'inherit', downloads: 'show', generations: 'hide' },
+      },
+    });
+
+    expect(result.meta).toMatchObject({
+      metricVisibility: { downloads: 'show', generations: 'hide' },
+      hideBuzz: null,
+      hideDownloads: null,
+      hideGenerations: null,
+    });
+    expect(result.meta?.metricVisibility).not.toHaveProperty('buzz');
+  });
+
+  it('does the same on a model version', () => {
+    const result = modelVersionUpsertSchema2.parse({
+      modelId: 1,
+      name: 'v1',
+      baseModel: 'SD 1.5',
+      meta: { hideDownloads: true, metricVisibility: { buzz: 'show', downloads: 'inherit' } },
+    });
+
+    expect(result.meta).toEqual({
+      metricVisibility: { buzz: 'show' },
+      hideBuzz: null,
+      hideDownloads: null,
+      hideGenerations: null,
+    });
+  });
+
+  it('leaves a legacy-only save as it was', () => {
+    const result = modelVersionUpsertSchema2.parse({
+      modelId: 1,
+      name: 'v1',
+      baseModel: 'SD 1.5',
+      meta: { hideBuzz: true },
+    });
+
+    expect(result.meta).toEqual({ hideBuzz: true });
+  });
+
+  it('rejects a choice that is not inherit, hide or show', () => {
+    const result = modelVersionUpsertSchema2.safeParse({
+      modelId: 1,
+      name: 'v1',
+      baseModel: 'SD 1.5',
+      meta: { metricVisibility: { buzz: 'visible' } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

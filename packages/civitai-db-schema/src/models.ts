@@ -90,6 +90,8 @@ export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
 
 export type EntityModerationStatus = "Pending" | "Succeeded" | "Failed" | "Expired" | "Canceled";
 
+export type TextScanHoldStatus = "Pending" | "Dismissed" | "Confirmed";
+
 export type ImageEngagementType = "Favorite" | "Hide";
 
 export type ImageOnModelType = "Example" | "Training";
@@ -191,6 +193,8 @@ export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audi
 export type TechniqueType = "Image" | "Video";
 
 export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
+
+export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
@@ -754,6 +758,7 @@ export interface User {
   serviceOfferings?: ServiceOffering[];
   serviceDealsBought?: ServiceDeal[];
   serviceDealsSold?: ServiceDeal[];
+  mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
 }
 
@@ -1555,6 +1560,21 @@ export interface ResourceIntentVocabulary {
   createdAt: Date;
   frozenAt: Date | null;
   frozenBy: string | null;
+  tagIndexSnapshots?: ResourceIntentTagIndexSnapshot[];
+}
+
+export interface ResourceIntentTagIndexSnapshot {
+  id: string;
+  status: string;
+  vocabVersion: string;
+  vocabulary?: ResourceIntentVocabulary;
+  specHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  objectKey: string;
+  buildStats: JsonValue;
+  createdAt: Date;
+  retiredAt: Date | null;
 }
 
 export interface Post {
@@ -1759,6 +1779,29 @@ export interface TextScanPrompt {
   note: string | null;
   createdById: number | null;
   createdAt: Date;
+}
+
+export interface TextScanHold {
+  id: number;
+  entityType: string;
+  entityId: number;
+  label: string;
+  textHash: string;
+  status: TextScanHoldStatus;
+  userId: number | null;
+  text: string;
+  reason: string;
+  workflowId: string | null;
+  promptId: number | null;
+  contentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  decidedAt: Date | null;
+  decidedById: number | null;
+  decisionNote: string | null;
+  hiddenAt: Date | null;
+  restoredAt: Date | null;
+  meta: JsonValue | null;
 }
 
 export interface ImageEngagement {
@@ -3186,6 +3229,7 @@ export interface Cosmetic {
   packMemberships?: CosmeticShopItemCosmetic[];
   creatorMilestones?: CreatorMilestone[];
   milestoneExtras?: CreatorMilestoneCosmetic[];
+  itemDefinition?: ItemDefinition | null;
 }
 
 export interface UserCosmetic {
@@ -3315,6 +3359,8 @@ export interface CosmeticShopItem {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   listed: boolean;
+  itemDefinitionId: number | null;
+  itemDefinition?: ItemDefinition | null;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
@@ -3391,6 +3437,116 @@ export interface UserCosmeticShopPurchaseCosmetic {
   cosmetic?: Cosmetic;
   unitAmount: number;
   meta: JsonValue | null;
+}
+
+export interface ItemDefinition {
+  id: number;
+  type: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  params: JsonValue;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  rarity: string | null;
+  value: number | null;
+  flags: number;
+  quantityAvailable: number | null;
+  version: number;
+  status: string;
+  createdById: number | null;
+  updatedById: number | null;
+  sellerId: number | null;
+  seller?: User | null;
+  createdAt: Date;
+  updatedAt: Date;
+  items?: Item[];
+  boxTiers?: BoxTier[];
+  boxContents?: BoxContent[];
+  rewardOf?: BoxContent[];
+  oddsSnapshots?: BoxOddsSnapshot[];
+  revisions?: BoxRevision[];
+  shopItems?: CosmeticShopItem[];
+}
+
+export interface Item {
+  id: bigint;
+  itemDefinitionId: number;
+  itemDefinition?: ItemDefinition;
+  holderType: string;
+  holderId: number;
+  quantity: number;
+  expiresAt: Date | null;
+  data: JsonValue;
+  sourceKey: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BoxTier {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  key: string;
+  name: string;
+  weight: number;
+  color: string | null;
+  sortOrder: number;
+  contents?: BoxContent[];
+}
+
+export interface BoxContent {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  tierId: number;
+  tier?: BoxTier;
+  rewardDefinitionId: number;
+  reward?: ItemDefinition;
+  enabled: boolean;
+}
+
+export interface BoxOpening {
+  boxItemId: bigint;
+  boxDefinitionId: number;
+  boxVersion: number;
+  userId: number;
+  boxSourceKey: string;
+  tierId: number;
+  contentId: number;
+  rewardDefinitionId: number;
+  rewardType: string;
+  tierWeight: number;
+  eligibleWeight: number;
+  tierRoll: number;
+  tierPoolSize: number;
+  itemRoll: number;
+  rewardStatus: string;
+  createdAt: Date;
+}
+
+export interface BoxRevision {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  baseVersion: number;
+  proposal: JsonValue;
+  status: string;
+  appliedVersion: number | null;
+  submittedById: number;
+  reviewedById: number | null;
+  reviewedAt: Date | null;
+  note: string | null;
+  createdAt: Date;
+}
+
+export interface BoxOddsSnapshot {
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  version: number;
+  snapshot: JsonValue;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface BuzzClaim {
@@ -4297,6 +4453,8 @@ export interface Appeal {
   internalNotes: string | null;
   buzzTransactionId: string | null;
   entityRemovedAt: Date | null;
+  category: AppealCategory | null;
+  context: JsonValue | null;
 }
 
 export interface RemovalScoreExemption {
@@ -6553,6 +6711,37 @@ export interface Prize {
   autoClaimed: boolean;
   paidAt: Date | null;
   voidedAt: Date | null;
+}
+
+export interface CreatorProgramPayoutReview {
+  id: number;
+  period: string;
+  userId: number;
+  status: string;
+  hold: boolean;
+  signals: string[];
+  payoutCents: number;
+  evidence: JsonValue;
+  firstFlaggedAt: Date;
+  lastEvaluatedAt: Date;
+  evaluations: number;
+  decidedAt: Date | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  version: number;
+  decisions: JsonValue;
+}
+
+export interface CreatorProgramPayoutReviewRun {
+  id: number;
+  period: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  creditedCount: number;
+  evaluatedCount: number;
+  flaggedCount: number;
+  error: string | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

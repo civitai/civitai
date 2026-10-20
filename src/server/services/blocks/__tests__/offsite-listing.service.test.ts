@@ -80,6 +80,8 @@ const { mockCreateImage } = vi.hoisted(() => ({
 
 const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
@@ -127,6 +129,12 @@ const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefin
 // back out of the image store. Only the backend accessor is replaced — the probe
 // itself, and the sharp decode inside it, run for real against real bytes.
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
+
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 

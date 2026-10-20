@@ -107,6 +107,32 @@ describe('mapTrainingBaseModelToBaseModel', () => {
     expect(mapped.baseModel).toBe(info.baseModel);
   });
 
+  it("publishes a keep-training continuation under its pinned base, not the ecosystem's first", () => {
+    const continuation = (pin: Record<string, unknown>) =>
+      studioWorkflow({
+        steps: [
+          {
+            $type: 'training',
+            input: {
+              engine: 'ai-toolkit',
+              ecosystem: 'sdxl',
+              continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@abc',
+              ...pin,
+            },
+          },
+        ],
+      });
+    expect(
+      mapTrainingBaseModelToBaseModel(continuation({ model: trainingModelInfo.illustrious.air }))
+        .baseModel
+    ).toBe('Illustrious');
+    expect(
+      mapTrainingBaseModelToBaseModel(continuation({ model: trainingModelInfo.pony.air })).baseModel
+    ).toBe('Pony');
+    // Without the pin the sdxl ecosystem resolves to its first entry: why the continuation carries it.
+    expect(mapTrainingBaseModelToBaseModel(continuation({})).baseModel).toBe('SDXL 1.0');
+  });
+
   it('resolves an AI-Toolkit ecosystem + variant to the variant-matched entry', () => {
     const entries = Object.entries(trainingModelInfo).filter(
       ([, i]) => i.aiToolkit?.ecosystem === 'wan'
@@ -328,6 +354,56 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.visibility).toBe('Private');
     expect(file.metadata.selectedEpochUrl).toBe('https://blobs/epoch-1');
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
+  });
+
+  // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
+  // the scan fallback job submits it and only tombstones it after a failed pre-flight. Stamping
+  // virusScanResult Success instead would be a fake scan result, so the fix is exists=false.
+  it('takes the Training Data placeholder out of the scan queue without faking a scan', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 300 },
+      data: { exists: false },
+    });
+  });
+
+  it("carries the run's LoRA type as the category tag and trainingDetails.type", async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'My Style', loraType: 'style' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toEqual([
+      { name: 'style', isCategory: true },
+    ]);
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Style');
+  });
+
+  it.each([undefined, 'foo'])('leaves the category unset for LoRA type %s', async (loraType) => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'Run', loraType } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toBeUndefined();
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Character');
+  });
+
+  it('writes a published base model for an ACE-Step run', async () => {
+    const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+    base.steps[0].input = { ...base.steps[0].input, ecosystem: 'ace_step_15' };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: base as unknown as Workflow,
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
   });
 
   it('falls back to the last available epoch when the selected number has no blob', async () => {

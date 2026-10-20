@@ -86,9 +86,9 @@ export async function assertImageVisibleToViewer({
   isModerator?: boolean;
 }) {
   const [visible] = await dbRead.$queryRaw<
-    { userId: number; nsfwLevel: number; postId: number | null }[]
+    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
   >`
-    SELECT i."userId", i."nsfwLevel", i."postId"
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(

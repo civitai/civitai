@@ -31,6 +31,11 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import {
+  WITHHELD_COSMETIC_ERROR,
+  getWithheldCosmeticIds,
+} from '~/server/services/creator-shop-withheld';
+import { bustUserCreatorCache } from '~/server/services/user-creator.service';
 import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
@@ -248,6 +253,8 @@ export async function equipCosmeticToEntity({
   // shape with no cssFrame or offset, on an entity nobody chose it for.
   if (userCosmetic.cosmetic.type === CosmeticType.Sticker)
     throw new Error('Stickers cannot be equipped');
+  if ((await getWithheldCosmeticIds([cosmeticId], dbWrite)).size)
+    throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
@@ -344,6 +351,9 @@ export async function equipCosmeticToEntity({
     await refreshEntityDecorationCaches(userCosmetic.equippedToType, [userCosmetic.equippedToId]);
   }
 
+  // Last, so a refusal still leaves both ends of the move refreshed: the sweep refreshes only where it
+  // found the cosmetic.
+  await refuseIfWithheldAfterEquip([cosmeticId]);
   return updated;
 }
 
@@ -552,12 +562,15 @@ function writeThroughRemovedEventHats(
       ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
       : []
   );
-  if (hats.length) void syncOwnersEventHats(hats);
-  if (hats.length)
-    void syncEventRosterMembers(
+  if (!hats.length) return Promise.resolve();
+  // Both catch and log their own failures, so a caller may leave this unawaited.
+  return Promise.all([
+    syncOwnersEventHats(hats),
+    syncEventRosterMembers(
       hats.map((h) => h.userId),
       { onlyIfListed: true }
-    );
+    ),
+  ]).then(() => undefined);
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -707,10 +720,64 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
-  writeThroughRemovedEventHats(equipped);
+  await afterHoldingsRemoved(uniqueUserIds, equipped);
 
-  await userCosmeticCache.refresh(uniqueUserIds);
-  await refreshOwnedStickerCache(uniqueUserIds);
+  return { revoked: count };
+}
+
+/** Clears every worn or content-placed copy of a cosmetic whose creator-shop listing is withheld. */
+export async function unequipWithheldCosmetic(cosmeticId: number | null | undefined) {
+  if (cosmeticId == null) return;
+  if (!(await getWithheldCosmeticIds([cosmeticId], dbWrite)).has(cosmeticId)) return;
+
+  const wornWhere = {
+    cosmeticId,
+    OR: [{ equippedAt: { not: null } }, { equippedToId: { not: null } }],
+  } satisfies Prisma.UserCosmeticWhereInput;
+  const worn = await dbWrite.userCosmetic.findMany({
+    where: wornWhere,
+    select: {
+      userId: true,
+      equippedToId: true,
+      equippedToType: true,
+      cosmetic: { select: { data: true } },
+    },
+  });
+  if (!worn.length) return;
+
+  await dbWrite.userCosmetic.updateMany({
+    where: wornWhere,
+    data: { equippedAt: null, equippedToId: null, equippedToType: null },
+  });
+  const userIds = [...new Set(worn.map((row) => row.userId))];
+  await afterHoldingsRemoved(userIds, worn);
+  await bustUserCreatorCache(userIds);
+}
+
+/**
+ * Call after an equip's write has committed. A verdict commits before its sweep above runs
+ * (`reviewCreatorShopItem` must keep that order, outside one transaction), so either that sweep saw
+ * this equip or this re-check sees the verdict: one of the two takes the cosmetic off.
+ */
+export async function refuseIfWithheldAfterEquip(cosmeticIds: number[]) {
+  const withheld = await getWithheldCosmeticIds(cosmeticIds, dbWrite);
+  if (!withheld.size) return;
+  for (const cosmeticId of withheld) await unequipWithheldCosmetic(cosmeticId);
+  throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
+}
+
+type RemovedEquippedHolding = {
+  userId: number;
+  equippedToId: number | null;
+  equippedToType: CosmeticEntity | null;
+  cosmetic?: { data: unknown } | null;
+};
+
+async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquippedHolding[]) {
+  const hatSync = writeThroughRemovedEventHats(equipped);
+
+  await userCosmeticCache.refresh(userIds);
+  await refreshOwnedStickerCache(userIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -733,8 +800,37 @@ export async function revokeCosmeticsFromUsers({
         ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
   }
+  return { hatSync };
+}
 
-  return { revoked: count };
+/**
+ * The cleanup `revokeCosmeticsFromUsers` runs, for holdings the moderator app already deleted.
+ * `removed` only names the owners and entities to re-derive, never what to take off, so a wrong or
+ * stale entry refreshes what is there.
+ */
+export async function refreshAfterHoldingsRemoved(
+  removed: {
+    userId: number;
+    cosmeticId: number;
+    equippedToId: number;
+    equippedToType: CosmeticEntity;
+  }[]
+) {
+  const cosmetics = await dbWrite.cosmetic.findMany({
+    where: { id: { in: [...new Set(removed.map((r) => r.cosmeticId))] } },
+    select: { id: true, data: true },
+  });
+  const dataById = new Map(cosmetics.map((c) => [c.id, c.data]));
+  const { hatSync } = await afterHoldingsRemoved(
+    [...new Set(removed.map((r) => r.userId))],
+    removed.map(({ cosmeticId, ...row }) => ({
+      ...row,
+      cosmetic: { data: dataById.get(cosmeticId) ?? null },
+    }))
+  );
+  // Awaited here, unlike the revoke, so the hat is off the map when the moderator's request returns.
+  // The sync logs its own failures and the hourly reconcile settles them: a 200 does not prove it.
+  await hatSync;
 }
 
 /**
@@ -818,8 +914,7 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
-  writeThroughRemovedEventHats(equipped);
-  await refreshOwnedStickerCache(userIds);
+  await afterHoldingsRemoved(userIds, equipped);
   return { count: result.count };
 }
 

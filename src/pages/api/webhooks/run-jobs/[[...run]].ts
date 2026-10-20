@@ -10,6 +10,7 @@ import {
   appealTrainingCopyJob,
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { scanLabelControlSampleJob } from '~/server/jobs/scan-label-control-sample';
 import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
 import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
@@ -18,6 +19,8 @@ import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
+import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -86,6 +89,7 @@ import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
 import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
 import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
+import { creatorShopWithdrawnRefundsJob } from '~/server/jobs/creator-shop-withdrawn-refunds';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -98,6 +102,7 @@ import {
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
 } from '~/server/jobs/build-resource-intent-cooc';
+import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
@@ -226,6 +231,7 @@ export const jobs: Job[] = [
   syncGeneratorLoadedResources,
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
+  buildResourceIntentTagIndexJob,
   updateUserScore,
   grantCreatorMilestones,
   userScoreHealthCheckJob,
@@ -237,6 +243,8 @@ export const jobs: Job[] = [
   botAccountDetection,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  creatorProgramCounterpartyReview,
+  creatorProgramPrepayoutReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
@@ -274,6 +282,7 @@ export const jobs: Job[] = [
   ...placementJobs,
   ...creatorServiceDealJobs,
   ...creatorServiceDealFileJobs,
+  creatorShopWithdrawnRefundsJob,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,
@@ -291,6 +300,7 @@ export const jobs: Job[] = [
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
   scanLabelCopyJob,
+  scanLabelControlSampleJob,
   scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,

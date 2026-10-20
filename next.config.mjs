@@ -336,6 +336,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
+      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
+      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
       //
@@ -462,6 +465,13 @@ export default defineNextConfig(
         {
           source: '/apps/installed',
           destination: '/apps/activity',
+          statusCode: 301,
+        },
+        // `/events` page removed; the sitemap and external links still point at it. Official
+        // articles are now the Civitai Official chip on `/articles`.
+        {
+          source: '/events',
+          destination: '/articles',
           statusCode: 301,
         },
         {

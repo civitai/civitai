@@ -11,6 +11,7 @@ import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import type * as NotificationService from '~/server/services/notification.service';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 
 const {
   enforceBlockedBrowsingTags,
@@ -27,7 +28,7 @@ const {
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  // Straight through to the origin; caching is not what these tests are about.
+  // Straight through to the origin.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   setFetchThroughCache,
 }));
@@ -73,6 +74,7 @@ import {
   getStorylineChildren,
   getStorylinePath,
   getStorylineForkShares,
+  getStorylineGraph,
   getStorylinesForPosts,
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
@@ -134,6 +136,9 @@ const publishedPost = (overrides: Record<string, unknown> = {}) => ({
  * gives a different answer than one made with the right ones.
  */
 let blockedPairs: Array<[number, number]> = [];
+/** The SQL a raw call sends, with nested fragments (the main-route walk) composed in. */
+const sqlOfRaw = (strings: TemplateStringsArray, values: unknown[]) =>
+  Prisma.sql(strings, ...(values as Prisma.Sql[])).sql;
 const answerRaw = (client: { $queryRaw: { mockImplementation: (f: never) => unknown } }) =>
   client.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
     if (!strings.join('?').includes('"UserEngagement"')) return Promise.resolve([]);
@@ -516,11 +521,9 @@ describe('authorization', () => {
 
   describe('setCanonChapter', () => {
     beforeEach(() => {
-      w.storylineChapterEdge.findFirst.mockResolvedValue({
-        parentChapterId: 20,
-        storylineId: 10,
-        chapter: { removedAt: null },
-      } as never);
+      w.storylineChapterEdge.findMany.mockResolvedValue([
+        { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
+      ] as never);
     });
 
     it('moves canon for the owner: clears the old one, then sets the new one', async () => {
@@ -738,10 +741,10 @@ describe('reading', () => {
       // Four chapters: 1 -> 2 (post deleted) -> 3 (taken down) -> 4.
       r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 3 } as never);
       r.$queryRaw.mockResolvedValue([
-        { id: 1, postId: 101, depth: 0 },
-        { id: 2, postId: null, depth: 1 },
-        { id: 3, postId: 103, depth: 2 },
-        { id: 4, postId: 104, depth: 3 },
+        { id: 1, postId: 101, depth: 0, parentIds: [] },
+        { id: 2, postId: null, depth: 1, parentIds: [] },
+        { id: 3, postId: 103, depth: 2, parentIds: [] },
+        { id: 4, postId: 104, depth: 3, parentIds: [] },
       ] as never);
       r.post.findMany.mockResolvedValue([
         post(101, OWNER),
@@ -764,7 +767,6 @@ describe('reading', () => {
         [4, 'browsingLevel'],
       ]);
       expect(hasEarlier).toBe(false);
-      // A tombstone carries no post content.
       expect(chapters[2].post).toBeNull();
       expect(chapters[0].post).toMatchObject({ id: 101, username: `u${OWNER}` });
       // The fields the tombstone decides on are asked for.
@@ -825,7 +827,7 @@ describe('reading', () => {
     });
 
     it('says when the path starts further back than it returned', async () => {
-      r.$queryRaw.mockResolvedValue([{ id: 4, postId: 104, depth: 3 }] as never);
+      r.$queryRaw.mockResolvedValue([{ id: 4, postId: 104, depth: 3, parentIds: [] }] as never);
       const { hasEarlier } = await getStorylinePath({
         chapterId: 4,
         viewer: { id: 99 },
@@ -856,12 +858,16 @@ describe('reading', () => {
             }) as never
           ),
       ],
-    ])('when %s, has no path and no children for them', async (_name, arrange) => {
+    ])('when %s, has no path, children or map for them', async (_name, arrange) => {
       arrange();
       const read = { chapterId: 1, viewer: { id: STRANGER }, browsingLevel: NsfwLevel.PG };
       await expect(getStorylinePath(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       await expect(getStorylineChildren(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(
+        getStorylineGraph({ id: 10, viewer: read.viewer, browsingLevel: read.browsingLevel })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(r.$queryRaw).not.toHaveBeenCalled();
+      expect(r.storylineChapter.findMany).not.toHaveBeenCalled();
       expect(r.storylineChapterEdge.findMany).not.toHaveBeenCalled();
     });
   });
@@ -881,6 +887,7 @@ describe('reading', () => {
         userId,
         createdAt: new Date(`2026-10-0${day}`),
         post: post(chapterId + 100, userId, postOverrides),
+        _count: { parents: 1 },
       },
     });
 
@@ -1176,8 +1183,8 @@ describe('getStoryline: page fields', () => {
       ...storylineRow(),
       collaborators: [{ user: user(COLLABORATOR) }],
     } as never);
-    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
-      const sql = strings.join('?');
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = sqlOfRaw(strings, values);
       if (sql.includes('COUNT(DISTINCT'))
         return Promise.resolve([{ chapters: 4, contributors: 3 }]);
       if (sql.includes('GROUP BY c."userId"'))
@@ -1188,8 +1195,8 @@ describe('getStoryline: page fields', () => {
         ]);
       if (sql.includes('WITH RECURSIVE main'))
         return Promise.resolve([
-          { id: 1, postId: 101, depth: 0 },
-          { id: 2, postId: null, depth: 1 },
+          { id: 1, postId: 101, depth: 0, parentIds: [] },
+          { id: 2, postId: null, depth: 1, parentIds: [] },
         ]);
       return Promise.resolve([]);
     }) as never);
@@ -1429,13 +1436,13 @@ describe('getStorylineCanonAhead', () => {
     // The canon route from chapter 2: 2 -> 3 (taken down) -> 4 -> 5 (R) -> 6 (X) -> 7 (by a user
     // the reader blocked) -> 8 (unpublished, by READER_AUTHOR).
     r.$queryRaw.mockResolvedValue([
-      { id: 2, postId: 102, depth: 1 },
-      { id: 3, postId: 103, depth: 2 },
-      { id: 4, postId: 104, depth: 3 },
-      { id: 5, postId: 105, depth: 4 },
-      { id: 6, postId: 106, depth: 5 },
-      { id: 7, postId: 107, depth: 6 },
-      { id: 8, postId: 108, depth: 7 },
+      { id: 2, postId: 102, depth: 1, parentIds: [] },
+      { id: 3, postId: 103, depth: 2, parentIds: [] },
+      { id: 4, postId: 104, depth: 3, parentIds: [] },
+      { id: 5, postId: 105, depth: 4, parentIds: [] },
+      { id: 6, postId: 106, depth: 5, parentIds: [] },
+      { id: 7, postId: 107, depth: 6, parentIds: [] },
+      { id: 8, postId: 108, depth: 7, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([
       post(102, OWNER),
@@ -1494,7 +1501,7 @@ describe('getStorylineCanonAhead', () => {
   });
 
   it('is empty for a chapter with no canon child', async () => {
-    r.$queryRaw.mockResolvedValue([{ id: 2, postId: 102, depth: 1 }] as never);
+    r.$queryRaw.mockResolvedValue([{ id: 2, postId: 102, depth: 1, parentIds: [] }] as never);
     await expect(
       getStorylineCanonAhead({ chapterId: 2, viewer: undefined, browsingLevel: NsfwLevel.PG })
     ).resolves.toEqual([]);
@@ -1506,12 +1513,15 @@ describe('getStorylineCanonAhead', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    const sql = strings.join('?');
+    // The walk is the shared main-route fragment, composed into the query as Postgres gets it.
+    const composedSql = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    const sql = composedSql.sql;
     expect(sql).toContain('WHERE c.id = ?');
     expect(sql).toContain('e."parentChapterId" = main.id AND e.canon');
     expect(sql).toContain('WHERE main.hops < ?');
-    expect(sql).toContain('ORDER BY depth');
-    expect(values).toEqual([2, 199]);
+    // Route order: across a rejoin, depth (the first-parent distance) does not rise one per step.
+    expect(sql).toContain('FROM main ORDER BY hops');
+    expect(composedSql.values).toEqual([2, 199]);
   });
 
   it('serves nothing when the story is outside the reader level', async () => {
@@ -2097,9 +2107,9 @@ describe('a chapter whose placement was removed', () => {
   it('is a removed tombstone in the reading path, for its author too, but not for moderators', async () => {
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 2 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 1, postId: 101, depth: 0, removedAt: null },
-      { id: 2, postId: 102, depth: 1, removedAt: REMOVED_AT },
-      { id: 3, postId: 103, depth: 2, removedAt: null },
+      { id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] },
+      { id: 2, postId: 102, depth: 1, removedAt: REMOVED_AT, parentIds: [] },
+      { id: 3, postId: 103, depth: 2, removedAt: null, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([
       post(101, OWNER),
@@ -2118,7 +2128,7 @@ describe('a chapter whose placement was removed', () => {
     const sql = rawSql(r.$queryRaw.mock.calls[0]);
     expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
     expect(sql).toContain('SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1');
-    expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM path');
+    expect(sql).toContain('SELECT path.id, path."postId", path.depth, path."removedAt"');
     // Selected only, never filtered on: the walk must reach past a removed chapter.
     expect(sql.match(/"removedAt"/g)).toHaveLength(3);
   });
@@ -2126,8 +2136,8 @@ describe('a chapter whose placement was removed', () => {
   it('is a removed tombstone on the main route', async () => {
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 2, postId: 102, depth: 1, removedAt: null },
-      { id: 3, postId: 103, depth: 2, removedAt: REMOVED_AT },
+      { id: 2, postId: 102, depth: 1, removedAt: null, parentIds: [] },
+      { id: 3, postId: 103, depth: 2, removedAt: REMOVED_AT, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([post(102, OWNER), post(103, STRANGER)] as never);
     r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
@@ -2143,7 +2153,7 @@ describe('a chapter whose placement was removed', () => {
     const sql = rawSql(r.$queryRaw.mock.calls[0]);
     expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
     expect(sql).toContain('SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1');
-    expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM main');
+    expect(sql).toContain('SELECT main.id, main."postId", main.depth, main."removedAt"');
     expect(sql.match(/"removedAt"/g)).toHaveLength(3);
   });
 
@@ -2160,6 +2170,7 @@ describe('a chapter whose placement was removed', () => {
         createdAt: new Date('2026-10-02'),
         removedAt,
         post: post(id + 100, STRANGER),
+        _count: { parents: 1 },
       },
     });
     r.storylineChapterEdge.findMany.mockResolvedValue([
@@ -2323,16 +2334,14 @@ describe('a chapter whose placement was removed', () => {
   });
 
   it('cannot be made the main route, and canon is left as it was', async () => {
-    w.storylineChapterEdge.findFirst.mockResolvedValue({
-      parentChapterId: 20,
-      storylineId: 10,
-      chapter: { removedAt: REMOVED_AT },
-    } as never);
+    w.storylineChapterEdge.findMany.mockResolvedValue([
+      { parentChapterId: 20, storylineId: 10, chapter: { removedAt: REMOVED_AT } },
+    ] as never);
     await expect(setCanonChapter({ chapterId: 31, userId: OWNER })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
     expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
-    expect(w.storylineChapterEdge.findFirst.mock.calls[0][0]).toMatchObject({
+    expect(w.storylineChapterEdge.findMany.mock.calls[0][0]).toMatchObject({
       select: { chapter: { select: { removedAt: true } } },
     });
   });
@@ -2362,7 +2371,6 @@ describe('covers and cast', () => {
     poi: false,
     ...extra,
   });
-  /** A chosen-image row as the by-id read returns it: the image and the chapter it is in. */
   const picked = (id: number, extra: Record<string, unknown> = {}) => ({
     ...image(id),
     storylineId: 10,
@@ -2619,9 +2627,9 @@ describe('covers and cast', () => {
     it('gives each shown chapter of the path its first image, and a tombstone none, in one read', async () => {
       r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 2 } as never);
       answerRaw([
-        { id: 1, postId: 101, depth: 0, removedAt: null },
-        { id: 2, postId: 102, depth: 1, removedAt: null },
-        { id: 3, postId: 103, depth: 2, removedAt: null },
+        { id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] },
+        { id: 2, postId: 102, depth: 1, removedAt: null, parentIds: [] },
+        { id: 3, postId: 103, depth: 2, removedAt: null, parentIds: [] },
       ]);
       r.post.findMany.mockResolvedValue([
         chapterPost(101, OWNER),
@@ -2653,6 +2661,7 @@ describe('covers and cast', () => {
           postId: 100 + i,
           depth: i,
           removedAt: null,
+          parentIds: i ? [i] : [],
         }));
       const queriesFor = async (n: number) => {
         r.$queryRaw.mockClear();
@@ -2665,7 +2674,8 @@ describe('covers and cast', () => {
       };
       const few = await queriesFor(2);
       expect(await queriesFor(50)).toBe(few);
-      expect(few).toBe(2);
+      // The path, the main route's chapter ids, and the first images.
+      expect(few).toBe(3);
     });
 
     it('gives the ways on their first images, none to a tombstone', async () => {
@@ -2681,6 +2691,7 @@ describe('covers and cast', () => {
           createdAt: new Date('2026-10-02'),
           removedAt: null,
           post: chapterPost(id + 100, STRANGER, overrides),
+          _count: { parents: 1 },
         },
       });
       r.storylineChapterEdge.findMany.mockResolvedValue([
@@ -2703,7 +2714,7 @@ describe('covers and cast', () => {
 
     it('reads no hidden lists and no images when no chapter is shown', async () => {
       r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
-      answerRaw([{ id: 1, postId: null, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: null, depth: 0, removedAt: null, parentIds: [] }]);
       r.post.findMany.mockResolvedValue([] as never);
       const { chapters } = await getStorylinePath({
         chapterId: 1,
@@ -2721,7 +2732,7 @@ describe('covers and cast', () => {
         hiddenTags: [{ id: 5, hidden: true }],
       });
       r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       r.post.findMany.mockResolvedValue([chapterPost(101, OWNER)] as never);
       await getStorylinePath({ chapterId: 1, viewer: { id: 99 }, browsingLevel: PG });
       const read = rawCalls().find((call) => isFirstImageRead(call.text))!;
@@ -2735,6 +2746,39 @@ describe('covers and cast', () => {
       );
       expect(read.values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
+    });
+  });
+
+  it("applies the reader's image gate to the map's chapters too", async () => {
+    getAllHiddenForUser.mockResolvedValue({
+      hiddenImages: [{ id: 77, hidden: true }],
+      hiddenTags: [{ id: 5, hidden: true }],
+    });
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, post: chapterPost(101, OWNER) },
+      {
+        id: 2,
+        depth: 1,
+        removedAt: null,
+        post: chapterPost(102, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.firstImage?.id ?? null])).toEqual([
+      [1, null, 1101],
+      [2, 'removed', null],
+    ]);
+    const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
+    expect(reads).toHaveLength(1);
+    // The same bound values as the path's read: posts, the reader, their level, hidden lists.
+    expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+    // One row past the cap, so the read can tell a full map from a cut one without reading more.
+    expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
+      take: STORYLINE_GRAPH_LIMIT + 1,
     });
   });
 
@@ -2817,7 +2861,7 @@ describe('covers and cast', () => {
       ],
     ])('shows %s as the banner', async (_n, picks, chosenRows, heroId) => {
       withPicks(picks);
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], chosenRows);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }], chosenRows);
       const storyline = await page({ id: 99 });
       expect(storyline.heroImage?.id).toBe(heroId);
       // Only the banner pick (7 in every case) is shown as a banner; any fallback is a portrait.
@@ -2829,7 +2873,7 @@ describe('covers and cast', () => {
     it('shows a pick from a chapter only its author or a moderator may see, to them', async () => {
       withPicks({ heroImageId: 7 });
       const unpublished = [picked(7, { postUserId: STRANGER, publishedAt: null })];
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], unpublished);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }], unpublished);
       expect((await page({ id: STRANGER })).heroImage?.id).toBe(7);
       expect((await page({ id: MODERATOR, isModerator: true })).heroImage?.id).toBe(7);
       expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
@@ -2837,7 +2881,7 @@ describe('covers and cast', () => {
 
     it('reads the chapter fields the pick is judged by from the post, not the image', async () => {
       withPicks({ heroImageId: 7 });
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain(
@@ -2846,7 +2890,7 @@ describe('covers and cast', () => {
     });
 
     it('has no banner when chapter 1 is a tombstone and nothing is picked', async () => {
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       r.post.findMany.mockResolvedValue([chapterPost(101, OWNER, { tosViolation: true })] as never);
       const storyline = await page({ id: 99 });
       expect(storyline.heroImage).toBeNull();
@@ -2859,7 +2903,7 @@ describe('covers and cast', () => {
         hiddenTags: [{ id: 5, hidden: true }],
       });
       withPicks({ heroImageId: 7, coverImageId: 8 });
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain('JOIN "StorylineChapter" c ON c."postId" = i."postId"');
@@ -2885,7 +2929,7 @@ describe('covers and cast', () => {
       ],
     ])('gives the card picture as the feed does: %s', async (_n, picks, chosenRows, coverId) => {
       withPicks(picks);
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }], chosenRows);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }], chosenRows);
       expect((await page({ id: 99 })).coverImage?.id).toBe(coverId);
     });
 
@@ -2945,7 +2989,7 @@ describe('covers and cast', () => {
 
     it('gives the raw picks to the owner and moderators only', async () => {
       withPicks({ heroImageId: 7, coverImageId: 8 });
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       for (const viewer of [{ id: OWNER }, { id: MODERATOR, isModerator: true }])
         await expect(page(viewer)).resolves.toMatchObject({ coverImageId: 8, heroImageId: 7 });
       for (const viewer of [{ id: 99 }, undefined])
@@ -2971,11 +3015,13 @@ describe('covers and cast', () => {
         heroImagePosition: 50,
         collaborators: [{ user: cast(COLLABORATOR) }],
       } as never);
-      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = sqlOfRaw(strings, values);
         if (sql.includes('GROUP BY c."userId"')) return Promise.resolve([{ userId: STRANGER }]);
         if (sql.includes('WITH RECURSIVE main'))
-          return Promise.resolve([{ id: 1, postId: 101, depth: 0, removedAt: null }]);
+          return Promise.resolve([
+            { id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] },
+          ]);
         return Promise.resolve([]);
       }) as never);
       r.user.findMany.mockResolvedValue([cast(STRANGER)] as never);
@@ -3236,8 +3282,9 @@ describe('title moderation', () => {
       expect(Object.keys(result).map(Number)).toEqual([1, 3]);
     });
 
-    // The CASE itself is raiseNsfwLevelText's, pinned in its own package; this pins what it is
-    // applied to. Its behaviour on the masks above was checked against Postgres by hand.
+    // The CASE itself is raiseNsfwLevelText's, pinned in its own package
+    // (packages/civitai-shared/src/__tests__/rated-entity-sql.test.ts); this pins what it is
+    // applied to.
     it('getStorylinesInfinite: the level filter raises chapter 1 to the title', async () => {
       await getStorylinesInfinite({
         filter: 'all',
@@ -3396,10 +3443,9 @@ describe('title moderation', () => {
   });
 });
 
-// Justin's ruling: while the title scan holds a storyline as about a minor, nothing in it may be
-// NSFW. Every read and write below holds chapters to `storylineCeiling` (PG-13 here, under an
-// owner ceiling of X). Each case runs once with the flag and once without, the control: an R
-// chapter that is fine under the owner's ceiling alone.
+// While the title scan holds a storyline as about a minor, every read and write below holds
+// chapters to `storylineCeiling`. Each case runs once with the flag and once without it, the
+// control: an R chapter that is fine under the owner's ceiling alone.
 describe('a storyline the title scan holds as about a minor', () => {
   const R = NsfwLevel.R;
   const ALL = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X;
@@ -3535,12 +3581,12 @@ describe('a storyline the title scan holds as about a minor', () => {
         ...storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }),
         collaborators: [],
       } as never);
-      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
         Promise.resolve(
-          strings.join('?').includes('WITH RECURSIVE main')
+          sqlOfRaw(strings, values).includes('WITH RECURSIVE main')
             ? [
-                { id: 1, postId: 101, depth: 0 },
-                { id: 2, postId: 102, depth: 1 },
+                { id: 1, postId: 101, depth: 0, parentIds: [] },
+                { id: 2, postId: 102, depth: 1, parentIds: [] },
               ]
             : []
         )) as never);
@@ -3685,7 +3731,9 @@ describe('getStoryline — title appeal', () => {
     const asOwner = await page(byScan, { id: OWNER });
     expect(asOwner).toMatchObject({ titleAppealable: true, titleAppeal: lastAppeal });
     expect(r.appeal.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { entityType: 'Storyline', entityId: 10, userId: OWNER } })
+      expect.objectContaining({
+        where: { entityType: 'Storyline', entityId: 10, userId: OWNER, category: null },
+      })
     );
     for (const field of ['tosViolationByScan', 'tosViolationByModerator'])
       expect(asOwner).not.toHaveProperty(field);

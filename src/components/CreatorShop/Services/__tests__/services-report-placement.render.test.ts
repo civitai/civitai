@@ -47,12 +47,16 @@ const { ServicesSection } = await import('~/components/CreatorShop/Storefront/Se
 
 // The seller's id (9) differs from the offering's (42), so a report filed on the wrong one shows.
 const SELLER = 9;
-const renderShop = () =>
+const renderShop = (shopPublished = true) =>
   renderToStaticMarkup(
     createElement(
       MantineProvider,
       null,
-      createElement(ServicesSection, { ownerUserId: SELLER, username: 'seller' })
+      createElement(ServicesSection, {
+        ownerUserId: SELLER,
+        username: 'seller',
+        shopPublished,
+      })
     )
   );
 
@@ -65,6 +69,12 @@ describe('storefront: reporting a service', () => {
     const html = renderShop();
     expect(html).toContain('data-report-offering="42"');
     expect(html).toContain('Request');
+  });
+
+  it('offers no Request on a draft shop, which answers a buyer "Shop not found" (a moderator can see it)', () => {
+    const html = renderShop(false);
+    expect(html).not.toContain('Request');
+    expect(html).toContain('data-report-offering="42"');
   });
 
   it('shows no report to the seller on their own storefront', () => {

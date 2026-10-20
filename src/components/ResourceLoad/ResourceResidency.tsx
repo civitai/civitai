@@ -42,7 +42,7 @@ export function useResourceResidency(modelVersionId: number | undefined) {
 type Residency = { loaded: boolean; label: string; color: string; description: string };
 
 const WAIT_NOTE =
-  'You can still generate with it — the job waits in your queue until the download finishes, and you can boost it from there.';
+  'You can still generate with it — the job waits in your queue until the download finishes.';
 
 export function describeResidency(availability: ResourceLoadAvailability): Residency | null {
   const eta = (source: { progress?: number | null; etaSeconds?: number | null }) => {

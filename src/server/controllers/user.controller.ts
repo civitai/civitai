@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
@@ -53,6 +53,7 @@ import type {
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -63,6 +64,8 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
+import { countHeldMysteryBoxes } from '~/server/services/mystery-box-inventory.service';
+import { mysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -123,6 +126,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
@@ -303,6 +307,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
+    const unopenedBoxes = countHeldMysteryBoxes(mysteryBoxViewer(ctx)).catch(() => 0);
     // Concurrent, not serial: these hit two different backends — the
     // notifications service over HTTP (with its own retries) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
@@ -346,6 +351,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
       // rather than merely zero a count.
       pendingCollectionReviews: collectionReviewCounts.total,
+      unopenedBoxes: await unopenedBoxes,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -749,7 +755,7 @@ export const updateUserHandler = async ({
       usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
     );
 
-    purgeCache({ tags: [`user-creator-${id}`] }).catch();
+    await bustUserCreator(id);
 
     // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
     // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
@@ -1289,6 +1295,8 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean; withheld: boolean };
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1313,12 +1321,14 @@ export const getUserCosmeticsHandler = async ({
       entities: inUseCosmeticEntities,
       viewer: ctx.user,
     });
+    const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
     const cosmetics = user.cosmetics.reduce(
       (
         acc,
         {
           obtainedAt,
+          equippedAt,
           equippedToId,
           equippedToType,
           claimKey,
@@ -1335,6 +1345,10 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          // Also set while a content decoration is placed (that is `inUse`). A withheld cosmetic still
+          // worn from before withholding unequipped it shows to nobody, so it isn't equipped here either.
+          equipped: !!equippedAt && !withheld.has(rest.id),
+          withheld: withheld.has(rest.id),
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(
@@ -1370,16 +1384,19 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
+        else if (type === CosmeticType.CardDecoration)
+          acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
 
         return acc;
       },
       {
-        badges: [] as WithClaimKey<BadgeCosmetic>[],
-        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
-        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
-        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        sticker: [] as WithClaimKey<StickerCosmetic>[],
+        badges: [] as OwnedCosmetic<BadgeCosmetic>[],
+        nameplates: [] as OwnedCosmetic<NamePlateCosmetic>[],
+        profileDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        profileBackground: [] as OwnedCosmetic<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        sticker: [] as OwnedCosmetic<StickerCosmetic>[],
+        cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
       }
     );
 

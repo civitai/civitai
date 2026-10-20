@@ -1,5 +1,7 @@
+import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { getRegion } from '~/server/utils/region-blocking';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
@@ -111,6 +113,7 @@ export const cosmeticShopRouter = router({
   purchaseShopItem: verifiedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })
     .input(purchaseCosmeticShopItemInput)
+    .use(itemHolderInFlightLimit)
     .mutation(({ input, ctx }) => {
       // Calculate domain-allowed account types at router level
       const [buzzType] = getAllowedAccountTypes(ctx.features);
@@ -119,6 +122,8 @@ export const cosmeticShopRouter = router({
         ...input,
         stickersEnabled: ctx.features.stickers,
         packsEnabled: ctx.features.cosmeticPacks,
+        mysteryBoxEnabled: ctx.features.mysteryBox,
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
         buzzType,

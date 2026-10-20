@@ -9,14 +9,17 @@ import {
   stampModelTextScanAppeal,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
+import { writeTextScanRuling } from '~/server/services/text-scan/label-capture';
 import {
   getTextScanRedetection,
   readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
+  type TextScanRedetection,
 } from '~/server/services/text-scan/flag-snapshot';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
 
@@ -30,6 +33,7 @@ async function dismissRedetection({
   userId,
   reason,
   note,
+  detection,
 }: {
   modelId: number;
   label: TextScanFlagLabel;
@@ -37,15 +41,28 @@ async function dismissRedetection({
   userId: number;
   reason?: string;
   note?: string;
+  /** The held detection being dismissed: the verdict its label records. */
+  detection: TextScanRedetection;
 }) {
   const entry = flagEntryPath(label);
-  const dismissed = await dbWrite.$executeRaw`
+  const dismissed = await writeTextScanRuling(
+    {
+      modelId,
+      labels: [label],
+      decision: 'appealGranted',
+      via: 'moderator',
+      moderatorId: userId,
+      reason,
+      note,
+      heldDetection: detection,
+    },
+    (tx) => tx.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, (${entry} - 'redetected') || ${carriedRulings(label, [
-    'appealGranted',
-  ])} || jsonb_build_object(
+      'appealGranted',
+    ])} || jsonb_build_object(
           'appealGranted', jsonb_build_object(
             'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
           ) || jsonb_strip_nulls(jsonb_build_object(
@@ -56,13 +73,21 @@ async function dismissRedetection({
     )
     WHERE m.id = ${modelId}
       AND ${entry}->'redetected'->>'textHash' = ${textHash}
-  `;
+  `,
+    (changed) => changed > 0
+  );
   return dismissed > 0;
 }
 
 export async function hasOpenModelAppeal(modelId: number) {
   const openAppeal = await dbWrite.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, status: AppealStatus.Pending },
+    // In-app appeals only: a site-form appeal on the model is about its unpublish, not the flag.
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      status: AppealStatus.Pending,
+      category: null,
+    },
     select: { id: true },
   });
   return !!openAppeal;
@@ -92,8 +117,7 @@ export async function withResolutionLock<T>(
     .set(key, token, { NX: true, EX: LOCK_SECONDS })
     .then((reply) => !!reply)
     .catch(() => true);
-  if (!acquired)
-    throw throwBadRequestError('This flag is being resolved. Reload and try again.');
+  if (!acquired) throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {
@@ -181,7 +205,7 @@ async function resolve({
       logDecision('closed');
       return 'closed';
     }
-    if (!(await dismissRedetection({ modelId, label, textHash, userId, reason, note })))
+    if (!(await dismissRedetection({ modelId, label, textHash, userId, reason, note, detection })))
       throw stale();
     logDecision('dismissed');
     return 'dismissed';
@@ -218,6 +242,7 @@ async function resolve({
       via: 'moderator',
       reason,
       note,
+      heldDetection: detection,
     });
   // Last, so a failure anywhere above leaves the item in the queue to retry.
   await dropRedetection({ modelId, label, textHash });

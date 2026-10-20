@@ -96,6 +96,19 @@ export function isHostForColor(host: string, color: ColorDomain): boolean {
  * change the global color resolution.
  */
 
+/**
+ * True when `host` may serve mature App-Blocks content: a primary or alias of the RED domain.
+ * Fail-closed: an empty or missing host is not red-capable.
+ *
+ * The App Store's "is this request red-capable?" test — the two store routers, the public apps
+ * REST endpoints and the run page call this rather than re-spelling it. (The block-token mint
+ * and the block-scope middleware still spell the same expression inline when they choose a
+ * token's ceiling; they were left untouched in this change.)
+ */
+export function isRedCapableHost(host: string | null | undefined): boolean {
+  return !!host && isHostForColor(host, 'red');
+}
+
 /** Mature content ratings (App Blocks). Everything else is SFW. */
 const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
 

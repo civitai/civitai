@@ -142,6 +142,8 @@ const { store, mockRead, mockWrite, mockNotifyListing, mockRepo, mockNotifyColla
     };
 
     const makeClient = () => ({
+      $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+      $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
       appCollaborator,
       appOwnershipEvent: { create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})) },
       user: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },

@@ -6,6 +6,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
+  import { BlockedIds } from '$lib/blocked-ids.svelte';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
@@ -16,6 +17,7 @@
   import ContentCounts from '../../retool/user-lookup/ContentCounts.svelte';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import SharedIpAccounts from '$lib/components/SharedIpAccounts.svelte';
+  import DossierPanel from './DossierPanel.svelte';
   import { fetchSharedIpAccounts } from '../../retool/user-lookup/signals';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
@@ -24,8 +26,9 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { entityUrl, modelLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
-  import { clearPaging, nonPagingSearch } from '$lib/paging';
+  import { clearPaging, selectionKey } from '$lib/paging';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import type { ReportActionGrants } from '$lib/report-queue';
 
   let {
     suspectId,
@@ -35,7 +38,7 @@
     models,
     filters,
     accountHistory,
-    canAct,
+    can,
     civitaiUrl,
   }: {
     suspectId: number;
@@ -46,7 +49,8 @@
     models: AccountData['models'];
     filters: AccountData['filters'];
     accountHistory: AccountData['accountHistory'];
-    canAct: boolean;
+    /** The viewer's action grants: the image bar needs `images`, its strike box `strike`. */
+    can: ReportActionGrants;
     civitaiUrl: string;
   } = $props();
 
@@ -57,11 +61,6 @@
   );
 
   const selected = new SelectionSet<string | number>();
-  const blockedIds = $derived(
-    new Set<string | number>(
-      (suspect?.items ?? []).filter((i) => i.ingestion === 'Blocked').map((i) => i.id)
-    )
-  );
 
   // This panel owns its image writes so a success can clear the selection it armed. Strike and notify
   // moved to the report column beside it, with the report they answer.
@@ -82,13 +81,23 @@
     },
   });
 
-  // Paging deliberately keeps the selection — one removal spans several pages of a 500-image account.
-  // A filter change or a new suspect must not. Keyed on the search string, not `items`, which is a
-  // fresh array after ANY write and would discard a selection mid-assembly.
-  const batchKey = $derived(nonPagingSearch(pageState.url.search));
-  $effect(() => {
-    batchKey;
-    untrack(() => selected.clear());
+  // The selection survives an image page turn and nothing else: any other URL change clears it. Keyed
+  // on the URL, not `items`, a fresh array after ANY write that would discard a selection mid-assembly.
+  // Blocked ids accumulate over the batch's pages because the selection spans them.
+  const batchKey = $derived(selectionKey(pageState.url));
+  const blockedIds = new BlockedIds();
+  let shownBatch: string | undefined;
+  $effect.pre(() => {
+    const key = batchKey;
+    const items = suspect?.items ?? [];
+    untrack(() => {
+      if (key !== shownBatch) {
+        shownBatch = key;
+        selected.clear();
+        blockedIds.clear();
+      }
+      blockedIds.absorb(items);
+    });
   });
 
   // In the path with the account, so a link handed to a colleague opens the same view — and so the
@@ -176,6 +185,8 @@
       />
     </div>
   </section>
+
+  <DossierPanel {suspectId} />
 
   <!-- The accounts sharing an address with this one, and the hand-off to Bulk Ban — for bots and
        the people running them. Client-fetched (`/api/shared-ip-accounts`): the shared-IP scan is the
@@ -287,8 +298,8 @@
 
     {#if showFilters}
       <div class="mt-3 border-t border-dark-4 pt-3">
-        <!-- Keyed on the non-paging part, like the selection above: an unrelated write invalidates
-             `load` and would otherwise reset a half-typed filter, and so would turning the page. -->
+        <!-- Keyed on the URL, like the selection above: an unrelated write invalidates `load` and
+             would otherwise reset a half-typed filter. -->
         {#key batchKey}
           <SuspectFilterBar {filters} />
         {/key}
@@ -304,7 +315,7 @@
           </p>
     {/if}
 
-    {#if canAct}
+    {#if can.images}
       <div class="mt-3 border-t border-dark-4 pt-3">
         <ImageActionBar
           bare
@@ -313,7 +324,9 @@
           onSubmit={onSubmit.enhance}
           submitting={onSubmit.submitting}
           notify={false}
+          strike={can.strike}
           {blockedIds}
+          keepOffScreen
         />
       </div>
     {/if}
@@ -325,7 +338,7 @@
     total={suspect.matched}
     perPage={suspect.perPage}
     page={suspect.page}
-    selected={canAct ? selected : undefined}
+    selected={can.images ? selected : undefined}
     empty="No images match these filters."
     endLabel="End of this account's content."
     card={imageCard}

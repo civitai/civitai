@@ -34,6 +34,7 @@ export const IMAGE_PICKER_SOURCES_ERROR =
   'OPEN_IMAGE_PICKER: sources must be a non-empty list of "posted" and/or "generated".';
 export const IMAGE_PICKER_MULTIPLE_ERROR =
   'OPEN_IMAGE_PICKER: multiple.max must be a whole number of at least 1.';
+export const IMAGE_PICKER_PUBLIC_ONLY_ERROR = 'OPEN_IMAGE_PICKER: publicOnly must be a boolean.';
 
 export type ImagePickerRequest = {
   requestId: string;
@@ -41,6 +42,11 @@ export type ImagePickerRequest = {
   sources: BlockImagePickerSource[];
   /** `null` for a single pick; otherwise the clamped cap of a multi pick. */
   max: number | null;
+  /**
+   * Posted images only from a post that is not Private (`postedPickableWhere`). `false` when the
+   * app did not ask. Generated images are listed as before either way.
+   */
+  publicOnly: boolean;
 };
 
 export type ImagePickerDecision =
@@ -82,7 +88,12 @@ export function resolveImagePickerRequest(raw: unknown): ImagePickerDecision {
     max = Math.min(requested, IMAGE_PICKER_MULTIPLE_MAX);
   }
 
-  return { kind: 'open', request: { requestId, sources, max } };
+  if (obj.publicOnly !== undefined && typeof obj.publicOnly !== 'boolean') {
+    return { kind: 'refuse', requestId, error: IMAGE_PICKER_PUBLIC_ONLY_ERROR };
+  }
+  const publicOnly = obj.publicOnly === true;
+
+  return { kind: 'open', request: { requestId, sources, max, publicOnly } };
 }
 
 export const isSamePick = (

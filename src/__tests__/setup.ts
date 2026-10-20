@@ -94,6 +94,7 @@ vi.mock('@civitai/client', () => ({
   createCivitaiClient: vi.fn(),
   getWorkflow: vi.fn(),
   submitWorkflow: vi.fn(),
+  updateWorkflow: vi.fn(),
   getResource: vi.fn(),
   invalidateResource: vi.fn(),
   handleError: vi.fn(),

@@ -32,11 +32,9 @@ export const upsertArticleHandler = async ({
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
     // 🔴 `isOfficial` is a provenance claim, so a non-moderator's value is DROPPED rather
-    // than refused. Refusing is the shape that killed the tag version of this feature: the
-    // edit form seeds itself from the article, so an owner editing an article a moderator
-    // had marked would send the flag back and be locked out of their own article with a
-    // bare UNAUTHORIZED. Dropping it means their save succeeds and changes nothing about
-    // the mark — `upsertArticle` leaves the column alone when the field is undefined.
+    // than refused: the edit form seeds itself from the article, so an owner editing a marked
+    // article sends the flag back and would be locked out with a bare UNAUTHORIZED.
+    // `upsertArticle` leaves the column alone when the field is undefined.
     const { isOfficial, ...articleInput } = input;
     const official = ctx.user.isModerator ? isOfficial : undefined;
 

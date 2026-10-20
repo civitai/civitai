@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +30,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions } = await import(
+const { claimNext, castVote, getCounters, getOpenFlaggerVersions, sourceOrder } = await import(
   '../scan-label.service'
 );
 
@@ -57,7 +58,7 @@ const later = (ms: number) => new Date(NOW.getTime() + ms);
 let pg: PGlite;
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(`
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "type" TEXT NOT NULL DEFAULT 'image',
@@ -75,20 +76,29 @@ async function seedItem(
     blockVotes = 0,
     flaggedAt = '2026-10-13T08:00:00Z',
     version = 'scan@1',
-  }: { votes?: number; blockVotes?: number; flaggedAt?: string; version?: string } = {}
+    sources = ['orchestrator-scan'],
+  }: {
+    votes?: number;
+    blockVotes?: number;
+    flaggedAt?: string;
+    version?: string;
+    sources?: readonly ('orchestrator-scan' | 'xguard-prompt' | 'control-sample')[];
+  } = {}
 ): Promise<number> {
   await pg.query(`INSERT INTO "Image" ("id", "url") VALUES ($1, $2)`, [imageId, `key-${imageId}`]);
+  const lane = sources.includes('control-sample') ? 'control' : 'flagged';
   const { rows } = await pg.query<{ id: number }>(
-    `INSERT INTO "ScanLabelItem" ("imageId", "firstFlaggedAt", "votes", "blockVotes")
-     VALUES ($1, $2, $3, $4) RETURNING id`,
-    [imageId, flaggedAt, votes, blockVotes]
+    `INSERT INTO "ScanLabelItem" ("imageId", "lane", "firstFlaggedAt", "votes", "blockVotes")
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [imageId, lane, flaggedAt, votes, blockVotes]
   );
   const itemId = rows[0].id;
-  await pg.query(
-    `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
-     VALUES ($1, 'orchestrator-scan', $2, $3, $4)`,
-    [itemId, version, `wf-${imageId}`, flaggedAt]
-  );
+  for (const source of sources)
+    await pg.query(
+      `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+       VALUES ($1, $2, $3, $4, $5)`,
+      [itemId, source, version, `wf-${imageId}-${source}`, flaggedAt]
+    );
   // Prior votes come from moderators 900+, so they never collide with the test's own voters.
   for (let i = 0; i < votes; i++)
     await pg.query(
@@ -153,6 +163,140 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+});
+
+// Hundreds of claims each; PGlite is slow under a loaded machine.
+describe('claimNext source mix', { timeout: 60_000 }, () => {
+  const UPLOAD = { sources: ['orchestrator-scan'] } as const;
+  const PROMPT = { sources: ['xguard-prompt'] } as const;
+  const CONTROL = { sources: ['control-sample'] } as const;
+
+  /** Each hundredth of [0, 1) exactly once per 100 draws, interleaved. */
+  const everyHundredth = () => {
+    let k = 0;
+    return () => (((k++ * 37) % 100) + 0.5) / 100;
+  };
+  /** mulberry32: a small seeded PRNG, so the counts below are fixed. */
+  const seeded = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  async function seedMany(counts: { upload?: number; prompt?: number; control?: number }) {
+    const sourceOf = new Map<number, string>();
+    let imageId = 1;
+    for (const [source, opts] of [
+      ['upload', UPLOAD],
+      ['prompt', PROMPT],
+      ['control', CONTROL],
+    ] as const)
+      for (let n = 0; n < (counts[source] ?? 0); n++)
+        sourceOf.set(await seedItem(imageId++, opts), source);
+    return sourceOf;
+  }
+
+  async function pull(sourceOf: Map<number, string>, n: number, rng: () => number) {
+    const served: Record<string, number> = {};
+    for (let userId = 1; userId <= n; userId++) {
+      const card = await claimNext(userId, {}, NOW, rng);
+      const source = card ? sourceOf.get(card.itemId)! : 'none';
+      served[source] = (served[source] ?? 0) + 1;
+    }
+    return served;
+  }
+
+  it('serves exactly the mix over every hundred draws', async () => {
+    const sourceOf = await seedMany({ upload: 20, prompt: 20, control: 5 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({
+      upload: 45,
+      prompt: 45,
+      control: 10,
+    });
+  });
+
+  it('the seeded draw converges on the mix', () => {
+    const rng = seeded(7);
+    const drawn: Record<string, number> = {};
+    for (let n = 0; n < 100_000; n++) {
+      const [first] = sourceOrder(rng);
+      drawn[first] = (drawn[first] ?? 0) + 1;
+    }
+    expect(drawn).toEqual({ upload: 44_987, prompt: 44_972, control: 10_041 });
+  });
+
+  it('serves the drawn source on every claim of a seeded run', async () => {
+    const sourceOf = await seedMany({ upload: 60, prompt: 60, control: 20 });
+    const replay = seeded(7);
+    const expected: Record<string, number> = {};
+    for (let n = 0; n < 300; n++) {
+      const [first] = sourceOrder(replay);
+      expected[first] = (expected[first] ?? 0) + 1;
+    }
+    expect(expected).toEqual({ upload: 122, prompt: 141, control: 37 });
+    expect(await pull(sourceOf, 300, seeded(7))).toEqual(expected);
+  });
+
+  it('passes an empty source’s draws to the heaviest source left', async () => {
+    const sourceOf = await seedMany({ upload: 20, prompt: 20 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 55, prompt: 45 });
+  });
+
+  it('never passes an empty scan source’s draws to the control lane while the other has items', async () => {
+    const sourceOf = await seedMany({ prompt: 30, control: 5 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ prompt: 90, control: 10 });
+  });
+
+  it('serves whatever is left when only one source has items', async () => {
+    const sourceOf = await seedMany({ prompt: 10 });
+    expect(await pull(sourceOf, 30, everyHundredth())).toEqual({ prompt: 30 });
+  });
+
+  it('falls back when the drawn source holds only items the voter already voted on', async () => {
+    const voted = await seedItem(1, { ...UPLOAD, votes: 1 });
+    const prompt = await seedItem(2, PROMPT);
+    const card = await claimNext(900, {}, NOW, () => 0);
+    expect(card!.itemId).toBe(prompt);
+    expect(card!.itemId).not.toBe(voted);
+  });
+
+  it('files an item with both scan flags under upload, and a control item under control only', async () => {
+    const prompt = await seedItem(1, { ...PROMPT, flaggedAt: '2026-10-13T07:00:00Z' });
+    const both = await seedItem(2, {
+      sources: ['xguard-prompt', 'orchestrator-scan'],
+      flaggedAt: '2026-10-13T08:00:00Z',
+    });
+    // A scanner can flag an image after it was sampled; the item stays in the control lane.
+    const control = await seedItem(3, {
+      sources: ['control-sample', 'orchestrator-scan'],
+      flaggedAt: '2026-10-13T09:00:00Z',
+    });
+    // 0.1, 0.5 and 0.95 fall in the upload, prompt and control bands of QUEUE_MIX.
+    expect((await claimNext(1, {}, NOW, () => 0.1))!.itemId).toBe(both);
+    expect((await claimNext(2, {}, NOW, () => 0.5))!.itemId).toBe(prompt);
+    expect((await claimNext(3, {}, NOW, () => 0.95))!.itemId).toBe(control);
+  });
+
+  it('serves a filtered view in queue order, without drawing', async () => {
+    const upload = await seedItem(1, { ...UPLOAD, flaggedAt: '2026-10-13T07:00:00Z' });
+    const prompt = await seedItem(2, { ...PROMPT, flaggedAt: '2026-10-13T08:00:00Z' });
+    const noDraw = () => {
+      throw new Error('a filtered claim drew a source');
+    };
+    expect((await claimNext(1, { day: '2026-10-13' }, NOW, noDraw))!.itemId).toBe(prompt);
+    expect((await claimNext(2, { flaggerVersion: 'scan@1' }, NOW, noDraw))!.itemId).toBe(prompt);
+    expect(upload).not.toBe(prompt);
+  });
+
+  it('draws once per new claim, not when handing back a held lease', async () => {
+    await seedMany({ upload: 2, prompt: 2 });
+    let draws = 0;
+    const counted = () => (draws++, 0.1);
+    await claimNext(1, {}, NOW, counted);
+    await claimNext(1, {}, later(1000), counted);
+    expect(draws).toBe(1);
   });
 });
 

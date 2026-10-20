@@ -87,6 +87,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -97,6 +98,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
+import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -182,6 +185,7 @@ const loadModelVersion = async ({
             uploadType: true,
             user: { select: { id: true } },
             availability: true,
+            meta: true,
           },
         },
         files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
@@ -222,6 +226,8 @@ const loadModelVersion = async ({
         generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
+    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+      throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
@@ -344,8 +350,21 @@ const loadModelVersion = async ({
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
         : null;
 
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      version.model.user.id
+    );
+
+    // The version editor shows what the model's hide/show settings make each metric. Only those
+    // settings leave here, and only to the owner or a moderator: the rest of the meta is internal.
+    const { meta: modelMeta, ...model } = version.model;
+    const editorModelMeta: ModelMeta | null = isOwnerOrMod
+      ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
+      : null;
+
     return {
       ...version,
+      model: { ...model, meta: editorModelMeta, ownerMetricPrivacyDefaults },
       licensingFee,
       canGenerate,
       wildcardSetId,
@@ -761,6 +780,8 @@ export const upsertModelVersionHandler = async ({
 
           if (files.length) {
             await Promise.all(
+              // The url is the awarded entry's file as its author submitted it; it is not checked
+              // against the caller (assertClientFileUrlAllowed).
               files.map((f) =>
                 createFile({
                   modelVersionId: version.id,

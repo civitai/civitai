@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Removal } from '~/server/jobs/appeal-decision-records';
 
@@ -30,6 +31,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>)
 
 const {
   sweepExcludedRecords,
+  sweepLabelStore,
   fillRemovalLabels,
   recordRestoredLevels,
   removalLabelsFromClickhouse,
@@ -39,6 +41,7 @@ const {
 const MIGRATIONS = [
   '20261020120000_appeal_decision_record',
   '20261021120000_appeal_decision_record_training_copy',
+  '20261103120000_label_store',
 ].map((dir) =>
   path.resolve(
     __dirname,
@@ -75,9 +78,26 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "userId" integer NOT NULL, "deletedAt" timestamp(3));
     -- Stand-in with the production columns; the table is not in the Prisma schema.
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
+    );
+    -- The scan label tables the label store migration hooks into.
+    CREATE TABLE "ScanLabelItem" (
+      "id" serial PRIMARY KEY, "imageId" integer NOT NULL, "copyState" text, "copyKey" text, "copiedAt" timestamptz(3)
+    );
+    CREATE TABLE "ScanLabelFlag" (
+      "id" serial PRIMARY KEY, "itemId" integer NOT NULL, "source" text NOT NULL, "flaggerVersion" text NOT NULL,
+      "reason" text, "workflowId" text NOT NULL, "flaggedAt" timestamptz(3) NOT NULL, "snapshot" jsonb
+    );
+    CREATE TABLE "ScanLabelVote" (
+      "itemId" integer NOT NULL, "userId" integer NOT NULL, "block" boolean NOT NULL, "reason" text,
+      "reasonComment" text, "msOnItem" integer, "createdAt" timestamptz(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ScanLabelCopyObject" (
+      "key" text PRIMARY KEY, "itemId" integer NOT NULL, "imageId" integer NOT NULL,
+      "withdrawnAt" timestamptz(3), "withdrawReason" text
     );
   `);
   for (const file of MIGRATIONS) await holder.db.exec(readFileSync(file, 'utf8'));
@@ -86,7 +106,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   holder.ch = null;
   await holder.db.exec(
-    `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels RESTART IDENTITY`
+    `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels, label_store.subject,
+       label_store.change RESTART IDENTITY CASCADE`
   );
 });
 
@@ -506,6 +527,214 @@ describe('recordRestoredLevels', () => {
   });
 });
 
+describe('sweepLabelStore', () => {
+  const judged = (imageId: number, ownerId?: number) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'image', p_subject_id => $1, p_content_hash => $2, p_family => 'test',
+         p_question => 'image.block', p_value => 'clear', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"url": "x"}', p_owner_user_id => $4)`,
+      [String(imageId), `h-${imageId}`, `t-${imageId}`, ownerId ?? null]
+    );
+  const excludedIds = async () =>
+    (
+      await holder.db.query<{ subjectId: string }>(
+        `SELECT "subjectId" FROM label_store.subject WHERE "excludedAt" IS NOT NULL ORDER BY "subjectId"`
+      )
+    ).rows.map((r) => Number(r.subjectId));
+
+  it('excludes the subject of an image later flagged, and only that one', async () => {
+    await image(101, { needsReview: 'csam' });
+    await image(102);
+    await judged(101);
+    await judged(102);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([101]);
+    const [s] = (
+      await holder.db.query<{ snapshot: unknown; excludedReason: string }>(
+        `SELECT * FROM label_store.subject WHERE "subjectId" = '101'`
+      )
+    ).rows;
+    expect(s).toMatchObject({ snapshot: null, excludedReason: 'safety' });
+  });
+
+  it('excludes the subject of an image a report names, after the image is gone', async () => {
+    await judged(103);
+    await judged(104);
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 103}]')`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([103]);
+  });
+
+  it('excludes every subject of an owner a report names, by the owner hash alone', async () => {
+    await judged(105, 8);
+    await judged(106, 9);
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([105]);
+  });
+
+  it('excludes the subject of a live image whose owner a report names', async () => {
+    // Judged before the image row existed, so the subject carries no owner hash.
+    await judged(108);
+    await judged(109);
+    await image(108, { userId: 8 });
+    await image(109, { userId: 9 });
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([108]);
+  });
+
+  it('excludes the subject of an image sharing its stored file with an excluded image', async () => {
+    await image(110);
+    await image(112);
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (111, 9, 'u-110', 'csam')`
+    );
+    await judged(110);
+    await judged(112);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([110]);
+  });
+
+  it.each([
+    ['is clean', `UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 90`, false],
+    [
+      'is flagged, with a lower id',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 90`,
+      true,
+    ],
+    ['is blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 90`, true],
+    ['has a reported owner', `INSERT INTO "CsamReport" ("userId") VALUES (9)`, true],
+    ['is named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 90}]')`, true],
+    [
+      'is named by a report as a string id',
+      `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": "90"}]')`,
+      true,
+    ],
+  ])(
+    'a subject whose file is shared by an image that %s: excluded %s',
+    async (_, setup, excluded) => {
+      await image(116);
+      await holder.db.query(`INSERT INTO "Image" ("id", "userId", "url") VALUES (90, 9, 'u-116')`);
+      await holder.db.exec(setup);
+      await judged(116);
+
+      expect(await excludedIds()).toEqual([]);
+      expect(await sweepLabelStore()).toBe(excluded ? 1 : 0);
+      expect(await excludedIds()).toEqual(excluded ? [116] : []);
+    }
+  );
+
+  it('excludes the subject of a gone image a report names by a string id', async () => {
+    await judged(117);
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": "117"}]')`);
+
+    expect(await sweepLabelStore()).toBe(1);
+  });
+
+  it('excludes a subject whose image is gone when another image with its file is excluded', async () => {
+    await judged(113);
+    await judged(114);
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (115, 9, 'x', 'csam')`
+    );
+
+    // judged() snapshots url "x" for both; neither image row exists, only 115 shares the file.
+    await holder.db.query(
+      `UPDATE label_store.subject SET snapshot = '{"url": "y"}' WHERE "subjectId" = '114'`
+    );
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([113]);
+  });
+
+  it('counts a subject once, and nothing on the next run', async () => {
+    await image(107, { blockedFor: 'CSAM' });
+    await judged(107);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await sweepLabelStore()).toBe(0);
+  });
+});
+
+describe('sweepLabelStore, model text', () => {
+  const ruled = (modelId: number | string) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'model_text', p_subject_id => $1, p_content_hash => $2, p_family => 'text_scan',
+         p_question => 'text_scan.model.poi', p_value => 'flag', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"text": "owner text"}', p_owner_user_id => 5)`,
+      [String(modelId), `h-${modelId}`, `m-${modelId}`]
+    );
+  const subjects = async () =>
+    (
+      await holder.db.query<{
+        subjectId: string;
+        excludedReason: string | null;
+        snapshot: unknown;
+        labels: number;
+      }>(
+        `SELECT s."subjectId", s."excludedReason", s.snapshot,
+           (SELECT count(*)::int FROM label_store.label l WHERE l."subjectId" = s.id) AS labels
+         FROM label_store.subject s WHERE s."subjectType" = 'model_text' ORDER BY s."subjectId"`
+      )
+    ).rows;
+
+  const judged = (imageId: number) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'image', p_subject_id => $1, p_content_hash => $2, p_family => 'test',
+         p_question => 'image.block', p_value => 'clear', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"url": "x"}')`,
+      [String(imageId), `h-${imageId}`, `t-${imageId}`]
+    );
+
+  beforeEach(async () => {
+    await holder.db.exec(`TRUNCATE "Model"`);
+  });
+
+  it('drops the text of a model deleted or gone, and keeps its judgements', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", "deletedAt") VALUES (1, 5, NULL), (2, 5, now());
+    `);
+    for (const id of [1, 2, 3]) await ruled(id);
+    await image(101, { needsReview: 'csam' });
+    await judged(101);
+
+    expect(await sweepLabelStore()).toBe(3);
+    expect(await subjects()).toEqual([
+      { subjectId: '1', excludedReason: null, snapshot: { text: 'owner text' }, labels: 1 },
+      { subjectId: '2', excludedReason: 'removed', snapshot: null, labels: 1 },
+      { subjectId: '3', excludedReason: 'removed', snapshot: null, labels: 1 },
+    ]);
+    expect(await sweepLabelStore()).toBe(0);
+  });
+
+  // An id no model can have must not fail the sweep (a cast error would abort the whole run); no
+  // model owns it, so its text goes like a deleted model's.
+  it('does not fail on a subject id that is not an int4 model id', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (1, 5)`);
+    await ruled(1);
+    await ruled('99999999999');
+    await ruled('not-a-model');
+
+    expect(await sweepLabelStore()).toBe(2);
+    expect((await subjects()).map((s) => [s.subjectId, s.excludedReason])).toEqual([
+      ['1', null],
+      ['99999999999', 'removed'],
+      ['not-a-model', 'removed'],
+    ]);
+  });
+});
+
 describe('the nightly run', () => {
   it('sweeps before it labels or corrects anything', async () => {
     await record({ appealId: 1, imageId: 101 });
@@ -524,11 +753,51 @@ describe('the nightly run', () => {
       labels: 0,
       expired: 0,
       objects: 0,
+      storeExcluded: 1,
       labelled: 1,
       restored: 1,
       corrected: 1,
     });
     expect(lookup).toHaveBeenCalledWith([101]);
     expect((await appealLabels()).map((l) => l.url)).toEqual(['u-101']);
+    expect(
+      (
+        await holder.db.query(
+          `SELECT "subjectId", "excludedReason" FROM label_store.subject WHERE "excludedAt" IS NOT NULL`
+        )
+      ).rows
+    ).toEqual([{ subjectId: '102', excludedReason: 'safety' }]);
+  });
+});
+
+describe('the store sweep, absent or failing', () => {
+  it('is inert before the store migration is applied', async () => {
+    await holder.db.exec(`ALTER SCHEMA label_store RENAME TO label_store_off`);
+    try {
+      expect(await sweepLabelStore()).toBe(0);
+    } finally {
+      await holder.db.exec(`ALTER SCHEMA label_store_off RENAME TO label_store`);
+    }
+  });
+
+  it('a failing store sweep does not stop the record sweep', async () => {
+    await record({ appealId: 2, imageId: 102 });
+    await image(102, { userId: 8, nsfwLevel: 4 });
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+    await holder.db.exec(
+      `ALTER TABLE label_store.subject ADD CONSTRAINT forced_failure CHECK ("excludedAt" IS NULL) NOT VALID`
+    );
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    try {
+      expect(await runAppealDecisionRecords(vi.fn(async () => new Map()))).toMatchObject({
+        swept: 1,
+        storeExcluded: 0,
+      });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'Label store sweep failed' })
+      );
+    } finally {
+      await holder.db.exec(`ALTER TABLE label_store.subject DROP CONSTRAINT forced_failure`);
+    }
   });
 });

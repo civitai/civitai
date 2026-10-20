@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import { dbRead } from './db';
-import { convertHtml } from './html-to-text';
+import { cappedText } from './html-to-text';
 import { getModel, getReports, getTags, getVersions } from './model-lookup.service';
 
 /**
@@ -123,10 +123,6 @@ export async function getModelPreview(
       .execute(),
   ]);
 
-  const html = descriptionRow?.description?.trim();
-  const converted = html ? convertHtml(html) : null;
-  const text = converted?.text.trim() ?? '';
-
   const others = reports.rows.filter((r) => r.id !== reportId);
   const byStatus: Record<string, number> = {};
   for (const r of others) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
@@ -155,12 +151,7 @@ export async function getModelPreview(
     username: model.username,
     userBanned: model.userBannedAt != null,
     createdAt: model.createdAt,
-    description: text
-      ? {
-          text: text.length > DESCRIPTION_LIMIT ? `${text.slice(0, DESCRIPTION_LIMIT)}…` : text,
-          truncated: text.length > DESCRIPTION_LIMIT || converted?.complete === false,
-        }
-      : null,
+    description: cappedText(descriptionRow?.description, DESCRIPTION_LIMIT, { ellipsis: true }),
     versions: versions.map((v) => ({
       id: v.id,
       name: v.name,

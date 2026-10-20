@@ -74,13 +74,22 @@ describe('fetchFeedAnswer', () => {
 describe('fetchFeedAnswer refusals', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('keeps the feed\'s reason for a 400 and nothing for other failures', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"fieldErrors":{"tools":["Invalid input"]}}}', { status: 400 })));
+  it("keeps the feed's reason for a 400 and nothing for other failures", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{"error":{"fieldErrors":{"tools":["Invalid input"]}}}', { status: 400 })
+      )
+    );
     const refused = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
     expect(refused.status).toBe(400);
     expect(refused.ids).toEqual([]);
     expect(refused.error).toContain('tools');
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 503 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('busy', { status: 503 }))
+    );
     const down = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
     expect(down).toMatchObject({ status: 503, ids: [] });
     expect(down.error).toBeUndefined();
@@ -201,15 +210,26 @@ describe('mapSearchInputToFeedQuery', () => {
   it('serves a post page to the public API only, in the requested sort', () => {
     const website = mapSearchInputToFeedQuery({ ...base, postId: 4 }, 'primary', 'website');
     expect(website).toEqual({ ok: false, reason: 'input:postId' });
-    const rest = mapSearchInputToFeedQuery({ ...base, postId: 4, sort: 'Newest' }, 'primary', 'rest');
+    const rest = mapSearchInputToFeedQuery(
+      { ...base, postId: 4, sort: 'Newest' },
+      'primary',
+      'rest'
+    );
     expect(rest.ok).toBe(true);
     const q = rest.ok ? new URLSearchParams(rest.query) : new URLSearchParams();
     expect(q.get('postIds')).toBe('4');
     expect(q.get('sort')).toBe('newest');
-    const both = mapSearchInputToFeedQuery({ ...base, postId: 4, postIds: [5, 4] }, 'primary', 'rest');
+    const both = mapSearchInputToFeedQuery(
+      { ...base, postId: 4, postIds: [5, 4] },
+      'primary',
+      'rest'
+    );
     expect(both.ok && new URLSearchParams(both.query).get('postIds')).toBe('5,4');
     const many = { ...base, postIds: Array.from({ length: 51 }, (_, i) => i + 1) };
-    expect(mapSearchInputToFeedQuery(many, 'primary', 'rest')).toEqual({ ok: false, reason: 'postIds>50' });
+    expect(mapSearchInputToFeedQuery(many, 'primary', 'rest')).toEqual({
+      ok: false,
+      reason: 'postIds>50',
+    });
   });
 
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
@@ -238,6 +258,46 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q.has('offset')).toBe(false);
     expect(encodeFeedCursor('1788000012345|42')).toBe('feed:1788000012345:42');
     expect(parseFeedCursor('400|1788000012345')).toBeUndefined();
+  });
+});
+
+describe('jump to month', () => {
+  const creator = { ...base, period: 'AllTime', userId: 7, jumpTo: '2025-03' };
+  const sent = (input: Parameters<typeof mapSearchInputToFeedQuery>[0]) => {
+    const m = mapSearchInputToFeedQuery(input, 'primary');
+    if (!m.ok) throw new Error(`refused: ${m.reason}`);
+    return new URLSearchParams(m.query);
+  };
+
+  it('starts Newest at the last instant of the month and Oldest at its first', () => {
+    expect(sent({ ...creator, sort: 'Newest' }).get('cursor')).toBe(
+      `${Date.UTC(2025, 3, 1) - 1}|2147483647`
+    );
+    expect(sent({ ...creator, sort: 'Oldest' }).get('cursor')).toBe(`${Date.UTC(2025, 2, 1)}|0`);
+  });
+
+  it('continues from the feed cursor once paging has started', () => {
+    expect(
+      sent({ ...creator, sort: 'Newest', cursor: 'feed:1740000000000:55' }).get('cursor')
+    ).toBe('1740000000000|55');
+  });
+
+  it('starts at the top for a sort or a feed that has no place in time to start from', () => {
+    expect(sent({ ...creator, sort: 'Most Reactions' }).has('cursor')).toBe(false);
+    expect(sent({ ...creator, sort: 'Newest', userId: undefined }).has('cursor')).toBe(false);
+  });
+
+  it('leaves a jumped page the feed cannot place to the search index', () => {
+    expect(mapSearchInputToFeedQuery({ ...creator, sort: 'Newest' }, 'shadow')).toEqual({
+      ok: false,
+      reason: 'jumpTo:shadow',
+    });
+    expect(
+      mapSearchInputToFeedQuery(
+        { ...creator, sort: 'Newest', cursor: '20|1743465600000' },
+        'primary'
+      )
+    ).toEqual({ ok: false, reason: 'jumpTo:offset' });
   });
 });
 
@@ -323,7 +383,21 @@ describe('hub feeds', () => {
   });
 
   it('refuses a post page next to the hub', () => {
-    const m = mapSearchInputToFeedQuery({ ...base, hubId: 1, hubSources: { userIds: [1], modelVersionIds: [], tagGroups: [], excluded: { userIds: [], modelVersionIds: [], tagGroups: [] } }, postId: 4 } as any, 'primary', 'rest');
+    const m = mapSearchInputToFeedQuery(
+      {
+        ...base,
+        hubId: 1,
+        hubSources: {
+          userIds: [1],
+          modelVersionIds: [],
+          tagGroups: [],
+          excluded: { userIds: [], modelVersionIds: [], tagGroups: [] },
+        },
+        postId: 4,
+      } as any,
+      'primary',
+      'rest'
+    );
     expect(m).toEqual({ ok: false, reason: 'hub:driver' });
   });
 

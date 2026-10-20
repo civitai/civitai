@@ -288,10 +288,16 @@ export default function UserTrainingModels() {
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete version', error: new Error(error.message) });
+    },
   });
   const deleteModelMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete model', error: new Error(error.message) });
     },
   });
   const recheckTrainingStatusMutation = trpc.modelVersion.recheckTrainingStatus.useMutation({
@@ -716,7 +722,12 @@ export default function UserTrainingModels() {
           const isPaused = mv.trainingStatus === TrainingStatus.Paused;
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const isRunning = isSubmitted || isProcessing;
-          const isNotDeletable = isRunning || isPaused;
+          // A denied version stays on record, but a model's only version goes with the (soft-deleted) model.
+          const deletesVersion = mv.model._count.modelVersions > 1;
+          const isNotDeletable =
+            isRunning ||
+            isPaused ||
+            (deletesVersion && mv.trainingStatus === TrainingStatus.Denied);
 
           const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;

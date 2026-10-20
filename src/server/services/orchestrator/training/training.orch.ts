@@ -54,6 +54,11 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 
+// @civitai/client's AiToolkitTrainingInput still requires requiresAgeClassification; the
+// orchestration-client YuE2 input (beta.124+) omits it.
+type YuE2TrainingInput = YuE2AiToolkitTrainingInput &
+  Pick<AiToolkitTrainingInput, 'requiresAgeClassification'>;
+
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
   const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
@@ -209,7 +214,7 @@ export const buildAiToolkitTrainingStep = (
     metadata,
   } = input;
 
-  let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
+  let trainingInput: AiToolkitTrainingInput | YuE2TrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
@@ -511,6 +516,20 @@ export const createTrainingWorkflow = async ({
     data: { trainingStatus: TrainingStatus.Submitted },
   });
   if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
 
   let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
   try {

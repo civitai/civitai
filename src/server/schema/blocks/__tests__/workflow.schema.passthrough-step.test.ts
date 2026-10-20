@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  INLINE_MEDIA_DATA_URI_REGEX,
+  INLINE_MEDIA_RAW_BASE64_REGEX,
+} from '~/server/schema/blocks/inline-media';
+import {
+  blockMultiStepWorkflowBodySchema,
   blockPassThroughStepBodySchema,
   blockStepBodySchema,
   blockWorkflowBodySchema,
@@ -178,8 +183,8 @@ describe("kind: 'step' — the REGISTRY arm is unchanged by the new sibling", ()
 
 describe("kind: 'step' pass-through — inline media is refused", () => {
   const fix =
-    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-    'or pick it with useImagePicker and pass the returned url';
+    'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+    "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
   const issuesOf = (input: Record<string, unknown>) => {
     const parsed = blockWorkflowBodySchema.safeParse(passThroughBody({ input }));
     return parsed.success ? [] : parsed.error.issues.map((i) => [i.path, i.message]);
@@ -247,5 +252,56 @@ describe("kind: 'step' pass-through — inline media is refused", () => {
         ref: { $ref: 'gen', path: 'output.images[0].url' },
       })
     ).toEqual([]);
+  });
+});
+
+describe('inline-media scan on a repeated long string', () => {
+  // Base64 alphabet with a trailing space: the raw-base64 pattern reads all of it, then fails.
+  const nearMiss = `${'QUJD'.repeat(25_000)} `;
+  const repeated = { items: new Array(2_000).fill(nearMiss) }; // ~200 MB once serialised
+  // Characters handed to the two inline-media patterns may not exceed, per pattern, the byte
+  // cap plus the one string that crosses it.
+  const bound = 2 * (PASS_THROUGH_INPUT_BYTES_MAX + nearMiss.length);
+
+  /** Characters handed to the inline-media patterns while `run` runs. */
+  function inspectedDuring(run: () => unknown) {
+    const real = RegExp.prototype.test;
+    let inspected = 0;
+    const spy = vi
+      .spyOn(RegExp.prototype, 'test')
+      .mockImplementation(function (this: RegExp, input: string) {
+        if (this === INLINE_MEDIA_DATA_URI_REGEX || this === INLINE_MEDIA_RAW_BASE64_REGEX) {
+          inspected += String(input).length;
+        }
+        return real.call(this, input);
+      });
+    try {
+      return { result: run(), inspected };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('refuses a pass-through input on its size, inspecting at most the cap', () => {
+    const { result, inspected } = inspectedDuring(() =>
+      blockPassThroughStepBodySchema.safeParse(passThroughBody({ input: repeated }))
+    );
+    expect(result.success ? [] : result.error.issues.map((i) => [i.path, i.message])).toEqual([
+      [['input'], 'step input exceeds the 262144-byte limit'],
+    ]);
+    expect(inspected).toBeGreaterThan(nearMiss.length);
+    expect(inspected).toBeLessThanOrEqual(bound);
+  });
+
+  it('refuses multi-step inputs on their summed size, inspecting at most the cap', () => {
+    const step = { $type: 'echo', input: { items: new Array(1_000).fill(nearMiss) } };
+    const { result, inspected } = inspectedDuring(() =>
+      blockMultiStepWorkflowBodySchema.safeParse({ kind: 'workflow', steps: [step, step] })
+    );
+    expect(result.success ? [] : result.error.issues.map((i) => [i.path, i.message])).toEqual([
+      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
+    ]);
+    expect(inspected).toBeGreaterThan(nearMiss.length);
+    expect(inspected).toBeLessThanOrEqual(bound);
   });
 });

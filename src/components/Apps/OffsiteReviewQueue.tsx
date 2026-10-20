@@ -33,6 +33,9 @@ import {
 } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import { mostMatureReviewImage } from '~/components/Apps/reviewMediaRevealRule';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
 import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import {
@@ -54,6 +57,7 @@ import {
   driftPanelState,
   identicalAssetsNotice,
   listingAssetSnapshot,
+  proposedWithUnstagedRedSlots,
   revisionApplyScope,
   screenshotDriftSummary,
   uncomparedApplyFieldsSentence,
@@ -78,12 +82,23 @@ import {
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
 import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
+import {
+  ListingMediaSplitControl,
+  MEDIA_SPLIT_UNREADABLE_COPY,
+  MEDIA_SPLIT_UNREADABLE_REVISION_COPY,
+} from '~/components/Apps/ListingMediaSplitControl';
+import {
+  ratingFloorAssets,
+  resolveListingMediaSplitDecision,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   nsfwLevelFromContentRating,
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  listingRatingAssetLabel,
   listingRatingAssetsFromView,
   summarizeListingRating,
 } from '~/shared/utils/listing-rating-display';
@@ -427,6 +442,7 @@ export function OffsiteReviewModalBody({
   // Select shows the derived rating as its default); a non-null value is an explicit
   // override. The server FLOORS an under-rating override at the derived value.
   const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -467,6 +483,7 @@ export function OffsiteReviewModalBody({
     setApprovalNotes('');
     setActionMode('view');
     setRatingOverride(null);
+    setMediaSplitChoice(null);
     onClose();
   }
 
@@ -481,12 +498,34 @@ export function OffsiteReviewModalBody({
   const hasCover = assetsQuery.data?.coverId != null;
 
   // Content rating: DERIVE from the assets' max detected nsfwLevel (icon + cover +
-  // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
+  // screenshots + the civitai.red icon / cover overrides, which a split leaves out), surface it
+  // ALONGSIDE the author-declared rating, and FLAG when the
   // assets are more mature than declared. The Select defaults to the derived value;
   // the mod may rate UP (an under-rating is floored server-side).
+  // A split floors the rating by the civitai.com-eligible images only, so the default below
+  // follows the moderator's split choice rather than offering a value that would undo it.
+  const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
+  // Until the listing's media and split state have loaded, an approve would send a decision
+  // nobody has seen — and for a split listing, end its split.
+  // Same condition the asset query is enabled on, so a request it never reads is never blocked.
+  const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
+  // A `null` split is one this environment cannot read. No choice is offered and approve sends NO
+  // decision; any explicit decision would be refused. The server then reads the listing as unsplit:
+  // the approve floors its rating by all of its media (an on-site media revision rewrites no
+  // rating, and its next re-rate floors by all media), and a split stamped earlier stays in the
+  // record, not applied.
+  const splitUnreadable = assetsQuery.data?.mediaSplitApproved === null;
+  const resolvedMediaSplit = resolveListingMediaSplitDecision({
+    assets: ratingAssets,
+    currentlySplit: assetsQuery.data?.mediaSplitApproved === true,
+    choice: mediaSplitChoice,
+  }).value;
+  const mediaSplit: ListingMediaSplitDecision | undefined = splitUnreadable
+    ? undefined
+    : resolvedMediaSplit;
   const ratingSummary = summarizeListingRating({
     declaredRating: request.appListing?.contentRating,
-    assets: listingRatingAssetsFromView(assetsQuery.data ?? {}),
+    assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
   });
   const derivedRating = ratingSummary.derived ?? 'g';
   // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
@@ -577,20 +616,27 @@ export function OffsiteReviewModalBody({
         iconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         coverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         screenshots?: { scanStatus?: 'scanned' | 'pending' | 'blocked' | null }[];
+        redIconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        redCoverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         hasBlockedAsset?: boolean;
         hasPendingScan?: boolean;
       }
     | undefined;
-  const blockedScanKinds = [
-    assetsData?.iconScanStatus === 'blocked' ? 'icon' : null,
-    assetsData?.coverScanStatus === 'blocked' ? 'cover' : null,
-    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'blocked') ? 'screenshots' : null,
-  ].filter((v): v is string => v != null);
-  const pendingScanKinds = [
-    assetsData?.iconScanStatus === 'pending' ? 'icon' : null,
-    assetsData?.coverScanStatus === 'pending' ? 'cover' : null,
-    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'pending') ? 'screenshots' : null,
-  ].filter((v): v is string => v != null);
+  const scanKinds = (status: 'blocked' | 'pending') =>
+    [
+      assetsData?.iconScanStatus === status ? 'icon' : null,
+      assetsData?.coverScanStatus === status ? 'cover' : null,
+      (assetsData?.screenshots ?? []).some((s) => s.scanStatus === status) ? 'screenshots' : null,
+      // The civitai.red overrides are held to the same go-live scan gate.
+      assetsData?.redIconScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })
+        : null,
+      assetsData?.redCoverScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })
+        : null,
+    ].filter((v): v is string => v != null);
+  const blockedScanKinds = scanKinds('blocked');
+  const pendingScanKinds = scanKinds('pending');
   const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
   const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
 
@@ -713,7 +759,7 @@ export function OffsiteReviewModalBody({
             request targets a shadow revision (`revisionOfId` set). */}
       <RevisionDriftSection request={request} />
 
-      <ListingPreviewSection request={request} />
+      <ListingPreviewSection request={request} rating={selectedRating} />
 
       {isConnect && (
         <ConnectScopesPanel
@@ -880,6 +926,21 @@ export function OffsiteReviewModalBody({
           </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            {assetsQuery.data && !splitUnreadable && (
+              <ListingMediaSplitControl
+                assets={ratingAssets}
+                currentlySplit={assetsQuery.data.mediaSplitApproved === true}
+                value={resolvedMediaSplit}
+                // An on-site media REVISION records the decision but keeps the app's rating
+                // (`applyApprovedRevision` is assets-only), so it must not preview ratings.
+                appliesRating={!(isOnsite && !isOnsiteRepublishReview)}
+                onChange={(v) => {
+                  setMediaSplitChoice(v);
+                  setRatingOverride(null);
+                }}
+                disabled={busy}
+              />
+            )}
             <Select
               label="Final content rating"
               description={
@@ -912,6 +973,20 @@ export function OffsiteReviewModalBody({
               disabled={busy}
               data-testid="apps-offsite-approve-notes"
             />
+            {splitUnreadable && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
+                {isOnsite && !isOnsiteRepublishReview
+                  ? MEDIA_SPLIT_UNREADABLE_REVISION_COPY
+                  : MEDIA_SPLIT_UNREADABLE_COPY}
+              </Text>
+            )}
+            {splitStateUnknown && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+                {assetsQuery.isError
+                  ? 'Could not load the listing’s media, so approve is unavailable. Close and reopen this request to retry.'
+                  : 'Approve is available once the listing’s media has loaded.'}
+              </Text>
+            )}
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
@@ -924,9 +999,10 @@ export function OffsiteReviewModalBody({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
+                    ...(mediaSplit ? { mediaSplit } : {}),
                   })
                 }
-                disabled={busy}
+                disabled={busy || splitStateUnknown}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >
@@ -988,7 +1064,14 @@ export function OffsiteReviewModalBody({
  * row via the pure `reviewListingPreview` builders — so the review surface never
  * crashes or blanks.
  */
-function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
+function ListingPreviewSection({
+  request,
+  rating,
+}: {
+  request: OffsitePendingRow;
+  /** The rating this approve stamps, which decides where each image shows. */
+  rating?: string | null;
+}) {
   const features = useFeatureFlags();
   // Mod-only projection of the SHADOW listing's real media + scalars. Enabled only
   // once a row with a backing listing id is open.
@@ -1000,6 +1083,21 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
   // from the row while loading / on error / when there's no listing id.
   const card = previewQuery.data?.card ?? buildListingCardPreview(request);
   const detail = previewQuery.data?.detail ?? buildListingDetailPreview(request);
+  const media = previewQuery.data?.media ?? null;
+  // 🔴 The store-layout preview shows every image as attached (moderator view), so on
+  // civitai.com the whole preview is held behind ONE reveal, by its most mature image — the
+  // card and the detail render that image in several places at once. The per-image reveal and
+  // audience labels are in the media panel above it.
+  const previewGuard = media
+    ? mostMatureReviewImage([
+        media.icon,
+        media.cover,
+        ...media.screenshots,
+        media.redIcon,
+        media.redCover,
+      ])
+    : null;
+  const name = request.appListing?.name ?? request.slug;
   return (
     <Stack gap="xs" data-testid="apps-listing-preview">
       <Divider
@@ -1013,20 +1111,32 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
         }
         labelPosition="left"
       />
+      {media && (
+        <ReviewListingMedia
+          slug={request.slug}
+          name={name}
+          iconUrl={media.icon?.url ?? null}
+          coverUrl={media.cover?.url ?? null}
+          reviewMedia={media}
+          rating={rating}
+        />
+      )}
       <Text size="xs" c="dimmed">
         Listing preview — how it will appear in the store once approved.
       </Text>
-      {/* 🔴 `preview` — the SAME posture the detail body below it takes. Without it
-          this card offers a moderator (which every viewer of this queue is) the `⋮`
-          menu's live takedown actions against a listing that is NOT approved and
-          whose `id` may be the publish REQUEST's rather than an `AppListing`'s. See
-          `appListingDetailModActions.detailListingStatus`. */}
-      <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
-        <AppListingCard card={card} preview />
-      </div>
-      <Card withBorder p="md" data-testid="apps-listing-preview-detail">
-        <AppListingDetailBody detail={detail} preview />
-      </Card>
+      <ReviewMediaReveal image={previewGuard} testId="apps-listing-preview-reveal">
+        {/* 🔴 `preview` — the SAME posture the detail body below it takes. Without it
+            this card offers a moderator (which every viewer of this queue is) the `⋮`
+            menu's live takedown actions against a listing that is NOT approved and
+            whose `id` may be the publish REQUEST's rather than an `AppListing`'s. See
+            `appListingDetailModActions.detailListingStatus`. */}
+        <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
+          <AppListingCard card={card} preview />
+        </div>
+        <Card withBorder p="md" data-testid="apps-listing-preview-detail">
+          <AppListingDetailBody detail={detail} preview />
+        </Card>
+      </ReviewMediaReveal>
     </Stack>
   );
 }
@@ -1094,7 +1204,13 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
   // `listingRevisionDrift`.
   const applyScope = revisionApplyScope(request.kind);
   const drift =
-    live && proposed ? computeListingRevisionDrift(live, proposed, { applyScope }) : null;
+    live && proposed
+      ? computeListingRevisionDrift(
+          live,
+          proposedWithUnstagedRedSlots(proposed, live, shadowAssetsQuery.data),
+          { applyScope }
+        )
+      : null;
   // 🔴 `retry: false` on both queries means an error is TERMINAL. Without this the
   // panel sat on an indefinite "Comparing with the live listing…" spinner — a mod
   // next to the destructive-replace case would see a spinner, not "could not load".
@@ -1213,6 +1329,38 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
                 {assetSlotDriftLabel(drift.cover)}
               </Badge>
             </Group>
+            {/* The civitai.red overrides: shown only when either side has one, so a listing
+                that never had one is not given two permanently-"Unchanged" badges. */}
+            {(drift.redIcon !== 'same' || live?.redIconId != null) && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  {listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
+                </Text>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={slotDriftColor(drift.redIcon)}
+                  data-testid="apps-listing-revision-drift-red-icon"
+                >
+                  {assetSlotDriftLabel(drift.redIcon)}
+                </Badge>
+              </Group>
+            )}
+            {(drift.redCover !== 'same' || live?.redCoverId != null) && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  {listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
+                </Text>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={slotDriftColor(drift.redCover)}
+                  data-testid="apps-listing-revision-drift-red-cover"
+                >
+                  {assetSlotDriftLabel(drift.redCover)}
+                </Badge>
+              </Group>
+            )}
             <Group gap={6}>
               <Text size="xs" c="dimmed">
                 Screenshots
@@ -1234,10 +1382,19 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
       )}
 
       {parentPreviewQuery.data && (
-        <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
-          {/* `preview` — read-only drift comparison; no live action belongs on it. */}
-          <AppListingCard card={parentPreviewQuery.data.card} preview />
-        </div>
+        <ReviewMediaReveal
+          image={mostMatureReviewImage([
+            parentPreviewQuery.data.media?.icon,
+            parentPreviewQuery.data.media?.cover,
+            ...(parentPreviewQuery.data.media?.screenshots ?? []),
+          ])}
+          testId="apps-listing-revision-drift-live-reveal"
+        >
+          <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
+            {/* `preview` — read-only drift comparison; no live action belongs on it. */}
+            <AppListingCard card={parentPreviewQuery.data.card} preview />
+          </div>
+        </ReviewMediaReveal>
       )}
     </Stack>
   );

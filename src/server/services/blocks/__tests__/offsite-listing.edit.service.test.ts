@@ -97,6 +97,12 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 
 // The post-commit history write is a seam: these suites pin what each go-live HANDS it;
@@ -2213,6 +2219,28 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
       ],
       [],
       [],
+    ]);
+  });
+
+  it('🔴 each asset carries its own level into the civitai.com media problems', async () => {
+    const levels: Record<number, number> = { 41: 4, 53: 1, 61: 8, 62: 2 };
+    mockRead.image.findMany.mockImplementation((async (args: {
+      where?: { id?: { in?: number[] } };
+    }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        ingestion: 'Scanned',
+        nsfwLevel: levels[id],
+      }))) as never);
+    const row = requestRow('r_media', 'approved', 'pg13');
+    row.appListing.screenshots = [{ imageId: 61 }, { imageId: 62 }] as never;
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Icon R → the icon problem (not the PG cover's); the X and PG-13 screenshots raise none.
+    expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
+      ['sfw-slot-mature', 'Your icon is rated R'],
     ]);
   });
 

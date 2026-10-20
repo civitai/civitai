@@ -103,8 +103,10 @@ const uploads = vi.hoisted(() => ({
   corrupt: null as null | ((built: Buffer) => Buffer),
   beforeDone: null as null | (() => Promise<void>),
 }));
-vi.mock('@aws-sdk/lib-storage', () => ({
-  Upload: class {
+// `default` mirrors the named export: the package is pre-bundled for CJS interop, so consumers
+// resolve through `default`.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
     constructor(
       private readonly options: {
         params: { Key: string; Body: AsyncIterable<Buffer> };
@@ -135,12 +137,17 @@ vi.mock('@aws-sdk/lib-storage', () => ({
     async abort() {
       uploads.aborted++;
     }
-  },
-}));
+  };
+  return { Upload, default: { Upload } };
+});
 
-const scanSeam = vi.hoisted(() => ({ submitFinalScan: vi.fn(async () => 'Pending' as const) }));
+const scanSeam = vi.hoisted(() => ({
+  submitFinalScan: vi.fn(async () => 'Pending' as const),
+  isFinalsMalwareScanOn: vi.fn(async () => true),
+}));
 vi.mock('~/server/services/creator-service-deal-file-scan', () => ({
   submitFinalScan: scanSeam.submitFinalScan,
+  isFinalsMalwareScanOn: scanSeam.isFinalsMalwareScanOn,
 }));
 
 const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
@@ -407,6 +414,17 @@ describe('building the archive a buyer downloads', () => {
     expect(scanSeam.submitFinalScan).toHaveBeenCalledWith(
       expect.objectContaining({ id: fileId, s3Key: file.deliveryKey, size: file.deliverySize })
     );
+  });
+
+  it('with the finals malware scan off, records the step as skipped instead', async () => {
+    scanSeam.isFinalsMalwareScanOn.mockResolvedValueOnce(false);
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    await repack.repackFinals();
+    expect(scanSeam.submitFinalScan).not.toHaveBeenCalled();
+    expect(await fileRow(fileId)).toMatchObject({
+      malwareScanStatus: 'NotScanned',
+      scanStatus: 'Pending',
+    });
   });
 
   it('writes only regular files, in the original order, under tidied names', async () => {

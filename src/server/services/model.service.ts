@@ -190,6 +190,7 @@ import {
   gateHiddenMetrics,
   getMetaMetricPrivacy,
   getUserMetricPrivacyDefaults,
+  pickMetaMetricPrivacy,
   resolveModelHiddenMetrics,
   resolveVersionHiddenMetrics,
   type HiddenModelMetrics,
@@ -282,6 +283,7 @@ import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1352,7 +1354,7 @@ export const getModelsRaw = async ({
             },
             cosmetic: cosmetics[model.id] ?? null,
             eventDecoration: eventDecorations?.[model.id] ?? null,
-            metricPrivacy: getMetaMetricPrivacy(meta),
+            metricPrivacy: pickMetaMetricPrivacy(meta),
           };
         })
         .filter(isDefined)
@@ -1767,16 +1769,11 @@ export const getModelsWithImagesAndModelVersions = async ({
       const ownerId = it.user.id;
       if (isMod || ownerId === user?.id) continue;
       const defHidden = getUserMetricPrivacyDefaults(feedOwnerSettingsMap.get(ownerId));
-      if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+      if (anyMetricHidden(getMetaMetricPrivacy(it.metricPrivacy)) || anyMetricHidden(defHidden))
         membershipCandidates.add(ownerId);
     }
     feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
   }
-  const toMetaShape = (h: HiddenModelMetrics) => ({
-    hideBuzz: h.buzz,
-    hideDownloads: h.downloads,
-    hideGenerations: h.generations,
-  });
 
   const next = await nextCoverageEnabled();
   const result = {
@@ -1814,7 +1811,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         const isOwner = isMod || model.user.id === user?.id;
         const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
           resolveModelHiddenMetrics({
-            modelMeta: toMetaShape(metricPrivacy),
+            modelMeta: metricPrivacy,
             userSettings: feedOwnerSettingsMap.get(model.user.id),
             isOwnerOrModerator: isOwner,
             hasValidMembership: feedMembershipMap.get(model.user.id) ?? false,
@@ -2516,7 +2513,7 @@ async function captureMinorFlagSnapshot(modelId: number, source: MinorFlagSnapsh
   try {
     await dbWrite.$executeRaw`
       UPDATE "Model" m
-      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
         ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
           'at', now(),
           'source', ${source},
@@ -3842,7 +3839,7 @@ export const publishModelById = async ({
           },
           data: {
             status,
-            meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+            meta: isEmpty(meta) ? {} : meta,
             deletedAt: null,
           },
           select: publishedModelSelect,
@@ -4143,15 +4140,15 @@ export const unpublishModelById = async ({
             ? existing.status
             : ModelStatus.Unpublished
         }::"ModelStatus",
-            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(
-              preserveModStatus
-                ? {}
-                : {
-                    ...(reason ? { unpublishedReason: reason, customMessage } : {}),
-                    unpublishedAt,
-                    unpublishedBy: userId,
-                  }
-            )}::jsonb,
+            "meta" = ${asJsonbObjectSql('"meta"')} || ${JSON.stringify(
+        preserveModStatus
+          ? {}
+          : {
+              ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+              unpublishedAt,
+              unpublishedBy: userId,
+            }
+      )}::jsonb,
             -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
             -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
             -- public v1 payload via modelVersion.selector.
@@ -4611,12 +4608,19 @@ export const getAllModelsWithCategories = async ({
   userId,
   limit,
   page,
-}: GetModelsWithCategoriesSchema) => {
+  viewer,
+}: GetModelsWithCategoriesSchema & {
+  viewer?: { id?: number; isModerator?: boolean | null } | null;
+}) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
+    // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
+    ...(!viewer?.isModerator && {
+      OR: [{ poi: false }, ...(viewer?.id ? [{ userId: viewer.id }] : [])],
+    }),
   };
 
   const modelCategories = await getCategoryTags('model');
@@ -5103,7 +5107,7 @@ export async function getModelsWithVersions({
     const ownerId = it.user.id;
     if (isMod || ownerId === user?.id) continue;
     const defHidden = getUserMetricPrivacyDefaults(apiOwnerSettingsMap.get(ownerId));
-    if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+    if (anyMetricHidden(getMetaMetricPrivacy(it.metricPrivacy)) || anyMetricHidden(defHidden))
       apiMembershipCandidates.add(ownerId);
   }
   const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
@@ -5156,11 +5160,7 @@ export async function getModelsWithVersions({
       }) => {
         const isOwner = isMod || user.id === viewerId;
         const modelHidden = resolveModelHiddenMetrics({
-          modelMeta: {
-            hideBuzz: metricPrivacy.buzz,
-            hideDownloads: metricPrivacy.downloads,
-            hideGenerations: metricPrivacy.generations,
-          },
+          modelMeta: metricPrivacy,
           userSettings: apiOwnerSettingsMap.get(user.id),
           isOwnerOrModerator: isOwner,
           hasValidMembership: apiMembershipMap.get(user.id) ?? false,
@@ -5173,11 +5173,7 @@ export async function getModelsWithVersions({
             ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
               const versionHidden = resolveVersionHiddenMetrics({
                 versionMeta: versionMetaMap.get(version.id),
-                modelMeta: {
-                  hideBuzz: metricPrivacy.buzz,
-                  hideDownloads: metricPrivacy.downloads,
-                  hideGenerations: metricPrivacy.generations,
-                },
+                modelMeta: metricPrivacy,
                 userSettings: apiOwnerSettingsMap.get(user.id),
                 isOwnerOrModerator: isOwner,
                 hasValidMembership: apiMembershipMap.get(user.id) ?? false,
@@ -6379,8 +6375,16 @@ export async function transferModelOwnership({
     );
 
   // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
-  // and a replica still showing the previous owner would cache that owner's list for a week.
-  await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
+  // and a replica still showing the previous owner would cache that owner's list for a week. The
+  // versions too: per-version owner checks (App Blocks `ownedModelVersions`) read through the
+  // 'modelVersion' key, and a replica still showing the previous owner would answer them wrongly.
+  await invalidation(
+    'preventReplicationLagBatch',
+    Promise.all([
+      preventReplicationLagBatch('model', modelIds),
+      preventReplicationLagBatch('modelVersion', affectedVersionIds),
+    ])
+  );
 
   await Promise.all([
     ...(becomesOfficial

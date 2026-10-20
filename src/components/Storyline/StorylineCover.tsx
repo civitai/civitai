@@ -6,10 +6,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 
 /**
- * The page's wide banner, fading into the page at the bottom so the header card can sit over it.
- * A picked banner shows sharp at its focus (`position`, 0 to 100). Without one the art is a
- * portrait, which a wide crop turns into a torso, so it shows as a blurred backdrop instead and
- * the sharp picture is the card cover beside it.
+ * The page's wide banner. `backdrop` blurs the art instead of cropping it: without a picked banner
+ * the art is a portrait, which a wide crop turns into a torso.
  */
 export function StorylineHero({
   image,

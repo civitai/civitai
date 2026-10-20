@@ -10,6 +10,7 @@ import {
   getModelRuleSnapshots,
 } from '~/server/services/text-scan/model-rules';
 import { recordModelRulesLiteralHold } from '~/server/services/text-scan/record';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export { MODEL_RULES_UNPUBLISH_MESSAGE };
 
@@ -54,9 +55,9 @@ async function claimAndUnpublishForModelRules({
   // delivery of the same callback, is never taken down (or notified) again.
   const claimed = await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('modelRules', ${JSON.stringify(
-      modelRules
-    )}::jsonb)
+    SET meta = ${asJsonbObjectSql('meta')} || jsonb_build_object('modelRules', ${JSON.stringify(
+    modelRules
+  )}::jsonb)
     WHERE id = ${entityId}
       AND status IN ('Published', 'Scheduled')
       AND availability <> 'Private'

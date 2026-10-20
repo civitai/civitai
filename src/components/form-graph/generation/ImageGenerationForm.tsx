@@ -39,6 +39,7 @@ import {
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
+import { AvatarFormFields } from '~/components/AvatarGen/AvatarFormFields';
 import type { GenerationStore } from './store';
 
 /**
@@ -95,6 +96,29 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         />
       </div>
       <GateRuleWarnings />
+      <Controller
+        graph={imageHub}
+        name="resources"
+        render={({ meta, onChange }) => {
+          const turbo = meta && 'turbo' in meta ? meta.turbo : undefined;
+          if (!turbo) return null;
+          return (
+            <Checkbox
+              label="Turbo"
+              description={
+                turbo.full
+                  ? 'Remove a resource to make room for Turbo'
+                  : 'Fewer steps for faster, cheaper images, at some cost to quality'
+              }
+              checked={turbo.enabled}
+              disabled={turbo.full}
+              onChange={(e) =>
+                onChange(e.currentTarget.checked ? turbo.withTurbo : turbo.withoutTurbo)
+              }
+            />
+          );
+        }}
+      />
       <Controller
         graph={imageHub}
         name="resources"
@@ -172,6 +196,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
+      <AvatarFormFields store={store} />
       <Controller
         graph={generationHub}
         name="upscaler"

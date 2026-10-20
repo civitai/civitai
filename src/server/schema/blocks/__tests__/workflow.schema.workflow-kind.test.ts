@@ -149,8 +149,8 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
 
 describe("kind:'workflow' — inline media is refused", () => {
   const fix =
-    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-    'or pick it with useImagePicker and pass the returned url';
+    'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+    "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
   const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
   const issuesOf = (b: unknown) => {
     const parsed = blockWorkflowBodySchema.safeParse(b);
@@ -200,6 +200,29 @@ describe("kind:'workflow' — inline media is refused", () => {
     });
     expect(issuesOf(withArguments)).toEqual([
       [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('still reports padding in a later field once an earlier one is over the byte cap', () => {
+    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
+    const over = body({
+      steps: [
+        { $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX), next: 'a' } },
+      ],
+      arguments: pad,
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('leaves a photo in a later field to the byte cap once an earlier one is over it', () => {
+    const over = body({
+      steps: [{ $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX) } }],
+      arguments: { photo: tinyPng },
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
     ]);
   });
 

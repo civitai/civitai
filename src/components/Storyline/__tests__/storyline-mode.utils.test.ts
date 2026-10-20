@@ -9,9 +9,15 @@ import {
   getStorylineStep,
   getStorylineWalk,
   hideHiddenUsersChapters,
+  storylinePositionLabel,
   orderPathImages,
+  parseIdListParam,
   parseIdParam,
   resolvePendingContinue,
+  routeVia,
+  STORYLINE_CHAPTER_PARAM,
+  STORYLINE_VIA_PARAM,
+  storylineReadHref,
   uniquePostIds,
   withStorylineNavigation,
 } from '~/components/Storyline/storyline-mode.utils';
@@ -276,6 +282,77 @@ describe('buildSubwayStops', () => {
   });
 });
 
+describe('buildSubwayStops through a rejoin', () => {
+  // 31 and 40 carry depth 2, as if reached by a shorter route; the line numbers them by position (3).
+  const path = [
+    visible(1, 0, 100),
+    visible(21, 1, 210),
+    { ...visible(30, 2, 300), parentCount: 2, joins: [visible(11, 1, 110)] },
+  ];
+  const ahead = [visible(31, 2, 310)];
+  const children = new Map([[30, [visible(31, 2, 310), visible(40, 2, 400)]]]);
+
+  it('numbers stops and the ways off them along the line, not by their own depth', () => {
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(stops.map((s) => [s.chapter.chapterId, s.chapter.depth])).toEqual([
+      [1, 0],
+      [21, 1],
+      [30, 2],
+      [31, 3],
+    ]);
+    expect(stops[2].branches.map((b) => [b.chapterId, b.depth])).toEqual([[40, 3]]);
+  });
+
+  it('marks the stop where the other branch joins, and only that one', () => {
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(stops.map((s) => s.joins.map((j) => j.chapterId))).toEqual([[], [], [11], []]);
+  });
+});
+
+describe('routeVia', () => {
+  it('names the chapter before each rejoined chapter on the route', () => {
+    expect(
+      routeVia([
+        { chapterId: 1 },
+        { chapterId: 21, parentCount: 1 },
+        { chapterId: 30, parentCount: 2 },
+        { chapterId: 31, parentCount: 1 },
+        { chapterId: 50, parentCount: 3 },
+      ])
+    ).toEqual([21, 31]);
+  });
+
+  it('is empty on a route with no rejoin, so every link stays as it was', () => {
+    expect(routeVia([{ chapterId: 1 }, { chapterId: 2, parentCount: 1 }])).toEqual([]);
+    // The first stop has no chapter before it on the route to name.
+    expect(routeVia([{ chapterId: 30, parentCount: 2 }])).toEqual([]);
+  });
+});
+
+describe('parseIdListParam', () => {
+  it.each([
+    ['12,34', [12, 34]],
+    ['12,x,0,5', [12, 5]],
+    [15, [15]],
+    [
+      ['7,8', '9'],
+      [7, 8],
+    ],
+    ['', []],
+    [undefined, []],
+    // Past Postgres int4: the server would refuse the whole read, so the id is dropped.
+    ['3000000000,12', [12]],
+    ['2147483647', [2147483647]],
+  ])('%j -> %j', (value, expected) => {
+    expect(parseIdListParam(value)).toEqual(expected);
+  });
+
+  it('keeps no more ids than a path has chapters', () => {
+    const many = Array.from({ length: 250 }, (_, i) => i + 1).join(',');
+    expect(parseIdListParam(many)).toHaveLength(200);
+  });
+});
+
 describe('getStorylineChapterName', () => {
   it('uses the title, else the number, adding the author only where asked', () => {
     const titled = {
@@ -329,5 +406,62 @@ describe('canonAheadForkStops', () => {
   it('counts the limit in forks, not in stops, so a long straight run does not hide them', () => {
     const line = [stop(1, 1), stop(2, 1), stop(3, 3), stop(4, 1), stop(5, 3), stop(6, 2)];
     expect(canonAheadForkStops(line, 2)).toEqual([3, 5]);
+  });
+});
+
+describe('storylineReadHref', () => {
+  const read = (href: string) => {
+    const url = new URL(href, 'https://civitai.com');
+    return {
+      path: url.pathname,
+      chapterId: parseIdParam(url.searchParams.get(STORYLINE_CHAPTER_PARAM)),
+      via: parseIdListParam(url.searchParams.get(STORYLINE_VIA_PARAM)),
+    };
+  };
+
+  it('opens the chapter on the route its via names', () => {
+    const href = storylineReadHref({ imageId: 900, chapterId: 60, via: [42, 13, 7] });
+    expect(read(href)).toEqual({ path: '/images/900', chapterId: 60, via: [42, 13, 7] });
+    expect(href).toContain(`${STORYLINE_VIA_PARAM}=42,13,7`);
+  });
+
+  it('carries no via on a route with no rejoin, so the link is the one used everywhere else', () => {
+    expect(storylineReadHref({ imageId: 900, chapterId: 3 })).toBe(
+      `/images/900?${STORYLINE_CHAPTER_PARAM}=3`
+    );
+  });
+});
+
+describe('storylinePositionLabel', () => {
+  it('says the canon path while the reader is on the main route', () => {
+    expect(
+      storylinePositionLabel({ number: 2, length: 4, path: [{ onMain: true }, { onMain: true }] })
+    ).toBe('Chapter 2 of 4 on the canon path');
+  });
+
+  it('says this path once any chapter of the reader path is off the main route', () => {
+    expect(
+      storylinePositionLabel({
+        number: 5,
+        length: 5,
+        path: [{ onMain: true }, { onMain: true }, { onMain: false }, { onMain: false }],
+      })
+    ).toBe('Chapter 5 of 5 on this path');
+    // The count is the line's, whatever it is called.
+    expect(storylinePositionLabel({ number: 7, length: 11, path: [{ onMain: false }] })).toBe(
+      'Chapter 7 of 11 on this path'
+    );
+  });
+
+  it('treats a chapter that does not say as on the main route', () => {
+    expect(storylinePositionLabel({ number: 1, length: 3, path: [{}, {}] })).toBe(
+      'Chapter 1 of 3 on the canon path'
+    );
+  });
+
+  it('gives only the number while the length is not known', () => {
+    expect(
+      storylinePositionLabel({ number: 2, length: undefined, path: [{ onMain: false }] })
+    ).toBe('Chapter 2');
   });
 });

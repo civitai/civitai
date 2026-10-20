@@ -2,10 +2,10 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
-import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
   preventReplicationLag,
@@ -25,7 +25,7 @@ import {
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import type { ImageMetaProps, ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -108,8 +108,9 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
-import { getManualResourceLimitError } from '~/utils/manual-image-resources';
+import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import { CacheTTL } from '../common/constants';
 import type {
   AddPostTagInput,
@@ -237,6 +238,7 @@ export const getPostsInfinite = async ({
   excludedUserIds,
   period,
   periodMode,
+  jumpTo,
   sort,
   user,
   tags,
@@ -305,6 +307,13 @@ export const getPostsInfinite = async ({
   }
 
   if (modelVersionId) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { model: { select: { poi: true, userId: true } } },
+    });
+    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+      return { items: [] };
+
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
     cacheTags.push(`posts-modelVersion:${modelVersionId}`);
   }
@@ -362,6 +371,11 @@ export const getPostsInfinite = async ({
       );
     }
   }
+
+  const jump = draftOnly ? undefined : resolveJumpTo({ jumpTo, sort, userId: targetUser });
+  if (jump?.direction === 'before') AND.push(Prisma.sql`p."publishedAt" < ${new Date(jump.endMs)}`);
+  else if (jump?.direction === 'after')
+    AND.push(Prisma.sql`p."publishedAt" >= ${new Date(jump.startMs)}`);
 
   if (browsingLevel) {
     if (pending && (isModerator || userId)) {
@@ -803,7 +817,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
     }))
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
@@ -957,12 +971,9 @@ export const updatePost = async ({
       where: { id, userId: !user.isModerator ? user.id : undefined },
       data: {
         ...restData,
-        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
-        detail: !!restData.detail
-          ? restData.detail.length > 0
-            ? restData.detail
-            : null
-          : undefined,
+        // An empty string clears the field; only an omitted one leaves it alone.
+        title: restData.title === undefined ? undefined : restData.title || null,
+        detail: restData.detail === undefined ? undefined : restData.detail || null,
       },
     });
     if (publishedAt !== undefined) {
@@ -1018,6 +1029,51 @@ export const updatePost = async ({
 
   return post;
 };
+
+/**
+ * A moderator takes a post off the site without destroying anything: `publishedAt` is cleared and the
+ * metadata carries the same `unpublishedAt` / `unpublishedBy` / `prevPublishedAt` stamps the version
+ * unpublish writes, so the existing republish path restores it. The post and its images stay.
+ */
+export async function unpublishPostAsModerator({
+  id,
+  userId,
+  reason,
+}: {
+  id: number;
+  userId: number;
+  reason: string;
+}) {
+  const unpublishedAt = new Date().toISOString();
+  const rows = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Post"
+    SET
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+        'unpublishedAt', ${unpublishedAt}::text,
+        'unpublishedBy', ${userId}::int,
+        'unpublishedReason', ${reason}::text,
+        'prevPublishedAt', "publishedAt"
+      ),
+      "publishedAt" = NULL
+    WHERE id = ${id} AND "publishedAt" IS NOT NULL
+    RETURNING id, "userId"
+  `;
+  const post = rows[0];
+  if (!post) return { unpublished: false };
+
+  const images = await dbWrite.image.findMany({
+    where: { postId: id },
+    select: { id: true },
+  });
+  if (images.length)
+    await queueImageSearchIndexUpdate({
+      ids: images.map((image) => image.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  await userPostCountCache.refresh(post.userId);
+  await userImageVideoCountCaches.refresh(post.userId);
+  return { unpublished: true };
+}
 
 /**
  * Everything a publish needs besides the write. The reindex is explicit because the trigger-driven
@@ -1638,9 +1694,7 @@ export const addResourceToPostImage = async ({
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (
-    images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))
-  ) {
+  if (images.some((image) => !canAddManualResources(image))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
@@ -1687,11 +1741,11 @@ export const addResourceToPostImage = async ({
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
 
-  for (const image of images) {
-    if (!!image.postId) {
-      await preventReplicationLag('postImages', image.postId);
-      await bustCachesForPosts(image.postId);
-    }
+  // Once per post, not per image: every image of a post shares its caches.
+  const postIds = uniq(images.map((image) => image.postId).filter(isDefined));
+  if (postIds.length) {
+    await Promise.all(postIds.map((postId) => preventReplicationLag('postImages', postId)));
+    await bustCachesForPosts(postIds);
   }
 
   return dbWrite.imageResourceHelper.findMany({

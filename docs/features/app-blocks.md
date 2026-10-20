@@ -115,6 +115,7 @@ A third such site has to make its own argument — see the note at the foot of
 | `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.previewPostFromApp` then `blocks.createPostFromApp`; both also require the viewer's signed-in session and refuse unless it is the token's `sub`), optionally attached to a model version's gallery. Outputs are workflow outputs or — page apps only — images uploaded from the app's own bytes (`OPEN_IMAGE_UPLOAD { bytes }` → the store upload, then `blocks.persistAppUploadImage`, which is gated by this scope); such an image is postable only by the app that uploaded it, only for its owner, only within the SFW ceiling (whatever the viewer's own browsing level allows; bytes uploads are SFW-only in v1), and is never readable through `blocks.getImagesByIds`. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
 | `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship in shared storage, the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
 
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
@@ -128,6 +129,10 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > (`/api/v1/blocks/models`, `/api/v1/blocks/images`) serve public, maturity-clamped
 > data and accept any valid block token for its signed `maxBrowsingLevel` claim, not
 > for authorization (`catalog:read` was added in #2671 and retired the next day).
+> For a signed-in token, `/api/v1/blocks/images` (like `/api/v1/blocks/gated-images` and
+> `/api/v1/blocks/collections/[id]`) also attaches a per-viewer, per-app `reactTicket` to each
+> image — the provenance proof `blocks.setReactionFromApp` requires (see `social:react:self`).
+> It is the one per-viewer field on otherwise public data; block routes answer `private, no-store`.
 > `/api/v1/blocks/models?owner=mine` narrows the same public data to the signed-in
 > viewer's own models, taken from the token `sub` (anon gets 401). It is a filter,
 > not a viewer, so it needs no scope and shows no unpublished or Private-availability
@@ -185,6 +190,13 @@ on model pages AND `/api/internal/blocks/workflow-completed`. Off by
 default. The per-block emergency kill list
 (`system:blocks:emergency-kill-list` SET in sys Redis) is the
 fine-grained tool for ops.
+
+Several capabilities also have their own fail-closed flag, independent of
+`app-blocks-enabled`, that ships OFF with no moderator floor (an absent flag is
+off for everyone): `app-blocks-post-creation` (`posts:write:self`),
+`app-blocks-training-kind`, `app-blocks-confirmed-step` and
+`app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
+procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
 ## Threat model highlights
 
@@ -248,6 +260,9 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
+  storageMode?: 'local-preview';       // dev-tunnel frames only; advisory, grants nothing.
+                                       // See BLOCK_HOST_LOCAL_PREVIEW_STORAGE in
+                                       // src/components/AppBlocks/blockInitFragmentGate.ts.
 }
 ```
 
@@ -394,6 +409,12 @@ read that file. As of this writing the families are:
   `TRAINING_DATASET_RESULT`), `RUN_TRAINING` (→ `TRAINING_RESULT`) and
   `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last three page host only — see
   "Training runs" and "Confirmed steps".
+- **Reactions** (REQUEST-style, both real hosts, `social:react:self`, image only):
+  `SET_ENTITY_REACTION` (→ `ENTITY_REACTION_RESULT`) and `GET_ENTITY_REACTIONS`
+  (→ `ENTITY_REACTIONS_RESULT`), host-brokered via `blocks.setReactionFromApp` /
+  `blocks.getReactionsForApp`. On the bridge because only the host can do it: both
+  procedures require the viewer's own signed-in session to be the token's `sub`, which a
+  block cannot present. Each id needs the `reactTicket` a block image endpoint served.
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the resources the
@@ -410,12 +431,17 @@ read that file. As of this writing the families are:
   scope): `OPEN_IMAGE_PICKER` (→ `IMAGE_PICKER_RESULT`) lets the viewer pick from
   images they posted and images they made with the on-site generator. The app
   never lists the library; it receives only the pick. Request
-  `{ requestId, sources?, multiple? }`: `sources` is a non-empty list of
+  `{ requestId, sources?, multiple?, publicOnly? }`: `sources` is a non-empty list of
   `'posted'` / `'generated'` (omitted = both), `multiple: { max }` asks for
-  several (`max` above 20 is clamped to 20). A single pick answers
+  several (`max` above 20 is clamped to 20), and `publicOnly: true` lists posted
+  images only from posts that are not `Private` (for an app handing the pick to a
+  surface everyone sees, such as an App Store card, which refuses an image from a
+  Private post; generated images are unaffected; omitted or `false` lists as
+  before). A single pick answers
   `{ requestId, selected? }` (no `selected` on dismiss); a multi pick answers
-  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`
-  is answered `{ requestId, error }` and the picker does not open. Each pick is
+  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`,
+  or a `publicOnly` that is not a boolean, is answered `{ requestId, error }` and
+  the picker does not open. Each pick is
   `{ source, url, width, height, nsfwLevel, imageId? }`. `imageId` is present for
   a posted pick only (a generator output has no `Image` row). `nsfwLevel` is never
   0 and may be a mature level.
@@ -424,7 +450,10 @@ read that file. As of this writing the families are:
   decision: the viewer is choosing among their own images). Posted: the viewer's
   own images in a published post, scan complete, with no `needsReview` /
   `tosViolation` / `poi` / `minor` flag, rated at a level their browsing level
-  includes; an unrated image (level 0) is not listed. The rule is one query
+  includes; an unrated image (level 0) is not listed. With `publicOnly`, the post
+  must also not be `Private` (`publicPostImageWhere`, the Prisma form of the
+  store's `IMAGE_POST_PUBLIC_SQL`; the picker keeps `publishedAt <= now`, the
+  store `< now()`). The rule is one query
   filter (`postedPickableWhere`), and the level is read server-side from the
   session and request domain (`getRequestBrowsingLevel`), never from the input.
   Generated: the viewer's succeeded generator image outputs as the generator
@@ -442,6 +471,25 @@ read that file. As of this writing the families are:
   answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
   `src/components/AppBlocks/imagePickerLogic.ts` and
   `src/server/services/blocks/block-image-picker.logic.ts`.
+- **Media upload** (page host only, no scope): `OPEN_MEDIA_UPLOAD`
+  (→ `MEDIA_UPLOAD_RESULT`) uploads an image, video or audio file as a PRIVATE
+  generation input, an orchestrator consumer blob. Nothing is published: no
+  `Image` row and no public scan; the orchestrator scans the generation output.
+  This is how media reaches a step input, since inline data URIs and base64 there
+  are refused (`src/server/schema/blocks/inline-media.ts`). Request
+  `{ requestId, kind, purpose: 'generationSource', bytes?, mimeType? }`. Without
+  `bytes` the host opens its own picker; with `bytes` (an `ArrayBuffer` the app
+  made: canvas, crop, MediaRecorder) it uploads with no modal, only for a block
+  holding a token, at most 8 uploads and 128 MB per 60 s. Content is judged by
+  magic bytes: image PNG / JPEG / WebP (at most 24 MB, resized into 64..2048 and
+  re-encoded as JPEG), video MP4 / WebM and audio MP3 / WAV / WebM (at most
+  64 MB); a declared `mimeType` must match the content.
+  Video and audio must decode in a media element, and video needs a video track.
+  The answer is `{ requestId, selected? }` with
+  `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
+  on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged. Logic:
+  `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does

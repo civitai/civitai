@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
@@ -17,7 +18,7 @@ const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  // Straight through to the origin; caching is not what these tests are about.
+  // Straight through to the origin.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   setFetchThroughCache: vi.fn(),
 }));
@@ -68,7 +69,6 @@ function callerFor(
 
 const notBanned = { bannedAt: null, deletedAt: null };
 
-/** A storyline whose first chapter is rated X, with a ceiling of X. */
 const xStory = {
   id: 10,
   userId: OWNER,
@@ -107,8 +107,8 @@ describe('storyline router: a story outside the reader’s level serves nothing 
     r.storyline.findUnique.mockResolvedValue(xStory as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 1, postId: 101, depth: 0 },
-      { id: 2, postId: 102, depth: 1 },
+      { id: 1, postId: 101, depth: 0, parentIds: [] },
+      { id: 2, postId: 102, depth: 1, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([post(101, OWNER, NsfwLevel.X), post(102, OWNER)] as never);
     r.storylineChapter.findMany.mockResolvedValue([
@@ -160,8 +160,8 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     } as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 1, postId: 101, depth: 0 },
-      { id: 2, postId: 102, depth: 1 },
+      { id: 1, postId: 101, depth: 0, parentIds: [] },
+      { id: 2, postId: 102, depth: 1, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([post(101, OWNER), post(102, AUTHOR)] as never);
   });
@@ -255,12 +255,13 @@ describe('storyline router: canon ahead', () => {
     r.storyline.findUnique.mockResolvedValue(xStory as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     // The canon walk; the chapters' first images are none.
-    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
       Promise.resolve(
-        strings.join('?').includes('WITH RECURSIVE main')
+        // The walk is a nested fragment, so the SQL is read composed.
+        Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('WITH RECURSIVE main')
           ? [
-              { id: 2, postId: 102, depth: 1 },
-              { id: 3, postId: 103, depth: 2 },
+              { id: 2, postId: 102, depth: 1, parentIds: [] },
+              { id: 3, postId: 103, depth: 2, parentIds: [] },
             ]
           : []
       )) as never);
@@ -290,6 +291,8 @@ describe('storyline router: canon ahead', () => {
           user: { username: `u${AUTHOR}` },
         },
         childCount: 0,
+        joins: [],
+        parentCount: 0,
         firstImage: null,
       },
     ]);

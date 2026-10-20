@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
@@ -95,14 +97,15 @@ const applyArgs = (triggeredLabels: string[], blocked = false) => ({
   output: okOutput(triggeredLabels, blocked),
 });
 
-// `$executeRaw` is a tagged template, so a call arrives as (strings, ...boundValues). Splitting
+// `$executeRaw` is a tagged template, so a call arrives as (strings, ...values); Prisma.sql inlines
+// the nested fragments among the values, leaving the bound ones, as Prisma does. Splitting
 // the two raw statements on their SQL keeps the assertions readable and makes a revert that
 // drops one of them fail by name rather than by index.
 const rawCalls = () =>
-  dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => ({
-    sql: (call[0] as unknown as readonly string[]).join('?'),
-    values: call.slice(1),
-  }));
+  dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => {
+    const query = Prisma.sql(call[0] as readonly string[], ...call.slice(1));
+    return { sql: query.sql, values: query.values };
+  });
 const flipCall = () => rawCalls().find((c) => c.sql.includes('SET nsfw = TRUE'));
 const forensicsCall = () => rawCalls().find((c) => c.sql.includes("'textModeration'"));
 
@@ -334,7 +337,7 @@ describe('modelModerationAdapter.applyResult', () => {
     it('merges into meta in SQL rather than overwriting the object', async () => {
       await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
-      expect(forensicsCall()?.sql).toContain("COALESCE(m.meta, '{}'::jsonb) ||");
+      expect(forensicsCall()?.sql).toContain(`${asJsonbObject('m.meta')} ||`);
       expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
     });
 
