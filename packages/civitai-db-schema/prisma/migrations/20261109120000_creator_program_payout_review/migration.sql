@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS "CreatorProgramPayoutReview" (
     CHECK ("status" IN ('open', 'escalated', 'cleared', 'withheld'))
 );
 
+-- For a table created by an earlier draft of this file.
+ALTER TABLE "CreatorProgramPayoutReview"
+  ADD COLUMN IF NOT EXISTS "version" INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS "decisions" JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "CreatorProgramPayoutReview_period_userId_key"
   ON "CreatorProgramPayoutReview" ("period", "userId");
 CREATE INDEX IF NOT EXISTS "CreatorProgramPayoutReview_userId_idx"
