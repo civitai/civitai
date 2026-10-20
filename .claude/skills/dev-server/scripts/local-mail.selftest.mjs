@@ -52,7 +52,7 @@ try {
 const daemonSource = readFileSync(new URL('./daemon.mjs', import.meta.url), 'utf8');
 check(
   'main app session spawns on spawnEnvFor',
-  daemonSource.includes('const env = spawnEnvFor(envVars);'),
+  daemonSource.includes('const env = spawnEnvFor(envVars, '),
   true
 );
 check(

@@ -258,6 +258,19 @@ try {
   check('wt env --refresh exits 0', runEnv(home, primary, tree, '--refresh').code, 0);
   check('wt env --refresh routes a kept file too', read('apps/auth/.env'), routedAuth);
 
+  // A file only the tree has: its CSAM_* keys are emptied, its database left as the tree wrote it.
+  const handMade = join(tree, 'apps', 'auth', '.env.local');
+  writeFileSync(handMade, `LOCAL=1\nDATABASE_URL=${PLANTED}\nCSAM_UPLOAD_KEY=planted-csam-local\n`);
+  const ownRun = runEnv(home, primary, tree);
+  check('wt env exits 0 with a tree-only env file', ownRun.code, 0);
+  check(
+    "wt env empties a tree-only file's CSAM_* keys and keeps its database",
+    read('apps/auth/.env.local'),
+    `LOCAL=1\nDATABASE_URL=${PLANTED}\nCSAM_UPLOAD_KEY=\n`
+  );
+  check('... and says which file', /emptied\s+apps\/auth\/\.env\.local/.test(ownRun.out), true);
+  rmSync(handMade);
+
   // No dev database to route to: refuse, and write nothing.
   writeFileSync(join(primary, '.env'), 'ROOT=3\n');
   writeFileSync(treeAuth, plantedAuth);

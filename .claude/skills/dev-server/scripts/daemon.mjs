@@ -25,7 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
 import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
-import { blankKeys } from './blank-keys.mjs';
+import { blankKeys, blankedKeyNames } from './blank-keys.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -768,7 +768,7 @@ class DevSession {
       worktreeOptIn: skillConfig.worktreeDevFsCache,
     });
 
-    const env = spawnEnvFor(envVars);
+    const env = spawnEnvFor(envVars, { blankedEnvDir: worktreeEnvDir(this.worktree, this.worktree) });
 
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
@@ -1573,16 +1573,20 @@ class AuthHub {
     // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
     // the thing described and the thing handed to the child have to be one object.
     if (!this.spawnEnvCache) {
-      this.spawnEnvCache = spawnEnvFor(
-        this.envPaths.length ? loadEnvChain(this.envPaths) : {},
-        this.databaseEnv()
-      );
+      this.spawnEnvCache = spawnEnvFor(this.envPaths.length ? loadEnvChain(this.envPaths) : {}, {
+        databaseEnv: this.databaseEnv(),
+        blankedEnvDir: this.blankedEnvDir(),
+      });
     }
     return this.spawnEnvCache;
   }
 
-  // The hub runs from the primary checkout and keeps whatever database its own .env names.
+  // The hub runs from the primary checkout and keeps whatever its own .env names.
   databaseEnv() {
+    return null;
+  }
+
+  blankedEnvDir() {
     return null;
   }
 
@@ -1918,10 +1922,14 @@ class AppSession extends AuthHub {
 
   // In a worktree the DB keys skip the chain's base, the primary's app .env, which may name a
   // database other than dev. A key neither the worktree's app .env nor its root chain sets is
-  // removed rather than inherited. Non-null here is also what empties the blanked keys.
+  // removed rather than inherited.
   databaseEnv() {
     if (samePath(this.worktree, primaryCheckout)) return null;
     return appDatabaseEnv(loadEnvFile(resolve(this.path, '.env')), loadEnvChain(this.rootEnvPaths));
+  }
+
+  blankedEnvDir() {
+    return worktreeEnvDir(this.worktree, this.path);
   }
 }
 
@@ -1931,17 +1939,23 @@ class AppSession extends AuthHub {
 // way. The primary checkout keeps it.
 // Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
 // apps/auth/.env itself) is routed to the catcher only because the keys are set here.
-// `databaseEnv` is non-null only for an app in a worktree, which also gets the blanked keys emptied.
-function spawnEnvFor(envVars, databaseEnv = null) {
+// `databaseEnv` is non-null only for an app in a worktree; `blankedEnvDir` only for a process in a
+// worktree, naming the directory it reads its own .env files from.
+function spawnEnvFor(envVars, { databaseEnv = null, blankedEnvDir = null } = {}) {
   const env = { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
   if (databaseEnv) {
     for (const key of DB_KEYS) {
       if (databaseEnv[key] === undefined) delete env[key];
       else env[key] = databaseEnv[key];
     }
-    blankKeys(env);
   }
+  if (blankedEnvDir) blankKeys(env, blankedKeyNames(blankedEnvDir));
   return env;
+}
+
+// `dir` for a process running in a worktree; null in the primary checkout, which keeps its values.
+function worktreeEnvDir(worktree, dir) {
+  return samePath(worktree, primaryCheckout) ? null : dir;
 }
 
 function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
@@ -3300,6 +3314,7 @@ export {
   describeDatabaseHost,
   applyDevFsCacheDefault,
   spawnEnvFor,
+  worktreeEnvDir,
   appReservedPorts,
   appSessions,
   checkPath,
