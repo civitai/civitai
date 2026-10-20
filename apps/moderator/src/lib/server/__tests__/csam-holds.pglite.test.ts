@@ -6,6 +6,7 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CsamHoldQuery } from '../csam-holds.queries';
+import { PREVIEW_COUNT_CAP } from '../../minor-flags/model-detail';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const { dbHandle, callModEndpoint } = vi.hoisted(() => ({
@@ -407,6 +408,36 @@ describe('getHoldCoverImages', () => {
     const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
     expect(covers.get(1)).toEqual(covers.get(8));
     expect(covers.get(8)?.total).toBe(5);
+  });
+
+  it('bounds a model with many images to four and a capped count', async () => {
+    await db.exec(`
+      INSERT INTO "Model" VALUES (74, 'Big', 'Published', 10), (75, 'Huge', 'Published', 10);
+      INSERT INTO "ModelVersion" VALUES (740, 74, 0), (750, 75, 0);
+      INSERT INTO "Post" VALUES (810, NULL, '2026-10-01', 10, 740), (811, NULL, '2026-10-01', 10, 750);
+      INSERT INTO "Image" SELECT 6000 + g, 'big-' || g, 'image', 810, g, 1 FROM generate_series(1, 6) g;
+      INSERT INTO "Image" SELECT 7000 + g, 'huge-' || g, 'image', 811, g, 1 FROM generate_series(1, 150) g;
+    `);
+    const covers = await getHoldCoverImages([hold(1, 'Model', 74), hold(2, 'Model', 75)]);
+    expect(covers.get(1)?.images.map((i) => i.url)).toEqual(['big-1', 'big-2', 'big-3', 'big-4']);
+    expect(covers.get(1)?.total).toBe(6);
+    expect(covers.get(2)?.images).toHaveLength(4);
+    expect(covers.get(2)?.total).toBe(PREVIEW_COUNT_CAP + 1);
+  });
+
+  it('bounds a post with many images the same way', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (812, NULL, '2026-10-01', 10, NULL);
+      INSERT INTO "Image" SELECT 8000 + g, 'post-' || g, 'image', 812, g, 1 FROM generate_series(1, 150) g;
+    `);
+    const covers = await getHoldCoverImages([hold(1, 'Post', 812)]);
+    expect(covers.get(1)?.images.map((i) => i.url)).toEqual([
+      'post-1',
+      'post-2',
+      'post-3',
+      'post-4',
+    ]);
+    expect(covers.get(1)?.total).toBe(PREVIEW_COUNT_CAP + 1);
   });
 
   it('reads nothing for an empty page', async () => {

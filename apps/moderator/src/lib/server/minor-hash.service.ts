@@ -248,29 +248,67 @@ const APPEAL_TRAINED_WORDS_CAP = 8;
 const APPEAL_TAGS_CAP = 12;
 const APPEAL_COVER_COUNT = 4;
 
+/** Ordering of the model cover subquery's rows, over its aliased columns. */
+export const MODEL_COVER_ORDER = sql`c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
+  c."imageIndex" ASC NULLS LAST, c.id`;
+
+/** How many still images the owner has on a model's versions, read no further than `cap`. */
+export const modelCoverCount = (
+  modelId: RawBuilder<unknown>,
+  userId: RawBuilder<unknown>,
+  cap: number
+) => sql`
+  SELECT count(*)::int AS total
+  FROM (
+    SELECT 1
+    FROM "ModelVersion" mv
+    JOIN "Post" p ON p."modelVersionId" = mv.id
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE mv."modelId" = ${modelId} AND p."userId" = ${userId} AND i.type::text = 'image'
+    LIMIT ${sql.raw(String(cap))}
+  ) capped`;
+
+/** A model's first `limit` cover images: the owner's still images on its versions, unpublished posts
+ *  last, then by version, post and image order. A subquery to alias `c` and order by `MODEL_COVER_ORDER`.
+ *
+ *  Posts are ordered first and each post's images fetched in turn, so the plan stops after `limit`
+ *  images. Ordering the images of every post at once reads them all, which took tens of seconds for
+ *  a model with thousands of posts. The outer LIMIT has no ORDER BY on purpose: that would bring the
+ *  full read back, and the lateral join emits in the order of the sorted posts. */
+export const modelCoverImages = (
+  modelId: RawBuilder<unknown>,
+  userId: RawBuilder<unknown>,
+  limit: number
+) => sql`
+  -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
+  -- unpublished or draft model with no images at all.
+  SELECT i.id, i.url, i."nsfwLevel", pp.unpublished, pp."versionIndex", pp."postId",
+         i.index AS "imageIndex"
+  FROM (
+    SELECT p.id AS "postId", p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex"
+    FROM "ModelVersion" mv
+    JOIN "Post" p ON p."modelVersionId" = mv.id
+    WHERE mv."modelId" = ${modelId} AND p."userId" = ${userId}
+    ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC
+  ) pp
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.url, i."nsfwLevel", i.index
+    FROM "Image" i
+    WHERE i."postId" = pp."postId" AND i.type::text = 'image'
+    ORDER BY i.index ASC NULLS LAST, i.id ASC
+    LIMIT ${sql.raw(String(limit))}
+  ) i
+  LIMIT ${sql.raw(String(limit))}`;
+
 /** The model's first few images, joined to a CTE named `pg` that carries "modelId" and "userId".
  *  Shared by every queue that shows a model's pictures, so they load the same way. */
 const coverImagesJoin = sql`
 LEFT JOIN LATERAL (
   SELECT jsonb_agg(
            jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
-           ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
-                    c."imageIndex" ASC NULLS LAST, c.id
+           ORDER BY ${MODEL_COVER_ORDER}
          ) AS images
-  FROM (
-    -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
-    -- unpublished or draft model with no images at all.
-    SELECT i.id, i.url, i."nsfwLevel", p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
-           p.id AS "postId", i.index AS "imageIndex"
-    FROM "ModelVersion" mv
-    JOIN "Post" p ON p."modelVersionId" = mv.id
-    JOIN "Image" i ON i."postId" = p.id
-    WHERE mv."modelId" = pg."modelId"
-      AND p."userId" = pg."userId"
-      AND i.type::text = 'image'
-    ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
-    LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
-  ) c
+  FROM (${modelCoverImages(sql.ref('pg.modelId'), sql.ref('pg.userId'), APPEAL_COVER_COUNT)}) c
 ) ci ON TRUE
 `;
 

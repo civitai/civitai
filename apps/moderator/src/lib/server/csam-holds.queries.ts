@@ -2,8 +2,10 @@
 // resolve `$app/server`.
 import { sql } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
+import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
+import { MODEL_COVER_ORDER, modelCoverCount, modelCoverImages } from './minor-hash.service';
 import { MAX_INT4 } from './users.service';
 
 export type CsamHoldRow = {
@@ -160,7 +162,8 @@ export async function countPendingCsamHolds(entityType?: string): Promise<number
 
 export type CsamHoldImage = { id: number; url: string; nsfwLevel: number };
 
-/** The first stills of a held post or model, and how many it has in all. */
+/** The first stills of a held post or model, and how many it has in all (`PREVIEW_COUNT_CAP + 1` when
+ *  there are more than the cap; see `previewCountText`). */
 export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
 
 /** How many pictures a row carries; the rest is a link to the content. */
@@ -179,38 +182,50 @@ const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
 };
 
 /** A post's first stills in post order (lowest `index`, then id). Videos are left out: the preview
- *  renders stills. One read for every post. */
+ *  renders stills. One read for every post, bounded per post: four rows and a count that stops one
+ *  past `PREVIEW_COUNT_CAP`. */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
-    select r."entityId", r.id, r.url, r."nsfwLevel", r.total from (
-      select i."postId" as "entityId", i.id, i.url, i."nsfwLevel",
-        row_number() over (partition by i."postId" order by i.index asc nulls last, i.id asc) as rn,
-        count(*) over (partition by i."postId") as total
+    select p.id as "entityId", c.id, c.url, c."nsfwLevel", n.total
+    from "Post" p
+    cross join lateral (
+      select i.id, i.url, i."nsfwLevel", i.index
       from "Image" i
-      where i."postId" in (${sql.join(postIds)}) and i.type::text = 'image'
-    ) r
-    where r.rn <= ${HOLD_IMAGE_LIMIT}
-    order by r."entityId", r.rn`.execute(dbRead);
+      where i."postId" = p.id and i.type::text = 'image'
+      order by i.index asc nulls last, i.id asc
+      limit ${sql.raw(String(HOLD_IMAGE_LIMIT))}
+    ) c
+    cross join lateral (
+      select count(*)::int as total
+      from (
+        select 1 from "Image" i
+        where i."postId" = p.id and i.type::text = 'image'
+        limit ${sql.raw(String(PREVIEW_COUNT_CAP + 1))}
+      ) capped
+    ) n
+    where p.id in (${sql.join(postIds)})
+    order by p.id, c.index asc nulls last, c.id asc`.execute(dbRead);
   return toCovers(rows);
 }
 
-/** A model's first stills, chosen as the model flags queues choose theirs: the owner's posts on its
- *  versions, published before unpublished, then version, post and image order. One read for every model. */
+/** A model's first stills, chosen as the model flags queues choose theirs (`modelCoverImages`). One
+ *  read for every model, bounded per model like the post covers. */
 async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
-    select r."entityId", r.id, r.url, r."nsfwLevel", r.total from (
-      select m.id as "entityId", i.id, i.url, i."nsfwLevel",
-        row_number() over (partition by m.id order by p."publishedAt" is null, mv.index asc nulls last,
-          p.id asc, i.index asc nulls last, i.id asc) as rn,
-        count(*) over (partition by m.id) as total
-      from "Model" m
-      join "ModelVersion" mv on mv."modelId" = m.id
-      join "Post" p on p."modelVersionId" = mv.id and p."userId" = m."userId"
-      join "Image" i on i."postId" = p.id
-      where m.id in (${sql.join(modelIds)}) and i.type::text = 'image'
-    ) r
-    where r.rn <= ${HOLD_IMAGE_LIMIT}
-    order by r."entityId", r.rn`.execute(dbRead);
+    select m.id as "entityId", c.id, c.url, c."nsfwLevel", n.total
+    from "Model" m
+    cross join lateral (${modelCoverImages(
+      sql.ref('m.id'),
+      sql.ref('m.userId'),
+      HOLD_IMAGE_LIMIT
+    )}) c
+    cross join lateral (${modelCoverCount(
+      sql.ref('m.id'),
+      sql.ref('m.userId'),
+      PREVIEW_COUNT_CAP + 1
+    )}) n
+    where m.id in (${sql.join(modelIds)})
+    order by m.id, ${MODEL_COVER_ORDER}`.execute(dbRead);
   return toCovers(rows);
 }
 
