@@ -27,6 +27,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
   stampWorkflowPublished,
@@ -2038,43 +2039,13 @@ export const getAssociatedResourcesCardDataHandler = async ({
 };
 // #endregion
 /** Per matched hash, whether a model the caller does not own already has a file with it. */
-export const getModelByHashesHandler = async ({
+export const getModelByHashesHandler = ({
   input,
   ctx,
 }: {
   input: ModelByHashesInput;
   ctx: ProtectedContext;
-}) => {
-  const { hashes } = input;
-
-  if (hashes.length === 0) {
-    return [];
-  }
-
-  // `ModelFileHash.hash` is citext, so the ::citext[] cast is what makes this case-insensitive
-  // AND indexable on modelFileHash_hash_cs. Do not "simplify" it to a plain IN over text or a
-  // subquery: citext compared against an explicitly-typed text value degrades to a
-  // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
-  // returns nothing.
-  // No poi/status/availability filter on purpose: a file already on another user's model must
-  // block the bounty entry whatever that model's visibility.
-  const rows = await dbRead.$queryRaw<{ userId: number; hash: string }[]>`
-    SELECT DISTINCT m."userId",
-           mfh."hash"
-    FROM "ModelFileHash" mfh
-           JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
-           JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
-           JOIN "Model" m ON mv."modelId" = m.id
-    WHERE mfh."hash" = ANY(ARRAY[${Prisma.join(hashes.map((h) => h.toLowerCase()))}]::citext[])
-      AND m."deletedAt" IS NULL;
-  `;
-
-  const ownedByOther = new Map<string, boolean>();
-  for (const { userId, hash } of rows) {
-    ownedByOther.set(hash, (ownedByOther.get(hash) ?? false) || userId !== ctx.user.id);
-  }
-  return [...ownedByOther].map(([hash, ownedByOther]) => ({ hash, ownedByOther }));
-};
+}) => findHashOwnership({ hashes: input.hashes, userId: ctx.user.id });
 
 export async function getSimpleModelsInfiniteHandler({
   input,
