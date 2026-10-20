@@ -3073,23 +3073,20 @@ export async function amIBlockedByUser({
 }) {
   if (!(targetUserId || targetUsername)) return false;
   if (!targetUserId && targetUsername)
-    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
-
-  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+    targetUserId = (
+      await dbRead.user.findFirst({ where: { username: targetUsername }, select: { id: true } })
+    )?.id;
 
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
-  const engagement = await dbRead.userEngagement.findFirst({
-    where: {
-      userId: targetUserId,
-      targetUserId: userId,
-      type: 'Block',
-    },
-  });
-
-  return !!engagement;
+  // The cache is the answer. `BlockedByUsers` is invalidated for the blocked user by the
+  // only writer that creates a Block (`toggleBlockUser`), and its hash carries a TTL as a
+  // backstop. There used to be a per-request `userEngagement` lookup here on a cache miss;
+  // it ran on every logged-in detail view and only ever caught a missed invalidation —
+  // which now persists until the hash TTL instead.
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  return cachedBlockedBy.some((user) => user.id === targetUserId);
 }
 
 export async function requestAdToken({ userId }: { userId: number }) {
