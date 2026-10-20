@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
+import { NsfwLevel } from '~/server/common/enums';
+import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type { TextScanField } from '~/server/services/text-scan/types';
 
-const { mockCreateXGuardModerationRequest, mockSubmitWorkflow } = vi.hoisted(() => ({
-  mockCreateXGuardModerationRequest: vi.fn(),
+const { mockPreviewTextScanNsfw, mockSubmitWorkflow } = vi.hoisted(() => ({
+  mockPreviewTextScanNsfw: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
 }));
 
@@ -12,9 +14,9 @@ vi.mock('@civitai/client', () => ({
   submitWorkflow: mockSubmitWorkflow,
 }));
 
-vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof OrchestratorService>()),
-  createXGuardModerationRequest: mockCreateXGuardModerationRequest,
+vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPreview>()),
+  previewTextScanNsfw: mockPreviewTextScanNsfw,
 }));
 
 import {
@@ -23,33 +25,18 @@ import {
   draftSfwFace,
 } from '~/server/services/model-sfw-face.service';
 
-const succeeded = (results: { label: string; triggered: boolean; text?: string[] }[]) => ({
-  status: 'succeeded',
-  steps: [
-    {
-      output: {
-        results: results.map(({ label, triggered, text }) => ({
-          label,
-          triggered,
-          matchedTerms: text ? { text } : undefined,
-        })),
-      },
-    },
-  ],
-});
-
-const clean = succeeded([{ label: 'NSFW', triggered: false }]);
+const rated = (level: NsfwLevel, reason = 'reason') => ({ status: 'ok', level, reason });
+const fieldText = (call: unknown[]) =>
+  (call[0] as { fields: TextScanField[] }).fields.map((field) => field.text).join(' ');
 
 describe('checkSfwFace', () => {
   beforeEach(() => {
-    mockCreateXGuardModerationRequest.mockReset();
+    mockPreviewTextScanNsfw.mockReset();
   });
 
-  it('returns a per-field verdict with the triggered label and matched terms', async () => {
-    mockCreateXGuardModerationRequest.mockImplementation(async ({ content }) =>
-      content.includes('Nude')
-        ? succeeded([{ label: 'Suggestive', triggered: true, text: ['Nude'] }])
-        : clean
+  it('flags a field the text-scan rates above PG-13, with its rating and reason', async () => {
+    mockPreviewTextScanNsfw.mockImplementation(async ({ fields }: { fields: TextScanField[] }) =>
+      fields[0].text?.includes('Nude') ? rated(NsfwLevel.X, 'names nudity') : rated(NsfwLevel.PG)
     );
 
     const verdicts = await checkSfwFace({
@@ -58,42 +45,36 @@ describe('checkSfwFace', () => {
       userId: 1,
     });
 
-    expect(verdicts.sfwName).toEqual({
-      status: 'flagged',
-      labels: ['suggestive'],
-      terms: ['Nude'],
-    });
+    expect(verdicts.sfwName).toEqual({ status: 'flagged', level: 'X', reason: 'names nudity' });
     expect(verdicts.sfwDescription).toEqual({ status: 'clean' });
   });
 
-  it('checks the description as text, not markup', async () => {
-    mockCreateXGuardModerationRequest.mockResolvedValue(clean);
-    await checkSfwFace({ sfwDescription: '<p>A <strong>retro</strong> style.</p>', userId: 1 });
-    expect(mockCreateXGuardModerationRequest.mock.calls[0][0].content).not.toContain('<');
+  it('lets PG-13 through, as .com shows it to signed-in viewers', async () => {
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG13));
+    expect((await checkSfwFace({ sfwName: 'Swimwear Style', userId: 1 })).sfwName).toEqual({
+      status: 'clean',
+    });
   });
 
-  it('never registers a callback, so a preview writes no moderation record', async () => {
-    mockCreateXGuardModerationRequest.mockResolvedValue(clean);
-    await checkSfwFace({ sfwName: 'Retro Pinup Style', userId: 1 });
-    const args = mockCreateXGuardModerationRequest.mock.calls[0][0];
-    expect(args.callbackUrl).toBeNull();
-    expect(args.entityType).toBeUndefined();
-    expect(args.entityId).toBeUndefined();
+  it('checks the description as text, not markup', async () => {
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG));
+    await checkSfwFace({ sfwDescription: '<p>A <strong>retro</strong> style.</p>', userId: 1 });
+    expect(fieldText(mockPreviewTextScanNsfw.mock.calls[0])).not.toContain('<');
   });
 
   it('skips empty fields instead of scanning them', async () => {
     const verdicts = await checkSfwFace({ sfwName: '  ', sfwDescription: '<p></p>', userId: 1 });
     expect(verdicts).toEqual({});
-    expect(mockCreateXGuardModerationRequest).not.toHaveBeenCalled();
+    expect(mockPreviewTextScanNsfw).not.toHaveBeenCalled();
   });
 
-  it('reports unavailable when the scan fails or does not finish', async () => {
-    mockCreateXGuardModerationRequest.mockRejectedValueOnce(new Error('timeout'));
+  it('reports unavailable when the scan fails or gives no verdict', async () => {
+    mockPreviewTextScanNsfw.mockRejectedValueOnce(new Error('timeout'));
     expect((await checkSfwFace({ sfwName: 'A', userId: 1 })).sfwName).toEqual({
       status: 'unavailable',
     });
 
-    mockCreateXGuardModerationRequest.mockResolvedValueOnce({ status: 'processing', steps: [] });
+    mockPreviewTextScanNsfw.mockResolvedValueOnce({ status: 'unavailable' });
     expect((await checkSfwFace({ sfwName: 'A', userId: 1 })).sfwName).toEqual({
       status: 'unavailable',
     });
@@ -102,23 +83,21 @@ describe('checkSfwFace', () => {
 
 describe('assertSfwFaceSafe', () => {
   beforeEach(() => {
-    mockCreateXGuardModerationRequest.mockReset();
+    mockPreviewTextScanNsfw.mockReset();
   });
 
   it('refuses a flagged field, naming it', async () => {
-    mockCreateXGuardModerationRequest.mockResolvedValue(
-      succeeded([{ label: 'Explicit', triggered: true }])
-    );
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.R));
     await expect(assertSfwFaceSafe({ sfwName: 'x', userId: 1 })).rejects.toThrow('.com title');
   });
 
   it('refuses to save when the check cannot run', async () => {
-    mockCreateXGuardModerationRequest.mockRejectedValue(new Error('down'));
+    mockPreviewTextScanNsfw.mockRejectedValue(new Error('down'));
     await expect(assertSfwFaceSafe({ sfwName: 'x', userId: 1 })).rejects.toThrow("couldn't check");
   });
 
   it('lets a clean face through', async () => {
-    mockCreateXGuardModerationRequest.mockResolvedValue(clean);
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG));
     await expect(
       assertSfwFaceSafe({ sfwName: 'Retro Pinup Style', sfwDescription: '<p>ok</p>', userId: 1 })
     ).resolves.toBeUndefined();
@@ -140,16 +119,16 @@ describe('draftSfwFace', () => {
   });
 
   beforeEach(() => {
-    mockCreateXGuardModerationRequest.mockReset();
+    mockPreviewTextScanNsfw.mockReset();
     mockSubmitWorkflow.mockReset();
   });
 
-  it('asks for one revision when the check still flags the draft', async () => {
+  it('asks for one revision when the check still flags the draft, quoting its reason', async () => {
     mockSubmitWorkflow
       .mockResolvedValueOnce(draftReply('Nude Pinup Pack', '<p>Retro style.</p>'))
       .mockResolvedValueOnce(draftReply('Retro Pinup Style', '<p>Retro style.</p>'));
-    mockCreateXGuardModerationRequest.mockImplementation(async ({ content }) =>
-      content.includes('Nude') ? succeeded([{ label: 'NSFW', triggered: true }]) : clean
+    mockPreviewTextScanNsfw.mockImplementation(async ({ fields }: { fields: TextScanField[] }) =>
+      fields[0].text?.includes('Nude') ? rated(NsfwLevel.X, 'names nudity') : rated(NsfwLevel.PG)
     );
 
     const draft = await draftSfwFace({ name: 'Nude Pinup Pack', userId: 1 });
@@ -157,12 +136,12 @@ describe('draftSfwFace', () => {
     expect(draft.sfwName).toBe('Retro Pinup Style');
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
     const revision = mockSubmitWorkflow.mock.calls[1][0].body.steps[0].input.messages;
-    expect(revision.at(-1).content).toContain('title is still rated nsfw');
+    expect(revision.at(-1).content).toContain('title is still rated X: names nudity');
   });
 
   it('returns the first draft when it already passes', async () => {
     mockSubmitWorkflow.mockResolvedValueOnce(draftReply('Retro Pinup Style', '<p>ok</p>'));
-    mockCreateXGuardModerationRequest.mockResolvedValue(clean);
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG));
     await draftSfwFace({ name: 'x', userId: 1 });
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
   });

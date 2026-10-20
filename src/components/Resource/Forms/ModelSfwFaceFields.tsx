@@ -232,13 +232,12 @@ function VerdictLine({
     );
 
   if (verdict?.status === 'flagged') {
-    const reason = verdict.labels.join(', ');
-    const terms = verdict.terms.length ? `: “${verdict.terms.slice(0, 5).join('”, “')}”` : '';
     return (
       <Group gap={6} wrap="nowrap" align="flex-start">
         <IconAlertTriangle size={14} color="var(--mantine-color-red-6)" className="shrink-0" />
         <Text size="xs" c="red">
-          {subject} {plural ? 'aren’t' : 'isn’t'} suitable for civitai.com ({reason}){terms}
+          {subject} {plural ? 'aren’t' : 'isn’t'} suitable for civitai.com (rated {verdict.level}).{' '}
+          {verdict.reason}
         </Text>
       </Group>
     );

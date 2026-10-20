@@ -57,9 +57,12 @@ generator's resource picker.
 
 ## Content check
 
-Saving a .com title or description runs it through the text moderation check. A field the check
-flags, or a check that could not run, is refused. The editor runs the same check as the creator
-types (`model.checkSfwFace`) and shows the result above each field. It also checks version names
+Saving a .com title or description runs it through the text-scan, the same classifier, prompts and
+model that decide whether a model is marked mature, asking only for its nsfw rating. A field rated
+above PG-13, or a check that could not run, is refused. The preview (`text-scan/preview.ts`)
+registers no callback and names no entity, so it writes no moderation record. The editor runs the same check as the creator
+types (`model.checkSfwFace`) and shows the result above each field, with the classifier's rating
+and reason. It also checks version names
 and trigger words, which .com shows unchanged.
 
 The .com fields are never fed to the automatic checks that set `Model.nsfw`; those keep reading the
