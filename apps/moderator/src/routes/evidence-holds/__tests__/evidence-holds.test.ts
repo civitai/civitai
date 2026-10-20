@@ -18,7 +18,7 @@ type LoadEvent = Parameters<typeof load>[0];
 
 const loadAt = (query: string, grants: Record<string, boolean> = { 'csam.report.file': true }) =>
   load({
-    url: new URL(`http://x/csam/evidence-holds${query}`),
+    url: new URL(`http://x/evidence-holds${query}`),
     locals: { grants },
   } as unknown as LoadEvent) as Promise<Record<string, unknown>>;
 
@@ -54,6 +54,30 @@ describe('evidence holds load', () => {
       endingOnly: false,
       limit: 50,
       offset: 50,
+    });
+
+    vi.clearAllMocks();
+    countEvidenceHoldsEnding.mockResolvedValue({ owners: 0, earliest: null });
+    listEvidenceHeldOwners.mockResolvedValue({ items: [], hasMore: false });
+    await loadAt('?ending=1');
+    expect(endingOnly()).toBe(true);
+  });
+
+  it('hands the page the rows, the ending count and the filter it applied', async () => {
+    const earliest = new Date('2026-11-01T00:00:00Z');
+    const items = [{ userId: 7, username: 'a', heldUntil: earliest, holds: [] }];
+    countEvidenceHoldsEnding.mockResolvedValue({ owners: 4, earliest });
+    listEvidenceHeldOwners.mockResolvedValue({ items, hasMore: true });
+
+    expect(await loadAt('?page=3')).toMatchObject({
+      items,
+      hasMore: true,
+      page: 3,
+      endingOnly: true,
+      endingCount: 4,
+      earliest,
+      windowDays: 14,
+      asOf: expect.any(Number),
     });
   });
 });

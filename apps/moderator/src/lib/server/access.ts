@@ -98,7 +98,8 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
-      { path: '/csam/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
+      // Not under /csam: the expiry alert emails this link outside the company.
+      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },

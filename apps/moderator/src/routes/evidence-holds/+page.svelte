@@ -18,9 +18,9 @@
   let { data }: { data: PageData } = $props();
 
   const DAY_MS = 24 * 60 * 60 * 1000;
-  const now = Date.now();
 
-  const daysLeft = (end: Date) => Math.max(0, Math.ceil((end.getTime() - now) / DAY_MS));
+  const daysLeft = (end: Date) =>
+    Math.max(0, Math.ceil((end.getTime() - data.asOf) / DAY_MS));
 
   // A row's own end. One that has passed is shown, not hidden: its owner is still held by another row.
   const rowEnd = (hold: { releaseAt: Date | null; extendedUntil: Date | null }) => {
@@ -30,13 +30,15 @@
       : hold.releaseAt;
   };
 
+  const allHeldHref = $derived(urlWith(page.url, { ending: '0', page: null }));
+
   const filters = $derived([
     {
       value: '1',
       label: `Ending within ${data.windowDays} days (${data.endingCount})`,
       href: urlWith(page.url, { ending: '1', page: null }),
     },
-    { value: '0', label: 'All held', href: urlWith(page.url, { ending: '0', page: null }) },
+    { value: '0', label: 'All held', href: allHeldHref },
   ]);
 
   const pageHref = (n: number) => urlWith(page.url, { page: n > 1 ? n : null });
@@ -59,7 +61,14 @@
 
   {#if data.items.length === 0}
     <p class="m-0 text-sm text-dark-2">
-      {data.endingOnly ? `No hold ends within ${data.windowDays} days.` : 'Nobody is held.'}
+      {#if data.page > 1}
+        Nothing on this page.
+        <a href={pageHref(1)} class={LINK_CLASS}>Back to the first page</a>
+      {:else if data.endingOnly}
+        <a href={allHeldHref} class={LINK_CLASS}>Show everyone held</a>
+      {:else}
+        Nobody is held.
+      {/if}
     </p>
   {:else}
     <Table>
@@ -103,7 +112,7 @@
                     <span>
                       {#if !end}
                         no end date
-                      {:else if end.getTime() <= now}
+                      {:else if end.getTime() <= data.asOf}
                         ended {dateTime(end)}
                       {:else}
                         ends {dateTime(end)}
@@ -111,8 +120,9 @@
                     </span>
                     {#if hold.extendedUntil}
                       <span class="text-dark-2">
-                        extended from {dateTime(hold.releaseAt)} · {hold.extensionRequestedBy} ·
-                        {hold.extensionReference}
+                        extended to {dateTime(hold.extendedUntil)} from {dateTime(hold.releaseAt)}
+                        · requested by {hold.extensionRequestedBy ?? '—'} · ref
+                        {hold.extensionReference ?? '—'}
                       </span>
                     {/if}
                   </li>

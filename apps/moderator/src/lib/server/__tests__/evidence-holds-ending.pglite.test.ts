@@ -36,6 +36,7 @@ const TWO_ROWS_ENDING = 8; // two report rows both inside the window: one owner,
 const JUST_INSIDE = 9; // 14 days less an hour
 const JUST_OUTSIDE = 10; // 14 days and an hour
 const ENDED_ROW_BESIDE_MANUAL = 11;
+const NO_USER_ROW = 12; // held, account row gone: still listed, as the badge still counts them
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,7 +52,12 @@ const manual = (userId: number) =>
 const inDays = (days: number) => `now() + interval '${days} days'`;
 const inHours = (hours: number) => `now() + interval '${hours} hours'`;
 
+// A zoneless timestamp is parsed as host-local time, so on a UTC host a dropped `AT TIME ZONE 'UTC'`
+// would read correctly. Off UTC, it reads hours out.
+const hostTz = process.env.TZ;
+
 beforeAll(async () => {
+  process.env.TZ = 'America/Chicago';
   pg = await PGlite.create();
   // As the app's sessions run: the zoneless columns hold UTC, which `now()` only writes in a UTC session.
   await pg.exec(`
@@ -86,6 +92,7 @@ beforeAll(async () => {
     ${report(JUST_INSIDE, inHours(14 * 24 - 1))}
     ${report(JUST_OUTSIDE, inHours(14 * 24 + 1))}
     ${manual(ENDED_ROW_BESIDE_MANUAL)}
+    ${manual(NO_USER_ROW)}
   `);
   // A report row already past its date: inserted with a past date it would never have been active,
   // which the guard does not mind, and it is exactly what a row that ran out looks like.
@@ -94,6 +101,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (hostTz === undefined) delete process.env.TZ;
+  else process.env.TZ = hostTz;
   await pg?.close();
 });
 
@@ -125,11 +134,16 @@ describe('listEvidenceHeldOwners', () => {
     const { items } = await listEvidenceHeldOwners(db, { endingOnly: false, limit: 50, offset: 0 });
     const ids = items.map((o) => o.userId);
     expect(ids).not.toContain(RELEASED);
-    expect(ids.slice(-3).sort()).toEqual(
-      [NO_END, ENDING_ROW_BESIDE_MANUAL, ENDED_ROW_BESIDE_MANUAL].sort()
-    );
-    expect(items.slice(-3).every((o) => o.heldUntil === null)).toBe(true);
-    expect(ids).toHaveLength(10);
+    // In owner order, so a page boundary inside the no-end-date group is stable.
+    expect(ids.slice(-4)).toEqual([
+      NO_END,
+      ENDING_ROW_BESIDE_MANUAL,
+      ENDED_ROW_BESIDE_MANUAL,
+      NO_USER_ROW,
+    ]);
+    expect(items.slice(-4).every((o) => o.heldUntil === null)).toBe(true);
+    expect(ids).toHaveLength(11);
+    expect(items.at(-1)!.username).toBeNull();
   });
 
   it("shows an owner's row that has ended beside the hold that keeps them held", async () => {

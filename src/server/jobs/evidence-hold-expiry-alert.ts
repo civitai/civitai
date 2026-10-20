@@ -52,7 +52,7 @@ async function alertEndingEvidenceHolds() {
   if (!owners) return { owners, sent: false };
 
   const date = earliest?.toISOString().slice(0, 10) ?? 'unknown';
-  const link = `${env.MODERATOR_APP_URL}/csam/evidence-holds`;
+  const link = `${env.MODERATOR_APP_URL}/evidence-holds`;
   const summary =
     `${owners} owner(s) with an evidence hold ending within ${EVIDENCE_HOLD_ENDING_DAYS} days, ` +
     `the earliest on ${date} (UTC).`;

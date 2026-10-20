@@ -39,5 +39,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     endingCount,
     earliest,
     windowDays: EVIDENCE_HOLD_ENDING_DAYS,
+    // Days left are counted from the moment the rows were read, on server and client alike.
+    asOf: Date.now(),
   };
 };

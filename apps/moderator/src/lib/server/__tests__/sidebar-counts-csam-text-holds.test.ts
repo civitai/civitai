@@ -40,7 +40,10 @@ vi.mock('../minor-hash.service', () => ({
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
 vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));
-vi.mock('@civitai/db-queries/evidence-hold', () => ({ countEvidenceHoldsEnding }));
+vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  countEvidenceHoldsEnding,
+}));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 

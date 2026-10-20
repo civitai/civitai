@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -24,7 +26,11 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const RECIPIENTS = ['legal@example.test', 'trust@example.test'];
-const EARLIEST = new Date('2026-10-25T13:00:00Z');
+// Just past midnight UTC: a local date west of UTC would name the day before.
+const EARLIEST = new Date('2026-10-26T00:30:00Z');
+const LINK = 'https://mod.example.test/evidence-holds';
+const SUMMARY =
+  '3 owner(s) with an evidence hold ending within 14 days, the earliest on 2026-10-26 (UTC).';
 
 const run = () => evidenceHoldExpiryAlertJob.run() as Promise<{ owners: number; sent: boolean }>;
 const axiom = (type: string) =>
@@ -43,24 +49,34 @@ beforeEach(() => {
   mocks.countEvidenceHoldsEnding.mockResolvedValue({ owners: 3, earliest: EARLIEST });
 });
 
-describe('evidence-hold-expiry-alert', () => {
-  it('runs daily at 09:00 UTC', () => {
+describe('evidence-hold-expiry-alert wiring', () => {
+  // The entry in the `jobs` array is the scheduling: drop it and nothing else fails, the alert just
+  // never runs. Read as source because importing the route pulls in every job.
+  it('is registered in the jobs array the scheduler reads', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../pages/api/webhooks/run-jobs/[[...run]].ts'),
+      'utf8'
+    );
+    const start = source.indexOf('export const jobs: Job[] = [');
+    expect(start).toBeGreaterThan(-1);
+    const jobs = source.slice(start, source.indexOf('];', start));
+    expect(jobs).toMatch(/^\s*evidenceHoldExpiryAlertJob,$/m);
     expect(evidenceHoldExpiryAlertJob.cron).toBe('0 9 * * *');
   });
+});
 
+describe('evidence-hold-expiry-alert', () => {
   it('emails the configured recipients the count, the earliest date and the page, nothing else', async () => {
     await expect(run()).resolves.toEqual({ owners: 3, sent: true });
 
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
-    const email = mocks.sendEmail.mock.calls[0][0] as unknown as Record<string, unknown>;
-    expect(email.to).toEqual(RECIPIENTS);
-    // Whole-string equality: anything added to the message, an id or a policy word, fails here.
-    expect(email.subject).toBe('Evidence holds ending soon: 3');
-    expect(email.text).toBe(
-      '3 owner(s) with an evidence hold ending within 14 days, the earliest on 2026-10-25 (UTC).' +
-        '\n\nReview: https://mod.example.test/csam/evidence-holds'
-    );
-    expect(JSON.stringify(email)).not.toMatch(/csam(?!\/evidence-holds)/i);
+    // Whole-message equality: anything added, an id or a policy word, fails here.
+    expect(mocks.sendEmail.mock.calls[0][0]).toEqual({
+      to: RECIPIENTS,
+      subject: 'Evidence holds ending soon: 3',
+      html: `<p>${SUMMARY}</p><p>Review: <a href="${LINK}">${LINK}</a></p>`,
+      text: `${SUMMARY}\n\nReview: ${LINK}`,
+    });
   });
 
   it('logs the count and sends nothing when no hold is ending', async () => {

@@ -10,8 +10,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 /** How many days before its end a hold counts as ending. A fixed requirement, not a setting. */
 export const EVIDENCE_HOLD_ENDING_DAYS = 14;
 
-// A NULL "heldUntil" (no end date) never compares true, so it is never ending.
-const endingSoon = sql<boolean>`h."heldUntil" <= now() + make_interval(days => ${sql.lit(
+// A NULL "heldUntil" (no end date) never compares true, so it is never ending. The clock is read in
+// UTC, as the column is, so the window does not move with the session's time zone.
+const endingSoon = sql<boolean>`h."heldUntil" <= (now() AT TIME ZONE 'UTC') + make_interval(days => ${sql.lit(
   EVIDENCE_HOLD_ENDING_DAYS
 )})`;
 
@@ -22,7 +23,7 @@ const utc = (column: string) => sql<Date | null>`${sql.ref(column)} AT TIME ZONE
 export async function countEvidenceHoldsEnding(
   db: Kysely<DB>
 ): Promise<{ owners: number; earliest: Date | null }> {
-  return db
+  const { owners, earliest } = await db
     .selectFrom('EvidenceHeldUser as h')
     .select([
       sql<number>`count(*)::int`.as('owners'),
@@ -30,6 +31,8 @@ export async function countEvidenceHoldsEnding(
     ])
     .where(endingSoon)
     .executeTakeFirstOrThrow();
+  // A count that arrived as a string ("0") would be truthy and send an alert for nobody.
+  return { owners: Number(owners), earliest };
 }
 
 export type EvidenceHoldEntry = {
