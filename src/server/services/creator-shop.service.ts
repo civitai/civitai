@@ -2467,7 +2467,7 @@ export const takedownCosmeticShopItem = async ({
   const locked = await withShopItemRefundLock(id, archiveAndRefundBuyers, { wait: true });
   // Not had in time, or Redis is down. A takedown pulls content and must not wait on either, so it
   // runs without the lock, logged: a refund running now may refund a purchase alongside it.
-  if (!locked) {
+  if (locked === null) {
     await logTakedown('error', 'Takedown ran without the refund lock', { shopItemId: id });
     await archiveAndRefundBuyers();
   }
