@@ -58,7 +58,6 @@ async function loadAccounts(userIds: number[]) {
 
 const store = createPayoutReviewStore(dbWrite);
 
-/** Runs through the 14th so every batch is reviewed before the 15th's settlement. */
 export const creatorProgramPrepayoutReview = createJob(
   'creator-program-prepayout-review',
   '0 6 1-14 * *',

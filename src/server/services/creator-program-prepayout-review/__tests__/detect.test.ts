@@ -5,11 +5,11 @@ import { loadBatch, loadEarnings, loadPriorPayouts, periodWindow } from '../dete
 const fakeClickhouse = (rows: object[]) => ({ $query: vi.fn(async () => rows) });
 
 describe('periodWindow', () => {
-  it('covers the calendar month and names the three months before it', () => {
-    expect(periodWindow('2026-01', 3)).toEqual({
+  it('covers the calendar month and names the months before it', () => {
+    expect(periodWindow('2026-01', 4)).toEqual({
       start: new Date('2026-01-01T00:00:00Z'),
       end: new Date('2026-02-01T00:00:00Z'),
-      priorPeriods: ['2025-12', '2025-11', '2025-10'],
+      priorPeriods: ['2025-12', '2025-11', '2025-10', '2025-09'],
     });
   });
 });
@@ -35,7 +35,7 @@ describe('loadPriorPayouts', () => {
       { userId: '13', period: '2026-08', payoutCents: '200' },
     ]);
 
-    const prior = await loadPriorPayouts(ch, [12, 13], '2026-10', 3);
+    const prior = await loadPriorPayouts(ch, [12, 13], '2026-10', 4);
 
     expect(prior.get(12)).toEqual([300, 100]);
     expect(prior.get(13)).toEqual([200]);

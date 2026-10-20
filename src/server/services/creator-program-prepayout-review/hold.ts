@@ -14,8 +14,7 @@ const isMissingTable = (e: unknown) =>
 /**
  * Cleared creators are added because settlement otherwise pays only last month's participants, so
  * one cleared after the 15th would never be paid. Banned creators are left out, as
- * `getPoolParticipantsV2` leaves them out. A missing table (deployed before the migration) holds
- * nobody.
+ * `getPoolParticipantsV2` leaves them out.
  */
 export async function getSettlementHolds(period: string) {
   try {
@@ -90,7 +89,6 @@ export const payoutReviewDecisionSchema = z.object({
 });
 export type PayoutReviewDecision = z.infer<typeof payoutReviewDecisionSchema>;
 
-/** One entry in a review's append-only `decisions` history. */
 export type PayoutReviewDecisionEntry = {
   at: string;
   by: string;
@@ -103,7 +101,8 @@ export type PayoutReviewDecisionEntry = {
 };
 
 const TRANSITIONS: Record<PayoutReviewDecision['action'], string[]> = {
-  // From `cleared` too, so a mistaken clear can be put back on hold before settlement pays it.
+  // escalate and withhold also accept cleared, so a mistaken clear can be reversed before
+  // settlement pays it.
   escalate: ['open', 'cleared'],
   withhold: ['open', 'escalated', 'cleared'],
   clear: ['open', 'escalated', 'withheld'],
@@ -114,10 +113,7 @@ const conflict = (message: string) => new TRPCError({ code: 'CONFLICT', message 
 export const decisionHistory = (value: Prisma.JsonValue) =>
   (Array.isArray(value) ? value : []) as unknown as PayoutReviewDecisionEntry[];
 
-/**
- * `decidedBy` is the authenticated caller, never a value from the request. Nothing here moves
- * money: a cleared creator is paid by settlement.
- */
+/** `decidedBy` is the authenticated caller, never a value from the request. */
 export async function decidePayoutReview(
   input: PayoutReviewDecision,
   decidedBy: string,
@@ -146,7 +142,6 @@ export async function decidePayoutReview(
     note: input.note ?? null,
     askRef: input.askRef ?? null,
   };
-  // Conditional on the version read, so no other decision or re-run can land in between.
   const { count } = await dbWrite.creatorProgramPayoutReview.updateMany({
     where: { id: review.id, userId: input.userId, period: input.period, version: input.version },
     data: {

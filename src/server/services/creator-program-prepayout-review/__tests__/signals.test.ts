@@ -8,7 +8,7 @@ import {
   type PrepayoutLimits,
 } from '../signals';
 
-// Test values only; the real limits live in sysRedis.
+// Synthetic values for these tests only. Production limits are not committed.
 const limits: PrepayoutLimits = {
   counterparty: 1_000,
   singlePayerShare: 0.6,
@@ -17,7 +17,7 @@ const limits: PrepayoutLimits = {
   batchPayer: 700,
   youngPayerDays: 10,
   payoutJumpPercentile: 0.75,
-  historyPeriods: 3,
+  historyPeriods: 5,
 };
 
 const ctx = (over: Partial<BatchContext> = {}): BatchContext => ({
@@ -114,9 +114,9 @@ describe('evaluateCreator', () => {
     [7_999, 7_000, []], // ratio under 4
     [8_000, 8_000, ['payout-jump']],
     [8_000, 8_001, []], // below the batch cutoff
-  ])('payout-jump: %i cents, top decile from %i', (payoutCents, topDecile, expected) => {
+  ])('payout-jump: %i cents, batch cutoff %i', (payoutCents, batchCutoff, expected) => {
     const metrics = clean({ payoutCents, priorPayoutsCents: [2_000, 1_000, 3_000] });
-    expect(fired(metrics, ctx({ payoutCutoffCents: topDecile }))).toEqual(expected);
+    expect(fired(metrics, ctx({ payoutCutoffCents: batchCutoff }))).toEqual(expected);
   });
 
   it('payout-jump needs a history: a first payout never fires it', () => {

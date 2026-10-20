@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS "CreatorProgramPayoutReview" (
     CHECK ("status" IN ('open', 'escalated', 'cleared', 'withheld'))
 );
 
--- For a table created by an earlier draft of this file.
+-- Backfills columns added after an earlier version of this migration was applied.
 ALTER TABLE "CreatorProgramPayoutReview"
   ADD COLUMN IF NOT EXISTS "version" INTEGER NOT NULL DEFAULT 1,
   ADD COLUMN IF NOT EXISTS "decisions" JSONB NOT NULL DEFAULT '[]'::jsonb;

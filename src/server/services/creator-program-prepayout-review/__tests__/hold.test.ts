@@ -39,7 +39,7 @@ describe('getSettlementHolds', () => {
       { userId: 4, status: 'cleared', hold: false },
       { userId: 5, status: 'cleared', hold: false },
       { userId: 6, status: 'cleared', hold: false },
-      // Cleared for one period, still held for another: held wins.
+      // A cleared row does not lift an open one.
       { userId: 1, status: 'cleared', hold: false },
     ]);
     dbMock.dbWrite.user.findMany.mockResolvedValue([

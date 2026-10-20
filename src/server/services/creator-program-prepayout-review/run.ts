@@ -61,7 +61,6 @@ export type PrepayoutReviewDeps = {
   log?: (name: string, data: Record<string, unknown>) => void;
 };
 
-/** The batch a run on `now` reviews: the one distributed at the end of last month. */
 export const reviewPeriod = (now: Date) => dayjs.utc(now).subtract(1, 'month').format('YYYY-MM');
 
 const twoWay = (c: Counterparty) => Math.min(c.received, c.sent);
@@ -117,8 +116,8 @@ function buildEvidence(
 export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<RunOutcome> {
   const startedAt = deps.now();
   const period = reviewPeriod(startedAt);
-  // From the 15th the period's batch settles; a hold filed then would block the creator's next
-  // payout over money already paid.
+  // From the 15th the batch has settled; a hold filed then would block the next payout over cash
+  // already paid.
   if (startedAt.getUTCDate() > 14) {
     deps.log?.('creator-program-prepayout-review-skipped', { period, reason: 'after the 14th' });
     return { creditedCount: 0, evaluatedCount: 0, flaggedCount: 0, error: 'after the 14th' };
@@ -154,7 +153,6 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
       return await finish();
     }
 
-    // A withheld creator is re-decided every cycle, whether or not they were credited again.
     const carried = new Set(await deps.getCarriedUserIds(period));
     const batch = [
       ...credited,

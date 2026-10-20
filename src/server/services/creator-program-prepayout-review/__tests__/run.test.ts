@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPrepayoutReview, type AccountState, type PrepayoutReviewDeps } from '../run';
 import type { PrepayoutLimits } from '../signals';
 
-// Test values only; the real limits live in sysRedis.
+// Synthetic values for these tests only. Production limits are not committed.
 const limits: PrepayoutLimits = {
   counterparty: 1_000,
   singlePayerShare: 0.9,
