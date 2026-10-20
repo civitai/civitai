@@ -482,6 +482,10 @@ type PurchaseRefundResult = {
 type RefundablePurchase = OwedPurchase & { shopItemId: number; refunded: boolean };
 
 const PURCHASE_REFUND_LOG = 'creator-shop-purchase-refund';
+const TAKEN_DOWN = 'the item was taken down; the takedown refunds its purchases';
+
+const takenDown = async (shopItemId: number) =>
+  !!((await loadItem(shopItemId))?.meta as CosmeticShopItemMeta | null)?.takedown;
 
 const loadPurchases = (ids: string[]) =>
   dbWrite.userCosmeticShopPurchases.findMany({
@@ -500,8 +504,7 @@ function refusal(purchase: RefundablePurchase, item: RefundableItem | null, claw
   if (!item) return 'shop item not found';
   // A pack's members are granted on their own, so there is no single holding to take back.
   if (item.cosmeticId == null) return 'packs are not supported';
-  if ((item.meta as CosmeticShopItemMeta | null)?.takedown)
-    return 'the item was taken down; the takedown refunds its purchases';
+  if ((item.meta as CosmeticShopItemMeta | null)?.takedown) return TAKEN_DOWN;
   if (purchase.userId === creatorOf(item)) return "the creator's own purchase is not a sale";
   const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
   if (started && started.clawback !== clawback)
@@ -680,8 +683,8 @@ async function refundItemPurchases(
       // A purchase already begun is finished on the terms it began under.
       const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
       if (!started) {
-        // Refused before the stamp: a stamped purchase is retried by the job, and a ledger the
-        // run cannot reverse would be retried and logged on every pass.
+        // Refused before the stamp: the job retries a stamped purchase, and nothing owes this one
+        // but this call, so a ledger it cannot reverse would be retried and logged on every pass.
         if (purchase.unitAmount !== 0) {
           const ledger = await readPurchaseLedger(purchase);
           if (ledger.error !== undefined) {
@@ -689,9 +692,18 @@ async function refundItemPurchases(
             continue;
           }
         }
+        // Again, since a takedown can land during the ledger read and owns what isn't stamped.
+        if (await takenDown(shopItemId)) {
+          results.set(id, { ...base, status: 'failed', error: TAKEN_DOWN });
+          continue;
+        }
         await stampTerms(purchase, terms);
       }
-      const outcome = await settlePurchase(purchase, started ?? terms, item.cosmeticId);
+      // A takedown landing after the stamp leaves the purchase here: finish it as the job would.
+      const finishOn: RefundTerms = (await takenDown(shopItemId))
+        ? { ...(started ?? terms), trigger: 'reject', clawback: true }
+        : started ?? terms;
+      const outcome = await settlePurchase(purchase, finishOn, item.cosmeticId);
       if (outcome.status === 'failed') {
         results.set(id, { ...base, status: 'failed', error: outcome.error });
         continue;

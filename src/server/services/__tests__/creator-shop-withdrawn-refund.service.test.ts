@@ -961,6 +961,8 @@ describe('refundShopPurchases', () => {
 
   beforeEach(() => {
     itemMeta = { purchases: 0 };
+    // An `onLedgerRead` hook that never fired must not reach the next test.
+    delete (ledger.rows as { get?: unknown }).get;
   });
 
   it('a dry run reports what the real run would do with each purchase', async () => {
@@ -1252,8 +1254,62 @@ describe('refundShopPurchases', () => {
       error: 'debits 1000 do not match the price 1200',
     });
     expect(purchases[0].meta ?? null).toBeNull();
+    // With no marker on the item, only a stamp would put the purchase in front of the job.
     expect(await refundWithdrawnShopItem(ITEM)).toEqual({ purchases: 0, refunded: 0, failures: 0 });
     expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  /** Runs `during` the next time the purchase ledger is read, then reads it as usual. */
+  const onLedgerRead = (during: () => void) => {
+    const rows = ledger.rows;
+    const read = rows.get.bind(rows);
+    rows.get = (key: string) => {
+      delete (rows as { get?: unknown }).get;
+      during();
+      return read(key);
+    };
+  };
+
+  it('leaves a purchase unstamped when the ledger read fails, and a second call refunds it', async () => {
+    onLedgerRead(() => {
+      throw new Error('buzz 503');
+    });
+
+    const first = await refund(['p-1']);
+
+    expect(first.results[0]).toMatchObject({ status: 'failed', error: 'buzz 503' });
+    expect(purchases[0].meta ?? null).toBeNull();
+
+    const second = await refund(['p-1']);
+
+    expect(second.results[0].status).toBe('refunded');
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+  });
+
+  it('leaves the purchase to a takedown that lands during the ledger read', async () => {
+    onLedgerRead(() => {
+      itemMeta = { ...itemMeta, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+    });
+
+    const result = await refund(['p-1']);
+
+    expect(result.results[0]).toMatchObject({ status: 'failed', error: TAKEN_DOWN });
+    expect(purchases[0].meta ?? null).toBeNull();
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('reverses the payouts when a takedown lands just after the stamp', async () => {
+    const stamp = dbMock.dbWrite.userCosmeticShopPurchases.update.getMockImplementation()!;
+    dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation(async (args) => {
+      const row = await stamp(args);
+      itemMeta = { ...itemMeta, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+      return row;
+    });
+
+    const result = await refund(['p-1'], { clawback: false });
+
+    expect(result.results[0].status).toBe('refunded');
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
   });
 
   it('leaves a part-done purchase stamped, and the job finishes it', async () => {
