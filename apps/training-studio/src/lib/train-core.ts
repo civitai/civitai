@@ -493,6 +493,9 @@ async function buildContinuation(
   const continuedInput = {
     engine: 'ai-toolkit',
     ecosystem: input.ecosystem,
+    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+    // on the ecosystem's default base and publishes as that base.
+    ...(input.model ? { model: input.model } : {}),
     ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
     ...(input.version ? { version: input.version } : {}),
     ...(steps ? { steps } : {}),

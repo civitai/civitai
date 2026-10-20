@@ -125,6 +125,40 @@ describe('keep-training currencies', () => {
   });
 });
 
+describe('keep-training base model pin', () => {
+  const illustrious = 'urn:air:sdxl:checkpoint:civitai:795765@889818';
+  const source = (input: Record<string, unknown>) => ({
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000, ...input },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  });
+  const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  it("continues on the source run's pinned base, for both the quote and the submit", async () => {
+    getWorkflow.mockResolvedValue(source({ model: illustrious }));
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 1400 } } });
+    await continueTrainingWhatIf(client, opts);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, opts);
+    const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
+    expect(quoted![0].body.steps[0].input.model).toBe(illustrious);
+    expect(submitted![0].body.steps[0].input.model).toBe(illustrious);
+  });
+
+  it('sends no model when the source run had no pin', async () => {
+    getWorkflow.mockResolvedValue(source({}));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, opts);
+    expect('model' in submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input).toBe(false);
+  });
+});
+
 describe('custom base model', () => {
   const custom = 'urn:air:sdxl:checkpoint:civitai:1@2';
 

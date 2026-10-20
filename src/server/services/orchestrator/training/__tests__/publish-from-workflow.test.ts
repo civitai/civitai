@@ -107,6 +107,32 @@ describe('mapTrainingBaseModelToBaseModel', () => {
     expect(mapped.baseModel).toBe(info.baseModel);
   });
 
+  it("publishes a keep-training continuation under its pinned base, not the ecosystem's first", () => {
+    const continuation = (pin: Record<string, unknown>) =>
+      studioWorkflow({
+        steps: [
+          {
+            $type: 'training',
+            input: {
+              engine: 'ai-toolkit',
+              ecosystem: 'sdxl',
+              continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@abc',
+              ...pin,
+            },
+          },
+        ],
+      });
+    expect(
+      mapTrainingBaseModelToBaseModel(continuation({ model: trainingModelInfo.illustrious.air }))
+        .baseModel
+    ).toBe('Illustrious');
+    expect(
+      mapTrainingBaseModelToBaseModel(continuation({ model: trainingModelInfo.pony.air })).baseModel
+    ).toBe('Pony');
+    // Without the pin the sdxl ecosystem resolves to its first entry: why the continuation carries it.
+    expect(mapTrainingBaseModelToBaseModel(continuation({})).baseModel).toBe('SDXL 1.0');
+  });
+
   it('resolves an AI-Toolkit ecosystem + variant to the variant-matched entry', () => {
     const entries = Object.entries(trainingModelInfo).filter(
       ([, i]) => i.aiToolkit?.ecosystem === 'wan'
