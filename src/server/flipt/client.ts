@@ -20,6 +20,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+  // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
+  // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
+  // DEFAULT-OFF: `isFlipt` returns false for an unknown flag or an unreachable Flipt, which keeps
+  // the Prisma path. Both paths read the same replica and return the same rows.
+  //
+  // 🔴 BOOLEAN ONLY. Evaluated once per call with no entityId and no context (a single cached key,
+  // so the gate adds no per-user cache churn on a hot path); a percentage rollout hashes the literal
+  // 'global' and is 0% or 100%, and a segment rule matches nothing.
+  KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

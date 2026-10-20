@@ -293,7 +293,7 @@ import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
-import { getImageGenerationFields } from '@civitai/db-queries/image';
+import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
@@ -2867,10 +2867,16 @@ export const getUserReactionsForImages = async ({
 }) => {
   if (!imageIds.length) return {} as Record<number, ReviewReactions[]>;
 
-  const rows = await dbRead.imageReaction.findMany({
-    where: { imageId: { in: imageIds }, userId },
-    select: { imageId: true, reaction: true },
-  });
+  // A/B of the Prisma query engine's per-query CPU on this high-volume read: one flag evaluation per
+  // call (never per row). Both paths read the replica and return the same `{ imageId, reaction }`
+  // rows, pinned by src/server/db/__tests__/kysely-prisma-parity.test.ts.
+  const useKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_IMAGE_REACTIONS);
+  const rows: { imageId: number; reaction: ReviewReactions }[] = useKysely
+    ? await listImageReactionsMany(kyselyRead, { imageIds, userId })
+    : await dbRead.imageReaction.findMany({
+        where: { imageId: { in: imageIds }, userId },
+        select: { imageId: true, reaction: true },
+      });
 
   return rows.reduce((acc, { imageId, reaction }) => {
     acc[imageId] ??= [] as ReviewReactions[];
