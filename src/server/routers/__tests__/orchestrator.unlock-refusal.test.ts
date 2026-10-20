@@ -6,7 +6,11 @@ import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 const h = vi.hoisted(() => ({
   updateWorkflow: vi.fn(async () => ({ id: '5-1', steps: [] })),
-  getWorkflow: vi.fn(async () => ({ id: '5-1', steps: [] })),
+  getWorkflow: vi.fn(async () => ({
+    id: '5-1',
+    allowMatureContent: false,
+    steps: [{ $type: 'imageGen', name: '$0', output: { images: [{ id: '1', nsfwLevel: 'x' }] } }],
+  })),
   patchWorkflows: vi.fn(async () => undefined),
 }));
 

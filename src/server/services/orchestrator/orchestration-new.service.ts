@@ -3121,7 +3121,8 @@ function formatStep(
  */
 /**
  * The orchestrator charges the yellow-Buzz unlock without lifting the workflow's `nsfwLevel` cap, so
- * when every mature output is rated above the cap the unlock takes the Buzz and releases nothing.
+ * the unlock is allowed only when it releases something: the workflow is locked
+ * (`allowMatureContent === false`) and at least one output is rated mature and within the cap.
  */
 export async function assertUnlockReleasesOutput({
   token,
@@ -3131,18 +3132,28 @@ export async function assertUnlockReleasesOutput({
   workflowId: string;
 }) {
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  if (workflow.allowMatureContent === true)
+    throw throwBadRequestError('This generation is already unlocked.');
+  // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
+  // on `false` too.
+  if (workflow.allowMatureContent !== false)
+    throw throwBadRequestError('This generation has no mature restriction to unlock.');
+
   const cap = workflow.nsfwLevel;
-  if (!cap) return;
+  const capRefusal = () =>
+    throwBadRequestError(
+      `This generation is limited to ${cap!
+        .toUpperCase()
+        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+    );
+  if (cap === 'pg' || cap === 'pg13') throw capRefusal();
   const matureLevels = (workflow.steps ?? [])
     .flatMap((step) => normalizeStepOutput(step as StepWithOutput))
     .map((item) => item.nsfwLevel)
     .filter((level): level is NsfwLevel => !!isMature(level));
-  if (matureLevels.length && matureLevels.every((level) => exceedsNsfwLevel(level, cap)))
-    throw throwBadRequestError(
-      `This generation is limited to ${cap
-        .toUpperCase()
-        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
-    );
+  if (!matureLevels.length)
+    throw throwBadRequestError('Nothing in this generation needs unlocking yet.');
+  if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
 }
 
 type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };

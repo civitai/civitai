@@ -99,7 +99,13 @@ const output = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 function givenWorkflow(outputs: Array<Record<string, unknown>>) {
-  mocks.getWorkflow.mockResolvedValue({ id: 'wf-1', status: 'succeeded' });
+  // The raw read the unlock guard checks: still locked, with an output rated mature.
+  mocks.getWorkflow.mockResolvedValue({
+    id: 'wf-1',
+    status: 'succeeded',
+    allowMatureContent: false,
+    steps: [{ $type: 'comfy', name: '$0', output: { blobs: [output('b0', { nsfwLevel: 'x' })] } }],
+  });
   mocks.formatGenerationResponse2.mockResolvedValue([
     {
       id: 'wf-1',
@@ -245,6 +251,7 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     mocks.getWorkflow.mockResolvedValue({
       id: 'wf-1',
       status: 'succeeded',
+      allowMatureContent: false,
       nsfwLevel: 'pg13',
       steps: [
         { $type: 'comfy', name: '$0', output: { blobs: [output('b1', { nsfwLevel: 'r' })] } },
