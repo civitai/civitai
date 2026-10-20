@@ -688,6 +688,8 @@ export const orchestratorRouter = router({
         id: input.imageId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        // The mint is a write: a cache "not blocked" is confirmed on the primary.
+        confirmBlockOnPrimary: true,
       });
 
       return {

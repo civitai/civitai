@@ -80,10 +80,16 @@ export async function assertImageVisibleToViewer({
   id,
   userId,
   isModerator,
+  confirmBlockOnPrimary = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /**
+   * Only for a caller that WRITES on the strength of this check (the prompt-provenance mint):
+   * confirm a cache "not blocked" against the primary. Read callers leave it off.
+   */
+  confirmBlockOnPrimary?: boolean;
 }) {
   const [visible] = await dbRead.$queryRaw<
     { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
@@ -100,7 +106,11 @@ export async function assertImageVisibleToViewer({
   if (userId && !isModerator) {
     // Imported here: user.service sits in the image.service import cycle.
     const { amIBlockedByUser } = await import('~/server/services/user.service');
-    const blocked = await amIBlockedByUser({ userId, targetUserId: visible.userId });
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: visible.userId,
+      confirmOnPrimary: confirmBlockOnPrimary,
+    });
     if (blocked) throw throwNotFoundError();
   }
   return visible;

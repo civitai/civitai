@@ -181,7 +181,11 @@ describe('resource review writes — block enforcement', () => {
     await expect(
       upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: AUTHOR,
+      targetUserId: STORED_OWNER,
+      confirmOnPrimary: true,
+    });
     expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
@@ -192,7 +196,11 @@ describe('resource review writes — block enforcement', () => {
     await expect(
       upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: AUTHOR,
+      targetUserId: REQUEST_OWNER,
+      confirmOnPrimary: true,
+    });
     expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
@@ -206,7 +214,11 @@ describe('resource review writes — block enforcement', () => {
 
     await upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR });
 
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: AUTHOR,
+      targetUserId: STORED_OWNER,
+      confirmOnPrimary: true,
+    });
     expect(mockDbWrite.resourceReview.update).toHaveBeenCalledTimes(1);
   });
 
@@ -218,7 +230,11 @@ describe('resource review writes — block enforcement', () => {
     await expect(
       createResourceReview({ ...baseInput, modelId: REQUEST_MODEL, userId: AUTHOR })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: AUTHOR,
+      targetUserId: REQUEST_OWNER,
+      confirmOnPrimary: true,
+    });
     expect(mockDbWrite.resourceReview.create).not.toHaveBeenCalled();
   });
 
@@ -236,7 +252,11 @@ describe('resource review writes — block enforcement', () => {
     await expect(
       updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: AUTHOR,
+      targetUserId: STORED_OWNER,
+      confirmOnPrimary: true,
+    });
     expect(mockDbWrite.resourceReview.update).not.toHaveBeenCalled();
   });
 
