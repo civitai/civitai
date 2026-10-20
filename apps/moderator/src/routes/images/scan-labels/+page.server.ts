@@ -10,6 +10,7 @@ import {
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
+  getVotedItemOwner,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
 import {
@@ -88,6 +89,12 @@ export const actions: Actions = {
         isModerationBlocked,
       }
     ).catch((e) => console.error('scan label block sweep failed', e));
-    return { voted: true };
+    // The item this vote was just recorded on, so the strip names the image the moderator saw. The
+    // vote row gates the read; a failure only hides the strip.
+    const owner = await getVotedItemOwner(input.itemId, locals.user.id).catch((e) => {
+      console.error('scan label owner read failed', e);
+      return null;
+    });
+    return { voted: true, owner };
   },
 };

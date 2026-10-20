@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** A vote runs the majority-block sweep with the real block path, and a refused vote does not. */
 
-const { castVote, applyMajorityBlocks, blockImage, isModerationBlocked } = vi.hoisted(() => ({
-  castVote: vi.fn(),
-  applyMajorityBlocks: vi.fn(),
-  blockImage: vi.fn(),
-  isModerationBlocked: vi.fn(),
-}));
+const { castVote, applyMajorityBlocks, blockImage, isModerationBlocked, getVotedItemOwner } =
+  vi.hoisted(() => ({
+    getVotedItemOwner: vi.fn(),
+    castVote: vi.fn(),
+    applyMajorityBlocks: vi.fn(),
+    blockImage: vi.fn(),
+    isModerationBlocked: vi.fn(),
+  }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/image-moderation.service', () => ({ blockImage, isModerationBlocked }));
@@ -17,6 +19,7 @@ vi.mock('$lib/server/scan-label.service', () => ({
   claimNext: vi.fn(),
   getCounters: vi.fn(),
   getOpenFlaggerVersions: vi.fn(),
+  getVotedItemOwner,
 }));
 
 const { actions } = await import('../scan-labels/+page.server');
@@ -35,9 +38,12 @@ const event = (fields: Record<string, string>) =>
     locals: { user: { id: 7 } },
   } as never);
 
+const OWNER = { imageId: 3, ownerId: 500, ownerUsername: 'uploader' };
+
 beforeEach(() => {
   vi.clearAllMocks();
   applyMajorityBlocks.mockResolvedValue({ blocked: [], failed: [] });
+  getVotedItemOwner.mockResolvedValue(OWNER);
 });
 
 describe('vote action', () => {
@@ -53,7 +59,9 @@ describe('vote action', () => {
     castVote.mockResolvedValue(recorded);
     expect(
       await actions.vote(event({ itemId: '5', block: '1', reason: 'bestiality', ms: '900' }))
-    ).toEqual({ voted: true });
+    ).toEqual({ voted: true, owner: OWNER });
+    // The owner of the item this vote was recorded on, read as this moderator.
+    expect(getVotedItemOwner).toHaveBeenCalledExactlyOnceWith(5, 7);
     expect(castVote).toHaveBeenCalledWith({
       itemId: 5,
       userId: 7,
@@ -123,7 +131,20 @@ describe('vote action', () => {
     castVote.mockResolvedValue(recorded);
     applyMajorityBlocks.mockRejectedValue(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await actions.vote(event({ itemId: '5', block: '0' }))).toEqual({ voted: true });
+    expect(await actions.vote(event({ itemId: '5', block: '0' }))).toEqual({
+      voted: true,
+      owner: OWNER,
+    });
+  });
+
+  it('still reports the vote when the owner read throws', async () => {
+    castVote.mockResolvedValue(recorded);
+    getVotedItemOwner.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await actions.vote(event({ itemId: '5', block: '0' }))).toEqual({
+      voted: true,
+      owner: null,
+    });
   });
 
   it('refuses without sweeping when the vote was refused', async () => {
@@ -131,5 +152,6 @@ describe('vote action', () => {
     const result = (await actions.vote(event({ itemId: '5', block: '0' }))) as { status: number };
     expect(result.status).toBe(409);
     expect(applyMajorityBlocks).not.toHaveBeenCalled();
+    expect(getVotedItemOwner).not.toHaveBeenCalled();
   });
 });

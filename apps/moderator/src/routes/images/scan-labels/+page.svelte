@@ -8,6 +8,8 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
+  import { LINK_CLASS } from '$lib/format';
   import { urlWith } from '$lib/url';
   import VoteForm from './VoteForm.svelte';
   import type { ActionData, PageData } from './$types';
@@ -65,6 +67,7 @@
   };
 
   const versionLabel = $derived(data.version || 'All versions');
+  const lastVoted = $derived(form && 'owner' in form ? form.owner : null);
 </script>
 
 <div class="mx-auto flex max-w-5xl flex-col gap-4">
@@ -127,6 +130,18 @@
     <ErrorAlert message={serverError} />
   {:else if form?.error}
     <ErrorAlert message={form.error} />
+  {/if}
+
+  {#if lastVoted}
+    <p class="rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-sm text-dark-2">
+      Last vote:
+      <a href={imageLookupUrl(lastVoted.imageId)} class={LINK_CLASS}>image #{lastVoted.imageId}</a>
+      · Owner:
+      <a href={userLookupUrl(lastVoted.ownerUsername ?? lastVoted.ownerId)} class={LINK_CLASS}>
+        {lastVoted.ownerUsername ?? '[deleted]'}
+      </a>
+      · #{lastVoted.ownerId}
+    </p>
   {/if}
 
   {#if data.card}
