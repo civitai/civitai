@@ -138,6 +138,18 @@ describe('a tool call runs only once its start is saved', () => {
     expect(body).not.toHaveBeenCalled();
   });
 
+  it('never replaces an end already in the head, with progress or with another end', async () => {
+    const memory = await seeded();
+    const first = new ProgressWriter(memory, 'u1', 'c1', 1, log);
+    await first.end({ messages: [], status: 'aborted' });
+    const recorded = await memory.load('u1', 'c1');
+    // A pass that was stopped elsewhere finishes later and saves what it has.
+    const late = new ProgressWriter(memory, 'u1', 'c1', 1, log);
+    late.save(callStarted('late-call'));
+    await late.end({ messages: callStarted('late-call'), status: 'done' });
+    expect(await memory.load('u1', 'c1')).toEqual(recorded);
+  });
+
   it('saves the end after any progress still on its way, so a late save cannot reopen the reply', async () => {
     const memory = await seeded();
     const { store, release } = gated(memory);

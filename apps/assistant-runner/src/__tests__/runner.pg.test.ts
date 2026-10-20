@@ -599,6 +599,65 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     });
   });
 
+  /** A run whose workflow never runs here (another version), its head saved `running`, then put in `status`. */
+  async function parkedRun(
+    user: string,
+    conversationId: string,
+    status: string,
+    deadlinePast = false
+  ) {
+    await store.update(user, conversationId, () =>
+      withProgress(
+        startTurn(null, {
+          conversationId,
+          seq: 1,
+          user: { content: 'Parked.', attachments: [] },
+          now: new Date(),
+        }),
+        1,
+        [{ role: 'assistant', content: [{ type: 'text', text: 'Working on it.' }] }],
+        new Date()
+      )
+    );
+    const runId = `run_parked_${randomUUID().replace(/-/g, '')}`;
+    await DBOS.enqueueWorkflowWithOptions(
+      {
+        queueName: REPLIES_QUEUE,
+        workflowName: REPLY_WORKFLOW,
+        workflowID: runId,
+        appVersion: 'reply-parked',
+        authenticatedUser: user,
+        attributes: { conversationId, seq: 1 },
+      },
+      { runId }
+    );
+    await sql(
+      `update dbos.workflow_status set status = $2, workflow_deadline_epoch_ms = $3 where workflow_uuid = $1`,
+      [runId, status, deadlinePast ? Date.now() - 1000 : null]
+    );
+    return runId;
+  }
+
+  it('a run DBOS cancelled at its deadline ends ran_out, in its stream and its head', async () => {
+    const runId = await parkedRun('u-timed-out', 'c-timed-out', 'CANCELLED', true);
+    expect(ended(await events(runId, 'u-timed-out'))).toMatchObject({
+      status: 'ran_out',
+      steps: 1,
+    });
+    const head = await store.load('u-timed-out', 'c-timed-out');
+    expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done', ranOut: true });
+  });
+
+  it('a run past its recovery limit ends error, in its stream and its head', async () => {
+    const runId = await parkedRun('u-exhausted', 'c-exhausted', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED');
+    expect(ended(await events(runId, 'u-exhausted'))).toMatchObject({
+      status: 'error',
+      resumable: false,
+    });
+    const head = await store.load('u-exhausted', 'c-exhausted');
+    expect(head!.turns[0]!.assistant).toMatchObject({ status: 'error' });
+  });
+
   it('records the end of a run cancelled outright in the head, once, and ends its stream with it', async () => {
     const user = 'u-cancelled';
     const start = await post(
@@ -608,6 +667,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     );
     const runId = start.body!.runId as string;
     await events(runId, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+    const before = { aborted: calls.waitAborted, closed: tools.stats.closed };
     await DBOS.cancelWorkflow(runId);
     const entries = await events(runId, user);
     expect(ended(entries).status).toBe('stopped');
@@ -616,6 +676,20 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(head!.turns[0]!.assistant).toMatchObject({ status: 'aborted' });
     // The user's slot is free again.
     expect(await runner.lookup(user, 'c-cancelled')).toBeNull();
+
+    // The pass still running in this process stops too: its call is aborted and its tools closed.
+    const deadline = Date.now() + 10_000;
+    while (calls.waitAborted === before.aborted && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(calls.waitAborted).toBe(before.aborted + 1);
+    while (tools.stats.closed === before.closed && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(tools.stats.closed).toBe(before.closed + 1);
+    // ...and, finishing after the cancel path wrote the end, it does not replace it.
+    const waitsAfter = calls.wait;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(calls.wait).toBe(waitsAfter);
+    expect(await store.load(user, 'c-cancelled')).toEqual(head);
   });
 
   it('deletes the journals and workflows of runs that ended before the retention cutoff, and nothing live', async () => {
