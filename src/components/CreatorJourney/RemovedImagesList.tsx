@@ -52,7 +52,8 @@ export function RemovedImagesView({ removed }: { removed: RemovedImages }) {
             }.`}{' '}
         Images deleted since their removal show the date and reason only.
       </Text>
-      <Table.ScrollContainer minWidth={360} maxHeight={400}>
+      {/* `always`: the default overlay bar only exists while hovered, so a long list looked cut off. */}
+      <Table.ScrollContainer minWidth={360} maxHeight={400} scrollAreaProps={{ type: 'always' }}>
         <Table striped verticalSpacing={6} fz="sm">
           <Table.Thead>
             <Table.Tr>
