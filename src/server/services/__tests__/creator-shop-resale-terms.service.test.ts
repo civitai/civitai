@@ -56,6 +56,9 @@ import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -98,8 +101,10 @@ dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[
 dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
   (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
 );
-dbMock.dbWrite.$transaction.mockImplementation((...args: unknown[]) =>
-  (mocks.transaction as (...a: unknown[]) => unknown)(...args)
+dbMock.dbWrite.$transaction.mockImplementation((arg: unknown) =>
+  typeof arg === 'function'
+    ? (arg as (tx: unknown) => unknown)(dbMock.dbWrite)
+    : (mocks.transaction as (...a: unknown[]) => unknown)(arg)
 );
 
 const RESELLER_ID = 200;

@@ -27,6 +27,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
 );

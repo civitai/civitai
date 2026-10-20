@@ -48,6 +48,9 @@ import { wasLastReviewARejection } from '../creator-shop.data';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
 );

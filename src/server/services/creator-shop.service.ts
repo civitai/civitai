@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
+import { isEqual } from 'lodash-es';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
@@ -49,6 +50,7 @@ import { getPagination, getPagingData } from '~/server/utils/pagination-helpers'
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
@@ -637,9 +639,10 @@ export const submitCreatorShopItem = async ({
   }
 };
 
-// Load an item and assert the caller may manage it (its creator, or a moderator).
+// Load an item and assert the caller may manage it (its creator, or a moderator). From the primary:
+// callers write `meta` back built from this row, and a lagging replica would hand them a pre-verdict one.
 const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = false) => {
-  const item = await dbRead.cosmeticShopItem.findUnique({
+  const item = await dbWrite.cosmeticShopItem.findUnique({
     where: { id },
     select: {
       id: true,
@@ -920,31 +923,18 @@ export const updateCreatorShopItem = async ({
     ? 'Resubmitted for review after requested changes'
     : 'Edited while awaiting review';
 
-  if (contentChanged) {
-    const patchedData = patchCosmeticData({
-      existingData,
-      artworkData: artwork?.data as Record<string, unknown> | undefined,
-      offsetsChange,
-      slugChange,
-      economicsChange,
-      nextOffsets,
-      nextSlug,
-      nextEconomics,
-    }) as Prisma.InputJsonValue | undefined;
-    await dbWrite.cosmetic.update({
-      where: { id: existing.cosmeticId },
-      data: {
-        ...(name !== undefined ? { name } : {}),
-        ...(description !== undefined ? { description } : {}),
-        ...(patchedData !== undefined ? { data: patchedData } : {}),
-      },
-    });
-    // A raw update replaces `data.url` without going near updateCosmetic, so
-    // nothing else re-hashes it: the old hash survives against new artwork and
-    // `pHashUrl` is what tells the two apart afterwards.
-    if (artChanged && imageUrl)
-      queueCosmeticPerceptualHash({ id: existing.cosmeticId, url: imageUrl });
-  }
+  const patchedData = !contentChanged
+    ? undefined
+    : (patchCosmeticData({
+        existingData,
+        artworkData: artwork?.data as Record<string, unknown> | undefined,
+        offsetsChange,
+        slugChange,
+        economicsChange,
+        nextOffsets,
+        nextSlug,
+        nextEconomics,
+      }) as Prisma.InputJsonValue | undefined);
 
   const updatedMeta: CosmeticShopItemMeta = {
     ...meta,
@@ -982,21 +972,57 @@ export const updateCreatorShopItem = async ({
       })
     : updatedMeta;
 
-  const updated = await dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      ...(name !== undefined ? { title: name } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(price != null ? { unitAmount: price } : {}),
-      ...(availableQuantity !== undefined ? { availableQuantity } : {}),
-      status,
-      // Clear the prior verdict whenever it re-enters the review queue.
-      ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
-      meta: nextMeta as Prisma.InputJsonValue,
-    },
-    select: creatorShopItemSelect,
+  const cosmeticId = existing.cosmeticId;
+  const updated = await dbWrite.$transaction(async (tx) => {
+    // Everything above was derived from `existing`, and `meta` is written back whole: a verdict
+    // committed since the read would be erased with its history entry and `displayApproved`.
+    // NO KEY: still serialises with verdicts, without holding up a purchase's foreign-key insert.
+    await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR NO KEY UPDATE`;
+    const current = await tx.cosmeticShopItem.findUnique({
+      where: { id },
+      select: { status: true, meta: true },
+    });
+    // Every sale bumps `purchases` in SQL (countShopItemSale): carried from the locked row, not
+    // compared, so a sale mid-edit is neither a conflict nor rolled back by this write.
+    const { purchases, ...currentMeta } = (current?.meta ?? {}) as CosmeticShopItemMeta;
+    const { purchases: _readPurchases, ...readMeta } = meta;
+    if (current?.status !== existing.status || !isEqual(currentMeta, readMeta))
+      throw throwConflictError(
+        'This item changed while you were editing it. Reload and try again.'
+      );
+
+    if (contentChanged)
+      await tx.cosmetic.update({
+        where: { id: cosmeticId },
+        data: {
+          ...(name !== undefined ? { name } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(patchedData !== undefined ? { data: patchedData } : {}),
+        },
+      });
+    return tx.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        ...(name !== undefined ? { title: name } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(price != null ? { unitAmount: price } : {}),
+        ...(availableQuantity !== undefined ? { availableQuantity } : {}),
+        status,
+        // Clear the prior verdict whenever it re-enters the review queue.
+        ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
+        meta: {
+          ...nextMeta,
+          ...(purchases !== undefined ? { purchases } : {}),
+        } as Prisma.InputJsonValue,
+      },
+      select: creatorShopItemSelect,
+    });
   });
-  await unequipWithheldCosmetic(existing.cosmeticId);
+  // A raw update replaces `data.url` without going near updateCosmetic, so
+  // nothing else re-hashes it: the old hash survives against new artwork and
+  // `pHashUrl` is what tells the two apart afterwards.
+  if (artChanged && imageUrl) queueCosmeticPerceptualHash({ id: cosmeticId, url: imageUrl });
+  await unequipWithheldCosmetic(cosmeticId);
   return updated;
 };
 
