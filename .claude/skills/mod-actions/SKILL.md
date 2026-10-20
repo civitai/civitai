@@ -318,6 +318,8 @@ node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason 
 | `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
 
 Dry run unless `--writable` (the server's dry run lists each purchase's ledger legs). Re-running is safe.
+`--no-clawback` means Civitai pays the refund, `--clawback` the creator. Choose per case: an agent's
+`--writable` run needs Justin's approval card, and the card must name the clawback value.
 Refusals and behaviour: `docs/features/creator-shop.md` → "Refunding a purchase by hand".
 
 ---
