@@ -2442,7 +2442,7 @@ export const comicsRouter = router({
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
       await throwOnBlockedUserContent(input.name, {
-        isModerator: ctx.user.isModerator,
+        isModerator: ctx.user?.isModerator,
         surface: 'comic',
       });
       // Auto-increment position (use dbWrite to reduce read→write race window)
