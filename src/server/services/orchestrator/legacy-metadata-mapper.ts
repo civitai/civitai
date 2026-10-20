@@ -516,14 +516,24 @@ export function mapDataToGraphInput(
     }
   }
 
+  // Meta written by the current generator stores the graph's own `{ value, width, height }` here,
+  // often with no top-level width/height (the metadata-read path then passes 0 for them).
+  const storedRatio = p?.aspectRatio as unknown;
+  const graphRatio =
+    storedRatio && typeof storedRatio === 'object'
+      ? (storedRatio as { value?: string; width?: number; height?: number })
+      : undefined;
+
   // Fall back to standard width/height from params
-  if (!aspectRatio && p?.width && p?.height) {
-    const ratioValue = p.aspectRatio ?? `${p.width}:${p.height}`;
-    aspectRatio = {
-      value: ratioValue,
-      width: p.width,
-      height: p.height,
-    };
+  const width = p?.width || graphRatio?.width;
+  const height = p?.height || graphRatio?.height;
+  if (!aspectRatio && width && height) {
+    const label = graphRatio
+      ? graphRatio.value
+      : typeof storedRatio === 'string'
+      ? storedRatio
+      : undefined;
+    aspectRatio = { value: label || `${width}:${height}`, width, height };
   }
 
   // For video engines: preserve string aspectRatio when no width/height conversion is available
