@@ -1,7 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// The service module is a hub; nothing below reaches a database, so its import graph is cut here.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+import { describe, expect, it } from 'vitest';
+import '~/__tests__/mocks/db.mock';
 
 const { assertRecommendedSettingsForType } = await import(
   '~/server/services/model-version.service'
