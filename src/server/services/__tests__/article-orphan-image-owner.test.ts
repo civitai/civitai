@@ -88,6 +88,8 @@ const AWAITING_REVIEW = row(8, { needsReview: 'minor' });
 const BLOCKED = row(9, { ingestion: 'Blocked' });
 const BLOCKED_LEVEL = row(10, { ingestion: 'Error', nsfwLevel: 32 });
 const BLOCK_REASON = row(11, { ingestion: 'Error', blockedFor: 'tos' });
+// A plain id column with no Prisma relation, so it is checked by its own query.
+const AN_OFFERING_COVER = row(12);
 const UNLINKED = [
   UNUSED_OWN,
   SOMEONE_ELSES,
@@ -100,6 +102,7 @@ const UNLINKED = [
   BLOCKED,
   BLOCKED_LEVEL,
   BLOCK_REASON,
+  AN_OFFERING_COVER,
 ];
 
 const isUnusedCondition = (cond: unknown) =>
@@ -148,6 +151,10 @@ beforeEach(() => {
   dbMock.dbWrite.article.update.mockResolvedValue(stored as never);
   dbMock.dbWrite.article.delete.mockResolvedValue({ coverId: null } as never);
   dbMock.dbWrite.csamReport.count.mockResolvedValue(0 as never);
+  dbMock.dbWrite.serviceOffering.findMany.mockImplementation((async ({ where }: any) =>
+    where.coverImageId.in.includes(AN_OFFERING_COVER.id)
+      ? [{ coverImageId: AN_OFFERING_COVER.id }]
+      : []) as never);
 });
 
 describe('linkArticleContentImages', () => {

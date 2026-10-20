@@ -1608,6 +1608,23 @@ export const unusedAuthorImage = (ownerId: number) =>
     storylineHeroes: { none: {} },
   } satisfies Prisma.ImageWhereInput);
 
+/**
+ * Drops images used as a service offering's cover. That column has no Prisma relation, so
+ * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
+ */
+async function withoutOfferingCovers(
+  db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
+  imageIds: number[]
+) {
+  if (!imageIds.length) return imageIds;
+  const covers = await db.serviceOffering.findMany({
+    where: { coverImageId: { in: imageIds } },
+    select: { coverImageId: true },
+  });
+  const used = new Set(covers.map((offering) => offering.coverImageId));
+  return imageIds.filter((id) => !used.has(id));
+}
+
 /** An owner with a safety report on file keeps every image: the report's review needs them. */
 async function ownerUnderSafetyReport(
   db: Pick<Prisma.TransactionClient, 'csamReport'>,
@@ -1680,7 +1697,11 @@ export const deleteArticleById = async ({
         select: { id: true },
       });
 
-      for (const { id: imageId } of trulyOrphanedImages) {
+      const deletable = await withoutOfferingCovers(
+        dbWrite,
+        trulyOrphanedImages.map((img) => img.id)
+      );
+      for (const imageId of deletable) {
         await deleteImageById({ id: imageId }).catch((error) => {
           handleLogError(error, 'article-content-image-cleanup', {
             articleId: id,
@@ -1965,7 +1986,10 @@ export async function linkArticleContentImages({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },
       });
-      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = await withoutOfferingCovers(
+        tx,
+        trulyOrphaned.map((img) => img.id)
+      );
     }
 
     return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
