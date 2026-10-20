@@ -555,6 +555,7 @@ export const getResourceSelectSchema = z.object({
   filterTypes: z.enum(ModelType).array().default([]),
   filterBaseModels: z.string().array().default([]),
   filterLoaded: z.boolean().default(false),
+  filterTurbo: z.boolean().default(false),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
   hidePaid: z.boolean().optional(),

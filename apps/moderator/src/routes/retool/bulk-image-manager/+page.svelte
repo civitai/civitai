@@ -52,9 +52,9 @@
 
   const batchSubject = $derived(batchKey(page.url));
 
-  /** Owners and states of every image seen in this batch, kept across pages. The selection itself
-   *  only holds what is on screen (`ImageActionBar`), so the extra entries serve the Owners row, not
-   *  the action. */
+  /** Owners and states of every image seen in this batch, kept across pages. This host leaves
+   *  `keepOffScreen` off, so the bar drops ids that leave the page; the extra entries serve the Owners
+   *  row, not the action. */
   const seen = new SvelteMap<string | number, { userId: number; blocked: boolean }>();
   const seenOwners = new SvelteMap<number, { username: string | null; bannedAt: Date | null }>();
 

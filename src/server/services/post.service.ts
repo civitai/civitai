@@ -1026,6 +1026,51 @@ export const updatePost = async ({
 };
 
 /**
+ * A moderator takes a post off the site without destroying anything: `publishedAt` is cleared and the
+ * metadata carries the same `unpublishedAt` / `unpublishedBy` / `prevPublishedAt` stamps the version
+ * unpublish writes, so the existing republish path restores it. The post and its images stay.
+ */
+export async function unpublishPostAsModerator({
+  id,
+  userId,
+  reason,
+}: {
+  id: number;
+  userId: number;
+  reason: string;
+}) {
+  const unpublishedAt = new Date().toISOString();
+  const rows = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Post"
+    SET
+      "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+        'unpublishedAt', ${unpublishedAt}::text,
+        'unpublishedBy', ${userId}::int,
+        'unpublishedReason', ${reason}::text,
+        'prevPublishedAt', "publishedAt"
+      ),
+      "publishedAt" = NULL
+    WHERE id = ${id} AND "publishedAt" IS NOT NULL
+    RETURNING id, "userId"
+  `;
+  const post = rows[0];
+  if (!post) return { unpublished: false };
+
+  const images = await dbWrite.image.findMany({
+    where: { postId: id },
+    select: { id: true },
+  });
+  if (images.length)
+    await queueImageSearchIndexUpdate({
+      ids: images.map((image) => image.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  await userPostCountCache.refresh(post.userId);
+  await userImageVideoCountCaches.refresh(post.userId);
+  return { unpublished: true };
+}
+
+/**
  * Everything a publish needs besides the write. The reindex is explicit because the trigger-driven
  * updatedAt bump isn't reliably picked up by metrics_images, so a new publishedAt would leave
  * sortAt/publishedAtUnix stale.

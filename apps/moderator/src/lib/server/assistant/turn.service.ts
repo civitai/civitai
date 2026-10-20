@@ -1,8 +1,15 @@
 import { createHmac } from 'node:crypto';
 import type { TurnEvent } from '$lib/assistant/types';
 import type { PermissionId } from '$lib/permissions';
-import { ASSISTANT_MODEL, complete } from './openrouter';
-import { DAILY_TOKEN_CAP, runTurn, TURN_DEADLINE_MS, type TurnOutcome } from './loop';
+import { assistantModel, complete } from './openrouter';
+import { env } from '$env/dynamic/private';
+import {
+  DAILY_TOKEN_CAP,
+  runTurn,
+  TURN_DEADLINE_MS,
+  TURN_TOKEN_BUDGET,
+  type TurnOutcome,
+} from './loop';
 import { systemPrompt } from './prompt';
 import { LOOKUP, toolSpec, toolsFor } from './tools';
 import { redactAddresses } from '../redact-addresses';
@@ -20,6 +27,17 @@ import {
   startTurn,
   tokensToday,
 } from './store';
+
+const MIN_TURN_BUDGET = 5_000;
+
+// A setting, not a constant: the pilot's per-question budget is to be set from the real distribution
+// of turns, without a release each time. Out-of-range values are clamped, so a tighter setting never
+// comes out looser; anything that is not a whole number falls back to the default.
+export function turnTokenBudget(raw = env.ASSISTANT_TURN_TOKEN_BUDGET): number {
+  const n = Number(raw?.trim() || NaN);
+  if (!Number.isInteger(n)) return TURN_TOKEN_BUDGET;
+  return Math.min(Math.max(n, MIN_TURN_BUDGET), DAILY_TOKEN_CAP);
+}
 
 /** Earlier turns replayed to the model as plain prompt/answer pairs; their tool results are not. */
 export const HISTORY_TURNS = 12;
@@ -75,13 +93,14 @@ export async function executeTurn(input: {
   const playbooks = allPlaybooks.map(shown);
   const playbook = chosen && shown(chosen);
 
+  const model = assistantModel();
   const turnId = await startTurn({
     chatId: input.chatId,
     moderatorId: input.moderator.id,
     prompt: input.prompt,
     playbookSlug: playbook?.slug ?? null,
     playbookVersion: playbook?.version ?? null,
-    model: ASSISTANT_MODEL,
+    model,
   });
   input.emit({ type: 'started', turnId });
   // A chat started from "New chat" is named by its first question, or the list reads as a column of
@@ -120,8 +139,9 @@ export async function executeTurn(input: {
     specs: tools.map(toolSpec),
     ctx,
     budget: DAILY_TOKEN_CAP - input.used,
+    turnBudget: turnTokenBudget(),
     knownRefs: turns.flatMap((t) => t.sources.map((s) => s.ref)),
-    complete,
+    complete: (req) => complete({ ...req, model }),
     emit: input.emit,
   });
 

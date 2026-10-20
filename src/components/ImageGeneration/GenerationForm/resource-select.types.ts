@@ -16,6 +16,8 @@ export type ResourceSelectOptions = {
     partialSupport?: string[];
   }[];
   excludeIds?: number[];
+  /** Pins the picker to turbo variants; the chip is then not offered. */
+  turboOnly?: boolean;
 };
 
 const selectSources = ['generation', 'training', 'addResource', 'modelVersion', 'auction'] as const;
@@ -25,6 +27,7 @@ export type ResourceFilter = {
   types: ModelType[];
   baseModels: BaseModel[];
   loadedOnly: boolean;
+  turboOnly: boolean;
 } & ModelPricingFilter;
 
 export const resourceSelectTabs = [
@@ -51,6 +54,7 @@ export type SelectableVersion = {
   canGenerate?: boolean;
   canGenerateNext?: boolean;
   generatorLoaded?: boolean;
+  turbo?: boolean;
 };
 
 /**
@@ -66,6 +70,7 @@ export function selectableVersions<V extends SelectableVersion>(
     member,
     isCheckpoint,
     loadedOnly,
+    turboOnly,
     skipBaseModel,
     modelBaseModels,
     excludedIds,
@@ -77,6 +82,7 @@ export function selectableVersions<V extends SelectableVersion>(
     member?: boolean;
     isCheckpoint?: boolean;
     loadedOnly?: boolean;
+    turboOnly?: boolean;
     skipBaseModel: boolean;
     modelBaseModels: string[];
     excludedIds: number[];
@@ -93,6 +99,7 @@ export function selectableVersions<V extends SelectableVersion>(
           })
         : true) &&
       (!loadedOnly || !!version.generatorLoaded) &&
+      (!turboOnly || !!version.turbo) &&
       (skipBaseModel ||
         modelBaseModels.length === 0 ||
         modelBaseModels.includes(version.baseModel)) &&
@@ -163,6 +170,7 @@ export const toResourceSelectFilterInput = (filters: ResourceFilter) => ({
   filterBaseModels: filters.baseModels,
   hidePaid: filters.hidePaid,
   filterLoaded: filters.loadedOnly,
+  filterTurbo: filters.turboOnly,
 });
 
 export const resourceSort = {

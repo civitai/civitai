@@ -19,14 +19,14 @@ system:text-scan:label-modes
   minor → "review"
 ```
 
-- A missing field means `auto` — today's behaviour. Deploying the code changes nothing.
+- A missing field means `auto` — today's behaviour. Deploying the code changes nothing. (`csam` is the exception: it has its own `off`/`review` field, and a missing field means `off`; see [text-scan.md](text-scan.md).)
 - Only consulted when the scan's verdict can act (the entity's rollout is `active`). A `shadow`
   rollout still records verdicts and does nothing else.
 - Read through the same short TTL memo as the rollouts; written only through a guarded setter that
   checks the moderator and logs the change.
-- `poi` is switchable the same way (`label: "poi"`); it has no field today, so it stays `auto`.
+- `poi` is switchable the same way (`label: "poi"`); it has no field today, so it stays `auto`. `csam` is not: it takes `off` or `review` only, and `putLabelModes` refuses `auto` for it.
 - Set with the harness action `putLabelModes` (`{ "action": "putLabelModes", "label": "minor", "mode": "review" }`;
-  `"auto"` removes the field); `getPrompts` returns the current value as `labelModes`.
+  `"auto"` removes the field); `getPrompts` returns the current value as `labelModes` (`csam` is returned separately as `csamMode`).
 
 ## What happens on a detection
 

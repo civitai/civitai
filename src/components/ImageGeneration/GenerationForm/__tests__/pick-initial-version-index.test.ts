@@ -123,12 +123,14 @@ describe('toResourceSelectFilterInput', () => {
       types: ['LORA' as ModelType],
       baseModels: ['SDXL 1.0'] as ResourceFilter['baseModels'],
       loadedOnly: true,
+      turboOnly: true,
       hidePaid: true,
     };
     expect(toResourceSelectFilterInput(filters)).toEqual({
       filterTypes: ['LORA'],
       filterBaseModels: ['SDXL 1.0'],
       filterLoaded: true,
+      filterTurbo: true,
       hidePaid: true,
     });
     // Every key of the filter is accounted for — a new one added without a wire fails here.

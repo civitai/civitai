@@ -192,11 +192,11 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
  *      the ownership check for `user.isModerator` — disagreement D1 in
  *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
- *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
- *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
- *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      about the bypass. Reached by `setIcon`, `setCover`, `setRedMedia`,
+ *      `addScreenshot`, `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and
+ *      by `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
  *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
- *      { userId: user.id }`). Seven members.
+ *      { userId: user.id }`). Eight members.
  *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
  *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
  *      listing id. No bypass to have.
@@ -613,13 +613,17 @@ export const appListingsRouter = router({
    * Set or clear the civitai.red-only icon / cover override (`setListingRedMedia`): the same
    * owner / revision / moderator rules as `setIcon` / `setCover`.
    *
-   * Called by the author's listing media editor (`ListingAssetStep`'s civitai.red section).
+   * Called by the author's listing media editor (`ListingAssetStep`'s civitai.red section) and by
+   * the CLI (`civitai app listing set-icon|set-cover --red`, `clear-red`).
    *
-   * 🔴 NOT annotated with `listingMediaCliScope` (yet). The CLI has no command for it; admitting
-   * the scoped token is the CLI follow-on's decision, made on the basis that set's header
-   * states, not copied from the siblings above.
+   * Annotated with `listingMediaCliScope` on the basis that set's header states: it is shape 1
+   * (`loadOwnedListing`, moderator bypass), the same gate as `setIcon` / `setCover`, and unlike the
+   * withdrawn `getAssets` it ADDS something no annotated proc carries — the only write to these
+   * two slots. It returns only the slot, the image id the caller sent and a scan flag; it reads
+   * no override back, so admitting the token discloses no civitai.red media.
    */
   setRedMedia: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingRedMediaSchema)
     .mutation(async ({ ctx, input }) => {

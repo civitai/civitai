@@ -97,6 +97,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -344,8 +345,14 @@ const loadModelVersion = async ({
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
         : null;
 
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      version.model.user.id
+    );
+
     return {
       ...version,
+      model: { ...version.model, ownerMetricPrivacyDefaults },
       licensingFee,
       canGenerate,
       wildcardSetId,
