@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -54,7 +55,7 @@ const redetected = (at: string) => ({ workflowId: 'wf', reason: 'r', textHash: '
 
 let pg: PGlite;
 beforeEach(async () => {
-  pg = new PGlite();
+  pg = await freshPglite();
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   await pg.exec(SCHEMA);
   await pg.exec(`INSERT INTO "User" VALUES (1, 'owner'), (2, 'other'), (5, 'mod')`);

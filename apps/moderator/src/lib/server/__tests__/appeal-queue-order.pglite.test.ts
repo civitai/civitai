@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -67,7 +68,7 @@ const IMAGES_BY_APPEAL_AGE = [101, 102, 103, 104, 105];
 let db: PGlite;
 
 beforeEach(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(`INSERT INTO "User" ("id", "username") VALUES (7, 'appellant')`);
   for (const [days, imageId] of IMAGES_BY_APPEAL_AGE.entries()) {

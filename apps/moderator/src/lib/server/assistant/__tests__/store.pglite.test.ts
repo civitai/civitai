@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executableSchemaSql, pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
@@ -21,7 +22,7 @@ vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => kysely }));
 const store = await import('../store');
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
   kysely = new Kysely({ dialect: pgliteDialect(pg) });
 });
