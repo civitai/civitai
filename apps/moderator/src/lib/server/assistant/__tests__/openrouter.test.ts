@@ -43,6 +43,33 @@ describe('listPrices', () => {
     expect((await listPrices(later()))['z-ai/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
   });
 
+  it('keeps the release price for a model whose listed price is missing or the "-1" sentinel', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: [
+            { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.0000003', completion: '-1' } },
+            { id: 'openai/gpt-6-luna', pricing: { prompt: null, completion: null } },
+          ],
+        })
+      )
+    );
+    const prices = await listPrices(later());
+    expect(prices['z-ai/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
+    expect(prices['openai/gpt-6-luna']).toEqual({ input: 0.1, output: 0.5 });
+  });
+
+  it('retries a failed read after minutes, not an hour', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetch = vi.fn(async () => new Response('<html>bad gateway</html>', { status: 502 }));
+    vi.stubGlobal('fetch', fetch);
+    const at = later();
+    await listPrices(at);
+    await listPrices(at + 6 * 60_000);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('asks at most hourly', async () => {
     const fetch = vi.fn(async () => Response.json({ data: [] }));
     vi.stubGlobal('fetch', fetch);

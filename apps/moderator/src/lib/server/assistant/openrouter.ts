@@ -22,7 +22,9 @@ export const resolveModel = (id: string | null | undefined) =>
   findModel(id)?.id ?? assistantModel();
 
 const PRICE_TTL_MS = 60 * 60_000;
-let prices: { at: number; byId: Record<string, Price> } | null = null;
+// A failed read is retried sooner, so one blip does not pin the release's prices for an hour.
+const PRICE_RETRY_MS = 5 * 60_000;
+let prices: { until: number; byId: Record<string, Price> } | null = null;
 
 /**
  * OpenRouter's current list price for each listed model, from its public model list (no key), read
@@ -30,25 +32,32 @@ let prices: { at: number; byId: Record<string, Price> } | null = null;
  * list does not return, or when OpenRouter cannot be reached.
  */
 export async function listPrices(now = Date.now()): Promise<Record<string, Price>> {
-  if (prices && now - prices.at < PRICE_TTL_MS) return prices.byId;
+  if (prices && now < prices.until) return prices.byId;
   const byId = Object.fromEntries(ASSISTANT_MODELS.map((m) => [m.id, m.price]));
+  // A price is a non-negative number given as a string; OpenRouter marks "no price" with "-1".
+  const perMillion = (raw: unknown) => {
+    const n = typeof raw === 'string' && raw.trim() ? Number(raw) * 1_000_000 : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  let ttl = PRICE_TTL_MS;
   try {
     const res = await fetch('https://openrouter.ai/api/v1/models', {
       signal: AbortSignal.timeout(3_000),
     });
     const body = (await res.json()) as {
-      data?: { id: string; pricing?: { prompt?: string; completion?: string } }[];
+      data?: { id: string; pricing?: { prompt?: unknown; completion?: unknown } }[];
     };
-    for (const m of body.data ?? []) {
-      const input = Number(m.pricing?.prompt) * 1_000_000;
-      const output = Number(m.pricing?.completion) * 1_000_000;
-      if (m.id in byId && Number.isFinite(input) && Number.isFinite(output) && input >= 0)
-        byId[m.id] = { input, output };
+    if (!res.ok || !Array.isArray(body.data)) throw new Error(`price list status ${res.status}`);
+    for (const m of body.data) {
+      const input = perMillion(m?.pricing?.prompt);
+      const output = perMillion(m?.pricing?.completion);
+      if (m && m.id in byId && input !== null && output !== null) byId[m.id] = { input, output };
     }
   } catch (e) {
+    ttl = PRICE_RETRY_MS;
     console.error('[assistant] OpenRouter price list unavailable; using the listed prices', e);
   }
-  prices = { at: now, byId };
+  prices = { until: now + ttl, byId };
   return byId;
 }
 
