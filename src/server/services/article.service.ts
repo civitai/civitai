@@ -2741,7 +2741,7 @@ export async function rescanArticleImage({
   if (!canRescanArticleImage(image, article.userId)) {
     if (image.ingestion === ImageIngestionStatus.Pending) return;
     throw throwBadRequestError(
-      'This image cannot be rescanned. Remove it from the article, or ask a moderator to review it.'
+      'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
   }
 

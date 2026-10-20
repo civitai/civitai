@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as ImageService from '~/server/services/image.service';
 import type * as TextScanRoute from '~/server/services/text-scan/route';
@@ -79,16 +80,31 @@ const storeArticle = (coverId: number | null) => {
   dbMock.dbWrite.article.findUnique.mockResolvedValue(article as never);
 };
 
+/** A lagging replica: it still holds every image as clean, unblocked and the author's own. */
+const stale = (img: Img) => ({
+  ...img,
+  userId: AUTHOR,
+  ingestion: 'Scanned',
+  nsfwLevel: 1,
+  nsfwLevelLocked: false,
+  blockedFor: null,
+});
+
 const storeImages = ({ connected = [], byId = [] }: { connected?: Img[]; byId?: Img[] }) => {
-  dbMock.dbWrite.imageConnection.findMany.mockImplementation((async ({ include }: any) =>
-    connected.map((img) => ({
-      imageId: img.id,
-      image: pick(img, include.image.select),
-    }))) as never);
-  dbMock.dbWrite.image.findUnique.mockImplementation((async ({ where, select }: any) => {
-    const img = byId.find((x) => x.id === where.id);
-    return img ? pick(img, select) : null;
-  }) as never);
+  for (const [db, view] of [
+    [dbMock.dbWrite, (img: Img) => img],
+    [dbMock.dbRead, stale],
+  ] as const) {
+    db.imageConnection.findMany.mockImplementation((async ({ include }: any) =>
+      connected.map((img) => ({
+        imageId: img.id,
+        image: pick(view(img), include.image.select),
+      }))) as never);
+    db.image.findUnique.mockImplementation((async ({ where, select }: any) => {
+      const img = byId.find((x) => x.id === where.id);
+      return img ? pick(view(img), select) : null;
+    }) as never);
+  }
 };
 
 beforeEach(() => {
@@ -120,6 +136,16 @@ describe('rescanArticle', () => {
     expect(requeued()).toEqual([CLEAN.id]);
   });
 
+  it('re-queues a clean cover that is not among the connected images', async () => {
+    const cover = image(17);
+    storeArticle(cover.id);
+    storeImages({ connected: [CLEAN], byId: [cover] });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(requeued().sort()).toEqual([CLEAN.id, cover.id]);
+  });
+
   it('leaves a blocked cover alone', async () => {
     storeArticle(BLOCKED.id);
     storeImages({ connected: [CLEAN], byId: [BLOCKED] });
@@ -142,6 +168,8 @@ describe('rescanArticleImage', () => {
       await expect(rescan(img)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
       expect(requeued()).toEqual([]);
+      // A refusal does not use one of the day's attempts.
+      expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     }
   );
 
@@ -159,6 +187,7 @@ describe('rescanArticleImage', () => {
     await rescan(CLEAN);
 
     expect(requeued()).toEqual([CLEAN.id]);
+    expect(redisMock.redis.packed.set).toHaveBeenCalledOnce();
   });
 
   it("re-queues it for a moderator rescanning someone else's article, under the author", async () => {
