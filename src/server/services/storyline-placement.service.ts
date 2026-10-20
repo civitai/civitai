@@ -330,35 +330,6 @@ async function holdOrUnwind({
   }
 }
 
-/**
- * Opens or closes a storyline to continuations, inside the caller's transaction. Ownership is the
- * caller's to have checked. Postgres only, through `tx` (`no-io-in-transaction`).
- *
- * Writes the mode alone, on the storyline's own level of the space (`entityType 'storyline'`), so
- * a price its creator set stays put.
- */
-export async function setStorylineSpaceMode(
-  { storylineId, mode }: { storylineId: number; mode: StorylineSpaceMode },
-  tx: Pick<Prisma.TransactionClient, 'placementSpace'>
-) {
-  // Refused here as well as in the type: `auto` would put arbitrary media on
-  // someone's story unreviewed, and a caller casting a string would reach it.
-  if (!(PLACEMENT_SURFACES[SURFACE].allowedModes as readonly string[]).includes(mode))
-    throw new Error(`storyline: ${mode} is not a mode a storyline may be in`);
-
-  await tx.placementSpace.upsert({
-    where: {
-      surface_entityType_entityId: {
-        surface: SURFACE,
-        entityType: 'storyline',
-        entityId: storylineId,
-      },
-    },
-    create: { surface: SURFACE, entityType: 'storyline', entityId: storylineId, mode },
-    update: { mode },
-  });
-}
-
 /** Who may continue a storyline: its own setting, separate from the space's mode. */
 export type StorylineWhoCanContinue = 'Anyone' | 'Collaborators';
 

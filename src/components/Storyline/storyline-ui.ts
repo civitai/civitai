@@ -1,5 +1,5 @@
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { placementPriceCaption } from '~/shared/utils/placement';
+import { PLACEMENT_SURFACES, placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -115,7 +115,7 @@ export function storylineCeilingImpact(ceiling: number, levels: StorylineChapter
 }
 
 /** How long a continuation waits for the creator before it expires and any Buzz is refunded. */
-export const STORYLINE_CONTINUATION_EXPIRY_DAYS = 7;
+export const STORYLINE_CONTINUATION_EXPIRY_DAYS = PLACEMENT_SURFACES.storyline.expiryHours / 24;
 
 export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }

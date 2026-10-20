@@ -39,7 +39,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   return { ...queue, wide: true, games, storylines, serviceOfferings };
 };
 
-// Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
+// The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.
 export const actions: Actions = {
   ...reportStatusActions(),
   /**

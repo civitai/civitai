@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
@@ -217,6 +218,30 @@ describe('linkStorylineChapter against a removal', () => {
     const error = await link(24, R).catch((e: unknown) => e);
     expect((error as Error).message).toMatch(/removed/);
     expect(db.rows('storylineChapterEdge')).toEqual(before);
+  });
+});
+
+describe('the fake db chapter lock', () => {
+  const lock = (liveFilter: boolean) => {
+    // The same statement as the service's, reflowed across lines as a formatter would leave it.
+    const filter = liveFilter ? Prisma.sql`AND "removedAt" IS NULL` : Prisma.empty;
+    return dbMock.dbWrite.$transaction(async (tx: typeof dbMock.dbWrite) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id
+        FROM "StorylineChapter"
+        WHERE id =
+          ANY(${[R, 24]})
+          ${filter}
+        FOR SHARE`);
+      return [R, 24].map((id) => db.isShareLocked(id));
+    });
+  };
+
+  it('accepts a live-chapter lock whatever its whitespace and share-locks the chapters', async () => {
+    expect(await lock(true)).toEqual([true, true]);
+  });
+
+  it('still refuses a lock that does not read live chapters only', async () => {
+    await expect(lock(false)).rejects.toThrow(/not a live-chapter read/);
   });
 });
 
