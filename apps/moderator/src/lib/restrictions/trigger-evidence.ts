@@ -1,3 +1,4 @@
+import { utcMs } from '$lib/format';
 import type { RestrictionTrigger } from '$lib/server/user-restriction.service';
 
 export type TriggerField = 'prompt' | 'negativePrompt';
@@ -41,6 +42,13 @@ export function humanizeCategory(category: string): string {
 
 export const fieldLabel = (field: TriggerField): string =>
   field === 'prompt' ? 'prompt' : 'negative prompt';
+
+/** Cold-seeded triggers carry ClickHouse's unzoned UTC timestamps, which `Date` reads as local. */
+export function isoTriggerTime(time: string | undefined): string | undefined {
+  if (!time) return time;
+  const ms = utcMs(time);
+  return Number.isNaN(ms) ? time : new Date(ms).toISOString();
+}
 
 /** Rows written before the evidence fields existed carry only the top-level match, if any. */
 export function explainMatches(trigger: MatchSource): ExplainedMatch[] {

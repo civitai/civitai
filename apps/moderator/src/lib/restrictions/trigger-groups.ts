@@ -87,3 +87,17 @@ export function formatSpan(ms: number): string {
   }
   return parts.join(' ');
 }
+
+/** Triggers are stored newest first; a mod reads a retry burst in the order it happened. */
+export function attemptTimes<T extends { key: string; time?: string }>(
+  repeats: readonly T[]
+): { key: string; time?: string; offset: number | null }[] {
+  const parsed = repeats.map((r) => ({ key: r.key, time: r.time, ms: Date.parse(r.time ?? '') }));
+  const timed = parsed.filter((p) => !Number.isNaN(p.ms)).sort((a, b) => a.ms - b.ms);
+  const untimed = parsed.filter((p) => Number.isNaN(p.ms));
+  const first = timed[0]?.ms;
+  return [
+    ...timed.map((p) => ({ key: p.key, time: p.time, offset: p.ms - first })),
+    ...untimed.map((p) => ({ key: p.key, time: p.time, offset: null })),
+  ];
+}

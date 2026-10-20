@@ -242,13 +242,11 @@
     {/if}
 
     {#if notBlocking > 0}
-      <p
-        class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200"
-      >
+      <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
         {notBlocking} of {row.triggers.length}
         {row.triggers.length === 1 ? 'trigger' : 'triggers'} would not block under the current word
         list. They were likely warnings counted toward the mute.
-      </p>
+      </div>
     {/if}
 
     <div class="space-y-4">

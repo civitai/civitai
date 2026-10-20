@@ -13,6 +13,7 @@ import {
 import type { MediaType } from '../media/edge-url';
 import type { TriggerOrigin } from '$lib/restrictions/origin';
 import { planRecheck, recheckResult, type Recheck } from '$lib/restrictions/recheck';
+import { isoTriggerTime } from '$lib/restrictions/trigger-evidence';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
@@ -169,7 +170,8 @@ const asTriggerArray = (value: unknown): RestrictionTrigger[] => {
  * user actually typed. Highlighting happens in the component against the recorded `matchedWord` by
  * literal search; the stored `matchedRegex` is attacker-influenced text and is never executed.
  */
-const toView = (trigger: RestrictionTrigger, key: string): RestrictionTriggerView => {
+const toView = (raw: RestrictionTrigger, key: string): RestrictionTriggerView => {
+  const trigger = { ...raw, time: isoTriggerTime(raw.time) };
   // A scam cleanup records up to thousands of ids for the restore; the page needs only the count.
   if (!trigger.cleanup) return { ...trigger, key };
   const { ids: _ids, ...cleanup } = trigger.cleanup;

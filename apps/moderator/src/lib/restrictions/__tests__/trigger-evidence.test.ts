@@ -9,6 +9,7 @@ import {
   prefillInput,
   isMissingFromText,
   MAX_PREFILL_URL_LENGTH,
+  isoTriggerTime,
 } from '../trigger-evidence';
 
 describe('sourceLabel', () => {
@@ -169,5 +170,20 @@ describe('isMissingFromText', () => {
 
   it('has nothing to find without a text', () => {
     expect(isMissingFromText({ field: 'prompt' }, texts)).toBe(false);
+  });
+});
+
+describe('isoTriggerTime', () => {
+  it('reads an unzoned ClickHouse timestamp as UTC', () => {
+    expect(isoTriggerTime('2026-10-19 21:13:05')).toBe('2026-10-19T21:13:05.000Z');
+  });
+
+  it('keeps an ISO timestamp as it is', () => {
+    expect(isoTriggerTime('2026-10-19T21:21:53.540Z')).toBe('2026-10-19T21:21:53.540Z');
+  });
+
+  it('passes through missing and unparseable values', () => {
+    expect(isoTriggerTime(undefined)).toBeUndefined();
+    expect(isoTriggerTime('not a time')).toBe('not a time');
   });
 });

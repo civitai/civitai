@@ -5,7 +5,8 @@
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import PromptSegments from '$lib/components/PromptSegments.svelte';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { IconChevronDown } from '@tabler/icons-svelte';
+  import { LINK_CLASS, dateTime, utcMs } from '$lib/format';
   import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import { normalisedDiffers, recheckCategories, type RecheckResult } from '$lib/restrictions/recheck';
   import { triggerOrigin, type SourceState } from '$lib/restrictions/origin';
@@ -19,7 +20,7 @@
     promptTesterHref,
     sourceLabel,
   } from '$lib/restrictions/trigger-evidence';
-  import { formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
+  import { attemptTimes, formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
   import type {
     RemixSource,
     RestrictionTriggerView,
@@ -61,12 +62,20 @@
   const origin = $derived(triggerOrigin(trigger));
   const matches = $derived(explainMatches(trigger));
   const highlights = $derived(highlightSets(matches));
+  const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
   const testerLink = $derived(
-    trigger.prompt
+    trigger.prompt && noRecordedMatch
       ? promptTesterHref({ prompt: trigger.prompt, negativePrompt: trigger.negativePrompt })
       : null
   );
-  const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
+  const attempts = $derived(attemptTimes(repeats));
+  // Retries land seconds apart, so the minute-precision dateTime would show them all as equal.
+  const timeWithSeconds = (time: string) =>
+    new Date(utcMs(time)).toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
   const awaitingRecheck = $derived(
     noRecordedMatch && trigger.source !== 'External' && !recheck && !!recheckStatus
   );
@@ -166,15 +175,17 @@
       {#if count > 1}
         <button
           type="button"
-          class="cursor-pointer"
+          class="inline-flex cursor-pointer items-center gap-1 rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 text-xs text-dark-0 transition-colors hover:border-dark-3 hover:bg-dark-5"
           aria-expanded={timesOpen}
-          title="Identical prompt and input, retried. Click for the attempt times."
+          title="Identical prompt and input, retried"
           onclick={() => (timesOpen = !timesOpen)}
         >
-          <Badge variant="secondary">
-            {count}×{span !== null ? ` in ${formatSpan(span)}` : ''}
-            {timesOpen ? '▴' : '▾'}
-          </Badge>
+          {count}×{span !== null ? ` in ${formatSpan(span)}` : ''}
+          <span class="text-dark-2">· {timesOpen ? 'hide' : 'show'} times</span>
+          <IconChevronDown
+            size={14}
+            class="text-dark-2 transition-transform {timesOpen ? 'rotate-180' : ''}"
+          />
         </button>
       {/if}
       {#if trigger.time}
@@ -188,11 +199,17 @@
     </header>
 
     {#if timesOpen}
-      <ul class="m-0 list-none space-y-0.5 p-0 text-xs text-dark-2">
-        {#each repeats as r (r.key)}
-          <li>{r.time ? dateTime(r.time) : 'Time not recorded'}</li>
+      <div
+        class="grid w-fit grid-cols-[auto_auto_auto] gap-x-4 gap-y-1 rounded-md bg-dark-6 px-3 py-2 text-xs"
+      >
+        {#each attempts as a, i (a.key)}
+          <span class="text-dark-2">Attempt {i + 1}</span>
+          <span class="tabular-nums text-dark-0">{a.time ? timeWithSeconds(a.time) : 'Time not recorded'}</span>
+          <span class="tabular-nums text-dark-2">
+            {i === 0 ? 'first' : a.offset !== null ? `+${formatSpan(a.offset)}` : ''}
+          </span>
         {/each}
-      </ul>
+      </div>
     {/if}
 
     {#if origin.incomplete && origin.kind !== 'incomplete'}
