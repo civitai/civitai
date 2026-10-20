@@ -15,6 +15,7 @@ import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import { getHiddenModelIds } from '~/server/services/model-visibility.service';
 import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -155,7 +156,7 @@ export default MixedAuthEndpoint(async function handler(
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion, async () => user);
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -292,12 +293,22 @@ export async function prepareModelVersionResponse(
   };
 }
 
+type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+/**
+ * `getViewer` is only called for a version of a flagged model, so a public caller pays for no
+ * session lookup. A version the viewer may not see gets the same 404 as one that does not exist.
+ */
 export async function resModelVersionDetails(
   req: NextApiRequest,
   res: NextApiResponse,
-  modelVersion: ModelVersionApiReturn | null
+  modelVersion: ModelVersionApiReturn | null,
+  getViewer: () => Promise<Viewer>
 ) {
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  const hidden =
+    !!modelVersion?.model.poi &&
+    (await getHiddenModelIds([modelVersion.modelId], await getViewer())).size > 0;
+  if (!modelVersion || hidden) return res.status(404).json({ error: 'Model not found' });
 
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'

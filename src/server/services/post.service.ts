@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
   preventReplicationLag,
@@ -306,6 +307,13 @@ export const getPostsInfinite = async ({
   }
 
   if (modelVersionId) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { model: { select: { poi: true, userId: true } } },
+    });
+    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+      return { items: [] };
+
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
     cacheTags.push(`posts-modelVersion:${modelVersionId}`);
   }

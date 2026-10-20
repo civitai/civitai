@@ -2,9 +2,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getHiddenModelIds } from '~/server/services/model-visibility.service';
 import { getPublicPaidAccessForModelVersions } from '~/server/services/paid-access.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -25,7 +27,7 @@ export default PublicEndpoint(
         error: `Request must include an array of SHA256 Hashes. ${results.error.message}`,
       });
 
-    const files = await dbRead.modelFile.findMany({
+    const matched = await dbRead.modelFile.findMany({
       where: {
         hashes: { some: { hash: { in: results.data }, type: 'SHA256' } },
         modelVersion: { model: { status: 'Published' }, status: 'Published' },
@@ -36,6 +38,15 @@ export default PublicEndpoint(
         },
       },
     });
+
+    // Versions the caller may not see are left out, as if their hashes had not matched.
+    const flaggedModelIds = matched
+      .filter((file) => file.modelVersion.model.poi)
+      .map((file) => file.modelVersion.modelId);
+    const hidden = flaggedModelIds.length
+      ? await getHiddenModelIds(flaggedModelIds, (await getServerAuthSession({ req, res }))?.user)
+      : new Set<number>();
+    const files = matched.filter((file) => !hidden.has(file.modelVersion.modelId));
 
     const modelVersionIds = [...new Set(files.map((file) => file.modelVersion.id))];
     const images = await getImagesForModelVersion({

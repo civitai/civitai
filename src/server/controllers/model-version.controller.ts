@@ -87,6 +87,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -225,6 +226,8 @@ const loadModelVersion = async ({
         generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
+    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+      throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
