@@ -256,7 +256,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await updateWorkflow({ ...input, token: ctx.token });
+      const result = await updateWorkflow({
+        ...input,
+        token: ctx.token,
+        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+      });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);

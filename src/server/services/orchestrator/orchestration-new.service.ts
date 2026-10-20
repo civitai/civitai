@@ -101,6 +101,7 @@ import {
   type RawAirResource,
 } from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { CacheTTL } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import {
@@ -3120,7 +3121,8 @@ function formatStep(
  */
 /**
  * The orchestrator charges the yellow-Buzz unlock without lifting the workflow's `nsfwLevel` cap, so
- * when every mature output is rated above the cap the unlock takes the Buzz and releases nothing.
+ * the unlock is allowed only when it releases something: the workflow is locked
+ * (`allowMatureContent === false`) and at least one output is rated mature and within the cap.
  */
 export async function assertUnlockReleasesOutput({
   token,
@@ -3130,27 +3132,58 @@ export async function assertUnlockReleasesOutput({
   workflowId: string;
 }) {
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  if (workflow.allowMatureContent === true)
+    throw throwBadRequestError('This generation is already unlocked.');
+  // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
+  // on `false` too.
+  if (workflow.allowMatureContent !== false)
+    throw throwBadRequestError('This generation has no mature restriction to unlock.');
+
   const cap = workflow.nsfwLevel;
-  if (!cap) return;
+  const capRefusal = () =>
+    throwBadRequestError(
+      `This generation is limited to ${cap!
+        .toUpperCase()
+        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+    );
+  if (cap === 'pg' || cap === 'pg13') throw capRefusal();
   const matureLevels = (workflow.steps ?? [])
     .flatMap((step) => normalizeStepOutput(step as StepWithOutput))
     .map((item) => item.nsfwLevel)
     .filter((level): level is NsfwLevel => !!isMature(level));
-  if (matureLevels.length && matureLevels.every((level) => exceedsNsfwLevel(level, cap)))
+  if (!matureLevels.length)
+    throw throwBadRequestError('Nothing in this generation needs unlocking yet.');
+  if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
+}
+
+type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+
+/**
+ * Generation submits `allowMatureContent: false` on the green domain and for users with mature
+ * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ */
+export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+  if (domain === 'green')
     throw throwBadRequestError(
-      `This generation is limited to ${cap
-        .toUpperCase()
-        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+      'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
+    );
+  if (!showNsfw)
+    throw throwBadRequestError(
+      'Enable mature content in your account settings to unlock this generation.'
     );
 }
 
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
   user,
+  viewer,
   ...props
-}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
-  if (props.allowMatureContent === true) await assertUnlockReleasesOutput(props);
-  const workflow = await clientUpdateWorkflow(props);
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
+  if (props.allowMatureContent === true) {
+    assertUnlockAllowed(viewer);
+    await assertUnlockReleasesOutput(props);
+  }
+  const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
 }
