@@ -15,13 +15,19 @@ vi.mock('$lib/server/db', () => ({
 vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => ({}) }));
 
 const { getOpenUserReports } = await import('../reads');
+const { ReportReason, ReportStatus } = await import('$lib/reports');
 const { TOOLS } = await import('../tools');
 
+// Real enum types, so a literal the database does not know fails here as it would in prod.
+const enumType = (name: string, values: string[]) =>
+  `CREATE TYPE "${name}" AS ENUM (${values.map((v) => `'${v}'`).join(', ')});`;
 const SCHEMA = `
+${enumType('ReportReason', Object.values(ReportReason))}
+${enumType('ReportStatus', Object.values(ReportStatus))}
 CREATE TABLE "Report" (
   "id" INTEGER PRIMARY KEY,
-  "reason" TEXT NOT NULL,
-  "status" TEXT NOT NULL,
+  "reason" "ReportReason" NOT NULL,
+  "status" "ReportStatus" NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "userId" INTEGER NOT NULL,
   "details" JSONB,
@@ -56,6 +62,9 @@ beforeEach(async () => {
       100 + id,
     ]);
   }
+  await db.query(
+    `UPDATE "Report" SET "details" = '{"comment": "selling buzz"}', "alsoReportedBy" = '{11,12}' WHERE "id" = 7`
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -70,6 +79,19 @@ const ids = async (query: Parameters<typeof getOpenUserReports>[0]) =>
 describe('getOpenUserReports', () => {
   it('reads the open human-filed queue newest first by default', async () => {
     expect(await ids({})).toEqual([7, 4, 3, 2, 1]);
+  });
+
+  it('returns each report with its account, reporter, reason, status and comment', async () => {
+    const [newest] = await getOpenUserReports({ limit: 1 });
+    expect(newest).toMatchObject({
+      reportId: 7,
+      userId: 107,
+      reporterId: 9,
+      reason: 'Spam',
+      status: 'Pending',
+      comment: 'selling buzz',
+      alsoReportedBy: 2,
+    });
   });
 
   it('pages with a cursor in either order', async () => {
@@ -91,6 +113,7 @@ describe('getOpenUserReports', () => {
     // A value the input schema would refuse, reaching the function anyway, filters nothing in.
     expect(await ids({ reasons: ["Spam') OR ('1'='1"] })).toEqual([7, 4, 3, 2, 1]);
     expect(await ids({ statuses: ['Actioned'] })).toEqual([7, 4, 3, 2, 1]);
+    expect(await ids({ reasons: ['Automated'] })).toEqual([7, 4, 3, 2, 1]);
   });
 });
 
@@ -105,12 +128,15 @@ describe('open_user_reports', () => {
         reports: { reportId: number }[];
         nextCursor: number | null;
       };
-    const page = await call({ reasons: ['Spam'], statuses: ['Pending'], limit: 1 });
-    expect(page.reports.map((r) => r.reportId)).toEqual([7]);
-    expect(page.nextCursor).toBe(7);
-    const last = await call({ reasons: ['Spam'], statuses: ['Pending'], cursor: 7 });
+    const page = await call({ reasons: ['Spam'], statuses: ['Processing', 'Pending'], limit: 2 });
+    expect(page.reports.map((r) => r.reportId)).toEqual([7, 3]);
+    expect(page.nextCursor).toBe(3);
+    const last = await call({ reasons: ['Spam'], statuses: ['Pending'], cursor: 3 });
     expect(last.reports.map((r) => r.reportId)).toEqual([1]);
     expect(last.nextCursor).toBeNull();
+    const oldest = await call({ order: 'oldest', limit: 2 });
+    expect(oldest.reports.map((r) => r.reportId)).toEqual([1, 2]);
+    expect(oldest.nextCursor).toBe(2);
   });
 
   it('refuses a reason or status off its list', () => {

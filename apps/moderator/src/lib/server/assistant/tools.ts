@@ -522,11 +522,11 @@ export const TOOLS = [
   tool({
     name: 'open_user_reports',
     description:
-      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor.",
+      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor, passing the same order and filters.",
     input: z.object({
       limit: z.number().int().min(1).max(100).default(50),
       order: z.enum(['newest', 'oldest']).default('newest'),
-      cursor: z.number().int().positive().optional(),
+      cursor: z.number().int().positive().max(MAX_INT4).optional(),
       statuses: z
         .array(z.enum(['Pending', 'Processing']))
         .min(1)
