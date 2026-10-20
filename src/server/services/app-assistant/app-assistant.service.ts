@@ -51,8 +51,11 @@ export interface AppAssistantRefusal {
 type GateContext = { user: SessionUser; req?: NextApiRequest | IncomingMessage };
 
 /** What the account gates read: the fields `guardedProcedure` checks. */
-type GatedAccount = Pick<SessionUser, 'bannedAt' | 'onboarding' | 'muted'> &
-  Parameters<typeof requiresEmailVerification>[0];
+type GatedAccount = {
+  bannedAt?: Date | null;
+  onboarding?: number | null;
+  muted?: boolean | null;
+} & NonNullable<Parameters<typeof requiresEmailVerification>[0]>;
 
 /** The account gates `guardedProcedure` applies, as one predicate both entry points share. */
 function accountRefusal(user: GatedAccount): AppAssistantRefusal | null {
