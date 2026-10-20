@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -26,7 +26,9 @@ const {
   unarchiveCreatorShopItem,
   updateCreatorShopItem,
 } = await import('~/server/services/creator-shop.service');
-const { cosmeticEntityCaches, userCosmeticCache } = await import('~/server/redis/caches');
+const { cosmeticCache, cosmeticEntityCaches, userCosmeticCache } = await import(
+  '~/server/redis/caches'
+);
 
 const CREATOR = 11;
 const BUYER = 12;
@@ -415,6 +417,69 @@ describe('equipped cosmetics shown to other users', () => {
     const worn = await userCosmeticCache.fetch([BUYER]);
 
     expect(worn[BUYER].cosmetics.map((c) => c.cosmeticId)).toEqual([OTHER_COSMETIC]);
+  });
+});
+
+describe('decorations placed on content, shown to other users', () => {
+  const CREATOR_IMAGE = IMAGE;
+  const BUYER_IMAGE = IMAGE + 1;
+  const SHOP_FRAME_IMAGE = IMAGE + 2;
+  // Placed before withholding existed, so no sweep took them off: the creator's own image and a
+  // buyer's (withheld is per cosmetic, not per holder), beside a shop frame with no creator.
+  const placed = () =>
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { cosmeticId: COSMETIC, equippedToId: CREATOR_IMAGE, userData: null, createdById: CREATOR },
+      { cosmeticId: COSMETIC, equippedToId: BUYER_IMAGE, userData: null, createdById: CREATOR },
+      {
+        cosmeticId: OTHER_COSMETIC,
+        equippedToId: SHOP_FRAME_IMAGE,
+        userData: null,
+        createdById: null,
+      },
+    ] as never);
+  const frame = (id: number) => ({ id, name: 'Frame', type: 'ContentDecoration', data: {} });
+
+  let fetchCosmetics: typeof cosmeticCache.fetch;
+  beforeEach(() => {
+    fetchCosmetics = cosmeticCache.fetch;
+    cosmeticCache.fetch = (async () => ({
+      [COSMETIC]: frame(COSMETIC),
+      [OTHER_COSMETIC]: frame(OTHER_COSMETIC),
+    })) as never;
+    dbMock.dbWrite.$queryRaw.mockReset();
+  });
+  afterEach(() => {
+    cosmeticCache.fetch = fetchCosmetics;
+  });
+
+  it("leave out a withheld cosmetic, on the creator's content and a buyer's", async () => {
+    placed();
+
+    const frames = await cosmeticEntityCaches.Image.fetch([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+
+    expect(Object.keys(frames).map(Number)).toEqual([SHOP_FRAME_IMAGE]);
+  });
+
+  it('keep a published one', async () => {
+    storedListing = listingRow(LIVE);
+    placed();
+
+    const frames = await cosmeticEntityCaches.Image.fetch([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+
+    expect(Object.keys(frames).map(Number).sort()).toEqual([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+    expect(frames[CREATOR_IMAGE]).not.toHaveProperty('createdById');
   });
 });
 
