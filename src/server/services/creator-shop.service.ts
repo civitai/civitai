@@ -22,12 +22,14 @@ import {
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
+  isListingDisplayable,
   patchCosmeticData,
   recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
+import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
 import {
   stickerEconomicsFromCosmeticData,
   stickerSlugSearchTerm,
@@ -1266,11 +1268,27 @@ export const deleteCreatorShopItem = async ({
   // Deleting wipes purchase records — a moderator-only action; creators archive.
   if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // The creator's own listing is what withholds its cosmetic, so a withheld one leaves that on the
+  // cosmetic before it goes; holders of an approved one keep wearing it.
+  const keepWithheld =
+    existing.cosmeticId != null &&
+    existing.cosmetic?.createdById != null &&
+    existing.addedById === existing.cosmetic.createdById &&
+    !isListingDisplayable({
+      status: existing.status,
+      meta: existing.meta as CosmeticShopItemMeta | null,
+      rejectionReason: existing.rejectionReason,
+    });
+  if (keepWithheld)
+    await dbWrite.$executeRaw`
+      UPDATE "Cosmetic" SET flags = flags | ${CosmeticFlag.Withheld}::int WHERE id = ${existing.cosmeticId}::int
+    `;
   // Hard delete. FK cascades wipe the purchase records (sales totals), any
   // official-shop section links, and other creators' resale listings. Buyers
   // keep what they bought: UserCosmetic is keyed by cosmeticId and the Cosmetic
   // row is intentionally left in place.
   await dbWrite.cosmeticShopItem.delete({ where: { id } });
+  if (keepWithheld) await unequipWithheldCosmetic(existing.cosmeticId);
 
   // Free its featured slot.
   if (existing.addedById) {
