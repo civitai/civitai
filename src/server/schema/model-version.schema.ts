@@ -321,11 +321,44 @@ export const modelVersionUpsertSchema = z.object({
   // recipe: z.array(recipeSchema).optional(),
 });
 
+// A cleared number input submits '', which `z.coerce.number()` would read as 0.
+const blankToUndefined = (value: unknown) => (value === '' || value === null ? undefined : value);
+const rangeNumber = z.preprocess(blankToUndefined, z.coerce.number());
+
+/** A recommended value and the advisory band around it; the generator paints the band on the slider. */
+export const recommendedRangeSchema = z
+  .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
+  .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
+  .refine((r) => r.min <= r.default && r.default <= r.max, {
+    error: 'Default must be within min and max',
+    path: ['default'],
+  });
+
+/** A checkpoint's generation settings. */
+export const recommendedGenerationSettingsSchema = z.object({
+  /** The LoRA the generator's Turbo picker starts on with this checkpoint, over the ecosystem default. */
+  turboLora: z.object({ id: z.number().int().positive() }).nullish(),
+});
+
+/**
+ * A LoRA's turbo block. Its presence marks the version as a turbo variant, so both ranges are
+ * required: the generator applies them whole when the LoRA is on.
+ */
+export const turboSettingsSchema = z.object({
+  steps: recommendedRangeSchema,
+  cfgScale: recommendedRangeSchema,
+});
+
+/** The model types a turbo block may be saved on. */
+export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];
+
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({
   minStrength: z.coerce.number().nullish(),
   maxStrength: z.coerce.number().nullish(),
   strength: z.coerce.number().nullish(),
+  generation: recommendedGenerationSettingsSchema.nullish(),
+  turbo: turboSettingsSchema.nullish(),
 });
 
 export const linkedComponentSettingsSchema = z.object({

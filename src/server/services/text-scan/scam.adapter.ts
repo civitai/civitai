@@ -1,6 +1,7 @@
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
+import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { createTextScanAdapter } from '~/server/services/text-scan/adapter';
 import { scamSubjectText } from '~/server/services/text-scan/profiles/scam-text';
 import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-scan/types';
@@ -73,7 +74,7 @@ export const scamModerationAdapters = Object.fromEntries(
   SCAM_ENTITY_TYPES.map((entityType) => [
     entityType,
     createTextScanAdapter(entityType, {
-      applyTextScan: (args) => applyScamVerdict(entityType, args),
+      applyTextScan: withCsamHold(entityType, (args) => applyScamVerdict(entityType, args)),
     }),
   ])
 ) as Record<ScamEntityType, ModerationAdapter>;

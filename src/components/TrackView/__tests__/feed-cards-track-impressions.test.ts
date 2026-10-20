@@ -77,9 +77,6 @@ const EXEMPT: Record<string, string> = {
   'components/Games/NewOrder/JudgmentHistory.tsx:JudgmentHistoryItem': 'game history, not a feed',
   'components/ImageGeneration/GenerationForm/ResourceSelectModal/ResourceHitList.tsx:<inline>':
     'generator resource picker',
-  'components/Model/ModelDiscussion/ModelDiscussionV2.tsx:<inline>': 'comment threads',
-  'components/ResourceReview/ResourceReviewsGrid.tsx:ResourceReviewCard':
-    'reviews are not an impression entity type',
   'components/Tool/ToolsInfinite.tsx:ToolCard': 'tools are not an impression entity type',
   // These record their cover Image through AspectRatioImageCard's `image`, but
   // pass no `impression` of their own: their entity is not an impression type.

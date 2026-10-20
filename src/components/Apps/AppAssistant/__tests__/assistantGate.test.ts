@@ -442,3 +442,87 @@ describe('report_ready alongside other calls', () => {
     expect(decision.refuse).toMatch(/ Then call report_ready again\.$/);
   });
 });
+
+describe('subagent calls and the per-reply limit', () => {
+  // The id of the dispatch_agent call that started the subagent, as the chat passes it.
+  const child = { ...ctx, subagent: 'call-dispatch-1' };
+
+  it('leaves a subagent’s calls out of the count, so parent and subagent calls past 150 run', () => {
+    const gate = createAssistantGate();
+    // 97 parent + 113 subagent = 210 calls, interleaved; the parent alone stays under 150.
+    for (let i = 0; i < 113; i++) {
+      if (i < 97)
+        expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
+      expect(gate.beforeToolCall('sandbox__read_file', {}, child)).toEqual({ allow: true });
+    }
+  });
+
+  it('still ends the reply on the parent’s 151st call, however many subagent calls ran', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 150; i++) {
+      expect(gate.beforeToolCall('sandbox__list_dir', {}, ctx)).toEqual({ allow: true });
+      expect(gate.beforeToolCall('sandbox__list_dir', {}, child)).toEqual({ allow: true });
+    }
+    expect(gate.beforeToolCall('sandbox__list_dir', {}, ctx)).toEqual(STOP_AT_LIMIT);
+    // The chat itself ends subagents still running when the reply ends; the page never refuses them.
+    expect(gate.beforeToolCall('sandbox__list_dir', {}, child)).toEqual({ allow: true });
+  });
+
+  it('counts the dispatch_agent call itself, which is the parent’s', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 149; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    expect(gate.beforeToolCall('dispatch_agent', {}, ctx)).toEqual({ allow: true });
+    expect(gate.beforeToolCall('dispatch_agent', {}, ctx)).toEqual(STOP_AT_LIMIT);
+  });
+});
+
+describe('report_ready while a subagent runs', () => {
+  const readyResult = (gate: ReturnType<typeof createAssistantGate>) =>
+    Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx));
+  const dispatched: ChatToolResult = {
+    name: 'dispatch_agent',
+    input: { task: 'Find where auth is handled', mode: 'read' },
+    output: {
+      kind: 'subagent',
+      status: 'done',
+      summary: 'In src/auth.ts.',
+      steps: 3,
+      toolCalls: 2,
+      activity: [],
+    },
+    isError: false,
+  };
+  const childRead: ChatToolResult = {
+    name: 'sandbox__read_file',
+    input: { path: 'my-app/src/auth.ts' },
+    output: 'export {}',
+    isError: false,
+    subagent: 'call-dispatch-1',
+  };
+
+  async function passingGate() {
+    const gate = gateInConversation();
+    gate.onToolResult({ name: 'sandbox__list_dir', input: {}, output: 'a', isError: false });
+    await allPassing(gate);
+    return gate;
+  }
+
+  it('fails while a dispatch_agent of the same step has not returned', async () => {
+    const gate = await passingGate();
+    expect(gate.beforeToolCall('dispatch_agent', dispatched.input, ctx)).toEqual({ allow: true });
+    // The subagent's own calls come and go meanwhile.
+    gate.beforeToolCall(childRead.name, childRead.input, { ...ctx, subagent: 'call-dispatch-1' });
+    gate.onToolResult(childRead);
+    expect(readyDecision(gate)).toEqual({ allow: true });
+    await expect(readyResult(gate)).rejects.toThrow(/Call report_ready on its own/);
+  });
+
+  it('says ready once the subagent returned, since it only read', async () => {
+    const gate = await passingGate();
+    gate.beforeToolCall('dispatch_agent', dispatched.input, ctx);
+    gate.beforeToolCall(childRead.name, childRead.input, { ...ctx, subagent: 'call-dispatch-1' });
+    gate.onToolResult(childRead);
+    gate.onToolResult(dispatched);
+    await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+});

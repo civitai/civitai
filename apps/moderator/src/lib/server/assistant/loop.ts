@@ -1,3 +1,4 @@
+import { isHttpError } from '@sveltejs/kit';
 import type { TurnEvent, TurnSource, TurnStatus, TurnToolCall } from '$lib/assistant/types';
 import { unverifiedCitations } from '$lib/assistant/answer';
 import type { ChatMessage, Completion, ToolCall, ToolSpec } from './openrouter';
@@ -14,10 +15,36 @@ export const DAILY_TOKEN_CAP = 2_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
 /** A whole turn; past this the in-flight model call is aborted. */
 export const TURN_DEADLINE_MS = 4 * 60_000;
-/** One tool result as the model sees it, roughly: see `fitJson`. */
-export const MAX_TOOL_CHARS = 40_000;
+/**
+ * One tool result as the model sees it, roughly: see `fitJson`. Every later round resends it, so a
+ * turn's prompt tokens grow with the sum of its results, not the last one.
+ */
+export const MAX_TOOL_CHARS = 20_000;
+/** Tokens one question may spend before it must answer with what it has, unless configured. */
+export const TURN_TOKEN_BUDGET = 60_000;
+export const BUDGET_NOTICE =
+  '_Stopped at this question’s token budget. Ask to continue if you need more._';
+
+// Appended to the moderator's question, never stored with it. GLM reasons at length unless steered;
+// the shape follows the pilot moderator's own reasoning instruction for GLM.
+export const REASONING_NOTE = `
+
+# Reasoning
+Reason in telegraphic bullets, never prose, through these steps in order:
+1. Ask: what exactly was asked, and what was not.
+2. Lookups: the fewest that answer it.
+3. Results: what they show, and what they do not.
+4. Key points: the 1-10 points the answer needs.
+Never restate the request. Never put the reasoning in the answer.`;
 
 const TIMED_OUT = 'The lookup timed out.';
+// A filed tool request means the question needs something the assistant cannot do. It stops there and
+// asks, rather than spending the turn on what it can do, which the moderator usually already knows.
+const STOPS_TURN = new Set(['request_tool']);
+const STOP_AFTER_REQUEST =
+  'You filed a tool request. Stop investigating now: tell the moderator what you could not do and that you filed the request, report only what you had already found that answers the question, and ask whether they want you to look into anything else with the tools you have.';
+const STOP_AT_BUDGET =
+  'This question has reached its token budget. Answer now with what you have found, and say what you could not check.';
 
 export type AnyTool = {
   name: string;
@@ -32,9 +59,15 @@ export type TurnOutcome = {
   toolCalls: TurnToolCall[];
   sources: TurnSource[];
   unverified: string[];
+  /** Every round's reasoning, in order, capped at `MAX_REASONING_CHARS`. Null when the model gave none. */
+  reasoning: string | null;
   promptTokens: number;
   completionTokens: number;
 };
+
+/** Kept for the moderator to read, not resent to the model, so the cap only bounds the row and page. */
+export const MAX_REASONING_CHARS = 20_000;
+export const REASONING_CUT = '\n\n[Reasoning cut here: it ran past what is kept.]';
 
 export async function runTurn(input: {
   system: string;
@@ -45,6 +78,8 @@ export async function runTurn(input: {
   ctx: ToolContext;
   /** Tokens left in the moderator's day. The turn stops once it has spent them. */
   budget: number;
+  /** Tokens this question may spend before it must answer. Defaults to `TURN_TOKEN_BUDGET`. */
+  turnBudget?: number;
   /** Refs earlier turns in this chat returned, which an answer may still cite. */
   knownRefs: string[];
   complete: (req: {
@@ -67,12 +102,13 @@ export async function runTurn(input: {
       { role: 'user', content: h.prompt },
       { role: 'assistant', content: h.answer ?? '(no answer was given to this)' },
     ]),
-    { role: 'user', content: input.prompt },
+    { role: 'user', content: input.prompt + REASONING_NOTE },
   ];
   const toolCalls: TurnToolCall[] = [];
   const sources = new Map<string, TurnSource>();
   let promptTokens = 0;
   let completionTokens = 0;
+  const reasoning: string[] = [];
 
   const finish = (
     status: TurnOutcome['status'],
@@ -81,7 +117,13 @@ export async function runTurn(input: {
   ): TurnOutcome => {
     clearTimeout(timer);
     const known = [...input.knownRefs, ...sources.keys()];
+    const thought = reasoning.join('\n\n');
     return {
+      reasoning: !thought
+        ? null
+        : thought.length > MAX_REASONING_CHARS
+        ? thought.slice(0, MAX_REASONING_CHARS) + REASONING_CUT
+        : thought,
       status,
       answer,
       error,
@@ -93,14 +135,21 @@ export async function runTurn(input: {
     };
   };
 
+  // Why the next round must be the last, if anything has said so.
+  let stopWith: 'request' | 'budget' | null = null;
+
   try {
     for (let round = 0; round <= MAX_ROUNDS; round++) {
-      const last = round === MAX_ROUNDS || now() > deadline - TOOL_TIMEOUT_MS;
+      const last = stopWith !== null || round === MAX_ROUNDS || now() > deadline - TOOL_TIMEOUT_MS;
       if (last)
         messages.push({
           role: 'user',
           content:
-            'You are out of tool calls for this turn. Answer now with what you have found, and say what you could not check.',
+            stopWith === 'request'
+              ? STOP_AFTER_REQUEST
+              : stopWith === 'budget'
+              ? STOP_AT_BUDGET
+              : 'You are out of tool calls for this turn. Answer now with what you have found, and say what you could not check.',
         });
       const completion = await input.complete({
         messages,
@@ -110,10 +159,15 @@ export async function runTurn(input: {
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
+      const thought = completion.message.reasoning?.trim();
+      if (thought) reasoning.push(thought);
       const calls = last ? [] : completion.message.tool_calls ?? [];
 
       if (!calls.length) {
         const answer = completion.message.content?.trim() || null;
+        // Said by the app, not left to the model: a budget stop must never read as a full answer.
+        if (answer && stopWith === 'budget')
+          return finish('done', `${answer}\n\n${BUDGET_NOTICE}`, null);
         return answer
           ? finish('done', answer, null)
           : finish('error', null, 'The model returned an empty answer.');
@@ -130,6 +184,9 @@ export async function runTurn(input: {
         for (const s of r.sources) sources.set(s.ref, s);
         messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
       }
+      if (results.some((r) => STOPS_TURN.has(r.log.name) && !r.log.error)) stopWith = 'request';
+      else if (promptTokens + completionTokens >= (input.turnBudget ?? TURN_TOKEN_BUDGET))
+        stopWith = 'budget';
     }
     return finish('error', null, 'The model did not answer.');
   } catch (e) {
@@ -137,6 +194,8 @@ export async function runTurn(input: {
       ? 'The turn took too long and was stopped.'
       : e instanceof Error
       ? e.message
+      : isHttpError(e)
+      ? e.body.message
       : String(e);
     return finish('error', null, message);
   }

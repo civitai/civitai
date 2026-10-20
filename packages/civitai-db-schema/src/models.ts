@@ -90,6 +90,8 @@ export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
 
 export type EntityModerationStatus = "Pending" | "Succeeded" | "Failed" | "Expired" | "Canceled";
 
+export type TextScanHoldStatus = "Pending" | "Dismissed" | "Confirmed";
+
 export type ImageEngagementType = "Favorite" | "Hide";
 
 export type ImageOnModelType = "Example" | "Training";
@@ -1773,6 +1775,29 @@ export interface TextScanPrompt {
   note: string | null;
   createdById: number | null;
   createdAt: Date;
+}
+
+export interface TextScanHold {
+  id: number;
+  entityType: string;
+  entityId: number;
+  label: string;
+  textHash: string;
+  status: TextScanHoldStatus;
+  userId: number | null;
+  text: string;
+  reason: string;
+  workflowId: string | null;
+  promptId: number | null;
+  contentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  decidedAt: Date | null;
+  decidedById: number | null;
+  decisionNote: string | null;
+  hiddenAt: Date | null;
+  restoredAt: Date | null;
+  meta: JsonValue | null;
 }
 
 export interface ImageEngagement {

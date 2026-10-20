@@ -37,7 +37,13 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
   const raw = pgliteRaw(db as PGlite);
-  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+  return {
+    $executeRaw: raw.executeRaw,
+    $queryRaw: raw.queryRaw,
+    // The item edit reads and writes its row through the shared fakes, inside its lock.
+    cosmetic: dbMock.dbWrite.cosmetic,
+    cosmeticShopItem: dbMock.dbWrite.cosmeticShopItem,
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
@@ -893,7 +899,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it("can't be archived by its creator", async () => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await expect(shop.archiveCreatorShopItem({ userId: CREATOR, id })).rejects.toThrow(refusal);
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
@@ -905,7 +911,7 @@ describe('an item in a mystery pack on sale', () => {
     ['in a platform box', { platform: true }],
   ])('can be archived when %s', async (_label, state) => {
     const id = await inLivePack(state);
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await shop.archiveCreatorShopItem({ userId: CREATOR, id });
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
@@ -918,7 +924,7 @@ describe('an item in a mystery pack on sale', () => {
        VALUES (1, 900, 'Badge 1', $1, 'Published') RETURNING id`,
       [OTHER]
     );
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
       ...ownedItem(resold.id),
       addedById: OTHER,
     } as never);
@@ -929,7 +935,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it("a pack's own listing can't be archived or restored by its creator", async () => {
     const { boxId, shopItemId } = await submit();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
       ...ownedItem(shopItemId),
       cosmeticId: null,
       cosmetic: null,
@@ -947,7 +953,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it('can be archived by a moderator', async () => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await shop.archiveCreatorShopItem({ userId: MOD, isModerator: true, id });
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
@@ -980,7 +986,7 @@ describe('an item in a mystery pack on sale', () => {
     ],
   ])('can be %s by its creator', async (_label, act, data) => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await act(id);
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalledWith(
@@ -990,7 +996,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it("can't be capped by its creator", async () => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await expect(
       shop.updateCreatorShopItem({ userId: CREATOR, id, availableQuantity: 10 })

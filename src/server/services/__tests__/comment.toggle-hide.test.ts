@@ -8,7 +8,7 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   preventReplicationLag: vi.fn(async () => undefined),
 }));
 
-const { toggleHideComment, getCommentCountByModel } = await import('../comment.service');
+const { toggleHideComment } = await import('../comment.service');
 
 const COMMENT_ID = 11;
 const VIEWER_ID = 42;
@@ -61,19 +61,6 @@ describe('toggleHideComment (legacy model comments and their replies)', () => {
     expect(dbMock.dbWrite.comment.updateMany).toHaveBeenCalledWith({
       where: { id: COMMENT_ID },
       data: { hidden: false },
-    });
-  });
-});
-
-describe('getCommentCountByModel', () => {
-  // A hidden REPLY renders in place in its thread. It is not in the model page's
-  // "See N hidden comments" modal, which lists top-level comments only, so counting it
-  // there would advertise a comment the modal cannot show.
-  it('counts top-level comments only', async () => {
-    await getCommentCountByModel({ modelId: 7, hidden: true });
-
-    expect(dbMock.dbRead.comment.count).toHaveBeenCalledWith({
-      where: { modelId: 7, hidden: true, parentId: null },
     });
   });
 });

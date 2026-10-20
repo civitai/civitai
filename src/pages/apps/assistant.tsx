@@ -10,6 +10,8 @@ type AppAssistantPageProps = {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, or null when this deployment has none. */
   sandboxUrl: string | null;
+  /** The assistant may start read-only subagents. */
+  subagents: boolean;
 };
 
 export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
@@ -32,11 +34,21 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
     const { env } = await import('~/env/server');
     // No route CSP: a header CSP persists across the tab's client-side navigations and would block
     // payment and captcha frames on later pages.
-    return { props: { canPreview, sandboxUrl: env.APP_ASSISTANT_SANDBOX_URL ?? null } };
+    return {
+      props: {
+        canPreview,
+        sandboxUrl: env.APP_ASSISTANT_SANDBOX_URL ?? null,
+        subagents: !!features?.appAssistantSubagents,
+      },
+    };
   },
 });
 
-export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistantPageProps) {
+export default function AppAssistantPage({
+  canPreview,
+  sandboxUrl,
+  subagents,
+}: AppAssistantPageProps) {
   return (
     <>
       <Meta title="App Assistant — Civitai Apps" deIndex />
@@ -44,7 +56,11 @@ export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistan
         title="App Assistant"
         subtitle="Describe an app and the assistant builds it while you watch."
       >
-        <AppAssistantWorkspace canPreview={canPreview} sandboxUrl={sandboxUrl} />
+        <AppAssistantWorkspace
+          canPreview={canPreview}
+          sandboxUrl={sandboxUrl}
+          subagents={subagents}
+        />
       </AppsPageLayout>
     </>
   );

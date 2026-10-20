@@ -85,6 +85,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'Storyline',
   'StorylineBranchChoice',
   'Tag',
+  'TextScanHold',
   'TrustedSpokeDomain',
   'UserHub',
   'UserMembershipOverride',

@@ -9,6 +9,10 @@ import { createNotification } from '~/server/services/notification.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
 import {
+  writeTextScanRuling,
+  type TextScanModelRuling,
+} from '~/server/services/text-scan/label-capture';
+import {
   appealGrantCoversText,
   buildTextScanFlagEntry,
   readTextScanFlags,
@@ -630,7 +634,9 @@ export async function grantModelTextScanPoi({
   });
   if (!before?.poi) return false;
 
-  const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
+  const [after] = await writeTextScanRuling(
+    { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
+    (tx) => tx.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
     SET poi = FALSE,
         nsfw = CASE WHEN m.minor THEN m.nsfw
@@ -676,7 +682,9 @@ export async function grantModelTextScanPoi({
       }
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
-  `;
+  `,
+    (rows) => rows.length > 0
+  );
   if (!after) return false;
 
   const { applyModelFlagSideEffects } = await loadModelService();
@@ -729,6 +737,7 @@ export async function stampModelTextScanAppeal({
   reason,
   note,
   expectTextHash,
+  heldDetection,
 }: {
   modelId: number;
   userId: number;
@@ -740,6 +749,8 @@ export async function stampModelTextScanAppeal({
   note?: string;
   /** Stamp only while the first label's flag still carries this text hash. */
   expectTextHash?: string;
+  /** A held detection being ruled on: the verdict its label records, as the flag entry may not carry it whole. */
+  heldDetection?: TextScanModelRuling['heldDetection'];
 }): Promise<number> {
   if (!labels.length) return 0;
   // A grant covers the text the moderator reviewed, per label because the scan that owns a label
@@ -749,7 +760,9 @@ export async function stampModelTextScanAppeal({
   if (granted && !labels.every((label) => grantHashes?.[label]))
     throw new Error('A granted appeal needs the grant hash it covers for every label');
   const hashes = JSON.stringify(granted ? grantHashes : {});
-  return dbWrite.$executeRaw`
+  return writeTextScanRuling(
+    { modelId, labels, decision, via, moderatorId: userId, reason, note, heldDetection },
+    (tx) => tx.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
@@ -776,7 +789,9 @@ export async function stampModelTextScanAppeal({
           ? Prisma.sql`AND ${flagEntryPath(labels[0])}->>'textHash' = ${expectTextHash}`
           : Prisma.empty
       }
-  `;
+  `,
+    (changed) => changed > 0
+  );
 }
 
 export async function reassertModelPoiRestrictions(modelId: number) {

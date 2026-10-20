@@ -141,6 +141,7 @@ describe('turns', () => {
         toolCalls: [],
         sources: [],
         answer: 'a',
+        reasoning: null,
         unverified: [],
         error: null,
         promptTokens: 100,
@@ -203,6 +204,7 @@ describe('turns', () => {
       toolCalls,
       sources,
       answer: 'see [user:5]',
+      reasoning: '- look up 5',
       unverified: ['user:6'],
       error: null,
       promptTokens: 7,
@@ -214,9 +216,23 @@ describe('turns', () => {
       playbookVersion: 3,
       toolCalls,
       sources,
+      reasoning: '- look up 5',
       unverified: ['user:6'],
       totalTokens: 10,
     });
+    expect((await store.listAuditTurns({}))[0]).toMatchObject({ reasoning: '- look up 5' });
+  });
+
+  it('adds the reasoning column to a table created before it existed', async () => {
+    // The file is re-run in place, so the ALTER must apply to an existing table and re-run cleanly.
+    await pg.query(`ALTER TABLE assistant_turn DROP COLUMN reasoning`);
+    await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
+    await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
+    const cols = await pg.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'assistant_turn' AND column_name = 'reasoning'`
+    );
+    expect(cols.rows).toHaveLength(1);
   });
 });
 

@@ -1609,6 +1609,27 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
+  // Each stamp records one label-store label; a moderator-kind one would count the appeal outcome
+  // toward consensus.
+  it('records an upheld minor appeal once, as the appeal outcome', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { textScanFlags: { minor: { workflowId: 'wf-1', textHash: 'h-1' } } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledTimes(1);
+    const [stamp] = mockStampModelTextScanAppeal.mock.calls[0] as [{ via?: string }];
+    expect(stamp).toMatchObject({ decision: 'appealUpheld', labels: ['minor'] });
+    expect(stamp.via ?? 'appeal').toBe('appeal');
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ entityId: 42, activity: 'setMinor' })
+    );
+  });
+
   it('overturns by reverting the flag and approving the appeal', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,

@@ -167,16 +167,51 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## The current snapshot, 2026-10-16
+## The current snapshot, 2026-10-19
 
-`__tests__/fixtures/catalog-production-2026-10-16.json` is what the CI gate compares against
-(`gate-cli.ts`'s default). It was captured read-only with `drift --dump-catalog`. It is the first capture that includes `ON DELETE`/`ON UPDATE` and `validated`
-for each foreign key. Reproduce with:
+`__tests__/fixtures/catalog-production-2026-10-19.json` is what the CI gate compares against
+(`gate-cli.ts`'s default). It was captured read-only with `drift --dump-catalog` after the
+`Thread` entity-FK cascade migration (`20261101120000_thread_entity_fk_cascade`, #6155) was
+applied in production. Reproduce with:
 
 ```bash
 pnpm --filter @civitai/db-schema drift \
-  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-16.json
+  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-19.json
 ```
+
+```
+declared owning-side relations : 611
+checked against the database   : 582
+skipped (view / absent table)  : 29
+MISSING foreign key            : 32
+wrong referential action       : 67  (all ON UPDATE; ON DELETE agrees on every one)
+MISSING column                 : 0
+nullability checked            : 3296
+nullability drift              : 11
+uniqueness declarations checked: 159
+missing unique index           : 2
+```
+
+That makes 112 findings, and `drift-baseline.json` accepts all 112. Against the baseline as it
+stood before the recapture (119 entries), 16 dropped out and 9 were added:
+
+- **Dropped (16).** The 15 `Thread` entity relations that were declared `ON DELETE Cascade`
+  against a database `SetNull`, and `missing-foreign-key|Thread|challengeId`, which never had a
+  foreign key. The cascade migration flipped the 15 and added the sixteenth; all are validated.
+- **Added (9).** All `referential-action`, all `ON UPDATE` only (`Cascade` declared, `NoAction`
+  in the database), on the hand-written mystery-box keys (`BoxTier`, `BoxRevision`,
+  `BoxOddsSnapshot`, three on `BoxContent`, `ItemDefinition.cosmeticId`,
+  `Item.itemDefinitionId`, `CosmeticShopItem.itemDefinitionId`). Same inert class as the App
+  Blocks batch below; `ON DELETE` agrees on every one.
+
+The 2026-10-16 capture this one replaces is not kept: it lagged the schema on nothing the
+2026-08-03 fixture does not already cover, and a 640 KB fixture earns its place only by
+exercising a path.
+
+## The previous snapshot, 2026-10-16
+
+The 2026-10-16 capture was the first to include `ON DELETE`/`ON UPDATE` and `validated` for
+each foreign key. Its report:
 
 ```
 declared owning-side relations : 600
@@ -207,7 +242,7 @@ baseline (67 entries), 22 dropped out and 59 were added:
   (`WHERE "announcementId" IS NOT NULL`), the schema comment calls that deliberate, and the
   differ reads only total unique indexes. Postgres treats NULLs as distinct, so duplicates
   are still rejected. It is not the same as a full index, though: `ON CONFLICT
-  ("announcementId")` cannot use a partial index, so a Prisma `upsert` keyed on
+("announcementId")` cannot use a partial index, so a Prisma `upsert` keyed on
   `announcementId` would type-check and then fail at runtime. The only writer today is a
   plain `create`.
 
@@ -368,11 +403,11 @@ signal, not an interlock. Adding `Schema drift gate` to the required checks is w
 
 ### Why a baseline and not `--strict`
 
-`--strict` fails on any finding, and there are 104 on `main` today. A gate red on every run
+`--strict` fails on any finding, and there are 112 on `main` today. A gate red on every run
 teaches everyone to click through it, so it would be switched off within a week — the same
 reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
 
-`drift-baseline.json`, next to this README, records those 104 as accepted. The gate reports
+`drift-baseline.json`, next to this README, records those 112 as accepted. The gate reports
 only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
 act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
 which constraint the change gave up on.
@@ -482,7 +517,8 @@ the PR description.
   baseline against the new one and list what dropped and what was added in the PR. Explain
   every addition: drift that appeared since the previous capture, drift the old capture
   could not measure, or a finding the differ cannot read correctly (the 2026-10-16 recapture
-  had all three). Move the
-  2026-10-16 block in `production-snapshot.test.ts` (the ON UPDATE-only check) onto the new
-  fixture, and keep the 2026-08-03 fixture: the backlog tests need a catalog that lags the
-  schema.
+  had all three). Move the current-snapshot block in `production-snapshot.test.ts` (the ON
+  UPDATE-only check and the `capturedAt` pin) onto the new fixture, re-point
+  `dump-catalog-stamp.test.ts`, the two capture-date regexes in `gate.test.ts` and
+  `DEFAULT_CATALOG` in `gate-cli.ts`, and delete the superseded fixture. Keep the 2026-08-03
+  fixture: the backlog tests need a catalog that lags the schema.

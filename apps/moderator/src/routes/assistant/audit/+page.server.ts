@@ -38,6 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
         chatTitle: redactAddresses(r.chatTitle),
         prompt: redactAddresses(r.prompt),
         answer: r.answer && redactAddresses(r.answer),
+        reasoning: r.reasoning && redactAddresses(r.reasoning),
         toolCalls: r.toolCalls.map((c) => ({
           ...c,
           args: JSON.parse(redactAddresses(JSON.stringify(c.args))) as unknown,

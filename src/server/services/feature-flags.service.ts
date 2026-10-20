@@ -726,6 +726,10 @@ const featureFlags = createFeatureFlags({
   // App Assistant (`/apps/assistant`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
   appAssistant: { availability: [], fliptKey: 'app-assistant' },
+  // App Assistant read-only subagents (`dispatch_agent`). `['mod']` on purpose: moderators get it at
+  // deploy, before the Flipt flag exists; the flag then widens it or turns it off. Off leaves the
+  // chat's `subagents` unset, so non-mods see no change.
+  appAssistantSubagents: { availability: ['mod'], fliptKey: 'app-assistant-subagents' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag

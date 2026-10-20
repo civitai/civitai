@@ -32,7 +32,10 @@ import { SubscriptionRequiredBlock } from '~/components/Subscriptions/Subscripti
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
-import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
 import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
 import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
@@ -214,6 +217,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     level: 'model',
     userSettings,
     isOwner: !model?.user || model.user.id === currentUser?.id,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
   });
 
   const chipProps: Partial<ChipProps> = {
@@ -513,16 +517,10 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 <MetricPrivacyControls
                   level="model"
                   inherited={inheritedMetrics}
-                  disabled={!isActiveCreatorMember}
-                  note={
-                    <>
-                      These stats appear on this model&apos;s page and cards. Set the default for
-                      all your models in Creator Controls.{' '}
-                      {isActiveCreatorMember
-                        ? 'You and moderators always see your real stats.'
-                        : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
-                    </>
-                  }
+                  access={metricPrivacyAccessFor({
+                    isOwner: !model?.user || model.user.id === currentUser?.id,
+                    ownerHasMembership: isActiveCreatorMember,
+                  })}
                 />
               </Stack>
             </Paper>

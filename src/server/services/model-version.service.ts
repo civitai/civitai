@@ -72,6 +72,7 @@ import type {
   UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
+import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
@@ -157,7 +158,11 @@ import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import {
+  getBaseModelConfig,
+  getBaseModelsByGroup,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -528,6 +533,33 @@ function assertOwnerTrainingStatusChange(
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
 
+/** Turbo is an ecosystem opt-in: a turbo block or default turbo LoRA is refused where the ecosystem has no turbo defaults. */
+export function assertRecommendedSettingsForType(
+  settings: ModelVersionUpsertInput['settings'],
+  { modelType, baseModel }: { modelType: ModelType; baseModel?: string | null }
+) {
+  if (settings?.turbo && !TURBO_VARIANT_MODEL_TYPES.includes(modelType))
+    throw throwBadRequestError('Only LoRA versions can be turbo variants');
+  if (settings?.generation && modelType !== 'Checkpoint')
+    throw throwBadRequestError('Only checkpoint versions carry recommended generation settings');
+  const namesTurbo = !!settings?.turbo || !!settings?.generation?.turboLora;
+  if (namesTurbo && !getEcosystemTurboSettings(getBaseModelConfig(baseModel ?? '').ecosystemId))
+    throw throwBadRequestError(
+      `Turbo LoRAs are not supported for ${baseModel ?? 'this base model'}`
+    );
+}
+
+/** The default turbo LoRA reference survives that LoRA being unpublished or edited; only a deleted version is dropped. */
+async function withExistingTurboLora<T extends ModelVersionUpsertInput['settings']>(
+  settings: T
+): Promise<T> {
+  const id = settings?.generation?.turboLora?.id;
+  if (!id) return settings;
+  const lora = await getVersionById({ id, select: { id: true } });
+  if (lora) return settings;
+  return { ...settings, generation: { ...settings?.generation, turboLora: null } };
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -596,6 +628,8 @@ export const upsertModelVersion = async ({
     where: { id: data.modelId },
     select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
+  assertRecommendedSettingsForType(settings, { modelType: model.type, baseModel: data.baseModel });
+  settings = await withExistingTurboLora(settings);
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit

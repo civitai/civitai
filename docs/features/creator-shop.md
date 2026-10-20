@@ -166,8 +166,19 @@ Every writer appends inside the `cosmeticShopItem.update` it was already making 
 
 `getCreatorShopReviewQueue` already selects `meta`, so the moderator detail pane renders it (`HistoryCard`, newest-first, previous-vs-current artwork thumbnails on a swap) with no query change. Items predating the feature show an explicit empty state. Moderator-only for now — the creator-facing manage view still shows only the current status + rejection reason.
 
+## Wearing a creator cosmetic
+
+Approval grants the creator their own copy, but owning a creator cosmetic is not enough to wear it. A creator-made cosmetic is **withheld** (`getWithheldCosmeticIds`, `creator-shop-withheld.ts`) unless its creator's own listing is displayable (`isListingDisplayable`, `creator-shop.data.ts`): `Published`, or the last moderator verdict approved it and no edit since changed what holders see (name, description, artwork, fit offsets, slug). Relisting, restoring and a large price edit send an approved item back to review without withholding it. The verdict is kept on `meta.displayApproved`, set by every review and cleared by a creator's displayed-field edit; listings without it fall back to the history. Other creators' cross-listings never count, and cosmetics with no creator are never withheld.
+
+- `equipCosmetic` and `equipCosmeticToEntity` refuse a withheld cosmetic, and re-check after their write (`refuseIfWithheldAfterEquip`), so a verdict landing mid-equip still takes it off.
+- A non-approve verdict, or an edit that withholds the item, unequips every holder's copy, worn or placed on content (`unequipWithheldCosmetic`), and refreshes the caches that show it. Re-approval does not re-equip.
+- A creator edit reads the listing from the primary and writes it under a row lock, refusing with a conflict if a verdict (or anything but a sale) changed it since the read, so it cannot overwrite a verdict or `displayApproved`.
+- `userCosmeticCache` also drops withheld cosmetics on read, for rows worn before unequipping existed.
+- `user.getCosmetics` returns `withheld` per item, and the inventory shows "In review, not equipable" instead of Equip.
+
 ## Changelog
 
+- **2026-10-19** — Creator cosmetics whose listing isn't approved, or was edited after approval, can no longer be worn: equip is refused, holders are unequipped on a non-approve verdict or a displayed-field edit, and the inventory marks them "In review, not equipable". No migration.
 - **2026-08-05** — Resale listings moved from `User.settings.creatorShop.resoldItemIds` to the `UserCosmeticShopItemResale` table (migration `20260805120000_add_cosmetic_shop_item_resale` — **apply manually**, then run `pnpm tsscript scripts/oneoffs/backfill-cosmetic-resale-listings.ts` to migrate existing resellers off the blob). Each row carries the `sellerShare` it was listed under, so lowering the item's share or turning `sellableByOthers` off no longer changes what an existing reseller is paid or removes the item from their shop; and "who resells my item?" is now an indexed lookup instead of a scan of every user's settings JSON. Creators can now also **edit** `sellableByOthers` / `sellerShare` after publishing without it reaching creators who already list the item. Withdrawing the item itself (delist / archive / takedown) *does* end their listings, with a notification, and bringing it back re-enters review so the cycle can't be used to reset resale terms.
 - **2026-08-05** — Per-item review history recorded on `CosmeticShopItem.meta.history` (submissions, creator edits with before → after per field, verdicts, takedowns) and surfaced in the moderator review queue.
 - **2026-08-03** — Purchases now record their payout split **and each payout's transaction id** (`UserCosmeticShopPurchases.meta`, migration `20260803220000_add_cosmetic_purchase_payout_meta` — **apply manually**), so takedowns refund those payouts directly.

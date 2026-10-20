@@ -109,6 +109,14 @@ export function CosmeticCard({
   );
 }
 
+function InReviewNote() {
+  return (
+    <Text size="sm" c="dimmed" ta="center" data-testid="inventory-in-review">
+      In review, not equipable
+    </Text>
+  );
+}
+
 function InventoryEquippable({ kind }: { kind: EquippableKind }) {
   const { data, isLoading } = useInventoryCosmetics();
   const { set, pending, pendingId } = useEquipSlot(kind);
@@ -121,14 +129,16 @@ function InventoryEquippable({ kind }: { kind: EquippableKind }) {
       empty={`You don't have any ${noun}s yet.`}
     >
       {(item) => {
-        const { equipped } = item;
+        const { equipped, withheld } = item;
         return (
           <CosmeticCard
             key={item.id}
             item={item}
             testId="inventory-equippable"
             footer={
-              equipped ? (
+              withheld && !equipped ? (
+                <InReviewNote />
+              ) : equipped ? (
                 <Stack gap={6}>
                   <Badge variant="light" color="green" fullWidth>
                     Equipped
@@ -194,6 +204,8 @@ export function InventoryFrames() {
                 <Text component={NextLink} href={href} size="sm" c="blue.4">
                   On your {item.equippedToType?.toLowerCase()}
                 </Text>
+              ) : item.withheld ? (
+                <InReviewNote />
               ) : (
                 <Text size="sm" c="dimmed">
                   Not in use

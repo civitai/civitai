@@ -47,6 +47,14 @@
       <p class="text-sm text-red-300">{turn.error ?? 'No answer.'}</p>
     {/if}
 
+    {#if turn.reasoning}
+      <!-- Plain text, escaped by Svelte: model output never reaches {@html} here. -->
+      <details class="mt-3 text-xs text-dark-2">
+        <summary>Reasoning</summary>
+        <p class="mt-2 mb-0 break-words whitespace-pre-wrap">{turn.reasoning}</p>
+      </details>
+    {/if}
+
     <details class="mt-3 text-xs text-dark-2">
       <summary>
         {turn.toolCalls.length ? `${turn.toolCalls.length} lookups` : 'No lookups'} ·

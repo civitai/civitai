@@ -2215,7 +2215,11 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
-import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import {
+  exceedsNsfwLevel,
+  isMature,
+  maxNsfwLevel,
+} from '~/shared/constants/orchestrator.constants';
 
 // =============================================================================
 // Types
@@ -3114,11 +3118,38 @@ function formatStep(
 /**
  * Simplified formatGenerationResponse.
  */
+/**
+ * The orchestrator charges the yellow-Buzz unlock without lifting the workflow's `nsfwLevel` cap, so
+ * when every mature output is rated above the cap the unlock takes the Buzz and releases nothing.
+ */
+export async function assertUnlockReleasesOutput({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const workflow = await getWorkflow({ token, path: { workflowId } });
+  const cap = workflow.nsfwLevel;
+  if (!cap) return;
+  const matureLevels = (workflow.steps ?? [])
+    .flatMap((step) => normalizeStepOutput(step as StepWithOutput))
+    .map((item) => item.nsfwLevel)
+    .filter((level): level is NsfwLevel => !!isMature(level));
+  if (matureLevels.length && matureLevels.every((level) => exceedsNsfwLevel(level, cap)))
+    throw throwBadRequestError(
+      `This generation is limited to ${cap
+        .toUpperCase()
+        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+    );
+}
+
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
   user,
   ...props
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
+  if (props.allowMatureContent === true) await assertUnlockReleasesOutput(props);
   const workflow = await clientUpdateWorkflow(props);
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
@@ -3494,6 +3525,7 @@ export async function getWorkflowStatusUpdate({
       id: workflowId,
       status: result.status!,
       downloadPriority: readDownloadPriority(result),
+      nsfwCap: result.nsfwLevel,
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
