@@ -78,7 +78,7 @@ const nativePoolPlugin = {
 
 // 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
 // optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
-// `deps.optimizer.ssr.include` lists serves the other list's transforms: 148 of 150 files failed
+// `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
 // with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted.
 const optimizerCacheKeyPlugin = {
   name: 'civitai:fs-cache-optimizer-key',
@@ -205,10 +205,6 @@ const prebundledDeps = [
   '@tiptap/html',
   '@axiomhq/axiom-node',
   '@aws-sdk/s3-request-presigner',
-  // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
-  // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
-  // see the PGlite note on `deps.optimizer`, where the total stayed put while 87 tests stopped running.
-  //
   // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
   // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
   // subpath import still resolves through the module runner to the original files and the
@@ -257,21 +253,17 @@ const prebundledDeps = [
   'redis',
   '@aws-sdk/client-s3',
   '@aws-sdk/lib-storage',
-  // `article.service` imports the `/server` subpath, which the bare entry above does not cover.
+  // Subpath: not covered by the bare entry above.
   '@tiptap/html/server',
-  // Both forms: `utils/metadata` imports the bare name AND `/civitai`, and listing one would leave the
-  // other a separate native copy (the subpath hazard above).
+  // Both forms are imported by `utils/metadata`; a subpath left out is a separate native copy.
   '@civitai/generation-metadata',
   '@civitai/generation-metadata/civitai',
-  // Mocked by one file, whose factory already returns `default`.
+  // CommonJS and mocked: its factory must keep `default`.
   'cloudflare',
   // 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
-  // sibling left native loads a second, native copy of core next to the pre-bundled one. Measured with
-  // `@mantine/core` alone: its import cost moved into `@mantine/notifications` (8s -> 181s over 32
-  // files) instead of disappearing, and the run held two instances of every Mantine context.
-  // Natively, `@mantine/core` was ~10s of import per test file that reached it, 28% of the suite's
-  // import time. Mocked by 18 unit test files, 9 of them with a named-only factory; each one was
-  // shown to still serve its consumers under this list (a factory that throws turns the file red).
+  // sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
+  // contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
+  // mock factories keep working (see the `default` note on `deps.optimizer`).
   '@mantine/core',
   '@mantine/hooks',
   '@mantine/dates',
@@ -329,9 +321,10 @@ const unitTestConfig = {
     // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
     // load into one chunk, paid once for the run.
     //
-    // 🔴 A MOCKED package needs `default` in every factory before it goes on this list.
-    // Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory that returns only
-    // named exports stops satisfying its consumers, and the file collects zero tests:
+    // 🔴 A MOCKED CommonJS package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps it as a CJS-interop chunk (`export default require_x()`), so a `vi.mock`
+    // factory that returns only named exports stops satisfying its consumers, and the file collects
+    // zero tests (an ESM package such as Mantine bundles to named exports and is not affected):
     //   Error: [vitest] No "default" export is defined on the "redis" mock.
     // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
     // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
@@ -354,14 +347,12 @@ const unitTestConfig = {
     // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
     // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
     // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
-    // Two big fan-in packages are still blocked the same way:
-    //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
-    //   `next`                3,459 / 114                        — 10 mocking files
+    // `@tabler/icons-react` and `next` are not listed: their `vi.mock` callers have not been checked
+    // against pre-bundling.
     optimizer: {
       ssr: { enabled: true, include: prebundledDeps },
-      // `@vitest-environment happy-dom` / `jsdom` files run in Vite's CLIENT environment, which has
-      // its own optimizer. With only `ssr` enabled, every `prebundledDeps` entry loaded natively for them:
-      // measured, 176 such files averaged 13.7s of import each against 2.2s for a node-env file.
+      // `@vitest-environment happy-dom`/`jsdom` files run in Vite's client environment, which has its
+      // own optimizer; `ssr` alone leaves them loading every entry natively.
       client: { enabled: true, include: prebundledDeps },
     },
   },
