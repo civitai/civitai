@@ -273,9 +273,27 @@ export async function refundWithdrawnShopItem(
   shopItemId: number,
   { limit }: { limit?: number } = {}
 ) {
+  return withShopItemRefundLock(shopItemId, () => runWithdrawnRefund(shopItemId, limit));
+}
+
+/**
+ * The one lock every run that refunds an item's purchases holds: the withdrawn refund, a
+ * moderator's refund and a takedown. Null when it is held elsewhere; `wait` keeps trying for up to
+ * two minutes, for a caller that cannot leave the work to the job.
+ */
+export function withShopItemRefundLock<T>(
+  shopItemId: number,
+  operation: () => Promise<T>,
+  { wait = false }: { wait?: boolean } = {}
+) {
   return withDistributedLock(
-    { key: `creator-shop-withdrawn-refund:${shopItemId}`, ttl: 60, autoRenew: true, maxRetries: 0 },
-    () => runWithdrawnRefund(shopItemId, limit)
+    {
+      key: `creator-shop-withdrawn-refund:${shopItemId}`,
+      ttl: 60,
+      autoRenew: true,
+      ...(wait ? { retryDelay: 500, maxRetries: 240 } : { maxRetries: 0 }),
+    },
+    operation
   );
 }
 
@@ -570,20 +588,13 @@ export async function refundShopPurchases({
         await planItem(shopItemId, owned, clawback, results);
         continue;
       }
-      const ran = await withDistributedLock(
-        {
-          key: `creator-shop-withdrawn-refund:${shopItemId}`,
-          ttl: 60,
-          autoRenew: true,
-          maxRetries: 0,
-        },
-        () =>
-          refundItemPurchases(
-            shopItemId,
-            owned.map((p) => p.buzzTransactionId),
-            { clawback, moderatorId },
-            results
-          )
+      const ran = await withShopItemRefundLock(shopItemId, () =>
+        refundItemPurchases(
+          shopItemId,
+          owned.map((p) => p.buzzTransactionId),
+          { clawback, moderatorId },
+          results
+        )
       );
       if (ran === null)
         for (const p of owned)
