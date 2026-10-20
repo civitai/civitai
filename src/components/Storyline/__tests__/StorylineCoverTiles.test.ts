@@ -15,8 +15,8 @@ const mocks = vi.hoisted(() => ({
   images: [] as { id: number; postId: number }[],
 }));
 
-// The guard's verdict is a switch; the media element and the hash leave markers that carry the
-// style the tile gave them.
+// The guard's verdict is mocks.safe; the media and hash stubs expose what the tile passed down
+// (className, style, data-crop) so tests can read it.
 vi.mock('~/components/ImageGuard/ImageGuard2', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageGuardModule>()),
   ImageGuard2: ({ children }: { children: (safe: boolean) => unknown }) => children(mocks.safe),
@@ -91,7 +91,6 @@ beforeEach(() => {
   mocks.images = [];
 });
 
-// The Manage modal's picker, which tells each tile which slot it is choosing for.
 function renderPicker(slot: 'cover' | 'banner') {
   const container = document.createElement('div');
   document.body.appendChild(container);

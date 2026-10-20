@@ -28,7 +28,7 @@ const {
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  // Straight through to the origin; caching is not what these tests are about.
+  // Straight through to the origin.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   setFetchThroughCache,
 }));
@@ -767,7 +767,6 @@ describe('reading', () => {
         [4, 'browsingLevel'],
       ]);
       expect(hasEarlier).toBe(false);
-      // A tombstone carries no post content.
       expect(chapters[2].post).toBeNull();
       expect(chapters[0].post).toMatchObject({ id: 101, username: `u${OWNER}` });
       // The fields the tombstone decides on are asked for.
@@ -2372,7 +2371,6 @@ describe('covers and cast', () => {
     poi: false,
     ...extra,
   });
-  /** A chosen-image row as the by-id read returns it: the image and the chapter it is in. */
   const picked = (id: number, extra: Record<string, unknown> = {}) => ({
     ...image(id),
     storylineId: 10,
@@ -3284,8 +3282,9 @@ describe('title moderation', () => {
       expect(Object.keys(result).map(Number)).toEqual([1, 3]);
     });
 
-    // The CASE itself is raiseNsfwLevelText's, pinned in its own package; this pins what it is
-    // applied to. Its behaviour on the masks above was checked against Postgres by hand.
+    // The CASE itself is raiseNsfwLevelText's, pinned in its own package
+    // (packages/civitai-shared/src/__tests__/rated-entity-sql.test.ts); this pins what it is
+    // applied to.
     it('getStorylinesInfinite: the level filter raises chapter 1 to the title', async () => {
       await getStorylinesInfinite({
         filter: 'all',
@@ -3444,10 +3443,9 @@ describe('title moderation', () => {
   });
 });
 
-// Justin's ruling: while the title scan holds a storyline as about a minor, nothing in it may be
-// NSFW. Every read and write below holds chapters to `storylineCeiling` (PG-13 here, under an
-// owner ceiling of X). Each case runs once with the flag and once without, the control: an R
-// chapter that is fine under the owner's ceiling alone.
+// While the title scan holds a storyline as about a minor, every read and write below holds
+// chapters to `storylineCeiling`. Each case runs once with the flag and once without it, the
+// control: an R chapter that is fine under the owner's ceiling alone.
 describe('a storyline the title scan holds as about a minor', () => {
   const R = NsfwLevel.R;
   const ALL = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X;

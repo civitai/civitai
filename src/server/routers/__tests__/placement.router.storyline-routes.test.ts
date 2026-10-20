@@ -28,7 +28,6 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
 
 const OWNER = 10;
 
-/** A 400 the way the storyline service throws one. */
 const refusal = (message: string) => {
   try {
     throwBadRequestError(message);

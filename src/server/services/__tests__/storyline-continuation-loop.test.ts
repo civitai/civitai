@@ -76,7 +76,7 @@ const ROOT_POST = 100;
 const STRANGER_POST = 200;
 const COLLABORATOR_POST = 300;
 const STRANGER_X_POST = 400;
-// NsfwLevel flags: PG = 1, X = 8. The storyline's ceiling is PG.
+// The storyline's ceiling is PG.
 const PG = 1;
 const X = 8;
 const ALL_LEVELS = 31;
@@ -319,8 +319,6 @@ describe('the storyline continuation loop', () => {
     expect(db.rows('placement')).toEqual([]);
   });
 
-  // Product rule, from the surface config: a declined PRICED continuation keeps
-  // the standard 30% decline fee for the owner, as remix galleries do.
   it('keeps the 30% decline fee for the owner, refunds the rest, and writes no chapter', async () => {
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);
@@ -344,7 +342,6 @@ describe('the storyline continuation loop', () => {
     const submittedAt = Date.now();
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);
-    // Stamped by submission itself, seven days out: a row with no deadline never expires.
     expect((db.row('placement', { id })!.expiresAt as Date).getTime()).toBe(
       submittedAt + 7 * 24 * 3_600_000
     );
@@ -420,9 +417,8 @@ describe('the storyline continuation loop', () => {
     }
   );
 
-  // Justin's ruling: a storyline whose title the scan found to be about a minor stays up, and
-  // nothing in it may be NSFW, forks included. Its chapters are held to PG-13 whatever the owner
-  // set (storylineCeiling), at submission, at approval and when read.
+  // While the title scan holds a storyline as about a minor, its chapters are held to
+  // `storylineCeiling` whatever the owner set, at submission, at approval and when read.
   describe('a storyline the title scan holds as about a minor', () => {
     const PG13 = 2;
     const R = 4;
@@ -572,7 +568,6 @@ describe('the storyline continuation loop', () => {
         (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS }))
           .items;
 
-      /** Makes the settle that follows the takedown fail, as an outage would. */
       const failSettling = () => {
         const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
         dbMock.dbWrite.$queryRaw.mockImplementation(
@@ -705,7 +700,6 @@ describe('the storyline continuation loop', () => {
           `placement-${id}-holdFee`,
           `placement-${id}-holdPrincipal`,
         ]);
-        // Both holds came back whole: 30 and 70 of the 100 taken.
         expect(
           db
             .rows('placementTransaction')
@@ -773,7 +767,6 @@ describe('the storyline continuation loop', () => {
         expect(await queue()).toEqual([]);
       });
 
-      // One row's settle failing must not stop the rows after it.
       it('settles the rest when one continuation fails to', async () => {
         charge(100);
         const { id: first } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
@@ -877,9 +870,8 @@ describe('the storyline continuation loop', () => {
       });
     });
 
-    // The old rule let an owner decline, and keep the fee, once the chapter's
-    // post was deleted. They could never have accepted it, so it is refunded
-    // instead. Deliberate: if you restore the old decline, the fee comes back.
+    // Refunded rather than declined for a fee: the owner could never have accepted it. Restoring
+    // the old decline brings the fee back.
     it('refunds a continuation whose parent post was deleted, rather than letting it be declined for a fee', async () => {
       charge(100);
       const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);

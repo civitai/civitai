@@ -10,10 +10,7 @@ beforeEach(() => {
   upsert.mockResolvedValue({});
 });
 
-/**
- * Called by the storyline service inside the transaction that marks a
- * storyline Complete, so the status and the space close together.
- */
+/** Writes the mode on the storyline level of the space, through the caller's transaction. */
 describe('setStorylineSpaceMode', () => {
   it('writes the mode on the storyline level of the space, through the transaction', async () => {
     await setStorylineSpaceMode({ storylineId: 9, mode: 'off' }, tx as never);

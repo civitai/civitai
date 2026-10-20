@@ -296,10 +296,10 @@ describe('getStorylineLinkTargets', () => {
     // Ahead of the parent, all of them: the trunk's 203 to 259, and then those behind it nearest first.
     expect(depths).toContain(259);
     expect(depths).toContain(204);
-    // The shallow far end of the long branch is what the cap now leaves out.
+    // The shallow far end of the long branch is what the cap leaves out.
     expect(depths).not.toContain(7);
     expect(Math.min(...depths)).toBeGreaterThan(100);
-    // Shown in story order, as before.
+    // Shown in story order.
     expect(depths).toEqual([...depths].sort((a, b) => a - b));
   });
 

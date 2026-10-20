@@ -234,7 +234,7 @@ describe('buildStorylineLaneList', () => {
 
   it('says whose path forks when the fork is off the canon path, not a canon chapter number', () => {
     const { rows, canonForkOf } = buildStorylineLaneList(offCanon, canonOf(offCanon, [1, 2]));
-    // Shares load only at canon forks, as the page did before.
+    // Shares load only at canon forks.
     expect(Object.fromEntries(canonForkOf)).toEqual({ 2: 1, 3: 1 });
     expect(rows[2].bands).toEqual([
       expect.objectContaining({ kind: 'fork', chapterId: 3, canon: false, author: 'author' }),

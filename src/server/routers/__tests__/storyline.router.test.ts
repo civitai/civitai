@@ -18,7 +18,7 @@ const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  // Straight through to the origin; caching is not what these tests are about.
+  // Straight through to the origin.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   setFetchThroughCache: vi.fn(),
 }));
@@ -69,7 +69,6 @@ function callerFor(
 
 const notBanned = { bannedAt: null, deletedAt: null };
 
-/** A storyline whose first chapter is rated X, with a ceiling of X. */
 const xStory = {
   id: 10,
   userId: OWNER,

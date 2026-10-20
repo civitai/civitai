@@ -74,7 +74,6 @@ const COMPOUND_KEYS: Record<string, string[]> = {
   surface_entityType_entityId: ['surface', 'entityType', 'entityId'],
 };
 
-/** Columns a real row always has, filled on create when the caller leaves them out. */
 const DEFAULTS: Record<string, () => Row> = {
   placement: () => ({
     sellerId: null,
@@ -411,7 +410,6 @@ export function createFakeDb() {
     },
   });
 
-  /** The tagged raw statements this loop sends, by shape; anything else throws. */
   const queryRaw = async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = Array.isArray(strings)
       ? Prisma.sql(strings as TemplateStringsArray, ...values)
@@ -565,7 +563,6 @@ export function createFakeDb() {
       client.$executeRaw.mockImplementation(executeRaw);
       client.$executeRawUnsafe.mockImplementation(executeRawUnsafe);
     }
-    // Interactive transactions roll back every table when the callback throws.
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) => {
       if (typeof fn !== 'function') throw new Error('fake db: only interactive transactions');
       const snapshot = structuredClone(tables);

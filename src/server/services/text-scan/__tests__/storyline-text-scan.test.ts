@@ -288,8 +288,8 @@ describe('applyStorylineTextScan', () => {
       ]);
     });
 
-    // Justin's ruling: a minor in a safe-for-work title is fine. The storyline stays up, and its
-    // chapters are held to safe for work (storylineCeiling).
+    // A minor in a safe-for-work title keeps the storyline up, with its chapters held to
+    // `storylineCeiling`.
     it.each([
       ['PG', NsfwLevel.PG],
       ['PG-13', NsfwLevel.PG13],

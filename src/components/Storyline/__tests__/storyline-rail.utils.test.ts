@@ -16,7 +16,7 @@ const chapter = (chapterId: number, depth: number, extra: Partial<Chapter> = {})
   ...extra,
 });
 
-// A 30-image, 7-chapter path: more than the 20 images the old dots could show.
+// A 30-image, 7-chapter path.
 const SIZES = [4, 4, 5, 4, 4, 4, 5];
 const PATH = SIZES.map((_, i) => chapter(10 + i, i));
 const IMAGE_CHAPTERS = SIZES.flatMap((n, i) => Array<number>(n).fill(10 + i));

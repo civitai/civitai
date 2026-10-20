@@ -215,9 +215,8 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
 });
 
 describe('createFreePlacement — a surface with no free tier', () => {
-  // A storyline may be priced at zero, and its zero-priced continuations are
-  // ordinary rows that spend nothing. A `free` row there would spend the
-  // placer's daily allowance, which is shared with stickers and remix galleries.
+  // A `free` row on a zero-priceable surface would spend the daily allowance shared with stickers
+  // and remix galleries.
   it('refuses a storyline before resolving anything', async () => {
     await expect(
       createFreePlacement({
