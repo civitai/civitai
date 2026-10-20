@@ -15,8 +15,9 @@ import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandli
  *   3. exactly the url of a live file on a model the caller owns now (re-using a file, e.g. a
  *      dataset for further training, or a file on a model transferred to them).
  *
- * Moderators are exempt. Server-side creates (Training Studio publish, bounty award, the Hugging Face
- * transfer job) choose their own url and do not come through here.
+ * Moderators are exempt. Server-side creates (Training Studio publish, the Hugging Face transfer job)
+ * choose their own url and do not come through here. A file copied from an awarded bounty entry is
+ * held to rule 1 for the entry's author (`assertBountyEntryFileUrlAllowed`).
  */
 
 export type StorageObjectUrlMiss =
@@ -213,6 +214,43 @@ export async function findClientFileUrlMiss({
 
   if (await isUrlOfOwnedLiveFile(url, userId)) return null;
   return miss;
+}
+
+/** Rule 1 for the entry's author. No moderator exemption: the author chose the url, not the caller. */
+export function assertBountyEntryFileUrlAllowed({
+  url,
+  authorId,
+  userId,
+  bountyEntryId,
+}: {
+  url: string;
+  authorId: number | null;
+  userId: number;
+  bountyEntryId: number;
+}) {
+  const parsed = parseUploadObjectUrl(url);
+  let reason: ClientFileUrlMiss;
+  if (!parsed.ok) reason = parsed.reason;
+  else if (authorId == null) reason = 'other-user-prefix';
+  else {
+    const key = classifyUploadKey(parsed.key, authorId);
+    if (key.kind === 'own-upload') return;
+    reason = key.kind === 'miss' ? key.reason : 'other-model-version';
+  }
+
+  logToAxiom({
+    type: 'warning',
+    name: 'model-file-url-refused',
+    op: 'bounty-award',
+    userId,
+    authorId,
+    bountyEntryId,
+    reason,
+    url,
+  }).catch(handleLogError);
+  throw throwBadRequestError(
+    "This bounty entry's files can't be copied into a model version. Upload the files to the version instead."
+  );
 }
 
 export async function assertClientFileUrlAllowed({

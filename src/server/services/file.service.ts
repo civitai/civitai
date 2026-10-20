@@ -23,6 +23,7 @@ import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
 
@@ -58,17 +59,19 @@ export const updateEntityFiles = async ({
   const updatedFiles = files.filter((f) => f.id);
 
   if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
+    const counts = await Promise.all(
+      updatedFiles.map((file) =>
+        tx.file.updateMany({
+          where: { id: file.id, entityId, entityType },
           data: {
             ...file,
             metadata: { ...(file.metadata ?? {}), ownRights },
           },
-        });
-      })
+        })
+      )
     );
+    if (counts.some(({ count }) => count !== 1))
+      throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.

@@ -103,6 +103,7 @@ import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
@@ -422,6 +423,26 @@ export const toggleNotifyEarlyAccessHandler = async ({
 const asUserTier = (tier: string | null): SessionUser['tier'] =>
   (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
 
+/** Throws unless every file is the entry author's own upload. Null when there is nothing to copy. */
+async function getAwardedEntryFiles({ bountyId, userId }: { bountyId: number; userId: number }) {
+  const entry = await dbRead.bountyEntry.findFirst({
+    where: { bountyId, benefactors: { some: { userId } } },
+    select: { id: true, userId: true, bounty: true },
+  });
+  if (!entry || !constants.bounties.supportedBountyToModels.some((t) => t === entry.bounty.type))
+    return null;
+
+  const files = await getFilesByEntity({ id: entry.id, type: 'BountyEntry' });
+  for (const file of files)
+    assertBountyEntryFileUrlAllowed({
+      url: file.url,
+      authorId: entry.userId,
+      userId,
+      bountyEntryId: entry.id,
+    });
+  return { entry, files };
+}
+
 export const upsertModelVersionHandler = async ({
   input: { bountyId, ...input },
   ctx,
@@ -724,6 +745,10 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
+    // Before the write: a refused file must not leave a half-built version behind.
+    const bountyCopy =
+      !input.id && bountyId ? await getAwardedEntryFiles({ bountyId, userId }) : null;
+
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
@@ -765,44 +790,28 @@ export const upsertModelVersionHandler = async ({
         // });
       }
 
-      if (bountyId) {
-        // Create model version files from the bounty.
-        const awardedEntry = await dbRead.bountyEntry.findFirst({
-          where: { bountyId, benefactors: { some: { userId } } },
-          select: { id: true, bounty: true },
-        });
-
-        if (
-          awardedEntry &&
-          constants.bounties.supportedBountyToModels.some((t) => t === awardedEntry?.bounty.type)
-        ) {
-          const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
-
-          if (files.length) {
-            await Promise.all(
-              // The url is the awarded entry's file as its author submitted it; it is not checked
-              // against the caller (assertClientFileUrlAllowed).
-              files.map((f) =>
-                createFile({
-                  modelVersionId: version.id,
-                  sizeKB: f.sizeKB,
-                  url: f.url,
-                  type: 'Model',
-                  metadata: {
-                    ...f.metadata,
-                    bountyId: awardedEntry.bounty.id,
-                    bountyEntryId: awardedEntry.id,
-                  },
-                  userId: ctx.user.id,
-                  name: f.name,
-                  select: {
-                    id: true,
-                  },
-                })
-              )
-            );
-          }
-        }
+      if (bountyCopy?.files.length) {
+        const { entry, files } = bountyCopy;
+        await Promise.all(
+          files.map((f) =>
+            createFile({
+              modelVersionId: version.id,
+              sizeKB: f.sizeKB,
+              url: f.url,
+              type: 'Model',
+              metadata: {
+                ...f.metadata,
+                bountyId: entry.bounty.id,
+                bountyEntryId: entry.id,
+              },
+              userId: ctx.user.id,
+              name: f.name,
+              select: {
+                id: true,
+              },
+            })
+          )
+        );
       }
     }
 
