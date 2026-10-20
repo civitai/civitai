@@ -2094,7 +2094,6 @@ export const getCreatorShopReviewQueue = async ({
         // review panel has nobody to attribute it to.
         addedBy: { select: { id: true, username: true, image: true } },
         itemDefinitionId: true,
-        // A mystery pack on sale with an edit waiting is marked in the queue.
         itemDefinition: {
           select: { revisions: { where: { status: 'pending' }, select: { id: true } } },
         },

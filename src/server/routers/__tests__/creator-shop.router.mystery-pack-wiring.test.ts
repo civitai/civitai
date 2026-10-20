@@ -157,13 +157,15 @@ describe('creator mystery pack procedures', () => {
     });
     expect(review.getMysteryPackReview).not.toHaveBeenCalled();
 
-    await caller({ ...ALL_ON, stickers: true }, { isModerator: true }).getMysteryPackReview({
-      id: 3,
-    });
-    expect(review.getMysteryPackReview).toHaveBeenCalledWith({
-      listingId: 3,
-      stickersEnabled: true,
-    });
+    for (const stickers of [true, false]) {
+      review.getMysteryPackReview.mockClear();
+      await caller({ ...ALL_ON, stickers }, { isModerator: true }).getMysteryPackReview({ id: 3 });
+      expect(review.getMysteryPackReview).toHaveBeenCalledTimes(1);
+      expect(review.getMysteryPackReview).toHaveBeenCalledWith({
+        listingId: 3,
+        stickersEnabled: stickers,
+      });
+    }
   });
 
   // The service loads every item it is handed, so the cap holds before it is called.

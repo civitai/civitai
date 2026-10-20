@@ -288,7 +288,8 @@ describe('getMysteryPackReview', () => {
     const result = await read(boxId);
 
     expect(result.revision?.id).toBe(await pendingRevisionId(boxId));
-    expect(result.live).toMatchObject({ version: result.version, price: 500 });
+    // Submitted at version 1; the approval made version 2.
+    expect(result.live).toMatchObject({ version: 2, price: 500 });
     expect(result.diff).toEqual({
       added: [{ tier: 'common', cosmeticId: 7 }],
       removed: [{ tier: 'rare', cosmeticId: 6 }],

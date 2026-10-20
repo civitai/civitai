@@ -69,6 +69,13 @@ export function MysteryPackReviewPanel({ review }: { review: MysteryPackReview }
           : `No edit waiting. Showing live version ${live?.version}.`}
       </Text>
 
+      {revision && revision.baseVersion !== review.version && (
+        <Alert color="yellow">
+          The pack has changed since this edit was made (version {revision.baseVersion}, now{' '}
+          {review.version}). Approving it closes the edit as out of date, and the creator has to
+          edit again.
+        </Alert>
+      )}
       {proposed?.layoutProblem && <Alert color="red">{proposed.layoutProblem}</Alert>}
       {proposed?.priceProblem && <Alert color="red">{proposed.priceProblem}</Alert>}
       {!!problems.length && (

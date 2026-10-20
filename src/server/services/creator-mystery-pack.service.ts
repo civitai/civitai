@@ -135,7 +135,7 @@ type ProposalInput = {
 /**
  * Every check `checkProposal` makes, reported rather than thrown, so the review pane can show why an
  * approval would fail. Values and checks each content by the creator's own listing of it
- * (`addedById`) only. Bounds are computed only once every content passes.
+ * (`addedById`) only. Bounds are null unless the layout and every content are valid.
  */
 export async function evaluateProposal(
   client: Tx,

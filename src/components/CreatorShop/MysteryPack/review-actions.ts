@@ -9,12 +9,15 @@ export function reviewActions({
   status,
   isMysteryPack,
   hasEdit,
+  hasLive,
   loaded,
 }: {
   status: CosmeticShopItemStatus;
   isMysteryPack: boolean;
   /** A mystery pack's pending edit, from its review read. */
   hasEdit: boolean;
+  /** Whether the pack has an approved version, from the same read. */
+  hasLive: boolean;
   /** Whether that read has loaded; a verdict without it would not name the edit it judged. */
   loaded: boolean;
 }) {
@@ -25,17 +28,22 @@ export function reviewActions({
       remove: live,
       verdicts: !live,
       blocked: false,
-      liveEdit: false,
+      rejectLabel: 'Reject',
+      approveLabel: 'Approve & Publish',
       waitingOnCreator: false,
     };
+  // The server makes reject final only for a pack never approved; on any other it turns the edit
+  // down (or, with none waiting, sends the pack back), so the button must not promise finality.
+  const rejectLabel = !hasLive ? 'Reject' : hasEdit ? 'Reject edit' : 'Send back';
   return {
+    // Revert needs no edit named, so it doesn't wait for the read.
     revert: live,
     remove: false,
     // A rejected pack takes no edits, so it never qualifies.
     verdicts: hasEdit || status === CosmeticShopItemStatus.PendingReview,
     blocked: !loaded,
-    // The pack stays on sale whatever the verdict on its edit.
-    liveEdit: hasEdit && live,
+    rejectLabel,
+    approveLabel: hasEdit && hasLive ? 'Approve edit' : 'Approve & Publish',
     waitingOnCreator: loaded && !hasEdit && status === CosmeticShopItemStatus.RequestedChanges,
   };
 }

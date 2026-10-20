@@ -479,6 +479,7 @@ function CreatorShopReviewPage() {
     status: selected?.status ?? CosmeticShopItemStatus.PendingReview,
     isMysteryPack,
     hasEdit: !!boxRevision,
+    hasLive: !!mysteryReview.data?.live,
     loaded: !!mysteryReview.data,
   });
 
@@ -526,8 +527,8 @@ function CreatorShopReviewPage() {
       return next;
     });
 
-  // A pack's verdict names its edit. Re-read after every attempt: a success replaces the edit, and
-  // the server's "edit changed" refusal means the pane is showing one that is gone.
+  // A pack's verdict names its edit; re-read after every attempt, since a success or an "edit
+  // changed" refusal leaves the pane on a stale one.
   const review = async (
     input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId'>
   ) => {
@@ -549,7 +550,8 @@ function CreatorShopReviewPage() {
     await review({ id: selected.id, action: 'approve' });
   };
 
-  // Reject is terminal; request-changes lets the creator edit & resubmit;
+  // Reject is terminal (for a mystery pack, only one never approved); request-changes lets the
+  // creator edit & resubmit;
   // revert unpublishes a live item back into the queue. All require a note so
   // the creator knows why.
   const submitReview = async (action: 'reject' | 'request-changes' | 'revert') => {
@@ -1296,14 +1298,12 @@ function CreatorShopReviewPage() {
                       />
                       <Group gap="sm" wrap="nowrap" className="max-md:flex-wrap">
                         {actions.revert && (
-                          // Already-live items: the mod pulls it back into the queue or removes
-                          // it. A mystery pack can't be removed here, but its edit is judged here.
+                          // Already-live items: the mod pulls it back into the queue or removes it.
                           <Button
                             color="orange"
                             variant="light"
                             leftSection={<IconArrowBackUp size={16} />}
                             loading={reviewItem.isPending}
-                            disabled={actions.blocked}
                             onClick={() => submitReview('revert')}
                           >
                             Revert to pending
@@ -1348,7 +1348,7 @@ function CreatorShopReviewPage() {
                               disabled={actions.blocked}
                               onClick={() => submitReview('reject')}
                             >
-                              {actions.liveEdit ? 'Reject edit' : 'Reject'}
+                              {actions.rejectLabel}
                             </Button>
                             <Button
                               color="green"
@@ -1357,7 +1357,7 @@ function CreatorShopReviewPage() {
                               disabled={actions.blocked}
                               onClick={handleApprove}
                             >
-                              {actions.liveEdit ? 'Approve edit' : 'Approve & Publish'}
+                              {actions.approveLabel}
                             </Button>
                           </>
                         )}
