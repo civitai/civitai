@@ -1,0 +1,375 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BridgeAuthModule from '~/server/services/blocks/block-bridge-auth.service';
+import type * as TokenAccessModule from '~/server/services/blocks/block-token-access.service';
+import type * as FlagModule from '~/server/services/app-blocks-flag';
+import type * as FeatureFlagsModule from '~/server/services/feature-flags.service';
+import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
+
+/**
+ * Two rules every App Blocks training run is held to, through `blocksRouter`:
+ *
+ *  - ONE trigger-word rule for every carrier — a pass-through `kind:'step'` training
+ *    `$type` and every training step of a `kind:'workflow'` (a `repeat` template
+ *    included) are audited like a prompt at the estimate and the submit, before any
+ *    quote or reservation, and a trigger word that is not a literal string is refused;
+ *  - a training CONFIRMATION names the blob keys its host uploaded, and a quote naming
+ *    any other key is never confirmed.
+ */
+
+const h = vi.hoisted(() => ({
+  authorize: vi.fn(),
+  assertEnabled: vi.fn(async () => undefined),
+  trainingFlag: vi.fn(async () => true),
+  getOrchestratorToken: vi.fn(async () => 'orch-token'),
+  submitWorkflow: vi.fn(),
+  audit: vi.fn(async () => undefined),
+  getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
+  catalogRate: vi.fn(async () => ({ allowed: true })),
+  buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
+}));
+
+vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BridgeAuthModule>()),
+  authorizeBlockBridgeToken: (...a: unknown[]) => h.authorize(...a),
+}));
+vi.mock('~/server/services/blocks/block-token-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TokenAccessModule>()),
+  assertAppBlocksEnabledForTokenUser: (...a: unknown[]) => h.assertEnabled(...(a as [])),
+}));
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof FlagModule>()),
+  isAppBlocksTrainingKindEnabled: (...a: unknown[]) => h.trainingFlag(...(a as [])),
+}));
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
+  getFeatureFlagsLazy: () => ({}),
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: () => h.getOrchestratorToken(),
+}));
+vi.mock('~/server/services/orchestrator/workflows', () => ({
+  submitWorkflow: (...a: unknown[]) => h.submitWorkflow(...a),
+  getWorkflow: vi.fn(),
+  cancelWorkflow: vi.fn(),
+  queryWorkflows: vi.fn(),
+  deleteWorkflow: vi.fn(),
+}));
+vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
+  auditPromptServer: (...a: unknown[]) => h.audit(...(a as [])),
+}));
+vi.mock('~/server/services/user.service', () => ({
+  getUserById: () => h.getUserById(),
+}));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: vi.fn(async () => null),
+}));
+vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof RateLimitModule>()),
+  checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogRate(...(a as [])),
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getUserBuzzAccounts: () => h.buzzAccounts(),
+  getUserBuzzAccount: vi.fn(),
+  getUserBuzzTransactions: vi.fn(),
+  getDailyCompensationRewardByUser: vi.fn(),
+}));
+vi.mock('~/server/middleware.trpc', async () => {
+  const { middleware } = await import('~/server/trpc');
+  return { rateLimit: () => middleware(({ next }) => next()) };
+});
+
+import { blocksRouter } from '../blocks.router';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const VIEWER = 42;
+const NOT_A_STRING = 'a training step’s triggerWord must be a literal string';
+const REFUSED = 'prompt refused';
+
+const store = new Map<string, string>();
+function installRedis() {
+  const r = redisMock.sysRedis;
+  r.get.mockImplementation(async (k: string) => store.get(k) ?? null);
+  r.set.mockImplementation(async (k: string, v: string, opts?: { NX?: boolean; XX?: boolean }) => {
+    if (opts?.NX && store.has(k)) return null;
+    if (opts?.XX && !store.has(k)) return null;
+    store.set(k, String(v));
+    return 'OK';
+  });
+  r.getDel.mockImplementation(async (k: string) => {
+    const v = store.get(k) ?? null;
+    store.delete(k);
+    return v;
+  });
+  r.del.mockImplementation(async (k: string) => (store.delete(k) ? 1 : 0));
+  r.incrBy.mockImplementation(async (k: string, n: number) => {
+    const v = Number(store.get(k) ?? 0) + n;
+    store.set(k, String(v));
+    return v;
+  });
+  r.expire.mockImplementation(async () => true);
+  r.ttl.mockImplementation(async () => 3600);
+}
+const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
+
+function claims() {
+  return {
+    iss: 'civitai',
+    aud: 'civitai-app-block',
+    sub: `user:${VIEWER}`,
+    iat: 0,
+    exp: 0,
+    jti: 'jti',
+    blockId: 'blk_test',
+    appId: 'app_test',
+    appBlockId: 'apb_test',
+    blockInstanceId: 'page_apb_test',
+    ctx: { slotId: 'app.page', entityType: 'none' },
+    scopes: ['ai:write:budgeted'],
+    buzzBudget: 50,
+    maxBrowsingLevel: 1,
+  };
+}
+
+function ctx(sessionUserId?: number) {
+  return {
+    acceptableOrigin: true,
+    user:
+      sessionUserId == null
+        ? undefined
+        : { id: sessionUserId, isModerator: false, onboarding: 0xffff, muted: false },
+    apiKeyId: null,
+    tokenScope: TokenScope.Full,
+    req: { headers: {} } as never,
+    res: { setHeader: () => undefined } as never,
+    cache: { edgeTTL: 0 },
+    features: {} as never,
+    track: undefined,
+  };
+}
+const caller = (sessionUserId?: number) => blocksRouter.createCaller(ctx(sessionUserId) as never);
+
+const estimate = (body: Record<string, unknown>) =>
+  caller().estimateWorkflow({ blockToken: 't', body: body as never });
+const submit = (body: Record<string, unknown>) =>
+  caller().submitWorkflow({ blockToken: 't', body: body as never });
+
+const stepBody = (input: Record<string, unknown>, $type = 'training') => ({
+  kind: 'step',
+  $type,
+  input,
+  maxBuzz: 40,
+});
+const workflowBody = (steps: unknown[], args?: Record<string, unknown>) => ({
+  kind: 'workflow',
+  steps,
+  ...(args ? { arguments: args } : {}),
+});
+const repeatOverImages = (template: Record<string, unknown>) => ({
+  $type: 'repeat',
+  name: 'loop',
+  input: { for: { $ref: '$arguments', path: 'images', as: 'item' }, template },
+});
+
+beforeEach(() => {
+  store.clear();
+  for (const fn of Object.values(h)) fn.mockClear();
+  installRedis();
+  h.authorize.mockImplementation(async () => claims());
+  h.audit.mockImplementation(async () => undefined);
+  h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+    if (args.query?.whatif) return { id: 'whatif', cost: { total: 30 } };
+    throw new Error('no real submit expected in this file');
+  });
+  dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the trigger word of a pass-through `kind:step` training step', () => {
+  it('is audited like a prompt at the ESTIMATE, before the orchestrator is asked', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    await expect(estimate(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'badword', userId: VIEWER, isGreen: true })
+    );
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('is audited at the SUBMIT too, before any quote or reservation', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    await expect(submit(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(keysWith('system:blocks:buzz-cap')).toEqual([]);
+  });
+
+  it('reads the key however it is cased, and whatever the training `$type` casing', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    await expect(estimate(stepBody({ TriggerWord: 'badword' }, 'Training'))).rejects.toThrow(
+      REFUSED
+    );
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+  });
+
+  it('is refused when it is not a literal string, before any audit or orchestrator call', async () => {
+    await expect(
+      estimate(stepBody({ triggerWord: { $ref: '$arguments', path: 'tw' } }))
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: NOT_A_STRING });
+    await expect(submit(stepBody({ triggerWord: 7 }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING,
+    });
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('control: a non-training step with the same field is not audited by this rule', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    await estimate(stepBody({ triggerWord: 'badword' }, 'wdTagging'));
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+});
+
+describe('the trigger word of a training step inside a `kind:workflow`', () => {
+  it('is audited at the estimate and the submit, before the orchestrator is asked', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    const body = workflowBody([
+      { name: 'tag', $type: 'wdTagging', input: {} },
+      { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
+    ]);
+    await expect(estimate(body)).rejects.toThrow(REFUSED);
+    await expect(submit(body)).rejects.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledTimes(2);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(keysWith('system:blocks:buzz-cap')).toEqual([]);
+  });
+
+  it('is audited inside a `repeat` template', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    const body = workflowBody(
+      [repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })],
+      { images: [{ url: 'a' }] }
+    );
+    await expect(estimate(body)).rejects.toThrow(REFUSED);
+    await expect(submit(body)).rejects.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a `$ref` trigger word',
+      workflowBody(
+        [{ $type: 'training', input: { triggerWord: { $ref: '$arguments', path: 'tw' } } }],
+        { tw: 'badword' }
+      ),
+    ],
+    [
+      'a `$ref` trigger word inside a `repeat` template',
+      workflowBody(
+        [
+          repeatOverImages({
+            $type: 'training',
+            input: { triggerWord: { $ref: 'item', path: 'url' } },
+          }),
+        ],
+        { images: [{ url: 'a' }] }
+      ),
+    ],
+    [
+      'a training input that is itself a reference',
+      workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
+        cfg: { triggerWord: 'badword' },
+      }),
+    ],
+  ])('refuses %s, before any audit or orchestrator call', async (_label, body) => {
+    await expect(estimate(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING,
+    });
+    await expect(submit(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING,
+    });
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('a training confirmation refuses data its host did not upload', () => {
+  const QUOTE_ID = `tq_${'5'.repeat(32)}`;
+  const quoteKey = `system:blocks:training-quote:${QUOTE_ID}`;
+  function seedQuote() {
+    store.set(
+      quoteKey,
+      JSON.stringify({
+        v: 1,
+        quoteId: QUOTE_ID,
+        userId: VIEWER,
+        appBlockId: 'apb_test',
+        blockInstanceId: 'page_apb_test',
+        total: 1200,
+        bodyHash: 'x',
+        itemKeys: ['K1.jpeg', 'K2.jpeg'],
+        imageCount: 2,
+        modelKey: 'sdxl',
+        modelName: 'SDXL',
+        ecosystem: 'sdxl',
+        epochs: 5,
+        steps: null,
+        expiresAt: 'x',
+        consentedBy: null,
+        consentedAt: null,
+      })
+    );
+  }
+  const consentedBy = () => JSON.parse(store.get(quoteKey) as string).consentedBy;
+
+  beforeEach(seedQuote);
+
+  it('🔴 refuses a quote naming a key this host did not upload, and records nothing', async () => {
+    await expect(
+      caller(VIEWER).consentTrainingQuote({
+        blockToken: 't',
+        quoteId: QUOTE_ID,
+        uploadedBlobKeys: ['K1.jpeg', 'OTHER.jpeg'],
+      } as never)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(consentedBy()).toBeNull();
+  });
+
+  it('🔴 refuses a confirmation that names no uploaded keys at all', async () => {
+    await expect(
+      caller(VIEWER).consentTrainingQuote({ blockToken: 't', quoteId: QUOTE_ID })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller(VIEWER).consentQuoteGrant({ kind: 'training', blockToken: 't', quoteId: QUOTE_ID })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(consentedBy()).toBeNull();
+  });
+
+  it('positive control: every quoted key uploaded (case-insensitive) is confirmed', async () => {
+    await expect(
+      caller(VIEWER).consentTrainingQuote({
+        blockToken: 't',
+        quoteId: QUOTE_ID,
+        uploadedBlobKeys: ['k2.JPEG', 'k1.jpeg', 'extra.png'],
+      } as never)
+    ).resolves.toMatchObject({ consented: true, total: 1200 });
+    expect(consentedBy()).toBe(VIEWER);
+  });
+
+  it('the generic consent pair applies the same rule to a training quote', async () => {
+    await expect(
+      caller(VIEWER).consentQuoteGrant({
+        kind: 'training',
+        blockToken: 't',
+        quoteId: QUOTE_ID,
+        uploadedBlobKeys: ['K1.jpeg'],
+      } as never)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(consentedBy()).toBeNull();
+  });
+});

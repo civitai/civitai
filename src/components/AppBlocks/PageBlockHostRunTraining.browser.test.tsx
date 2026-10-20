@@ -291,6 +291,46 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(submitMutate).not.toHaveBeenCalled();
   });
 
+  test('🔴 a quote naming an image this host did not upload is refused — no dialog, no confirmation', async () => {
+    previewMutate.mockResolvedValue({ ...PREVIEW, itemKeys: ['FOREIGN.jpeg'] });
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_foreign', body: BODY });
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_foreign',
+        error: 'training data not uploaded here',
+      });
+      expectReplyKeys('RUN_TRAINING', 'error', ['error'], r.payload);
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(consentMutate).not.toHaveBeenCalled();
+    expect(submitMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('PREPARE_TRAINING_DATASET is removed: a fixed `removed` error at once, nothing called', async () => {
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('PREPARE_TRAINING_DATASET', {
+      requestId: 'rq_prepare',
+      items: [{ imageId: 1, caption: 'a cat' }],
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_DATASET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_prepare', error: 'removed' });
+      expectReplyKeys('PREPARE_TRAINING_DATASET', 'error', ['error'], r.payload);
+    });
+    expect(replies.of('TRAINING_DATASET_RESULT')).toHaveLength(1);
+    expect(previewMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
   test('a block that is not ready is refused — no preview, no dialog', async () => {
     await mount();
     const replies = listenForReply();
