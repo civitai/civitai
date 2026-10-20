@@ -393,30 +393,56 @@ describe('row context', () => {
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
   });
 
-  it('counts earlier appeals on the same model by status, leaving out the one in view', async () => {
-    // Model 1: a rejected and an approved appeal from an earlier owner, a second rejected one from this
-    // owner. The category appeal, the Image appeal and model 2's appeal are not model 1's flag appeals.
+  it('counts model appeals on other models sharing a SHA256 with this one, by status', async () => {
+    const withHash = async (modelId: number, hash: string, type = 'SHA256') => {
+      await db.query(
+        `INSERT INTO "ModelVersion" ("id","modelId","baseModel") VALUES ($1,$2,'SDXL')`,
+        [900 + modelId, modelId]
+      );
+      await db.query(
+        `INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, 'Model')`,
+        [900 + modelId]
+      );
+      await db.query(`INSERT INTO "ModelFileHash" VALUES ($1, $2, $3)`, [
+        900 + modelId,
+        type,
+        hash,
+      ]);
+    };
+    // Models 1, 2 and 3 carry one file. Model 4 has other bytes, and its AutoV2 hash that equals the
+    // shared value does not count: only SHA256 identifies the file.
+    await withHash(1, 'shared');
+    await withHash(2, 'shared');
+    await withHash(3, 'shared');
+    await withHash(4, 'other');
+    await withHash(5, 'shared', 'AutoV2');
     await db.exec(`
       INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","category") VALUES
-        (70, 99, 'Model', 1, 'Rejected', '2026-06-01', NULL),
-        (71, 99, 'Model', 1, 'Approved', '2026-06-02', NULL),
-        (72, 10, 'Model', 1, 'Rejected', '2026-06-03', NULL),
-        (73, 10, 'Model', 1, 'Pending', '2026-06-04', 'Model'),
-        (74, 10, 'Image', 1, 'Rejected', '2026-06-05', NULL);
+        (70, 99, 'Model', 3, 'Rejected', '2026-06-01', NULL),
+        (71, 99, 'Model', 3, 'Rejected', '2026-06-02', NULL),
+        (72, 99, 'Model', 4, 'Rejected', '2026-06-03', NULL),
+        (73, 99, 'Model', 3, 'Rejected', '2026-06-04', 'Model'),
+        (74, 99, 'Image', 3, 'Rejected', '2026-06-05', NULL),
+        (75, 99, 'Model', 5, 'Rejected', '2026-06-06', NULL);
     `);
-    expect((await rowFor(1)).modelAppeals).toEqual({
+    // Model 2 holds the seeded Approved appeal and its own pending one; model 3 its pending one plus
+    // the two rejections. Model 1's own appeal, the category and Image appeals, and models 4 and 5 are out.
+    expect((await rowFor(1)).sameFileAppeals).toEqual({
       approved: 1,
       rejected: 2,
       void: 0,
-      pending: 0,
+      pending: 2,
+      models: 2,
     });
-    // Model 2 has its own appeal in view plus the seeded earlier approved one.
-    expect((await rowFor(2)).modelAppeals).toEqual({
-      approved: 1,
+    // Model 4 shares nothing; a model with no file at all has nothing to match either.
+    expect((await rowFor(4)).sameFileAppeals).toEqual({
+      approved: 0,
       rejected: 0,
       void: 0,
       pending: 0,
+      models: 0,
     });
+    expect((await rowFor(6)).sameFileAppeals.models).toBe(0);
   });
 
   it("numbers the appeal among the uploader's model appeals this year, any status", async () => {

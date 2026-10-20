@@ -323,7 +323,7 @@
       showPriorClear={false}
       showRulings={false}
       pastAppeals={row.pastAppeals}
-      modelAppeals={row.modelAppeals}
+      sameFileAppeals={row.sameFileAppeals}
     />
 
     <div class="grid gap-4 md:grid-cols-2">

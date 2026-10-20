@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
-  import { repeatAppealBadge } from '$lib/minor-flags/appeal-row';
+  import { sameFileAppealBadge } from '$lib/minor-flags/appeal-row';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageFilterChips, {
     type ChipGroup,
@@ -157,8 +157,8 @@
     >
       {#snippet badges()}
         <AppealTags {row} />
-        {#if repeatAppealBadge(row.modelAppeals)}
-          <MetaChip tone="amber">{repeatAppealBadge(row.modelAppeals)}</MetaChip>
+        {#if sameFileAppealBadge(row.sameFileAppeals)}
+          <MetaChip tone="amber">{sameFileAppealBadge(row.sameFileAppeals)}</MetaChip>
         {/if}
         <CrossTabChips
           chips={crossTabChips(

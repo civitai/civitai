@@ -3,10 +3,10 @@ import {
   ago,
   appealDecisionHint,
   clipList,
-  modelAppealsText,
+  sameFileAppealsText,
   modelRef,
   pastAppealsText,
-  repeatAppealBadge,
+  sameFileAppealBadge,
   shortHash,
   yearMonth,
 } from '../appeal-row';
@@ -22,26 +22,26 @@ describe('pastAppealsText', () => {
   });
 });
 
-describe('modelAppealsText', () => {
+describe('sameFileAppealsText', () => {
   it('lists rejections first and pluralises the count', () => {
-    expect(modelAppealsText({ approved: 1, rejected: 2, void: 0, pending: 0 })).toBe(
-      '3 earlier appeals (2 rejected, 1 approved)'
+    expect(sameFileAppealsText({ approved: 1, rejected: 2, void: 0, pending: 0 })).toBe(
+      '3 appeals (2 rejected, 1 approved)'
     );
-    expect(modelAppealsText({ approved: 0, rejected: 1, void: 0, pending: 0 })).toBe(
-      '1 earlier appeal (1 rejected)'
+    expect(sameFileAppealsText({ approved: 0, rejected: 1, void: 0, pending: 0 })).toBe(
+      '1 appeal (1 rejected)'
     );
   });
-  it('is null when the model was never appealed', () => {
-    expect(modelAppealsText({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
+  it('is null when no other model with the file was appealed', () => {
+    expect(sameFileAppealsText({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
   });
 });
 
-describe('repeatAppealBadge', () => {
+describe('sameFileAppealBadge', () => {
   it('counts every earlier appeal, open ones included, and hides at zero', () => {
-    expect(repeatAppealBadge({ approved: 1, rejected: 1, void: 0, pending: 1 })).toBe(
-      'Appealed 3× before'
+    expect(sameFileAppealBadge({ approved: 1, rejected: 1, void: 0, pending: 1 })).toBe(
+      'Same file appealed 3× on other models'
     );
-    expect(repeatAppealBadge({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
+    expect(sameFileAppealBadge({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
   });
 });
 

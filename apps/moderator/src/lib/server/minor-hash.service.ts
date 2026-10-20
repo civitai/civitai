@@ -167,6 +167,8 @@ const searchPredicate = (
 
 export type AppealCounts = { approved: number; rejected: number; void: number; pending: number };
 
+export type SameFileAppeals = AppealCounts & { models: number };
+
 export type MinorHashReviewRow = {
   modelId: number;
   modelName: string;
@@ -193,8 +195,8 @@ export type MinorHashReviewRow = {
   coverImages: AppealCoverImage[];
   otherFlaggedModels: number;
   pastAppeals: AppealCounts;
-  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
-  modelAppeals: AppealCounts;
+  /** Appeals on other models sharing a file with this one. */
+  sameFileAppeals: SameFileAppeals;
 };
 
 export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
@@ -229,8 +231,8 @@ export type MinorFlagAppealRow = {
   flaggedByAt: Date | null;
   otherFlaggedModels: number;
   pastAppeals: AppealCounts;
-  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
-  modelAppeals: AppealCounts;
+  /** Appeals on other models sharing a file with this one. */
+  sameFileAppeals: SameFileAppeals;
   /** This appeal's place among the uploader's model appeals this calendar year, counting it. */
   appealNthThisYear: number;
   /** Auto-flagged lists this model too (a hash flag in its window or an open text-scan flag), so
@@ -323,15 +325,28 @@ LEFT JOIN LATERAL (
 ) ap ON TRUE
 `;
 
-/** Appeals on this one model by outcome; `exclude` drops the appeal being viewed, if any. */
-const modelAppealsJoin = (exclude: RawBuilder<unknown>) => sql`
+/** Model-flag appeals on OTHER models that share a SHA256 with this one, by outcome, plus how many
+ *  models they sit on. Owners re-upload a denied file as a new model and appeal again. `pg` carries
+ *  "modelId"; hash, file and version lookups all have an index. */
+const sameFileAppealsJoin = sql`
 LEFT JOIN LATERAL (
-  SELECT count(*) FILTER (WHERE ma.status::text = 'Approved')::int AS approved,
-         count(*) FILTER (WHERE ma.status::text = 'Rejected')::int AS rejected,
-         count(*) FILTER (WHERE ma.status::text = 'Void')::int AS void,
-         count(*) FILTER (WHERE ma.status::text = 'Pending')::int AS pending
-  FROM "Appeal" ma
-  WHERE ma."entityType" = 'Model' AND ma."entityId" = pg."modelId" AND ma.category IS NULL ${exclude}
+  SELECT count(*) FILTER (WHERE sa.status::text = 'Approved')::int AS approved,
+         count(*) FILTER (WHERE sa.status::text = 'Rejected')::int AS rejected,
+         count(*) FILTER (WHERE sa.status::text = 'Void')::int AS void,
+         count(*) FILTER (WHERE sa.status::text = 'Pending')::int AS pending,
+         count(DISTINCT sa."entityId")::int AS models
+  FROM "Appeal" sa
+  WHERE sa."entityType" = 'Model' AND sa.category IS NULL AND sa."entityId" <> pg."modelId"
+    AND sa."entityId" IN (
+      SELECT ov."modelId"
+      FROM "ModelVersion" mv
+      JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
+      JOIN "ModelFileHash" mh ON mh."fileId" = mf.id AND mh.type = 'SHA256'
+      JOIN "ModelFileHash" oh ON oh.hash = mh.hash AND oh.type = 'SHA256'
+      JOIN "ModelFile" ofl ON ofl.id = oh."fileId"
+      JOIN "ModelVersion" ov ON ov.id = ofl."modelVersionId"
+      WHERE mv."modelId" = pg."modelId"
+    )
 ) mp ON TRUE
 `;
 
@@ -484,8 +499,9 @@ export async function getMinorFlagAppealsForReview({
            ) AS "pastAppeals",
            jsonb_build_object(
              'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
-             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0)
-           ) AS "modelAppeals",
+             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0),
+             'models', COALESCE(mp.models, 0)
+           ) AS "sameFileAppeals",
            ya.nth AS "appealNthThisYear",
            ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
            ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
@@ -512,7 +528,7 @@ export async function getMinorFlagAppealsForReview({
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
     ) ls ON TRUE
     ${pastAppealsJoin(sql`AND pa.id <> pg."appealId"`)}
-    ${modelAppealsJoin(sql`AND ma.id <> pg."appealId"`)}
+    ${sameFileAppealsJoin}
     LEFT JOIN LATERAL (
       SELECT count(*)::int + 1 AS nth
       FROM "Appeal" ya
@@ -595,8 +611,8 @@ export type ModelFlagsRow = {
   coverImages: AppealCoverImage[];
   otherFlaggedModels: number;
   pastAppeals: AppealCounts;
-  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
-  modelAppeals: AppealCounts;
+  /** Appeals on other models sharing a file with this one. */
+  sameFileAppeals: SameFileAppeals;
 };
 
 /** One model waiting in Auto-flagged. */
@@ -836,8 +852,9 @@ const flaggedPageSql = <R>(
          ) AS "pastAppeals",
            jsonb_build_object(
              'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
-             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0)
-           ) AS "modelAppeals",
+             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0),
+             'models', COALESCE(mp.models, 0)
+           ) AS "sameFileAppeals",
          CASE WHEN pg."hasTextScanFlag"
               THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
          CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"
@@ -855,7 +872,7 @@ const flaggedPageSql = <R>(
   ${coverImagesJoin}
   ${uploaderFlagsJoin}
   ${pastAppealsJoin(sql``)}
-  ${modelAppealsJoin(sql``)}
+  ${sameFileAppealsJoin}
   ${extra.joins}
   ORDER BY ${outer}
 `;

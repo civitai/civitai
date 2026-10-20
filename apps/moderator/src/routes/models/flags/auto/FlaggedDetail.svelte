@@ -234,7 +234,7 @@
         showPriorClear={false}
         showRulings
         pastAppeals={i === 0 ? row.pastAppeals : undefined}
-          modelAppeals={i === 0 ? row.modelAppeals : undefined}
+          sameFileAppeals={i === 0 ? row.sameFileAppeals : undefined}
         appealOpen={i === 0 ? row.hasPendingAppeal : undefined}
       />
     {/each}

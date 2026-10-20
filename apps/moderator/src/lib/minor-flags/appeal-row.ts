@@ -19,15 +19,15 @@ type AppealCounts = { approved: number; rejected: number; void: number; pending:
 
 export const appealTotal = (c: AppealCounts) => c.approved + c.rejected + c.void + c.pending;
 
-/** "Appealed 3× before": the row badge, only when this model has been appealed already. */
-export const repeatAppealBadge = (c: AppealCounts): string | null => {
+/** "Same file appealed 3× on other models": the row badge, only when one has been. */
+export const sameFileAppealBadge = (c: AppealCounts): string | null => {
   const n = appealTotal(c);
-  return n > 0 ? `Appealed ${n}× before` : null;
+  return n > 0 ? `Same file appealed ${n}× on other models` : null;
 };
 
-/** "3 earlier appeals (2 rejected, 1 approved)" for this one model, rejections first since a
- *  repeat appeal after a denial is what the line is for; null when there are none. */
-export const modelAppealsText = (c: AppealCounts): string | null => {
+/** "3 appeals (2 rejected, 1 approved)" on other models sharing a file, rejections first since a
+ *  re-upload after a denial is what the line is for; null when there are none. */
+export const sameFileAppealsText = (c: AppealCounts): string | null => {
   const n = appealTotal(c);
   if (!n) return null;
   const parts = [
@@ -36,7 +36,7 @@ export const modelAppealsText = (c: AppealCounts): string | null => {
     c.void && `${c.void} void`,
     c.pending && `${c.pending} open`,
   ].filter(Boolean);
-  return `${n} earlier ${n === 1 ? 'appeal' : 'appeals'} (${parts.join(', ')})`;
+  return `${n} ${n === 1 ? 'appeal' : 'appeals'} (${parts.join(', ')})`;
 };
 
 export const clipList = <T>(
