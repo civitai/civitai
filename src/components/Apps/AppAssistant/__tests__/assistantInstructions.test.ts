@@ -160,8 +160,9 @@ describe('buildAssistantSystemPromptWithSubagents', () => {
   it('pins the whole subagent rule text: a reworded rule must be re-read here', () => {
     expect(APP_ASSISTANT_SUBAGENT_RULES).toBe(
       [
-        '- dispatch_agent starts a read-only subagent. Use it when you need a conclusion drawn from many files or pages, not their contents: for example "how does the SDK do auth?" or "which components use X?".',
-        '- Do it yourself when the work is small, when your next step depends on the details rather than a summary, or when the user is waiting on a quick answer. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
+        '- dispatch_agent starts a read-only subagent that reads files, lists directories, reads the dev server’s status and logs and reads the guide, then returns a short summary. Prefer it to reading yourself: everything you read stays in your context for the rest of the reply, and a subagent’s reading does not.',
+        '- Dispatch, with every subagent of the step in that one step so they run at the same time: before you change an existing app (one subagent per area: its source, its tests, the guide pages you need); whenever answering a question would take you more than three reads; and to find where something is defined or used.',
+        '- Do it yourself only when one or two reads will do, or when you need a file’s exact contents to edit it. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
         '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
       ].join('\n')
     );
