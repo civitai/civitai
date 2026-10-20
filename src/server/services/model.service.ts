@@ -269,10 +269,15 @@ import type {
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
 import {
+  hasCompleteSfwFace,
+  hoistCoverImage,
   normalizeSfwFaceInput,
+  pickCoverImageId,
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
+import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -303,6 +308,8 @@ type ModelRaw = {
   description?: string | null;
   sfwName: string | null;
   sfwDescription?: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   type: ModelType;
   poi?: boolean;
   minor?: boolean;
@@ -1105,6 +1112,8 @@ export const getModelsRaw = async ({
       ${pSql}."modelId" as "id",
       m."name",
       m."sfwName",
+      m."coverImageId",
+      m."sfwCoverImageId",
       ${ifDetails`
         m."description",
         m."sfwDescription",
@@ -1254,7 +1263,10 @@ export const getModelsRaw = async ({
     items: withSpan('model:getAll:transform', () =>
       models
         .map(({ rank, cursorId, meta, ...rawModel }) => {
-          const model = resolveModelFace(rawModel, showSfwFace);
+          const model = {
+            ...resolveModelFace(rawModel, showSfwFace),
+            hasSfwFace: hasCompleteSfwFace(rawModel),
+          };
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
@@ -1717,6 +1729,15 @@ export const getModelsWithImagesAndModelVersions = async ({
     }
   }
 
+  const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
+  const coverImages = await getCoverImages({
+    coverIds: items.map((model) => pickCoverImageId(model, showSfwFace)),
+    modelVersionImages,
+    // Under a base-model filter the card shows that version, so a cover from another stays put.
+    sameVersionOnly: !!input.baseModels?.length,
+    shownVersionIds: modelVersionIds,
+  });
+
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
   // Creator Controls metric privacy for the card feed. Fetch owner defaults once,
@@ -1762,7 +1783,11 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = modelVersionImages[version.id]?.images ?? [];
+        const coverId = pickCoverImageId(model, showSfwFace);
+        const versionImages = hoistCoverImage(
+          modelVersionImages[version.id]?.images ?? [],
+          coverId ? coverImages.get(coverId) : undefined
+        );
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
@@ -3003,6 +3028,8 @@ export const upsertModel = async (
             description: true,
             sfwName: true,
             sfwDescription: true,
+            coverImageId: true,
+            sfwCoverImageId: true,
             poi: true,
             userId: true,
             minor: true,
@@ -3037,6 +3064,19 @@ export const upsertModel = async (
       sfwDescription: data.sfwDescription ?? beforeUpdate?.sfwDescription,
       userId,
     });
+  const coverChanged =
+    (data.coverImageId !== undefined && data.coverImageId !== beforeUpdate?.coverImageId) ||
+    (data.sfwCoverImageId !== undefined && data.sfwCoverImageId !== beforeUpdate?.sfwCoverImageId);
+  if (coverChanged) {
+    if (!beforeUpdate || !id)
+      throw throwBadRequestError('Covers can be picked once the model has published images.');
+    await assertCoverImagesValid({
+      modelId: id,
+      ownerId: beforeUpdate.userId,
+      coverImageId: data.coverImageId,
+      sfwCoverImageId: data.sfwCoverImageId,
+    });
+  }
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,
@@ -3478,6 +3518,12 @@ export const upsertModel = async (
       after: result,
       tagsChanged: !!tagsOnModels,
     });
+
+    // The face and the .com cover feed the model's level, which decides whether .com lists it.
+    if (sfwFaceChanged || coverChanged) {
+      await updateModelNsfwLevels([result.id]);
+      await bustPublicModelResponseCache(result.id);
+    }
 
     // A lift is the moderator's only when their input set the flag false: a sweep clearing it
     // between the read and the write must not be stamped as their decision.

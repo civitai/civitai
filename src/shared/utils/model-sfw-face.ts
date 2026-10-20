@@ -1,4 +1,7 @@
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -63,4 +66,34 @@ export function searchHitName(
   showSfwFace: boolean
 ) {
   return (showSfwFace && hit.sfwName) || hit.name;
+}
+
+/**
+ * Whether a model's .com face is complete: a .com title and a .com cover the level computation
+ * accepted, which is what puts safe bits in a mature model's `nsfwLevel`.
+ */
+export function hasCompleteSfwFace(model: {
+  sfwName?: string | null;
+  sfwCoverImageId?: number | null;
+  nsfwLevel: number;
+}) {
+  return (
+    model.sfwName != null &&
+    model.sfwCoverImageId != null &&
+    Flags.intersects(model.nsfwLevel, sfwBrowsingLevelsFlag)
+  );
+}
+
+/** The cover a viewer gets: the .com one with a complete face, otherwise the creator's .red pick. */
+export function pickCoverImageId(
+  model: { hasSfwFace?: boolean; coverImageId?: number | null; sfwCoverImageId?: number | null },
+  showSfwFace: boolean
+) {
+  return (showSfwFace && model.hasSfwFace ? model.sfwCoverImageId : model.coverImageId) ?? null;
+}
+
+/** Puts the chosen cover first. Returns the list unchanged when there is no cover. */
+export function hoistCoverImage<T extends { id: number }>(images: T[], cover: T | undefined): T[] {
+  if (!cover) return images;
+  return [cover, ...images.filter((image) => image.id !== cover.id)];
 }

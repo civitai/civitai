@@ -220,7 +220,8 @@ export function filterPreferences<
           const userId = model.user.id;
           const isOwner = ownedByViewer(userId);
           const shownName = (showSfwFace && model.sfwName) || model.name;
-          if (!canViewNsfw && (hasNsfwWords(shownName) || model.nsfw === true)) return false;
+          const matureListing = model.nsfw === true && !model.hasSfwFace;
+          if (!canViewNsfw && (hasNsfwWords(shownName) || matureListing)) return false;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
           if (showHidden && !hiddenModels.get(model.id)) return false;
           if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
@@ -874,6 +875,7 @@ type BaseModel = {
   nsfw?: boolean;
   name?: string | null;
   sfwName?: string | null;
+  hasSfwFace?: boolean;
   minor?: boolean;
   poi?: boolean;
 };

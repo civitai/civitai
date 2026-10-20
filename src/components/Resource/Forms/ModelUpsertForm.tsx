@@ -71,6 +71,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
+import { ModelCoverFields } from '~/components/Resource/Forms/ModelCoverFields';
 import { ModelSfwFaceFields } from '~/components/Resource/Forms/ModelSfwFaceFields';
 
 const schema = modelUpsertSchema
@@ -167,6 +168,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     description: model?.description ?? '',
     sfwName: model?.sfwName ?? null,
     sfwDescription: model?.sfwDescription ?? null,
+    coverImageId: model?.coverImageId ?? null,
+    sfwCoverImageId: model?.sfwCoverImageId ?? null,
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: initialType,
@@ -495,6 +498,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
               withAsterisk
             />
             <ModelSfwFaceFields modelId={model?.id} />
+            {model?.id && <ModelCoverFields modelId={model.id} />}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"

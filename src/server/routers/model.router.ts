@@ -112,6 +112,7 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
+import { getCoverCandidates } from '~/server/services/model-cover.service';
 import { checkSfwFace, draftSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
@@ -298,6 +299,11 @@ export const modelRouter = router({
     .input(checkSfwFaceSchema)
     .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
     .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
+  getCoverCandidates: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getCoverCandidates({ modelId: input.id })),
   draftSfwFace: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(draftSfwFaceSchema)

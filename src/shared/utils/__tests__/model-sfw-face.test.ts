@@ -5,7 +5,10 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  hasCompleteSfwFace,
+  hoistCoverImage,
   normalizeSfwFaceInput,
+  pickCoverImageId,
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
@@ -76,5 +79,37 @@ describe('normalizeSfwFaceInput', () => {
     const data: { sfwName?: string | null; sfwDescription?: string | null } = {};
     normalizeSfwFaceInput(data);
     expect(data).toEqual({});
+  });
+});
+
+describe('hasCompleteSfwFace', () => {
+  const mature = 60;
+  it('needs a title, a cover and the safe bits the level computation adds for that cover', () => {
+    expect(hasCompleteSfwFace({ sfwName: 'x', sfwCoverImageId: 1, nsfwLevel: mature | 1 })).toBe(
+      true
+    );
+    // A cover the computation rejected (moderated, deleted, not the creator's) leaves no safe bits.
+    expect(hasCompleteSfwFace({ sfwName: 'x', sfwCoverImageId: 1, nsfwLevel: mature })).toBe(false);
+    expect(hasCompleteSfwFace({ sfwName: null, sfwCoverImageId: 1, nsfwLevel: 1 })).toBe(false);
+    expect(hasCompleteSfwFace({ sfwName: 'x', sfwCoverImageId: null, nsfwLevel: 1 })).toBe(false);
+  });
+});
+
+describe('pickCoverImageId', () => {
+  const model = { hasSfwFace: true, coverImageId: 10, sfwCoverImageId: 20 };
+  it('gives the .com cover only to a face viewer of a model with a complete face', () => {
+    expect(pickCoverImageId(model, true)).toBe(20);
+    expect(pickCoverImageId(model, false)).toBe(10);
+    expect(pickCoverImageId({ ...model, hasSfwFace: false }, true)).toBe(10);
+    expect(pickCoverImageId({ hasSfwFace: false }, true)).toBeNull();
+  });
+});
+
+describe('hoistCoverImage', () => {
+  const images = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  it('moves the cover to the front without duplicating it', () => {
+    expect(hoistCoverImage(images, { id: 3 }).map((i) => i.id)).toEqual([3, 1, 2]);
+    expect(hoistCoverImage(images, { id: 9 }).map((i) => i.id)).toEqual([9, 1, 2, 3]);
+    expect(hoistCoverImage(images, undefined)).toBe(images);
   });
 });

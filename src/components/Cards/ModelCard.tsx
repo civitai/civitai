@@ -48,6 +48,7 @@ import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { pickCoverImageId } from '~/shared/utils/model-sfw-face';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
   return (
@@ -209,12 +210,20 @@ function ModelCardContent({ data }: Props) {
   // images[0] is always the latest version's cover — show the matched version's
   // cover instead when a base-model filter is active. The feed type omits
   // modelVersionId (its images are already the matched version's), so it falls back.
+  const coverId = activeBaseModels?.length
+    ? null
+    : pickCoverImageId(
+        data as { hasSfwFace?: boolean; coverImageId?: number; sfwCoverImageId?: number },
+        showSfwFace
+      );
   const image =
+    (coverId ? data.images.find((i) => i.id === coverId) : undefined) ??
     (activeBaseModels?.length
       ? data.images.find(
           (i) => (i as { modelVersionId?: number }).modelVersionId === targetVersionId
         )
-      : undefined) ?? data.images[0];
+      : undefined) ??
+    data.images[0];
 
   return (
     <AspectRatioImageCard

@@ -167,7 +167,7 @@ import {
   getRequestBrowsingLevel,
   resolveRequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
-import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -559,6 +559,7 @@ export const getModelHandler = async ({
 
     return {
       ...resolveModelFace(model, withSfwFace),
+      hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
       metrics: undefined,

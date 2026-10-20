@@ -285,7 +285,8 @@ export const getServerSideProps = createServerSideProps({
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // A complete .com face is what civitai.com shows; it is not the mature listing.
+          nsfw: model.nsfw && !model.hasSfwFace,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }
@@ -870,7 +871,7 @@ export default function ModelDetailsV2({
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw}
+      nsfw={model.nsfw && !model.hasSfwFace}
       bypassRating={isOwner}
       suppressAds={!published}
       meta={{

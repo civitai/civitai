@@ -227,6 +227,8 @@ export const modelUpsertSchema = z.object({
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   sfwName: z.string().trim().max(255).nullish(),
   sfwDescription: getSanitizedStringSchema().nullish(),
+  coverImageId: z.number().int().positive().nullish(),
+  sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),

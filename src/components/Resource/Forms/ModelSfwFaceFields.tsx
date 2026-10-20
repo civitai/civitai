@@ -21,6 +21,7 @@ type SfwFaceForm = {
   description?: string | null;
   sfwName?: string | null;
   sfwDescription?: string | null;
+  sfwCoverImageId?: number | null;
 };
 
 const CHECK_DEBOUNCE_MS = 800;
@@ -44,6 +45,7 @@ export function ModelSfwFaceFields({ modelId }: { modelId?: number }) {
   const setFace = (name: string | null, description: string | null) => {
     form.setValue('sfwName', name, { shouldDirty: true, shouldValidate: name !== null });
     form.setValue('sfwDescription', description, { shouldDirty: true });
+    if (name === null) form.setValue('sfwCoverImageId', null, { shouldDirty: true });
   };
 
   const draftMutation = trpc.model.draftSfwFace.useMutation({
