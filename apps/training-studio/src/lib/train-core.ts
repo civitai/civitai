@@ -43,6 +43,7 @@ import {
   isRetiredBaseAir,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
+import type { TrainingTextCheck } from '$lib/training-text';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -256,6 +257,12 @@ export class TrainingSubmitError extends Error {
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
 export class TrainingBatchValidationError extends Error {}
 
+export {
+  TrainingTextCheckError,
+  TrainingTextRefusedError,
+  type TrainingTextCheck,
+} from '$lib/training-text';
+
 function fail(field: string, why: string): never {
   throw new TrainingBatchValidationError(`${field} ${why}`);
 }
@@ -389,11 +396,19 @@ export function submitFailureReason(err: unknown): string {
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown, runIndex: number) => void } = {}
+  opts: SubmitOptions & {
+    checkText: TrainingTextCheck;
+    onRunError?: (err: unknown, runIndex: number) => void;
+  }
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+
+  // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
+  // sweep repeats one trigger word across runs; each distinct one is checked once.
+  for (const triggerWord of new Set(runs.map((run) => run.trigger)))
+    await opts.checkText({ triggerWord });
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -442,7 +457,7 @@ async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
   { callbacks, traceMode = 'events' }: SubmitOptions
-): Promise<{ body: WorkflowTemplate; steps: number | undefined }> {
+): Promise<{ body: WorkflowTemplate; steps: number | undefined; triggerWord: string }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await getWorkflow({
     client,
@@ -533,6 +548,7 @@ async function buildContinuation(
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
+    triggerWord: String(input.triggerWord ?? ''),
   };
 }
 
@@ -540,9 +556,11 @@ async function buildContinuation(
 export async function continueTraining(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  submitOpts: SubmitOptions = {}
+  submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body } = await buildContinuation(client, opts, submitOpts);
+  const { body, triggerWord } = await buildContinuation(client, opts, submitOpts);
+  // The source run may predate the check, so its trigger word is checked again before it trains again.
+  await submitOpts.checkText({ triggerWord });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id)
     throw new Error(

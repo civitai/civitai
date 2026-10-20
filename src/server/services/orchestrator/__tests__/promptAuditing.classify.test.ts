@@ -66,6 +66,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 import type { PromptTrigger, PromptTriggerCategory } from '~/utils/metadata/audit';
 import {
   auditPromptServer,
+  classifyPromptExternally,
   classifyPromptServer,
 } from '~/server/services/orchestrator/promptAuditing';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -536,5 +537,38 @@ describe('auditPromptServer — prompt origin is attached after the block', () =
     arrange();
     await auditPromptServer({ ...base, ...extra }).catch(() => undefined);
     expect(mockAttachPromptOrigin).not.toHaveBeenCalled();
+  });
+});
+
+describe('classifyPromptExternally', () => {
+  beforeEach(() => mockModeratePrompt.mockClear());
+
+  it('returns the categories of a flag, and nothing for an unflagged verdict', async () => {
+    externalFlags('cat-a', 'cat-b');
+    expect(await classifyPromptExternally(PROMPT)).toEqual({
+      categories: ['cat-a', 'cat-b'],
+      externalError: null,
+    });
+    mockModeratePrompt.mockResolvedValueOnce({ flagged: false, categories: ['cat-a'] });
+    expect(await classifyPromptExternally(PROMPT)).toEqual({ categories: [], externalError: null });
+  });
+
+  it('fails open on a classifier error, reporting it', async () => {
+    mockModeratePrompt.mockRejectedValueOnce(new Error('down'));
+    expect(await classifyPromptExternally(PROMPT)).toEqual({
+      categories: [],
+      externalError: { message: 'down' },
+    });
+    expectNoSideEffects();
+  });
+
+  it('sends the benign-stripped copy, and nothing for blank text', async () => {
+    mockStripBenignPhrases.mockResolvedValueOnce('stripped');
+    await classifyPromptExternally(PROMPT, 'other');
+    expect(mockModeratePrompt).toHaveBeenCalledWith('stripped', 'other');
+
+    mockModeratePrompt.mockClear();
+    await classifyPromptExternally('   ');
+    expect(mockModeratePrompt).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,7 @@ const h = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(async () => undefined),
   audit: vi.fn(async () => undefined),
+  checkTriggerWord: vi.fn(async (_input: { triggerWord: string }) => undefined),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   reserveAppSpend: vi.fn(async () => ({ allowed: true, dailyKey: 'app-daily' })),
   refundAppSpend: vi.fn(async () => undefined),
@@ -90,6 +91,9 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (...a: unknown[]) => h.audit(...(a as [])),
+}));
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: (input: { triggerWord: string }) => h.checkTriggerWord(input),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -430,15 +434,23 @@ describe('training ESTIMATE — prices the run and stores a quote', () => {
     ]);
   });
 
-  it('audits the trigger word — and only it, as the Training Studio does — before pricing', async () => {
+  it('checks the trigger word — and only it, as the Training Studio does — before pricing', async () => {
     await estimate();
-    expect(h.audit).toHaveBeenCalledTimes(1);
-    expect(h.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'mychar', userId: VIEWER, isGreen: true })
+    expect(h.checkTriggerWord).toHaveBeenCalledTimes(1);
+    expect(h.checkTriggerWord).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar' })
     );
-    expect(h.audit.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(h.checkTriggerWord.mock.invocationCallOrder[0]).toBeLessThan(
       h.submitWorkflow.mock.invocationCallOrder[0]
     );
+    // Neither the sample prompts nor the captions get a separate audit.
+    expect(h.audit).not.toHaveBeenCalled();
+  });
+
+  it('a refused trigger word stops the estimate before pricing', async () => {
+    h.checkTriggerWord.mockRejectedValueOnce(new Error('trigger word refused'));
+    await expect(estimate()).rejects.toThrow('trigger word refused');
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -981,10 +993,15 @@ describe('training — maturity and currency', () => {
     expect('allowMatureContent' in b).toBe(false);
   });
 
-  it('the submit re-audits the trigger word, and a refusal charges nothing', async () => {
+  it('the submit re-checks the trigger word, and a refusal charges nothing', async () => {
     const quoteId = await confirmedQuote();
-    h.audit.mockRejectedValueOnce(new Error('prompt refused'));
-    await expect(submit(body({ quoteId }))).rejects.toThrow('prompt refused');
+    h.checkTriggerWord.mockClear();
+    h.checkTriggerWord.mockRejectedValueOnce(new Error('trigger word refused'));
+    await expect(submit(body({ quoteId }))).rejects.toThrow('trigger word refused');
+    expect(h.checkTriggerWord).toHaveBeenCalledTimes(1);
+    expect(h.checkTriggerWord).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerWord: 'mychar' })
+    );
     expect(realSubmits()).toHaveLength(0);
     expect(counter('system:blocks:buzz-cap')).toBe(0);
   });
@@ -1205,12 +1222,6 @@ describe('training — the run key', () => {
 });
 
 describe('training — remaining controls', () => {
-  it('the audit strictness follows the token: an all-levels token audits non-green', async () => {
-    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
-    await estimate();
-    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ isGreen: false }));
-  });
-
   it('positive control: a viewer budget that fits is RESERVED on the consent leg', async () => {
     dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
       buzzBudgetPerDay: 5000,

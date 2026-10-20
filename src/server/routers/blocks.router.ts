@@ -14515,7 +14515,6 @@ async function estimateTrainingWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({
     claims,
     userId,
-    user,
     steps: trainingBodyTriggerWordSteps(body),
   });
 
@@ -14571,13 +14570,12 @@ async function estimateTrainingWorkflow(opts: {
  * THE trigger-word rule for every App Blocks carrier of a training run — `kind:'training'`,
  * a pass-through `kind:'step'`, every step of a `kind:'workflow'` — called by each
  * estimate and submit before any quote or reservation. A trigger word that cannot be
- * read as a literal string is refused; the rest are audited like a prompt.
+ * read as a literal string is refused; each other one gets the check every training
+ * path applies (`assertTrainingTriggerWordAllowed`).
  */
 async function assertBlockTrainingTriggerWordsAllowed(opts: {
   claims: BlockClaims;
   userId: number;
-  /** The token subject's session user, when the caller already holds it. */
-  user?: SessionUser;
   steps: ReadonlyArray<{ $type: string; input: unknown }>;
 }): Promise<void> {
   const { claims, userId, steps } = opts;
@@ -14585,14 +14583,17 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
   if ('error' in collected) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
   }
-  const text = collected.triggerWords
-    .map((word) => word.trim())
-    .filter((word) => word.length > 0)
-    .join('\n');
-  if (text.length === 0) return;
-  const user = opts.user ?? (await getBlockSessionUser(userId));
-  const { isGreen } = resolveBlockMaturity(claims);
-  await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
+  const words = collected.triggerWords.map((word) => word.trim()).filter((word) => word.length > 0);
+  if (words.length === 0) return;
+  const { assertTrainingTriggerWordAllowed } = await import(
+    '~/server/services/orchestrator/training/training-trigger-word-check'
+  );
+  for (const triggerWord of words) {
+    await assertTrainingTriggerWordAllowed({
+      triggerWord,
+      log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
+    });
+  }
 }
 
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */
@@ -14607,7 +14608,7 @@ function trainingBodyTriggerWordSteps(body: BlockTrainingBody) {
  * ambiguous failure — which needs a fresh quote — dedupes there instead of charging
  * twice, and a deliberate re-run after a definite submit is a new run (the run
  * generation advances only on a definite submit). The run is re-resolved against fresh
- * service status and flags, and its trigger word re-audited, before anything is charged.
+ * service status and flags, and its trigger word re-checked, before anything is charged.
  */
 async function submitTrainingWorkflow(opts: {
   ctx: Context;
@@ -14665,7 +14666,6 @@ async function submitTrainingWorkflow(opts: {
         await assertBlockTrainingTriggerWordsAllowed({
           claims,
           userId,
-          user,
           steps: trainingBodyTriggerWordSteps(body),
         });
         // `name` is what the snapshot/publish extractors key on.

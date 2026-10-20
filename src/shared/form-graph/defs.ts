@@ -29,6 +29,8 @@ export interface NumberMeta {
   max: number;
   step: number;
   presets?: { label: string; value: number }[];
+  /** An advisory band inside the range, painted on the slider. */
+  recommended?: { min: number; max: number };
 }
 
 /**

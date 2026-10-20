@@ -6,7 +6,7 @@ import {
 
 // ONE trigger-word rule for every App Blocks carrier of a training run: `kind:'training'`,
 // a pass-through `kind:'step'` and each step of a `kind:'workflow'` (a `repeat` template
-// included). The router audits what this collects, before any quote or reservation.
+// included). The router checks what this collects, before any quote or reservation.
 
 const TRIGGER_WORD_KEY = 'triggerword';
 const REF_KEY = '$ref';

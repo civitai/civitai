@@ -353,11 +353,16 @@ export const SNIPPETS: FieldDef<SnippetsValue> = {
 
 // --- resources / model ---------------------------------------------------------
 
+const turboRangeSchema = z.object({ min: z.number(), max: z.number(), default: z.number() });
+
 export const resourceSchema = z.object({
   id: z.number(),
   baseModel: z.string().optional(),
   model: z.object({ type: z.string() }),
   strength: z.number().optional(),
+  // Client-supplied: clamp before use.
+  turbo: z.object({ steps: turboRangeSchema, cfgScale: turboRangeSchema }).optional(),
+  turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
   trainedWords: z.array(z.string()).optional(),
   epochDetails: z.object({ epochNumber: z.number().optional() }).optional(),
   // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row) —
@@ -404,7 +409,13 @@ export function getResourceSelectOptions(
 const DEFAULT_RESOURCE_TYPES = ['TextualInversion', 'LORA', 'LoCon', 'DoRA'] as ModelType[];
 
 export interface ResourcesMeta {
-  options: { canGenerate: boolean; resources: ResourceSelectOption[]; excludeIds: number[] };
+  options: {
+    canGenerate: boolean;
+    resources: ResourceSelectOption[];
+    excludeIds: number[];
+    turboOnly?: boolean;
+    excludeTurbo?: boolean;
+  };
   limit: number;
 }
 

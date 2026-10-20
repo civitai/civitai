@@ -73,6 +73,7 @@ import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import type { BlurbUse } from '~/server/services/blurb-materialize.service';
 import {
   expandBlurbs,
@@ -558,10 +559,10 @@ export const upsertBounty = async ({
   buzzType,
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
-  await throwOnBlockedUserContent([data.name, data.description], {
-    isModerator,
-    surface: 'bounty',
-  });
+  await throwOnBlockedUserContent(
+    [data.name, data.description, ...(await newTagNames(data.tags?.map((tag) => tag.name)))],
+    { isModerator, surface: 'bounty' }
+  );
 
   const stored = id
     ? await dbRead.bounty.findUnique({

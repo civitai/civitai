@@ -10,8 +10,8 @@ import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
  *
  *  - ONE trigger-word rule for every carrier — a pass-through `kind:'step'` training
  *    `$type` and every training step of a `kind:'workflow'` (a `repeat` template
- *    included) are audited like a prompt at the estimate and the submit, before any
- *    quote or reservation, and a trigger word that is not a literal string is refused;
+ *    included) gets the trigger-word check every training path uses, at the estimate
+ *    and the submit, before any quote or reservation, and a trigger word that is not a literal string is refused;
  *  - a training CONFIRMATION names the blob keys its host uploaded, and a quote naming
  *    any other key is never confirmed.
  */
@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
   audit: vi.fn(async () => undefined),
+  check: vi.fn(async (_input: { triggerWord: string; log: Record<string, unknown> }) => undefined),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
   buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
@@ -56,6 +57,12 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (...a: unknown[]) => h.audit(...(a as [])),
+}));
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: (input: {
+    triggerWord: string;
+    log: Record<string, unknown>;
+  }) => h.check(input),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -179,6 +186,10 @@ beforeEach(() => {
   installRedis();
   h.authorize.mockImplementation(async () => claims());
   h.audit.mockImplementation(async () => undefined);
+  // The shared training check refuses exactly one word, so a mixed body shows which ran.
+  h.check.mockImplementation(async ({ triggerWord }) => {
+    if (triggerWord === 'badword') throw new Error(REFUSED);
+  });
   h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
     if (args.query?.whatif) return { id: 'whatif', cost: { total: 30 } };
     throw new Error('no real submit expected in this file');
@@ -188,30 +199,32 @@ beforeEach(() => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the trigger word of a pass-through `kind:step` training step', () => {
-  it('is audited like a prompt at the ESTIMATE, before the orchestrator is asked', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('gets the shared training check at the ESTIMATE, before the orchestrator is asked', async () => {
     await expect(estimate(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
-    expect(h.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'badword', userId: VIEWER, isGreen: true })
-    );
+    expect(h.check).toHaveBeenCalledWith({
+      triggerWord: 'badword',
+      log: expect.objectContaining({
+        userId: VIEWER,
+        source: 'app-blocks',
+        appBlockId: 'apb_test',
+      }),
+    });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('is audited at the SUBMIT too, before any quote or reservation', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('is checked at the SUBMIT too, before any quote or reservation', async () => {
     await expect(submit(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('reads the key however it is cased, and whatever the training `$type` casing', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
     await expect(estimate(stepBody({ TriggerWord: 'badword' }, 'Training'))).rejects.toThrow(
       REFUSED
     );
-    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
   });
 
-  it('is refused when it is not a literal string, before any audit or orchestrator call', async () => {
+  it('is refused when it is not a literal string, before any check or orchestrator call', async () => {
     await expect(
       estimate(stepBody({ triggerWord: { $ref: '$arguments', path: 'tw' } }))
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: NOT_A_STRING });
@@ -219,43 +232,30 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
       code: 'BAD_REQUEST',
       message: NOT_A_STRING,
     });
-    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('audits with the token’s strictness: an all-levels token audits non-green', async () => {
-    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
-    h.audit.mockRejectedValue(new Error(REFUSED));
-    await expect(estimate(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
-    expect(h.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'badword', isGreen: false, isModerator: false })
-    );
-  });
-
-  it('control: a non-training step with the same field is not audited by this rule', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('control: a non-training step with the same field is not checked by this rule', async () => {
     await estimate(stepBody({ triggerWord: 'badword' }, 'wdTagging'));
-    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.check).not.toHaveBeenCalled();
   });
 });
 
 describe('the trigger word of a training step inside a `kind:workflow`', () => {
-  it('is audited at the estimate and the submit, before the orchestrator is asked', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('is checked at the estimate and the submit, before the orchestrator is asked', async () => {
     const body = workflowBody([
       { name: 'tag', $type: 'wdTagging', input: {} },
       { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
     ]);
     await expect(estimate(body)).rejects.toThrow(REFUSED);
     await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.audit).toHaveBeenCalledTimes(2);
-    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+    expect(h.check).toHaveBeenCalledTimes(2);
+    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('audits every training step’s word together, skipping blank ones and non-training steps', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
-    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+  it('checks every training step’s word, skipping blank ones and non-training steps', async () => {
     const body = workflowBody([
       { name: 'tag', $type: 'wdTagging', input: { triggerWord: 'nottraining' } },
       { name: 'a', $type: 'training', input: { triggerWord: 'cleanword' } },
@@ -263,31 +263,29 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
       { name: 'c', $type: 'imageResourceTraining', input: { triggerWord: 'badword' } },
     ]);
     await expect(estimate(body)).rejects.toThrow(REFUSED);
-    expect(h.audit).toHaveBeenCalledTimes(1);
-    expect(h.audit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'cleanword\nbadword', isGreen: false })
-    );
+    expect(h.check.mock.calls.map(([input]) => input.triggerWord)).toEqual([
+      'cleanword',
+      'badword',
+    ]);
   });
 
-  it('control: a workflow with no training step is never audited by this rule', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('control: a workflow with no training step is never checked by this rule', async () => {
     // Whatever the rest of the estimate answers here, it got past the rule: it priced.
     await estimate(workflowBody([{ $type: 'wdTagging', input: { triggerWord: 'badword' } }])).catch(
       () => undefined
     );
     expect(h.submitWorkflow).toHaveBeenCalled();
-    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.check).not.toHaveBeenCalled();
   });
 
-  it('is audited inside a `repeat` template', async () => {
-    h.audit.mockRejectedValue(new Error(REFUSED));
+  it('is checked inside a `repeat` template', async () => {
     const body = workflowBody(
       [repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })],
       { images: [{ url: 'a' }] }
     );
     await expect(estimate(body)).rejects.toThrow(REFUSED);
     await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
+    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -317,7 +315,7 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
         cfg: { triggerWord: 'badword' },
       }),
     ],
-  ])('refuses %s, before any audit or orchestrator call', async (_label, body) => {
+  ])('refuses %s, before any check or orchestrator call', async (_label, body) => {
     await expect(estimate(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: NOT_A_STRING,
@@ -326,7 +324,7 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
       code: 'BAD_REQUEST',
       message: NOT_A_STRING,
     });
-    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 });

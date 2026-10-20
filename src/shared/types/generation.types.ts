@@ -1,4 +1,5 @@
 import type { ModelVersionTerms } from '@civitai/buzz';
+import type { TurboSettings } from '~/shared/constants/basemodel.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 type NodeRef = [string, number];
@@ -27,6 +28,10 @@ export type GenerationResourceBase = {
   minStrength: number;
   maxStrength: number;
   strength: number;
+  /** Present on a turbo variant LoRA: the steps and CFG it runs at, with their advisory bands. */
+  turbo?: TurboSettings;
+  /** A checkpoint's own default turbo LoRA, over the family's; its strength over the LoRA's own. */
+  turboLora?: { id: number; strength?: number };
   /** Whether the current user owns the model this resource belongs to (computed by server) */
   isOwnedByUser?: boolean;
   /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
