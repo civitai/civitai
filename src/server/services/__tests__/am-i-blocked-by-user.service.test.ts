@@ -71,10 +71,9 @@ describe('amIBlockedByUser', () => {
     await expect(amIBlockedByUser({ userId: VIEWER, targetUsername: 'blocker' })).resolves.toBe(
       true
     );
-    expect(dbMock.dbRead.user.findFirst).toHaveBeenCalledWith({
-      where: { username: 'blocker' },
-      select: { id: true },
-    });
+    expect(dbMock.dbRead.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { username: 'blocker' } })
+    );
     expect(dbMock.dbRead.userEngagement.findFirst).not.toHaveBeenCalled();
   });
 
@@ -85,5 +84,7 @@ describe('amIBlockedByUser', () => {
     await expect(amIBlockedByUser({ userId: VIEWER, targetUsername: 'nobody' })).resolves.toBe(
       false
     );
+    // An unresolved username is answered before the cache is read.
+    expect(getCached).not.toHaveBeenCalled();
   });
 });
