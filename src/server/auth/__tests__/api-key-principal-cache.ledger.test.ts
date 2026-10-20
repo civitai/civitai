@@ -126,12 +126,14 @@ function scan(root = ROOT) {
   const files = globSync('{src,apps,packages,scripts}/**/*.{ts,tsx,js,mjs,cjs,svelte}', {
     cwd: root,
     exclude: (f) =>
-      /node_modules|\.svelte-kit|(^|\/)dist(\/|$)/.test(typeof f === 'string' ? f : f.name),
-  }).filter(
-    (f) =>
-      !/(__tests__|\.test\.|\.spec\.|\/migrations\/)/.test(f) &&
-      statSync(path.join(root, f)).isFile()
-  );
+      /node_modules|\.svelte-kit|(^|[\\/])dist([\\/]|$)/.test(typeof f === 'string' ? f : f.name),
+  })
+    .map((f) => f.split(path.sep).join('/'))
+    .filter(
+      (f) =>
+        !/(__tests__|\.test\.|\.spec\.|\/migrations\/)/.test(f) &&
+        statSync(path.join(root, f)).isFile()
+    );
   const found: Record<string, number> = {};
   for (const f of files) {
     const text = stripCodeComments(readFileSync(path.join(root, f), 'utf8'));

@@ -291,9 +291,11 @@ describe('creator card cache: bust on write', () => {
  */
 describe('creator card invalidation ledger', () => {
   const ROOT = path.resolve(__dirname, '../../../..');
-  const sources = globSync('src/**/*.{ts,tsx}', { cwd: ROOT }).filter(
-    (f) => !/(__tests__|\.test\.|\.spec\.)/.test(f) && statSync(path.join(ROOT, f)).isFile()
-  );
+  const sources = globSync('src/**/*.{ts,tsx}', { cwd: ROOT })
+    .map((f) => f.split(path.sep).join('/'))
+    .filter(
+      (f) => !/(__tests__|\.test\.|\.spec\.)/.test(f) && statSync(path.join(ROOT, f)).isFile()
+    );
   const read = (f: string) => readFileSync(path.join(ROOT, f), 'utf8');
   /** Calls of `name(` in code, not in comments: a commented-out call is not a bust. */
   const callsIn = (text: string, name: string) =>
