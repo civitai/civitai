@@ -419,15 +419,14 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), and which of them share addresses. `clusters` comes first: groups of reactors that share addresses with EACH OTHER, whether or not with the creator, each member with its rank and concentration. When asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` may hide a narrower link; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. `addressesChecked` says how many of the over-floor reactors were checked for shared addresses: when there are no clusters, say how many were checked out of how many, and if the check timed out, say it did not finish, never that there are no clusters. `actors` is only the top reactors by concentration. Use days 3 for who is boosting the creator now, 30 or 90 for a slow farm; groupIpv4 groups IPv4 addresses by /24, as the Reactor Lookup page can. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), and which of them share addresses. `clusters` comes first: groups of reactors that share addresses with EACH OTHER, whether or not with the creator, each member with its rank and concentration. When asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` may hide a narrower link; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. `addressesChecked` says how many of the over-floor reactors were checked for shared addresses and whether that check is `complete`. Say a creator's reactors have no clusters only when it is complete, and then say how many were checked out of how many; when it timed out or the scan was cut short (`scanCapped`), say the check did not finish, never that there are no clusters. `actors` is only the top reactors by concentration. Use days 3 for who is boosting the creator now, 30 or 90 for a slow farm. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
       minCount: z.number().int().min(1).max(1000).default(5),
-      groupIpv4: z.boolean().default(false),
     }),
     requires: [REACTOR_LOOKUP, LOOKUP],
-    run: async ({ userId: id, days, minCount, groupIpv4 }, ctx) => {
+    run: async ({ userId: id, days, minCount }, ctx) => {
       const [report, breadth] = await Promise.all([
         getInflationActors(id, { category: 'reactions', days, minCount, limit: ADDRESS_CHECK }),
         getReactionBreadth(id, days),
@@ -440,7 +439,6 @@ export const TOOLS = [
         try {
           ({ accounts: shared, scanCapped } = await getSharedIpCoverage(checked, {
             targetId: id,
-            groupIpv4,
             timeoutSeconds: ADDRESS_TIMEOUT_SECONDS,
           }));
         } catch (e) {
@@ -452,6 +450,8 @@ export const TOOLS = [
       const byId = new Map(report.actors.map((a, i) => [a.userId, { a, rank: i + 1 }]));
       const inCluster = new Set(clusters.flatMap((c) => c.members.map((m) => m.userId)));
       const shown = report.actors.slice(0, SHOWN_ACTORS);
+      // Only accounts in a finding: with 300 checked, every sharer would swamp the answer.
+      const findings = shared.filter((s) => s.withTarget || inCluster.has(s.userId));
       const label = shownAddress(ctx);
       return {
         data: {
@@ -460,6 +460,7 @@ export const TOOLS = [
             overFloor: report.total,
             scanCapped,
             timedOut,
+            complete: !scanCapped && !timedOut,
           },
           clusters: clusters.map((c) => ({
             ...c,
@@ -486,26 +487,24 @@ export const TOOLS = [
             createdAt: day(a.createdAt),
             instantVerify: a.instantVerify,
           })),
-          // Only accounts in a finding: with 300 checked, every sharer would swamp the answer.
-          sharedAddresses: shared
-            .filter((s) => s.withTarget || inCluster.has(s.userId))
-            .map((s) => ({
-              userId: s.userId,
-              username: s.username,
-              withCreator: s.withTarget,
-              addressCount: s.addressCount,
-              addresses: s.addresses
-                .slice(0, ADDRESSES_SHOWN)
-                .map((a) => ({ ...a, cluster: label(a.cluster) })),
-            })),
+          sharedAddresses: findings.map((s) => ({
+            userId: s.userId,
+            username: s.username,
+            withCreator: s.withTarget,
+            addressCount: s.addressCount,
+            addresses: s.addresses
+              .slice(0, ADDRESSES_SHOWN)
+              .map((a) => ({ ...a, cluster: label(a.cluster) })),
+          })),
         },
         rows: shown.length,
         truncated: report.total > checked.length || scanCapped || timedOut,
         sources: [
           userSource(id),
-          ...[...shown, ...report.actors.filter((a) => inCluster.has(a.userId))].map((a) =>
-            userSource(a.userId, a.username)
-          ),
+          ...shown.map((a) => userSource(a.userId, a.username)),
+          // Every account a finding names, so a citation of one past the top rows still verifies.
+          ...findings.map((s) => userSource(s.userId, s.username)),
+          ...unmeasuredLinks.flat().map((u) => userSource(u, byId.get(u)?.a.username)),
           ...breadth.top.map((t) => userSource(t.userId)),
         ],
       };

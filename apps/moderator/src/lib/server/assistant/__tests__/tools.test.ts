@@ -343,21 +343,20 @@ describe('toolCatalog', () => {
       'userId',
       'days',
       'minCount',
-      'groupIpv4',
     ]);
   });
 });
 
 describe('reactors_of', () => {
   const CREATOR = 1;
-  // Ranked as the tool ranks them: user 1000 + rank, concentration falling with rank.
+  // Ranked as the tool ranks them: user 1000 + rank, concentration and reactions falling with rank.
   const actors = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
       userId: 1001 + i,
       username: `r${i + 1}`,
-      count: 10,
+      count: 400 - i,
       entities: 5,
-      totalGiven: 20,
+      totalGiven: 800,
       owners: 3,
       concentration: 1 - i / 1000,
       status: 'active',
@@ -365,21 +364,33 @@ describe('reactors_of', () => {
       createdAt: null,
       instantVerify: null,
     }));
-  const sharer = (userId: number, peer: number) => ({
+  const sharer = (
+    userId: number,
+    peers: number[],
+    { withTarget = false, addresses = ['198.51.100.7'] } = {}
+  ) => ({
     userId,
-    username: null,
-    withTarget: false,
-    addressCount: 1,
-    addresses: [{ cluster: '198.51.100.7', totalAccounts: 2 }],
-    peers: [{ userId: peer, username: null, isTarget: false }],
+    username: `r${userId - 1000}`,
+    withTarget,
+    addressCount: addresses.length,
+    addresses: addresses.map((cluster, i) => ({ cluster, totalAccounts: 2 + i })),
+    peers: peers.map((p) => ({ userId: p, username: null, isTarget: p === CREATOR })),
   });
   // A pair deep in the ranking shares an address. The fake answers only about the ids it is asked,
-  // as the real query does, so checking too few reactors finds nothing.
+  // as the real query does, so checking too few reactors finds nothing. 1200 shares an address with
+  // the creator alone (a finding, no cluster); 1250 shares with nobody the clusters can measure.
   const PAIR = [1150, 1151];
+  const FIVE = ['198.51.100.7', '198.51.100.8', '198.51.100.9', '198.51.100.10', '198.51.100.11'];
   const coverage = async (ids: number[]) => ({
-    accounts: PAIR.every((p) => ids.includes(p))
-      ? [sharer(PAIR[0], PAIR[1]), sharer(PAIR[1], PAIR[0])]
-      : [],
+    accounts: [
+      ...(PAIR.every((p) => ids.includes(p))
+        ? [sharer(PAIR[0], [PAIR[1]], { addresses: FIVE }), sharer(PAIR[1], [PAIR[0]])]
+        : []),
+      ...(ids.includes(1200)
+        ? [sharer(1200, [CREATOR], { withTarget: true, addresses: ['203.0.113.5'] })]
+        : []),
+      ...(ids.includes(1250) ? [sharer(1250, [], { addresses: ['203.0.113.9'] })] : []),
+    ],
     scanCapped: false,
   });
   type Out = {
@@ -388,70 +399,105 @@ describe('reactors_of', () => {
       overFloor: number;
       scanCapped: boolean;
       timedOut: boolean;
+      complete: boolean;
     };
-    clusters: { complete: boolean; members: { userId: number; rank: number | null }[] }[];
+    clusters: {
+      complete: boolean;
+      members: {
+        userId: number;
+        rank: number | null;
+        concentration: number | null;
+        reactions: number | null;
+      }[];
+    }[];
     actors: unknown[];
+    sharedAddresses: { userId: number; addresses: unknown[] }[];
   };
   const reactors = async () =>
     (await run('reactors_of', { userId: CREATOR }, [
       '/retool/reactor-lookup',
       '/retool/user-lookup',
-    ])) as unknown as {
-      data: Out;
-      truncated: boolean;
-    };
+    ])) as unknown as { data: Out; truncated: boolean; sources: { ref: string }[] };
+  const report = (n: number, total: number) =>
+    getInflationActors.mockResolvedValue({
+      actors: actors(n),
+      total,
+      belowFloor: 0,
+      capped: false,
+    });
 
   beforeEach(() => {
-    getInflationActors
-      .mockReset()
-      .mockResolvedValue({ actors: actors(300), total: 1090, belowFloor: 0, capped: false });
+    getInflationActors.mockReset();
+    report(300, 1090);
     getSharedIpCoverage.mockReset().mockImplementation(coverage);
   });
 
-  it('finds a cluster far below the top reactors, with the rank of each member', async () => {
+  it('finds a cluster far below the top reactors, with each member ranked', async () => {
     const { data } = await reactors();
     expect(data.clusters).toHaveLength(1);
-    expect(data.clusters[0].members.map((m) => [m.userId, m.rank])).toEqual([
-      [1150, 150],
-      [1151, 151],
+    expect(data.clusters[0].members).toMatchObject([
+      { userId: 1150, rank: 150, concentration: 1 - 149 / 1000, reactions: 251 },
+      { userId: 1151, rank: 151, concentration: 1 - 150 / 1000, reactions: 250 },
     ]);
     expect(data.actors).toHaveLength(20);
   });
 
-  it('says how many reactors it checked out of how many', async () => {
+  it('lists addresses only for accounts in a finding, the narrowest three each', async () => {
+    const { data } = await reactors();
+    const listed = new Map(data.sharedAddresses.map((s) => [s.userId, s.addresses.length]));
+    expect([...listed.keys()].sort()).toEqual([1150, 1151, 1200]);
+    expect(listed.get(1150)).toBe(3);
+  });
+
+  it('cites every account a finding names, however far down it ranks', async () => {
+    const { sources } = await reactors();
+    const refs = sources.map((s) => s.ref);
+    for (const id of [1150, 1151, 1200]) expect(refs).toContain(`user:${id}`);
+    expect(refs).not.toContain('user:1250');
+  });
+
+  it('says how many reactors it checked out of how many, bounded in time', async () => {
     const { data, truncated } = await reactors();
     expect(data.addressesChecked).toEqual({
       reactors: 300,
       overFloor: 1090,
       scanCapped: false,
       timedOut: false,
+      complete: true,
     });
     expect(truncated).toBe(true);
-    // Bounded in time, so a slow scan comes back as unfinished instead of holding the turn.
     expect(getSharedIpCoverage).toHaveBeenCalledWith(
       expect.any(Array),
-      expect.objectContaining({ targetId: CREATOR, timeoutSeconds: expect.any(Number) })
+      expect.objectContaining({ targetId: CREATOR, timeoutSeconds: 15 })
     );
   });
 
-  it('marks every cluster incomplete when the address scan hit its budget', async () => {
+  it('is not truncated when every over-floor reactor was checked in full', async () => {
+    report(300, 300);
+    expect((await reactors()).truncated).toBe(false);
+  });
+
+  it('marks the check and every cluster incomplete when the address scan hit its budget', async () => {
+    report(300, 300);
     getSharedIpCoverage.mockImplementation(async (ids: number[]) => ({
       ...(await coverage(ids)),
       scanCapped: true,
     }));
-    const { data } = await reactors();
-    expect(data.addressesChecked.scanCapped).toBe(true);
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toMatchObject({ scanCapped: true, complete: false });
     expect(data.clusters[0].complete).toBe(false);
+    expect(truncated).toBe(true);
   });
 
   it('reads a timed-out address check as unfinished, not as no clusters', async () => {
+    report(300, 300);
     getSharedIpCoverage.mockRejectedValue(
       new Error(
         'ClickHouse query failed: Timeout exceeded: elapsed 15.2 seconds (TIMEOUT_EXCEEDED)'
       )
     );
     const { data, truncated } = await reactors();
-    expect(data.addressesChecked).toMatchObject({ reactors: 0, timedOut: true });
+    expect(data.addressesChecked).toMatchObject({ reactors: 0, timedOut: true, complete: false });
     expect(data.clusters).toEqual([]);
     expect(truncated).toBe(true);
   });
