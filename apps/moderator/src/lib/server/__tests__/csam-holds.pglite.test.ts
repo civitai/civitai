@@ -155,11 +155,11 @@ describe('listCsamHolds', () => {
   it('says whether the held content is still live: true, false, or unknown for types without a state', async () => {
     const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
     const byId = new Map(items.map((h) => [h.id, h]));
-    expect(byId.get(1)?.live).toBe(true); // published post
-    expect(byId.get(7)?.live).toBe(true); // published model
-    expect(byId.get(6)?.live).toBe(false); // unpublished post
-    expect(byId.get(3)?.live).toBe(false); // post that no longer exists
-    expect(byId.get(2)?.live).toBeNull(); // chat message
+    expect(byId.get(1)?.live).toBe(true);
+    expect(byId.get(7)?.live).toBe(true);
+    expect(byId.get(6)?.live).toBe(false);
+    expect(byId.get(3)?.live).toBe(false);
+    expect(byId.get(2)?.live).toBeNull();
   });
 
   it('says a held model whose row is gone is not live', async () => {

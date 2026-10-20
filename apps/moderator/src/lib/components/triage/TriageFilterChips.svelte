@@ -32,7 +32,6 @@
     sort?: ChipGroup;
     /** The URL param holding the open item; it indexes the old result set, so a filter drops it. */
     selectionParam: string;
-    /** Extra controls after the chips and before the sort, e.g. a menu of the chips folded away. */
     trailing?: Snippet;
   } = $props();
 

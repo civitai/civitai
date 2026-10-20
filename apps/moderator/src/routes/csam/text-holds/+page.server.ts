@@ -82,7 +82,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     items,
     hasMore: queue.hasMore,
     fullBleed: true,
-    // The page's own header shares the sidebar trigger's row.
     headerInline: true,
   };
 };

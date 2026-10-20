@@ -29,9 +29,7 @@
   }: {
     filters: CsamHoldFilters;
     entityType: string | null;
-    /** Holds per type for the shown status and search, plus `all`; null when they could not be read. */
     typeCounts: Record<string, number> | null;
-    /** Every pending hold, whatever the list is narrowed to; shown beside Pending in the status menu, null when it could not be read. */
     pendingCount: number | null;
   } = $props();
 

@@ -15,7 +15,6 @@
   }: {
     key: number;
     primary?: boolean;
-    /** Overrides the look: darker reds for the severe decisions, a red outline for the one set apart. */
     tone?: 'red' | 'dark-red' | 'darker-red' | 'red-outline';
     /** The decision offers reasons, so its key opens the reason list instead of submitting. */
     reasons?: boolean;

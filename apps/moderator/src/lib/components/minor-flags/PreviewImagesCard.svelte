@@ -16,9 +16,7 @@
     allHref?: string;
     /** Carries the model's true preview count; until it lands, the count is what the row holds. */
     detail?: Promise<ModelFlagDetail>;
-    /** The true image count when there is no `detail` to carry it. */
     total?: number;
-    /** Hides the pictures behind a blur; the ratings stay readable. */
     blurred?: boolean;
   } = $props();
 

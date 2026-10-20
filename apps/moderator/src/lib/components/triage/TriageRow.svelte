@@ -28,11 +28,9 @@
     /** Colour of the meta text, e.g. amber for someone waiting. */
     metaClass?: string;
     coverUrl?: string | undefined;
-    /** Hides the thumbnail behind a blur. */
     coverBlurred?: boolean;
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
-    /** Shown in the thumbnail slot when there is no image: a neutral placeholder icon. */
     coverIcon?: Snippet;
     verdict: string | undefined;
     error: string | undefined;

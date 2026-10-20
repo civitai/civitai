@@ -21,19 +21,15 @@ export type CsamHoldRow = {
   contentAt: Date | null;
   createdAt: Date;
   chatId: number | null;
-  /** The post's title or the model's name; null for other types, or when the content is gone or untitled. */
   title: string | null;
-  /** Whether the held post or model is still published, false when its row is gone; null for types with no such state. */
   live: boolean | null;
   status: string;
   decidedAt: Date | null;
   decidedByUsername: string | null;
   decisionNote: string | null;
-  /** The action taken, as the main app records it with the decision; null while pending. */
   decision: string | null;
 };
 
-/** A number matches the held content's id or its author's id; anything else is a username. */
 export type CsamHoldSearch = { id: number } | { username: string };
 
 export const csamHoldSearch = (q: string): CsamHoldSearch | undefined => {
@@ -86,7 +82,6 @@ export async function listCsamHolds({
 }: CsamHoldQuery): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
   let query = csamHolds({ status, search })
     .leftJoin('User as d', 'd.id', 'h.decidedById')
-    // Titles and liveness come from the same page of rows, joined by type, so the list costs no extra queries.
     .leftJoin('Post as p', (join) =>
       join.onRef('p.id', '=', 'h.entityId').on('h.entityType', '=', 'Post')
     )
@@ -140,7 +135,6 @@ export async function listCsamHolds({
   return { items, hasMore: rows.length > limit };
 }
 
-/** Holds per entity type for one status and search, ignoring the type filter so the chips stay put. */
 export async function countCsamHoldsByType(args: {
   status: CsamHoldStatusFilter;
   search?: CsamHoldSearch;
@@ -152,7 +146,6 @@ export async function countCsamHoldsByType(args: {
   return Object.fromEntries(rows.map((r) => [r.entityType, Number(r.count)]));
 }
 
-/** What the sidebar badge shows: every pending csam hold. */
 export async function countPendingCsamHolds(entityType?: string): Promise<number> {
   let query = csamHolds({ status: 'pending' });
   if (entityType) query = query.where('h.entityType', '=', entityType);
@@ -162,11 +155,8 @@ export async function countPendingCsamHolds(entityType?: string): Promise<number
 
 export type CsamHoldImage = { id: number; url: string; nsfwLevel: number };
 
-/** The first stills of a held post or model, and how many it has in all (`PREVIEW_COUNT_CAP + 1` when
- *  there are more than the cap; see `previewCountText`). */
 export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
 
-/** How many pictures a row carries; the rest is a link to the content. */
 export const HOLD_IMAGE_LIMIT = 4;
 
 type CoverRow = { entityId: number; id: number; url: string; nsfwLevel: number; total: string };
@@ -181,9 +171,7 @@ const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
   return byEntity;
 };
 
-/** A post's first stills in post order (lowest `index`, then id). Videos are left out: the preview
- *  renders stills. One read for every post, bounded per post: four rows and a count that stops one
- *  past `PREVIEW_COUNT_CAP`. */
+/** A post's first stills in post order (lowest `index`, then id); videos are left out. One read for every post, bounded per post. */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
     select p.id as "entityId", c.id, c.url, c."nsfwLevel", n.total
@@ -229,8 +217,6 @@ async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldC
   return toCovers(rows);
 }
 
-/** The preview images of each post or model hold on a page, by hold id: two reads at most however many
- *  rows there are. Holds with no still, and other types, have no entry. */
 export async function getHoldCoverImages(
   holds: { id: number; entityType: string; entityId: number }[]
 ): Promise<Map<number, CsamHoldCovers>> {

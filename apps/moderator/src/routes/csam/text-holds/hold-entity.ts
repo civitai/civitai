@@ -53,7 +53,6 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
-/** What a decided hold was decided as; the recorded action when there is one, else the status alone. */
 export function decisionLabel(hold: { status: string; decision: string | null }): string {
   const outcome =
     hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
@@ -80,7 +79,7 @@ const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
 export const entityLabel = (entityType: string) =>
   isCsamHoldEntityType(entityType) ? CSAM_HOLD_ENTITY_LABELS[entityType] : entityType;
 
-/** What the five decision keys do, in key order: digit `n + 1` picks index `n`. */
+/** The decision keys in key order: digit `n + 1` picks index `n`. */
 export const CSAM_HOLD_KEY_ORDER = [
   'dismiss',
   'remove',
@@ -89,8 +88,6 @@ export const CSAM_HOLD_KEY_ORDER = [
   'remove_ban_report',
 ] as const satisfies readonly CsamHoldDecision[];
 
-/** One entry per key in `CSAM_HOLD_KEY_ORDER`; empty when nothing can be decided. A key is on only
- *  when the grants it needs are held, the content can be removed and, for the author ones, the author is known. */
 export function holdDecisionEnabled(
   hold: { entityType: string; status: string; userId: number | null },
   grants: { canDecide: boolean; canStrike: boolean; canBan: boolean }
@@ -114,7 +111,6 @@ export function holdDecisionEnabled(
   });
 }
 
-/** What each confirmed decision asks before it runs. */
 export const CSAM_HOLD_CONFIRMS: Partial<
   Record<CsamHoldDecision, { label: string; title: string; description: string }>
 > = {
@@ -150,7 +146,6 @@ const QUOTED = [
   `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
 ];
 
-/** The phrases a hold's reason quotes from the text, to highlight in it. */
 export function quotedPhrases(reason: string): string[] {
   const found = new Set<string>();
   for (const source of QUOTED)
@@ -161,7 +156,6 @@ export function quotedPhrases(reason: string): string[] {
   return [...found];
 }
 
-/** The list and detail title: the content's own title when the query could cheaply find it. */
 export function holdTitle(hold: {
   entityType: string;
   entityId: number;
@@ -182,7 +176,6 @@ export function holdTitle(hold: {
   }
 }
 
-/** The right-hand text of a list row. */
 export function holdMeta(
   hold: { status: string; createdAt: Date; decidedAt: Date | null },
   now = Date.now()
@@ -192,8 +185,6 @@ export function holdMeta(
     : `decided ${shortAge(hold.decidedAt, now)}`;
 }
 
-/** Splits the type chips into those with holds and the empty ones that fold into a menu. The open
- *  type stays a chip whatever its count, and unreadable counts hide nothing. */
 export function splitEmptyTypes<T extends string>(
   types: readonly T[],
   counts: Record<string, number> | null,

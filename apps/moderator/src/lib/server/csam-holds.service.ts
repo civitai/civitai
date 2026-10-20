@@ -12,7 +12,6 @@ export {
   type CsamHoldRow,
 } from './csam-holds.queries';
 
-/** A queue row: the hold with the preview images its list and detail show. */
 export type CsamHoldItem = CsamHoldRow & { coverImages: CsamHoldImage[]; imageTotal: number };
 
 export type CsamHoldDecisionResult = { ok: true } | { ok: false; error: string };

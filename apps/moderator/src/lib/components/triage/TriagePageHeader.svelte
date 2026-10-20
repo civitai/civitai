@@ -7,7 +7,6 @@
   import { carriedSearchParams } from '$lib/triage/filters';
   import { searchDebouncer, searchHref } from '$lib/triage/search-debounce';
 
-  /** The header of a triage page without tabs: title and subtitle on the left, the search box on the right. */
   let {
     title,
     subtitle,
@@ -25,8 +24,6 @@
   // and the old search describe the result set being replaced.
   const carried = $derived(carriedSearchParams(page.url.searchParams));
 
-  // The box shows the page's search once a navigation lands, unless the moderator has typed since
-  // (a search still pending).
   let value = $state(untrack(() => q));
   const search = searchDebouncer({
     delay: 300,
@@ -35,7 +32,6 @@
       void goto(searchHref(page.url, next), { keepFocus: true, noScroll: true, replaceState: true });
     },
   });
-  // A pending search must not follow the moderator to another page or row.
   beforeNavigate(() => search.cancel());
   afterNavigate(({ to }) => {
     if (!search.pending()) value = to?.url.searchParams.get('q') ?? '';

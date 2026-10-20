@@ -1,5 +1,4 @@
-// Module state, not component state: filter and paging navigations remount the page's components,
-// and the choice must outlive them. It is never stored, so a reload blurs again.
+// Module state: navigations remount the page's components and the choice must outlive them.
 let revealed = $state(false);
 
 export const imageReveal = {

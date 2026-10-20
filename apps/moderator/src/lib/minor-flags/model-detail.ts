@@ -57,8 +57,7 @@ export const flagPromptId = (promptIds: unknown, label: string): number | null =
   return typeof id === 'number' ? id : null;
 };
 
-/** Queues that count a model's or post's images with a bounded read stop at one past this and pass
- *  that sentinel as the total, so the count reads "100+" rather than a figure that is too low. */
+/** Bounded reads stop at one past this and pass that sentinel as the total, so `previewCountText` reads "N+" rather than too low a figure. */
 export const PREVIEW_COUNT_CAP = 100;
 
 export const previewCountText = (total: number, shown: number) => {

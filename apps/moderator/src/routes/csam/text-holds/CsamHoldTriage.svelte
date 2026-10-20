@@ -75,7 +75,6 @@
       Object.keys(csamHoldFilterParams(data.holdFilters)).length > 0
   );
   const grants = $derived({ canDecide, canStrike, canBan });
-  // A decision key presses its button, which asks first where the decision needs it.
   const ondecision = (_row: unknown, index: number) => pressDecisionKey(index);
 
   const statusLabel = $derived(

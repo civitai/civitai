@@ -68,7 +68,6 @@
 
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
   const canRemove = $derived(canRemoveHeld(row.entityType));
-  // A decided hold opens read-only; the main app refuses a second decision either way.
   const decidedRow = $derived(row.status !== 'Pending');
   const dismissedRow = $derived(row.status === 'Dismissed');
   const enabled = $derived(holdDecisionEnabled(row, { canDecide, canStrike, canBan }));
@@ -87,7 +86,6 @@
     formEl?.requestSubmit();
   }
 
-  // A decision that takes the account or its content down asks first.
   const press = (next: CsamHoldDecision) => {
     if (CSAM_HOLD_CONFIRMS[next]) {
       confirming = next;
@@ -103,7 +101,6 @@
     remove_ban: { label: 'Remove + ban', tone: 'darker-red' },
     remove_ban_report: { label: 'Ban + file NCMEC report', tone: 'red-outline' },
   };
-  // Digit n + 1 picks the n-th, in the order `holdDecisionEnabled` reports.
   const KEYS = CSAM_HOLD_KEY_ORDER.map((decision) => ({ decision, ...KEY_LOOK[decision] }));
 
   const whyDisabled = (key: CsamHoldDecision) => {

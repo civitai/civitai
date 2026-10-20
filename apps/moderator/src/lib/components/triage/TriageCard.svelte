@@ -11,7 +11,6 @@
     title: string;
     /** The compact card of a flush triage page: small muted title, 13px body, tighter padding. */
     dense?: boolean;
-    /** A coloured left edge that marks the card as the item's outcome. */
     accent?: 'red' | 'neutral';
     children: Snippet;
   } = $props();

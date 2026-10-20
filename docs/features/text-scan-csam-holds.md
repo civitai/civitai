@@ -1,10 +1,17 @@
 # CSAM text holds queue
 
-A moderator-app queue at `/csam/text-holds` (sidebar: Text Scan > CSAM holds) listing every Pending
-`TextScanHold` row with label `csam`, oldest first. Each item shows the held text as the scan
-composed it, the model's reason, the author, when the hold and the content were created, the prompt
-id and the workflow id, with a link to the content where one exists. It can be narrowed to one
-entity type.
+A moderator-app queue at `/csam/text-holds` (sidebar: Text Scan > CSAM holds) listing `TextScanHold`
+rows with label `csam`. A status filter (Pending by default, or Removed / Dismissed / All) and a
+sort (oldest first by default, or newest first) narrow the list. Type chips with counts narrow it to
+one entity type, and the header search takes a content id, a user id or an author username. Each item shows the
+held text as the scan composed it, the model's reason, the author, when the hold and the content were
+created, the prompt id and the workflow id, with a link to the content where one exists. Decided
+holds open read-only with their outcome, decider, time and note.
+
+Post and Model holds show a row thumbnail and up to four preview images, loaded with the page. They
+are blurred until the page-wide Reveal toggle (V) is on, and a blurred image does not link to the
+original. The preview count caps at "100+". The model cover-image selection is shared with the
+Model Flags pages.
 
 ## Where holds come from
 
@@ -50,7 +57,11 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   decision can be sent again. The action is also kept in the hold's `meta.decision`.
 - The endpoint refuses (409) a hold that is missing or no longer Pending, and logs every decision to
   Axiom (`text-scan` / `csam-hold-decision`).
-- Destructive actions ask for confirmation before submitting; none has a keyboard shortcut.
+- Decision keys 1-5 are Dismiss, Remove, Remove + strike, Remove + ban, Ban + file NCMEC report.
+  A key is disabled when the content type cannot be removed or the moderator lacks the grant.
+  Remove + strike, Remove + ban and the report action still ask for confirmation first; while a
+  confirmation is open, decision keys, J/K and V do nothing. K/J move to the next/previous hold, and
+  V toggles image reveal.
 - Hiding content while a hold waits is not built: holds stay non-hiding.
 
 ## Access

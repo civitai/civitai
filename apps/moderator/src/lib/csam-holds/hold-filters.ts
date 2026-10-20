@@ -20,7 +20,6 @@ export const CSAM_HOLD_SORT_LABELS: Record<CsamHoldSort, string> = {
   newest: 'Newest first',
 };
 
-/** The non-default filters, as the URL params that restore them. */
 export const csamHoldFilterParams = (
   filters: CsamHoldFilters,
   entityType?: string | null

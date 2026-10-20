@@ -9,13 +9,11 @@
     blurred = false,
   }: {
     images: AppealCoverImage[];
-    /** Hides the pictures behind a blur; the rating label stays readable. */
     blurred?: boolean;
   } = $props();
 </script>
 
 {#if images.length}
-  <!-- Four columns whatever the count, so every model's tiles are the same size to compare. -->
   <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
       <svelte:element

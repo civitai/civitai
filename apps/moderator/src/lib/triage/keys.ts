@@ -93,6 +93,5 @@ export const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
 
 export const isDialogOpen = () => document.querySelector(DIALOG_SELECTOR) !== null;
 
-/** V toggles the page's image reveal. */
 export const isRevealKey = (e: PlainKeyEvent & { repeat: boolean }) =>
   (e.key === 'v' || e.key === 'V') && !e.repeat && isPlainKey(e);
