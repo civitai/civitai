@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('../../xguard-api', () => ({ openrouterKey: () => 'test-key' }));
 
 const { complete, reasoningOf } = await import('../openrouter');
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('complete', () => {
   it("returns the answer and the completion's reasoning, whatever field carried it", async () => {
@@ -26,7 +28,6 @@ describe('complete', () => {
       )
     );
     const out = await complete({ model: 'm', messages: [{ role: 'user', content: 'q' }] });
-    vi.unstubAllGlobals();
     expect(out.message).toMatchObject({ content: 'It is [user:5].', reasoning: '- look up 5' });
   });
 });
