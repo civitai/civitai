@@ -3,13 +3,9 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { LINK_CLASS, num } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { bulkBanUrl, userLookupUrl } from '$lib/entity-url';
 
-  /**
-   * The accounts sharing an address with this one, and the hand-off to Bulk Ban. Shared by User
-   * Lookup's Addresses panel and the user report queue's User details tab — where a bot ring is
-   * usually first noticed.
-   */
+  /** The accounts sharing an address with this one, and the hand-off to Bulk Ban. */
   let {
     accountId,
     accounts,
@@ -74,7 +70,7 @@
     <Button
       size="xs"
       variant="outline"
-      href="/retool/bulk-ban?ids={encodeURIComponent(ids.join('\n'))}"
+      href={bulkBanUrl(ids)}
       target="_blank"
       rel="noopener"
     >
