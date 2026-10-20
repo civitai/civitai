@@ -1,11 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-// The service module is a hub; nothing below reaches a database, so its import graph is cut here.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
-const { assertRecommendedSettingsForType } = await import(
-  '~/server/services/model-version.service'
-);
+import { assertRecommendedSettingsForType } from '~/server/services/model-version.service';
 
 const range = { min: 4, max: 12, default: 8 };
 const turbo = { steps: range, cfgScale: { min: 1, max: 1.5, default: 1 } };

@@ -106,6 +106,10 @@ describe('page resource picker ⇄ shared modal maturity seam', () => {
       'canGenerate',
       'excludeIds',
       'resources',
+      // Reviewed here: only narrows the hits to versions with a turbo preset, so it can
+      // hide resources but never surface one above the site-wide ceiling. No App Block
+      // host passes it; each builds its options bag literally.
+      'turboOnly',
     ]);
   });
 
