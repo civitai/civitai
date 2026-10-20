@@ -117,6 +117,10 @@ try {
   const localOnly = commit(primary, 'local-only');
   writeFileSync(join(primary, '.env'), 'ROOT=1\n');
   writeFileSync(join(primary, '.env.local'), 'LOCAL=1\n');
+  const realMail =
+    'A=1\nEMAIL_HOST=smtp.example.net\nEMAIL_PORT=587\nEMAIL_USER=real-user\nEMAIL_PASS=real-pass\n' +
+    '# EMAIL_HOST=smtp.example.org\nEMAIL_FROM=Real <a@example.net>\n';
+  writeFileSync(join(primary, '.env.development'), realMail);
   writeFileSync(join(primary, '.env.bak-123'), 'OLD=1\n');
   writeFileSync(join(primary, 'apps', 'web', '.env'), 'WEB=1\n');
   mkdirSync(join(primary, 'apps', 'gone'), { recursive: true });
@@ -150,6 +154,15 @@ try {
   check('copies a .env.* variant', read('.env.local'), 'LOCAL=1\n');
   check('copies a per-app .env', read('apps/web/.env'), 'WEB=1\n');
   check('skips a .env backup', read('.env.bak-123'), null);
+  const catcherMail =
+    'A=1\n\n# Email: local catcher (Mailpit, docker-compose.base.yml)\nEMAIL_HOST=localhost\n' +
+    'EMAIL_PORT=1025\nEMAIL_SECURE=false\nEMAIL_USER=local\nEMAIL_PASS=local\n' +
+    'EMAIL_FROM="Civitai Dev <noreply@localhost>"\n';
+  check(
+    'a copied .env has its mail lines, commented ones too, replaced by the catcher',
+    read('.env.development'),
+    catcherMail
+  );
   check('skips an app the branch does not have', existsSync(join(tree, 'apps', 'gone')), false);
   check('the copies stay out of git', git(['status', '--porcelain'], tree), '');
 
@@ -164,6 +177,11 @@ try {
   const refreshed = syncAppEnv(primary, tree, { refresh: true }).refreshed;
   check('--refresh re-copies files the primary edited later', refreshed.join(), '.env,apps/web/.env');
   check('--refresh brings the new value', read('.env'), 'ROOT=2\n');
+  writeFileSync(join(tree, '.env.development'), 'A=tree\n');
+  utimesSync(join(tree, '.env.development'), past, past);
+  writeFileSync(join(primary, '.env.development'), realMail);
+  syncAppEnv(primary, tree, { refresh: true });
+  check('--refresh routes mail to the catcher too', read('.env.development'), catcherMail);
   writeFileSync(join(primary, '.env.example'), 'KEY=edited-in-primary\n');
   syncAppEnv(primary, tree, { refresh: true });
   check('never copies a tracked .env.example', /edited-in-primary/.test(read('.env.example')), false);

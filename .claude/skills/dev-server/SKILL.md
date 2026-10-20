@@ -596,7 +596,7 @@ The hub works behind the RGB proxy too. When you browse dev at `https://civitai-
 
 ### Logging in
 
-- **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
+- **Email magic-link** lands in the local Mailpit inbox (http://localhost:1080): the daemon forces every app's `EMAIL_*` to the catcher, so start it with `docker compose -f docker-compose.base.yml up -d mailpit`.
 - **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
 - Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
 
