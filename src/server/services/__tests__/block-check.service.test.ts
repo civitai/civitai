@@ -517,11 +517,10 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
       targetUserId: OWNER,
       confirmOnPrimary: true,
     });
-    expect(amIBlockedByUser).not.toHaveBeenCalledWith({
-      userId: VIEWER,
-      targetUserId: OTHER_OWNER,
-      confirmOnPrimary: true,
-    });
+    // Shape-independent: no call for OTHER_OWNER, whatever options it carries.
+    expect(amIBlockedByUser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ targetUserId: OTHER_OWNER })
+    );
   });
 
   it('resolves a top-level comment to its own thread content', async () => {
