@@ -133,7 +133,7 @@
       href={state.href}
       selected={state.selected}
       title={holdTitle(row)}
-      coverUrl={row.coverUrl ?? undefined}
+      coverUrl={row.coverImages[0]?.url}
       coverBlurred={!imageReveal.on}
       meta={holdMeta(row)}
       verdict={state.verdict}

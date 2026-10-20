@@ -160,101 +160,80 @@ export async function countPendingCsamHolds(entityType?: string): Promise<number
 
 export type CsamHoldImage = { id: number; url: string; nsfwLevel: number };
 
-/** The first `limit` images of a held post in post order, and how many it has in all. Videos are left out:
- *  the preview renders stills. */
-export async function getPostHoldImages(
-  postId: number,
-  limit: number
-): Promise<{ images: CsamHoldImage[]; total: number }> {
-  const rows = await dbRead
-    .selectFrom('Image as i')
-    .select(['i.id', 'i.url', 'i.nsfwLevel', sql<string>`count(*) over ()`.as('total')])
-    .where('i.postId', '=', postId)
-    .where(sql<boolean>`i.type::text = 'image'`)
-    .orderBy(sql`i.index asc nulls last`)
-    .orderBy('i.id', 'asc')
-    .limit(limit)
-    .execute();
-  return {
-    images: rows.map(({ id, url, nsfwLevel }) => ({ id, url, nsfwLevel })),
-    total: rows.length ? Number(rows[0].total) : 0,
-  };
+/** The first stills of a held post or model, and how many it has in all. */
+export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
+
+/** How many pictures a row carries; the rest is a link to the content. */
+export const HOLD_IMAGE_LIMIT = 4;
+
+type CoverRow = { entityId: number; id: number; url: string; nsfwLevel: number; total: string };
+
+const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
+  const byEntity = new Map<number, CsamHoldCovers>();
+  for (const { entityId, id, url, nsfwLevel, total } of rows) {
+    const entry = byEntity.get(entityId) ?? { images: [], total: Number(total) };
+    entry.images.push({ id, url, nsfwLevel });
+    byEntity.set(entityId, entry);
+  }
+  return byEntity;
+};
+
+/** A post's first stills in post order (lowest `index`, then id). Videos are left out: the preview
+ *  renders stills. One read for every post. */
+async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
+  const { rows } = await sql<CoverRow>`
+    select r."entityId", r.id, r.url, r."nsfwLevel", r.total from (
+      select i."postId" as "entityId", i.id, i.url, i."nsfwLevel",
+        row_number() over (partition by i."postId" order by i.index asc nulls last, i.id asc) as rn,
+        count(*) over (partition by i."postId") as total
+      from "Image" i
+      where i."postId" in (${sql.join(postIds)}) and i.type::text = 'image'
+    ) r
+    where r.rn <= ${HOLD_IMAGE_LIMIT}
+    order by r."entityId", r.rn`.execute(dbRead);
+  return toCovers(rows);
 }
 
-const stillsOnly = sql<boolean>`i.type::text = 'image'`;
-
-/** A post's first still: lowest `index`, then id. One row per post. */
-async function getPostCovers(postIds: number[]): Promise<Map<number, string>> {
-  const rows = await dbRead
-    .selectFrom('Image as i')
-    .distinctOn('i.postId')
-    .select(['i.postId', 'i.url'])
-    .where('i.postId', 'in', postIds)
-    .where(stillsOnly)
-    .orderBy('i.postId')
-    .orderBy(sql`i.index asc nulls last`)
-    .orderBy('i.id', 'asc')
-    .execute();
-  return new Map(rows.flatMap((r) => (r.postId === null ? [] : [[r.postId, r.url] as const])));
+/** A model's first stills, chosen as the model flags queues choose theirs: the owner's posts on its
+ *  versions, published before unpublished, then version, post and image order. One read for every model. */
+async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldCovers>> {
+  const { rows } = await sql<CoverRow>`
+    select r."entityId", r.id, r.url, r."nsfwLevel", r.total from (
+      select m.id as "entityId", i.id, i.url, i."nsfwLevel",
+        row_number() over (partition by m.id order by p."publishedAt" is null, mv.index asc nulls last,
+          p.id asc, i.index asc nulls last, i.id asc) as rn,
+        count(*) over (partition by m.id) as total
+      from "Model" m
+      join "ModelVersion" mv on mv."modelId" = m.id
+      join "Post" p on p."modelVersionId" = mv.id and p."userId" = m."userId"
+      join "Image" i on i."postId" = p.id
+      where m.id in (${sql.join(modelIds)}) and i.type::text = 'image'
+    ) r
+    where r.rn <= ${HOLD_IMAGE_LIMIT}
+    order by r."entityId", r.rn`.execute(dbRead);
+  return toCovers(rows);
 }
 
-/** A model's first still, chosen as the model flags queues choose theirs: the owner's posts on its
- *  versions, published before unpublished, then version, post and image order. One row per model. */
-async function getModelCovers(modelIds: number[]): Promise<Map<number, string>> {
-  const rows = await dbRead
-    .selectFrom('Model as m')
-    .innerJoin('ModelVersion as mv', 'mv.modelId', 'm.id')
-    .innerJoin('Post as p', (join) =>
-      join.onRef('p.modelVersionId', '=', 'mv.id').onRef('p.userId', '=', 'm.userId')
-    )
-    .innerJoin('Image as i', 'i.postId', 'p.id')
-    .distinctOn('m.id')
-    .select(['m.id as modelId', 'i.url'])
-    .where('m.id', 'in', modelIds)
-    .where(stillsOnly)
-    .orderBy('m.id')
-    .orderBy(sql`p."publishedAt" is null`)
-    .orderBy(sql`mv.index asc nulls last`)
-    .orderBy('p.id', 'asc')
-    .orderBy(sql`i.index asc nulls last`)
-    .orderBy('i.id', 'asc')
-    .execute();
-  return new Map(rows.map((r) => [r.modelId, r.url]));
-}
-
-/** The thumbnail key of each post or model hold on a page, by hold id: two reads at most however many
+/** The preview images of each post or model hold on a page, by hold id: two reads at most however many
  *  rows there are. Holds with no still, and other types, have no entry. */
-export async function getHoldCoverUrls(
+export async function getHoldCoverImages(
   holds: { id: number; entityType: string; entityId: number }[]
-): Promise<Map<number, string>> {
+): Promise<Map<number, CsamHoldCovers>> {
   const idsOf = (type: string) => [
     ...new Set(holds.filter((h) => h.entityType === type).map((h) => h.entityId)),
   ];
   const postIds = idsOf('Post');
   const modelIds = idsOf('Model');
   const [posts, models] = await Promise.all([
-    postIds.length ? getPostCovers(postIds) : new Map<number, string>(),
-    modelIds.length ? getModelCovers(modelIds) : new Map<number, string>(),
+    postIds.length ? getPostCovers(postIds) : new Map<number, CsamHoldCovers>(),
+    modelIds.length ? getModelCovers(modelIds) : new Map<number, CsamHoldCovers>(),
   ]);
-  const covers = new Map<number, string>();
+  const covers = new Map<number, CsamHoldCovers>();
   for (const h of holds) {
-    const url = (h.entityType === 'Post' ? posts : h.entityType === 'Model' ? models : null)?.get(
+    const found = (h.entityType === 'Post' ? posts : h.entityType === 'Model' ? models : null)?.get(
       h.entityId
     );
-    if (url) covers.set(h.id, url);
+    if (found) covers.set(h.id, found);
   }
   return covers;
-}
-
-/** What a hold points at, for reading its content; null when the id is not a csam hold. */
-export async function getCsamHoldRef(
-  holdId: number
-): Promise<{ entityType: string; entityId: number } | null> {
-  const row = await dbRead
-    .selectFrom('TextScanHold as h')
-    .select(['h.entityType', 'h.entityId'])
-    .where('h.id', '=', holdId)
-    .where('h.label', '=', 'csam')
-    .executeTakeFirst();
-  return row ?? null;
 }

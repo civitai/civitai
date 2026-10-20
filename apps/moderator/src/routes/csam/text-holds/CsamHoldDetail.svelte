@@ -21,12 +21,10 @@
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
-  import { browser } from '$app/environment';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
-  import { fetchHoldImages } from '$lib/csam-holds/hold-images';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import { dateTime, shortAge } from '$lib/format';
-  import type { CsamHoldRow } from '$lib/server/csam-holds.service';
+  import type { CsamHoldItem } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
   import {
     CSAM_HOLD_CONFIRMS,
@@ -38,7 +36,6 @@
     entityLabel,
     holdDecisionEnabled,
     holdEntityHref,
-    holdHasImages,
     holdTitle,
     quotedPhrases,
     type CsamHoldDecision,
@@ -55,7 +52,7 @@
     submit,
     actionHref,
   }: {
-    row: CsamHoldRow;
+    row: CsamHoldItem;
     civitaiUrl: string;
     /** Holds `csam.report.file`: the page itself is closed to anyone else. */
     canDecide: boolean;
@@ -78,11 +75,6 @@
   const phrases = $derived(quotedPhrases(row.reason));
   const typeName = $derived(entityLabel(row.entityType));
 
-  // Read when a hold opens, not with the page: the shell switches holds without navigating, and only
-  // posts and models have any. The shell keys this component per hold, so a late reply cannot land on another.
-  const images = $derived(
-    browser && holdHasImages(row.entityType) ? fetchHoldImages(row.id) : null
-  );
   const LINK_BUTTON =
     'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
 
@@ -206,19 +198,15 @@
       </TriageCard>
     {/if}
 
-    {#if images}
-      {#await images then found}
-        {#if found}
-          <TriageCard dense title={row.entityType === 'Model' ? 'Model images' : 'Post images'}>
-            <PreviewImagesCard
-              images={found.images}
-              total={found.total}
-              blurred={!imageReveal.on}
-              allHref={entityHref ?? undefined}
-            />
-          </TriageCard>
-        {/if}
-      {/await}
+    {#if row.coverImages.length}
+      <TriageCard dense title={row.entityType === 'Model' ? 'Model images' : 'Post images'}>
+        <PreviewImagesCard
+          images={row.coverImages}
+          total={row.imageTotal}
+          blurred={!imageReveal.on}
+          allHref={entityHref ?? undefined}
+        />
+      </TriageCard>
     {/if}
 
     <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">

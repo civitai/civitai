@@ -73,10 +73,6 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
-/** Only posts and models show pictures in the detail pane. */
-export const holdHasImages = (entityType: string) =>
-  entityType === 'Post' || entityType === 'Model';
-
 const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
   (CSAM_HOLD_ENTITY_TYPES as readonly string[]).includes(value);
 

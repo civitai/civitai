@@ -5,9 +5,9 @@ const {
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
-  getHoldCoverUrls,
+  getHoldCoverImages,
 } = vi.hoisted(() => ({
-  getHoldCoverUrls: vi.fn(),
+  getHoldCoverImages: vi.fn(),
   listCsamHolds: vi.fn(),
   countCsamHoldsByType: vi.fn(),
   countPendingCsamHolds: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
-  getHoldCoverUrls,
+  getHoldCoverImages,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -61,7 +61,7 @@ beforeEach(() => {
   countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
   countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
-  getHoldCoverUrls.mockResolvedValue(new Map());
+  getHoldCoverImages.mockResolvedValue(new Map());
 });
 
 describe('csam text holds load', () => {
@@ -145,7 +145,7 @@ describe('csam text holds load', () => {
     expect(data).toMatchObject({ items: [{ id: 1 }], pendingCount: null });
   });
 
-  it('hands each row its thumbnail key from one batched read of the page', async () => {
+  it('hands each row its preview images from one batched read of the page', async () => {
     listCsamHolds.mockResolvedValue({
       items: [
         { id: 1, entityType: 'Post', entityId: 10 },
@@ -153,23 +153,25 @@ describe('csam text holds load', () => {
       ],
       hasMore: false,
     });
-    getHoldCoverUrls.mockResolvedValue(new Map([[1, 'k-1']]));
+    getHoldCoverImages.mockResolvedValue(
+      new Map([[1, { images: [{ id: 5, url: 'k-1', nsfwLevel: 1 }], total: 9 }]])
+    );
     const data = await loadAt('');
-    expect(getHoldCoverUrls).toHaveBeenCalledTimes(1);
-    expect(getHoldCoverUrls).toHaveBeenCalledWith([
+    expect(getHoldCoverImages).toHaveBeenCalledTimes(1);
+    expect(getHoldCoverImages).toHaveBeenCalledWith([
       { id: 1, entityType: 'Post', entityId: 10 },
       { id: 2, entityType: 'ChatMessage', entityId: 20 },
     ]);
     expect(data.items).toMatchObject([
-      { id: 1, coverUrl: 'k-1' },
-      { id: 2, coverUrl: null },
+      { id: 1, coverImages: [{ id: 5, url: 'k-1', nsfwLevel: 1 }], imageTotal: 9 },
+      { id: 2, coverImages: [], imageTotal: 0 },
     ]);
   });
 
-  it('still lists the queue, with icons, when the thumbnails fail', async () => {
-    getHoldCoverUrls.mockRejectedValue(new Error('db down'));
+  it('still lists the queue, with icons, when the images fail', async () => {
+    getHoldCoverImages.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
-    expect(data.items).toMatchObject([{ id: 1, coverUrl: null }]);
+    expect(data.items).toMatchObject([{ id: 1, coverImages: [], imageTotal: 0 }]);
   });
 
   it('still lists the queue when the counts fail', async () => {

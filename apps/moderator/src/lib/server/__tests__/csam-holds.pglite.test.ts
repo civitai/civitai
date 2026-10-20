@@ -25,8 +25,7 @@ const {
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
-  getHoldCoverUrls,
-  getPostHoldImages,
+  getHoldCoverImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
 
@@ -342,24 +341,7 @@ describe('decideCsamHold', () => {
   });
 });
 
-describe('getPostHoldImages', () => {
-  it('returns the first images of the post in order with the true count, skipping videos', async () => {
-    const result = await getPostHoldImages(10, 4);
-    expect(result.images).toEqual([
-      { id: 2, url: 'k-b', nsfwLevel: 1 },
-      { id: 1, url: 'k-a', nsfwLevel: 4 },
-      { id: 4, url: 'k-d', nsfwLevel: 1 },
-      { id: 5, url: 'k-e', nsfwLevel: 1 },
-    ]);
-    expect(result.total).toBe(5);
-  });
-
-  it('is empty for a post with no images or no row', async () => {
-    expect(await getPostHoldImages(30, 4)).toEqual({ images: [], total: 0 });
-  });
-});
-
-describe('getHoldCoverUrls', () => {
+describe('getHoldCoverImages', () => {
   const hold = (id: number, entityType: string, entityId: number) => ({ id, entityType, entityId });
 
   beforeEach(async () => {
@@ -381,24 +363,39 @@ describe('getHoldCoverUrls', () => {
     `);
   });
 
-  it("picks a post's first still, skipping videos, one per post", async () => {
-    const covers = await getHoldCoverUrls([hold(1, 'Post', 10), hold(2, 'Post', 60)]);
-    expect(covers.get(1)).toBe('k-b');
-    expect(covers.get(2)).toBe('k-g');
+  it('returns the first four stills of a post in post order with the true count, skipping videos', async () => {
+    const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(2, 'Post', 60)]);
+    expect(covers.get(1)).toEqual({
+      images: [
+        { id: 2, url: 'k-b', nsfwLevel: 1 },
+        { id: 1, url: 'k-a', nsfwLevel: 4 },
+        { id: 4, url: 'k-d', nsfwLevel: 1 },
+        { id: 5, url: 'k-e', nsfwLevel: 1 },
+      ],
+      total: 5,
+    });
+    expect(covers.get(2)).toEqual({ images: [{ id: 7, url: 'k-g', nsfwLevel: 1 }], total: 1 });
   });
 
-  it("picks a model's first owner still by version then post order, ignoring other users' posts and videos", async () => {
-    const covers = await getHoldCoverUrls([hold(3, 'Model', 71)]);
-    expect(covers.get(3)).toBe('m-first');
+  it("picks a model's owner stills by version then post order, ignoring other users' posts and videos", async () => {
+    const covers = await getHoldCoverImages([hold(3, 'Model', 71)]);
+    expect(covers.get(3)).toEqual({
+      images: [
+        { id: 91, url: 'm-first', nsfwLevel: 1 },
+        { id: 92, url: 'm-later', nsfwLevel: 1 },
+      ],
+      total: 2,
+    });
   });
 
   it('prefers a published post over an unpublished one', async () => {
-    const covers = await getHoldCoverUrls([hold(4, 'Model', 72)]);
-    expect(covers.get(4)).toBe('p-live');
+    const covers = await getHoldCoverImages([hold(4, 'Model', 72)]);
+    expect(covers.get(4)?.images.map((i) => i.url)).toEqual(['p-live', 'u-draft']);
+    expect(covers.get(4)?.total).toBe(2);
   });
 
-  it('has no cover for a post or model without images, or a type with none', async () => {
-    const covers = await getHoldCoverUrls([
+  it('has no entry for a post or model without images, or a type with none', async () => {
+    const covers = await getHoldCoverImages([
       hold(5, 'Post', 30),
       hold(6, 'Model', 73),
       hold(7, 'ChatMessage', 1),
@@ -407,11 +404,12 @@ describe('getHoldCoverUrls', () => {
   });
 
   it('gives every hold its own entry when two holds share an entity', async () => {
-    const covers = await getHoldCoverUrls([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
-    expect([covers.get(1), covers.get(8)]).toEqual(['k-b', 'k-b']);
+    const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
+    expect(covers.get(1)).toEqual(covers.get(8));
+    expect(covers.get(8)?.total).toBe(5);
   });
 
   it('reads nothing for an empty page', async () => {
-    expect((await getHoldCoverUrls([])).size).toBe(0);
+    expect((await getHoldCoverImages([])).size).toBe(0);
   });
 });

@@ -12,8 +12,9 @@ import {
   countPendingCsamHolds,
   csamHoldSearch,
   decideCsamHold,
-  getHoldCoverUrls,
+  getHoldCoverImages,
   listCsamHolds,
+  type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
@@ -53,12 +54,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       return null;
     }),
   ]);
-  // Thumbnails are decoration: a failure leaves the rows on their icons.
-  const covers = await getHoldCoverUrls(queue.items).catch((err) => {
-    console.error('CSAM hold thumbnails failed', err);
-    return new Map<number, string>();
+  // Images are decoration: a failure leaves the rows on their icons and the details without a preview.
+  const covers = await getHoldCoverImages(queue.items).catch((err) => {
+    console.error('CSAM hold images failed', err);
+    return new Map<number, CsamHoldCovers>();
   });
-  const items = queue.items.map((hold) => ({ ...hold, coverUrl: covers.get(hold.id) ?? null }));
+  const items = queue.items.map((hold) => ({
+    ...hold,
+    coverImages: covers.get(hold.id)?.images ?? [],
+    imageTotal: covers.get(hold.id)?.total ?? 0,
+  }));
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,
     all: Object.values(byType).reduce((sum, n) => sum + n, 0),

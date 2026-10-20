@@ -1,18 +1,19 @@
-import { getCsamHoldRef, getPostHoldImages, type CsamHoldImage } from './csam-holds.queries';
-import { getModelPreview } from './model-preview.service';
+import type { CsamHoldImage, CsamHoldRow } from './csam-holds.queries';
 import { callModEndpoint } from './user-actions.service';
 
 export {
   countCsamHoldsByType,
   countPendingCsamHolds,
   csamHoldSearch,
-  getCsamHoldRef,
-  getHoldCoverUrls,
-  getPostHoldImages,
+  getHoldCoverImages,
   listCsamHolds,
+  type CsamHoldCovers,
   type CsamHoldImage,
   type CsamHoldRow,
 } from './csam-holds.queries';
+
+/** A queue row: the hold with the preview images its list and detail show. */
+export type CsamHoldItem = CsamHoldRow & { coverImages: CsamHoldImage[]; imageTotal: number };
 
 export type CsamHoldDecisionResult = { ok: true } | { ok: false; error: string };
 
@@ -55,45 +56,4 @@ export async function decideCsamHold({
       error: `The main app did not report the hold as ${expected.toLowerCase()}.`,
     };
   return { ok: true };
-}
-
-/** How many pictures the detail pane shows; the rest is a link to the content. */
-export const HOLD_IMAGE_LIMIT = 4;
-
-export type CsamHoldImages = {
-  images: CsamHoldImage[];
-  /** The count when it is exact, else a lower bound (`atLeast`). */
-  total: number;
-  atLeast: boolean;
-};
-
-/** The pictures of a held post or model, read for the one hold on screen. Null for types that show none,
- *  or when there is nothing to show. */
-export async function getHoldImages(hold: {
-  entityType: string;
-  entityId: number;
-}): Promise<CsamHoldImages | null> {
-  let found: CsamHoldImages;
-  if (hold.entityType === 'Post') {
-    const { images, total } = await getPostHoldImages(hold.entityId, HOLD_IMAGE_LIMIT);
-    found = { images, total, atLeast: false };
-  } else if (hold.entityType === 'Model') {
-    // The model page's showcase: the owner's posts on its versions, as the model reports show it.
-    const preview = await getModelPreview(hold.entityId, null);
-    const stills = (preview?.images ?? []).filter((i) => i.type === 'image');
-    found = {
-      images: stills
-        .slice(0, HOLD_IMAGE_LIMIT)
-        .map(({ id, url, nsfwLevel }) => ({ id, url, nsfwLevel })),
-      total: stills.length,
-      atLeast: preview?.moreImages ?? false,
-    };
-  } else return null;
-  return found.images.length ? found : null;
-}
-
-/** `getHoldImages` for a hold by id; null when there is no such csam hold. */
-export async function getHoldImagesById(holdId: number): Promise<CsamHoldImages | null> {
-  const ref = await getCsamHoldRef(holdId);
-  return ref ? getHoldImages(ref) : null;
 }
