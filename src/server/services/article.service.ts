@@ -1562,7 +1562,7 @@ export async function applyArticleContentChange({
  * Most of these relations null out on delete, so a missed one silently blanks that surface:
  * a new relation that displays an image belongs here.
  */
-const unusedAuthorImage = (ownerId: number) =>
+export const unusedAuthorImage = (ownerId: number) =>
   ({
     userId: ownerId,
     postId: null,
