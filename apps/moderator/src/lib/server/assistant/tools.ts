@@ -26,7 +26,13 @@ import { getAbuseFindingsForUser } from '../abuse-detection.service';
 import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
-import { getAccounts, getOpenUserReports, MAX_ACCOUNTS, searchAccounts } from './reads';
+import {
+  getAccounts,
+  getOpenUserReports,
+  HUMAN_REPORT_REASONS,
+  MAX_ACCOUNTS,
+  searchAccounts,
+} from './reads';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
 
 // The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
@@ -516,14 +522,26 @@ export const TOOLS = [
   tool({
     name: 'open_user_reports',
     description:
-      "The open user-report queue, oldest first, human-filed only: report id, reported account, reporter, reason and the reporter's comment (quoted user text). Page with afterReportId.",
+      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor, passing the same order and filters.",
     input: z.object({
       limit: z.number().int().min(1).max(100).default(50),
-      afterReportId: z.number().int().positive().optional(),
+      order: z.enum(['newest', 'oldest']).default('newest'),
+      cursor: z.number().int().positive().max(MAX_INT4).optional(),
+      statuses: z
+        .array(z.enum(['Pending', 'Processing']))
+        .min(1)
+        .max(2)
+        .optional(),
+      reasons: z
+        .array(z.enum(HUMAN_REPORT_REASONS as [string, ...string[]]))
+        .min(1)
+        .max(HUMAN_REPORT_REASONS.length)
+        .optional(),
     }),
     requires: [USER_REPORTS],
-    run: async ({ limit, afterReportId }) => {
-      const rows = await getOpenUserReports(limit, afterReportId);
+    run: async (query) => {
+      const { limit } = query;
+      const rows = await getOpenUserReports(query);
       return {
         data: {
           reports: rows.map((r) => ({
@@ -531,6 +549,7 @@ export const TOOLS = [
             createdAt: day(r.createdAt),
             comment: quoted(r.comment),
           })),
+          nextCursor: rows.length >= limit ? rows.at(-1)!.reportId : null,
         },
         rows: rows.length,
         truncated: rows.length >= limit,
