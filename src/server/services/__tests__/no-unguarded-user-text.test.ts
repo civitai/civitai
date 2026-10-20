@@ -77,7 +77,9 @@ const SURFACES: Record<string, number> = {
   'src/server/services/crucible.service.ts': 2,
   'src/server/services/image.service.ts': 2,
   'src/server/services/membership-gift.service.ts': 1,
-  'src/server/services/model-version.service.ts': 4,
+  // `upsertModelVersion` holds 3: the description before and after blurb expansion, and the
+  // name/trained-words diff against the stored row.
+  'src/server/services/model-version.service.ts': 5,
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
@@ -184,7 +186,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
     upsertExplorationPrompt: 1,
-    upsertModelVersion: 2,
+    upsertModelVersion: 3,
   },
   'src/server/services/model.service.ts': { applyModelContentChange: 1, upsertModel: 2 },
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
