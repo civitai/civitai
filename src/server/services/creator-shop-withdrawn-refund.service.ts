@@ -679,7 +679,18 @@ async function refundItemPurchases(
       title = item.title;
       // A purchase already begun is finished on the terms it began under.
       const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
-      if (!started) await stampTerms(purchase, terms);
+      if (!started) {
+        // Refused before the stamp: a stamped purchase is retried by the job, and a ledger the
+        // run cannot reverse would be retried and logged on every pass.
+        if (purchase.unitAmount !== 0) {
+          const ledger = await readPurchaseLedger(purchase);
+          if (ledger.error !== undefined) {
+            results.set(id, { ...base, status: 'failed', error: ledger.error });
+            continue;
+          }
+        }
+        await stampTerms(purchase, terms);
+      }
       const outcome = await settlePurchase(purchase, started ?? terms, item.cosmeticId);
       if (outcome.status === 'failed') {
         results.set(id, { ...base, status: 'failed', error: outcome.error });

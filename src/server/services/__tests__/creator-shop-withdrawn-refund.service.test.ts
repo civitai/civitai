@@ -1242,6 +1242,20 @@ describe('refundShopPurchases', () => {
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 
+  it('leaves a purchase the ledger refuses unstamped, so the job does not retry it', async () => {
+    purchases[0].unitAmount = 1200;
+
+    const result = await refund(['p-1']);
+
+    expect(result.results[0]).toMatchObject({
+      status: 'failed',
+      error: 'debits 1000 do not match the price 1200',
+    });
+    expect(purchases[0].meta ?? null).toBeNull();
+    expect(await refundWithdrawnShopItem(ITEM)).toEqual({ purchases: 0, refunded: 0, failures: 0 });
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+
   it('leaves a part-done purchase stamped, and the job finishes it', async () => {
     const working = mocks.refundTransaction.getMockImplementation()!;
     mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
