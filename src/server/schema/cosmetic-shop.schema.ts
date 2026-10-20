@@ -52,7 +52,8 @@ export const cosmeticShopItemHistoryEntry = z.object({
 });
 
 const withdrawnRefundTerms = z.object({
-  trigger: z.enum(['reject', 'archive']),
+  // `manual`: a moderator refunded the purchase through `refundShopPurchases`.
+  trigger: z.enum(['reject', 'archive', 'manual']),
   clawback: z.boolean(),
   userId: z.number(),
   at: z.string(),

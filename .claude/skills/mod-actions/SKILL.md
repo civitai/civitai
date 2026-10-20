@@ -41,6 +41,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 | `content.mjs` | Content moderation | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, mod-rule |
 | `model3ds.mjs` | 3D Models moderation | list, get, files, unpublish, delete, restore, set-nsfw-level, toggle-tos, toggle-poi, toggle-minor, toggle-nsfw, toggle-unlisted |
 | `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
+| `shop.mjs` | Creator Shop | refund |
 
 ---
 
@@ -303,6 +304,22 @@ node .claude/skills/mod-actions/csam.mjs reports --limit 10
 node .claude/skills/mod-actions/csam.mjs image-resources 12345,67890
 node .claude/skills/mod-actions/csam.mjs create-report 3879899 --type GeneratedImage --image-ids 111,222 --dry-run
 ```
+
+---
+
+## shop.mjs — Creator Shop
+
+```bash
+node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason <text> (--clawback | --no-clawback) [--writable]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
+
+Dry run unless `--writable`, and the dry run is the server's: it lists each purchase's ledger legs and
+which are already refunded. Re-running refunds nothing twice. Behaviour and refusals:
+`docs/features/creator-shop.md` → "Refunding a purchase by hand".
 
 ---
 

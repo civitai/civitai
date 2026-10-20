@@ -159,6 +159,15 @@ Rejecting a creator cosmetic that has sold, or archiving one while it is withhel
 - **After.** One `cosmetic-shop-item-refunded` notification per buyer, a `refunded` history entry, and one Axiom record under `name: 'creator-shop-withdrawn-refund'`.
 - **Retry.** The request refunds at most 25 purchases. The `creator-shop-withdrawn-refunds` job (every 10 minutes) finishes the rest and anything a Buzz failure, a held lock or a dead process left behind. Runs are serialised per item with a distributed lock.
 
+## Refunding a purchase by hand
+
+`creatorShop.refundPurchases` (moderator only, not flag-gated) refunds named purchases on the same path: `{ buzzTransactionIds (1-50), clawback, reason, dryRun = true }`.
+
+- **Dry run** (the default) moves nothing and lists, per purchase, the debit and payout legs it would reverse and whether each `refund-<id>` is already on the ledger.
+- **A real run** stamps `{ trigger: 'manual', clawback, userId, at }` on each purchase, then reverses it, revokes the holding and marks it `refunded` exactly as above, under the same per-item lock. A purchase it leaves part done is finished by the `creator-shop-withdrawn-refunds` job; calling again refunds nothing twice.
+- **Refused:** a purchase not found, the creator's own purchase, a pack, an item that was taken down (the takedown refunds those), and a purchase whose refund already began with a different `clawback`.
+- **After.** One `cosmetic-shop-purchase-refunded` notification per buyer, a `refunded` history entry carrying the reason, and one Axiom record under `name: 'creator-shop-purchase-refund'` with the moderator, reason and per-purchase outcome.
+
 ## Review history
 
 An edit-triggered re-review clears `rejectionReason` / `reviewedById` / `reviewedAt`, so without a log a moderator opening a re-queued item can't tell what the creator changed or what was decided last time. `CosmeticShopItemMeta.history` is that log — a capped (25, oldest dropped first) append-only array on the existing JSON column, no migration:
@@ -173,7 +182,7 @@ Every writer appends inside the `cosmeticShopItem.update` it was already making 
 - `updateCreatorShopItem` appends `edited` with one `changes` row per moved field (name, description, artwork — carrying the **pre-swap `data.url`** — fit offsets, slug, uses, price-per-use, price, quantity), plus a `note` when the edit forced the item back into review and why. An edit that moves nothing appends nothing.
 - `reviewCreatorShopItem` appends `reviewed` with the action, the reviewer and the note — which is how the note **survives the next edit clearing `rejectionReason`**.
 - `takedownCosmeticShopItem` appends `takedown` alongside the `meta.takedown` record it already writes.
-- `refundWithdrawnShopItem` appends `refunded` after a run that refunded purchases. It is the one writer with a statement of its own: a single SQL update that touches only `history`, so it cannot write back meta a verdict changed during the run.
+- `refundWithdrawnShopItem` and `refundShopPurchases` append `refunded` after a run that refunded purchases. They are the writers with a statement of their own: a single SQL update that touches only `history`, so it cannot write back meta a verdict changed during the run.
 
 `getCreatorShopReviewQueue` already selects `meta`, so the moderator detail pane renders it (`HistoryCard`, newest-first, previous-vs-current artwork thumbnails on a swap) with no query change. Items predating the feature show an explicit empty state. Moderator-only for now — the creator-facing manage view still shows only the current status + rejection reason.
 
@@ -190,6 +199,7 @@ Approval grants the creator their own copy, but owning a creator cosmetic is not
 
 ## Changelog
 
+- **2026-10-20** — Moderators can refund chosen shop purchases in one call (`creatorShop.refundPurchases`, dry run by default): Buzz back to the buyer, payouts reversed when asked, the cosmetic revoked and the purchase marked refunded. New notification `cosmetic-shop-purchase-refunded`; new refund trigger `manual`. No migration.
 - **2026-10-20** — Creator cosmetics rejected after selling, or archived while withheld, now refund their buyers automatically: the creator's payouts are reversed (even into a negative balance), the cosmetic is revoked per purchase, and buyers are notified. New job `creator-shop-withdrawn-refunds` (every 10 minutes) finishes what the request starts. New history kind `refunded`; `meta.withdrawnRefund` on the item and on `UserCosmeticShopPurchases`. A takedown no longer refunds a payout the buyer refund already reversed, and leaves purchases a withdrawn refund began. No migration.
 - **2026-10-19** — Creator cosmetics whose listing isn't approved, or was edited after approval, can no longer be worn: equip is refused, holders are unequipped on a non-approve verdict or a displayed-field edit, and the inventory marks them "In review, not equipable". No migration.
 - **2026-08-05** — Resale listings moved from `User.settings.creatorShop.resoldItemIds` to the `UserCosmeticShopItemResale` table (migration `20260805120000_add_cosmetic_shop_item_resale` — **apply manually**, then run `pnpm tsscript scripts/oneoffs/backfill-cosmetic-resale-listings.ts` to migrate existing resellers off the blob). Each row carries the `sellerShare` it was listed under, so lowering the item's share or turning `sellableByOthers` off no longer changes what an existing reseller is paid or removes the item from their shop; and "who resells my item?" is now an indexed lookup instead of a scan of every user's settings JSON. Creators can now also **edit** `sellableByOthers` / `sellerShare` after publishing without it reaching creators who already list the item. Withdrawing the item itself (delist / archive / takedown) *does* end their listings, with a notification, and bringing it back re-enters review so the cycle can't be used to reset resale terms.
