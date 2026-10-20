@@ -9,7 +9,13 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 import { tagCache, tagCacheByName } from '~/server/redis/caches';
 import { bustGetTagsCache } from '~/server/services/tag.service';
-import { refreshProfilePicturesForImages } from '~/server/services/user.service';
+
+// Lazy: user.service pulls in most of the server, and this handler only needs it after the response.
+// Never throws, like the helper itself: the rating write it follows has committed.
+const refreshProfilePictures = (imageIds: number[]) =>
+  import('~/server/services/user.service')
+    .then(({ refreshProfilePicturesForImages }) => refreshProfilePicturesForImages(imageIds))
+    .catch(() => undefined);
 
 const schema = z.object({
   tags: commaDelimitedStringArray(),
@@ -80,8 +86,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           AND NOT i."nsfwLevelLocked" AND i."nsfwLevel" < ${nsfwLevel};
       `);
       await query.result();
-      // Avatars are gated on their cached rating; one raised here must be re-read. Never throws.
-      await refreshProfilePicturesForImages(batch);
+      // Avatars are gated on their cached rating; one raised here must be re-read.
+      await refreshProfilePictures(batch);
       console.log(`Updated ${batchNumber} of ${batchCount}`);
     },
   });
