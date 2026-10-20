@@ -18,7 +18,9 @@ const { isListingDisplayable } = await import('~/server/services/creator-shop.da
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
+const { CosmeticFlag } = await import('~/shared/constants/cosmetic-flags.constants');
 const {
+  deleteCreatorShopItem,
   reviewCreatorShopItem,
   setCreatorShopItemListed,
   unarchiveCreatorShopItem,
@@ -659,5 +661,81 @@ describe('a creator edit racing another write to the item', () => {
 
     expect(outcome).toBe('saved');
     expect(storedListing).toMatchObject({ unitAmount: 520, meta: { purchases: 1 } });
+  });
+});
+
+describe('a moderator deleting a listing', () => {
+  const SYSTEM_COSMETIC = 900;
+  type CosmeticRow = { id: number; createdById: number | null; flags: number };
+  let cosmetics: CosmeticRow[];
+  let deleted: boolean;
+
+  beforeEach(() => {
+    deleted = false;
+    cosmetics = [
+      { id: COSMETIC, createdById: CREATOR, flags: 0 },
+      { id: SYSTEM_COSMETIC, createdById: null, flags: 0 },
+    ];
+    const listings = listingsIn(() => (deleted ? [] : [storedListing]));
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockImplementation(listings);
+    dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation(listings);
+    dbMock.dbWrite.cosmeticShopItem.delete.mockImplementation(() => {
+      deleted = true;
+      return storedListing;
+    });
+    // The one raw write this path makes: OR a bit into one cosmetic's flags.
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      (sql: TemplateStringsArray, bit: number, id: number) => {
+        expect(sql.join('?')).toMatch(
+          /UPDATE "Cosmetic" SET flags = flags \| \?::int WHERE id = \?/
+        );
+        const row = cosmetics.find((c) => c.id === id);
+        if (row) row.flags |= bit;
+        return row ? 1 : 0;
+      }
+    );
+    const cosmeticRows = ({ where }: { where: Record<string, unknown> }) =>
+      cosmetics.filter((row) =>
+        Object.entries(where).every(([key, condition]) => {
+          if (key === 'id') return (condition as { in: number[] }).in.includes(row.id);
+          if (key === 'createdById') return row.createdById !== null; // `{ not: null }`
+          throw new Error(`Cosmetic fake does not model where.${key}`);
+        })
+      );
+    dbMock.dbWrite.cosmetic.findMany.mockImplementation(cosmeticRows);
+    dbMock.dbRead.cosmetic.findMany.mockImplementation(cosmeticRows);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ settings: {} });
+    dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
+      { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
+    ]);
+  });
+
+  it('keeps the cosmetic of a deleted sent-back listing withheld', async () => {
+    storedListing = listingRow(SENT_BACK);
+
+    await deleteCreatorShopItem({ id: 42, userId: MOD, isModerator: true });
+
+    expect(deleted).toBe(true);
+    await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
+      IN_REVIEW
+    );
+    expect(await getWithheldCosmeticIds([COSMETIC])).toEqual(new Set([COSMETIC]));
+  });
+
+  it('leaves the cosmetic of a deleted approved listing wearable', async () => {
+    storedListing = listingRow(LIVE);
+
+    await deleteCreatorShopItem({ id: 42, userId: MOD, isModerator: true });
+
+    expect(deleted).toBe(true);
+    await equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC });
+    expect(cosmetics.find((c) => c.id === COSMETIC)?.flags).toBe(0);
+  });
+
+  it('never withholds a cosmetic no creator made, whatever its flags say', async () => {
+    deleted = true;
+    cosmetics = cosmetics.map((c) => ({ ...c, flags: CosmeticFlag.Withheld }));
+
+    expect(await getWithheldCosmeticIds([SYSTEM_COSMETIC, COSMETIC])).toEqual(new Set([COSMETIC]));
   });
 });
