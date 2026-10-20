@@ -1031,6 +1031,49 @@ const storylineEdges = (db: Db | typeof dbRead, storylineId: number) =>
   });
 
 /**
+ * Takes the share lock on the live chapters among `ids`, held to the end of the transaction, and
+ * says which they are. A removal's update of one waits for it, and one that has already committed
+ * is not among them, so what is joined is live from here to the commit. In id order, so two
+ * writers locking the same chapters ask for them in the same order.
+ */
+export const lockLiveChapters = async (db: Db, ids: number[]) =>
+  (
+    await db.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "StorylineChapter"
+      WHERE id = ANY(${ids}::int[]) AND "removedAt" IS NULL
+      ORDER BY id
+      FOR SHARE
+    `
+  ).map((row) => row.id);
+
+/**
+ * Whether a chapter may be joined: the storyline's owner is shown it. The owner's view, not the
+ * one of whoever is asking, so a moderator choosing for them is offered, and refused, exactly what
+ * the owner would be. The picker and the link both ask this, so they cannot disagree.
+ */
+async function createChapterJoinable(storyline: {
+  userId: number;
+  maxNsfwLevel: number;
+  minorByScan: boolean;
+}) {
+  const viewer = { id: storyline.userId };
+  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const maxNsfwLevel = storylineCeiling(storyline);
+  return (chapter: {
+    removedAt: Date | null;
+    post: Parameters<typeof getStorylineChapterTombstone>[0]['post'];
+  }) =>
+    getStorylineChapterTombstone({
+      post: chapter.post,
+      removed: !!chapter.removedAt,
+      viewer,
+      maxNsfwLevel,
+      browsingLevel: allBrowsingLevelsFlag,
+      blockedUserIds,
+    }) === null;
+}
+
+/**
  * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
  * two branches rejoin at it. The chapter gains a parent and keeps its depth.
  */
@@ -1061,19 +1104,24 @@ export async function linkStorylineChapter({
       await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE`;
       const storyline = await tx.storyline.findUnique({
         where: { id: storylineId },
-        select: { tosViolation: true },
+        select: { tosViolation: true, userId: true, maxNsfwLevel: true, minorByScan: true },
       });
       if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      // Before the reads below, so what they find stays true until the edge is written.
+      const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
       const chapters = await tx.storylineChapter.findMany({
         where: { id: { in: [parentChapterId, chapterId] }, storylineId },
-        select: { id: true, depth: true, removedAt: true },
+        select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
       });
       const target = chapters.find((c) => c.id === chapterId);
-      if (chapters.length < 2 || !target) throw throwNotFoundError('Chapter not found');
-      if (chapters.some((c) => c.removedAt))
+      if (chapters.length < 2 || !target || !storyline)
+        throw throwNotFoundError('Chapter not found');
+      if (live.length < 2 || chapters.some((c) => c.removedAt))
         throw throwBadRequestError('A removed chapter cannot be joined');
       if (target.depth === 0)
         throw throwBadRequestError('The first chapter cannot continue another chapter');
+      if (!(await createChapterJoinable(storyline))(target))
+        throw throwBadRequestError('That chapter cannot be joined');
       const judge = createStorylineLinkJudge(
         await storylineEdges(tx, storylineId),
         parentChapterId
@@ -1115,7 +1163,7 @@ export async function getStorylineLinkTargets({
 }) {
   const parent = await dbRead.storylineChapter.findUnique({
     where: { id: parentChapterId },
-    select: { storylineId: true, removedAt: true },
+    select: { storylineId: true, removedAt: true, depth: true },
   });
   if (!parent) throw throwNotFoundError('Chapter not found');
   if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be joined');
@@ -1125,34 +1173,35 @@ export async function getStorylineLinkTargets({
     isModerator,
   });
   const viewer = { id: userId, isModerator };
-  const [chapters, edges, blockedUserIds] = await Promise.all([
+  const [chapters, edges, joinable, blockedUserIds] = await Promise.all([
     dbRead.storylineChapter.findMany({
       where: { storylineId: storyline.id, removedAt: null, depth: { gt: 0 } },
-      select: { id: true, depth: true, post: { select: chapterPostSelect } },
+      select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
       orderBy: [{ depth: 'asc' }, { id: 'asc' }],
     }),
     storylineEdges(dbRead, storyline.id),
+    createChapterJoinable(storyline),
     getViewerExcludedIds(viewer),
   ]);
   const judge = createStorylineLinkJudge(edges, parentChapterId);
-  const targets = chapters
-    .filter((chapter) => chapter.id !== parentChapterId && !judge(chapter.id))
-    .map((chapter) =>
-      toPathChapter(
-        chapter,
-        chapter.post,
-        getStorylineChapterTombstone({
-          post: chapter.post,
-          removed: false,
-          viewer,
-          maxNsfwLevel: storylineCeiling(storyline),
-          browsingLevel: allBrowsingLevelsFlag,
-          blockedUserIds,
-        })
-      )
-    )
-    .filter((chapter) => !chapter.tombstone)
-    .slice(0, STORYLINE_LINK_TARGETS_LIMIT);
+  // The nearest to the parent first, ahead of it before behind: a rejoin is nearly always a few
+  // chapters on, so the cap keeps those and not the shallowest. The judging stops at the cap.
+  const nearest = chapters
+    .filter((chapter) => chapter.id !== parentChapterId && joinable(chapter))
+    .sort(
+      (a, b) =>
+        Math.abs(a.depth - parent.depth) - Math.abs(b.depth - parent.depth) ||
+        b.depth - a.depth ||
+        a.id - b.id
+    );
+  const accepted: typeof nearest = [];
+  for (const chapter of nearest) {
+    if (accepted.length === STORYLINE_LINK_TARGETS_LIMIT) break;
+    if (!judge(chapter.id)) accepted.push(chapter);
+  }
+  const targets = accepted
+    .sort((a, b) => a.depth - b.depth || a.id - b.id)
+    .map((chapter) => toPathChapter(chapter, chapter.post, null));
   return withFirstImages(
     getStorylineImageGate(viewer, allBrowsingLevelsFlag, blockedUserIds),
     targets

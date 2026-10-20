@@ -171,8 +171,9 @@ function StorylineMap({
   const currentIndex = stops.findIndex((s) => s.chapter.chapterId === currentChapterId);
   const current = stops[currentIndex];
   const next = currentIndex >= 0 ? stops[currentIndex + 1] : undefined;
-  // The canon line's length once it is known: the path then the chapters ahead of its end.
-  const length = canonAhead.isLoading ? undefined : stops.length;
+  // The line's length once it is known: the path then the chapters ahead of its end, counted from
+  // chapter 1 like a chapter's number, since a long path is read from a window that starts deeper.
+  const length = canonAhead.isLoading ? undefined : (path.chapters[0]?.depth ?? 0) + stops.length;
   const open = (stop: SubwayStop<StorylineChild>) => {
     if (stop.kind === 'path') return jumpToChapter(stop.chapter.chapterId);
     const before = line[line.indexOf(stop.chapter) - 1];

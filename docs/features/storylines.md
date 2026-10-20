@@ -76,7 +76,9 @@ section).
   chapter: "Add the next chapter", then "Join an existing chapter", offers a chapter already in the
   story as a way on. Nothing is copied. A link that would loop, skip chapters on a
   route, or lead into the first chapter is refused, and a chapter can be joined from at most 8
-  chapters.
+  chapters. The picker offers the 100 chapters nearest the chapter being continued, and only ones the
+  storyline's owner is shown. Before rolling back the rejoin code, remove the second and later
+  parent links of any chapter that has more than one parent, keeping each chapter's oldest.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 
