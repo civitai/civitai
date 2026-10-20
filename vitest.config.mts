@@ -196,6 +196,93 @@ const sharpExecutingTestFiles = [
   'src/tests/api/og.milestone.test.ts',
 ];
 
+// Packages pre-bundled for the unit projects. One list, read by both the `ssr` and `client`
+// optimizers below, so the two environments cannot drift. The hazards to check before adding one
+// are on `deps.optimizer` inside `unitTestConfig`.
+const prebundledDeps = [
+  'lodash-es',
+  'googleapis',
+  '@tiptap/html',
+  '@axiomhq/axiom-node',
+  '@aws-sdk/s3-request-presigner',
+  // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
+  // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
+  // see the PGlite note on `deps.optimizer`, where the total stayed put while 87 tests stopped running.
+  //
+  // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
+  // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
+  // subpath import still resolves through the module runner to the original files and the
+  // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
+  // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
+  // is the shape that breaks, e.g. `error instanceof z.ZodError` in
+  // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
+  // package whose identity is compared with `instanceof`.
+  'zod',
+  // 'react' is NOT here on purpose. Vitest hardcodes
+  // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
+  // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
+  // react-dom.js but no react.js. Listing it would read as a delivered win that never
+  // happened.
+  'react-dom',
+  'zustand',
+  'immer',
+  'clsx',
+  'uuid',
+  'prom-client',
+  '@tanstack/react-query',
+  '@paddle/paddle-node-sdk',
+  // Resolvable from the root only because it is a root devDependency; otherwise the
+  // optimizer logs "Failed to resolve dependency" and the package stays native.
+  'kysely',
+  'kysely/helpers/postgres',
+  'remark-gfm',
+  'remark-parse',
+  'remark-rehype',
+  'rehype-stringify',
+  'unified',
+  'stripe',
+  'jose',
+  'pg',
+  'form-graph',
+  'form-graph/react',
+  'sanitize-html',
+  '@openrouter/sdk',
+  '@openrouter/sdk/models',
+  '@openrouter/sdk/models/errors',
+  'nodemailer',
+  'obscenity',
+  'superjson',
+  'htmlparser2',
+  '@discordjs/rest',
+  'redis',
+  '@aws-sdk/client-s3',
+  '@aws-sdk/lib-storage',
+  // `article.service` imports the `/server` subpath, which the bare entry above does not cover.
+  '@tiptap/html/server',
+  // Both forms: `utils/metadata` imports the bare name AND `/civitai`, and listing one would leave the
+  // other a separate native copy (the subpath hazard above).
+  '@civitai/generation-metadata',
+  '@civitai/generation-metadata/civitai',
+  // Mocked by one file, whose factory already returns `default`.
+  'cloudflare',
+  // 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
+  // sibling left native loads a second, native copy of core next to the pre-bundled one. Measured with
+  // `@mantine/core` alone: its import cost moved into `@mantine/notifications` (8s -> 181s over 32
+  // files) instead of disappearing, and the run held two instances of every Mantine context.
+  // Natively, `@mantine/core` was ~10s of import per test file that reached it, 28% of the suite's
+  // import time. Mocked by 18 unit test files, 9 of them with a named-only factory; each one was
+  // shown to still serve its consumers under this list (a factory that throws turns the file red).
+  '@mantine/core',
+  '@mantine/hooks',
+  '@mantine/dates',
+  '@mantine/dropzone',
+  '@mantine/modals',
+  '@mantine/notifications',
+  '@mantine/nprogress',
+  '@mantine/tiptap',
+  'mantine-react-table',
+];
+
 // Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
 // Every other setting has to stay identical or the split changes behaviour as well as scheduling.
 const unitTestConfig = {
@@ -267,74 +354,15 @@ const unitTestConfig = {
     // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
     // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
     // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
-    // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
-    // way and are the follow-up this list is building toward:
+    // Two big fan-in packages are still blocked the same way:
     //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
     //   `next`                3,459 / 114                        — 10 mocking files
-    //   `@mantine/core`       1,180 / 249                        — 4 mocking files
     optimizer: {
-      ssr: {
-        enabled: true,
-        include: [
-          'lodash-es',
-          'googleapis',
-          '@tiptap/html',
-          '@axiomhq/axiom-node',
-          '@aws-sdk/s3-request-presigner',
-          // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
-          // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
-          // see the PGlite note above, where the total stayed put while 87 tests stopped running.
-          //
-          // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
-          // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
-          // subpath import still resolves through the module runner to the original files and the
-          // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
-          // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
-          // is the shape that breaks, e.g. `error instanceof z.ZodError` in
-          // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
-          // package whose identity is compared with `instanceof`.
-          'zod',
-          // 'react' is NOT here on purpose. Vitest hardcodes
-          // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
-          // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
-          // react-dom.js but no react.js. Listing it would read as a delivered win that never
-          // happened.
-          'react-dom',
-          'zustand',
-          'immer',
-          'clsx',
-          'uuid',
-          'prom-client',
-          '@tanstack/react-query',
-          '@paddle/paddle-node-sdk',
-          // Resolvable from the root only because it is a root devDependency; otherwise the
-          // optimizer logs "Failed to resolve dependency" and the package stays native.
-          'kysely',
-          'kysely/helpers/postgres',
-          'remark-gfm',
-          'remark-parse',
-          'remark-rehype',
-          'rehype-stringify',
-          'unified',
-          'stripe',
-          'jose',
-          'pg',
-          'form-graph',
-          'form-graph/react',
-          'sanitize-html',
-          '@openrouter/sdk',
-          '@openrouter/sdk/models',
-          '@openrouter/sdk/models/errors',
-          'nodemailer',
-          'obscenity',
-          'superjson',
-          'htmlparser2',
-          '@discordjs/rest',
-          'redis',
-          '@aws-sdk/client-s3',
-          '@aws-sdk/lib-storage',
-        ],
-      },
+      ssr: { enabled: true, include: prebundledDeps },
+      // `@vitest-environment happy-dom` / `jsdom` files run in Vite's CLIENT environment, which has
+      // its own optimizer. With only `ssr` enabled, every `prebundledDeps` entry loaded natively for them:
+      // measured, 176 such files averaged 13.7s of import each against 2.2s for a node-env file.
+      client: { enabled: true, include: prebundledDeps },
     },
   },
   // A transform cache on disk, keyed per module and shared between separate `vitest run`
