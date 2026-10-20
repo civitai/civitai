@@ -80,6 +80,8 @@ export const WORKFLOW_VERSION = 'reply-1';
 const MAX_RECOVERY_ATTEMPTS = 5;
 /** How long past its wall clock a run gets to write its own end before DBOS cancels it outright. */
 const HARD_TIMEOUT_GRACE_MS = 60_000;
+/** How often a process checks whether a run it is running was cancelled outright, plus up to a quarter more. */
+const CANCEL_CHECK_MS = 2000;
 /** How long one journal read waits for a value before it is opened again: bounds a reader whose client left. */
 const READ_WINDOW_SECONDS = 10;
 
@@ -150,6 +152,9 @@ export class Runner implements RunService {
   #ready = false;
   #executorId = '';
   #maintenance: ReturnType<typeof setInterval> | undefined;
+  /** The runs whose pass runs in this process, and how to stop each. */
+  readonly #running = new Map<string, () => void>();
+  #cancelCheck: ReturnType<typeof setTimeout> | undefined;
 
   constructor(deps: RunnerDeps) {
     this.#deps = deps;
@@ -178,6 +183,33 @@ export class Runner implements RunService {
     this.#pool = new pg.Pool({ connectionString: options.databaseUrl, max: 4 });
     this.#executorId = options.executorId;
     this.#ready = true;
+    this.#scheduleCancelCheck();
+  }
+
+  /**
+   * One check per process, not per run: the runs this process is running whose workflow was
+   * cancelled outright (a forced Stop, DBOS's timeout) stop as a graceful Stop stops them.
+   */
+  #scheduleCancelCheck(): void {
+    this.#cancelCheck = setTimeout(() => {
+      void this.#checkCancelled().finally(() => {
+        if (this.#ready) this.#scheduleCancelCheck();
+      });
+    }, CANCEL_CHECK_MS * (1 + Math.random() / 4));
+    this.#cancelCheck.unref();
+  }
+
+  async #checkCancelled(): Promise<void> {
+    if (!this.#pool || this.#running.size === 0) return;
+    try {
+      const { rows } = await this.#pool.query<{ id: string }>(
+        `select workflow_uuid as id from "${SYSTEM_SCHEMA}".workflow_status where workflow_uuid = any($1::text[]) and status = 'CANCELLED'`,
+        [[...this.#running.keys()]]
+      );
+      for (const { id } of rows) this.#running.get(id)?.();
+    } catch (error) {
+      this.#deps.log.warn({ err: error }, 'checking for cancelled runs failed');
+    }
   }
 
   /**
@@ -205,6 +237,7 @@ export class Runner implements RunService {
   async shutdown(graceMs = 0): Promise<void> {
     this.#ready = false;
     if (this.#maintenance) clearInterval(this.#maintenance);
+    if (this.#cancelCheck) clearTimeout(this.#cancelCheck);
     await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
     await this.#pool?.end();
     this.#pool = undefined;
@@ -567,6 +600,7 @@ export class Runner implements RunService {
       void closeTools();
     };
     stop.addEventListener('abort', abort, { once: true });
+    this.#running.set(runId, abort);
     if (stop.aborted) abort();
     const wallClock = setTimeout(() => {
       why.reason ??= 'ran_out';
@@ -602,6 +636,7 @@ export class Runner implements RunService {
     } finally {
       clearTimeout(wallClock);
       stop.removeEventListener('abort', abort);
+      this.#running.delete(runId);
       await closeTools();
     }
 

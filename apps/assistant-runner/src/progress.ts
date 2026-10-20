@@ -1,7 +1,7 @@
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { withEnd, withProgress, type EndedReply } from './head';
+import { hasEnded, savedTurn, withEnd, withProgress, type EndedReply } from './head';
 import type { ConversationStore, Logger } from './interfaces';
 
 /** How long a tool call waits for its start to be saved before it fails without running. */
@@ -75,11 +75,15 @@ export class ProgressWriter {
   async #write(
     change: (head: StoredConversationMetadata) => StoredConversationMetadata
   ): Promise<boolean> {
+    let written = false;
     try {
-      const head = await this.store.update(this.userId, this.conversationId, (current) =>
-        current ? change(current) : null
-      );
-      return head !== null;
+      await this.store.update(this.userId, this.conversationId, (current) => {
+        // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it.
+        if (!current || hasEnded(savedTurn(current, this.seq))) return null;
+        written = true;
+        return change(current);
+      });
+      return written;
     } catch (error) {
       this.log.error(
         { err: error, conversationId: this.conversationId, seq: this.seq },

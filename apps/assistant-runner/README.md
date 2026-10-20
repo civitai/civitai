@@ -40,8 +40,7 @@ run-API request (401). See [Not built yet](#not-built-yet).
   `stopped`. If the run has not ended `RUN_STOP_GRACE_MS` later, its workflow is cancelled
   outright. A run cancelled that way, timed out by DBOS or past its recovery limit cannot journal
   its own end, so the first reader of its stream writes that end to the head (once) and the stream
-  ends with a `run-ended` built from the head. Cancelling a workflow does not interrupt a pass still
-  running in a live process; only the graceful Stop does.
+  ends with a `run-ended` built from the head. Each process checks its running passes every 2 s (one query for all of them) and stops any whose workflow was cancelled outright, as a graceful Stop would. Once a reply's end is in the head, a pass finishing later cannot replace it.
 - **Wall clock.** A run ends `ran_out` after `RUN_WALL_CLOCK_MS` (2 h by default). DBOS's own
   workflow timeout, a minute later, is the backstop.
 - **Crash recovery.** A restarted process with the same `RUNNER_EXECUTOR_ID` recovers the runs it
