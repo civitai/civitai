@@ -12,7 +12,7 @@ const sandboxTool = (tool: string) => `${SANDBOX_SERVER_ID}__${tool}`;
 /**
  * Tool calls one reply may make. The next call does not run and ends the reply, with no further model
  * request; Continue starts a new reply with a fresh count. Calls stand in for steps because a step's Buzz
- * cost is not visible to the page.
+ * cost is not visible to the page. A subagent's calls are not counted: the chat caps those per subagent.
  */
 export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
 
@@ -156,7 +156,8 @@ export function createAssistantGate({
   let verification = unverified();
   let checklist: ChecklistItem[] | null = null;
   // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
-  // a step together, so a write in the same step as report_ready could land after it said ready.
+  // a step together, so a write in the same step as report_ready could land after it said ready. A
+  // dispatch_agent counts until its subagent returns.
   let running = 0;
   // Which set_checklist call ended the last reply and waits for the user; only its card offers Build it.
   // Per page load, so a card restored from an earlier visit never matches.
@@ -228,9 +229,11 @@ export function createAssistantGate({
       answered();
       onReply?.();
     }
-    if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
-      return { refuse: TURN_LIMIT_REFUSAL, stop: true, message: TURN_LIMIT_MESSAGE };
-    turnCalls++;
+    if (context.subagent === undefined) {
+      if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
+        return { refuse: TURN_LIMIT_REFUSAL, stop: true, message: TURN_LIMIT_MESSAGE };
+      turnCalls++;
+    }
     const refusedByPage = refuse?.(name);
     if (refusedByPage) return { refuse: refusedByPage };
     if (name === REPORT_READY) {
