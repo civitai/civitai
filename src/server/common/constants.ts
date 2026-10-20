@@ -603,6 +603,8 @@ export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
+export const CYBERTIP_CONTACT_EMAIL = 'compliance@civitai.com';
+
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 type LicenseDetails = {
