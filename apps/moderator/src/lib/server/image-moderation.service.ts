@@ -13,6 +13,7 @@ import {
   trackImageRestore,
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
@@ -254,6 +255,7 @@ export async function blockImage({
   if (!numUpdatedRows) return {};
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
+  await bustProfilePictures({ imageIds: [imageId] });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });

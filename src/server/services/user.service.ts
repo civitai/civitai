@@ -1128,6 +1128,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
   );
@@ -1347,6 +1348,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
   // block's scope are the same set, which is what makes the wide form correct in this one place.
   await clearAccountDeletionImageMarkers({ userId: id });
+  await refreshProfilePicturesForUsers([id]);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1755,6 +1757,55 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+}
+
+/** The users whose profile picture is one of `imageIds`, from the primary. */
+export async function getProfilePictureUserIds(imageIds: number[]) {
+  if (!imageIds.length) return [];
+  const users = await dbWrite.user.findMany({
+    where: { profilePictureId: { in: imageIds } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
+}
+
+function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
+  logToAxiom({
+    type: 'error',
+    name: 'profile-picture-cache-refresh',
+    message: (error as Error)?.message,
+    ...meta,
+  }).catch(() => undefined);
+}
+
+/**
+ * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
+ * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ */
+export async function refreshProfilePicturesForUsers(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  try {
+    await profilePictureCache.refresh(ids);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  }
+}
+
+/**
+ * For a write that changed images' rating or ingestion: refreshes the cached profile picture of
+ * every user whose picture is one of them, so the avatar gate applies the new rating now rather
+ * than at the cache TTL. Never throws, for the same reason as `refreshProfilePicturesForUsers`.
+ */
+export async function refreshProfilePicturesForImages(imageIds: number[]) {
+  let userIds: number[];
+  try {
+    userIds = await getProfilePictureUserIds(imageIds);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { imageIds: imageIds.join(',') });
+    return;
+  }
+  await refreshProfilePicturesForUsers(userIds);
 }
 
 // #region [article engagement]
@@ -2335,6 +2386,7 @@ export const toggleBan = async ({
         // actually blocked rather than to the account: a ban outranks a grace block, so the
         // restore breadcrumbs come off the rows it hid.
         await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
+        await refreshProfilePicturesForUsers([id]);
       } catch (error) {
         logToAxiom({
           type: 'error',
