@@ -69,6 +69,8 @@ describe('viewer tokens', () => {
       issuer: 'someone-else',
     });
     // A symmetric token keyed with the public key's text: the classic algorithm-confusion forgery.
+    // With `alg: none` below, an invariant guard: jose refuses both for an EC key even without
+    // `algorithms`, so these pin the outcome, not that option.
     const hmac = await new SignJWT({})
       .setProtectedHeader({ alg: 'HS256', typ: VIEWER.typ })
       .setIssuer('civitai')

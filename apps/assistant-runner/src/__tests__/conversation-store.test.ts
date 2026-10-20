@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { OrchestrationConversationStore, type ConversationLock } from '../conversation-store';
 import { startTurn, withEnd, withPatch } from '../head';
+import { MintRefusedError } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { FakeOrchestration } from '../test-support/fake-orchestration';
 
@@ -164,6 +165,22 @@ describe('OrchestrationConversationStore', () => {
     await runTurn(store, 'u1', 'c-stale-token', 1, 'hi', 'hello');
     expect((await store.load('u1', 'c-stale-token'))!.turns).toHaveLength(1);
     expect(asked).toContain(true);
+  });
+
+  it('fails a write with the mint’s own refusal when there is no grant to act with', async () => {
+    const orchestration = new FakeOrchestration();
+    const refusal = new MintRefusedError('invalid_grant', 'no grant', 401);
+    const store = new OrchestrationConversationStore({
+      orchestration: new OrchestrationClient(BASE, orchestration.fetch),
+      tokens: () => async () => {
+        throw refusal;
+      },
+      lock: noLock,
+      log: quiet,
+    });
+    // The patch route answers 403 on exactly this error, so it must reach the caller as it is.
+    await expect(store.update('u1', 'c1', (head) => head)).rejects.toBe(refusal);
+    expect(orchestration.requests).toEqual([]);
   });
 
   it('never reads another user’s conversation', async () => {

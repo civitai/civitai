@@ -132,5 +132,11 @@ describe('verifyRunGrant', () => {
     await expect(signRunGrant(GRANT)).rejects.toThrow(/not configured/);
     setEnv({ ASSISTANT_RUNNER_SIGNING_KEY: 'not a key' });
     expect(isAssistantRunnerConfigured()).toBe(false);
+    // A key that parses but cannot sign ES256 is no key either.
+    const p384 = generateKeyPairSync('ec', { namedCurve: 'P-384' })
+      .privateKey.export({ type: 'pkcs8', format: 'pem' })
+      .toString();
+    setEnv({ ASSISTANT_RUNNER_SIGNING_KEY: p384 });
+    expect(isAssistantRunnerConfigured()).toBe(false);
   });
 });

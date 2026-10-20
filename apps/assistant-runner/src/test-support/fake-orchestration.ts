@@ -48,11 +48,11 @@ export class FakeOrchestration {
     if (!workflow) return new Response('', { status: 404 });
     if (tag && method === 'DELETE') {
       this.removeTag(user, workflow.id, decodeURIComponent(tag));
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     }
     if (method === 'PUT') {
       this.update(user, workflow.id, body as { metadata: unknown });
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     }
     return new Response('', { status: 405 });
   };

@@ -25,6 +25,7 @@ export class OrchestrationError extends Error {
 }
 
 const WORKFLOWS = 'v2/consumer/workflows';
+/** The longest one call may take in all: its mint, its request, and a fresh mint and retry after a 401. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
