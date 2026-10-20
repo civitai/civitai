@@ -30,6 +30,7 @@
   import type { Outcome } from '$lib/triage/queue';
   import StatusBadge from './StatusBadge.svelte';
   import TriageTriggerCard from './TriageTriggerCard.svelte';
+  import TriggerSummary from './TriggerSummary.svelte';
 
   type Verdict = 'Upheld' | 'Overturned';
 
@@ -235,6 +236,13 @@
         </p>
       {/if}
     </header>
+
+    {#if row.triggers.length > 1}
+      <TriggerSummary
+        triggers={row.triggers}
+        recheck={typeof recheck === 'object' ? recheck : undefined}
+      />
+    {/if}
 
     <div class="space-y-4">
       {#each groups as group (group.triggers[0].key)}
