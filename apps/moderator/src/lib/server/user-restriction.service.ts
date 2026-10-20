@@ -12,7 +12,7 @@ import {
 } from '$lib/restriction-types';
 import type { MediaType } from '../media/edge-url';
 import type { TriggerOrigin } from '$lib/restrictions/origin';
-import { planRecheck, type Recheck } from '$lib/restrictions/recheck';
+import { planRecheck, recheckResult, type Recheck } from '$lib/restrictions/recheck';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
@@ -258,11 +258,7 @@ const RECHECK_LIMIT = 200;
 export function recheckTriggers(triggers: readonly RestrictionTriggerView[]): Recheck {
   const plan = planRecheck(triggers);
   const results = plan.inputs.slice(0, RECHECK_LIMIT).map((input) => {
-    const { prompt, negativePrompt } = getPromptHighlightSegments(
-      input.prompt,
-      input.negativePrompt ?? null
-    );
-    return { prompt, negativePrompt };
+    return recheckResult(getPromptHighlightSegments(input.prompt, input.negativePrompt ?? null));
   });
   const byKey = Object.fromEntries(Object.entries(plan.byKey).filter(([, i]) => i < RECHECK_LIMIT));
   return { results, byKey };

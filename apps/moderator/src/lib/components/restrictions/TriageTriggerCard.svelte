@@ -347,7 +347,18 @@
                 (not recorded at block time; text shown normalised)
               </span>
             </p>
-            {#if recheckCats.length}
+            {#if recheckCats.length || recheck.wouldBlock}
+              <p class="m-0 text-sm font-medium {recheck.wouldBlock ? 'text-red-300' : 'text-amber-300'}">
+                {recheck.wouldBlock
+                  ? 'Current word list would block this prompt'
+                  : 'Current word list would NOT block this prompt'}
+              </p>
+              {#if !recheck.wouldBlock}
+                <p class="m-0 text-xs text-dark-2">
+                  Only terms that don't block on their own were found. This may have been a
+                  warning, not a block.
+                </p>
+              {/if}
               <PromptSegments segments={recheck.prompt} />
               {#if recheck.negativePrompt && recheck.negativePrompt.some((s) => s.category)}
                 <p class="m-0 text-xs text-dark-2">Negative prompt</p>

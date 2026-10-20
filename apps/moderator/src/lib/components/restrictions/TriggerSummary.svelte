@@ -2,7 +2,7 @@
   import { dateTime } from '$lib/format';
   import { HIGHLIGHT_LEGEND } from '$lib/prompt-highlight';
   import { originSummary } from '$lib/restrictions/origin';
-  import { recheckCategories, type Recheck } from '$lib/restrictions/recheck';
+  import { RECHECK_NOT_BLOCKING, recheckReasonLabels, type Recheck } from '$lib/restrictions/recheck';
   import { formatSpan } from '$lib/restrictions/trigger-groups';
   import { summarizeTriggers } from '$lib/restrictions/trigger-summary';
   import type { RestrictionTriggerView } from '$lib/server/user-restriction.service';
@@ -19,7 +19,8 @@
     Object.fromEntries(
       Object.entries(recheck?.byKey ?? {}).map(([key, index]) => [
         key,
-        recheckCategories(recheck!.results[index]).map(
+        recheckReasonLabels(
+          recheck!.results[index],
           (cat) => HIGHLIGHT_LEGEND.find((l) => l.cat === cat)?.label ?? cat
         ),
       ])
@@ -37,7 +38,11 @@
     <p class="m-0 text-xs font-semibold tracking-wide text-dark-2 uppercase">{title}</p>
     <ul class="m-0 list-none space-y-0.5 p-0 text-sm text-dark-0">
       {#each items as item (item.label)}
-        <li>{item.label} <span class="text-dark-2">× {item.count}</span></li>
+        {@const warn = item.label === `Re-check: ${RECHECK_NOT_BLOCKING}`}
+        <li class={warn ? 'font-medium text-amber-300' : undefined}>
+          {item.label}
+          <span class={warn ? 'text-amber-300' : 'text-dark-2'}>× {item.count}</span>
+        </li>
       {/each}
     </ul>
   </div>

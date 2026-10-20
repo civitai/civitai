@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planRecheck, recheckCategories } from '../recheck';
+import { planRecheck, recheckCategories, recheckReasonLabels, recheckResult } from '../recheck';
 
 const t = (key: string, extra: Record<string, unknown> = {}) => ({
   key,
@@ -59,5 +59,72 @@ describe('recheckCategories', () => {
     expect(
       recheckCategories({ prompt: [{ text: 'a', category: null }], negativePrompt: null })
     ).toEqual([]);
+  });
+});
+
+const seg = (category: 'nsfw' | 'blocked' | 'minor' | null) => ({ text: 'a', category });
+
+describe('recheckResult', () => {
+  it('would block when the audit calls the prompt inappropriate', () => {
+    expect(
+      recheckResult({ includesInappropriate: true, prompt: [seg('nsfw')], negativePrompt: null })
+        .wouldBlock
+    ).toBe(true);
+  });
+
+  it('would block on a blocked-list hit in either prompt', () => {
+    const base = { includesInappropriate: false };
+    expect(
+      recheckResult({ ...base, prompt: [seg('blocked')], negativePrompt: null }).wouldBlock
+    ).toBe(true);
+    expect(
+      recheckResult({ ...base, prompt: [seg(null)], negativePrompt: [seg('blocked')] }).wouldBlock
+    ).toBe(true);
+  });
+
+  it('would not block on terms that do not block on their own', () => {
+    expect(
+      recheckResult({ includesInappropriate: false, prompt: [seg('nsfw')], negativePrompt: null })
+        .wouldBlock
+    ).toBe(false);
+  });
+
+  it('drops the audit-only flag from the shipped result', () => {
+    const result = recheckResult({
+      includesInappropriate: false,
+      prompt: [],
+      negativePrompt: null,
+    });
+    expect(Object.keys(result).sort()).toEqual(['negativePrompt', 'prompt', 'wouldBlock']);
+  });
+});
+
+describe('recheckReasonLabels', () => {
+  const names = (c: string) => c.toUpperCase();
+  it('names the categories when it would block', () => {
+    const r = recheckResult({
+      includesInappropriate: true,
+      prompt: [seg('minor'), seg('nsfw')],
+      negativePrompt: null,
+    });
+    expect(recheckReasonLabels(r, names)).toEqual(['would block (MINOR, NSFW)']);
+  });
+
+  it('says would not block when only non-blocking terms were found', () => {
+    const r = recheckResult({
+      includesInappropriate: false,
+      prompt: [seg('nsfw')],
+      negativePrompt: null,
+    });
+    expect(recheckReasonLabels(r, names)).toEqual(['would not block']);
+  });
+
+  it('is empty when nothing was found', () => {
+    const r = recheckResult({
+      includesInappropriate: false,
+      prompt: [seg(null)],
+      negativePrompt: null,
+    });
+    expect(recheckReasonLabels(r, names)).toEqual([]);
   });
 });

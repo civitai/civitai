@@ -5,7 +5,35 @@ import { hasNoRecordedMatch } from './trigger-evidence';
 export type RecheckResult = {
   prompt: PromptSegment[];
   negativePrompt: PromptSegment[] | null;
+  /** Whether the current audit would hard-block this prompt, as opposed to merely flagging terms. */
+  wouldBlock: boolean;
 };
+
+export const RECHECK_NOT_BLOCKING = 'would not block';
+
+/** Highlighted terms alone do not block; only the audit's own verdict or a blocked-list hit does. */
+export function recheckResult(audit: {
+  includesInappropriate: boolean;
+  prompt: PromptSegment[];
+  negativePrompt: PromptSegment[] | null;
+}): RecheckResult {
+  const { prompt, negativePrompt } = audit;
+  const blocked = [...prompt, ...(negativePrompt ?? [])].some((s) => s.category === 'blocked');
+  return { prompt, negativePrompt, wouldBlock: audit.includesInappropriate || blocked };
+}
+
+/** Summary labels for one re-checked trigger; empty means the re-check found nothing. */
+export function recheckReasonLabels(
+  result: RecheckResult,
+  categoryName: (category: PromptHighlightCategory) => string
+): string[] {
+  const categories = recheckCategories(result);
+  if (!categories.length && !result.wouldBlock) return [];
+  if (!result.wouldBlock) return [RECHECK_NOT_BLOCKING];
+  return [
+    categories.length ? `would block (${categories.map(categoryName).join(', ')})` : 'would block',
+  ];
+}
 
 /** `byKey` indexes `results`, so a user who retried one prompt 89 times ships its segments once. */
 export type Recheck = {
@@ -39,7 +67,9 @@ export function planRecheck(triggers: readonly Plannable[]): {
   return { inputs, byKey };
 }
 
-export function recheckCategories(result: RecheckResult): PromptHighlightCategory[] {
+export function recheckCategories(
+  result: Pick<RecheckResult, 'prompt' | 'negativePrompt'>
+): PromptHighlightCategory[] {
   const found = new Set<PromptHighlightCategory>();
   for (const segment of [...result.prompt, ...(result.negativePrompt ?? [])]) {
     if (segment.category) found.add(segment.category);
