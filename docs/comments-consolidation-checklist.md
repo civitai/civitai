@@ -107,9 +107,12 @@ and flip order.
 - [ ] Triggers: `CommentTopic.commentCount` (counted set = ALL rows incl. hidden/self, matching
       today's `update_thread_comment_count`), reaction-count port of
       `update_comment_reaction_count`
-- [ ] **(review)** `commentv3_delete_topic` AFTER DELETE trigger on each of the 13 entity tables
-      (`ComicChapter` passes `OLD.id`, not its composite PK), so an entity hard-delete cascades
-      its comments
+- [ ] **(review, 2026-10-20)** `CommentTopic` is `PARTITION BY LIST ("entityType")`: one partition
+      per enum value, each with an `ON DELETE CASCADE` FK to its entity table (`ComicChapter (id)`,
+      `app_listings (serial_id)`); the migration loops over the enum and fails on a missing
+      mapping; no DEFAULT partition; PK `("entityId", "entityType")`. Replaces the per-entity
+      `AFTER DELETE` triggers. On the dev apply, re-run the reply-tree cascade from the entity
+      side under `parentId RESTRICT`
 - [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
       `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
       `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
@@ -156,8 +159,8 @@ backfill to race.
 - [ ] `toggleLockCommentsThread` sets `Thread.locked` + `CommentTopic.locked` together
 - [ ] `toggleThreadMute` → `CommentMute`, `toggleSectionMute` → `CommentTopicMute` (both v2 controls
       from PR #4524; the section control gains the ability to mute a comment-less entity)
-- [ ] `CommentTopic` rows deleted by the entity hard-delete paths (image, post, article, bounty,
-      model, account deletion) — no FK does it **(review)**
+- [ ] Entity hard-delete paths (image, post, article, bounty, model, account deletion) seen to
+      cascade through the partition FK into `CommentTopic` and `CommentV3` on dev **(review)**
 - [ ] CDC provisioned **before** enabling: `public.CommentV3` in event-engine table subscriptions +
       `postgres.CommentV3` Kafka topic created (dedupe against old handlers during overlap)
 - [ ] Deployed to production; new comments/reactions/reports visibly landing in both sides, zero
