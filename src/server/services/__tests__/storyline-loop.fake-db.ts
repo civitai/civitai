@@ -436,7 +436,7 @@ export function createFakeDb() {
     if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
       // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
       // while the statement carries both its filters, so one that drops either is refused.
-      const compact = text.replace(/s+/g, ' ');
+      const compact = text.replace(/\s+/g, ' ');
       if (!compact.includes('WHERE id = ANY(') || !compact.includes('"removedAt" IS NULL'))
         throw new Error(`fake db: chapter lock is not a live-chapter read: ${compact}`);
       const [ids] = v as [number[]];
@@ -603,6 +603,7 @@ export function createFakeDb() {
         shareLocked.has(id) ? deferredRemovals.push(id) : removeNow(id)
       ),
     edgesOnRemoved: () => structuredClone(edgesOnRemoved),
+    isShareLocked: (id: number) => shareLocked.has(id),
   };
 }
 

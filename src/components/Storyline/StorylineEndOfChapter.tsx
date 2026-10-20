@@ -21,7 +21,6 @@ import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
-import type { StorylineCoverImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
@@ -36,9 +35,6 @@ import {
   getStorylineChapterName,
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
-
-/** A way on from a chapter, with its first image. */
-type ForkChild = StorylineChild & { firstImage?: StorylineCoverImage | null };
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -95,7 +91,7 @@ export function StorylineEndOfChapter({
   const [main, ...others] = (children ?? []).map((child) => ({
     ...child,
     depth: chapterDepth + 1,
-  })) as ForkChild[];
+  })) as StorylineChild[];
   const ended = !children?.length && !isLoading;
 
   return (
@@ -253,7 +249,7 @@ function LeadFork({
   shares,
   onContinue,
 }: {
-  child: ForkChild;
+  child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
@@ -348,7 +344,7 @@ function OtherFork({
   shares,
   onContinue,
 }: {
-  child: ForkChild;
+  child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
