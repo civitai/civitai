@@ -33,7 +33,7 @@ vi.mock('@civitai/db-queries/image', async (importOriginal) => ({
 import { listImageReactionsMany } from '@civitai/db-queries/image';
 import { getUserReactionsForImages } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { kyselyRead } from '~/server/db/kyselyDb';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 const kyselyReactions = vi.mocked(listImageReactionsMany);
@@ -121,6 +121,8 @@ describe('getUserReactionsForImages', () => {
       // `toBe`: kyselyRead and kyselyWrite are distinct clients; the Prisma path reads dbRead, so
       // the Kysely path must read the replica too, not the primary.
       expect(kyselyReactions.mock.calls[0][0]).toBe(kyselyRead);
+      // Control for the identity check above: it only separates read from write while they differ.
+      expect(kyselyRead).not.toBe(kyselyWrite);
       expect(kyselyReactions.mock.calls[0][1]).toEqual({
         imageIds: [142799705, 2],
         userId: VIEWER,

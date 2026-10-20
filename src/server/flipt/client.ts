@@ -28,6 +28,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 BOOLEAN ONLY. Evaluated once per call with no entityId and no context (a single cached key,
   // so the gate adds no per-user cache churn on a hot path); a percentage rollout hashes the literal
   // 'global' and is 0% or 100%, and a segment rule matches nothing.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
+  // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
+  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
+  // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
