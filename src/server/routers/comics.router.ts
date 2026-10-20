@@ -46,6 +46,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import {
+  assertUnlockAllowed,
   assertUnlockReleasesOutput,
   formatGenerationResponse2,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -3925,15 +3926,7 @@ export const comicsRouter = router({
         throw throwBadRequestError('Panel has no workflow to unlock.');
       }
 
-      // Don't allow lifting mature restrictions while the user is on the
-      // SFW (green) domain — that would push the unblurred result into the
-      // editor on a domain that's not allowed to show it. Force the
-      // redirect-to-red flow instead.
-      if (ctx.domain === 'green') {
-        throw throwBadRequestError(
-          'Mature content cannot be unlocked on this site. Open the project on civitai.red to unlock.'
-        );
-      }
+      assertUnlockAllowed({ domain: ctx.domain, showNsfw: !!ctx.user!.showNsfw });
 
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
@@ -3951,15 +3944,13 @@ export const comicsRouter = router({
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
       await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-      try {
-        await updateWorkflow({
-          token,
-          workflowId: panel.workflowId,
-          allowMatureContent: true,
-        });
-      } catch (error) {
-        throw throwBadRequestError(getOrchestratorErrorMessage(error));
-      }
+      // Uncaught: the mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+      await updateWorkflow({
+        token,
+        workflowId: panel.workflowId,
+        allowMatureContent: true,
+        throwOnError: true,
+      });
 
       // 2) Re-fetch the workflow and run it through the same `BlobData`
       //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
