@@ -1,8 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { TurnEvent } from '$lib/assistant/types';
 import type { PermissionId } from '$lib/permissions';
-import { findModel } from '$lib/assistant/models';
-import { assistantModel, complete } from './openrouter';
+import { complete, resolveModel } from './openrouter';
 import { env } from '$env/dynamic/private';
 import {
   DAILY_TOKEN_CAP,
@@ -96,7 +95,7 @@ export async function executeTurn(input: {
   const playbooks = allPlaybooks.map(shown);
   const playbook = chosen && shown(chosen);
 
-  const model = findModel(input.model)?.id ?? assistantModel();
+  const model = resolveModel(input.model);
   const turnId = await startTurn({
     chatId: input.chatId,
     moderatorId: input.moderator.id,

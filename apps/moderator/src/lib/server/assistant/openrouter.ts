@@ -1,5 +1,10 @@
 import { env } from '$env/dynamic/private';
-import { DEFAULT_ASSISTANT_MODEL, findModel } from '$lib/assistant/models';
+import {
+  ASSISTANT_MODELS,
+  DEFAULT_ASSISTANT_MODEL,
+  findModel,
+  type Price,
+} from '$lib/assistant/models';
 import { openrouterKey } from '../xguard-api';
 
 // The model call, and nothing else. Server-only: the key is read here and never leaves the process.
@@ -11,6 +16,41 @@ import { openrouterKey } from '../xguard-api';
  */
 export const assistantModel = () =>
   findModel(env.ASSISTANT_MODEL?.trim())?.id ?? DEFAULT_ASSISTANT_MODEL;
+
+/** The model to run for a request: the one asked for if it is listed, else the default. */
+export const resolveModel = (id: string | null | undefined) =>
+  findModel(id)?.id ?? assistantModel();
+
+const PRICE_TTL_MS = 60 * 60_000;
+let prices: { at: number; byId: Record<string, Price> } | null = null;
+
+/**
+ * OpenRouter's current list price for each listed model, from its public model list (no key), read
+ * at most hourly. List prices move, so the release's own copy is only the fallback: for a model the
+ * list does not return, or when OpenRouter cannot be reached.
+ */
+export async function listPrices(now = Date.now()): Promise<Record<string, Price>> {
+  if (prices && now - prices.at < PRICE_TTL_MS) return prices.byId;
+  const byId = Object.fromEntries(ASSISTANT_MODELS.map((m) => [m.id, m.price]));
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/models', {
+      signal: AbortSignal.timeout(3_000),
+    });
+    const body = (await res.json()) as {
+      data?: { id: string; pricing?: { prompt?: string; completion?: string } }[];
+    };
+    for (const m of body.data ?? []) {
+      const input = Number(m.pricing?.prompt) * 1_000_000;
+      const output = Number(m.pricing?.completion) * 1_000_000;
+      if (m.id in byId && Number.isFinite(input) && Number.isFinite(output) && input >= 0)
+        byId[m.id] = { input, output };
+    }
+  } catch (e) {
+    console.error('[assistant] OpenRouter price list unavailable; using the listed prices', e);
+  }
+  prices = { at: now, byId };
+  return byId;
+}
 
 export type ChatMessage =
   | { role: 'system' | 'user'; content: string }

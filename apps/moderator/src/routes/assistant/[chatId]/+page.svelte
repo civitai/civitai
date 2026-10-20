@@ -6,6 +6,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
@@ -92,12 +93,6 @@
   );
   const modelLabel = $derived(data.models.find((m) => m.id === model)?.label ?? model);
   const usd = (n: number) => (n < 0.01 && n > 0 ? '<$0.01' : `$${n.toFixed(2)}`);
-  // Per model, so "which price" is answered: the router picks the provider, so this is an estimate.
-  const spendDetail = $derived(
-    data.spend.byModel
-      .map((r) => `${r.label}: ${r.usd === null ? 'price unknown' : usd(r.usd)}`)
-      .join('\n')
-  );
 </script>
 
 <header class="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -119,10 +114,34 @@
       <Button type="submit" size="sm" variant="outline" disabled={rename.submitting}>Rename</Button>
     {/if}
   </form>
-  <div class="flex items-center gap-2 text-xs text-dark-2">
+  <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
     <span>{num(data.allowance.used)} / {num(data.allowance.cap)} tokens today</span>
     {#if data.spend.byModel.length}
-      <span title={spendDetail}>· ≈ {usd(data.spend.usd)} today, estimated at list prices</span>
+      <!-- A popover, not a title: the per-model split must reach a phone and a keyboard too. -->
+      <Popover.Root>
+        <Popover.Trigger class="underline decoration-dotted underline-offset-2">
+          ≈ {usd(data.spend.usd)}{data.spend.unpricedTokens ? '+' : ''} today (est.)
+        </Popover.Trigger>
+        <Popover.Content align="end" class="w-64 text-xs">
+          <p class="mt-0 mb-2 text-dark-2">
+            Estimated at OpenRouter's list prices. The router picks the provider per call, so the real
+            cost can differ.
+          </p>
+          <ul class="m-0 space-y-1 p-0">
+            {#each data.spend.byModel as r (r.model)}
+              <li class="flex justify-between gap-2">
+                <span>{r.label}</span>
+                <span class="text-dark-0">{r.usd === null ? 'price unknown' : usd(r.usd)}</span>
+              </li>
+            {/each}
+          </ul>
+          {#if data.spend.unpricedTokens}
+            <p class="mt-2 mb-0 text-amber-300">
+              {num(data.spend.unpricedTokens)} tokens on models with no price are not in the total.
+            </p>
+          {/if}
+        </Popover.Content>
+      </Popover.Root>
     {/if}
     {#if canUse}
       <form method="POST" action="?/archive" use:enhance={archive.enhance}>
@@ -187,27 +206,30 @@
       disabled={busy}
     />
     <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-      <Select.Root type="single" bind:value={() => playbook, (v) => (playbook = v ?? NO_PLAYBOOK)}>
-        <Select.Trigger class="w-full max-w-64 text-xs sm:w-64" aria-label="Playbook">
-          {playbookLabel}
-        </Select.Trigger>
-        <Select.Content>
-          <Select.Item value={NO_PLAYBOOK}>No playbook</Select.Item>
-          {#each data.playbooks as p (p.slug)}
-            <Select.Item value={p.slug}>{p.title}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-      <Select.Root type="single" bind:value={() => model, (v) => (model = v || data.model)}>
-        <Select.Trigger class="w-full max-w-48 text-xs sm:w-48" aria-label="Model">
-          {modelLabel}
-        </Select.Trigger>
-        <Select.Content>
-          {#each data.models as m (m.id)}
-            <Select.Item value={m.id}>{m.label}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
+      <!-- One line on a phone: the composer is sticky, so every extra row costs the transcript. -->
+      <div class="flex w-full min-w-0 gap-2 sm:w-auto">
+        <Select.Root type="single" bind:value={() => playbook, (v) => (playbook = v ?? NO_PLAYBOOK)}>
+          <Select.Trigger class="min-w-0 flex-1 text-xs sm:w-64 sm:flex-none" aria-label="Playbook">
+            {playbookLabel}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value={NO_PLAYBOOK}>No playbook</Select.Item>
+            {#each data.playbooks as p (p.slug)}
+              <Select.Item value={p.slug}>{p.title}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <Select.Root type="single" bind:value={() => model, (v) => (model = v || data.model)}>
+          <Select.Trigger class="min-w-0 flex-1 text-xs sm:w-44 sm:flex-none" aria-label="Model">
+            {modelLabel}
+          </Select.Trigger>
+          <Select.Content>
+            {#each data.models as m (m.id)}
+              <Select.Item value={m.id}>{m.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
       <div class="flex items-center gap-2">
         <span class="hidden text-xs text-dark-2 sm:inline">Ctrl+Enter</span>
         <Button type="submit" disabled={busy || !prompt.trim()}>

@@ -1,19 +1,22 @@
 // The models a moderator may pick for a question, and what a day of them costs. Client-safe: the page
 // renders the picker and the spend line from this, and the server refuses any id not in it.
 
+/** USD per million tokens. */
+export type Price = { input: number; output: number };
+
 export type AssistantModel = {
   /** OpenRouter's id. Each one was checked to route with tools under `data_collection: 'deny'`. */
   id: string;
   label: string;
-  /** OpenRouter's LIST price, USD per million tokens. The router picks the provider per call, so what
-   *  a turn really cost can differ; the page says "estimated at list prices" for that reason. */
-  price: { input: number; output: number };
+  /** OpenRouter's list price, USD per million tokens, as of this release. Only a fallback: list prices
+   *  move (Flash's tripled within hours), so the server reads the live list (`listPrices`). */
+  price: Price;
   /** No provider of it accepts `temperature`. Sent anyway, `require_parameters` finds no endpoint. */
   noTemperature?: true;
 };
 
 export const ASSISTANT_MODELS: readonly AssistantModel[] = [
-  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', price: { input: 0.048, output: 0.16 } },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', price: { input: 0.15, output: 0.5 } },
   { id: 'z-ai/glm-5.3', label: 'GLM 5.3', price: { input: 0.079, output: 1.4 } },
   { id: 'stepfun/step-5-preview', label: 'Step 5 Preview', price: { input: 1, output: 2.7 } },
   {
@@ -38,19 +41,32 @@ export type ModelSpend = {
   usd: number | null;
 };
 
-/** A day's spend, per model and in total, at list prices. Unpriced models are left out of the total. */
+export type TokenRow = { model: string; promptTokens: number; completionTokens: number };
+
+/**
+ * A day's spend, per model and in total, at the given prices (the listed fallback by default). A model
+ * with no price is left out of the total, and `unpricedTokens` says how much was left out, so the page
+ * can say the total is short rather than show a smaller number as if it were complete.
+ */
 export function estimateSpend(
-  rows: { model: string; promptTokens: number; completionTokens: number }[]
-): { usd: number; byModel: ModelSpend[] } {
+  rows: TokenRow[],
+  prices: Record<string, Price> = Object.fromEntries(ASSISTANT_MODELS.map((m) => [m.id, m.price]))
+): { usd: number; byModel: ModelSpend[]; unpricedTokens: number } {
   const byModel = rows.map((r): ModelSpend => {
-    const m = findModel(r.model);
+    const price = prices[r.model];
     return {
       ...r,
-      label: m?.label ?? r.model,
-      usd: m
-        ? (r.promptTokens * m.price.input + r.completionTokens * m.price.output) / 1_000_000
+      label: findModel(r.model)?.label ?? r.model,
+      usd: price
+        ? (r.promptTokens * price.input + r.completionTokens * price.output) / 1_000_000
         : null,
     };
   });
-  return { usd: byModel.reduce((sum, r) => sum + (r.usd ?? 0), 0), byModel };
+  return {
+    usd: byModel.reduce((sum, r) => sum + (r.usd ?? 0), 0),
+    byModel,
+    unpricedTokens: byModel
+      .filter((r) => r.usd === null)
+      .reduce((sum, r) => sum + r.promptTokens + r.completionTokens, 0),
+  };
 }

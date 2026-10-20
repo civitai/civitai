@@ -4,7 +4,54 @@ const env = vi.hoisted((): Record<string, string | undefined> => ({}));
 vi.mock('$env/dynamic/private', () => ({ env }));
 vi.mock('../../xguard-api', () => ({ openrouterKey: () => 'test-key' }));
 
-const { assistantModel, complete, reasoningOf } = await import('../openrouter');
+const { assistantModel, complete, listPrices, reasoningOf } = await import('../openrouter');
+
+describe('listPrices', () => {
+  const HOUR = 60 * 60_000;
+  // Each case starts past the cache of the one before.
+  let clock = 0;
+  const later = () => (clock += 2 * HOUR);
+
+  it("takes OpenRouter's current list price, per million, for a listed model", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: [
+            { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.0000003', completion: '0.000001' } },
+            { id: 'not/listed', pricing: { prompt: '1', completion: '1' } },
+          ],
+        })
+      )
+    );
+    const prices = await listPrices(later());
+    expect(prices['z-ai/glm-5.3-flash'].input).toBeCloseTo(0.3, 10);
+    expect(prices['z-ai/glm-5.3-flash'].output).toBeCloseTo(1, 10);
+    // A model the list did not return keeps the release's price; an unlisted one is never added.
+    expect(prices['openai/gpt-6-luna']).toEqual({ input: 0.1, output: 0.5 });
+    expect(prices['not/listed']).toBeUndefined();
+  });
+
+  it('falls back to the release prices when OpenRouter cannot be reached', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    expect((await listPrices(later()))['z-ai/glm-5.3-flash']).toEqual({ input: 0.15, output: 0.5 });
+  });
+
+  it('asks at most hourly', async () => {
+    const fetch = vi.fn(async () => Response.json({ data: [] }));
+    vi.stubGlobal('fetch', fetch);
+    const at = later();
+    await listPrices(at);
+    await listPrices(at + HOUR / 2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

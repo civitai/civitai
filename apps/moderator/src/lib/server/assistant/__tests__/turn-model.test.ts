@@ -10,7 +10,12 @@ const { complete, startTurn } = vi.hoisted(() => ({
   startTurn: vi.fn(),
 }));
 
-vi.mock('../openrouter', () => ({ complete, assistantModel: () => 'z-ai/glm-5.3-flash' }));
+// The real model resolution; only the network call is faked.
+vi.mock('../../xguard-api', () => ({ openrouterKey: () => 'test-key' }));
+vi.mock('../openrouter', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../openrouter')>()),
+  complete,
+}));
 vi.mock('../tools', () => ({ LOOKUP: '/lookup', toolSpec: () => ({}), toolsFor: () => [] }));
 vi.mock('../store', () => ({
   DEFAULT_CHAT_TITLE: 'New chat',
@@ -43,13 +48,11 @@ const ask = (model: string | null) =>
 
 beforeEach(() => {
   startTurn.mockReset().mockResolvedValue(9);
-  complete
-    .mockReset()
-    .mockResolvedValue({
-      message: { content: 'ok' },
-      finishReason: 'stop',
-      usage: { prompt: 1, completion: 1 },
-    });
+  complete.mockReset().mockResolvedValue({
+    message: { content: 'ok' },
+    finishReason: 'stop',
+    usage: { prompt: 1, completion: 1 },
+  });
 });
 
 describe('executeTurn', () => {
