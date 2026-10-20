@@ -9,7 +9,6 @@ import { createStorylineLaneRouter, layoutStorylineLanes } from '~/shared/utils/
 
 type LaneMapChapter = StorylinePathChapter & { firstImage: { id: number } | null };
 
-/** A lane's colour on the map, and wherever else a path is drawn in its lane's colour. */
 export const LANE_COLORS = ['blue', 'grape', 'teal', 'orange', 'pink', 'lime', 'cyan', 'yellow'];
 export const laneColor = (lane: number) =>
   `var(--mantine-color-${LANE_COLORS[lane % LANE_COLORS.length]}-6)`;
@@ -25,9 +24,9 @@ export const storylineDisplayLane = (
 ) => (node.lane === 0 && !onCanon ? layout.lanes : node.lane);
 
 /**
- * The lane of each chapter of a reader's path that is off the main route, as the map draws it, for
- * the viewer's rail to colour by. A chapter on the main route, or one the graph does not hold (it
- * is capped, or still loading), is left out and keeps the plain look.
+ * The lane of each chapter of a reader's path that is off the main route, as the map draws it. A
+ * chapter on the main route, or one the graph does not hold (it is capped, or still loading), is
+ * left out and keeps the plain look.
  */
 export function getStorylinePathLanes(
   graph:
@@ -184,7 +183,6 @@ export function buildStorylineLaneList<N extends LaneListNode>(
   const mapNodes = map?.nodes ?? [];
   const mapLinks = map?.layout.links ?? [];
   const isCanonCell = (chapterId: number) => canonIds.has(chapterId);
-  // A spare lane for whatever sits in lane 0 off the canon path.
   const spare = map?.layout.lanes ?? 1;
   const laneOf = new Map<number, number>();
   for (const node of mapNodes)

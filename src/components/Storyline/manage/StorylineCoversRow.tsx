@@ -23,19 +23,16 @@ import { trpc } from '~/utils/trpc';
 type Storyline = RouterOutput['storyline']['getById'];
 type Slot = CoverSlot;
 
-/** The image read's page size, and so how many images the picker can offer. */
 const PICKER_IMAGE_LIMIT = 200;
 
 /**
- * The owner's picks for the storyline's card cover and page banner, as one row of the Manage
- * modal's settings. Each pick is saved as soon as it is made; the server has the last word on
- * which images may be used, and its refusal is shown here.
+ * Each pick is saved as soon as it is made; the server decides which images may be used and its
+ * refusal is shown here.
  */
 export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
   const utils = trpc.useUtils();
   const { data: storyline } = trpc.storyline.getById.useQuery({ id: storylineId });
   const [error, setError] = useState<string | null>(null);
-  // Follows the drag; the server's value until the owner moves it.
   const [position, setPosition] = useState<number | null>(null);
 
   const update = trpc.storyline.update.useMutation({
@@ -48,7 +45,6 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
       ]),
     onError: (e) => setError(e.message),
   });
-  // Saved once the drag pauses, and on closing Manage mid-drag.
   const savePosition = useDebouncedCallback(
     (heroImagePosition: number) => update.mutate({ id: storylineId, heroImagePosition }),
     { delay: 400, flushOnUnmount: true }
@@ -114,7 +110,6 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
           disabled={update.isPending}
         >
           {storyline.heroIsBanner && storyline.heroImage ? (
-            // The owner's own blur preferences apply here as on the page.
             <ImageGuard2 image={storyline.heroImage} explain={false}>
               {(safe) =>
                 safe ? (
@@ -228,9 +223,8 @@ function CoverSlot({
 }
 
 /**
- * The images the server would accept, grouped by chapter: the canon path's chapters by the owner
- * or an endorsed collaborator, rated within the ceiling, and no minors or real people. Read
- * through the normal image read, so the owner's own level and hidden images apply as well.
+ * The images the server accepts for a cover or banner, grouped by chapter. Read through the normal
+ * image read, so the owner's own level and hidden images apply as well.
  */
 export function StorylineImagePicker({
   storyline,

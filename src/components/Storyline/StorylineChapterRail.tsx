@@ -15,10 +15,8 @@ import { buildStorylineRail } from '~/components/Storyline/storyline-rail.utils'
 const STUB = 'pointer-events-none absolute bottom-1/2 h-2.5 w-0.5 bg-[var(--mantine-color-pink-5)]';
 
 /**
- * Storyline-mode replacement for the carousel dots. Pink stubs mark where other paths leave or
- * join; they are marks only, since the map lists forks for the stops nearest the end alone. A
- * reader off the main route sees their path's chapters in the colour of the lane the map draws
- * them in.
+ * Storyline-mode replacement for the carousel dots. The pink stubs are marks only: the map lists
+ * forks for the stops nearest the end alone.
  */
 export function StorylineChapterRail({
   storyline,
@@ -75,7 +73,6 @@ export function StorylineChapterRail({
           <div
             key={chapter.chapterId}
             className="relative flex h-full min-w-0 items-center"
-            // Same total width at every chapter: only the share the current one takes moves.
             style={{ flex: current ? Math.min(Math.max(ticks.length, 3), 8) : 1 }}
             data-testid="storyline-rail-segment"
             data-chapter-id={chapter.chapterId}
@@ -133,7 +130,7 @@ export function StorylineChapterRail({
                     !chapter.post ? 'bg-gray-6' : lane === null && 'bg-white',
                     kind === 'ahead' ? 'opacity-30' : 'dark:opacity-60'
                   )}
-                  // A removed chapter keeps its plain grey, whatever lane it sat in.
+                  // A tombstoned chapter keeps its plain grey, whatever lane it sat in.
                   style={
                     lane !== null && chapter.post
                       ? { background: laneColor(lane), borderColor: laneColor(lane) }

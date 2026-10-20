@@ -44,8 +44,8 @@ export function StorylinePage({ id }: { id: number }) {
   const queryUtils = trpc.useUtils();
   const storyline = storylineQuery.data;
   const mainPath = storyline?.mainPath ?? [];
-  // Cover, thread and Start reading come from the reading path, which tombstones chapter 1 where
-  // this reader may not see it; `rootPostId` does not.
+  // Thread and Start reading come from the reading path, which tombstones chapter 1 where this
+  // reader may not see it; `rootPostId` does not.
   const rootPost = mainPath[0]?.post ?? null;
   const startLink = mainPath[0] ? storylineChapterLink(mainPath[0], []) : null;
   // Continue adds the next chapter after the end of the main path. When that chapter is hidden
@@ -68,7 +68,6 @@ export function StorylinePage({ id }: { id: number }) {
 
   return (
     <div className="pb-10">
-      {/* Only a picked banner shows sharp; the fallback is a portrait, so a blurred backdrop. */}
       <StorylineHero
         image={storyline.heroImage}
         position={storyline.heroImagePosition}
@@ -95,7 +94,7 @@ export function StorylinePage({ id }: { id: number }) {
           <div className="flex min-w-0 flex-col gap-5">
             <StorylineChapters storyline={storyline} />
           </div>
-          {/* Spans both rows on desktop; on a phone it comes before the discussion. */}
+          {/* On a phone this column comes before the discussion. */}
           <div className="flex flex-col gap-5 md:col-start-2 md:row-span-2 md:row-start-1">
             <StorylineContributors contributors={storyline.contributors} />
             <StorylineAboutContinuing storyline={storyline} terms={shownTerms} />
@@ -221,7 +220,6 @@ function StorylineHeader({
   );
 }
 
-/** The price when this reader can continue; otherwise why not, when the server says. */
 function StorylineContinueChip({
   storyline,
   terms,
@@ -294,7 +292,6 @@ function StorylineContributors({ contributors }: { contributors: Storyline['cont
   );
 }
 
-/** Price and ceiling, and in one sentence who may continue and who reviews it. */
 function StorylineAboutContinuing({
   storyline,
   terms,

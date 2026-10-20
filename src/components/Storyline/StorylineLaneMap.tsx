@@ -51,11 +51,6 @@ const SIZES = {
 };
 const RATIO = 5 / 4;
 
-/**
- * The storyline's chapters as lanes: the canon path down the left with big tiles and titles, the
- * other paths in coloured lanes to its right, and a labelled band where the story forks or a path
- * joins back. A story that never forks is the canon lane alone.
- */
 export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
   const compact = !!useIsMobile({ type: 'media' });
   const size = compact ? SIZES.compact : SIZES.wide;

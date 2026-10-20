@@ -16,11 +16,9 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
-/** The surface every storyline card sits on. */
 export const storylineCardClass =
   'rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
 
-/** The design system's one chip: light, small, round; on an image, a dark translucent fill. */
 function Chip({
   onImage,
   className,
@@ -70,7 +68,6 @@ export function StorylineStatusChip({
   );
 }
 
-/** Why a reader may not continue: closed to everyone, or only to collaborators. */
 export function StorylineClosedChip({
   label,
   onImage,
@@ -93,7 +90,6 @@ export function StorylineClosedChip({
   );
 }
 
-/** Anyone may continue, and the creator reviews each continuation. */
 export function StorylineOpenToAnyoneChip() {
   return (
     <Chip color="blue" leftSection={<IconUsers size={12} />} data-testid="storyline-who-chip">
@@ -102,7 +98,6 @@ export function StorylineOpenToAnyoneChip() {
   );
 }
 
-/** A way on's share of the readers who chose at a fork, laid over its cover. */
 export function StorylineShareChip({
   percent,
   className,
@@ -117,7 +112,6 @@ export function StorylineShareChip({
   );
 }
 
-/** What continuing costs. `short` drops "to continue" where space is tight, keeping it as a tooltip. */
 export function StorylinePriceChip({
   price,
   short,
@@ -142,9 +136,8 @@ export function StorylinePriceChip({
   );
 }
 
-/** The storyline's rating ceiling, "Up to PG-13". */
 export function StorylineCeilingChip({ maxNsfwLevel }: { maxNsfwLevel: number }) {
-  // Only a real ceiling: the labels map other levels (0 among them) to "?".
+  // Only a real ceiling: the label table also names 0 ("?") and Blocked.
   if (!(STORYLINE_CEILING_LEVELS as readonly number[]).includes(maxNsfwLevel)) return null;
   const label = browsingLevelLabels[maxNsfwLevel as keyof typeof browsingLevelLabels];
   return (
@@ -172,7 +165,6 @@ export function StorylineRoleChip({ role }: { role: 'creator' | 'endorsed' | 'co
   );
 }
 
-/** A way on from a chapter: the owner's canon, or an endorsed collaborator's. */
 export function StorylineRankChip({
   rank,
   onImage,
@@ -194,7 +186,6 @@ export function StorylineRankChip({
   );
 }
 
-/** An icon and a count, with the noun for screen readers and as a tooltip. */
 export function StorylineStat({
   icon: Icon,
   count,
@@ -207,7 +198,6 @@ export function StorylineStat({
   count: number;
   one: string;
   many: string;
-  /** Print the noun beside the count, not only for screen readers. */
   showLabel?: boolean;
   size?: 'xs' | 'sm';
 }) {

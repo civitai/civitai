@@ -50,10 +50,8 @@ type WithCover = { firstImage?: StorylineCoverImage | null };
 const coverOf = (chapter: unknown) => (chapter as WithCover).firstImage;
 
 /**
- * The storyline chip in the stage toolbar and the map that drops from it. On desktop the map is a
- * sheet anchored under the chip, with no backdrop: the image and its arrows stay live, and Esc, a
- * click outside or the chip closes it. On a phone it is a bottom sheet over the lower part of the
- * page, again without dimming, with the image visible above it.
+ * The chip in the stage toolbar and the map that drops from it. Neither layout dims the stage: the
+ * image and its arrows stay live while the map is open.
  */
 export function StorylineMapControl({
   storyline,
@@ -392,7 +390,6 @@ function StorylineMap({
           Story page
         </Button>
       </div>
-      {/* What the chip's x used to do: back to browsing this post's images, out of the mode. */}
       <Button
         variant="subtle"
         color="gray"

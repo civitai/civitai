@@ -1,6 +1,5 @@
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 
-/** Past this many chapters the rail shows a window around the current one. */
 export const STORYLINE_RAIL_WINDOW = 24;
 
 type RailChapter = Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post'> & {
@@ -17,7 +16,6 @@ export type StorylineRailSegment<T extends RailChapter> = {
   current: boolean;
   /** Another path leaves after this chapter: a way on besides the next chapter on the line. */
   leaves: boolean;
-  /** Another path joins the line at this chapter. */
   joins: boolean;
   /** The current chapter's images, as indexes into the carousel's images. Empty on the others. */
   ticks: number[];
@@ -25,10 +23,6 @@ export type StorylineRailSegment<T extends RailChapter> = {
   lane: number | null;
 };
 
-/**
- * The viewer's chapter rail: one segment per chapter on the reader's line (the path, then the
- * canon line ahead), with ticks for the current chapter's images only.
- */
 export function buildStorylineRail<T extends RailChapter>({
   path,
   ahead,
@@ -42,7 +36,6 @@ export function buildStorylineRail<T extends RailChapter>({
   ahead: T[];
   /** The chapter of each carousel image, in carousel order (undefined off the path). */
   imageChapterIds: (number | undefined)[];
-  /** The carousel image being shown. */
   index: number;
   /** Whether the canon line ahead has arrived. Until it has, the path's end is not marked as forking. */
   aheadKnown: boolean;

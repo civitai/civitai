@@ -40,8 +40,6 @@ export function StartStorylineModal({
   const dialog = useDialogContext();
   const router = useRouter();
   const utils = trpc.useUtils();
-  // The server's own rule, so a ceiling it would refuse is never offered: chapter 1 above its
-  // storyline's ceiling would hide the story's start.
   const allowed = STORYLINE_CEILING_LEVELS.filter((level) =>
     storylineLevelAllowed({ postLevel: postNsfwLevel, maxNsfwLevel: level })
   );
