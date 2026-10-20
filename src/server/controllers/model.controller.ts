@@ -154,6 +154,7 @@ import {
 import {
   amIBlockedByUser,
   bustUserDownloadsCache,
+  getCosmeticsAndProfilePicturesForUsers,
   getUserSettings,
 } from '~/server/services/user.service';
 import {
@@ -551,13 +552,14 @@ export const getModelHandler = async ({
         })
       : null;
 
-    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
-      ctx.user,
-      model.user.id
-    );
+    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+      getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
+      getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+    ]);
 
     return {
       ...model,
+      user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
       ownerMetricPrivacyDefaults,
