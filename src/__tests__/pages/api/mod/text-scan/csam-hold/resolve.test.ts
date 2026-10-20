@@ -297,33 +297,75 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.refreshModelCache).toHaveBeenCalledWith(55);
     });
 
-    it('unpublishes a published article as a violation, keeping its content', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'Article' }));
-      await call({ holdId: 12, decision: 'remove' });
-      expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 55,
-          reason: 'csam-text-hold',
-          metadata: {},
-          userId: 7,
-          isModerator: true,
-        })
-      );
-      expect(mocks.tracker.article).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'Unpublish', articleId: 55 })
-      );
-    });
-
-    it('records the decision for an article that is already unpublished, without unpublishing again', async () => {
-      findFirst.mockResolvedValue(pendingHold({ entityType: 'Article' }));
-      dbMock.dbWrite.article.findUnique.mockResolvedValue({
-        status: 'UnpublishedViolation',
-        metadata: {},
+    describe('article', () => {
+      const articleUpdate = () => dbMock.dbWrite.article.updateMany;
+      beforeEach(() => {
+        findFirst.mockResolvedValue(pendingHold({ entityType: 'Article' }));
+        articleUpdate().mockResolvedValue({ count: 1 });
       });
-      const { status } = await call({ holdId: 12, decision: 'remove' });
-      expect(status).toBe(200);
-      expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
-      expect(labelCalls()).toHaveLength(1);
+
+      it('unpublishes a published article as a violation, keeping its content', async () => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({
+          status: 'Published',
+          metadata: { foo: 1 },
+        });
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).toHaveBeenCalledTimes(1);
+        expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 55,
+            reason: 'csam-text-hold',
+            metadata: { foo: 1 },
+            userId: 7,
+            isModerator: true,
+          })
+        );
+        expect(mocks.tracker.article).toHaveBeenCalledTimes(1);
+        expect(mocks.tracker.article).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'Unpublish', articleId: 55 })
+        );
+        expect(articleUpdate()).not.toHaveBeenCalled();
+        expect(labelCalls()).toHaveLength(1);
+      });
+
+      it.each([
+        ['a draft', { status: 'Draft', scheduledAt: null }],
+        ['a scheduled draft', { status: 'Draft', scheduledAt: new Date('2027-01-01') }],
+        ['a processing article', { status: 'Processing', scheduledAt: null }],
+        ['an owner-unpublished article', { status: 'Unpublished', scheduledAt: null }],
+      ])('marks %s as a violation so it cannot go live later', async (_name, row) => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...row, metadata: { foo: 1 } });
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
+        expect(articleUpdate()).toHaveBeenCalledTimes(1);
+        expect(articleUpdate()).toHaveBeenCalledWith({
+          where: { id: 55, status: { not: 'UnpublishedViolation' } },
+          data: {
+            status: 'UnpublishedViolation',
+            metadata: {
+              foo: 1,
+              unpublishedReason: 'csam-text-hold',
+              unpublishedAt: expect.any(String),
+              unpublishedBy: 7,
+            },
+          },
+        });
+        expect(labelCalls()).toHaveLength(1);
+      });
+
+      it.each([
+        ['already removed', { status: 'UnpublishedViolation', metadata: {} }],
+        ['missing', null],
+      ])('records the decision for an article that is %s, without writing', async (_name, row) => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue(row);
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
+        expect(articleUpdate()).not.toHaveBeenCalled();
+        expect(labelCalls()).toHaveLength(1);
+      });
     });
 
     it('unpublishes a post instead of deleting it', async () => {

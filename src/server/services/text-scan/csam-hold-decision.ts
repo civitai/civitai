@@ -141,12 +141,29 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         where: { id: entityId },
         select: { status: true, metadata: true },
       });
-      // Nothing to unpublish once it is a draft or already unpublished; the decision is still recorded.
-      if (article?.status !== ArticleStatus.Published) return;
+      if (!article || article.status === ArticleStatus.UnpublishedViolation) return;
+      const metadata = (article.metadata as ArticleMetadata | null) || {};
+      if (article.status !== ArticleStatus.Published) {
+        // unpublishArticleById refuses anything not Published. The violation status is what stops
+        // ingestion, the scheduler or the owner from publishing it later; it is not in search now.
+        await dbWrite.article.updateMany({
+          where: { id: entityId, status: { not: ArticleStatus.UnpublishedViolation } },
+          data: {
+            status: ArticleStatus.UnpublishedViolation,
+            metadata: {
+              ...metadata,
+              unpublishedReason: ARTICLE_UNPUBLISH_REASON,
+              unpublishedAt: new Date().toISOString(),
+              unpublishedBy: actor.id,
+            },
+          },
+        });
+        return;
+      }
       await unpublishArticleById({
         id: entityId,
         reason: ARTICLE_UNPUBLISH_REASON,
-        metadata: (article.metadata as ArticleMetadata | null) || {},
+        metadata,
         userId: actor.id,
         isModerator: true,
       });
