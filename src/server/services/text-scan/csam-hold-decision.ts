@@ -3,7 +3,9 @@ import type { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
+import type { ArticleMetadata } from '~/server/schema/article.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { unpublishArticleById } from '~/server/services/article.service';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
@@ -13,7 +15,7 @@ import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { StrikeReason } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, StrikeReason } from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -45,6 +47,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'UserProfile',
   'Post',
   'Model',
+  'Article',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -54,6 +57,7 @@ const STRIKE_DESCRIPTION = 'Content you posted violated our Terms of Service.';
 const STRIKE_POINTS = 1;
 const POST_UNPUBLISH_REASON = 'csam-text-hold';
 const MODEL_UNPUBLISH_REASON = 'mature-underage';
+const ARTICLE_UNPUBLISH_REASON = 'csam-text-hold';
 
 /** The moderator-app grants a decision needs beyond `csam.report.file`: the ones the ban and strike actions carry elsewhere. */
 export const CSAM_HOLD_DECISION_GRANTS: Partial<
@@ -130,6 +134,23 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       });
       await tracker.modelEvent({ type: 'Unpublish', modelId: entityId, nsfw: model.nsfw });
       await dataForModelsCache.refresh(entityId);
+      return;
+    }
+    case 'Article': {
+      const article = await dbWrite.article.findUnique({
+        where: { id: entityId },
+        select: { status: true, metadata: true },
+      });
+      // Nothing to unpublish once it is a draft or already unpublished; the decision is still recorded.
+      if (article?.status !== ArticleStatus.Published) return;
+      await unpublishArticleById({
+        id: entityId,
+        reason: ARTICLE_UNPUBLISH_REASON,
+        metadata: (article.metadata as ArticleMetadata | null) || {},
+        userId: actor.id,
+        isModerator: true,
+      });
+      await tracker.article({ type: 'Unpublish', articleId: entityId, nsfw: false });
       return;
     }
   }
