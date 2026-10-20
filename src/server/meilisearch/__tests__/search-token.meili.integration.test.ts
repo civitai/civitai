@@ -171,7 +171,7 @@ describe.skipIf(!HOST || !MASTER_KEY)('search tokens on a real Meilisearch', () 
     expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([CONTROL, RESTRICTED]);
   });
 
-  it('a moderator token finds everything', async () => {
+  it('a moderator token finds every model, but not a retired index', async () => {
     const token = tokenFor({ id: 1, isModerator: true });
     expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([CONTROL, RESTRICTED, PRIVATE]);
     expect((await call(token, `/indexes/${RETIRED_INDEX}/search`, { q: '' })).status).toBe(403);
