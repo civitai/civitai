@@ -263,6 +263,8 @@ describe('validateContestCollectionEntry — creator block gate', () => {
     expect(mockAmIBlockedByUser).toHaveBeenCalledWith({
       userId: USER_ID,
       targetUserId: CREATOR_ID,
+      // An entry is a write: the gate confirms a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
