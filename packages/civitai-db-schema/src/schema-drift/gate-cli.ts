@@ -36,7 +36,7 @@ import type { DbCatalog } from './types';
 const PACKAGE_ROOT = resolve(__dirname, '../..');
 
 const DEFAULT_SCHEMA = 'prisma/schema.full.prisma';
-const DEFAULT_CATALOG = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-19.json';
+const DEFAULT_CATALOG = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json';
 const DEFAULT_BASELINE = 'src/schema-drift/drift-baseline.json';
 
 const USAGE = `Usage: drift-gate [options]
