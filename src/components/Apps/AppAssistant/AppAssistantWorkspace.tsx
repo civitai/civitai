@@ -34,6 +34,7 @@ import {
   createAssistantGate,
 } from '~/components/Apps/AppAssistant/assistantGate';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
+import { APP_ASSISTANT_SUBAGENTS } from '~/components/Apps/AppAssistant/assistantSubagents';
 import {
   AssistantTokenError,
   createAssistantTokenProvider,
@@ -178,10 +179,13 @@ export function mostRecentApp(apps: Sandbox[]): Sandbox | null {
 export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
+  subagents = false,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
+  /** The assistant may start read-only subagents. */
+  subagents?: boolean;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -826,6 +830,7 @@ export function AppAssistantWorkspace({
             onBeforeSend={onSend}
             onReplyResume={onReplyResume}
             onChatChange={onChatOpened}
+            subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
           />
         </Paper>
         {session && (

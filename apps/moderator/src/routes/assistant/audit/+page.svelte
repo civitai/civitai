@@ -46,6 +46,12 @@
         {:else if t.error}
           <p class="mt-2 mb-0 text-red-300">{t.error}</p>
         {/if}
+        {#if t.reasoning}
+          <details class="mt-2 text-xs text-dark-2">
+            <summary>Reasoning</summary>
+            <p class="mt-2 mb-0 break-words whitespace-pre-wrap">{t.reasoning}</p>
+          </details>
+        {/if}
         <details class="mt-2 text-xs text-dark-2">
           <summary>
             {t.toolCalls.length} lookups{t.unverified.length ? ` · ${t.unverified.length} unverified citations` : ''}

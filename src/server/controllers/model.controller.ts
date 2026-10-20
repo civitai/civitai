@@ -44,6 +44,7 @@ import {
   hasValidCreatorMembershipCached,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -548,10 +549,16 @@ export const getModelHandler = async ({
         })
       : null;
 
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      model.user.id
+    );
+
     return {
       ...model,
       metrics: undefined,
       hiddenMetrics: modelHidden,
+      ownerMetricPrivacyDefaults,
       rank: {
         downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,

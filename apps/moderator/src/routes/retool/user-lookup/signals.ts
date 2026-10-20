@@ -26,8 +26,6 @@ export type Signals = {
   commentBurst: CommentBurst | null;
   ips: {
     addresses: { ip: string; type: string; first: string; last: string; events: number }[];
-    accounts: (LinkedAccount & { ip: string; type: string; last: string })[];
-    truncated: boolean;
   };
   socials: {
     links: { id: number; url: string; type: string }[];

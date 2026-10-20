@@ -19,7 +19,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -37,9 +37,19 @@ import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donatio
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
-import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
 import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
-import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
+import { RecommendedRangeInputs } from '~/components/Resource/Forms/RecommendedRangeInputs';
+import { scopeRecommendedSettings } from '~/components/Resource/Forms/model-version-settings';
+import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import {
+  getMetricVisibilityChoices,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -62,6 +72,10 @@ import {
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
+  getBaseModelConfig,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
+import {
   BASE_MODEL_ATTESTATION_STATEMENT,
   hasBaseModelAttestation,
   requiresBaseModelAttestation as requiresBaseModelAttestationFor,
@@ -82,6 +96,7 @@ import type {
 import {
   baseModelToTraningDetailsBaseModelMap,
   modelVersionUpsertSchema2,
+  TURBO_VARIANT_MODEL_TYPES,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
@@ -236,11 +251,17 @@ export function ModelVersionUpsertForm({
     useMutateUserSettings();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const isModelOwner = !model?.user || model.user.id === currentUser?.id;
   const inheritedMetrics = inheritedMetricPrivacy({
     level: 'version',
     userSettings,
     modelMeta: model?.meta,
-    isOwner: !model?.user || model.user.id === currentUser?.id,
+    isOwner: isModelOwner,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
+  });
+  const metricPrivacyAccess = metricPrivacyAccessFor({
+    isOwner: isModelOwner,
+    ownerHasMembership: isActiveCreatorMember,
   });
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
@@ -266,6 +287,7 @@ export function ModelVersionUpsertForm({
   // the control out mid-edit.
   const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
+  const isCheckpointVersion = model?.type === ModelType.Checkpoint;
   // "Over" means a TIMED window that has ended. A permanent gate (endsAt null) never ends, and a version
   // with no gate has nothing to be over — neither should lock the controls.
   const isEarlyAccessOver =
@@ -335,6 +357,25 @@ export function ModelVersionUpsertForm({
     'settings.minStrength',
     'settings.maxStrength',
   ]) as number[];
+  const isTurbo = !!form.watch('settings.turbo');
+  const ecosystemTurboSettings = getEcosystemTurboSettings(
+    getBaseModelConfig(baseModel).ecosystemId
+  );
+  const showTurboSection =
+    !!ecosystemTurboSettings && TURBO_VARIANT_MODEL_TYPES.includes(model?.type as ModelType);
+  const showTurboLoraPicker = isCheckpointVersion && !!ecosystemTurboSettings;
+  // The form keeps only the id; the card needs the resource, picked here or fetched for a stored id.
+  const turboLoraId = form.watch('settings.generation.turboLora')?.id;
+  const [pickedTurboLora, setPickedTurboLora] = useState<GenerationResource | null>(null);
+  const { data: storedTurboLora } = trpc.generation.getResourceDataByIds.useQuery(
+    { ids: [turboLoraId ?? 0] },
+    { enabled: isCheckpointVersion && !!turboLoraId && pickedTurboLora?.id !== turboLoraId }
+  );
+  const turboLora = !turboLoraId
+    ? null
+    : pickedTurboLora?.id === turboLoraId
+    ? pickedTurboLora
+    : storedTurboLora?.find((r) => r.id === turboLoraId) ?? null;
   const { isDirty } = form.formState;
   const paidAccessConfig = form.watch('paidAccessConfig');
   // The three generation grants the terms model supports. Seeded from the stored config so an existing
@@ -655,8 +696,12 @@ export function ModelVersionUpsertForm({
     ...data
   }: Schema) => {
     const schemaResult = querySchema.safeParse(router.query);
+    const settings = scopeRecommendedSettings(data.settings, {
+      turboSection: showTurboSection,
+      turboLoraPicker: showTurboLoraPicker,
+    });
     const decision = decideModelVersionSubmit(
-      { ...data, recommendedResources: rawRecommendedResources },
+      { ...data, settings, recommendedResources: rawRecommendedResources },
       {
         modelId: model?.id,
         modelNsfw: !!model?.nsfw,
@@ -1105,23 +1150,6 @@ export function ModelVersionUpsertForm({
                 includeControls={['formatting', 'list', 'link', 'blurb']}
                 editorSize="xl"
               />
-              <Stack gap="xs">
-                <Divider label="Version metric privacy" />
-                <MetricPrivacyControls
-                  level="version"
-                  inherited={inheritedMetrics}
-                  disabled={!isActiveCreatorMember}
-                  note={
-                    <>
-                      These stats appear in this version&apos;s details card. Set the default for
-                      all your models in Creator Controls.{' '}
-                      {isActiveCreatorMember
-                        ? 'You and moderators always see your real stats.'
-                        : 'Requires an active Creator Program membership.'}
-                    </>
-                  }
-                />
-              </Stack>
               {acceptsTrainedWords && (
                 <Stack gap="xs">
                   {!skipTrainedWords && (
@@ -1149,6 +1177,21 @@ export function ModelVersionUpsertForm({
                   )}
                 </Stack>
               )}
+              {modelDownloadEnabled && (
+                <InputSwitch
+                  name="requireAuth"
+                  label="Require users to be logged in to download this asset"
+                  description={
+                    <>
+                      This limits a bots ability to download the files associated with this
+                      resource.
+                      <br />
+                      This will also require third-party applications to utilize a user API key to
+                      download the asset files.
+                    </>
+                  }
+                />
+              )}
               <Stack gap={4}>
                 <Divider label="Training Params" />
                 <Group gap="xs" grow>
@@ -1170,10 +1213,64 @@ export function ModelVersionUpsertForm({
                   />
                 </Group>
               </Stack>
-              {(showClipSkip || showStrengthInput || showRecommendedResources) && (
+              {(showClipSkip ||
+                showStrengthInput ||
+                showRecommendedResources ||
+                showTurboLoraPicker) && (
                 <Stack gap={4}>
                   <Divider label="Recommended Settings" />
                   <Group gap="xs" className="*:grow">
+                    {showTurboLoraPicker && (
+                      <Stack gap="xs" w="100%">
+                        <ResourceSelect
+                          buttonLabel={
+                            <Stack gap={2} align="center" py="xs">
+                              <Group gap={6}>
+                                <IconPlus size={18} />
+                                <Text fw={600}>Default turbo LoRA</Text>
+                              </Group>
+                              <Text size="xs" c="dimmed" ta="center" fw={400}>
+                                What the generator&apos;s Turbo picker starts on with this
+                                checkpoint. Leave empty for the ecosystem&apos;s default.
+                              </Text>
+                            </Stack>
+                          }
+                          buttonProps={{
+                            variant: 'default',
+                            h: 'auto',
+                            leftSection: null,
+                            className: 'border-2 border-dashed',
+                            styles: {
+                              root: { borderColor: 'var(--mantine-color-default-border)' },
+                              label: { whiteSpace: 'normal' },
+                            },
+                          }}
+                          value={turboLora}
+                          onChange={(resource) => {
+                            setPickedTurboLora(resource);
+                            form.setValue(
+                              'settings.generation.turboLora',
+                              resource ? { id: resource.id } : null,
+                              { shouldDirty: true }
+                            );
+                          }}
+                          selectSource="modelVersion"
+                          options={{
+                            resources: TURBO_VARIANT_MODEL_TYPES.map((type) => ({
+                              type,
+                              baseModels: [baseModel],
+                            })),
+                            turboOnly: true,
+                          }}
+                        />
+                        {turboLora && (turboLora.isPrivate || !turboLora.canGenerate) && (
+                          <Text size="xs" c="yellow.6">
+                            This LoRA is not published or not generatable right now. The generator
+                            uses the ecosystem default until it is, and your pick is kept.
+                          </Text>
+                        )}
+                      </Stack>
+                    )}
                     {showClipSkip && (
                       <InputNumber
                         name="clipSkip"
@@ -1229,23 +1326,41 @@ export function ModelVersionUpsertForm({
                   </Group>
                 </Stack>
               )}
-              {modelDownloadEnabled && (
-                <Stack gap={8}>
-                  <Divider label="Additional options" />
-
-                  <InputSwitch
-                    name="requireAuth"
-                    label="Require users to be logged in to download this asset"
-                    description={
-                      <>
-                        This limits a bots ability to download the files associated with this
-                        resource.
-                        <br />
-                        This will also require third-party applications to utilize a user API key to
-                        download the asset files.
-                      </>
+              {showTurboSection && (
+                <Stack gap="xs">
+                  <Divider label="Turbo" />
+                  <Checkbox
+                    label="Turbo variant"
+                    description="A distillation LoRA for fewer steps. The generator's Turbo picker lists it and applies these settings when it is on."
+                    checked={isTurbo}
+                    onChange={(e) =>
+                      form.setValue(
+                        'settings.turbo',
+                        e.currentTarget.checked ? ecosystemTurboSettings ?? null : null,
+                        { shouldDirty: true, shouldValidate: true }
+                      )
                     }
                   />
+                  {isTurbo && (
+                    <>
+                      <RecommendedRangeInputs
+                        name="settings.turbo.steps"
+                        label="Steps"
+                        min={1}
+                        max={100}
+                        required
+                      />
+                      <RecommendedRangeInputs
+                        name="settings.turbo.cfgScale"
+                        label="CFG scale"
+                        min={0}
+                        max={30}
+                        step={0.5}
+                        decimalScale={1}
+                        required
+                      />
+                    </>
+                  )}
                 </Stack>
               )}
             </Stack>
@@ -1957,6 +2072,16 @@ export function ModelVersionUpsertForm({
               </Stack>
             </Card>
           )}
+          <Card withBorder p="md">
+            <Stack gap="sm">
+              <Text fw={600}>Version metric privacy</Text>
+              <MetricPrivacyControls
+                level="version"
+                inherited={inheritedMetrics}
+                access={metricPrivacyAccess}
+              />
+            </Stack>
+          </Card>
         </Stack>
         {children({ loading: upsertVersionMutation.isPending, canSave })}
       </Form>
@@ -1985,7 +2110,13 @@ type Props = {
   // `user` is the model's OWNER, needed to scope the rights affirmation the way the server does. The edit
   // page and both wizards pass a query result carrying it; ModelWizard's template/bounty paths don't, but
   // those carry no version `meta` either, so the check lands on asking rather than on a silent bypass.
-  model?: Partial<ModelUpsertInput & { publishedAt: Date | null; user: { id: number } | null }>;
+  model?: Partial<
+    ModelUpsertInput & {
+      publishedAt: Date | null;
+      user: { id: number } | null;
+      ownerMetricPrivacyDefaults: HiddenModelMetrics | null;
+    }
+  >;
   // Base model of the model's most recent existing version; used to default the
   // picker when adding a brand-new version to an existing model.
   previousBaseModel?: string | null;

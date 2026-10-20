@@ -117,7 +117,7 @@ want: a ruling changes the queue.
 | `advanceAfterRuling` | Once the open item has nothing left to rule, open whichever item now sits where it sat in the queue (`hasOpenReport`, `nextItemId`). `capture()` at submit — after the write the queue has reloaded — and `advance()` on success. |
 | `ReportRowMeta` | A queue row's second line: status, reason, who filed it and how many more, then the type's own note as `children`. |
 | `reportActionGrants`, `ReadOnlyNotice` | What the viewer may do to the content (`image.moderate`) and the owner (`user.strike`), read once per view from `data.grants`; and the line naming each missing grant and where it is given. Ruling and notes need only the queue's own path. |
-| `ImageEvidence`, `OwnerActions` | An item's images (grid, selection, remove/restore/flag, optional numbered `paging`) and the strike/notify panel. Both hold their own state: render them under `{#key}` on the item. |
+| `ImageEvidence`, `OwnerActions` | An item's images (grid, selection, remove/restore/flag, optional numbered `paging`) and the strike/notify panel. Both hold their own state: render them under `{#key}` on the item. With `paging`, the selection spans pages (`keepOffScreen`) and blocked ids accumulate across every page shown. |
 
 The row's look, the item's header and its evidence are the type's own. Everything above them is shared;
 a second copy of any of it is how the two pages drifted before this existed.

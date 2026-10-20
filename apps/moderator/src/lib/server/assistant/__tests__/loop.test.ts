@@ -1,7 +1,16 @@
 import { error as kitError } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { fitJson, MAX_ROUNDS, runTurn, type AnyTool } from '../loop';
+import {
+  BUDGET_NOTICE,
+  fitJson,
+  MAX_REASONING_CHARS,
+  MAX_ROUNDS,
+  REASONING_CUT,
+  REASONING_NOTE,
+  runTurn,
+  type AnyTool,
+} from '../loop';
 import type { Completion, ToolCall } from '../openrouter';
 import type { ToolResult } from '../tools';
 
@@ -154,6 +163,112 @@ describe('runTurn', () => {
     expect(out.status).toBe('done');
     expect(out.toolCalls[0].error).toBe('The lookup failed.');
     expect(JSON.stringify(complete.mock.calls)).not.toContain('192.0.2.44');
+  });
+
+  it('ends the turn after a filed tool request: no further lookups, and it asks', async () => {
+    lookup.mockClear();
+    const fileRequest = vi.fn(
+      async (): Promise<ToolResult> => ({
+        data: { filed: 1 },
+        rows: 1,
+        truncated: false,
+        sources: [],
+      })
+    );
+    const { run, complete } = turn(
+      [
+        reply(null, [call('request_tool', { need: 'crucible judges' })]),
+        // Would keep digging if allowed to.
+        {
+          ...reply('I filed it. Want me to check anything else?', [call('lookup', { userId: 5 })]),
+        },
+      ],
+      {
+        tools: [
+          ...tools,
+          {
+            name: 'request_tool',
+            input: z.object({ need: z.string() }),
+            run: fileRequest as never,
+          },
+        ],
+      }
+    );
+    const out = await run;
+    expect(out.status).toBe('done');
+    expect(fileRequest).toHaveBeenCalledTimes(1);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledTimes(2);
+    const second = complete.mock.calls[1][0] as {
+      toolChoice: string;
+      messages: { content: string }[];
+    };
+    expect(second.toolChoice).toBe('none');
+    expect(second.messages.at(-1)?.content).toMatch(
+      /^You filed a tool request\. Stop investigating/
+    );
+  });
+
+  it('stops at the per-question budget and says so in the answer, never silently', async () => {
+    lookup.mockClear();
+    const { run, complete } = turn(
+      [reply(null, [call('lookup', { userId: 5 })], 700), reply('what I found so far')],
+      { turnBudget: 500 }
+    );
+    const out = await run;
+    expect(out.status).toBe('done');
+    expect(out.answer).toBe(`what I found so far\n\n${BUDGET_NOTICE}`);
+    expect((complete.mock.calls[1][0] as { toolChoice: string }).toolChoice).toBe('none');
+  });
+
+  it('a question under the budget is answered without the notice', async () => {
+    const { run } = turn([reply(null, [call('lookup', { userId: 5 })], 10), reply('done')], {
+      turnBudget: 500,
+    });
+    expect((await run).answer).toBe('done');
+  });
+
+  it('asks the model to reason briefly, after the question', async () => {
+    const { run, complete } = turn([reply('ok')]);
+    await run;
+    const messages = (complete.mock.calls[0][0] as { messages: { content: string }[] }).messages;
+    expect(messages.at(-1)?.content).toBe(`q${REASONING_NOTE}`);
+  });
+
+  it("keeps every round's reasoning, in order, and never sends it back to the model", async () => {
+    const thinking = (content: string | null, thought: string, calls: ToolCall[] = []) => {
+      const r = reply(content, calls);
+      r.message.reasoning = thought;
+      return r;
+    };
+    const { run, complete } = turn([
+      thinking(null, '- need the account', [call('lookup', { userId: 5 })]),
+      thinking('It is [user:5].', '- found it'),
+    ]);
+    const out = await run;
+    expect(out.reasoning).toBe('- need the account\n\n- found it');
+    expect(JSON.stringify(complete.mock.calls[1][0])).not.toContain('need the account');
+  });
+
+  it('records no reasoning when the model returns none', async () => {
+    const { run } = turn([reply('ok')]);
+    expect((await run).reasoning).toBeNull();
+  });
+
+  it('keeps the reasoning when the turn fails after it, so a failed turn can be read', async () => {
+    const first = reply(null, [call('lookup', { userId: 5 })]);
+    first.message.reasoning = '- need the account';
+    const { run } = turn([first]);
+    const out = await run;
+    expect(out.status).toBe('error');
+    expect(out.reasoning).toBe('- need the account');
+  });
+
+  it('cuts reasoning past the cap and says so', async () => {
+    const long = reply('ok');
+    long.message.reasoning = 'x'.repeat(MAX_REASONING_CHARS + 50);
+    const { run } = turn([long]);
+    expect((await run).reasoning).toBe('x'.repeat(MAX_REASONING_CHARS) + REASONING_CUT);
   });
 
   // SvelteKit's `error()` throws an HttpError, which is not an `Error`.

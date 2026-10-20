@@ -22,6 +22,7 @@ import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { usePathname } from 'next/navigation';
 import { profileSchemaImageUrl } from '~/components/Meta/safe-schema-image';
+import { ogImageUrl } from '~/components/Meta/og-image-url';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -121,9 +122,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
   // A shared milestone link previews its card. Telegram takes the JSON-LD page image over og:image
   // (the profile link previewed the avatar there), so the schema names the card as well.
-  const pageImage = ogEndpoint
-    ? `${env.NEXT_PUBLIC_BASE_URL as string}${ogEndpoint}`
-    : userMetaImage;
+  const pageImage = ogEndpoint ? ogImageUrl(ogEndpoint) : userMetaImage;
   const metaSchema =
     user && user.username
       ? {

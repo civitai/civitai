@@ -87,6 +87,7 @@ export function ResourceHitList({ query }: { query: string }) {
   const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
     useResourceSelectContext();
   const loadedOnly = filters.loadedOnly;
+  const turboOnly = filters.turboOnly;
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -133,12 +134,23 @@ export function ResourceHitList({ query }: { query: string }) {
         member,
         isCheckpoint: model.type === 'Checkpoint',
         loadedOnly,
+        turboOnly,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
       });
     },
-    [canGenerate, coverageNext, member, loadedOnly, resources, excludedIds, tab, selectSource]
+    [
+      canGenerate,
+      coverageNext,
+      member,
+      loadedOnly,
+      turboOnly,
+      resources,
+      excludedIds,
+      tab,
+      selectSource,
+    ]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -217,7 +229,7 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length && !loadedOnly) return models;
+    if (!canGenerate && !resources.length && !loadedOnly && !turboOnly) return models;
 
     const ret = models
       .map((model) => {
@@ -239,7 +251,7 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, loadedOnly, featured, models, resources, tab, filterVersions]);
+  }, [canGenerate, loadedOnly, turboOnly, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (

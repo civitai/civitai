@@ -351,6 +351,9 @@ export async function equipCosmeticToEntity({
     await refreshEntityDecorationCaches(userCosmetic.equippedToType, [userCosmetic.equippedToId]);
   }
 
+  // Last, so a refusal still leaves both ends of the move refreshed: the sweep refreshes only where it
+  // found the cosmetic.
+  await refuseIfWithheldAfterEquip([cosmeticId]);
   return updated;
 }
 
@@ -749,6 +752,18 @@ export async function unequipWithheldCosmetic(cosmeticId: number | null | undefi
   const userIds = [...new Set(worn.map((row) => row.userId))];
   await afterHoldingsRemoved(userIds, worn);
   await bustUserCreatorCache(userIds);
+}
+
+/**
+ * Call after an equip's write has committed. A verdict commits before its sweep above runs
+ * (`reviewCreatorShopItem` must keep that order, outside one transaction), so either that sweep saw
+ * this equip or this re-check sees the verdict: one of the two takes the cosmetic off.
+ */
+export async function refuseIfWithheldAfterEquip(cosmeticIds: number[]) {
+  const withheld = await getWithheldCosmeticIds(cosmeticIds, dbWrite);
+  if (!withheld.size) return;
+  for (const cosmeticId of withheld) await unequipWithheldCosmetic(cosmeticId);
+  throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 }
 
 type RemovedEquippedHolding = {

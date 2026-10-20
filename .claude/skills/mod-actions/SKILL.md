@@ -58,8 +58,9 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
 | `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
 | `dm <id\|username>` | Send a DM (requires `--message`) |
+| `creator-program-ban <id\|username> <set\|clear>` | Ban from / unban from the Creator Program (requires `--internal <reason>`; optional `--gate <ref>`; needs the `user.creatorProgram.ban` permission). Use this, never a raw `onboarding` UPDATE. |
 
-**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`
+**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`, `--gate <ref>`
 
 **Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, SpamBot, LeaderboardCheating, BuzzCheating, RRDViolation, Other
 
@@ -67,6 +68,7 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 node .claude/skills/mod-actions/query.mjs user 3879899
 node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
+node .claude/skills/mod-actions/query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
 ```
 
 ---

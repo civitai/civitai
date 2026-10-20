@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.331",
+  "version": "5.1.335",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -135,7 +135,7 @@
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/client": "0.2.0-beta.98",
-    "@civitai/components-chat": "^0.18.0",
+    "@civitai/components-chat": "^0.19.0",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",

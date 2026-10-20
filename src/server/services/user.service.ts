@@ -71,7 +71,10 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
-import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import {
+  isCosmeticAvailable,
+  refuseIfWithheldAfterEquip,
+} from '~/server/services/cosmetic.service';
 import {
   WITHHELD_COSMETIC_ERROR,
   getWithheldCosmeticIds,
@@ -2988,6 +2991,7 @@ export async function equipCosmetic({
       data: { equippedAt: new Date() },
     }),
   ]);
+  await refuseIfWithheldAfterEquip(cosmeticId);
 
   // Clear cache
   await deleteUserCosmeticCache(userId);

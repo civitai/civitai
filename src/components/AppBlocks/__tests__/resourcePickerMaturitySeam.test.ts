@@ -106,6 +106,9 @@ describe('page resource picker ⇄ shared modal maturity seam', () => {
       'canGenerate',
       'excludeIds',
       'resources',
+      // Reviewed with #6350: pins the picker to turbo variants, so it can only
+      // narrow the result set; it has no say over maturity.
+      'turboOnly',
     ]);
   });
 
