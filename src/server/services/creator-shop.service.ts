@@ -976,7 +976,8 @@ export const updateCreatorShopItem = async ({
   const updated = await dbWrite.$transaction(async (tx) => {
     // Everything above was derived from `existing`, and `meta` is written back whole: a verdict
     // committed since the read would be erased with its history entry and `displayApproved`.
-    await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR UPDATE`;
+    // NO KEY: still serialises with verdicts, without holding up a purchase's foreign-key insert.
+    await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR NO KEY UPDATE`;
     const current = await tx.cosmeticShopItem.findUnique({
       where: { id },
       select: { status: true, meta: true },

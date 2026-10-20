@@ -319,7 +319,6 @@ export async function equipCosmeticToEntity({
     where: { userId, cosmeticId, claimKey },
     data: { equippedToId, equippedToType, equippedAt: now },
   });
-  await refuseIfWithheldAfterEquip([cosmeticId]);
 
   if (eventDecoration)
     void syncOwnerEventHats(userId, [
@@ -352,6 +351,9 @@ export async function equipCosmeticToEntity({
     await refreshEntityDecorationCaches(userCosmetic.equippedToType, [userCosmetic.equippedToId]);
   }
 
+  // Last, so a refusal still leaves both ends of the move refreshed: the sweep refreshes only where it
+  // found the cosmetic.
+  await refuseIfWithheldAfterEquip([cosmeticId]);
   return updated;
 }
 
