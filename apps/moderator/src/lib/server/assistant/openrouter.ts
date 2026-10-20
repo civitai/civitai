@@ -109,7 +109,7 @@ export async function complete(input: {
       messages: input.messages,
       tools: input.tools?.length ? input.tools : undefined,
       tool_choice: input.tools?.length ? input.toolChoice ?? 'auto' : undefined,
-      temperature: 0.2,
+      temperature: findModel(input.model)?.noTemperature ? undefined : 0.2,
       // Reasoning tokens are billed and counted against the turn's budget; low keeps them short.
       reasoning: { effort: 'low' },
       // Account data goes into these prompts. Route only to providers that do not retain or train on

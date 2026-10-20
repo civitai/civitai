@@ -133,6 +133,21 @@ describe('complete', () => {
     expect(sent.model).toBe('z-ai/glm-5.3');
     expect(sent.provider).toEqual({ data_collection: 'deny', require_parameters: true });
   });
+
+  // With `require_parameters`, one unsupported parameter leaves no endpoint at all: GPT-6 Luna under
+  // the no-retention policy came back 404 until temperature was dropped for it.
+  it('sends temperature only to a model that accepts it', async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) =>
+      Response.json({ choices: [{ message: { content: 'ok' } }] })
+    );
+    vi.stubGlobal('fetch', fetch);
+    const sent = async (model: string) => {
+      await complete({ model, messages: [{ role: 'user', content: 'q' }] });
+      return JSON.parse(fetch.mock.calls.at(-1)![1].body as string);
+    };
+    expect((await sent('openai/gpt-6-luna')).temperature).toBeUndefined();
+    expect((await sent('z-ai/glm-5.3-flash')).temperature).toBe(0.2);
+  });
 });
 
 /**

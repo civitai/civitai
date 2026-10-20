@@ -11,6 +11,8 @@ export type AssistantModel = {
   /** OpenRouter's list price, USD per million tokens, as of this release. Only a fallback: list prices
    *  move (Flash's tripled within hours), so the server reads the live list (`listPrices`). */
   price: Price;
+  /** No provider of it accepts `temperature`. Sent anyway, `require_parameters` finds no endpoint. */
+  noTemperature?: true;
 };
 
 // Adding a model adds a processor that receives moderation context, so it needs the Moderation Lead's
@@ -18,6 +20,13 @@ export type AssistantModel = {
 export const ASSISTANT_MODELS: readonly AssistantModel[] = [
   { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', price: { input: 0.15, output: 0.5 } },
   { id: 'z-ai/glm-5.3', label: 'GLM 5.3', price: { input: 0.079, output: 1.4 } },
+  { id: 'stepfun/step-5-preview', label: 'Step 5 Preview', price: { input: 1, output: 2.7 } },
+  {
+    id: 'openai/gpt-6-luna',
+    label: 'GPT-6 Luna',
+    price: { input: 0.1, output: 0.5 },
+    noTemperature: true,
+  },
 ];
 
 export const DEFAULT_ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
