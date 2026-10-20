@@ -22,6 +22,7 @@ vi.mock('~/server/db/db-lag-helpers', async () => {
   };
 });
 
+const { getDbWithoutLag } = await import('~/server/db/db-lag-helpers');
 const { getVersionByIdWithGenerationChildren } = await import(
   '../model-version-generation-children.service'
 );
@@ -122,6 +123,9 @@ describe('getVersionByIdWithGenerationChildren', () => {
 
   it('reads the version and its children with ONE extra statement on the same client', async () => {
     await load(100);
+    // The lag guard is keyed on the version, the same key getVersionById uses.
+    expect(getDbWithoutLag).toHaveBeenCalledTimes(1);
+    expect(getDbWithoutLag).toHaveBeenCalledWith('modelVersion', 100);
     expect(dbMock.dbRead.modelVersion.findUnique).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.modelVersion.findUnique.mock.calls[0][0]).toEqual({
       where: { id: 100 },
@@ -138,6 +142,8 @@ describe('getVersionByIdWithGenerationChildren', () => {
   ])('reads both from the primary on %s', async (_label, forceWriteDb, isStale) => {
     stale.value = isStale;
     await load(100, forceWriteDb);
+    if (forceWriteDb) expect(getDbWithoutLag).not.toHaveBeenCalled();
+    else expect(getDbWithoutLag).toHaveBeenCalledWith('modelVersion', 100);
     expect(dbMock.dbWrite.modelVersion.findUnique).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();

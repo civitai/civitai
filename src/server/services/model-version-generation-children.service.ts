@@ -21,7 +21,7 @@ export const versionGenerationChildrenSql = (id: number) => Prisma.sql`
     (
       SELECT json_build_object('covered', gc."covered", 'coveredNext', gc."coveredNext")
       FROM "GenerationCoverage" gc
-      WHERE gc."modelVersionId" = ${id}
+      WHERE gc."modelVersionId" = ${id}::int
     ) AS "generationCoverage",
     COALESCE(
       (
@@ -33,7 +33,7 @@ export const versionGenerationChildrenSql = (id: number) => Prisma.sql`
           )
         )
         FROM "RecommendedResource" rr
-        WHERE rr."sourceId" = ${id}
+        WHERE rr."sourceId" = ${id}::int
       ),
       '[]'::json
     ) AS "recommendedResources"
