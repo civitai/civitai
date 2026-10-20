@@ -24,6 +24,7 @@ import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 import {
   selectableVersions,
+  needsVersionFilter,
   skipBaseModelForOwnTabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
@@ -84,7 +85,7 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
+  const { canGenerate, resources, selectSource, excludedIds, tab, filters, excludeTurbo } =
     useResourceSelectContext();
   const loadedOnly = filters.loadedOnly;
   const turboOnly = filters.turboOnly;
@@ -135,6 +136,7 @@ export function ResourceHitList({ query }: { query: string }) {
         isCheckpoint: model.type === 'Checkpoint',
         loadedOnly,
         turboOnly,
+        excludeTurbo,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
@@ -146,6 +148,7 @@ export function ResourceHitList({ query }: { query: string }) {
       member,
       loadedOnly,
       turboOnly,
+      excludeTurbo,
       resources,
       excludedIds,
       tab,
@@ -229,7 +232,8 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length && !loadedOnly && !turboOnly) return models;
+    if (!needsVersionFilter({ canGenerate, resources, loadedOnly, turboOnly, excludeTurbo }))
+      return models;
 
     const ret = models
       .map((model) => {
@@ -251,7 +255,17 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, loadedOnly, turboOnly, featured, models, resources, tab, filterVersions]);
+  }, [
+    canGenerate,
+    loadedOnly,
+    turboOnly,
+    excludeTurbo,
+    featured,
+    models,
+    resources,
+    tab,
+    filterVersions,
+  ]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (

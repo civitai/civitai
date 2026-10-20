@@ -239,6 +239,11 @@ export function ResourceItemContent({
                 Epoch {epochDetails.epochNumber}
               </Badge>
             )}
+            {resource.turbo && (
+              <Badge size="sm" color="orange" variant="filled" className="shrink-0">
+                Turbo
+              </Badge>
+            )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
             {isSfwOnly && (
               <HoverCard position="bottom" withArrow width={200}>

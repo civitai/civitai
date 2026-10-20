@@ -81,9 +81,7 @@ export type EcosystemSettings = {
     engine?: string;
     /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
     turbo?: {
-      /** The LoRA the generator's Turbo picker starts on. */
-      lora?: { id: number };
-      /** Prefills a LoRA version's turbo block; the generator's fallback for anything it left unset. */
+      /** Prefills a LoRA version's turbo block; the generator uses it for a turbo LoRA whose own block is not loaded. */
       settings: TurboSettings;
     };
   };

@@ -105,9 +105,9 @@ describe('page resource picker ⇄ shared modal maturity seam', () => {
     expect(topLevelFieldNames(read(OPTIONS_FILE), 'ResourceSelectOptions')).toEqual([
       'canGenerate',
       'excludeIds',
+      // turboOnly / excludeTurbo only narrow the result set; neither has a say over maturity.
+      'excludeTurbo',
       'resources',
-      // Reviewed with #6350: pins the picker to turbo variants, so it can only
-      // narrow the result set; it has no say over maturity.
       'turboOnly',
     ]);
   });
