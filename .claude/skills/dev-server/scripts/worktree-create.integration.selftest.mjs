@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from 'fs';
@@ -30,6 +31,13 @@ if (process.env.WT_NEW_ARGS) {
   const [primary, name, branch, base] = JSON.parse(process.env.WT_NEW_ARGS);
   await cmdCreate(primary, name, branch, { base, noInstall: true });
   process.exit(0);
+}
+
+if (process.env.WT_ENV_ARGS) {
+  const { cmdSkillEnv } = await import('./skill-env.mjs');
+  const [primary, ...argv] = JSON.parse(process.env.WT_ENV_ARGS);
+  cmdSkillEnv(primary, argv);
+  process.exit(process.exitCode ?? 0);
 }
 
 let failures = 0;
@@ -61,6 +69,18 @@ const commit = (repo, file) => {
   git(['add', file], repo);
   git(['commit', '-qm', file], repo);
   return git(['rev-parse', 'HEAD'], repo);
+};
+
+const runEnv = (scratchHome, primary, ...argv) => {
+  const r = spawnSync(process.execPath, [SELF], {
+    env: {
+      ...process.env,
+      CIVITAI_SKILL_ENV_HOME: scratchHome,
+      WT_ENV_ARGS: JSON.stringify([primary, ...argv]),
+    },
+    encoding: 'utf8',
+  });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 
 const run = (primary, name, branch, base) => {
@@ -108,14 +128,26 @@ try {
   writeFileSync(join(seed, '.gitignore'), '.env\n.env.*\n!.env.example\n');
   writeFileSync(join(seed, '.env.example'), 'KEY=\n');
   writeFileSync(join(seed, 'apps', 'web', 'keep'), '');
-  git(['add', '.gitignore', '.env.example', 'apps/web/keep'], seed);
+  mkdirSync(join(seed, 'apps', 'auth'), { recursive: true });
+  writeFileSync(join(seed, 'apps', 'auth', 'keep'), '');
+  git(['add', '.gitignore', '.env.example', 'apps/web/keep', 'apps/auth/keep'], seed);
   git(['commit', '-qm', 'env layout'], seed);
   git(['push', '-q', 'origin', 'main'], seed);
 
   git(['clone', '-q', origin, primary], scratch);
   identity(primary);
   const localOnly = commit(primary, 'local-only');
-  writeFileSync(join(primary, '.env'), 'ROOT=1\n');
+  // The primary root .env's database is the dev one; a primary app .env may name another.
+  const DEV = 'postgres://dev:dev@dev.example.invalid:5432/civitai';
+  const DEV_REPLICA = 'postgres://dev:dev@dev-replica.example.invalid:5432/civitai';
+  const PLANTED = 'postgres://u:p@example.invalid:5432/x';
+  const devLines = `DATABASE_URL=${DEV}\nDATABASE_REPLICA_URL=${DEV_REPLICA}\n`;
+  const plantedAuth =
+    `AUTH=1\nDATABASE_URL=${PLANTED}\nDATABASE_REPLICA_URL=${PLANTED}\n# DATABASE_URL=${PLANTED}\n`;
+  const routedAuth = `AUTH=1\n${devLines}`;
+  const planted = (text) => (text ?? '').split('u:p@example.invalid').length - 1;
+  writeFileSync(join(primary, '.env'), `ROOT=1\n${devLines}`);
+  writeFileSync(join(primary, 'apps', 'auth', '.env'), plantedAuth);
   writeFileSync(join(primary, '.env.local'), 'LOCAL=1\n');
   const realMail =
     'A=1\nEMAIL_HOST=smtp.example.net\nEMAIL_PORT=587\nEMAIL_USER=real-user\nEMAIL_PASS=real-pass\n' +
@@ -150,7 +182,19 @@ try {
     '## feat/one'
   );
   const read = (rel) => (existsSync(join(tree, rel)) ? readFileSync(join(tree, rel), 'utf8') : null);
-  check('copies the root .env', read('.env'), 'ROOT=1\n');
+  check('copies the root .env', read('.env'), `ROOT=1\n${devLines}`);
+  check(
+    "the auth app's copy takes the primary root .env's database, its commented line dropped",
+    read('apps/auth/.env'),
+    routedAuth
+  );
+  check("the auth app's copy holds no trace of the primary app's database", planted(read('apps/auth/.env')), 0);
+  check(
+    "the primary's own auth .env is untouched",
+    readFileSync(join(primary, 'apps', 'auth', '.env'), 'utf8'),
+    plantedAuth
+  );
+  check('wt new names the files it routed', /DATABASE_URL.*apps\/auth\/\.env/.test(created.out), true);
   check('copies a .env.* variant', read('.env.local'), 'LOCAL=1\n');
   check('copies a per-app .env', read('apps/web/.env'), 'WEB=1\n');
   check('skips a .env backup', read('.env.bak-123'), null);
@@ -171,12 +215,12 @@ try {
   writeFileSync(join(tree, 'apps', 'web', '.env'), 'WEB=tree\n');
   const past = new Date(Date.now() - 60_000);
   utimesSync(join(tree, 'apps', 'web', '.env'), past, past);
-  writeFileSync(join(primary, '.env'), 'ROOT=2\n');
+  writeFileSync(join(primary, '.env'), `ROOT=2\n${devLines}`);
   check('without --refresh, an existing file is kept', syncAppEnv(primary, tree).refreshed.join(), '');
-  check('without --refresh, the old value stays', read('.env'), 'ROOT=1\n');
+  check('without --refresh, the old value stays', read('.env'), `ROOT=1\n${devLines}`);
   const refreshed = syncAppEnv(primary, tree, { refresh: true }).refreshed;
   check('--refresh re-copies files the primary edited later', refreshed.join(), '.env,apps/web/.env');
-  check('--refresh brings the new value', read('.env'), 'ROOT=2\n');
+  check('--refresh brings the new value', read('.env'), `ROOT=2\n${devLines}`);
   writeFileSync(join(tree, '.env.development'), 'A=tree\n');
   utimesSync(join(tree, '.env.development'), past, past);
   writeFileSync(join(primary, '.env.development'), realMail);
@@ -185,6 +229,41 @@ try {
   writeFileSync(join(primary, '.env.example'), 'KEY=edited-in-primary\n');
   syncAppEnv(primary, tree, { refresh: true });
   check('never copies a tracked .env.example', /edited-in-primary/.test(read('.env.example')), false);
+
+  // `wt env` repairs a tree copied before the routing existed: a KEPT file is routed in place, its
+  // mtime left alone so a later primary edit still looks newer to --refresh.
+  const home = join(scratch, 'skill-env-home');
+  const treeAuth = join(tree, 'apps', 'auth', '.env');
+  writeFileSync(treeAuth, plantedAuth);
+  utimesSync(treeAuth, past, past);
+  const repaired = runEnv(home, primary, tree);
+  check('wt env exits 0 on a repair', repaired.code, 0);
+  check('wt env routes a kept file to the primary root database', read('apps/auth/.env'), routedAuth);
+  check('... leaving none of the planted value', planted(read('apps/auth/.env')), 0);
+  check('... and keeps its mtime', Math.round(statSync(treeAuth).mtimeMs / 1000), Math.round(past.getTime() / 1000));
+  check('... and says which file', /db\s+apps\/auth\/\.env/.test(repaired.out), true);
+  const future = new Date(Date.now() + 60_000);
+  writeFileSync(treeAuth, plantedAuth);
+  utimesSync(treeAuth, future, future);
+  check('wt env --refresh exits 0', runEnv(home, primary, tree, '--refresh').code, 0);
+  check('wt env --refresh routes a kept file too', read('apps/auth/.env'), routedAuth);
+
+  // No dev database to route to: refuse, and write nothing.
+  writeFileSync(join(primary, '.env'), 'ROOT=3\n');
+  writeFileSync(treeAuth, plantedAuth);
+  const noDev = runEnv(home, primary, tree);
+  check('wt env exits 1 when the primary root .env has no DATABASE_URL', noDev.code, 1);
+  check('... naming the key', /no active DATABASE_URL/.test(noDev.out), true);
+  check('... and leaves the tree file as it was', read('apps/auth/.env'), plantedAuth);
+  const noDevNew = run(primary, 'four', 'feat/four');
+  check('wt new exits 1 when the primary root .env has no DATABASE_URL', noDevNew.code, 1);
+  check('... naming the key', /no active DATABASE_URL/.test(noDevNew.out), true);
+  check(
+    '... and copies no auth .env',
+    existsSync(join(reposRoot, 'worktrees', 'four', 'apps', 'auth', '.env')),
+    false
+  );
+  writeFileSync(join(primary, '.env'), `ROOT=2\n${devLines}`);
 
   const dupBranch = run(primary, 'two', 'feat/one');
   check('refuses an existing branch name', dupBranch.code, 1);

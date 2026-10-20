@@ -5,15 +5,14 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { loadEnvChain, spawnEnvFor } from './daemon.mjs';
 import { LOCAL_MAIL_ENV } from './local-mail.mjs';
+import { redactedMismatch } from './selftest-redact.mjs';
 
 const failures = [];
 let checks = 0;
 
 function check(name, actual, expected) {
   checks++;
-  if (actual !== expected) {
-    failures.push(`${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  }
+  if (actual !== expected) failures.push(`${name}: ${redactedMismatch(actual, expected)}`);
 }
 
 function checkCatcher(name, env) {
