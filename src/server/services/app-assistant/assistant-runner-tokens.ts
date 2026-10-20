@@ -31,6 +31,9 @@ function keys(): { privateKey: KeyObject; publicKey: KeyObject } | null {
   if (cached?.pem !== pem) {
     try {
       const privateKey = createPrivateKey(pem);
+      // ES256 signs with P-256 only: any other key would parse here and fail at the first signature.
+      const curve = privateKey.asymmetricKeyDetails?.namedCurve;
+      if (privateKey.asymmetricKeyType !== 'ec' || curve !== 'prime256v1') return null;
       cached = { pem, privateKey, publicKey: createPublicKey(privateKey) };
     } catch {
       // A key that does not parse is no key: the endpoints answer 503, as when it is unset.

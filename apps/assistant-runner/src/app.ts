@@ -14,6 +14,7 @@ import {
 import { z } from 'zod';
 
 import type { Authenticator } from './interfaces';
+import { MintRefusedError } from './minter';
 import type { RunService } from './service';
 import { GRANT_HEADER, grantHeader, type TokenVerifier, type VerifiedGrant } from './tokens';
 import { refuseAll, refuseGrants } from './unconfigured';
@@ -260,8 +261,20 @@ export function buildApp(options: AppOptions): FastifyInstance {
               `The run grant in ${GRANT_HEADER} is not for this chat.`
             );
         }
-        if (!(await service.patch(request.userId, request.params.id, body.data, grant)))
-          return refuse(reply, 'not-found', 'No such chat.');
+        let found: boolean;
+        try {
+          found = await service.patch(request.userId, request.params.id, body.data, grant);
+        } catch (error) {
+          // No grant to write it with (none sent, no run of the chat live): the client's to fix.
+          if (error instanceof MintRefusedError && error.code === 'invalid_grant')
+            return refuse(
+              reply,
+              'refused',
+              `This chat needs a current run grant in ${GRANT_HEADER} to be changed now.`
+            );
+          throw error;
+        }
+        if (!found) return refuse(reply, 'not-found', 'No such chat.');
         return reply.code(204).send();
       }
     );

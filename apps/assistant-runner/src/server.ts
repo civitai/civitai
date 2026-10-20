@@ -26,9 +26,21 @@ const log: Logger = {
 // The step budget and history budget every reply uses, as App Assistant's page configures them.
 configureChat({ maxSteps: config.maxSteps, contextBudgetTokens: config.contextBudgetTokens });
 
-/** The runner's own tables (run grants, conversation locks), beside DBOS's in the same database. */
-const pool = createPool({ connectionString: config.databaseUrl, max: 8 }, 'runner-tables');
+/** The runner's own table of run grants, beside DBOS's in the same database. */
+const pool = createPool(
+  { connectionString: config.databaseUrl, max: 8, connectionTimeoutMillis: 10_000 },
+  'runner-grants'
+);
 const grants = new RunGrants(pool);
+/**
+ * Conversation locks on a pool of their own: a lock holds its connection while the write it guards
+ * looks up grants on the pool above, so sharing one pool could leave every connection held by a
+ * lock owner waiting for another. A waiter that gets no connection in time fails, not hangs.
+ */
+const lockPool = createPool(
+  { connectionString: config.databaseUrl, max: 16, connectionTimeoutMillis: 60_000 },
+  'runner-locks'
+);
 
 let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
@@ -48,7 +60,7 @@ if (civitai) {
   store = new OrchestrationConversationStore({
     orchestration,
     tokens: (userId, conversationId) => credentials.forConversation(userId, conversationId),
-    lock: new AdvisoryLock(pool),
+    lock: new AdvisoryLock(lockPool),
     log,
   });
   // TODO(B2): the sandbox MCP tools and the App Assistant gate. Until then a reply is words only.
@@ -105,6 +117,7 @@ async function shutdown(signal: string): Promise<void> {
     await app.close();
     await runner.shutdown(config.shutdownGraceMs);
     await pool.end();
+    await lockPool.end();
   } catch (error) {
     app.log.error({ err: error }, 'shutdown failed');
     process.exitCode = 1;

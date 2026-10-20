@@ -14,6 +14,9 @@ import type { ConversationStore, Logger } from './interfaces';
 import type { TokenSource } from './minter';
 import type { OrchestrationClient, Workflow } from './orchestration';
 
+/** The longest a write waits for another writer of the same conversation. */
+const LOCK_WAIT_MS = 120_000;
+
 /** Runs `fn` with the conversation's head to itself, across every replica. */
 export interface ConversationLock {
   run<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -35,6 +38,8 @@ export class AdvisoryLock implements ConversationLock {
     const client = await this.#pool.connect();
     let broken: Error | undefined;
     try {
+      // Bounded: a writer that never gets the lock fails loudly instead of holding its connection.
+      await client.query(`set lock_timeout = '${LOCK_WAIT_MS}ms'`);
       await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [key]);
       try {
         return await fn();

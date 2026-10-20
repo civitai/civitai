@@ -1,4 +1,5 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 /**
  * How many tokens the runner may mint with one run grant per window. A run mints about one token per
@@ -28,7 +29,10 @@ export async function checkRunnerMintRateLimit(grantId: string): Promise<RunnerM
     if (count <= RUNNER_MINT_LIMIT) return { allowed: true };
     const ttl = Number(await sysRedis.ttl(key));
     return { allowed: false, retryAfterSeconds: ttl > 0 ? ttl : RUNNER_MINT_WINDOW_SECONDS };
-  } catch {
+  } catch (error) {
+    logSysRedisFailOpen('rate-limit-write-degraded', 'checkRunnerMintRateLimit', error, {
+      grantId,
+    });
     return { allowed: true };
   }
 }

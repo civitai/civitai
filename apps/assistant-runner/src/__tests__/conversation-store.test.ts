@@ -148,6 +148,24 @@ describe('OrchestrationConversationStore', () => {
     expect(page.summaries.map((s) => s.id)).toEqual(['c-scoped']);
   });
 
+  it('asks again with a freshly minted token when orchestration refuses a cached one', async () => {
+    const orchestration = new FakeOrchestration();
+    const asked: boolean[] = [];
+    const store = new OrchestrationConversationStore({
+      orchestration: new OrchestrationClient(BASE, orchestration.fetch),
+      // The cached token has gone stale; only a fresh mint is accepted.
+      tokens: (userId) => async (_purpose, options) => {
+        asked.push(options?.fresh === true);
+        return options?.fresh ? FakeOrchestration.tokenFor(userId) : 'stale-token';
+      },
+      lock: noLock,
+      log: quiet,
+    });
+    await runTurn(store, 'u1', 'c-stale-token', 1, 'hi', 'hello');
+    expect((await store.load('u1', 'c-stale-token'))!.turns).toHaveLength(1);
+    expect(asked).toContain(true);
+  });
+
   it('never reads another user’s conversation', async () => {
     const { store } = setup();
     await runTurn(store, 'u1', 'c-private', 1, 'secret plans', 'ok');

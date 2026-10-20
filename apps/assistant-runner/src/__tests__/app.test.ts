@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp, lastEventId, loggerOptions } from '../app';
 import type { JournalEntry, RunService, StartOutcome } from '../service';
+import { MintRefusedError } from '../minter';
 import { createTokenVerifier } from '../tokens';
 import { bearerAuthenticator } from '../test-support/fakes';
 import { signGrant, signViewer, testKeys } from '../test-support/keys';
@@ -458,6 +459,24 @@ describe('the run API', () => {
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.join('')).toContain('/runs?conversationId=c1');
     expect(lines.join('')).not.toContain(secret);
+  });
+});
+
+describe('a patch with nothing to write it with', () => {
+  it('is refused as the client’s to fix (a grant), not answered as an outage', async () => {
+    const { service } = fakeService({
+      patch: async () => {
+        throw new MintRefusedError('invalid_grant', 'no grant', 401);
+      },
+    });
+    const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+    const response = await fetch(`${base}/conversations/c1/patch`, {
+      method: 'POST',
+      headers: { ...user1, 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, title: 'New' }),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ v: 1, error: 'refused' });
   });
 });
 

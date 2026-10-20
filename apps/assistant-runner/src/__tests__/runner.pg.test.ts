@@ -980,6 +980,26 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(await rowsContaining(db.url, 'assistant_runner', grant)).toEqual([]);
   });
 
+  it('ends a run ran_out shortly before its grant expires, while it can still save its end', async () => {
+    const user = 'u-grant-short';
+    const body = startBody({ conversationId: 'c-grant-short', model: 'hang' });
+    // Expires 2 min 4 s from now: the run's deadline is 4 s away, far inside its 60 s wall clock.
+    const grant = await signGrant(
+      keys,
+      { userId: user, conversationId: body.conversationId, idempotencyKey: body.idempotencyKey },
+      124
+    );
+    const started = Date.now();
+    const start = await post('/runs', { ...as(user), 'x-run-grant': grant }, body);
+    const entries = await events(start.body!.runId as string, user);
+    expect(ended(entries).status).toBe('ran_out');
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect((await store.load(user, 'c-grant-short'))!.turns[0]!.assistant).toMatchObject({
+      status: 'done',
+      ranOut: true,
+    });
+  });
+
   it('keeps no grant for a start it refuses', async () => {
     const user = 'u-grant-refused';
     const body = startBody({ conversationId: 'c-grant-refused', model: 'tools', seq: 4 });

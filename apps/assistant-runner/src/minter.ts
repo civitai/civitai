@@ -20,7 +20,7 @@ const MAX_CACHED = 5_000;
 export class MintRefusedError extends Error {
   override name = 'MintRefusedError';
   constructor(
-    readonly code: 'consent_required' | 'invalid_grant' | 'unavailable',
+    readonly code: 'consent_required' | 'invalid_grant' | 'rate_limited' | 'unavailable',
     message: string,
     readonly status: number
   ) {
@@ -92,19 +92,31 @@ export class TokenMinter {
       code?: unknown;
     } | null;
     if (!response.ok || typeof body?.token !== 'string') {
-      log.warn({ purpose, status: response.status }, 'civitai refused to mint a token');
-      if (body?.code === 'consent_required')
+      if (body?.code === 'consent_required') {
+        log.warn({ purpose, status: response.status }, 'civitai refused to mint: consent is gone');
         throw new MintRefusedError(
           'consent_required',
           'App Assistant is turned off for this account. Turn it on to continue.',
           403
         );
-      if (response.status === 401 || response.status === 403)
+      }
+      if (body?.code === 'invalid_grant') {
+        log.warn({ purpose, status: response.status }, 'civitai refused to mint: the grant');
         throw new MintRefusedError(
           'invalid_grant',
           'This reply can no longer act for you. Send your message again.',
           401
         );
+      }
+      if (response.status === 429) {
+        log.warn({ purpose }, 'civitai refused to mint: too many for this grant');
+        throw new MintRefusedError('rate_limited', 'This reply asked for too many tokens.', 429);
+      }
+      // A 401 or 403 with neither code is civitai refusing the runner itself (its secret): a
+      // deployment fault, not the user's, so it is logged as one.
+      if (response.status === 401 || response.status === 403)
+        log.error({ purpose, status: response.status }, 'civitai refused the runner secret');
+      else log.warn({ purpose, status: response.status }, 'civitai could not mint a token');
       throw new MintRefusedError('unavailable', 'Civitai could not be reached just now.', 503);
     }
     const expiresAtMs = typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : NaN;

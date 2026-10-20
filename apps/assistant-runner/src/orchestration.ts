@@ -1,4 +1,4 @@
-import type { FreeTierStatus } from '@civitai/components-chat/core';
+import { authedFetch, type FreeTierStatus } from '@civitai/components-chat/core';
 
 import type { TokenSource } from './minter';
 
@@ -76,18 +76,18 @@ export class OrchestrationClient {
   }
 
   async #json<T>(tokens: TokenSource, method: string, path: string, body?: unknown): Promise<T> {
-    const send = async (fresh: boolean) =>
-      this.#fetch(`${this.#baseUrl}/${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${await tokens('chat', { fresh })}`,
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    let response = await send(false);
-    if (response.status === 401) response = await send(true);
+    // The chat package's own signing fetch: a token per request, asked again fresh after a 401.
+    const send = authedFetch(
+      { getToken: ({ fresh } = {}) => tokens('chat', { fresh }) },
+      this.#fetch
+    );
+    const response = await send(`${this.#baseUrl}/${path}`, {
+      method,
+      ...(body === undefined
+        ? {}
+        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     const text = await response.text();
     if (!response.ok)
       throw new OrchestrationError(

@@ -52,16 +52,22 @@ describePg('run grants and conversation locks in the runner’s database', () =>
   });
 
   it('hands back a run’s grant only while it is live, and a conversation’s latest live one', async () => {
-    await grants.save('run-live', grant('grant-live', hours(2)));
+    // Saved oldest first, so the answer cannot come from insertion order.
     await grants.save('run-older', grant('grant-older', hours(1)));
-    await grants.save('run-expired', grant('grant-expired', hours(-1)));
+    await grants.save('run-live', grant('grant-live', hours(2)));
+    await grants.save('run-expired', grant('grant-expired', hours(3)));
+    await pool.query(
+      `update assistant_runner.run_grants set expires_at = now() - interval '1 minute' where run_id = 'run-expired'`
+    );
     await grants.save('run-other', grant('grant-other', hours(3), 'u2'));
+    await grants.save('run-only-expired', grant('grant-only-expired', hours(-1), 'u1', 'c-stale'));
 
     expect(await grants.forRun('run-live')).toBe('grant-live');
     expect(await grants.forRun('run-expired')).toBeNull();
     expect(await grants.forConversation('u1', 'c1')).toBe('grant-live');
     expect(await grants.forConversation('u2', 'c1')).toBe('grant-other');
     expect(await grants.forConversation('u1', 'c2')).toBeNull();
+    expect(await grants.forConversation('u1', 'c-stale')).toBeNull();
   });
 
   it('keeps the later of two grants saved for one run', async () => {
@@ -80,6 +86,8 @@ describePg('run grants and conversation locks in the runner’s database', () =>
     await grants.save('sweep-ended-just-now', grant('g3', hours(2)));
     await grants.save('sweep-live', grant('g4', hours(2)));
     await grants.save('sweep-orphan', grant('g5', hours(2)));
+    // Saved by a start a moment ago, before its workflow exists: not an orphan yet.
+    await grants.save('sweep-just-saved', grant('g6', hours(2)));
     const now = Date.now();
     const status = (id: string, value: string, updatedAt: number) =>
       pool.query(
@@ -97,7 +105,11 @@ describePg('run grants and conversation locks in the runner’s database', () =>
     const { rows } = await pool.query<{ run_id: string }>(
       `select run_id from assistant_runner.run_grants where run_id like 'sweep-%' order by run_id`
     );
-    expect(rows.map((row) => row.run_id)).toEqual(['sweep-ended-just-now', 'sweep-live']);
+    expect(rows.map((row) => row.run_id)).toEqual([
+      'sweep-ended-just-now',
+      'sweep-just-saved',
+      'sweep-live',
+    ]);
   });
 
   it('serialises two writers of one conversation across connections, so neither change is lost', async () => {

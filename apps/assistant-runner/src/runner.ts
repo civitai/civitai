@@ -112,7 +112,15 @@ export interface ReplyInput {
   settings: RunSettings;
   page?: StartRunRequest['page'];
   wallClockMs: number;
+  /**
+   * When the run's grant expires (ms since the epoch): a time, not a credential. The run ends
+   * `ran_out` shortly before it, while it can still save its end, rather than fail at a mint.
+   */
+  grantExpiresAt?: number;
 }
+
+/** How long before its grant expires a run ends, so its last saves still mint. */
+const GRANT_END_MARGIN_MS = 2 * 60 * 1000;
 
 /** A reply's workflow output: also how a later retry of the same turn finds where to carry on from. */
 export interface ReplyOutput {
@@ -364,6 +372,7 @@ export class Runner implements RunService {
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
       wallClockMs: this.#deps.wallClockMs,
+      grantExpiresAt: grant.expiresAt.getTime(),
     };
     for (let attempt = 0; ; attempt++) {
       try {
@@ -541,7 +550,11 @@ export class Runner implements RunService {
         ...(from ? { from } : {}),
       })
     );
-    return { deadline: Date.now() + input.wallClockMs, stoppedBeforeStart };
+    const deadline = Math.min(
+      Date.now() + input.wallClockMs,
+      input.grantExpiresAt === undefined ? Infinity : input.grantExpiresAt - GRANT_END_MARGIN_MS
+    );
+    return { deadline, stoppedBeforeStart };
   }
 
   /** Where a retry of a failed turn carries on from: its saved progress, else the resume point the failed run left. */

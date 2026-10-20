@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MintRefusedError, type TokenSource } from '../minter';
 import { OrchestrationClient } from '../orchestration';
-import { OrchestrationModels } from '../orchestration-model';
+import { OrchestrationModels, refusalsAsAnswers } from '../orchestration-model';
 
 const BASE = 'https://orchestration.example';
 const FREE_MODEL = 'civitai/qwen3.8';
@@ -162,5 +162,26 @@ describe('OrchestrationModels', () => {
     expect(error).toMatchObject({ statusCode: 403 });
     expect(String((error as Error).message)).toMatch(/turned off/);
     expect(orchestration.chat()).toEqual([]);
+  });
+
+  it('answers each refused mint with a status the AI SDK retries only for an outage', async () => {
+    for (const [code, status] of [
+      ['consent_required', 403],
+      ['invalid_grant', 400],
+      ['rate_limited', 400],
+      ['unavailable', 503],
+    ] as const) {
+      const send = refusalsAsAnswers(async () => {
+        throw new MintRefusedError(code, 'why', 401);
+      });
+      const response = await send('https://orchestration.example/v1/chat/completions');
+      expect(response.status, code).toBe(status);
+      expect(await response.json(), code).toEqual({ error: { message: 'why', code } });
+    }
+    await expect(
+      refusalsAsAnswers(async () => {
+        throw new TypeError('fetch failed');
+      })('https://orchestration.example')
+    ).rejects.toThrow('fetch failed');
   });
 });

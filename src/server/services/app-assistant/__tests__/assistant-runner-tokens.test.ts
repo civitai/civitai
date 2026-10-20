@@ -72,6 +72,36 @@ describe('verifyRunGrant', () => {
     expect(await verifyRunGrant((await signRunnerViewerToken(42)).token)).toBeNull();
   });
 
+  it('refuses a token carrying every grant claim but the viewer audience or typ, or another issuer', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const withClaims = (aud: string, typ: string, iss = 'civitai') =>
+      new SignJWT({ cid: 'c-1', key: 'k-1' })
+        .setProtectedHeader({ alg: 'ES256', typ })
+        .setIssuer(iss)
+        .setAudience(aud)
+        .setSubject('42')
+        .setJti('j')
+        .setIssuedAt(now)
+        .setExpirationTime(now + 600)
+        .sign(keys.privateKey);
+    // Control: the same builder with the grant's own values passes, so each refusal below is its field's.
+    expect(
+      await verifyRunGrant(
+        await withClaims('assistant-runner:run-grant', 'assistant-run-grant+jwt')
+      )
+    ).toMatchObject(GRANT);
+    for (const [name, token] of [
+      ['viewer aud', await withClaims('assistant-runner:viewer', 'assistant-run-grant+jwt')],
+      ['viewer typ', await withClaims('assistant-runner:run-grant', 'assistant-viewer+jwt')],
+      ['both viewer', await withClaims('assistant-runner:viewer', 'assistant-viewer+jwt')],
+      [
+        'another issuer',
+        await withClaims('assistant-runner:run-grant', 'assistant-run-grant+jwt', 'elsewhere'),
+      ],
+    ] as const)
+      expect(await verifyRunGrant(token), name).toBeNull();
+  });
+
   it('refuses an expired grant', async () => {
     const now = Math.floor(Date.now() / 1000);
     const expired = await new SignJWT({ cid: 'c-1', key: 'k-1' })

@@ -41,7 +41,7 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
   another kind, or for another viewer, conversation or key is refused (403 `refused`). The page sets
   it per start from its `remoteRunner.fetch`, which sees the start's body. A
   `POST /conversations/<id>/patch` may carry a grant for that conversation (any key); without one it
-  is written with a live run's grant, and a chat with neither cannot be patched.
+  is written with a live run's grant, and a chat with neither is refused (403 `refused`).
 - **Tokens, per request.** The runner keeps each run's grant in its own table
   (`assistant_runner.run_grants`, keyed by run id), never in a DBOS workflow input, step output or
   the journal. Each model or store request trades the grant, with the runner's own secret, at
@@ -125,8 +125,9 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
   kinds have distinct `aud` and `typ`, so neither passes as the other.
 - **A cookie never reaches the runner as a credential**: it reads the `Authorization` and
   `X-Run-Grant` headers only, and logs neither.
-- **Revocation.** Turning App Assistant off under connected apps stops every mint at once; a run in
-  flight ends at its next model or store request.
+- **Revocation.** Revoking App Assistant's consent under connected apps stops every mint at once; a
+  run in flight ends at its next model or store request. A ban or the feature flag going off does not
+  (see the known gaps).
 
 
 ## Environment
@@ -191,7 +192,7 @@ Known gaps:
 - Journal reads poll Postgres; their load per viewer has not been measured.
 - A run left by a replica that was removed (its executor id never comes back) holds its user's
   slot until DBOS's workflow timeout cancels it, or until the user stops it.
-- A run that outlives its grant (a recovery after the grant expired) cannot mint: its model request
-  fails, and its end cannot be written to the head, which then reads as cut off.
+- A run ends `ran_out` two minutes before its grant expires, if that comes before its wall clock (a
+  run that waited long in the queue, or was recovered late), so it can still save its end.
 - A ban or a lost feature flag does not stop a run in flight: the mint endpoint re-checks consent
   only, not the gates the grant endpoint checks.

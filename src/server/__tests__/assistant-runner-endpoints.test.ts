@@ -138,6 +138,11 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
   it('refuses a grant that is expired, unsigned by civitai, or a viewer token (aud confusion)', async () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 60 });
     const soon = await grantFor();
+    // Control: the same grant mints before its expiry, so the 401 below is the expiry's.
+    expect(
+      (await call(mintRoute, { headers: asRunner, body: { grant: soon, purpose: 'chat' } })).status
+    ).toBe(200);
+    mintMock.mockClear();
     vi.useFakeTimers({ now: Date.now() + 10 * 60 * 1000, toFake: ['Date'] });
     try {
       const expired = await call(mintRoute, {
@@ -182,6 +187,38 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(status).toBe(429);
     expect(headers.get('retry-after')).toBe('120');
     expect(mintMock).not.toHaveBeenCalled();
+  });
+
+  it('lets the 60th mint of a window through and stops the 61st', async () => {
+    redisMock.sysRedis.ttl.mockResolvedValue(300);
+    redisMock.sysRedis.incr.mockResolvedValue(60);
+    const body = { grant: await grantFor(), purpose: 'chat' };
+    expect((await call(mintRoute, { headers: asRunner, body })).status).toBe(200);
+    redisMock.sysRedis.incr.mockResolvedValue(61);
+    expect((await call(mintRoute, { headers: asRunner, body })).status).toBe(429);
+  });
+
+  it('gives a counter that lost its expiry one again, so a long run is not locked out', async () => {
+    redisMock.sysRedis.incr.mockResolvedValue(2);
+    redisMock.sysRedis.ttl.mockResolvedValue(-1);
+    redisMock.sysRedis.expire.mockClear();
+    await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
+      expect.stringContaining('runner-mint-rate-limit:'),
+      600
+    );
+  });
+
+  it('accepts the secret with a trailing newline on either side', async () => {
+    setEnv({ ASSISTANT_RUNNER_SECRET: `${SECRET}\n` });
+    const { status } = await call(mintRoute, {
+      headers: { authorization: `bearer ${SECRET} ` },
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(status).toBe(200);
   });
 
   it('mints on when the rate limiter’s Redis is down', async () => {

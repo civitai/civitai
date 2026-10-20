@@ -1,5 +1,4 @@
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { FreeTier, freeTierFetch, PROVIDER } from '@civitai/components-chat/core';
+import { createAssistantModel, FreeTier, freeTierFetch } from '@civitai/components-chat/core';
 import type { LanguageModel } from 'ai';
 
 import type { ModelContext, ModelProvider } from './interfaces';
@@ -16,12 +15,13 @@ export interface OrchestrationModelOptions {
 }
 
 /**
- * The reply's model: orchestration's chat completions, as the browser's App Assistant asks them
- * (`createAssistantModel` and `freeTierFetch` in `@civitai/components-chat` 0.21.0): the same
- * OpenAI-compatible provider under the same provider name (so `AgentCore`'s provider options reach
- * the request), the viewer's own `chat` token on every request, so orchestration bills the viewer
- * under the App Assistant's client and its daily Buzz cap, and the viewer's tier choice sent as
- * `X-Civitai-Tier: free` while their free allowance for the model lasts.
+ * The reply's model: orchestration's chat completions, built by the chat package's own
+ * `createAssistantModel` and `freeTierFetch` (`@civitai/components-chat` 0.21.0), as the browser's
+ * App Assistant builds it: the same OpenAI-compatible provider under the same provider name (so
+ * `AgentCore`'s provider options reach the request), the same 401 retry, the viewer's own `chat`
+ * token on every request (minted inside it), so orchestration bills the viewer under the App
+ * Assistant's client and its daily Buzz cap, and `X-Civitai-Tier: free` while the viewer's free
+ * allowance for the model lasts, as their tier allows.
  */
 export class OrchestrationModels implements ModelProvider {
   readonly #options: OrchestrationModelOptions;
@@ -34,42 +34,37 @@ export class OrchestrationModels implements ModelProvider {
     const { baseUrl, orchestration } = this.#options;
     const tokens = this.#options.tokens(context.runId);
     const freeTier = new FreeTier(() => orchestration.getFreeTier(tokens));
-    const send = mintingFetch(tokens, this.#options.fetch ?? fetch);
     const tier = context.tier;
-    const wrapped = freeTierFetch(send, context.model, freeTier, () => ({
-      useFree: tier !== 'paid',
-      payWhenOut: tier !== 'free',
-    }));
-    const provider = createOpenAICompatible({
-      name: PROVIDER,
-      baseURL: `${baseUrl.replace(/\/+$/, '')}/v1`,
-      fetch: wrapped,
-    });
-    return provider.chatModel(context.model);
+    return createAssistantModel(
+      { getToken: ({ fresh } = {}) => tokens('chat', { fresh }) },
+      {
+        baseUrl,
+        model: context.model,
+        ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
+        wrap: (signed) =>
+          freeTierFetch(refusalsAsAnswers(signed), context.model, freeTier, () => ({
+            useFree: tier !== 'paid',
+            payWhenOut: tier !== 'free',
+          })),
+      }
+    );
   }
 }
 
 /**
- * A fetch that signs each request with a `chat` token minted inside it, never one passed in, and
- * asks once more with a fresh token after a 401. A mint civitai refuses becomes a 4xx answer the
- * AI SDK does not retry (as the chat's own free-tier refusals do), carrying why.
+ * A mint civitai refused becomes an answer the AI SDK reads as the request's own failure, with why:
+ * a 4xx it does not retry (as the chat's own free-tier refusals are), or a 503 it may retry when
+ * civitai could not be reached.
  */
-export function mintingFetch(tokens: TokenSource, doFetch: typeof fetch): typeof fetch {
+export function refusalsAsAnswers(inner: typeof fetch): typeof fetch {
   return async (input, init) => {
-    const attempt = async (fresh: boolean) => {
-      let token: string;
-      try {
-        token = await tokens('chat', { fresh });
-      } catch (error) {
-        if (!(error instanceof MintRefusedError)) throw error;
-        const status = error.code === 'unavailable' ? 503 : error.status === 403 ? 403 : 400;
-        return Response.json({ error: { message: error.message, code: error.code } }, { status });
-      }
-      const headers = new Headers(init?.headers);
-      headers.set('Authorization', `Bearer ${token}`);
-      return doFetch(input, { ...init, headers });
-    };
-    const first = await attempt(false);
-    return first.status === 401 ? attempt(true) : first;
+    try {
+      return await inner(input, init);
+    } catch (error) {
+      if (!(error instanceof MintRefusedError)) throw error;
+      const status =
+        error.code === 'unavailable' ? 503 : error.code === 'consent_required' ? 403 : 400;
+      return Response.json({ error: { message: error.message, code: error.code } }, { status });
+    }
   };
 }

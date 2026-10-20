@@ -101,20 +101,24 @@ describe('TokenMinter', () => {
     expect(civitai.calls).toHaveLength(2);
   });
 
-  it('reads a refused grant or secret as invalid, and anything else as unavailable', async () => {
-    for (const [status, code] of [
-      [401, 'invalid_grant'],
-      [503, 'unavailable'],
-      [500, 'unavailable'],
+  it('tells a refused grant from a refused runner, a rate limit and an outage', async () => {
+    for (const [answer, code] of [
+      [() => Response.json({ code: 'invalid_grant' }, { status: 401 }), 'invalid_grant'],
+      // No code: civitai refused the runner's secret, a deployment fault.
+      [() => Response.json({ error: 'Unauthorized' }, { status: 401 }), 'unavailable'],
+      [() => Response.json({ error: 'no' }, { status: 403 }), 'unavailable'],
+      [() => Response.json({ code: 'rate_limited' }, { status: 429 }), 'rate_limited'],
+      [() => Response.json({ error: 'no' }, { status: 503 }), 'unavailable'],
+      [() => new Response('<html>', { status: 500 }), 'unavailable'],
     ] as const) {
-      const civitai = fakeCivitai(() => Response.json({ error: 'no' }, { status }));
+      const civitai = fakeCivitai(answer);
       const minter = new TokenMinter({
         civitaiUrl: 'https://civitai.example',
         secret: SECRET,
         log: quiet,
         fetch: civitai.doFetch,
       });
-      await expect(minter.token('g', 'chat'), `${status}`).rejects.toMatchObject({ code });
+      await expect(minter.token('g', 'chat'), code).rejects.toMatchObject({ code });
     }
   });
 });

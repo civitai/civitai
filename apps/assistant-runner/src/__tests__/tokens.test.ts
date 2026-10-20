@@ -118,6 +118,26 @@ describe('run grants', () => {
     expect(await verifier.grant(await signViewer(keys, '42'))).toBeNull();
   });
 
+  it('refuses a token carrying every grant claim but the viewer audience or typ, or another issuer', async () => {
+    const claims = { cid: 'c-1', key: 'k-1' };
+    // Control: the grant's own values pass, so each refusal below is its field's.
+    expect(
+      await verifier.grant(await signTestToken(keys.privateKey, { ...GRANT, sub: '42', claims }))
+    ).not.toBeNull();
+    for (const [name, options] of [
+      ['viewer aud', { aud: VIEWER.aud, typ: GRANT.typ }],
+      ['viewer typ', { aud: GRANT.aud, typ: VIEWER.typ }],
+      ['both viewer', { ...VIEWER }],
+      ['another issuer', { ...GRANT, issuer: 'elsewhere' }],
+    ] as const)
+      expect(
+        await verifier.grant(
+          await signTestToken(keys.privateKey, { ...options, sub: '42', claims })
+        ),
+        name
+      ).toBeNull();
+  });
+
   it('refuses an expired grant', async () => {
     expect(await verifier.grant(await signGrant(keys, grantFields, -120))).toBeNull();
   });

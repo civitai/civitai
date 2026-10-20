@@ -34,10 +34,13 @@ function digest(value: string): Buffer {
   return createHash('sha256').update(value).digest();
 }
 
-/** Constant-time: both sides are hashed to one length first. */
+/**
+ * Constant-time: both sides are hashed to one length first. Both are trimmed, as the runner trims
+ * its copy, so a value mounted from a file with a trailing newline still matches.
+ */
 function presentedSecret(req: AxiomAPIRequest, secret: string): boolean {
-  const match = /^Bearer (.+)$/.exec(req.headers.authorization ?? '');
-  return !!match && timingSafeEqual(digest(match[1]!), digest(secret));
+  const match = /^bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
+  return !!match && timingSafeEqual(digest(match[1]!.trim()), digest(secret.trim()));
 }
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -58,7 +61,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const limit = await checkRunnerMintRateLimit(grant.grantId);
   if (!limit.allowed) {
     res.setHeader('Retry-After', String(limit.retryAfterSeconds));
-    return res.status(429).json({ error: 'Too many tokens for this run grant' });
+    return res
+      .status(429)
+      .json({ error: 'Too many tokens for this run grant', code: 'rate_limited' });
   }
 
   try {
