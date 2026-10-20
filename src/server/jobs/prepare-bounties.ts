@@ -16,6 +16,11 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { retryUnsettledBountyPayouts, settleBountyPayout } from '~/server/services/bounty.service';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  checkPendingBountyEntryFiles,
+  getBountyEntryFileStates,
+  isBountyEntryFileCheckOn,
+} from '~/server/services/bounty-entry-file-check.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 
 const log = createLogger('prepare-bounties', 'blue');
@@ -220,6 +225,7 @@ async function settleExpiredBounty({
   tracker: Tracker;
 }) {
   log(`Started bounty ${id}`);
+  const fileCheckOn = await isBountyEntryFileCheckOn();
   // Claimed under the payout lock; a bounty a refund or manual award already claimed
   // is left alone. Buzz moves only after the claim commits.
   const claim = await dbWrite.$transaction(async (tx) => {
@@ -239,6 +245,11 @@ async function settleExpiredBounty({
       return { kind: 'refund' as const, currency, poiHidden: true };
     }
 
+    // Entries whose files are another user's model can't win; wait while any are unchecked.
+    const fileStates = await getBountyEntryFileStates({ tx, bountyId: id, checkOn: fileCheckOn });
+    if (fileStates?.unchecked) return { kind: 'postponed' as const };
+    const blockedEntryIds = fileStates?.blockedEntryIds ?? [];
+
     const [winnerEntry] = await tx.$queryRaw<{ id: number; userId: number }[]>`SELECT
             be.id,
             be."userId",
@@ -256,6 +267,7 @@ async function settleExpiredBounty({
               AND own."awardedToId" IS NULL
           )
           AND be."userId" IS DISTINCT FROM ${userId}
+          AND NOT (be.id = ANY(${blockedEntryIds}::int[]))
         GROUP BY be.id, be."userId", bes."reactionCountAllTime"
         ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
       `;
@@ -279,6 +291,10 @@ async function settleExpiredBounty({
 
   if (!claim) {
     log(` Bounty ${id} was already claimed; skipped`);
+    return;
+  }
+  if (claim.kind === 'postponed') {
+    log(` Bounty ${id} has entry files still being checked; postponed`);
     return;
   }
   log(" Bounty's main currency detected:", claim.currency);
@@ -366,4 +382,15 @@ const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async (
   retryUnsettledBountyPayouts()
 );
 
-export const bountyJobs = [prepareBounties, bountyPayoutRetry];
+const bountyEntryFileCheck = createJob(
+  'bounty-entry-file-check',
+  '*/5 * * * *',
+  async ({ checkIfCanceled }) => {
+    if (!(await isBountyEntryFileCheckOn())) return;
+    return checkPendingBountyEntryFiles({ checkCanceled: checkIfCanceled });
+  },
+  // One run streams up to ~8 GB; a 30-minute hold keeps the next tick from overlapping it.
+  { lockExpiration: 30 * 60 }
+);
+
+export const bountyJobs = [prepareBounties, bountyPayoutRetry, bountyEntryFileCheck];

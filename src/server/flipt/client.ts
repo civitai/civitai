@@ -97,6 +97,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
   DUPLICATE_MODEL_HASH_BLOCK = 'duplicate-model-hash-block',
+  // Turns on the bounty entry file check: the job that hashes model-bounty entry files, and the
+  // award and download gates that read its result. DEFAULT-OFF; all three ship dark together,
+  // since the award gate refuses files the job has not hashed yet.
+  BOUNTY_ENTRY_FILE_CHECK = 'bounty-entry-file-check',
   // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
   // modelId so a percentage rollout picks a deterministic, sticky subset of content.
   // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.

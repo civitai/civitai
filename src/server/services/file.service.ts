@@ -43,6 +43,24 @@ export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema
   }));
 };
 
+/** File metadata only the bounty entry file check writes. Never taken from a caller. */
+export const SERVER_FILE_METADATA_KEYS = [
+  'sha256Server',
+  'hashCheckedAt',
+  'hashAttemptedAt',
+  'blockedReason',
+] as const;
+
+function pickMetadata(metadata: unknown, server: boolean) {
+  const isServerKey = (key: string) =>
+    (SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key);
+  return Object.fromEntries(
+    Object.entries((metadata ?? {}) as Record<string, unknown>).filter(
+      ([key]) => isServerKey(key) === server
+    )
+  );
+}
+
 export const updateEntityFiles = async ({
   tx,
   entityId,
@@ -59,16 +77,26 @@ export const updateEntityFiles = async ({
   const updatedFiles = files.filter((f) => f.id);
 
   if (updatedFiles.length > 0) {
+    // A file saved again at the same url keeps its check result; a new url is checked afresh.
+    const existing = await tx.file.findMany({
+      where: { id: { in: updatedFiles.map((f) => f.id as number) }, entityId, entityType },
+      select: { id: true, url: true, metadata: true },
+    });
     const counts = await Promise.all(
-      updatedFiles.map((file) =>
-        tx.file.updateMany({
+      updatedFiles.map((file) => {
+        const before = existing.find((x) => x.id === file.id);
+        return tx.file.updateMany({
           where: { id: file.id, entityId, entityType },
           data: {
             ...file,
-            metadata: { ...(file.metadata ?? {}), ownRights },
+            metadata: {
+              ...pickMetadata(file.metadata, false),
+              ownRights,
+              ...(before?.url === file.url ? pickMetadata(before.metadata, true) : {}),
+            },
           },
-        })
-      )
+        });
+      })
     );
     if (counts.some(({ count }) => count !== 1))
       throw throwBadRequestError('A file to update is not part of this item.');
@@ -96,7 +124,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
-        metadata: { ...(file.metadata ?? {}), ownRights },
+        metadata: { ...pickMetadata(file.metadata, false), ownRights },
       })),
     });
   }
