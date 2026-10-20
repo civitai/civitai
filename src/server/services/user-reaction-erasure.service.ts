@@ -18,8 +18,8 @@ import {
  * - `queue`: the Postgres metric whose rows are recomputed only for queued ids.
  * - Image, Article and BountyEntry counts in ClickHouse and Redis follow the DELETE itself: those tables
  *   are REPLICA IDENTITY FULL and the event engine's reaction handlers emit the -1 from CDC.
- * - CommentV2Reaction's count is a trigger on the table. CommentReaction, ResourceReviewReaction and
- *   ClubPostReaction have no counter.
+ * - CommentV2Reaction's and CommentV3Reaction's counts are triggers on their tables. CommentReaction,
+ *   ResourceReviewReaction and ClubPostReaction have no counter.
  *
  * NOT corrected here: a content owner's all-time reactions-received score (ClickHouse
  * `reactions_owner_scores`, read by `UserMetric.reactionCount`), which the un-react path lowers with a
@@ -42,6 +42,7 @@ const TABLES = [
     queue: bountyEntryMetrics,
   },
   { table: 'CommentV2Reaction', fk: 'commentId' },
+  { table: 'CommentV3Reaction', fk: 'commentId' },
   { table: 'CommentReaction', fk: 'commentId' },
   { table: 'ResourceReviewReaction', fk: 'reviewId' },
   { table: 'ClubPostReaction', fk: 'clubPostId' },
