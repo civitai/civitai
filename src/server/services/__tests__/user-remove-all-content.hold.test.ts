@@ -6,9 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * how many images it kept, or a partial wipe reads as complete.
  */
 
-const { deleteImageById, logToAxiom } = vi.hoisted(() => ({
+const { deleteImageById } = vi.hoisted(() => ({
   deleteImageById: vi.fn(async () => undefined),
-  logToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
@@ -55,9 +54,9 @@ vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteBidsForModel: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { removeAllContent } from '~/server/services/user.service';
 
 const TARGET = 4_242;
@@ -98,9 +97,11 @@ describe('removeAllContent on an owner under a hold marker', () => {
     expect(result).toEqual({ keptUnderHold: IMAGES.length });
     expect(deleteImageById).not.toHaveBeenCalled();
     expect(imageDeletesForTarget()).toEqual([]);
-    const holdLines = logToAxiom.mock.calls.filter(
-      ([entry]) => (entry as { message?: string }).message === 'Kept images under a hold'
-    );
+    const holdLines = vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.filter(
+        ([entry]) => (entry as { message?: string }).message === 'Kept images under a hold'
+      );
     expect(holdLines).toEqual([
       [
         expect.objectContaining({
