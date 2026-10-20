@@ -67,6 +67,7 @@ export const modelsFilterableAttributes = [
   'versions.canGenerateNext',
   'versions.generatorLoaded',
   'versions.hashes',
+  'versions.turbo',
   'versions.id',
   'versions.pricing',
   'cannotPromote',

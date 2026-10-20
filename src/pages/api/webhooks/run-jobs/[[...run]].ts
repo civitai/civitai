@@ -20,6 +20,7 @@ import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
+import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -88,6 +89,7 @@ import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
 import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
 import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
+import { creatorShopWithdrawnRefundsJob } from '~/server/jobs/creator-shop-withdrawn-refunds';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -242,6 +244,7 @@ export const jobs: Job[] = [
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
   creatorProgramCounterpartyReview,
+  creatorProgramPrepayoutReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
@@ -279,6 +282,7 @@ export const jobs: Job[] = [
   ...placementJobs,
   ...creatorServiceDealJobs,
   ...creatorServiceDealFileJobs,
+  creatorShopWithdrawnRefundsJob,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,

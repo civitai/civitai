@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
+import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -31,36 +32,43 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
-export const getComments = async <TSelect extends Prisma.CommentSelect>({
-  input: {
-    limit = DEFAULT_PAGE_SIZE,
-    page,
-    cursor,
-    modelId,
-    userId,
-    filterBy,
-    sort,
-    hidden = false,
-  },
-  select,
-  user,
-}: {
-  input: GetAllCommentsSchema;
-  select: TSelect;
-  user?: SessionUser;
-}) => {
-  const skip = page ? (page - 1) * limit : undefined;
-  const isMod = user?.isModerator ?? false;
+type ModelCommentsFilterInput = Pick<GetAllCommentsSchema, 'modelId' | 'userId' | 'hidden'>;
 
+type ViewerExclusionLists = {
+  hiddenUsers: number[];
+  blockedByUsers: number[];
+  blockedUsers: number[];
+};
+
+async function getViewerExclusionLists(
+  user: SessionUser | undefined
+): Promise<ViewerExclusionLists> {
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  return { hiddenUsers, blockedByUsers, blockedUsers };
+}
+
+/**
+ * Where-clause shared by the comment list, the pinned list and the visible count so they can't drift.
+ * Pass `lists` when building more than one where for the same viewer, so the lists are read once.
+ */
+async function getTopLevelCommentsWhere(
+  { modelId, userId, hidden = false }: ModelCommentsFilterInput,
+  user: SessionUser | undefined,
+  { ownerSeesBlockers }: { ownerSeesBlockers: boolean },
+  lists?: ViewerExclusionLists
+): Promise<Prisma.CommentWhereInput> {
+  const isMod = user?.isModerator ?? false;
+
+  const { hiddenUsers, blockedByUsers, blockedUsers } =
+    lists ?? (await getViewerExclusionLists(user));
   // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
   // still see + report engagement on their own content) — drop blockedByUsers only then; keep
   // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
   // viewer actually has a blocked-by list, since that's the only case it can change anything.
   let isContentOwner = false;
-  if (user?.id && blockedByUsers.length) {
+  if (ownerSeesBlockers && user?.id && blockedByUsers.length) {
     const model = await dbRead.model.findUnique({
       where: { id: modelId },
       select: { userId: true },
@@ -75,28 +83,36 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
     isContentOwner,
   });
 
+  return {
+    modelId,
+    userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+    parentId: { equals: null },
+    tosViolation: !isMod ? false : undefined,
+    hidden,
+  };
+}
+
+export const getComments = async <TSelect extends Prisma.CommentSelect>({
+  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, filterBy, sort, ...filter },
+  select,
+  user,
+}: {
+  input: GetAllCommentsSchema;
+  select: TSelect;
+  user?: SessionUser;
+}) => {
+  const skip = page ? (page - 1) * limit : undefined;
+
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const db = await getDbWithoutLag('commentModel', modelId);
+  const where = await getTopLevelCommentsWhere(filter, user, { ownerSeesBlockers: true });
+
+  const db = await getDbWithoutLag('commentModel', filter.modelId);
   const comments = await db.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      modelId,
-      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      parentId: { equals: null },
-      tosViolation: !isMod ? false : undefined,
-      hidden,
-      pinnedAt: null,
-      // OR: [
-      //   {
-      //     userId: { not: user?.id },
-      //     nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
-      //   },
-      //   { userId: user?.id },
-      // ],
-    },
+    where: { ...where, pinnedAt: null },
     orderBy: {
       createdAt:
         sort === ReviewSort.Oldest ? 'asc' : sort === ReviewSort.Newest ? 'desc' : undefined,
@@ -110,7 +126,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 };
 
 export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { modelId, userId, filterBy, hidden = false },
+  input: { filterBy, ...filter },
   select,
   user,
 }: {
@@ -118,27 +134,44 @@ export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
   select: TSelect;
   user?: SessionUser;
 }) => {
-  const isMod = user?.isModerator ?? false;
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+  const where = await getTopLevelCommentsWhere(filter, user, { ownerSeesBlockers: false });
 
-  const db = await getDbWithoutLag('commentModel', modelId);
+  const db = await getDbWithoutLag('commentModel', filter.modelId);
   return db.comment.findMany({
-    where: {
-      modelId,
-      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      parentId: { equals: null },
-      tosViolation: !isMod ? false : undefined,
-      hidden,
-      pinnedAt: { not: null },
-    },
+    where: { ...where, pinnedAt: { not: null } },
     orderBy: { pinnedAt: 'desc' },
     select,
   });
+};
+
+/** How many top-level comments `getComments` + `getPinnedComments` can return to this viewer. */
+export const getVisibleCommentCount = async ({
+  input,
+  user,
+}: {
+  input: GetCommentCountByModelInput;
+  user?: SessionUser;
+}) => {
+  const db = await getDbWithoutLag('commentModel', input.modelId);
+  const lists = await getViewerExclusionLists(user);
+  const [unpinnedWhere, pinnedWhere] = await Promise.all([
+    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: true }, lists),
+    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: false }, lists),
+  ]);
+  // The two wheres differ only when the viewer owns the model AND has a blocked-by list (the
+  // unpinned list then lets the owner see blockers' comments; the pinned list does not). In
+  // every other case they are identical, and `pinnedAt IS NULL` / `IS NOT NULL` partition the
+  // rows, so one COUNT over the shared where equals the sum of the two. Don't fold the
+  // differing case into a single OR: it would bind both `notIn` lists in one statement, and
+  // each is capped just under the bind-parameter limit on its own (boundExcludedUserIds).
+  if (isEqual(unpinnedWhere, pinnedWhere)) return db.comment.count({ where: unpinnedWhere });
+  const [unpinned, pinned] = await Promise.all([
+    db.comment.count({ where: { ...unpinnedWhere, pinnedAt: null } }),
+    db.comment.count({ where: { ...pinnedWhere, pinnedAt: { not: null } } }),
+  ]);
+  return unpinned + pinned;
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
@@ -393,7 +426,7 @@ export async function bulkSetCommentTosViolation({
       .then(() => {
         notified += 1;
       })
-      .catch(() => {});
+      .catch(() => undefined); // best-effort notification; a failure must not fail the action
   }
 
   return { count, notified, rewardedReports };
@@ -422,13 +455,6 @@ export async function bulkDeleteComments({ ids }: { ids: number[] }) {
 
   return { count: result.count };
 }
-
-export const getCommentCountByModel = ({
-  modelId,
-  hidden = false,
-}: GetCommentCountByModelInput) => {
-  return dbRead.comment.count({ where: { modelId, hidden, parentId: null } });
-};
 
 /**
  * The legacy twin of `bulkClearCommentV2TosViolation` — see that function for why an unflag exists at

@@ -126,6 +126,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
@@ -1294,7 +1295,7 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
-type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean };
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean; withheld: boolean };
 
 export const getUserCosmeticsHandler = async ({
   input,
@@ -1320,6 +1321,7 @@ export const getUserCosmeticsHandler = async ({
       entities: inUseCosmeticEntities,
       viewer: ctx.user,
     });
+    const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
     const cosmetics = user.cosmetics.reduce(
       (
@@ -1343,8 +1345,10 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
-          // Also set while a content decoration is placed (that is `inUse`).
-          equipped: !!equippedAt,
+          // Also set while a content decoration is placed (that is `inUse`). A withheld cosmetic still
+          // worn from before withholding unequipped it shows to nobody, so it isn't equipped here either.
+          equipped: !!equippedAt && !withheld.has(rest.id),
+          withheld: withheld.has(rest.id),
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(

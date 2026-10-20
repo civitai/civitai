@@ -26,7 +26,7 @@ vi.mock('~/components/AppBlocks/useChromeListingDetail', () => ({
 }));
 
 import { ChromeRecentAppIcon } from '~/components/AppBlocks/ChromeRecentAppIcon';
-import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIcon';
+import { chromeRecentAppIconSrc } from '~/components/AppBlocks/chromeRecentAppIconSrc';
 import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import {
   getRecentlyOpenedApps,

@@ -20,14 +20,12 @@ const mocks = vi.hoisted(() => {
     replace: vi.fn(),
     trackBranchChoice: vi.fn(),
     hiddenUserIds: new Set<number>(),
-    /** Path read by end chapter id. */
     paths: {} as Record<number, Chapter[]>,
     /** Images by post id; a post absent here has no image this reader can see. */
     imagesByPost: {} as Record<number, Image[]>,
     imagesFetching: false,
     /** Chapter whose path read still shows another chapter's data (keepPreviousData). */
     placeholder: {} as Record<number, number>,
-    /** The `via` the last path read was asked with. */
     pathVia: undefined as number[] | undefined,
     bump: () => undefined as void,
   };

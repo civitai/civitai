@@ -87,6 +87,8 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
+  // The store-listing media's click-to-reveal reads the host flag through the optional hook.
+  useOptionalFeatureFlags: () => ({ appBlocks: true }),
 }));
 
 vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({

@@ -172,7 +172,7 @@ export const storylineRouter = router({
 
   moderateTitle: moderatorProcedure
     .input(moderateStorylineTitleSchema)
-    .mutation(({ input }) => moderateStorylineTitle(input)),
+    .mutation(({ input, ctx }) => moderateStorylineTitle({ ...input, moderatorId: ctx.user.id })),
 
   setTakedown: moderatorProcedure
     .input(setStorylineTakedownSchema)

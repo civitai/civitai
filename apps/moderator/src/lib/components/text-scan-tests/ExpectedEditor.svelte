@@ -9,7 +9,12 @@
     type LabRule,
     type NsfwLevelName,
   } from '$lib/text-scan-lab/types';
-  import { levelRank, type Expected, type FlagLabel } from '$lib/text-scan-tests/expected';
+  import {
+    FLAG_LABELS,
+    levelRank,
+    type Expected,
+    type FlagLabel,
+  } from '$lib/text-scan-tests/expected';
 
   let {
     labels,
@@ -26,7 +31,7 @@
   const UNSCORED = 'unscored';
   const FLAG_TEXT: Record<string, string> = { yes: 'Yes', no: 'No', [UNSCORED]: "Don't score" };
   const flagLabels = $derived(
-    labels.filter((l): l is FlagLabel => l === 'poi' || l === 'minor' || l === 'scam')
+    labels.filter((l): l is FlagLabel => (FLAG_LABELS as readonly LabLabel[]).includes(l))
   );
 
   function setMin(v: string) {

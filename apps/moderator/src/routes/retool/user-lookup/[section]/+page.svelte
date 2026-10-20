@@ -4,7 +4,10 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import { fetchAccountLinks } from '../account-links';
+  import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
+  import LinkedAccountsPanel from '../LinkedAccountsPanel.svelte';
   import BountiesPanel from '../BountiesPanel.svelte';
   import BuzzBalances from '../BuzzBalances.svelte';
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
@@ -32,6 +35,10 @@
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
+  import {
+    CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
+    CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  } from '$lib/creator-score-grant';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -51,6 +58,9 @@
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
+  const links = $derived(
+    browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
+  );
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -86,7 +96,9 @@
         canAct={data.canAct}
         canStrike={data.canStrike}
       />
-      <AddressesPanel {signals} accountId={result.identity.id} />
+      <LinkedAccountsPanel {links} accountId={result.identity.id} />
+      <AddressesPanel {signals} />
+      <AccountHistoryPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel
@@ -181,7 +193,12 @@
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
       {#if data.grants['user.creatorScore.grant']}
-        <CreatorScoreGrantPanel userId={result.identity.id} />
+        <CreatorScoreGrantPanel
+          userId={result.identity.id}
+          maxAmount={data.grants['user.creatorScore.grantLarge']
+            ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+            : CREATOR_SCORE_GRANT_MAX_AMOUNT}
+        />
       {/if}
     {:else if section === 'reports'}
       <ReportsPanel

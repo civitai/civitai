@@ -5,6 +5,7 @@ import type {
   AnswerVoteInput,
 } from './../schema/answer.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { Prisma } from '@prisma/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
@@ -22,6 +23,7 @@ export const getAnswerDetail = async <TSelect extends Prisma.AnswerSelect>({
 };
 
 export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { userId: number }) => {
+  await throwOnBlockedUserContent(data.content, { surface: 'answer' });
   const result = !data.id
     ? await dbWrite.answer.create({
         data: { ...data, userId },

@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
@@ -156,6 +157,7 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
+  await throwOnBlockedUserContent(data.overrideName, { isModerator, surface: 'model-file' });
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
     where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
@@ -203,6 +205,11 @@ export async function updateFile({
     select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
+
+  // Only a changed name: the editor re-sends the stored one with every file save, and scanning it
+  // would leave a file whose name trips a list impossible to edit in any other way.
+  if (inputData.overrideName && inputData.overrideName !== modelFile.overrideName)
+    await throwOnBlockedUserContent(inputData.overrideName, { isModerator, surface: 'model-file' });
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
 

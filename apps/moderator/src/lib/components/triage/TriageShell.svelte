@@ -15,7 +15,8 @@
   import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
-  type QueueForm = { error?: string; subject?: string } | null;
+  // `subject` is a ready-made label for the item a refusal belongs to; `key` is its queue key.
+  type QueueForm = { error?: string; subject?: string; key?: string | number } | null;
   type RowState = {
     id: string;
     selected: boolean;
@@ -231,7 +232,11 @@
   const selectPrompt = $derived(
     `Select ${/^[aeiou]/i.test(itemLabel) ? 'an' : 'a'} ${itemLabel.toLowerCase()} from the queue.`
   );
-  const banner = $derived(failureBanner(form));
+  const banner = $derived(
+    form?.error && !form.subject && form.key !== undefined
+      ? `${itemLabel} #${form.key}: ${form.error}`
+      : failureBanner(form)
+  );
   const firstShown = $derived(offset + 1);
   const lastShown = $derived(offset + rows.length);
 </script>

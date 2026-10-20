@@ -160,18 +160,12 @@ async function orphanedContinuationIds(
 }
 
 /**
- * Takes approved placements down, and in the same transaction turns any storyline
- * chapter one of them added into a tombstone.
+ * Takes approved placements down and, in the same transaction, tombstones any storyline chapter
+ * one of them added. Tombstoned, not deleted: the chapters after it stay reachable, and the row
+ * keeps holding its post, so that post cannot be submitted again.
  *
- * A storyline continuation's approval wrote a chapter; without this, taking the
- * placement down would leave the chapter in the story. Tombstoned, not deleted:
- * the chapters after it stay reachable, and the row keeps holding its post, so
- * the same post cannot be submitted as a continuation again. Other surfaces
- * have no chapter rows, so for them the second write matches nothing.
- *
- * The tombstone is written for every id asked about, not only the rows this
- * call flipped, so a retry after a partial failure still finishes the job; it
- * only ever sets an unset `removedAt`, so a replay changes nothing.
+ * The tombstone is written for every id asked about, not only the rows this call flipped, so a
+ * retry after a partial failure still finishes the job.
  */
 const takeDownApproved = (
   placementIds: number[],

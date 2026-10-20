@@ -45,6 +45,7 @@ import {
   modelTagCompositeSelect,
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
@@ -150,7 +151,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
-    const userCosmeticsRaw = await db.userCosmetic.findMany({
+    const equipped = await db.userCosmetic.findMany({
       where: { userId: { in: goodIds }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
@@ -158,6 +159,12 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
         data: true,
       },
     });
+    // Unequip-on-withhold doesn't reach rows worn before it shipped, so filter on read too.
+    const withheld = await getWithheldCosmeticIds(
+      equipped.map((x) => x.cosmeticId),
+      db
+    );
+    const userCosmeticsRaw = equipped.filter((x) => !withheld.has(x.cosmeticId));
     const results = userCosmeticsRaw.reduce((acc, { userId, cosmeticId, data }) => {
       acc[userId] ??= { userId, cosmetics: [] };
       acc[userId].cosmetics.push({ cosmeticId, data });
@@ -276,6 +283,7 @@ type EntityCosmeticLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
   userData: Prisma.JsonValue;
+  createdById: number | null;
 };
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
@@ -289,19 +297,27 @@ export const cosmeticEntityCaches = Object.fromEntries(
       debounceTime: 1,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData"
+          SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData", c."createdById"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
             AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';
         `;
+        // Unequip-on-withhold doesn't reach content decorated before it shipped, so filter on read too.
+        // Only creator cosmetics can be withheld, so a batch of shop frames costs no extra query.
+        const withheld = await getWithheldCosmeticIds(
+          entityCosmetics.filter((x) => x.createdById != null).map((x) => x.cosmeticId),
+          dbWrite
+        );
         return Object.fromEntries(
-          entityCosmetics.map((x) => [
-            x.equippedToId,
-            // Hack here so we can fix it in the appendFn
-            x as any as ContentDecorationCosmetic,
-          ])
+          entityCosmetics
+            .filter((x) => !withheld.has(x.cosmeticId))
+            .map(({ createdById: _, ...x }) => [
+              x.equippedToId,
+              // Hack here so we can fix it in the appendFn
+              x as any as ContentDecorationCosmetic,
+            ])
         );
       },
       appendFn: async (records) => {

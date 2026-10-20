@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -81,7 +82,7 @@ let pg: PGlite;
 let nextId = 1;
 beforeEach(async () => {
   nextId = 1;
-  pg = new PGlite();
+  pg = await freshPglite();
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   await pg.exec(SCHEMA);
   await pg.exec(`INSERT INTO "User" VALUES (1, 'seeder'), (2, 'copier'), (3, 'third')`);

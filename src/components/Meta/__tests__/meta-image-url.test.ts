@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { Meta } from '~/components/Meta/Meta';
 import { NsfwLevel } from '~/server/common/enums';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 
 vi.mock('next/head', () => ({
   default: ({ children }: { children: ReactNode }) => createElement(Fragment, null, children),
@@ -72,7 +74,7 @@ describe('Meta imageUrl', () => {
   ])(
     'prefers the og endpoint, which rates its own image, over a %s imageUrl',
     (_, imageNsfwLevel) => {
-      const og = 'https://civitai.com/api/og?type=model&id=1';
+      const og = 'https://civitai.com/api/og?type=model&id=1&v=2';
       expect(
         ogImages({ ogEndpoint: '/api/og?type=model&id=1', imageUrl: url, imageNsfwLevel })
       ).toEqual({ og: [og], twitter: [og] });
@@ -88,5 +90,31 @@ describe('Meta imageUrl', () => {
     expect(og).toHaveLength(1);
     expect(og[0]).toContain('pg-key');
     expect(og[0]).not.toContain('r-key');
+  });
+});
+
+// Cloudflare and Discord cache a card by its URL, so a card that would draw differently needs a
+// different og:image URL, and an unchanged one must keep its URL (and its cached render).
+describe('Meta og:image for a model card', () => {
+  const v = (id: number, status: ModelStatus) => ({ id, status });
+  const cardFor = (modelVersions: ReturnType<typeof v>[]) =>
+    ogImages({ ogEndpoint: modelOgEndpoint({ id: 1, modelVersions }) }).og[0];
+
+  it('moves off the URL every card was cached under before versioning', () => {
+    expect(cardFor([v(10, ModelStatus.Published)])).not.toBe(
+      'https://civitai.com/api/og?type=model&id=1'
+    );
+  });
+
+  it('changes when a newer version is published, since the cover comes from it', () => {
+    const before = cardFor([v(10, ModelStatus.Published)]);
+    const after = cardFor([v(11, ModelStatus.Published), v(10, ModelStatus.Published)]);
+    expect(after).not.toBe(before);
+  });
+
+  it('keeps its URL when only a draft version is added', () => {
+    const before = cardFor([v(10, ModelStatus.Published)]);
+    const after = cardFor([v(11, ModelStatus.Draft), v(10, ModelStatus.Published)]);
+    expect(after).toBe(before);
   });
 });

@@ -12,6 +12,7 @@ import type { ModelQueryParams } from '~/components/Model/model.utils';
 import { useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -49,7 +50,9 @@ export function ModelsInfinite({
     ...filters,
     browsingLevel,
   });
-  const salesByModelId = useModelSaleBadges(models.map((m) => m.id));
+  const modelIds = models.map((m) => m.id);
+  const salesByModelId = useModelSaleBadges(modelIds);
+  useEngagedModelsPrefetch(modelIds);
 
   return (
     <ModelCardContextProvider

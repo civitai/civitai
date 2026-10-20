@@ -388,7 +388,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </Group>
       )}
       {profile?.bio && !muted && (
-        <ContentClamp maxHeight={sizeOpts.bio} style={{ wordWrap: 'break-word' }}>
+        <ContentClamp
+          maxHeight={sizeOpts.bio}
+          style={{ wordWrap: 'break-word', whiteSpace: 'pre-line' }}
+        >
           {profile.bio}
         </ContentClamp>
       )}

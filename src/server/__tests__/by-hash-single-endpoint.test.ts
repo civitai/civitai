@@ -66,6 +66,11 @@ describe('by-hash/[hash] endpoint', () => {
     const { promise } = runRequest({ hash: HASH });
     await promise;
 
-    expect(mockResDetails).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+    expect(mockResDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      null,
+      expect.any(Function)
+    );
   });
 });

@@ -56,5 +56,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],
     env: dbEnvFromRootDotenv(),
+    // Builds the empty cluster `freshPglite()` starts every pglite test from.
+    globalSetup: ['./src/test/pglite-template.setup.ts'],
   },
 });

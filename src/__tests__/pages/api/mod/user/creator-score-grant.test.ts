@@ -54,7 +54,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 vi.mock('~/server/services/creator-score-grant.service', () => ({
-  CREATOR_SCORE_GRANT_LIMITS: { maxAmount: 10_000, dailyPerModerator: 20, maxReasonLength: 500 },
+  CREATOR_SCORE_GRANT_LIMITS: {
+    maxAmount: 10_000,
+    largeMaxAmount: 1_000_000,
+    dailyPerModerator: 20,
+    maxReasonLength: 500,
+  },
   grantCreatorScore: (...a: unknown[]) => grant(...a),
   revokeCreatorScoreGrant: (...a: unknown[]) => revoke(...a),
 }));
@@ -148,7 +153,54 @@ describe('grant: the granter is the session, not the body', () => {
       amount: 250,
       reason: 'Contest judge',
       moderatorId: MODERATOR,
+      allowLarge: false,
     });
+  });
+});
+
+describe('grant: over 10,000 needs the large-grant permission as well', () => {
+  const LARGE = { ...GRANT, amount: 100_000 };
+  const holds = (...ids: string[]) =>
+    hasModeratorGrant.mockImplementation(async (_actor, id) => ids.includes(id as string));
+
+  it('refuses 100,000 from a moderator holding only user.creatorScore.grant', async () => {
+    holds('user.creatorScore.grant');
+    const { status, body } = await callGrant(LARGE);
+    expect(status).toBe(403);
+    expect(body).toMatchObject({
+      message: expect.stringContaining('user.creatorScore.grantLarge'),
+    });
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('control: grants 100,000 for a moderator holding both, and lets the service take it', async () => {
+    holds('user.creatorScore.grant', 'user.creatorScore.grantLarge');
+    const { status } = await callGrant(LARGE);
+    expect(status).toBe(200);
+    expect(grant).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 100_000, moderatorId: MODERATOR, allowLarge: true })
+    );
+  });
+
+  // The large permission widens the ordinary one; it does not stand in for it.
+  it('refuses 100,000 from a moderator holding only the large-grant permission', async () => {
+    holds('user.creatorScore.grantLarge');
+    const { status } = await callGrant(LARGE);
+    expect(status).toBe(403);
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it('control: 10,000 from a plain holder grants without the large permission', async () => {
+    holds('user.creatorScore.grant');
+    const { status } = await callGrant({ ...GRANT, amount: 10_000 });
+    expect(status).toBe(200);
+    expect(grant).toHaveBeenCalledWith(expect.objectContaining({ allowLarge: false }));
+  });
+
+  it('refuses 1,000,001 even for a holder of both', async () => {
+    const { status } = await callGrant({ ...GRANT, amount: 1_000_001 });
+    expect(status).toBe(400);
+    expect(grant).not.toHaveBeenCalled();
   });
 });
 
@@ -156,7 +208,7 @@ describe('grant: schema bounds', () => {
   it.each([
     ['amount 0', { amount: 0 }],
     ['a negative amount', { amount: -5 }],
-    ['an amount over the cap', { amount: 10_001 }],
+    ['an amount over the large-grant cap', { amount: 1_000_001 }],
     ['a fractional amount', { amount: 1.5 }],
     ['a blank reason', { reason: '   ' }],
     ['a 501-char reason', { reason: 'x'.repeat(501) }],
@@ -170,6 +222,7 @@ describe('grant: schema bounds', () => {
   it.each([
     ['1 point', { amount: 1 }],
     ['exactly the cap', { amount: 10_000 }],
+    ['exactly the large-grant cap', { amount: 1_000_000 }],
   ])('control: accepts %s', async (_label, patch) => {
     const { status } = await callGrant({ ...GRANT, ...patch });
     expect(status).toBe(200);

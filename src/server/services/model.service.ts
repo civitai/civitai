@@ -2919,6 +2919,41 @@ export async function setModelPoi({
   return result;
 }
 
+const MODEL_FLAG_ACTIVITIES = {
+  poi: ['setPoi', 'unsetPoi'],
+  minor: ['setMinor', 'unsetMinor'],
+  sfwOnly: ['setSfwOnly', 'unsetSfwOnly'],
+} as const;
+
+/**
+ * The moderation-log activities for a moderator's model save: the names the set-flag actions write,
+ * one per flag the save flipped, plus one per property it locked or unlocked. A field the save did
+ * not send is one it did not change.
+ */
+function moderatorFlagActivities(
+  before: { poi: boolean; minor: boolean; sfwOnly: boolean; lockedProperties: string[] },
+  data: { poi?: boolean; minor?: boolean; sfwOnly?: boolean; lockedProperties?: string[] }
+) {
+  const activities: Array<
+    | (typeof MODEL_FLAG_ACTIVITIES)[keyof typeof MODEL_FLAG_ACTIVITIES][number]
+    | `lockProperty:${string}`
+    | `unlockProperty:${string}`
+  > = [];
+  for (const field of ['poi', 'minor', 'sfwOnly'] as const) {
+    const next = data[field];
+    if (next === undefined || next === before[field]) continue;
+    const [set, unset] = MODEL_FLAG_ACTIVITIES[field];
+    activities.push(next ? set : unset);
+  }
+  if (data.lockedProperties) {
+    const prev = new Set(before.lockedProperties);
+    const next = new Set(data.lockedProperties);
+    for (const prop of next) if (!prev.has(prop)) activities.push(`lockProperty:${prop}`);
+    for (const prop of prev) if (!next.has(prop)) activities.push(`unlockProperty:${prop}`);
+  }
+  return activities;
+}
+
 // Model columns the GenerationCoverage view reads that THIS path can change. `poi` and `mode` are
 // read by the view too, but move through applyModelFlagSideEffects and updateModelById, which bust
 // the version caches themselves.
@@ -3211,9 +3246,13 @@ export const upsertModel = async (
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
-        // unchanged", skipping the repair below on exactly the save that needed it.
-        typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
-          ?.type;
+        // unchanged", skipping the repair below on exactly the save that needed it. The flags are
+        // read here for the same reason: the moderation log records what this save replaced.
+        const replaced = await tx.model.findUnique({
+          where: { id },
+          select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
+        });
+        typeBeforeUpdate = replaced?.type;
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -3280,6 +3319,15 @@ export const upsertModel = async (
               : undefined,
           },
         });
+
+        // In the transaction, so a moderator's flag change cannot commit without its log row.
+        if (isModerator && replaced)
+          for (const activity of moderatorFlagActivities(replaced, data))
+            await trackModActivity(
+              userId,
+              { entityType: 'model', entityId: updated.id, activity },
+              tx
+            );
 
         // In the transaction, so a permission change cannot land without the record mods judge merges by.
         if (storedPermissions && permissionsChanged(storedPermissions, data)) {
@@ -4512,12 +4560,19 @@ export const getAllModelsWithCategories = async ({
   userId,
   limit,
   page,
-}: GetModelsWithCategoriesSchema) => {
+  viewer,
+}: GetModelsWithCategoriesSchema & {
+  viewer?: { id?: number; isModerator?: boolean | null } | null;
+}) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
+    // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
+    ...(!viewer?.isModerator && {
+      OR: [{ poi: false }, ...(viewer?.id ? [{ userId: viewer.id }] : [])],
+    }),
   };
 
   const modelCategories = await getCategoryTags('model');

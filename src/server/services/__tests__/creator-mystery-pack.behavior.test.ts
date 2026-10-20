@@ -37,7 +37,13 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
   const raw = pgliteRaw(db as PGlite);
-  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+  return {
+    $executeRaw: raw.executeRaw,
+    $queryRaw: raw.queryRaw,
+    // The item edit reads and writes its row through the shared fakes, inside its lock.
+    cosmetic: dbMock.dbWrite.cosmetic,
+    cosmeticShopItem: dbMock.dbWrite.cosmeticShopItem,
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
@@ -445,6 +451,17 @@ describe('submitting a mystery pack', () => {
       await expect(submit()).rejects.toThrow('at most 5 mystery packs');
     });
 
+    it('a sixth live pack, but not counting a box a moderator archived and left on sale', async () => {
+      const ids = [];
+      for (let i = 0; i < 5; i++) ids.push((await submit()).boxId);
+      await publish(ids[0]);
+      await expect(submit()).rejects.toThrow('at most 5 mystery packs');
+
+      await q(`UPDATE "ItemDefinition" SET status = 'archived' WHERE id = $1`, [ids[0]]);
+      expect((await listingOf(ids[0])).status).toBe('Published');
+      await expect(submit()).resolves.toBeDefined();
+    });
+
     it.each([
       [
         "another creator's item",
@@ -663,6 +680,105 @@ describe('revising a mystery pack', () => {
   });
 });
 
+describe('lowering the price', () => {
+  const lower = (boxId: number, price: number, userId = CREATOR) =>
+    packs.lowerMysteryPackPrice({ userId, boxId, price });
+
+  /** A pack on sale at 800, with its items' shelf prices raised so that price is in bounds. */
+  const onSaleAt800 = async () => {
+    await q(`UPDATE "CosmeticShopItem" SET "unitAmount" = 1000 WHERE "cosmeticId" IS NOT NULL`);
+    const { boxId } = await submit({ price: 800 });
+    await publish(boxId);
+    return boxId;
+  };
+
+  it('applies at once, with no review and no new version, and records it', async () => {
+    const boxId = await onSaleAt800();
+
+    expect(await lower(boxId, 600)).toEqual({ boxId, price: 600 });
+
+    const listing = await listingOf(boxId);
+    expect(listing).toMatchObject({ status: 'Published', unitAmount: 600 });
+    expect(listing.meta.history.at(-1)).toMatchObject({
+      kind: 'edited',
+      userId: CREATOR,
+      changes: [{ field: 'price', from: 800, to: 600 }],
+    });
+    expect((await boxRow(boxId)).version).toBe(2);
+    expect(await revisionsOf(boxId)).toEqual([expect.objectContaining({ status: 'approved' })]);
+  });
+
+  it("holds the creator's lock while it writes, so it can't race an edit", async () => {
+    const boxId = await onSaleAt800();
+    await holder.db.exec(`
+      CREATE TABLE "SeenLock" (n int);
+      CREATE FUNCTION see_lock() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO "SeenLock" SELECT count(*) FROM pg_locks
+        WHERE locktype = 'advisory' AND classid = x'434d0001'::int::oid AND objid = ${CREATOR} AND objsubid = 2;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER see_lock BEFORE UPDATE ON "CosmeticShopItem" FOR EACH ROW EXECUTE FUNCTION see_lock();
+    `);
+    try {
+      await lower(boxId, 600);
+      expect(await q(`SELECT n FROM "SeenLock"`)).toEqual([{ n: 1 }]);
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER see_lock ON "CosmeticShopItem"; DROP FUNCTION see_lock; DROP TABLE "SeenLock";`
+      );
+    }
+  });
+
+  it('refuses a price that is not lower, or under the floor', async () => {
+    const boxId = await onSaleAt800();
+
+    await expect(lower(boxId, 800)).rejects.toThrow('The new price must be below 800');
+    await expect(lower(boxId, 900)).rejects.toThrow('The new price must be below 800');
+    await expect(lower(boxId, 499)).rejects.toThrow('The price is at least 500');
+    await expect(lower(boxId, 500)).resolves.toEqual({ boxId, price: 500 });
+  });
+
+  it('refuses while an edit waits for review', async () => {
+    const boxId = await onSaleAt800();
+    await packs.reviseMysteryPack({
+      userId: CREATOR,
+      countryCode: 'US',
+      stickersEnabled: false,
+      boxId,
+      steepness: 'gentle',
+      tiers: [
+        [1, 2, 3, 4],
+        [5, 6],
+      ],
+      price: 800,
+    });
+
+    await expect(lower(boxId, 600)).rejects.toThrow('has an edit waiting for review');
+    expect((await listingOf(boxId)).unitAmount).toBe(800);
+  });
+
+  it.each(['PendingReview', 'RequestedChanges', 'Rejected', 'Archived'])(
+    'refuses a pack whose listing is %s',
+    async (status) => {
+      const boxId = await onSaleAt800();
+      await q(
+        `UPDATE "CosmeticShopItem" SET status = $2::"CosmeticShopItemStatus" WHERE "itemDefinitionId" = $1`,
+        [boxId, status]
+      );
+      await expect(lower(boxId, 600)).rejects.toThrow(
+        'Only a mystery pack on sale can be repriced'
+      );
+    }
+  );
+
+  it("treats another creator's pack as not found", async () => {
+    const boxId = await onSaleAt800();
+    await expect(lower(boxId, 600, OTHER)).rejects.toThrow('Mystery pack not found');
+    expect((await listingOf(boxId)).unitAmount).toBe(800);
+  });
+});
+
 describe('withdrawing', () => {
   it('a pack that never sold archives it and keeps the fee', async () => {
     const { boxId } = await submit();
@@ -783,7 +899,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it("can't be archived by its creator", async () => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await expect(shop.archiveCreatorShopItem({ userId: CREATOR, id })).rejects.toThrow(refusal);
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
@@ -795,7 +911,7 @@ describe('an item in a mystery pack on sale', () => {
     ['in a platform box', { platform: true }],
   ])('can be archived when %s', async (_label, state) => {
     const id = await inLivePack(state);
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await shop.archiveCreatorShopItem({ userId: CREATOR, id });
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
@@ -808,7 +924,7 @@ describe('an item in a mystery pack on sale', () => {
        VALUES (1, 900, 'Badge 1', $1, 'Published') RETURNING id`,
       [OTHER]
     );
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
       ...ownedItem(resold.id),
       addedById: OTHER,
     } as never);
@@ -819,7 +935,7 @@ describe('an item in a mystery pack on sale', () => {
 
   it("a pack's own listing can't be archived or restored by its creator", async () => {
     const { boxId, shopItemId } = await submit();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
       ...ownedItem(shopItemId),
       cosmeticId: null,
       cosmetic: null,
@@ -837,43 +953,54 @@ describe('an item in a mystery pack on sale', () => {
 
   it('can be archived by a moderator', async () => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await shop.archiveCreatorShopItem({ userId: MOD, isModerator: true, id });
     expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
   });
 
-  it('can be delisted but not re-listed: re-listing sends it back to review', async () => {
+  // Decision: re-listing and a reprice past the review threshold are allowed. Both send the item
+  // back to review, but the pack keeps the values it was approved at; the only cost is that the
+  // item fails the pack checks at the next edit until it is approved again. Don't restore the
+  // refusal without that reason changing.
+  it.each([
+    [
+      'delisted',
+      (id: number) => shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: false }),
+      { listed: false },
+    ],
+    [
+      're-listed, back to review',
+      (id: number) => shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: true }),
+      { listed: true, status: 'PendingReview' },
+    ],
+    [
+      'repriced within the threshold, staying on sale',
+      (id: number) => shop.updateCreatorShopItem({ userId: CREATOR, id, price: 550 }),
+      { status: 'Published' },
+    ],
+    [
+      'repriced past the threshold, back to review',
+      (id: number) => shop.updateCreatorShopItem({ userId: CREATOR, id, price: 1000 }),
+      { status: 'PendingReview' },
+    ],
+  ])('can be %s by its creator', async (_label, act, data) => {
     const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
+
+    await act(id);
+    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining(data) })
+    );
+  });
+
+  it("can't be capped by its creator", async () => {
+    const id = await inLivePack();
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
 
     await expect(
-      shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: true })
+      shop.updateCreatorShopItem({ userId: CREATOR, id, availableQuantity: 10 })
     ).rejects.toThrow(refusal);
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
-
-    await shop.setCreatorShopItemListed({ userId: CREATOR, id, listed: false });
-    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
-  });
-
-  it.each([
-    ['capped', { availableQuantity: 10 }],
-    ['repriced past the review threshold', { price: 1000 }],
-  ])("can't be %s by its creator", async (_label, edit) => {
-    const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
-
-    await expect(shop.updateCreatorShopItem({ userId: CREATOR, id, ...edit })).rejects.toThrow(
-      refusal
-    );
-    expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
-  });
-
-  it('can be repriced within the threshold, which keeps it on sale', async () => {
-    const id = await inLivePack();
-    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(ownedItem(id) as never);
-
-    await shop.updateCreatorShopItem({ userId: CREATOR, id, price: 550 });
-    expect(dbMock.dbWrite.cosmeticShopItem.update).toHaveBeenCalled();
   });
 });

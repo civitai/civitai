@@ -11,7 +11,10 @@ export const CIVITAI_MEMBERSHIP_URL = 'https://civitai.com/pricing';
 // Its server guard redirects non-members to /pricing, so only link members here.
 export const CIVITAI_MANAGE_MEMBERSHIP_URL = 'https://civitai.com/user/membership';
 
-export { CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE } from '@civitai/buzz';
+export {
+  CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE,
+  CREATOR_PROGRAM_MIN_WITHDRAWAL_AMOUNT as MIN_WITHDRAWAL_AMOUNT,
+} from '@civitai/buzz';
 
 export const CREATOR_PROGRAM_PERKS = [
   {

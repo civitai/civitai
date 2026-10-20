@@ -3,10 +3,24 @@
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import PromptSegments from '$lib/components/PromptSegments.svelte';
+  import { IconChevronDown } from '@tabler/icons-svelte';
+  import { LINK_CLASS, dateTime, utcMs } from '$lib/format';
+  import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
+  import { normalisedDiffers, recheckCategories, type RecheckResult } from '$lib/restrictions/recheck';
   import { triggerOrigin, type SourceState } from '$lib/restrictions/origin';
+  import {
+    explainMatches,
+    fieldLabel,
+    hasNoRecordedMatch,
+    highlightSets,
+    humanizeCategory,
+    isMissingFromText,
+    promptTesterHref,
+    sourceLabel,
+  } from '$lib/restrictions/trigger-evidence';
+  import { attemptTimes, formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
   import type {
     RemixSource,
     RestrictionTriggerView,
@@ -15,26 +29,60 @@
   import PromptDiff from './PromptDiff.svelte';
 
   let {
-    trigger,
+    repeats,
     index,
-    total,
     civitaiUrl,
     source,
     sourceState,
     selected,
     onToggle,
+    recheck,
+    recheckStatus,
   }: {
-    trigger: RestrictionTriggerView;
+    /** Adjacent identical attempts; the first stands for all of them. */
+    repeats: RestrictionTriggerView[];
     index: number;
-    total: number;
     civitaiUrl: string;
     source: RemixSource | undefined;
     sourceState: SourceState | undefined;
     selected: boolean;
-    onToggle: (key: string) => void;
+    onToggle: (keys: string[]) => void;
+    /** The current word list run over a prompt that recorded no match; absent when not applicable. */
+    recheck: RecheckResult | undefined;
+    recheckStatus: 'loading' | 'failed' | undefined;
   } = $props();
 
+  const trigger = $derived(repeats[0]);
+  const count = $derived(repeats.length);
+  const span = $derived(repeatSpanMs(repeats));
+  const position = $derived(count > 1 ? `#${index + 1}–${index + count}` : `#${index + 1}`);
+  let timesOpen = $state(false);
+  let promptOriginal = $state(false);
+  let negativeOriginal = $state(false);
   const origin = $derived(triggerOrigin(trigger));
+  const matches = $derived(explainMatches(trigger));
+  const highlights = $derived(highlightSets(matches));
+  const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
+  const testerLink = $derived(
+    trigger.prompt && noRecordedMatch
+      ? promptTesterHref({ prompt: trigger.prompt, negativePrompt: trigger.negativePrompt })
+      : null
+  );
+  const attempts = $derived(attemptTimes(repeats));
+  // Retries land seconds apart, so the minute-precision dateTime would show them all as equal.
+  const timeWithSeconds = (time: string) =>
+    new Date(utcMs(time)).toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  const awaitingRecheck = $derived(
+    noRecordedMatch && trigger.source !== 'External' && !recheck && !!recheckStatus
+  );
+  const recheckCats = $derived(recheck ? recheckCategories(recheck) : []);
+  const categoryName = (cat: string) => HIGHLIGHT_LEGEND.find((l) => l.cat === cat)?.label ?? cat;
+  const legendFor = (segments: { category: string | null }[]) =>
+    HIGHLIGHT_LEGEND.filter((l) => segments.some((seg) => seg.category === l.cat));
   const isRemix = $derived(origin.kind === 'remix' || origin.kind === 'legacy-remix');
   const canDiff = $derived(isRemix && !!source?.prompt && !!trigger.prompt);
   // A diff is only offered when the match was not already settled as identical.
@@ -45,147 +93,294 @@
   const imageFailed = $derived(source !== undefined && failedSourceId === source.id);
 </script>
 
-<TriageCard title="Trigger {index + 1} of {total}">
-  <div class="space-y-4">
-    {#if origin.kind !== 'none'}
-      <div class="space-y-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-base font-medium text-white">{origin.label}</span>
-          {#if (isRemix || origin.kind === 'enhancer') && !origin.verified}
-            <Badge
-              variant="outline"
-              class="text-dark-2"
-              title={isRemix
-                ? 'The client claimed this source; the server could not confirm it.'
-                : 'The server could not confirm this matches an enhancer output.'}
-            >
-              unverified
-            </Badge>
-          {/if}
-          {#if origin.alsoEnhancer}
-            <Badge variant="secondary">
-              {origin.enhancerVerified
-                ? 'also matches a prompt enhancer output'
-                : 'may match a prompt enhancer output (unverified)'}
-            </Badge>
-          {/if}
-        </div>
 
-        {#if origin.incomplete && origin.kind !== 'incomplete'}
-          <p class="m-0 text-sm text-amber-300">
-            Origin lookup incomplete; the evidence shown may be partial.
-          </p>
-        {/if}
+{#snippet textBox(
+  label: string,
+  raw: string,
+  segments: RecheckResult['prompt'] | null | undefined,
+  highlight: string[],
+  original: boolean,
+  toggle: () => void,
+  maxHeight: string
+)}
+  {@const showSegments = !!segments && !original}
+  {@const differs = !!segments && normalisedDiffers(segments, raw)}
+  {@const legend = showSegments ? legendFor(segments) : []}
+  <div class="{maxHeight} overflow-auto rounded-md border border-dark-4 bg-dark-7 px-2 pb-2">
+    <div class="sticky top-0 z-10 flex items-center gap-2 bg-dark-7 py-1">
+      <span class="text-xs font-semibold tracking-wide text-dark-2 uppercase">{label}</span>
+      {#if segments}
+        <span
+          class="text-xs text-dark-2 italic"
+          title={showSegments
+            ? 'Not recorded at block time; highlighted with the current word list'
+            : 'The prompt as submitted'}
+        >
+          {showSegments ? 're-checked' : 'original'}
+        </span>
+      {:else if awaitingRecheck}
+        <span class="text-xs text-dark-2 italic">
+          {recheckStatus === 'failed' ? 're-check failed' : 're-checking…'}
+        </span>
+      {/if}
+      {#if differs}
+        <button type="button" class="ml-auto cursor-pointer text-xs {LINK_CLASS}" onclick={toggle}>
+          {original ? 'show re-checked' : 'show original'}
+        </button>
+      {/if}
+    </div>
+    {#if showSegments}
+      <PromptSegments {segments} />
+    {:else}
+      <HighlightedText text={raw} {highlight} />
+    {/if}
+    {#if legend.length}
+      <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-2">
+        {#each legend as l (l.cat)}
+          <span class="inline-flex items-center gap-1">
+            <span class="inline-block size-3 rounded {HIGHLIGHT_MARK[l.cat]}"></span>
+            {l.label}
+          </span>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
-        {#if isRemix && origin.imageId}
-          <div class="flex flex-wrap items-start gap-3">
-            {#if source}
-              <a
-                href="{civitaiUrl}/images/{source.id}"
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open the source image in a new tab"
-                class="relative block size-28 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7"
-                onerrorcapture={() => (failedSourceId = source?.id ?? null)}
-              >
-                {#if imageFailed}
-                  <span
-                    class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2"
-                  >
-                    Image unavailable
-                  </span>
-                {:else}
-                  <EdgeMedia
-                    src={source.url}
-                    type={source.type}
-                    width={320}
-                    class="size-full object-cover"
-                  />
-                {/if}
-                <Badge variant="secondary" class="absolute top-1 left-1">
-                  {getBrowsingLevelLabel(source.nsfwLevel)}
-                </Badge>
-              </a>
-            {/if}
-            <div class="space-y-1 text-sm">
-              <a
-                href="{civitaiUrl}/images/{origin.imageId}"
-                target="_blank"
-                rel="noreferrer"
-                class={LINK_CLASS}
-              >
-                Open image #{origin.imageId} ↗
-              </a>
-              {#if !source}
-                <p class="m-0 text-dark-2">
-                  {sourceState === 'failed'
-                    ? 'The source image could not be loaded.'
-                    : sourceState === 'not-loaded'
-                      ? 'The source image was not loaded for this page.'
-                      : 'The source image is no longer available.'}
-                </p>
-              {:else if !source.prompt}
-                <p class="m-0 text-dark-2">The source image has no stored prompt to compare.</p>
-              {/if}
-            </div>
-          </div>
+<section class="rounded-xl border border-dark-4 bg-dark-7 p-4">
+  <div class="space-y-3">
+    <header class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span class="text-xs text-dark-2 tabular-nums">{position}</span>
+      {#if origin.kind !== 'none'}
+        <Badge variant="outline">{origin.label}</Badge>
+        {#if (isRemix || origin.kind === 'enhancer') && !origin.verified}
+          <Badge
+            variant="outline"
+            class="text-dark-2"
+            title={isRemix
+              ? 'The client claimed this source; the server could not confirm it.'
+              : 'The server could not confirm this matches an enhancer output.'}
+          >
+            unverified
+          </Badge>
         {/if}
+        {#if origin.alsoEnhancer}
+          <Badge variant="secondary">
+            {origin.enhancerVerified
+              ? 'also matches a prompt enhancer output'
+              : 'may match a prompt enhancer output (unverified)'}
+          </Badge>
+        {/if}
+      {/if}
+      {#if count > 1}
+        <button
+          type="button"
+          class="inline-flex cursor-pointer items-center gap-1 rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 text-xs text-dark-0 transition-colors hover:border-dark-3 hover:bg-dark-5"
+          aria-expanded={timesOpen}
+          title="Identical prompt and input, retried"
+          onclick={() => (timesOpen = !timesOpen)}
+        >
+          {count}×{span !== null ? ` in ${formatSpan(span)}` : ''}
+          <span class="text-dark-2">· {timesOpen ? 'hide' : 'show'} times</span>
+          <IconChevronDown
+            size={14}
+            class="text-dark-2 transition-transform {timesOpen ? 'rotate-180' : ''}"
+          />
+        </button>
+      {/if}
+      {#if trigger.time}
+        <span
+          class="ml-auto text-xs text-dark-2"
+          title={new Date(trigger.time).toISOString()}
+        >
+          {dateTime(trigger.time)}
+        </span>
+      {/if}
+    </header>
 
-        {#if showDiff}
-          <details class="rounded-md border border-dark-4 bg-dark-6 p-3">
-            <summary class="cursor-pointer text-sm text-dark-0">
-              {compared ? 'Source prompt vs submitted' : 'Not compared · view diff'}
-            </summary>
-            {#if !compared}
-              <p class="mt-2 mb-0 text-xs text-dark-2">
-                No automatic comparison was made for this trigger; the diff is shown for review.
-              </p>
-            {/if}
-            <div class="mt-2">
-              <PromptDiff source={source!.prompt!} submitted={trigger.prompt!} />
-            </div>
-          </details>
-        {/if}
+    {#if timesOpen}
+      <div
+        class="grid w-fit grid-cols-[auto_auto_auto] gap-x-4 gap-y-1 rounded-md bg-dark-6 px-3 py-2 text-xs"
+      >
+        {#each attempts as a, i (a.key)}
+          <span class="text-dark-2">Attempt {i + 1}</span>
+          <span class="tabular-nums text-dark-0">{a.time ? timeWithSeconds(a.time) : 'Time not recorded'}</span>
+          <span class="tabular-nums text-dark-2">
+            {i === 0 ? 'first' : a.offset !== null ? `+${formatSpan(a.offset)}` : ''}
+          </span>
+        {/each}
       </div>
     {/if}
 
+    {#if origin.incomplete && origin.kind !== 'incomplete'}
+      <p class="m-0 text-sm text-amber-300">
+        Origin lookup incomplete; the evidence shown may be partial.
+      </p>
+    {/if}
+
+    {#if isRemix && origin.imageId}
+      <div class="flex flex-wrap items-start gap-3">
+        {#if source}
+          <a
+            href="{civitaiUrl}/images/{source.id}"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open the source image in a new tab"
+            class="relative block size-28 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7"
+            onerrorcapture={() => (failedSourceId = source?.id ?? null)}
+          >
+            {#if imageFailed}
+              <span
+                class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2"
+              >
+                Image unavailable
+              </span>
+            {:else}
+              <EdgeMedia
+                src={source.url}
+                type={source.type}
+                width={320}
+                class="size-full object-cover"
+              />
+            {/if}
+            <Badge variant="secondary" class="absolute top-1 left-1">
+              {getBrowsingLevelLabel(source.nsfwLevel)}
+            </Badge>
+          </a>
+        {/if}
+        <div class="space-y-1 text-sm">
+          <a
+            href="{civitaiUrl}/images/{origin.imageId}"
+            target="_blank"
+            rel="noreferrer"
+            class={LINK_CLASS}
+          >
+            Open image #{origin.imageId} ↗
+          </a>
+          {#if !source}
+            <p class="m-0 text-dark-2">
+              {sourceState === 'failed'
+                ? 'The source image could not be loaded.'
+                : sourceState === 'not-loaded'
+                  ? 'The source image was not loaded for this page.'
+                  : 'The source image is no longer available.'}
+            </p>
+          {:else if !source.prompt}
+            <p class="m-0 text-dark-2">The source image has no stored prompt to compare.</p>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    {#if showDiff}
+      <details>
+        <summary class="cursor-pointer text-sm text-dark-0">
+          {compared ? 'Source prompt vs submitted' : 'Not compared · view diff'}
+        </summary>
+        {#if !compared}
+          <p class="mt-2 mb-0 text-xs text-dark-2">
+            No automatic comparison was made for this trigger; the diff is shown for review.
+          </p>
+        {/if}
+        <div class="mt-2">
+          <PromptDiff source={source!.prompt!} submitted={trigger.prompt!} />
+        </div>
+      </details>
+    {/if}
+
     <div class="grid gap-4 md:grid-cols-[14rem_1fr]">
-      <div class="flex flex-col gap-2">
+      <div class="flex flex-col gap-3">
         {#if trigger.category !== 'scam'}
           <div class="flex items-center gap-2">
             <Checkbox
               id="flag-{trigger.key}"
-              bind:checked={() => selected, () => onToggle(trigger.key)}
+              bind:checked={() => selected, () => onToggle(repeats.map((r) => r.key))}
             />
-            <Label for="flag-{trigger.key}" class="font-normal text-dark-0">
-              False positive
-            </Label>
+            <Label for="flag-{trigger.key}" class="font-normal text-dark-0">False positive</Label>
           </div>
         {/if}
 
-        <div class="flex flex-wrap items-center gap-2">
-          {#if trigger.source}<Badge variant="outline">{trigger.source}</Badge>{/if}
-          {#if trigger.category}<Badge variant="destructive">{trigger.category}</Badge>{/if}
+        <div class="space-y-2">
+          <p class="m-0 text-xs font-semibold tracking-wide text-dark-2 uppercase">Why blocked</p>
+          <div class="flex flex-wrap items-center gap-2">
+            {#if trigger.source}<Badge variant="outline">{sourceLabel(trigger.source)}</Badge>{/if}
+            {#if trigger.category && !matches.length}
+              <Badge variant="destructive">{humanizeCategory(trigger.category)}</Badge>
+            {/if}
+          </div>
+
+          {#each matches as m, i (i)}
+            <div class="space-y-1">
+              {#if m.category}
+                <Badge variant="destructive">{humanizeCategory(m.category)}</Badge>
+              {/if}
+              {#if m.text}
+                <p class="m-0 text-xs text-dark-0">
+                  <code class="break-all">"{m.text}"</code>
+                  {m.field ? `in ${fieldLabel(m.field)}` : ''}
+                  {#if isMissingFromText(m, trigger)}
+                    <span class="text-dark-2">(not found in text)</span>
+                  {/if}
+                </p>
+              {/if}
+              {#if m.gateWord}
+                <p class="m-0 text-xs text-dark-2">
+                  with NSFW term <code class="break-all text-dark-0">"{m.gateWord}"</code>
+                </p>
+              {/if}
+              {#if m.regex}
+                <details>
+                  <summary class="cursor-pointer text-xs text-dark-2">Pattern</summary>
+                  <code class="text-xs break-all text-dark-0">{m.regex}</code>
+                </details>
+              {/if}
+            </div>
+          {/each}
+
+          {#if !matches.length && noRecordedMatch}
+            {#if recheck && recheck.wouldBlock}
+              <div class="flex flex-wrap items-center gap-1">
+                <Badge variant="destructive">Would block now</Badge>
+                {#each recheckCats as cat (cat)}
+                  <Badge variant="outline">{categoryName(cat)}</Badge>
+                {/each}
+              </div>
+            {:else if recheck && recheckCats.length}
+              <div class="space-y-1">
+                <Badge variant="outline" class="border-amber-500/40 bg-amber-500/10 text-amber-300">
+                  Would not block now
+                </Badge>
+                <p class="m-0 text-xs text-dark-2">
+                  Only terms that don't block on their own. Likely a warning, not a block.
+                </p>
+              </div>
+            {:else if recheck}
+              <p class="m-0 text-xs text-dark-0">No match with the current word list</p>
+            {:else if awaitingRecheck}
+              <p class="m-0 text-xs text-dark-2">
+                {recheckStatus === 'failed' ? 'Match not recorded; re-check failed.' : 'Re-checking…'}
+              </p>
+            {:else}
+              <p class="m-0 text-xs text-dark-2">Match not recorded at block time.</p>
+            {/if}
+          {/if}
+
+          {#if testerLink}
+            <a
+              href={testerLink.href}
+              title={testerLink.prefilled ? undefined : 'Prompt too long to prefill'}
+              target="_blank"
+              rel="noreferrer"
+              class="text-xs {LINK_CLASS}"
+            >
+              Open in prompt tester ↗
+            </a>
+            {#if !testerLink.prefilled}
+              <span class="text-xs text-dark-2">(too long to prefill)</span>
+            {/if}
+          {/if}
         </div>
 
-        {#if trigger.matchedWord}
-          <div>
-            <p class="m-0 text-xs text-dark-2">Matched text</p>
-            <code class="text-sm break-all text-dark-0">{trigger.matchedWord}</code>
-          </div>
-        {/if}
-        {#if trigger.matchedRegex}
-          <div>
-            <p class="m-0 text-xs text-dark-2">Regex pattern</p>
-            <code class="text-xs break-all text-dark-0">{trigger.matchedRegex}</code>
-          </div>
-        {/if}
-        {#if trigger.time}
-          <div>
-            <p class="m-0 text-xs text-dark-2">Time</p>
-            <p class="m-0 text-xs text-dark-0">{dateTime(trigger.time)}</p>
-          </div>
-        {/if}
         {#if trigger.entityType}
           <div>
             <p class="m-0 text-xs text-dark-2">Entity</p>
@@ -204,63 +399,79 @@
         {/if}
       </div>
 
-      <div class="min-w-0">
+      <div class="min-w-0 space-y-2">
         {#if trigger.reason}
-          <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Verdict</p>
-          <p class="mb-2 text-sm text-dark-0">{trigger.reason}</p>
+          <div>
+            <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Verdict</p>
+            <p class="m-0 text-sm text-dark-0">{trigger.reason}</p>
+          </div>
         {/if}
         {#if trigger.text}
-          <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Scanned text</p>
-          <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <p class="m-0 text-sm break-words whitespace-pre-wrap text-dark-0">{trigger.text}</p>
+          <div>
+            <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">
+              Scanned text
+            </p>
+            <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
+              <p class="m-0 text-sm break-words whitespace-pre-wrap text-dark-0">{trigger.text}</p>
+            </div>
           </div>
         {/if}
         {#if trigger.prompt}
-          <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Prompt</p>
-          <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <HighlightedText text={trigger.prompt} highlight={trigger.matchedWord} />
-          </div>
+          {@render textBox(
+            'Prompt',
+            trigger.prompt,
+            recheck?.prompt,
+            highlights.prompt,
+            promptOriginal,
+            () => (promptOriginal = !promptOriginal),
+            'max-h-[32rem]'
+          )}
         {/if}
         {#if trigger.negativePrompt}
-          <p class="mt-2 mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">
-            Negative
-          </p>
-          <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <HighlightedText text={trigger.negativePrompt} highlight={trigger.matchedWord} />
-          </div>
+          {@render textBox(
+            'Negative',
+            trigger.negativePrompt,
+            recheck?.negativePrompt,
+            highlights.negativePrompt,
+            negativeOriginal,
+            () => (negativeOriginal = !negativeOriginal),
+            'max-h-48'
+          )}
         {/if}
 
         {#if trigger.inputImages?.length || trigger.inputVideo}
-          <p class="mt-3 mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">
-            Input media
-          </p>
-          <div class="flex flex-wrap items-center gap-2">
-            {#each trigger.inputImages ?? [] as url, i (`${i}:${url}`)}
-              <a href={url} target="_blank" rel="noreferrer">
-                <img
-                  src={url}
-                  alt="Input"
-                  class="size-24 rounded border border-dark-4 object-cover"
-                />
-              </a>
-            {/each}
-            {#if trigger.inputVideo}
-              <a
-                href={trigger.inputVideo}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open the input video in a new tab"
-              >
-                <video
-                  src={trigger.inputVideo}
-                  muted
-                  class="size-24 rounded border border-dark-4 object-cover"
-                ></video>
-              </a>
-            {/if}
+          <div>
+            <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">
+              Input media
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              {#each trigger.inputImages ?? [] as url, i (`${i}:${url}`)}
+                <a href={url} target="_blank" rel="noreferrer">
+                  <img
+                    src={url}
+                    alt="Input"
+                    class="size-24 rounded border border-dark-4 object-cover"
+                  />
+                </a>
+              {/each}
+              {#if trigger.inputVideo}
+                <a
+                  href={trigger.inputVideo}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open the input video in a new tab"
+                >
+                  <video
+                    src={trigger.inputVideo}
+                    muted
+                    class="size-24 rounded border border-dark-4 object-cover"
+                  ></video>
+                </a>
+              {/if}
+            </div>
           </div>
         {/if}
       </div>
     </div>
   </div>
-</TriageCard>
+</section>

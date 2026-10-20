@@ -1,9 +1,21 @@
 import { cachedFactory, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { SDXL_FULL_AR, SEED, resourcesDef, sliderDef, type ResourceData } from '../defs';
-import { familyScope, makeTextBlock, modelIdOf, perModelScope, type FamilyExt } from '../shared';
+import {
+  familyScope,
+  makeTextBlock,
+  modelIdOf,
+  perModelScope,
+  versionModeOf,
+  type FamilyExt,
+} from '../shared';
 
-/** Neither variant is distilled (both are CFG models), so SFT exposes steps, CFG and negative prompt too. */
+/**
+ * Base and SFT share one ecosystem (their LoRAs are interchangeable), so the
+ * checkpoint picker is the only split and the orchestrator model derives from the
+ * version id. Neither is distilled (both are CFG models), so SFT exposes steps,
+ * CFG and negative prompt too.
+ */
 
 export type MossImageModel = 'sft' | 'base';
 
@@ -37,15 +49,10 @@ const mossImageTurboToggleVersionIds: Record<MossImageModel, number> = {
   sft: 3411385,
   base: 3413516,
 };
-const mossImageBaseModels: Record<MossImageModel, string> = {
-  sft: 'MOSS Image',
-  base: 'MOSS Image Base',
-};
-
 /** A fresh object each call: state and the server's corrected value must not share one. */
 const mossImageTurboToggleLora = (model: MossImageModel): ResourceData => ({
   id: mossImageTurboToggleVersionIds[model],
-  baseModel: mossImageBaseModels[model],
+  baseModel: 'MOSS Image',
   model: { id: MOSS_IMAGE_TURBO_LORA_MODEL_ID, type: 'LORA' } as ResourceData['model'],
   strength: 1,
 });
@@ -67,8 +74,8 @@ const mossImageTurboLoraOf = (resources: readonly unknown[] | undefined) =>
 export const hasMossImageTurboLora = (resources: readonly unknown[] | undefined) =>
   mossImageTurboLoraOf(resources) != null;
 
-export const mossImageModelOf = (ecosystem: string): MossImageModel =>
-  ecosystem === 'MossImage_base' ? 'base' : 'sft';
+/** One lookup for the graph AND the handler — the lanes cannot drift. */
+export const mossImageModelOf = versionModeOf(mossImageVersionIds, 'sft');
 
 /**
  * What the Turbo toggle writes: `resources` with and without the turbo LoRA.
@@ -89,10 +96,10 @@ type ResourcesTurboMeta = {
  */
 const mossImageResources = cachedFactory(function mossImageResources(
   ecosystem: string,
+  model: MossImageModel,
   limit: number
 ) {
   const def = resourcesDef({ ecosystem, limit });
-  const model = mossImageModelOf(ecosystem);
   const toggleVersionId = mossImageTurboToggleVersionIds[model];
   const isOtherCheckpointTurboLora = (r: ResourceData) => {
     const forModel = mossImageTurboLoraVersions[r.id]?.model;
@@ -160,7 +167,9 @@ export const mossImage = defineGraph<FamilyExt>({ scope: familyScope })
       versions: { options: mossImageVersionOptions },
     })
   )
-  .field('resources', ({ _ext }) => mossImageResources(_ext.ecosystem, _ext.limits.maxResources))
+  .field('resources', ({ _ext, model }) =>
+    mossImageResources(_ext.ecosystem, mossImageModelOf(model), _ext.limits.maxResources)
+  )
   .field('aspectRatio', SDXL_FULL_AR)
   // One turbo CFG for every turbo version, so a remembered CFG survives a version swap
   .field(

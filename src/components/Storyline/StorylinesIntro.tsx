@@ -28,7 +28,6 @@ const steps = [
   },
 ] as const;
 
-/** Shown at the top of the storylines section to everyone until they dismiss it. */
 export function StorylinesIntro() {
   const currentUser = useCurrentUser();
   const [dismissed, dismiss] = useIntroDismissed(STORYLINES_INTRO_DISMISSED_KEY);

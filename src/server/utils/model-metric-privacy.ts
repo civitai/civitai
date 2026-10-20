@@ -167,6 +167,17 @@ export function pickMetaMetricPrivacy(meta: unknown): MetaPrivacyFlags {
 }
 
 /** Reads the user-default hide flags off a User.settings JSON blob. */
+/**
+ * Only a moderator editing someone else's model is served the owner's defaults: the owner's are in
+ * their own session, and anyone else must not see them.
+ */
+export function needsOwnerMetricPrivacyDefaults(
+  viewer: { id: number; isModerator?: boolean | null } | null | undefined,
+  ownerId: number
+): boolean {
+  return !!viewer?.isModerator && viewer.id !== ownerId;
+}
+
 export function getUserMetricPrivacyDefaults(settings: unknown): HiddenModelMetrics {
   const s = (settings ?? {}) as UserPrivacyDefaults;
   return {

@@ -159,7 +159,14 @@ const makeTx = (onLock: () => Promise<void>) => ({
       world.log.push('select:definition:share');
       const row = definition(values[0] as number);
       return row
-        ? [{ id: row.id, type: row.type, version: (row as { version?: number }).version }]
+        ? [
+            {
+              id: row.id,
+              type: row.type,
+              version: (row as { version?: number }).version,
+              sellerId: (row as { sellerId?: number }).sellerId ?? null,
+            },
+          ]
         : [];
     }
     if (!sql.includes('"Item"') || !sql.includes('FOR UPDATE'))
@@ -738,6 +745,13 @@ describe('refusals keep the box', () => {
     await expect(open()).rejects.toThrow('not yours');
     expect(world.owned).toEqual([]);
     expect(world.items).toHaveLength(1);
+  });
+
+  it("a creator's mystery pack, before anything is drawn", async () => {
+    (world.box as { sellerId?: number }).sellerId = 10;
+    await expect(open()).rejects.toThrow('cannot be opened');
+    nothingOpened();
+    expect(mocks.randomInt).not.toHaveBeenCalled();
   });
 
   it('an item that is not a box, before anything is drawn', async () => {

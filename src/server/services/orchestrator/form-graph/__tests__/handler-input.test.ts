@@ -189,6 +189,25 @@ describe('krea3.handler', () => {
     });
     expect(firstInput(create)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
   });
+
+  it('sends Ultra only when krea3Ultra is on', async () => {
+    const on = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(on)).toMatchObject({ thinkingMode: 'ultra' });
+
+    const off = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      thinkingMode: 'ultra',
+    });
+    expect(firstInput(off)).toMatchObject({ thinkingMode: 'instant' });
+  });
 });
 
 describe('ideogram.handler', () => {
@@ -374,6 +393,21 @@ describe('moss-image.handler', () => {
       quantity: 2,
     });
     expect((firstInput(steps) as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+    expect(firstInput(steps)).not.toHaveProperty('diffusionModel');
+  });
+
+  it('a creator checkpoint reaches the orchestrator as diffusionModel', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage',
+      prompt: 'a cat',
+      model: { id: 424242, baseModel: 'MOSS Image', model: { type: 'Checkpoint' } },
+    });
+    expect(firstInput(steps)).toMatchObject({
+      ecosystem: 'mossImage',
+      model: 'sft',
+      diffusionModel: 'urn:air:test:424242',
+    });
   });
 
   // Turbo (DMD) LoRAs run at 8 steps, CFG 1; the floor sits below that for 4-step distills.
@@ -389,10 +423,11 @@ describe('moss-image.handler', () => {
     expect(firstInput(steps)).toMatchObject({ model: 'sft', steps: n, cfgScale: 1 });
   });
 
-  it('the Base ecosystem selects the base model and keeps the graph defaults', async () => {
+  it('the Base version selects the base model and keeps the graph defaults', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage_base',
+      ecosystem: 'MossImage',
+      model: { id: 3409868, baseModel: 'MOSS Image' },
       prompt: 'a cat',
     });
     expect(firstInput(steps)).toMatchObject({
@@ -401,6 +436,7 @@ describe('moss-image.handler', () => {
       steps: 25,
       cfgScale: 3,
     });
+    expect(firstInput(steps)).not.toHaveProperty('diffusionModel');
   });
 });
 

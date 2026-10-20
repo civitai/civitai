@@ -2276,6 +2276,42 @@ model TextScanPrompt {
   @@index([key, id(sort: Desc)])
 }
 
+enum TextScanHoldStatus {
+  Pending
+  Dismissed
+  Confirmed
+}
+
+// A text-scan verdict held for a moderator; nothing else acts on it. A partial index on pending rows
+// lives in migration 20261016150000_text_scan_hold (Prisma cannot model it).
+model TextScanHold {
+  id           Int                @id @default(autoincrement())
+  entityType   String
+  entityId     Int
+  label        String
+  textHash     String
+  status       TextScanHoldStatus @default(Pending)
+  /// Content author. A plain column so the hold keeps it after the account is deleted.
+  userId       Int?
+  /// The text as composed for the scan.
+  text         String
+  reason       String
+  workflowId   String?
+  promptId     Int?
+  contentAt    DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  decidedAt    DateTime?
+  decidedById  Int?
+  decisionNote String?
+  hiddenAt     DateTime?
+  restoredAt   DateTime?
+  meta         Json?
+
+  @@unique([entityType, entityId, label, textHash])
+  @@index([status, createdAt])
+}
+
 enum ImageEngagementType {
   Favorite
   Hide
@@ -5444,6 +5480,7 @@ model CosmeticShopItem {
   resales   UserCosmeticShopItemResale[]
   members   CosmeticShopItemCosmetic[]
 
+  @@index([cosmeticId])
   @@index([itemDefinitionId])
 }
 
@@ -10573,4 +10610,46 @@ model Prize {
 
   @@index([userId])
   @@index([sourceType, sourceId])
+}
+
+// A Creator Program creator whose pending payout for a period is held for review before settlement.
+// `status`: open | escalated | cleared | withheld.
+model CreatorProgramPayoutReview {
+  id                Int       @id @default(autoincrement())
+  period            String // 'YYYY-MM', the banking month
+  userId            Int
+  status            String    @default("open")
+  hold              Boolean   @default(true)
+  signals           String[]
+  payoutCents       Int
+  evidence          Json      @default("{}")
+  firstFlaggedAt    DateTime  @default(now())
+  lastEvaluatedAt   DateTime  @default(now())
+  evaluations       Int       @default(1)
+  decidedAt         DateTime?
+  decidedBy         String?
+  decisionNote      String?
+  askRef            String?
+  // Bumped by every write, decisions and re-runs alike; a decision must name the version it read.
+  version           Int       @default(1)
+  // Append-only: one entry per decision or reopen.
+  decisions         Json      @default("[]")
+
+  @@unique([period, userId])
+  @@index([userId])
+  @@index([status])
+}
+
+// One run of the pre-payout review. A finished run with no `error` is what settlement checks for.
+model CreatorProgramPayoutReviewRun {
+  id             Int       @id @default(autoincrement())
+  period         String
+  startedAt      DateTime
+  finishedAt     DateTime?
+  creditedCount  Int       @default(0)
+  evaluatedCount Int       @default(0)
+  flaggedCount   Int       @default(0)
+  error          String?
+
+  @@index([period, startedAt])
 }

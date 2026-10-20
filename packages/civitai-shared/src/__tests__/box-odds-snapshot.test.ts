@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { boxOddsSnapshotSchema, snapshotOfLiveBox, snapshotsMatch } from '../box-odds-snapshot';
+import {
+  boxOddsSnapshotSchema,
+  diffBoxSnapshots,
+  snapshotOfLiveBox,
+  snapshotsMatch,
+} from '../box-odds-snapshot';
 
 const TIERS = [
   { id: 1, key: 'common', name: 'Common', weight: 80, sortOrder: 0 },
@@ -55,5 +60,69 @@ describe('snapshotsMatch: a price edit is not an odds change', () => {
       ),
     };
     expect(snapshotsMatch(live, stored)).toBe(false);
+  });
+});
+
+describe('diffBoxSnapshots', () => {
+  const live = {
+    tiers: [
+      { key: 'common', name: 'Common', weight: 8075 },
+      { key: 'rare', name: 'Rare', weight: 1925 },
+    ],
+    contents: [
+      { tier: 'common', cosmeticId: 1 },
+      { tier: 'common', cosmeticId: 2 },
+      { tier: 'rare', cosmeticId: 3 },
+    ],
+    price: 600,
+  };
+
+  it('reports nothing for an unchanged box', () => {
+    expect(diffBoxSnapshots(live, live)).toEqual({
+      added: [],
+      removed: [],
+      moved: [],
+      tiers: [],
+      price: null,
+    });
+  });
+
+  it('names each added, removed and moved item, every weight change and the price change', () => {
+    const next = {
+      tiers: [
+        { key: 'common', name: 'Common', weight: 7000 },
+        { key: 'rare', name: 'Rare', weight: 2500 },
+        { key: 'legendary', name: 'Legendary', weight: 500 },
+      ],
+      contents: [
+        { tier: 'common', cosmeticId: 1 },
+        { tier: 'legendary', cosmeticId: 2 },
+        { tier: 'rare', cosmeticId: 4 },
+      ],
+      price: 550,
+    };
+    expect(diffBoxSnapshots(live, next)).toEqual({
+      added: [{ tier: 'rare', cosmeticId: 4 }],
+      removed: [{ tier: 'rare', cosmeticId: 3 }],
+      moved: [{ cosmeticId: 2, from: 'common', to: 'legendary' }],
+      tiers: [
+        { key: 'common', name: 'Common', before: 8075, after: 7000 },
+        { key: 'rare', name: 'Rare', before: 1925, after: 2500 },
+        { key: 'legendary', name: 'Legendary', before: null, after: 500 },
+      ],
+      price: { before: 600, after: 550 },
+    });
+  });
+
+  it('reports a tier the edit drops, and refused weights as null', () => {
+    const next = {
+      tiers: [{ key: 'common', name: 'Common', weight: null }],
+      contents: live.contents.map((c) => ({ ...c, tier: 'common' })),
+      price: 600,
+    };
+    expect(diffBoxSnapshots(live, next).tiers).toEqual([
+      { key: 'common', name: 'Common', before: 8075, after: null },
+      { key: 'rare', name: 'Rare', before: 1925, after: null },
+    ]);
   });
 });

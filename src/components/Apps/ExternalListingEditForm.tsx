@@ -709,6 +709,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 onRepull={autofill.repull}
                 repullLoading={autofill.loading}
                 initial={edit.assets}
+                // Set through `setRedMedia` against the same effective target as every other
+                // asset here (the revision for an approved listing), so Save submits it too.
+                redMedia={edit.redMedia}
                 allowRemove
                 onAssetMutated={() => setAssetsDirty(true)}
               />

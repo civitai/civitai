@@ -27,6 +27,7 @@
     blockedIds,
     maxSelection,
     bare = false,
+    keepOffScreen = false,
   }: {
     selected: SvelteSet<string | number>;
     /** Every id currently on screen, for the select-all helpers. */
@@ -47,6 +48,10 @@
     maxSelection?: number;
     /** No box of its own, for a host that folds the bar into its own toolbar card. */
     bare?: boolean;
+    /** Keep ids the moderator paged past, so one removal can span pages. Only for a host with no
+     *  client-side filter and one subject per page set; it must clear the selection on a batch change
+     *  itself and pass `blockedIds` covering every page shown. */
+    keepOffScreen?: boolean;
   } = $props();
 
   // Scopes the strike checkbox's `for`/`id` pair — this bar is mounted on four routes.
@@ -59,17 +64,20 @@
   const unblockedSelected = $derived(
     blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
   );
-  // 🔴 A selection only ever holds what is on screen. The removal posts ids, and a selection used to
-  // outlive the screen two ways — a client-side filter hid an image, or the moderator paged past it —
-  // so a bulk action could reach images nobody was looking at. Whatever leaves `selectable` leaves
-  // the selection; a range beyond one page is shift-click on each page, acted on page by page.
-  // `.pre`: before the DOM updates, so the count and "Remove N" never show a frame of what left.
+  // 🔴 The removal posts ids, so by default an id that leaves `selectable` (a client-side filter, a
+  // page turn) leaves the selection: a bulk action must not reach images nobody is looking at. `.pre`
+  // so the count and "Remove N" never show a frame of what left.
+  const visible = $derived(new Set(selectable));
   $effect.pre(() => {
-    const visible = new Set(selectable);
+    if (keepOffScreen) return;
+    const onScreen = visible;
     untrack(() => {
-      for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
+      for (const id of [...selected]) if (!onScreen.has(id)) selected.delete(id);
     });
   });
+  const offScreen = $derived(
+    keepOffScreen ? [...selected].filter((id) => !visible.has(id)).length : 0
+  );
 
   let tosReason = $state<string | null>(null);
   let reason = $state('');
@@ -135,6 +143,9 @@
         <span class="font-semibold text-white">{num(count)}</span> selected
         {#if ownerCount > 1}
           <span class="text-amber-300">· spanning {ownerCount} accounts</span>
+        {/if}
+        {#if offScreen > 0}
+          <span class="text-amber-300">· {num(offScreen)} on other pages</span>
         {/if}
       {/if}
     </p>

@@ -155,7 +155,7 @@ Environment is up.
 
   app          http://localhost:3000   (once next dev finishes compiling)
   minio        http://localhost:9001   minioadmin / minioadmin
-  maildev      http://localhost:1080
+  mailpit      http://localhost:1080
   postgres     localhost:15432         psql -h localhost -p 15432 -U postgres civitai
   meilisearch  http://localhost:7700
 

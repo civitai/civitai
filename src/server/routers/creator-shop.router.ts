@@ -16,12 +16,14 @@ import {
   getShopItemResellersSchema,
   reorderResoldItemsSchema,
   resoldItemSchema,
+  lowerMysteryPackPriceSchema,
   reviseMysteryPackSchema,
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
   submitCreatorShopPackSchema,
   submitMysteryPackSchema,
+  refundShopPurchasesSchema,
   takedownCosmeticShopItemSchema,
   updateCreatorShopPackSchema,
   updateCreatorShopItemSchema,
@@ -60,11 +62,14 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { refundShopPurchases } from '~/server/services/creator-shop-withdrawn-refund.service';
 import {
+  lowerMysteryPackPrice,
   reviseMysteryPack,
   submitMysteryPack,
   withdrawMysteryPackRevision,
 } from '~/server/services/creator-mystery-pack.service';
+import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
@@ -179,6 +184,12 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       assertMysteryPacksEnabled(ctx.features);
       return withdrawMysteryPackRevision({ ...input, userId: ctx.user.id });
+    }),
+  lowerMysteryPackPrice: guardedProcedure
+    .input(lowerMysteryPackPriceSchema)
+    .mutation(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return lowerMysteryPackPrice({ ...input, userId: ctx.user.id });
     }),
   // #endregion
   updateItem: creatorShopProcedure
@@ -334,14 +345,30 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('cosmeticSimilarity'))
     .input(getSimilarCosmeticsSchema)
     .query(({ input }) => getSimilarCosmetics(input)),
+  getMysteryPackReview: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getByIdSchema)
+    .query(({ input, ctx }) =>
+      getMysteryPackReview({ listingId: input.id, stickersEnabled: ctx.features.stickers })
+    ),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
-    .mutation(({ input, ctx }) => reviewCreatorShopItem({ ...input, reviewerId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      reviewCreatorShopItem({
+        ...input,
+        reviewerId: ctx.user.id,
+        stickersEnabled: ctx.features.stickers,
+      })
+    ),
   // Deliberately not flag-gated: takedowns cover official shop items too, and
   // pulling infringing content can't wait on the Creator Shop rollout.
   takedownItem: moderatorProcedure
     .input(takedownCosmeticShopItemSchema)
     .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
+  // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout.
+  refundPurchases: moderatorProcedure
+    .input(refundShopPurchasesSchema)
+    .mutation(({ input, ctx }) => refundShopPurchases({ ...input, moderatorId: ctx.user.id })),
   // #endregion
 });

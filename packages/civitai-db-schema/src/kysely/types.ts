@@ -50,6 +50,7 @@ import type {
   MediaType,
   BlockImageReason,
   EntityModerationStatus,
+  TextScanHoldStatus,
   ImageEngagementType,
   ImageOnModelType,
   TagTarget,
@@ -2700,6 +2701,35 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorProgramPayoutReview = {
+  id: Generated<number>;
+  period: string;
+  userId: number;
+  status: Generated<string>;
+  hold: Generated<boolean>;
+  signals: string[];
+  payoutCents: number;
+  evidence: Generated<unknown>;
+  firstFlaggedAt: Generated<Timestamp>;
+  lastEvaluatedAt: Generated<Timestamp>;
+  evaluations: Generated<number>;
+  decidedAt: Timestamp | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  version: Generated<number>;
+  decisions: Generated<unknown>;
+};
+export type CreatorProgramPayoutReviewRun = {
+  id: Generated<number>;
+  period: string;
+  startedAt: Timestamp;
+  finishedAt: Timestamp | null;
+  creditedCount: Generated<number>;
+  evaluatedCount: Generated<number>;
+  flaggedCount: Generated<number>;
+  error: string | null;
+};
 export type CreatorScoreGrant = {
   id: Generated<number>;
   userId: number;
@@ -5348,6 +5378,34 @@ export type Technique = {
   enabled: Generated<boolean>;
   type: TechniqueType;
 };
+export type TextScanHold = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  label: string;
+  textHash: string;
+  status: Generated<TextScanHoldStatus>;
+  /**
+   * Content author. A plain column so the hold keeps it after the account is deleted.
+   */
+  userId: number | null;
+  /**
+   * The text as composed for the scan.
+   */
+  text: string;
+  reason: string;
+  workflowId: string | null;
+  promptId: number | null;
+  contentAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  decidedAt: Timestamp | null;
+  decidedById: number | null;
+  decisionNote: string | null;
+  hiddenAt: Timestamp | null;
+  restoredAt: Timestamp | null;
+  meta: unknown | null;
+};
 export type TextScanPrompt = {
   id: Generated<number>;
   key: string;
@@ -5955,6 +6013,8 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorProgramPayoutReview: CreatorProgramPayoutReview;
+  CreatorProgramPayoutReviewRun: CreatorProgramPayoutReviewRun;
   CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
@@ -6158,6 +6218,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanHold: TextScanHold;
   TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;

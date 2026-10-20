@@ -515,11 +515,14 @@ browser as user 1290051, not by reading the code.
       selection; a new search does not carry it over. Two consequences handled: `Select all`
       counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
       filtering to ToS'd before acting. **2026-10-16:** a selection holds only what is on screen —
-      `ImageActionBar` drops whatever a filter hides or a page turn moves off, everywhere (the owner's
-      rule: "The user should only ever be able to select what is visually on the screen"). It replaced
-      the "**N selected but not on screen**" warning and the cross-page selection (mod-studio-feedback
-      2026-08-21, "Turning the page threw the selection away"; 2026-08-24, 566b09c08f); a range is
-      shift-click, page by page.
+      `ImageActionBar` drops whatever a filter hides or a page turn moves off (the owner's rule: "The
+      user should only ever be able to select what is visually on the screen"). This replaced the
+      "**N selected but not on screen**" warning and the cross-page selection (mod-studio-feedback
+      2026-08-21, "Turning the page threw the selection away"; 2026-08-24, 566b09c08f). **Reopened
+      2026-10-19 for the two hosts that page one subject's images:** User Reports (`/reports/user`,
+      images tab) and the collection report queue pass `keepOffScreen`, so their selection survives
+      page turns and the bar shows "N on other pages". Bulk Image Manager and the other grids still
+      prune to what is on screen; there a range is shift-click, page by page.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and

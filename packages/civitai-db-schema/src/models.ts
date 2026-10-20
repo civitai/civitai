@@ -90,6 +90,8 @@ export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
 
 export type EntityModerationStatus = "Pending" | "Succeeded" | "Failed" | "Expired" | "Canceled";
 
+export type TextScanHoldStatus = "Pending" | "Dismissed" | "Confirmed";
+
 export type ImageEngagementType = "Favorite" | "Hide";
 
 export type ImageOnModelType = "Example" | "Training";
@@ -1773,6 +1775,29 @@ export interface TextScanPrompt {
   note: string | null;
   createdById: number | null;
   createdAt: Date;
+}
+
+export interface TextScanHold {
+  id: number;
+  entityType: string;
+  entityId: number;
+  label: string;
+  textHash: string;
+  status: TextScanHoldStatus;
+  userId: number | null;
+  text: string;
+  reason: string;
+  workflowId: string | null;
+  promptId: number | null;
+  contentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  decidedAt: Date | null;
+  decidedById: number | null;
+  decisionNote: string | null;
+  hiddenAt: Date | null;
+  restoredAt: Date | null;
+  meta: JsonValue | null;
 }
 
 export interface ImageEngagement {
@@ -6682,6 +6707,37 @@ export interface Prize {
   autoClaimed: boolean;
   paidAt: Date | null;
   voidedAt: Date | null;
+}
+
+export interface CreatorProgramPayoutReview {
+  id: number;
+  period: string;
+  userId: number;
+  status: string;
+  hold: boolean;
+  signals: string[];
+  payoutCents: number;
+  evidence: JsonValue;
+  firstFlaggedAt: Date;
+  lastEvaluatedAt: Date;
+  evaluations: number;
+  decidedAt: Date | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  version: number;
+  decisions: JsonValue;
+}
+
+export interface CreatorProgramPayoutReviewRun {
+  id: number;
+  period: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  creditedCount: number;
+  evaluatedCount: number;
+  flaggedCount: number;
+  error: string | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

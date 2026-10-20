@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   bustAppListingCatalogCache,
   listingQueueFacts,
@@ -58,7 +59,15 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
-import { applyListingMediaSplitDecision } from '~/server/services/blocks/listing-media-split.service';
+import {
+  applyListingMediaSplitDecision,
+  applyRevisionRedSlots,
+  cloneListingRedSlots,
+  readListingRedMediaManyForRender,
+  readListingRedSlotAssets,
+  readListingRedSlots,
+  type ListingRedMediaImages,
+} from '~/server/services/blocks/listing-media-split.service';
 import {
   ratingFloorAssets,
   type ListingMediaSplitDecision,
@@ -164,6 +173,24 @@ function slugTakenError(slug: string): TRPCError {
  */
 export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
 
+/**
+ * The author-written text a submission or patch carries. Tagline and description edits on a
+ * live listing apply in place without review, so this is scanned on every path that writes them.
+ */
+function listingAuthorText(
+  fields: Pick<UpdateListingPatch, 'name' | 'tagline' | 'description' | 'betaMessage'> & {
+    scopeJustifications?: Record<string, string> | null;
+  }
+) {
+  return [
+    fields.name,
+    fields.tagline,
+    fields.description,
+    fields.betaMessage,
+    ...Object.values(fields.scopeJustifications ?? {}),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // submitExternalListing (author).
 // ---------------------------------------------------------------------------
@@ -220,6 +247,11 @@ export async function submitExternalListing(opts: {
   isModerator?: boolean;
 }): Promise<SubmitExternalListingResult> {
   const { input, userId, isModerator = false } = opts;
+
+  await throwOnBlockedUserContent([input.slug, input.changelog, ...listingAuthorText(input)], {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
@@ -1389,6 +1421,11 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before any branch below can open a shadow revision, for the reason the hoists below give.
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
   // and DERIVE the requested-scope snapshot from it (server-authoritative — a
@@ -1645,7 +1682,8 @@ export type BeginListingRevisionResult = { shadowId: string; created: boolean };
  * shadow). Otherwise the approved parent is cloned into a hidden DRAFT AppListing
  * — scalars copied, appBlockId NULL, a synthetic unique slug (`rev-<ulid>`, never
  * public), revisionOfId = parentId, owned by the parent's owner — and each of the
- * parent's screenshots is copied (imageId/order/caption). The author then edits
+ * parent's screenshots is copied (imageId/order/caption), as are its civitai.red icon /
+ * cover overrides (`cloneListingRedSlots`). The author then edits
  * the shadow's ASSETS via the EXISTING setIcon/setCover/addScreenshot procs by
  * passing the shadow id (no new asset procs).
  */
@@ -1767,6 +1805,10 @@ export async function beginListingRevision(opts: {
           ),
         });
       }
+      // 🔴 The civitai.red icon / cover overrides are carried onto the shadow too, for the same
+      // reason as the source link above: `applyApprovedRevision` applies the shadow's overrides
+      // to the parent, so a revision that does not touch them must hold them already.
+      await cloneListingRedSlots(tx, { fromListingId: listingId, toListingId: shadowId });
     });
   } catch (err) {
     // A concurrent creator committed its shadow between our in-tx read-check and
@@ -1815,6 +1857,7 @@ export async function submitListingRevision(opts: {
 }): Promise<SubmitListingRevisionResult> {
   const { shadowId, userId } = opts;
   const changelog = opts.changelog ?? null;
+  await throwOnBlockedUserContent(changelog, { surface: 'offsite-listing' });
 
   const shadow = (await dbRead.appListing.findUnique({
     where: { id: shadowId },
@@ -1976,6 +2019,62 @@ export type ListingEditScalars = {
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
+
+/**
+ * The edit target's civitai.red icon / cover overrides, for the author's editor. `available:
+ * false` while the environment does not have the slot columns (or this role cannot read them):
+ * the editor then offers no picker, matching `setListingRedMedia`'s refusal.
+ */
+export type ListingEditRedMedia = {
+  available: boolean;
+  icon: ListingEditAsset;
+  cover: ListingEditAsset;
+};
+
+/**
+ * {@link ListingEditRedMedia} of `listingId` — the same edit target whose `assets` the editor is
+ * handed. Read through the WRITE client, like `getListingAssets`' read of the same slots: the
+ * editor re-reads after every slot write, and a slot set on a shadow minted milliseconds ago must
+ * not read back empty off a lagging replica.
+ *
+ * NEVER THROWS, like the store's read of the same slots (`readListingRedMediaManyForRender`): the
+ * editor must not fail to open because of the manual-apply slot table. A failed read reads as
+ * "not available" (no picker), and is logged.
+ */
+export async function loadListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  try {
+    return await readListingEditRedMedia(listingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[offsite-listing] civitai.red slot read for the editor failed; offering no picker: ' +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return { available: false, icon: NO_EDIT_ASSET, cover: NO_EDIT_ASSET };
+  }
+}
+
+const NO_EDIT_ASSET: ListingEditAsset = Object.freeze({ imageId: null, url: null });
+
+async function readListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  const red = await readListingRedSlots(dbWrite, listingId);
+  const ids = [red.redIconId, red.redCoverId].filter((v): v is number => v != null);
+  const images = ids.length
+    ? await dbWrite.image.findMany({ where: { id: { in: ids } }, select: { id: true, url: true } })
+    : [];
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const urlOf = (id: number | null, width: number) => {
+    const url = id == null ? null : images.find((i) => i.id === id)?.url;
+    return url ? getEdgeUrl(url, { width }) : null;
+  };
+  return {
+    available: red.available,
+    // The same preview widths as the regular icon / cover in `loadListingEditView`.
+    icon: { imageId: red.redIconId, url: urlOf(red.redIconId, 256) },
+    cover: { imageId: red.redCoverId, url: urlOf(red.redCoverId, 1200) },
+  };
+}
+
 export type ListingEditScreenshot = {
   id: string;
   imageId: number | null;
@@ -2032,6 +2131,8 @@ export type GetMyListingForEditResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The effective source's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
@@ -2315,6 +2416,7 @@ export async function getMyListingForEdit(opts: {
     shadowId,
     scalars: view.scalars,
     assets: view.assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
     connectClientId: listing.connectClientId,
     connectAllowedScopes,
     connectRequestedScopes: view.connectRequestedScopes,
@@ -2389,6 +2491,8 @@ export type GetMyListingForAppResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The same EFFECTIVE edit target's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
 };
 
 /**
@@ -2597,6 +2701,7 @@ export async function getMyListingForApp(opts: {
     editTargetId: effectiveId,
     editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
     assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
   };
 }
 
@@ -2717,6 +2822,10 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a
@@ -2879,15 +2988,19 @@ export type ApproveExternalRequestResult = {
  * Compute the content rating to STAMP on an off-site listing at approve. The
  * scanner's per-image rating is imprecise, so the AUTHOR is never blocked on it +
  * the author's declared rating is only a hint — the authoritative rating is DERIVED
- * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots) at
- * review, with an optional mod OVERRIDE.
+ * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots + the
+ * civitai.red icon / cover overrides) at review, with an optional mod OVERRIDE.
  *
  * 🔴 SAFETY (floor-at-derived): an override whose ceiling is BELOW the derived value
  * would publish mature assets under a too-low rating — so it is clamped UP to the
  * derived rating (never silently under-rated). An override AT or ABOVE the derived
  * value is honoured (a mod may always rate UP). Reads the backing Image levels from
  * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
- * With `mediaSplit` the derive reads only the civitai.com-eligible assets.
+ * With `mediaSplit` the derive reads only the civitai.com-eligible assets (never an override).
+ *
+ * `redSlotsListingId` names the listing whose civitai.red overrides go live with this approve,
+ * when that is not `appListingId`: a revision that staged no overrides keeps the LIVE listing's
+ * (`applyRevisionRedSlots`), so its approve must be floored by those, not by the shadow's none.
  */
 async function resolveApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -2897,6 +3010,7 @@ async function resolveApprovalContentRating(
     coverId: number | null;
     override?: OffsiteContentRating | null;
     mediaSplit: boolean;
+    redSlotsListingId?: string;
   }
 ): Promise<OffsiteContentRating> {
   const shots = await tx.appListingScreenshot.findMany({
@@ -2909,9 +3023,11 @@ async function resolveApprovalContentRating(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
+  // The civitai.red overrides floor it too, unless the listing is split (`ratingFloorAssets`).
+  const redSlots = await readListingRedSlotAssets(tx, args.redSlotsListingId ?? args.appListingId);
   const derived = deriveContentRatingFromAssets(
     ratingFloorAssets(
-      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      [...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...redSlots],
       args.mediaSplit
     )
   );
@@ -3168,8 +3284,15 @@ export async function approveExternalRequest(opts: {
   // replica; re-asserted AUTHORITATIVELY on the primary/tx in (5) (TOCTOU: a scan
   // can flip between these reads — the in-tx one is the authority). This is the
   // QUALITY gate that lets attach + submit stay permissive with an in-flight scan.
+  const replicaRedSlots = await readListingRedSlots(dbRead, appListingId);
   await assertAssetsScanClean(
-    { iconId: listing.iconId, coverId: listing.coverId, screenshotImageIds },
+    {
+      iconId: listing.iconId,
+      coverId: listing.coverId,
+      screenshotImageIds,
+      redIconId: replicaRedSlots.redIconId,
+      redCoverId: replicaRedSlots.redCoverId,
+    },
     dbRead
   );
 
@@ -3262,11 +3385,14 @@ export async function approveExternalRequest(opts: {
     // Pending/Blocked on the primary is caught HERE and rolls the whole tx back
     // before anything is approved. Upholds the invariant: no approved listing may
     // ever reference a non-`Scanned` / `Blocked` image.
+    const primaryRedSlots = await readListingRedSlots(tx, appListingId);
     await assertAssetsScanClean(
       {
         iconId: primaryListing.iconId,
         coverId: primaryListing.coverId,
         screenshotImageIds: primaryScreenshotImageIds,
+        redIconId: primaryRedSlots.redIconId,
+        redCoverId: primaryRedSlots.redCoverId,
       },
       tx
     );
@@ -3486,7 +3612,9 @@ export async function approveExternalRequest(opts: {
  *   4. REPARENT the shadow's screenshots onto the parent: delete the parent's
  *      existing screenshot rows, then UPDATE the shadow's screenshots'
  *      appListingId → parent BEFORE deleting the shadow, so the CASCADE on the
- *      shadow delete drops nothing (the rows have already left the shadow).
+ *      shadow delete drops nothing (the rows have already left the shadow). Then apply the
+ *      shadow's civitai.red icon / cover overrides to the parent (`applyRevisionRedSlots`),
+ *      also before the delete, which cascades the shadow's overrides row away.
  *   5. Delete the shadow (guarded to a revision row so it can never remove a real
  *      listing). Its screenshots are gone (moved) and its only request is re-pointed
  *      at the parent, so the cascade is a no-op.
@@ -3539,6 +3667,15 @@ async function applyApprovedRevision(opts: {
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
   const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // 🔴 LOCK THE PARENT FIRST — before ANY statement, and in particular before any on the
+    // split / civitai.red-override table. Unlike the first-time approves, this writes the
+    // split, the overrides and the media of a listing that is ALREADY `approved`, which a
+    // moderator's image re-rate (`reDeriveListingRatingInTx`) can re-rate concurrently: it
+    // takes `FOR UPDATE` on this row and then reads the split and the media. Without this lock
+    // the re-rate could read them as they stood before this apply and commit a rating floored
+    // by the wrong set of media. With it, the re-rate waits for this transaction and reads
+    // what it committed.
+    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
     // Set by the off-site branch only; the on-site one leaves the rating alone.
     let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
@@ -3601,11 +3738,23 @@ async function applyApprovedRevision(opts: {
     // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
     // live while any of its media is still scanning or was `Blocked`. Rolls the
     // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    //
+    // The civitai.red overrides it checks are the ones live AFTER step (4b): the shadow's when
+    // it staged a row (a row of nulls included, which clears them), otherwise the parent's,
+    // which `applyRevisionRedSlots` leaves in place. Both kinds. The rating floor below reads
+    // the same listing (`redSlotsListingId`), so the two cannot disagree about which overrides
+    // go live.
+    const shadowRedSlots = await readListingRedSlots(tx, shadowId);
+    const redSlotsListingId = shadowRedSlots.staged ? shadowId : parentId;
+    const liveRedSlots =
+      redSlotsListingId === shadowId ? shadowRedSlots : await readListingRedSlots(tx, parentId);
     await assertAssetsScanClean(
       {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         screenshotImageIds: shadowScreenshotImageIds,
+        redIconId: liveRedSlots.redIconId,
+        redCoverId: liveRedSlots.redCoverId,
       },
       tx
     );
@@ -3689,15 +3838,8 @@ async function applyApprovedRevision(opts: {
     });
 
     // The decision belongs to the live parent; the face it is checked against is the
-    // shadow's, which is what goes live.
-    //
-    // 🔴 LOCK THE PARENT FIRST. Unlike the first-time approves, this writes the split of a
-    // listing that is ALREADY `approved`, which a moderator's image re-rate
-    // (`reDeriveListingRatingInTx`) can re-rate concurrently: it takes `FOR UPDATE` on this
-    // row and then reads the split. Without this lock the re-rate could read the split as it
-    // stood before this decision and commit a rating floored by the wrong set of media. With
-    // it, the re-rate waits for this transaction and reads the decision it committed.
-    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
+    // shadow's, which is what goes live. (The parent is already locked: see the top of this
+    // transaction.)
     const mediaSplit = await applyListingMediaSplitDecision(tx, {
       appListingId: parentId,
       face: { iconId: shadow.iconId, coverId: shadow.coverId },
@@ -3758,6 +3900,8 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
         mediaSplit,
+        // The overrides live AFTER step (4b) — the same listing the scan gate above checked.
+        redSlotsListingId,
       });
       appliedOffsiteRating = finalRating;
       await tx.appListing.update({
@@ -3807,6 +3951,11 @@ async function applyApprovedRevision(opts: {
       where: { appListingId: shadowId },
       data: { appListingId: parentId },
     });
+    // (4b) The civitai.red icon / cover overrides, BOTH KINDS (they are assets, so an on-site
+    // assets-only apply carries them too). Also before the shadow delete: the shadow's row goes
+    // with it. The shadow's overrides replace the parent's; a shadow that staged none (no row)
+    // leaves the parent's alone — see `applyRevisionRedSlots`.
+    await applyRevisionRedSlots(tx, { shadowId, parentId });
 
     // (5) Retire the shadow (guarded to a revision row). Screenshots already moved;
     // the request already re-pointed — the cascade drops nothing.
@@ -4196,8 +4345,10 @@ const modQueueSubmissionSelect = {
       // discriminates on the listing's, and says in capitals never to substitute
       // `appBlockId` nullness for it.
       kind: true,
-      icon: { select: { url: true } },
-      cover: { select: { url: true } },
+      // `id` + `nsfwLevel` beside the url: the review holds an above-SFW image behind a
+      // click-to-reveal on civitai.com (moderator-only, like the rest of this select).
+      icon: { select: { id: true, url: true, nsfwLevel: true } },
+      cover: { select: { id: true, url: true, nsfwLevel: true } },
       metric: { select: { openCount: true } },
     },
   },
@@ -4214,14 +4365,15 @@ const modQueueSubmissionSelect = {
  */
 function withModQueueListingFacts<
   T extends {
+    appListingId?: string | null;
     appListing: {
       kind?: string | null;
-      icon?: { url: string | null } | null;
-      cover?: { url: string | null } | null;
+      icon?: { id: number; url: string | null; nsfwLevel: number } | null;
+      cover?: { id: number; url: string | null; nsfwLevel: number } | null;
       metric?: { openCount: number } | null;
     } | null;
   }
->(row: T) {
+>(row: T, red?: Map<string, ListingRedMediaImages>) {
   const { appListing, ...rest } = row;
   // The three relation objects are stripped so the derived strings are the payload, which
   // is the on-site path's shape. ⚠️ A DENYLIST, so it is not a guarantee about keys added
@@ -4233,8 +4385,22 @@ function withModQueueListingFacts<
     appListing: appListing
       ? (listingRest as Omit<NonNullable<T['appListing']>, 'icon' | 'cover' | 'metric'>)
       : null,
-    ...(appListing ? listingQueueFacts(appListing) : NO_LISTING_QUEUE_FACTS),
+    ...(appListing
+      ? listingQueueFacts(appListing, row.appListingId ? red?.get(row.appListingId) : null)
+      : NO_LISTING_QUEUE_FACTS),
   };
+}
+
+/**
+ * {@link withModQueueListingFacts} for a whole page, with ONE batched read of the page's
+ * civitai.red overrides (each row's own listing — a revision's shadow carries its own).
+ */
+async function withModQueueListingFactsPage<
+  T extends Parameters<typeof withModQueueListingFacts>[0]
+>(rows: T[]) {
+  const ids = rows.flatMap((r) => (r.appListingId ? [r.appListingId] : []));
+  const red = await readListingRedMediaManyForRender(dbRead, ids);
+  return rows.map((r) => withModQueueListingFacts(r, red));
 }
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
@@ -4453,7 +4619,7 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4472,7 +4638,7 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
     },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4491,6 +4657,6 @@ export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptio
     },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

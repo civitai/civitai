@@ -16,7 +16,7 @@ const chapter = (chapterId: number, depth: number, extra: Partial<Chapter> = {})
   ...extra,
 });
 
-// A 30-image, 7-chapter path: more than the 20 images the old dots could show.
+// A 30-image, 7-chapter path.
 const SIZES = [4, 4, 5, 4, 4, 4, 5];
 const PATH = SIZES.map((_, i) => chapter(10 + i, i));
 const IMAGE_CHAPTERS = SIZES.flatMap((n, i) => Array<number>(n).fill(10 + i));
@@ -84,6 +84,33 @@ describe('buildStorylineRail', () => {
     const path = [chapter(40, 5), chapter(41, 6)];
     const { segments } = rail(0, { path, imageChapterIds: [40], ahead: [chapter(42, 0)] });
     expect(segments.map((s) => s.depth)).toEqual([5, 6, 7]);
+  });
+
+  it('gives each path chapter off the main route its map lane, and no other segment one', () => {
+    const laneOf = new Map([
+      [14, 2],
+      [15, 2],
+      [16, 4],
+    ]);
+    const ahead = [chapter(17, 7, { childCount: 0 })];
+    const { segments } = rail(0, { laneOf, ahead });
+    expect(segments.map((s) => [s.chapter.chapterId, s.lane])).toEqual([
+      [10, null],
+      [11, null],
+      [12, null],
+      [13, null],
+      [14, 2],
+      [15, 2],
+      [16, 4],
+      // The canon line ahead is the main route: never coloured, even for an id the map holds.
+      [17, null],
+    ]);
+    expect(rail(0, { laneOf: new Map([[17, 3]]), ahead }).segments.at(-1)?.lane).toBeNull();
+  });
+
+  it('leaves every segment plain until the lanes are known', () => {
+    expect(rail(0).segments.map((s) => s.lane)).toEqual(Array(7).fill(null));
+    expect(rail(0, { laneOf: new Map() }).segments.map((s) => s.lane)).toEqual(Array(7).fill(null));
   });
 
   it('shows a window around the current chapter on a long line', () => {

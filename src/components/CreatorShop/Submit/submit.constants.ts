@@ -1,6 +1,6 @@
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { ReviewQueueSort } from '~/server/schema/creator-shop.schema';
-import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import { MYSTERY_PACK_FILTER_VALUE, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 
 export const cosmeticTypeOptions = [
   { value: CosmeticType.Badge, label: 'Badge' },
@@ -13,8 +13,12 @@ export const cosmeticTypeOptions = [
 export const reviewQueueTypeOptions = [
   ...cosmeticTypeOptions,
   { value: PACK_FILTER_VALUE, label: 'Pack' },
+  { value: MYSTERY_PACK_FILTER_VALUE, label: 'Mystery pack' },
 ];
-export type ReviewQueueFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
+export type ReviewQueueFilterType =
+  | CosmeticType
+  | typeof PACK_FILTER_VALUE
+  | typeof MYSTERY_PACK_FILTER_VALUE;
 
 export const reviewQueueSortOptions: { value: ReviewQueueSort; label: string }[] = [
   { value: 'oldest', label: 'Oldest first' },

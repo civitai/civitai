@@ -44,8 +44,8 @@
  * dev only: /api/testing is unreachable on production builds.
  *
  *   { "action": "getPrompts", "history"?: "<key>", "limit"?: 20 }
- *     Active prompt row per key plus the runtime config and rollout modes; with `history`, every
- *     version of that key (author, note, createdAt) newest first.
+ *     Active prompt row per key plus the runtime config, rollout modes, poi/minor `labelModes` and
+ *     `csamMode`; with `history`, every version of that key (author, note, createdAt) newest first.
  *
  *   { "action": "putPrompt", "key": "base" | "label:<label>", "content": "...",
  *     "note": "...", "createdById": <moderator id> }
@@ -71,6 +71,8 @@
  *     per-label firing counts. Text below the profile's minChars is not sent, and an
  *     item whose prompt key is missing counts as `missing_prompt`. Refused when
  *     ceil(ids / concurrency) * wait exceeds the harness budget, as for scanTexts over its texts.
+ *     `"labels"?: ["csam", ...]` replaces the profile's labels (web-search still narrows them);
+ *     without it, csam is dropped from the profile's labels while its mode is off, as in production.
  *
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
@@ -80,7 +82,8 @@
  *     serves them.
  *
  *   putLabelModes is refused here (403) too: it changes what the live scan does with a detection
- *     and needs a signed-in moderator, so only /api/mod/text-scan serves it.
+ *     and needs a signed-in moderator, so only /api/mod/text-scan serves it. poi/minor take
+ *     `auto | review`; csam takes `off | review` only.
  *
  *   { "action": "scanTexts", "entityType": "Comment",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
@@ -88,6 +91,7 @@
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
  *     Free text declares nothing, so the outcome is what would fire on an entity that
  *     declares nothing. A missing prompt key comes back as that item's error.
+ *     `"labels"?` replaces the profile's labels, as for batchEntities.
  *
  *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }

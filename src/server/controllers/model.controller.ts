@@ -44,6 +44,7 @@ import {
   hasValidCreatorMembershipCached,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -162,6 +163,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
@@ -233,7 +235,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+      throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: model.user.id });
@@ -548,10 +551,16 @@ export const getModelHandler = async ({
         })
       : null;
 
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      model.user.id
+    );
+
     return {
       ...model,
       metrics: undefined,
       hiddenMetrics: modelHidden,
+      ownerMetricPrivacyDefaults,
       rank: {
         downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
@@ -2028,7 +2037,14 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
-export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
+/** Per matched hash, whether a model the caller does not own already has a file with it. */
+export const getModelByHashesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelByHashesInput;
+  ctx: ProtectedContext;
+}) => {
   const { hashes } = input;
 
   if (hashes.length === 0) {
@@ -2040,11 +2056,10 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
   // subquery: citext compared against an explicitly-typed text value degrades to a
   // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
   // returns nothing.
-  const modelsByHashes = await dbRead.$queryRaw<
-    { userId: number; modelId: number; hash: string }[]
-  >`
-    SELECT m."userId",
-           m."id",
+  // No poi/status/availability filter on purpose: a file already on another user's model must
+  // block the bounty entry whatever that model's visibility.
+  const rows = await dbRead.$queryRaw<{ userId: number; hash: string }[]>`
+    SELECT DISTINCT m."userId",
            mfh."hash"
     FROM "ModelFileHash" mfh
            JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
@@ -2054,7 +2069,11 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
       AND m."deletedAt" IS NULL;
   `;
 
-  return modelsByHashes;
+  const ownedByOther = new Map<string, boolean>();
+  for (const { userId, hash } of rows) {
+    ownedByOther.set(hash, (ownedByOther.get(hash) ?? false) || userId !== ctx.user.id);
+  }
+  return [...ownedByOther].map(([hash, ownedByOther]) => ({ hash, ownedByOther }));
 };
 
 export async function getSimpleModelsInfiniteHandler({

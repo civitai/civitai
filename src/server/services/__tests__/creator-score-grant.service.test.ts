@@ -112,12 +112,13 @@ describe('grant bounds', () => {
   it('the limits are the agreed ones', () => {
     expect(CREATOR_SCORE_GRANT_LIMITS).toEqual({
       maxAmount: 10_000,
+      largeMaxAmount: 1_000_000,
       dailyPerModerator: 20,
       maxReasonLength: 500,
     });
   });
 
-  it.each([0, -1, 10_001, 2.5])('refuses %s points and writes nothing', async (amount) => {
+  it.each([0, -1, 10_001, 100_000, 2.5])('refuses %s points and writes nothing', async (amount) => {
     await expect(grantCreatorScore({ ...valid(), amount })).rejects.toThrow(/amount/i);
     expect(tx.creatorScoreGrant.create).not.toHaveBeenCalled();
   });
@@ -126,6 +127,33 @@ describe('grant bounds', () => {
     await grantCreatorScore({ ...valid(), amount });
     expect(tx.creatorScoreGrant.create).toHaveBeenCalledTimes(1);
     expect(tx.creatorScoreGrant.create.mock.calls[0][0].data.amount).toBe(amount);
+  });
+
+  it.each([0, 1_000_001, 2.5])(
+    'refuses %s points even with allowLarge, and writes nothing',
+    async (amount) => {
+      await expect(grantCreatorScore({ ...valid(), amount, allowLarge: true })).rejects.toThrow(
+        /amount/i
+      );
+      expect(tx.creatorScoreGrant.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([10_001, 100_000, 1_000_000])(
+    'control: %s points is granted with allowLarge',
+    async (amount) => {
+      await grantCreatorScore({ ...valid(), amount, allowLarge: true });
+      expect(tx.creatorScoreGrant.create).toHaveBeenCalledTimes(1);
+      expect(tx.creatorScoreGrant.create.mock.calls[0][0].data.amount).toBe(amount);
+    }
+  );
+
+  it('a large grant counts toward the daily cap like any other', async () => {
+    tx.creatorScoreGrant.count.mockResolvedValue(20);
+    await expect(
+      grantCreatorScore({ ...valid(), amount: 100_000, allowLarge: true })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(tx.creatorScoreGrant.create).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
@@ -79,7 +80,7 @@ beforeEach(async () => {
   chQuery.mockReset();
   chQuery.mockResolvedValue({ json: async () => [{ hash: PHASH, reason: 'TOS' }] });
   chInsert.mockClear();
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(
     `INSERT INTO "Image" ("id", "needsReview", "blockedFor", "ingestion", "pHash", "nsfwLevel", "nsfwLevelLocked")

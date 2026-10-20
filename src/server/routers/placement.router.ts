@@ -64,6 +64,7 @@ import {
   getPlacementSettlementStates,
   getStickerPlacementCounts,
   getStickerPlacements,
+  getStickerPlacementsAndCounts,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -170,16 +171,10 @@ function assertSurfaceRouted(surface: PlacementSurface) {
   if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
 
-/**
- * The storyline procedures' gate. Applied to everything but the owner's answer
- * and the contributor's retraction, which stay open so turning the flag off
- * traps nobody.
- */
 function assertStorylinesEnabled(ctx: Context) {
   if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
 
-/** Per placer. Well above an honest pace, well below a script's. */
 export const STORYLINE_SUBMIT_RATE_LIMIT = { limit: 30, period: 3600 } as const;
 
 export const placementRouter = router({
@@ -267,6 +262,21 @@ export const placementRouter = router({
   getStickerPlacementCounts: publicProcedure
     .input(getStickerPlacementsSchema)
     .query(({ input }) => getStickerPlacementCounts(input.imageIds)),
+
+  // The listing and the counts in one call, for every surface that wants both —
+  // which is every surface a signed-in viewer sees. Same input cap as the two it
+  // replaces there. Both of those stay: anonymous viewers who have not revealed
+  // stickers still ask for counts alone (an edge-cacheable call), and clients
+  // built before this procedure keep calling the pair for hours after a release.
+  getStickerPlacementsAndCounts: publicProcedure
+    .input(getStickerPlacementsSchema)
+    .query(({ input, ctx }) =>
+      getStickerPlacementsAndCounts({
+        imageIds: input.imageIds,
+        viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
@@ -584,15 +594,6 @@ export const placementRouter = router({
         viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
     ),
-
-  // -------------------------------------------------------------------------
-  // Storyline continuations
-  //
-  // Their own procedures rather than the shared space endpoints, which still
-  // refuse the surface (`assertSurfaceRouted`): a storyline space is keyed on a
-  // storyline and opens at price 0 by default, and every route that reaches it
-  // runs the chapter check first.
-  // -------------------------------------------------------------------------
 
   getStorylineSpace: protectedProcedure.input(storylineIdSchema).query(({ input, ctx }) => {
     assertStorylinesEnabled(ctx);

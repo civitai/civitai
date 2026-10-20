@@ -40,6 +40,8 @@ import {
 import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import { workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -99,6 +101,7 @@ import {
   type RawAirResource,
 } from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { CacheTTL } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import {
@@ -136,6 +139,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createFormGraphStepInput } from './form-graph';
+import { createAvatarSteps, expandAvatarData } from './form-graph/avatar.handler';
 import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
@@ -1100,6 +1104,10 @@ async function createStepInputs(
       rawResult = createVideoPreprocessStep(data as never) as StepInput;
       break;
 
+    case 'img2img:avatar':
+      rawResult = createAvatarSteps(data as LooseGenerationData, handlerCtx);
+      break;
+
     default: {
       // Ecosystem workflows - ecosystem must be defined
       if (!('ecosystem' in data) || !data.ecosystem) {
@@ -1311,6 +1319,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
 }> {
+  data = expandAvatarData(data);
+
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
@@ -1542,6 +1552,7 @@ export async function createWorkflowStepsFromGraph({
 
     const extraTags: string[] = [];
     if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+    if (data.workflow === AVATAR_WORKFLOW) extraTags.push('avatar');
 
     return {
       steps: wrappedSteps,
@@ -1929,6 +1940,10 @@ export async function generateFromGraph({
     });
   }
 
+  // One user for validation and for the reply: coverage of a cold checkpoint depends on tier and
+  // isModerator, so formatting the reply with less would contradict what validation accepted.
+  const user = { id: userId, isModerator, tier: externalCtx.user.tier };
+
   const {
     steps,
     workflowMetadata,
@@ -1937,7 +1952,7 @@ export async function generateFromGraph({
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
-    user: { id: userId, isModerator, tier: externalCtx.user.tier },
+    user,
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
@@ -2046,9 +2061,11 @@ export async function generateFromGraph({
       experimental,
       metadata: metadataWithSubstitutions,
       callbacks: getOrchestratorCallbacks(userId),
-      // Private generation restrictions
-      nsfwLevel: isPrivateGeneration ? 'pg13' : undefined,
-      allowMatureContent: isPrivateGeneration ? false : allowMatureContent,
+      ...workflowOutputRestrictions({
+        workflow: data.workflow,
+        isPrivateGeneration,
+        allowMatureContent,
+      }),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
@@ -2059,7 +2076,7 @@ export async function generateFromGraph({
   await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
-  const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
   const priced = await downloadWhatIf;
   attachEstimatedPreparation(
     formatted.steps,
@@ -2203,7 +2220,11 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
-import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import {
+  exceedsNsfwLevel,
+  isMature,
+  maxNsfwLevel,
+} from '~/shared/constants/orchestrator.constants';
 
 // =============================================================================
 // Types
@@ -3102,19 +3123,78 @@ function formatStep(
 /**
  * Simplified formatGenerationResponse.
  */
+/**
+ * The orchestrator charges the yellow-Buzz unlock without lifting the workflow's `nsfwLevel` cap, so
+ * the unlock is allowed only when it releases something: the workflow is locked
+ * (`allowMatureContent === false`) and at least one output is rated mature and within the cap.
+ */
+export async function assertUnlockReleasesOutput({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const workflow = await getWorkflow({ token, path: { workflowId } });
+  if (workflow.allowMatureContent === true)
+    throw throwBadRequestError('This generation is already unlocked.');
+  // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
+  // on `false` too.
+  if (workflow.allowMatureContent !== false)
+    throw throwBadRequestError('This generation has no mature restriction to unlock.');
+
+  const cap = workflow.nsfwLevel;
+  const capRefusal = () =>
+    throwBadRequestError(
+      `This generation is limited to ${cap!
+        .toUpperCase()
+        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+    );
+  if (cap === 'pg' || cap === 'pg13') throw capRefusal();
+  const matureLevels = (workflow.steps ?? [])
+    .flatMap((step) => normalizeStepOutput(step as StepWithOutput))
+    .map((item) => item.nsfwLevel)
+    .filter((level): level is NsfwLevel => !!isMature(level));
+  if (!matureLevels.length)
+    throw throwBadRequestError('Nothing in this generation needs unlocking yet.');
+  if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
+}
+
+type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+
+/**
+ * Generation submits `allowMatureContent: false` on the green domain and for users with mature
+ * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ */
+export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+  if (domain === 'green')
+    throw throwBadRequestError(
+      'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
+    );
+  if (!showNsfw)
+    throw throwBadRequestError(
+      'Enable mature content in your account settings to unlock this generation.'
+    );
+}
+
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
   user,
+  viewer,
   ...props
-}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
-  const workflow = await clientUpdateWorkflow(props);
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
+  if (props.allowMatureContent === true) {
+    assertUnlockAllowed(viewer);
+    await assertUnlockReleasesOutput(props);
+  }
+  const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
 }
 
 export async function formatGenerationResponse2(
   workflows: Workflow[],
-  user?: SessionUser
+  user?: { id?: number; isModerator?: boolean; tier?: string }
 ): Promise<NormalizedWorkflow[]> {
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
@@ -3482,6 +3562,7 @@ export async function getWorkflowStatusUpdate({
       id: workflowId,
       status: result.status!,
       downloadPriority: readDownloadPriority(result),
+      nsfwCap: result.nsfwLevel,
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 

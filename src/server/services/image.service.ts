@@ -198,6 +198,7 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getCosmeticsForEntity,
   getEventDecorationsForEntity,
@@ -2375,6 +2376,8 @@ const getAllImagesUncaptured = async (
     cursorProp = cursorResult.prop;
   }
   if (cursorClause) AND.push(cursorClause);
+  // A post's images can share an index. Appended after getCursor so the cursor stays `i."index"`.
+  if (postId && !modelId) orderBy = `${orderBy}, i."id"`;
 
   if (prioritizeUser && !useModelVersionCache) {
     // [x]
@@ -2402,7 +2405,7 @@ const getAllImagesUncaptured = async (
     else {
       // For everyone else, only show their images.
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
-      orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0)`; // Order by oldest post first
+      orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`; // Order by oldest post first
     }
   }
 
@@ -5958,7 +5961,7 @@ export const getImagesForModelVersion = async ({
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
           )
-        ORDER BY i."postId", i.index
+        ORDER BY i."postId", i.index, i.id
         LIMIT ${imagesPerVersion}
       ) i
     )
@@ -5999,7 +6002,7 @@ export const getImagesForModelVersion = async ({
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
-    ORDER BY i."postId", i."index"
+    ORDER BY i."postId", i."index", i.id
   `;
   const images = await (db ?? dbRead).$queryRaw<ImagesForModelVersions[]>(query);
 
@@ -6264,7 +6267,7 @@ export const getImagesForPosts = async ({
         (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
         OR NOT i."modelRestricted"
       )
-    ORDER BY i.index ASC
+    ORDER BY i.index ASC, i.id
   `;
   const imageIds = images.map((i) => i.id);
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);
@@ -6739,6 +6742,13 @@ export async function createImage({
     verifiedSourceImageIds
   );
   const metadata = stripBlockProvenanceMetadata(image.metadata);
+  // A banned owner's new image is stored blocked, like the media the ban already blocked. It is still
+  // scanned, so the row is rated if the block is ever lifted; the scan result keeps the block.
+  const owner = await dbWrite.user.findUnique({
+    where: { id: image.userId },
+    select: { bannedAt: true },
+  });
+  const ownerBanned = !!owner?.bannedAt;
   const result = await dbWrite.image.create({
     data: {
       ...pickClientImageColumns(image),
@@ -6756,7 +6766,13 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
-      ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
+      ingestion: ownerBanned
+        ? ImageIngestionStatus.Blocked
+        : skipIngestion
+        ? ImageIngestionStatus.PendingManualAssignment
+        : undefined,
+      blockedFor: ownerBanned ? BlockedReason.Moderated : undefined,
+      nsfwLevel: ownerBanned ? NsfwLevel.Blocked : undefined,
     },
     select: { id: true },
   });
@@ -7031,7 +7047,7 @@ export const getEntityCoverImage = async ({
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
           )
-          ORDER BY e."entityId", mv.index,  p.id, i.index
+          ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
         UNION
@@ -7069,7 +7085,7 @@ export const getEntityCoverImage = async ({
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
           )
-          ORDER BY e."entityId", mv.index,  p.id, i.index
+          ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
         UNION
@@ -7137,7 +7153,7 @@ export const getEntityCoverImage = async ({
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
               OR NOT i."modelRestricted"
             )
-          ORDER BY e."entityId", i."postId", i.index
+          ORDER BY e."entityId", i."postId", i.index, i.id
         ) t
 
         UNION
@@ -7913,6 +7929,10 @@ export async function updateImageTools({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-tool' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, toolId, notes }) =>
       dbWrite.imageTool.update({
@@ -7992,6 +8012,10 @@ export async function updateImageTechniques({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-technique' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, techniqueId, notes }) =>
       dbWrite.imageTechnique.update({

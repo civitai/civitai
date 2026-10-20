@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_ASSISTANT_RULES,
+  APP_ASSISTANT_SUBAGENT_RULES,
   buildAssistantInstructions,
   buildAssistantSystemPrompt,
+  buildAssistantSystemPromptWithSubagents,
 } from '~/components/Apps/AppAssistant/assistantInstructions';
 
 const running = { name: 'sbx-0123456789ab', app: 'my-app', state: 'running' as const };
@@ -142,6 +144,26 @@ describe('buildAssistantSystemPrompt', () => {
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+      ].join('\n')
+    );
+  });
+});
+
+describe('buildAssistantSystemPromptWithSubagents', () => {
+  it('is the prompt without subagents, then when to start one', () => {
+    expect(buildAssistantSystemPromptWithSubagents('BUILT-IN RULES')).toBe(
+      `BUILT-IN RULES\n\n${APP_ASSISTANT_RULES}\n${APP_ASSISTANT_SUBAGENT_RULES}`
+    );
+    expect(buildAssistantSystemPrompt('BUILT-IN RULES')).not.toContain('dispatch_agent');
+  });
+
+  it('pins the whole subagent rule text: a reworded rule must be re-read here', () => {
+    expect(APP_ASSISTANT_SUBAGENT_RULES).toBe(
+      [
+        '- dispatch_agent starts a read-only subagent that reads files, lists directories, reads the dev server’s status and logs and reads the guide, then returns a short summary. Prefer it to reading yourself: everything you read stays in your context for the rest of the reply, and a subagent’s reading does not.',
+        '- Dispatch, with every subagent of the step in that one step so they run at the same time: before you change an existing app (one subagent per area: its source, its tests, the guide pages you need); whenever answering a question would take you more than three reads; and to find where something is defined or used.',
+        '- Do it yourself only when one or two reads will do, or when you need a file’s exact contents to edit it. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
+        '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
       ].join('\n')
     );
   });

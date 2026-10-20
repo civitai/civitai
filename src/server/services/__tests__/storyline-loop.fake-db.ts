@@ -74,7 +74,6 @@ const COMPOUND_KEYS: Record<string, string[]> = {
   surface_entityType_entityId: ['surface', 'entityType', 'entityId'],
 };
 
-/** Columns a real row always has, filled on create when the caller leaves them out. */
 const DEFAULTS: Record<string, () => Row> = {
   placement: () => ({
     sellerId: null,
@@ -296,10 +295,41 @@ export function createFakeDb() {
     }
   };
 
+  /**
+   * Row locks and a writer that has to wait for them. `FOR SHARE` on a chapter holds it until the
+   * transaction ends, and a removal arriving meanwhile (`concurrentRemoval`) is applied when it
+   * does, as Postgres would: its UPDATE waits for the lock. Edges written while an end was
+   * already removed are kept in `edgesOnRemoved`, which is what the lock is there to prevent.
+   */
+  const shareLocked = new Set<number>();
+  const deferredRemovals: number[] = [];
+  const beforeEdgeCreate: (() => void)[] = [];
+  const edgesOnRemoved: { chapterId: number; parentChapterId: number }[] = [];
+  const removeNow = (id: number) => {
+    const found = tables.storylineChapter.find((c) => same(c.id, id));
+    if (found && found.removedAt == null) found.removedAt = new Date();
+  };
+  const endTransaction = () => {
+    shareLocked.clear();
+    for (const id of deferredRemovals.splice(0)) removeNow(id);
+  };
+
   const insert = (model: string, data: Row) => {
     const row: Row = { ...(DEFAULTS[model]?.() ?? {}), ...structuredClone(data) };
     if (row.id == null && model !== 'storylineChapterEdge') row.id = nextId[model]++;
-    if (model === 'storylineChapterEdge') assertEdge(row);
+    if (model === 'storylineChapterEdge') {
+      beforeEdgeCreate.splice(0).forEach((fn) => fn());
+      assertEdge(row);
+      if (
+        [row.chapterId, row.parentChapterId].some(
+          (id) => tables.storylineChapter.find((c) => same(c.id, id))?.removedAt != null
+        )
+      )
+        edgesOnRemoved.push({
+          chapterId: row.chapterId as number,
+          parentChapterId: row.parentChapterId as number,
+        });
+    }
     assertUnique(model, row);
     tables[model].push(row);
     return row;
@@ -380,7 +410,6 @@ export function createFakeDb() {
     },
   });
 
-  /** The tagged raw statements this loop sends, by shape; anything else throws. */
   const queryRaw = async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = Array.isArray(strings)
       ? Prisma.sql(strings as TemplateStringsArray, ...values)
@@ -404,6 +433,19 @@ export function createFakeDb() {
     // images a reader may see is storyline.service.test's subject, not this one's.
     if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
+    if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
+      // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
+      // while the statement carries both its filters, so one that drops either is refused.
+      const compact = text.replace(/\s+/g, ' ');
+      if (!compact.includes('WHERE id = ANY(') || !compact.includes('"removedAt" IS NULL'))
+        throw new Error(`fake db: chapter lock is not a live-chapter read: ${compact}`);
+      const [ids] = v as [number[]];
+      const live = tables.storylineChapter.filter(
+        (c) => ids.includes(c.id as number) && c.removedAt == null
+      );
+      for (const c of live) shareLocked.add(c.id as number);
+      return live.map((c) => ({ id: c.id }));
+    }
     if (text.includes('FROM "Placement" pl') && text.includes('JOIN "Post" p')) {
       if (text.includes('pl."createdAt" >')) throw new Error('fake db: queue keyset not modelled');
       const [surface, targetType, ownerId, limit] = v as [string, string, number, number];
@@ -521,7 +563,6 @@ export function createFakeDb() {
       client.$executeRaw.mockImplementation(executeRaw);
       client.$executeRawUnsafe.mockImplementation(executeRawUnsafe);
     }
-    // Interactive transactions roll back every table when the callback throws.
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) => {
       if (typeof fn !== 'function') throw new Error('fake db: only interactive transactions');
       const snapshot = structuredClone(tables);
@@ -532,6 +573,8 @@ export function createFakeDb() {
         tables = snapshot;
         Object.assign(nextId, ids);
         throw error;
+      } finally {
+        endTransaction();
       }
     });
   };
@@ -551,6 +594,16 @@ export function createFakeDb() {
       applyData(found[0], data);
     },
     block: (a: number, b: number) => blocks.add(`${a}:${b}`),
+    /**
+     * A removal that commits just before the next edge is written, as one landing between a
+     * link's checks and its insert would. Waits for the lock when the link holds one.
+     */
+    removeBeforeNextEdge: (id: number) =>
+      beforeEdgeCreate.push(() =>
+        shareLocked.has(id) ? deferredRemovals.push(id) : removeNow(id)
+      ),
+    edgesOnRemoved: () => structuredClone(edgesOnRemoved),
+    isShareLocked: (id: number) => shareLocked.has(id),
   };
 }
 

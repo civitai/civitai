@@ -13,6 +13,7 @@ import {
   isTerminal as isTerminalStatus,
   laneConcurrencyArgs,
   parseMaxWorkersFlag,
+  parseRunTimeoutFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 import { daemonFetch } from './scripts/daemon-http.mjs';
@@ -681,6 +682,17 @@ async function cmdTest(sub, rest) {
           process.exit(1);
         }
       }
+      const timeoutAt = rest.findIndex((a) => /^--run-timeout(=|$)/.test(a));
+      if (timeoutAt !== -1) {
+        const inline = rest[timeoutAt].split('=')[1];
+        const raw = inline !== undefined ? inline : rest[timeoutAt + 1];
+        try {
+          body.runTimeoutMs = parseRunTimeoutFlag(raw);
+        } catch (err) {
+          console.error(err.message);
+          process.exit(1);
+        }
+      }
       result = Object.keys(body).length
         ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
         : await daemonRequest('/test-runs/config');
@@ -1084,6 +1096,8 @@ Commands:
   test config [n]     Show or set the UNIT lane's concurrency (0 pauses that lane;
                       --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
+                      [--run-timeout <min>] kills a run older than this (default 60;
+                      reaches runs already running)
                       [--typecheck <n>] sets the typecheck lane's limit
                       [--typecheck-apps <n>] sets the app-typecheck lane's limit
                       [--component <n>] sets the component (browser) lane's limit

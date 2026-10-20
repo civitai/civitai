@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -62,7 +63,7 @@ CREATE TABLE "TextScanPrompt" ("id" INTEGER PRIMARY KEY, "key" TEXT NOT NULL, "c
 
 let pg: PGlite;
 beforeEach(async () => {
-  pg = new PGlite();
+  pg = await freshPglite();
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   await pg.exec(SCHEMA);
   memory.notes.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);

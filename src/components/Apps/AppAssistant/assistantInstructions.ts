@@ -27,9 +27,22 @@ export const APP_ASSISTANT_RULES = [
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
 ].join('\n');
 
+/** When to start a read-only subagent; in the system prompt only while subagents are on. */
+export const APP_ASSISTANT_SUBAGENT_RULES = [
+  '- dispatch_agent starts a read-only subagent that reads files, lists directories, reads the dev server’s status and logs and reads the guide, then returns a short summary. Prefer it to reading yourself: everything you read stays in your context for the rest of the reply, and a subagent’s reading does not.',
+  '- Dispatch, with every subagent of the step in that one step so they run at the same time: before you change an existing app (one subagent per area: its source, its tests, the guide pages you need); whenever answering a question would take you more than three reads; and to find where something is defined or used.',
+  '- Do it yourself only when one or two reads will do, or when you need a file’s exact contents to edit it. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
+  '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
+].join('\n');
+
 /** The chat's built-in rules, then App Assistant's. */
 export function buildAssistantSystemPrompt(defaults: string): string {
   return `${defaults}\n\n${APP_ASSISTANT_RULES}`;
+}
+
+/** {@link buildAssistantSystemPrompt}, then when to start a subagent. */
+export function buildAssistantSystemPromptWithSubagents(defaults: string): string {
+  return `${buildAssistantSystemPrompt(defaults)}\n${APP_ASSISTANT_SUBAGENT_RULES}`;
 }
 
 /** What the page tells the assistant before every reply. */

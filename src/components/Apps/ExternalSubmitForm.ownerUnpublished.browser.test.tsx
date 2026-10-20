@@ -82,6 +82,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         updateRevisionDraft: { useMutation: recording(mocks.updateRevision) },
         submitListingRevision: { useMutation: recording(mocks.submitRevision) },
         removeScreenshot: { useMutation: noopMutation },
+        setRedMedia: { useMutation: noopMutation },
         persistAssetImage: { useMutation: noopMutation },
         ingestAssetFromUrl: { useMutation: noopMutation },
         ingestAssetFromDataUri: { useMutation: noopMutation },

@@ -46,6 +46,7 @@ const m = vi.hoisted(() => ({
     ) => void;
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
+    subagents?: unknown;
   },
   list: [] as Sandbox[],
   /**
@@ -1598,6 +1599,25 @@ describe('AppAssistantWorkspace auto-resume', () => {
       await settle(100);
       expect(m.retryReply).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('AppAssistantWorkspace subagents', () => {
+  test('are off unless the page allows them', async () => {
+    await mount();
+    expect(m.chat!.subagents).toBeUndefined();
+  });
+
+  test('when allowed, the chat gets the read-only allowlist', async () => {
+    const { APP_ASSISTANT_SUBAGENTS } = await import('./assistantSubagents');
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} subagents />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    expect(m.chat!.subagents).toBe(APP_ASSISTANT_SUBAGENTS);
   });
 });
 

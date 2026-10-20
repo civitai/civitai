@@ -418,7 +418,7 @@ jobs:
     # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
     # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
     #
-    # 🔴 WHY 4 AND NOT MORE. `App unit tests + typecheck` is 2.9m. At N=4 this
+    # 🔴 WHY 4 AND NOT MORE. The apps job was 2.9m (2026-08-25). At N=4 this
     # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
     # optimises something that is NO LONGER THE BOTTLENECK — the PR's critical
     # path floors at ~2.9m however far you go. Raising this number without
@@ -729,13 +729,11 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   apps:
-    # Named for BOTH things it runs. It used to be "App unit tests", and the typecheck steps
-    # were added under that name — so a type error in an app would have rendered in the checks
-    # list as a failing unit-test job, pointing the reader at the wrong suite. Safe to rename:
-    # neither `main` nor `release` has any required_status_checks (re-verified 2026-08-20 via
-    # the branch-protection API, not inherited from the earlier note), so no merge gate keys
-    # on the old string.
-    name: App unit tests + typecheck
+    # The app typecheck used to run as the last steps of this job, as "App unit tests +
+    # typecheck"; it is now the `apps-typecheck` job below. Renaming is safe: neither `main`
+    # nor `release` has any required_status_checks (re-verified 2026-08-20 via the
+    # branch-protection API), so no merge gate keys on either string.
+    name: App unit tests
     runs-on: ubuntu-latest
     # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
     # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
@@ -747,14 +745,34 @@ jobs:
     # jobs keep the blame attributable: a red app suite should not make the package suites
     # look broken. Costs one more `pnpm install`; these suites run in seconds.
     #
-    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
-    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # Not `continue-on-error`, for the same reason as `packages`: no browser and no Next module
+    # graph (its only database is the throwaway Postgres service below). As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
     # Selection is by vitest config, so an app without one is silently not covered here. Every app
     # under `apps/` has one today; scripts/ci/assert-workspace-suites-ran.mjs is what notices if that
     # stops being true.
-    timeout-minutes: 15
+    #
+    # 30, not 15: measured over 114 green runs (2026-10-19/20) this job took p50 12.9m, p95
+    # 13.7m, max 14.4m with the typecheck still in it, and 16 of 162 runs were cancelled at the
+    # 15m limit. The test step alone is p50 9.8m, up from 3.0m on 2026-10-06; nearly all of it
+    # is the moderator app's pglite suites. Speed those up or shard this run before raising
+    # this again.
+    timeout-minutes: 30
+    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
+    # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
+    # own databases on this throwaway server.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -781,18 +799,36 @@ jobs:
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
 
-      # ── App typechecks ──────────────────────────────────────────────────
-      # No app under `apps/` was typechecked by anything before this. The root
-      # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
-      # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
-      # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
-      # workflow's `typecheck` job and the `tekton / typecheck` status) run that
-      # same script, so the gap could not close on its own.
-      #
-      # Parked in this job rather than its own: `pnpm install` is the expensive
-      # part and this job has already paid for it. The tradeoff is that a type
-      # error renders under this job's name — hence the job rename above.
-      #
+  apps-typecheck:
+    name: App typecheck
+    runs-on: ubuntu-latest
+    # No app under `apps/` was typechecked by anything before this. The root
+    # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
+    # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
+    # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
+    # workflow's `typecheck` job and the `tekton / typecheck` status) run that
+    # same script, so the gap could not close on its own.
+    #
+    # Its own job, not steps at the end of `apps`: there it shared that job's
+    # timeout with the app unit tests, so as those grew the timeout landed here
+    # and cancelled a typecheck that takes ~2m (p95 2.3m over 114 runs). Costs one
+    # more `pnpm install` (~1m).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
       # Deliberately ONE step driving a script, not one `pnpm --filter` step per
       # app. Per-app steps abort at the first red app, so a shared type change
       # that breaks several of them reports one; and `pnpm --filter <name>` EXITS

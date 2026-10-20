@@ -2429,6 +2429,8 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
+    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
+    REPEATS: 'download:repeats',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2618,6 +2620,8 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
+    PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -3021,7 +3025,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
     // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
-    // Cleared when a reader chooses at that chapter. See storyline.service.
+    // Rewritten on each choice. See storyline.service.
     STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable

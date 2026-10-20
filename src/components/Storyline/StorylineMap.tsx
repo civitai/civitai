@@ -42,6 +42,7 @@ import {
   buildSubwayStops,
   getForkShare,
   getStorylineChapterName,
+  storylinePositionLabel,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -49,10 +50,8 @@ type WithCover = { firstImage?: StorylineCoverImage | null };
 const coverOf = (chapter: unknown) => (chapter as WithCover).firstImage;
 
 /**
- * The storyline chip in the stage toolbar and the map that drops from it. On desktop the map is a
- * sheet anchored under the chip, with no backdrop: the image and its arrows stay live, and Esc, a
- * click outside or the chip closes it. On a phone it is a bottom sheet over the lower part of the
- * page, again without dimming, with the image visible above it.
+ * The chip in the stage toolbar and the map that drops from it. Neither layout dims the stage: the
+ * image and its arrows stay live while the map is open.
  */
 export function StorylineMapControl({
   storyline,
@@ -170,8 +169,9 @@ function StorylineMap({
   const currentIndex = stops.findIndex((s) => s.chapter.chapterId === currentChapterId);
   const current = stops[currentIndex];
   const next = currentIndex >= 0 ? stops[currentIndex + 1] : undefined;
-  // The canon line's length once it is known: the path then the chapters ahead of its end.
-  const length = canonAhead.isLoading ? undefined : stops.length;
+  // The line's length once it is known: the path then the chapters ahead of its end, counted from
+  // chapter 1 like a chapter's number, since a long path is read from a window that starts deeper.
+  const length = canonAhead.isLoading ? undefined : (path.chapters[0]?.depth ?? 0) + stops.length;
   const open = (stop: SubwayStop<StorylineChild>) => {
     if (stop.kind === 'path') return jumpToChapter(stop.chapter.chapterId);
     const before = line[line.indexOf(stop.chapter) - 1];
@@ -207,8 +207,11 @@ function StorylineMap({
           </Text>
           {current && (
             <Text size="xs" c="dimmed" data-testid="storyline-map-position">
-              Chapter {current.chapter.depth + 1}
-              {length ? ` of ${length} on the canon path` : ''}
+              {storylinePositionLabel({
+                number: current.chapter.depth + 1,
+                length,
+                path: path.chapters,
+              })}
             </Text>
           )}
           {current && length ? (
@@ -387,7 +390,6 @@ function StorylineMap({
           Story page
         </Button>
       </div>
-      {/* What the chip's x used to do: back to browsing this post's images, out of the mode. */}
       <Button
         variant="subtle"
         color="gray"

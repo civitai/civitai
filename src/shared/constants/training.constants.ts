@@ -56,3 +56,25 @@ export const trainingStatusFields: {
       'The training data review was not completed in time and this request has expired. Please submit your training again.',
   },
 };
+
+/**
+ * A dataset is fixed once training has started, so the run's results and its review describe the
+ * bytes on record. Before the first run, and after a run that failed or expired (a retry), a new
+ * dataset may be uploaded. A denied dataset is never replaced.
+ */
+export const datasetEditableTrainingStatuses: (TrainingStatus | null)[] = [
+  null,
+  TrainingStatus.Pending,
+  TrainingStatus.Failed,
+  TrainingStatus.Expired,
+];
+export const isDatasetEditable = (status: TrainingStatus | null | undefined) =>
+  datasetEditableTrainingStatuses.includes(status ?? null);
+
+/** A run in progress or under moderation keeps its version: the owner can't delete it or merge it away. */
+export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Submitted,
+  TrainingStatus.Processing,
+  TrainingStatus.Paused,
+  TrainingStatus.Denied,
+];

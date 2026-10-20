@@ -12,6 +12,7 @@
     IconUsers,
     IconShieldLock,
     IconListSearch,
+    IconScanLetterT,
     IconChartBar,
     IconCircle,
     IconChevronRight,
@@ -58,6 +59,7 @@
     '/articles': IconArticle,
     '/models': IconBox,
     '/audit': IconListSearch,
+    '/text-scan': IconScanLetterT,
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };

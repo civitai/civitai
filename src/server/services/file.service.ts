@@ -22,6 +22,8 @@ import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model
 import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
 
@@ -57,17 +59,19 @@ export const updateEntityFiles = async ({
   const updatedFiles = files.filter((f) => f.id);
 
   if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
+    const counts = await Promise.all(
+      updatedFiles.map((file) =>
+        tx.file.updateMany({
+          where: { id: file.id, entityId, entityType },
           data: {
             ...file,
             metadata: { ...(file.metadata ?? {}), ownRights },
           },
-        });
-      })
+        })
+      )
     );
+    if (counts.some(({ count }) => count !== 1))
+      throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.
@@ -229,7 +233,7 @@ export const getFileForModelVersion = async ({
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
+  if (!canViewPoiModel(modelVersion.model.poi, modelVersion.model.userId, user)) {
     return { status: 'not-found' };
   }
 
@@ -304,6 +308,7 @@ export const getFileForModelVersion = async ({
     overrideName: true,
     type: true,
     metadata: true,
+    sizeKB: true,
     hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
   };
 
@@ -369,14 +374,17 @@ export const getFileForModelVersion = async ({
     versionFiles,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename, {
+    const { url, urlExpiryDate } = await resolveDownloadUrl(file.id, file.url, filename, {
       direct,
       ...attribution,
     });
     return {
       status: 'success',
       url,
+      // The legacy delivery-worker path hands this back as JSON text, not a Date.
+      urlExpiresAt: new Date(urlExpiryDate),
       fileId: file.id,
+      sizeKB: file.sizeKB,
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
@@ -459,7 +467,9 @@ type ModelVersionFileResult =
   | {
       status: 'success';
       url: string;
+      urlExpiresAt: Date;
       fileId: number;
+      sizeKB: number;
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
@@ -475,6 +485,7 @@ type FileResult = {
   name: string;
   overrideName?: string | null;
   metadata: Prisma.JsonValue;
+  sizeKB: number;
   hashes: {
     hash: string;
   }[];

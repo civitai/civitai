@@ -278,6 +278,9 @@ function ReviewDetailTabsViewInner({
               name={appDisplayName(request.manifest, request.slug)}
               iconUrl={request.iconUrl ?? null}
               coverUrl={request.coverUrl ?? null}
+              reviewMedia={request.reviewMedia ?? null}
+              // The app's declared rating — what an on-site listing is rated by, at least.
+              rating={typeof manifest.contentRating === 'string' ? manifest.contentRating : null}
             />
             <ScreenshotsReviewPanel publishRequestId={request.id} size="review" />
             <ReviewCurationSection selection={selection} />

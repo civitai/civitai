@@ -72,16 +72,25 @@ describe('/apps/assistant getServerSideProps', () => {
 
   it('renders without a route CSP, which would outlive the page in the tab', async () => {
     const { result, csp } = await resolve({ ...ON, appBlocksAuthor: true });
-    expect(result).toEqual({ props: { canPreview: true, sandboxUrl: null } });
+    expect(result).toEqual({ props: { canPreview: true, sandboxUrl: null, subagents: false } });
     expect(csp).toBeUndefined();
   });
 
   it('offers the preview only to an author with dev tunnels', async () => {
-    expect((await resolve(ON)).result).toEqual({ props: { canPreview: false, sandboxUrl: null } });
+    expect((await resolve(ON)).result).toEqual({
+      props: { canPreview: false, sandboxUrl: null, subagents: false },
+    });
     devTunnelEnabled.mockResolvedValue(false);
     expect((await resolve({ ...ON, appBlocksAuthor: true })).result).toEqual({
-      props: { canPreview: false, sandboxUrl: null },
+      props: { canPreview: false, sandboxUrl: null, subagents: false },
     });
+  });
+
+  it('offers subagents only with their flag', async () => {
+    expect((await resolve({ ...ON, appAssistantSubagents: true })).result).toMatchObject({
+      props: { subagents: true },
+    });
+    expect((await resolve(ON)).result).toMatchObject({ props: { subagents: false } });
   });
 
   it('gates the client render on the same predicate', () => {
@@ -93,7 +102,7 @@ describe('/apps/assistant getServerSideProps', () => {
   it('passes the sandbox service URL from the server env, read at request time', async () => {
     serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
     expect((await resolve(ON)).result).toEqual({
-      props: { canPreview: false, sandboxUrl: 'https://sandbox.example' },
+      props: { canPreview: false, sandboxUrl: 'https://sandbox.example', subagents: false },
     });
     serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://other-sandbox.example';
     expect((await resolve(ON)).result).toMatchObject({

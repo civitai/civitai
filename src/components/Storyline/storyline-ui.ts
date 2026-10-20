@@ -1,10 +1,10 @@
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { placementPriceCaption } from '~/shared/utils/placement';
+import { PLACEMENT_SURFACES, placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 /**
- * Who may continue a storyline; the values of the `StorylineWhoCanContinue` column. Endorsed
+ * Who may continue a storyline; the values of the `StorylineWhoCanContinue` enum. Endorsed
  * collaborators may always continue, and skip review.
  */
 export type StorylineWhoCanContinue = 'Anyone' | 'Collaborators';
@@ -17,14 +17,12 @@ export const STORYLINE_WHO_CAN_CONTINUE = [
 export const isStorylineWhoCanContinue = (value: unknown): value is StorylineWhoCanContinue =>
   value === 'Anyone' || value === 'Collaborators';
 
-/** Why the server says this viewer cannot continue a storyline right now. */
 export type StorylineClosedReason = 'closed' | 'collaboratorsOnly';
 
 export function storylinePriceLabel(price: number) {
   return price > 0 ? `${numberWithCommas(price)} Buzz` : 'Free';
 }
 
-/** The line under the price slider. Zero is a price on this surface, and it reads as Free. */
 export function storylinePriceCaption(price: number, cap: number | null) {
   if (price <= 0) return { text: 'Free to continue', warning: false };
   return (
@@ -42,11 +40,7 @@ export const STORYLINE_RATING_OPTIONS = STORYLINE_CEILING_LEVELS.map((level) => 
 
 export const STORYLINE_CONTINUE_POST_LIMIT = 50;
 
-/**
- * The viewer's posts they may offer as a continuation. Filtered by owner id here as well as by
- * username on the server: the server drops its user filter when a username lookup misses, and
- * this list is read at every browsing level so a post above the ceiling can be refused out loud.
- */
+/** The viewer's own posts, minus the chapter being continued. */
 export function storylineContinuePostOptions<TImage>(
   posts: {
     id: number;
@@ -121,7 +115,7 @@ export function storylineCeilingImpact(ceiling: number, levels: StorylineChapter
 }
 
 /** How long a continuation waits for the creator before it expires and any Buzz is refunded. */
-export const STORYLINE_CONTINUATION_EXPIRY_DAYS = 7;
+export const STORYLINE_CONTINUATION_EXPIRY_DAYS = PLACEMENT_SURFACES.storyline.expiryHours / 24;
 
 export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }
@@ -131,11 +125,9 @@ export type StorylineSubmitVerdict =
     };
 
 /**
- * What the contributor is told before they press Submit.
- *
- * The server decides; this only says up front what it would refuse, so nobody fills in a
- * submission to learn at the end that it could never have gone in. An unrated post is not refused
- * here: the placement waits for its scan and is refused or queued then.
+ * What the contributor is told before they press Submit. The server decides; this only says up
+ * front what it would refuse. An unrated post is not refused here (the placement waits for its scan
+ * and is refused or queued then), except when the owner adds it directly.
  */
 export function storylineSubmitVerdict({
   postLevel,

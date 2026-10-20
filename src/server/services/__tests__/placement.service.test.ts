@@ -188,7 +188,7 @@ describe('placementPriceRange', () => {
 });
 
 describe('placementPriceRanges', () => {
-  // Three creators who land in three different bands: score alone, tier alone, and both.
+  // Three creators in three different bands: neither score nor tier, score alone, and both.
   const creators = [
     { id: 1, score: 0, tier: null },
     { id: 2, score: 25_000, tier: null },

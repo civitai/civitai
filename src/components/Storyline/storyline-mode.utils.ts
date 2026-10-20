@@ -43,7 +43,6 @@ export function routeVia(route: { chapterId: number; parentCount?: number }[]) {
   );
 }
 
-/** A link that opens storyline mode at a chapter's first image, on the route `via` names. */
 export function storylineReadHref({
   imageId,
   chapterId,
@@ -210,7 +209,10 @@ export function getPathImagesPaging({
   return { fetchNext: wantsMore && !isFetching, loading: isFetching || wantsMore };
 }
 
-/** A chapter's name: its post's title, else its number (and author, where nothing else shows it). */
+/**
+ * A chapter's name: its post's title, else its number (and author, where nothing else shows it); a
+ * tombstone reads as its reason.
+ */
 export function getStorylineChapterName(
   chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
   { withAuthor = false }: { withAuthor?: boolean } = {}
@@ -278,6 +280,24 @@ export function canonAheadForkStops(
     .filter((stop, i) => stop.childCount > (i === ahead.length - 1 ? 0 : 1))
     .slice(0, limit)
     .map((stop) => stop.chapterId);
+}
+
+/**
+ * The line is the reader's path then the canon ahead of its end, so it is "the canon path" only
+ * while every chapter of the path is on the main route (`onMain` absent counts as on). `length` is
+ * undefined until the canon ahead is known.
+ */
+export function storylinePositionLabel({
+  number,
+  length,
+  path,
+}: {
+  number: number;
+  length: number | undefined;
+  path: { onMain?: boolean }[];
+}) {
+  const line = path.some((chapter) => chapter.onMain === false) ? 'this path' : 'the canon path';
+  return `Chapter ${number}${length ? ` of ${length} on ${line}` : ''}`;
 }
 
 export type StorylineShares = { total: number; shares: Record<number, number> } | undefined;

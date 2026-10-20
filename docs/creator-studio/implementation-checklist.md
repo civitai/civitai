@@ -40,6 +40,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 - [x] Shell: headline stat cards + section link cards + member badge
 - [x] Content-activity row (30d reactions/followers/images/posts/profile views, `getContentTotals`)
 - [x] Buzz earned (30d) + CP cash cards (ready / pending / withdrawn, authoritative via `@civitai/buzz`); cash cards gated to CP members
+- [x] "Banked this month" card (Buzz in this month's `creatorProgramBank`, `$lib/server/banked.ts`) + a note for a CP member whose membership lapsed: banked Buzz still pays out at month end
 
 ### `/earnings` — Earnings by source (A1 Part 1)
 - [x] By-source breakdown (comp / license / tip / access / cosmetic) — reads `buzzTransactions` directly (already owner-keyed); `licenseFee`+`'27'` filter, early-access prefix, cosmetic `sell`

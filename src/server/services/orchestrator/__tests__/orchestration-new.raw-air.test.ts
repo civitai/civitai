@@ -76,6 +76,7 @@ import {
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { nanoBananaVersionIds } from '~/shared/form-graph/generation/image/nano-banana.graph';
 import { rawAirResourceId } from '~/shared/utils/air';
 
 const USER_ID = 5;
@@ -482,5 +483,36 @@ describe('read path: formatGenerationResponse2 keeps raw-AIR resources', () => {
     const calls = vi.mocked(getResourceData).mock.calls;
     expect(calls).toHaveLength(1);
     expect((calls[0][0] as Array<{ id: number }>).map((r) => r.id)).toEqual([999]);
+  });
+});
+
+// Not raw-AIR, but this is the suite that runs the real step builder. The client reads output uses
+// from the workflow key saved at submit (`output-uses.ts`).
+describe('createWorkflowStepsFromGraph — workflow key', () => {
+  const build = (data: Record<string, unknown>) =>
+    createWorkflowStepsFromGraph({
+      data: {
+        images: [
+          {
+            url: 'https://orchestration.civitai.com/v2/consumer/blobs/p.jpg',
+            width: 1024,
+            height: 1024,
+          },
+        ],
+        quantity: 1,
+        ...data,
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+  it('saves the avatar workflow key', async () => {
+    const { workflowMetadata } = await build({
+      workflow: 'img2img:avatar',
+      avatarStyle: 'art-nouveau',
+      avatarReference: 'mara',
+      model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
+    });
+    expect(workflowMetadata).toMatchObject({ params: { workflow: 'img2img:avatar' } });
   });
 });
