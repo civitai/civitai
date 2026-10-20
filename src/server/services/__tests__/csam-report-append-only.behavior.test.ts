@@ -13,7 +13,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MIGRATION = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261111120000_csam_report_append_only/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261112120000_csam_report_append_only/migration.sql'
 );
 
 const db = { pg: null as unknown as PGlite };
