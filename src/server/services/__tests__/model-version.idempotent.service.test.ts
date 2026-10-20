@@ -263,8 +263,17 @@ describe('mergeVersions file remaps', () => {
   const PAST_REMAP = 'reached the steps after the file remap';
   const fileFindMany = vi.fn();
   const fileUpdateMany = vi.fn();
+  // The locked status rows: nothing here is training, so the merge checks pass.
+  const versionRows = vi.fn(async () =>
+    [TARGET, SOURCE].map((id) => ({
+      id,
+      name: `v${id}`,
+      status: 'Published',
+      trainingStatus: null,
+    }))
+  );
   const tx = new Proxy(
-    { modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany } },
+    { $queryRaw: versionRows, modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany } },
     {
       get(target, key) {
         if (key in target) return target[key as keyof typeof target];
@@ -375,6 +384,123 @@ describe('mergeVersions file remaps', () => {
       where: { id: FILE, ...inMerge },
       data: { type: 'Pruned Model' },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeVersions keeps a version whose training run is in progress, under review or denied, and a
+// trained dataset off a version that still takes a new one
+// ---------------------------------------------------------------------------
+describe('mergeVersions training runs', () => {
+  const OWNER = 7;
+  const MODEL = 1;
+  const TARGET = 100;
+  const SOURCE = 101;
+
+  // Reaching the file move (step 2) means every check before it passed.
+  const PAST_CHECKS = 'reached the file move';
+  const versionRows = vi.fn();
+  const datasetFindFirst = vi.fn();
+  const fileMove = vi.fn(() => {
+    throw new Error(PAST_CHECKS);
+  });
+  const tx = {
+    $queryRaw: versionRows,
+    modelFile: { findFirst: datasetFindFirst, updateMany: fileMove },
+  };
+
+  const row = (id: number, status: string, trainingStatus: string | null) => ({
+    id,
+    name: `v${id}`,
+    status,
+    trainingStatus,
+  });
+  const stored = (
+    source: { status?: string; trainingStatus: string | null },
+    target: { status?: string; trainingStatus?: string | null } = {}
+  ) =>
+    versionRows.mockResolvedValue([
+      row(TARGET, target.status ?? 'Draft', target.trainingStatus ?? null),
+      row(SOURCE, source.status ?? 'Draft', source.trainingStatus),
+    ]);
+
+  const merge = () =>
+    mergeVersions({
+      modelId: MODEL,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+
+  beforeEach(() => {
+    versionRows.mockReset();
+    datasetFindFirst.mockReset().mockResolvedValue({ modelVersionId: SOURCE });
+    fileMove.mockClear();
+    mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: 'Draft',
+        monetization: null,
+        meta: null,
+      })),
+    });
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  it.each(['Submitted', 'Processing', 'Paused', 'Denied'])(
+    'refuses a source whose run is %s, moving nothing',
+    async (trainingStatus) => {
+      stored({ trainingStatus });
+
+      await expect(merge()).rejects.toThrow(
+        `Version "v101" has a training run in progress, under review or denied, and can't be merged.`
+      );
+      expect(fileMove).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['InReview', 'Approved'])(
+    'refuses moving a %s source dataset onto a version that takes a new dataset',
+    async (trainingStatus) => {
+      stored({ trainingStatus }, { status: 'Draft', trainingStatus: null });
+
+      await expect(merge()).rejects.toThrow(
+        `Version "v101" has a finished training run, so its training data can't move to a version that still accepts new training data.`
+      );
+      expect(datasetFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { modelVersionId: { in: [SOURCE] }, type: 'Training Data' },
+        })
+      );
+      expect(fileMove).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['into a published target', { trainingStatus: 'InReview' }, { status: 'Published' }],
+    [
+      'into a target with its own started run',
+      { trainingStatus: 'Approved' },
+      { trainingStatus: 'InReview' },
+    ],
+    ['from a source that never trained', { trainingStatus: null }, {}],
+    ['from a source whose run failed', { trainingStatus: 'Failed' }, {}],
+  ] as const)('merges %s', async (_, source, target) => {
+    stored(source, target);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  it('merges a trained source that has no training data', async () => {
+    stored({ trainingStatus: 'InReview' });
+    datasetFindFirst.mockResolvedValue(null);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
   });
 });
 

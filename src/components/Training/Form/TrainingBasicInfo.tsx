@@ -25,6 +25,7 @@ import { useTrainingStudioSwitch } from '~/components/Training/TrainingStudioSwi
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { isDatasetEditable } from '~/shared/constants/training.constants';
 import { constants } from '~/server/common/constants';
 import type {
   ModelVersionUpsertInput,
@@ -230,7 +231,10 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           ? (thisModelVersion.baseModel as BaseModel)
           : ('SD 1.5' as const), // this is not really correct, but it needs something there
         trainedWords: thisModelVersion ? thisModelVersion.trainedWords : [],
-        trainingStatus: TrainingStatus.Pending,
+        // Once a run has started the status is the run's; a rename here must not reset it.
+        ...((!thisModelVersion || isDatasetEditable(thisModelVersion.trainingStatus)) && {
+          trainingStatus: TrainingStatus.Pending,
+        }),
         trainingDetails: {
           type: trainingModelType,
           mediaType: trainingMediaType,
