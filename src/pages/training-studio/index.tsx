@@ -179,6 +179,15 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             return null;
           }
         },
+        // Same status the classic trainer's TrainStatusMessage reads; the element shows the notice and
+        // disables Start when training is off. Null (e.g. the `imageTraining` flag is off) = no banner.
+        getTrainingStatus: async () => {
+          try {
+            return await utilsRef.current.training.getStatus.fetch();
+          } catch {
+            return null;
+          }
+        },
         // pricingUrl relative on purpose: the element treats it as an in-host same-tab navigation.
         config: {
           orchestratorEndpoint,

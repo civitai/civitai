@@ -29,6 +29,7 @@
   import { remixFromRun } from '$lib/reuse';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
   import {
@@ -158,6 +159,7 @@
 {/snippet}
 
 <section class="flex flex-col gap-5">
+  <ServiceStatusBanner />
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">My trainings</h2>
