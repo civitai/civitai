@@ -51,6 +51,7 @@ import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
   checkSfwFaceSchema,
+  draftSfwFaceSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
@@ -111,7 +112,7 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
-import { checkSfwFace } from '~/server/services/model-sfw-face.service';
+import { checkSfwFace, draftSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
   middleware,
@@ -297,6 +298,11 @@ export const modelRouter = router({
     .input(checkSfwFaceSchema)
     .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
     .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
+  draftSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(draftSfwFaceSchema)
+    .use(rateLimit({ limit: 20, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => draftSfwFace({ ...input, userId: ctx.user.id })),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsDelete })
     .input(deleteModelSchema)

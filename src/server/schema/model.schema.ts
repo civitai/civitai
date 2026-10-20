@@ -214,6 +214,12 @@ export const checkSfwFaceSchema = z.object({
 });
 export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
 
+export const draftSfwFaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  description: z.string().max(50000).nullish(),
+  modelId: z.number().optional(),
+});
+
 export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),

@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
 
-const { mockCreateXGuardModerationRequest } = vi.hoisted(() => ({
+const { mockCreateXGuardModerationRequest, mockSubmitWorkflow } = vi.hoisted(() => ({
   mockCreateXGuardModerationRequest: vi.fn(),
+  mockSubmitWorkflow: vi.fn(),
+}));
+
+// The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
+vi.mock('@civitai/client', () => ({
+  createCivitaiClient: vi.fn(() => ({})),
+  submitWorkflow: mockSubmitWorkflow,
 }));
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOriginal) => ({
@@ -10,7 +17,11 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
   createXGuardModerationRequest: mockCreateXGuardModerationRequest,
 }));
 
-import { assertSfwFaceSafe, checkSfwFace } from '~/server/services/model-sfw-face.service';
+import {
+  assertSfwFaceSafe,
+  checkSfwFace,
+  draftSfwFace,
+} from '~/server/services/model-sfw-face.service';
 
 const succeeded = (results: { label: string; triggered: boolean; text?: string[] }[]) => ({
   status: 'succeeded',
@@ -111,5 +122,53 @@ describe('assertSfwFaceSafe', () => {
     await expect(
       assertSfwFaceSafe({ sfwName: 'Retro Pinup Style', sfwDescription: '<p>ok</p>', userId: 1 })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('draftSfwFace', () => {
+  const draftReply = (title: string, description: string) => ({
+    data: {
+      status: 'succeeded',
+      steps: [
+        {
+          output: {
+            choices: [{ message: { content: JSON.stringify({ title, description }) } }],
+          },
+        },
+      ],
+    },
+  });
+
+  beforeEach(() => {
+    mockCreateXGuardModerationRequest.mockReset();
+    mockSubmitWorkflow.mockReset();
+  });
+
+  it('asks for one revision when the check still flags the draft', async () => {
+    mockSubmitWorkflow
+      .mockResolvedValueOnce(draftReply('Nude Pinup Pack', '<p>Retro style.</p>'))
+      .mockResolvedValueOnce(draftReply('Retro Pinup Style', '<p>Retro style.</p>'));
+    mockCreateXGuardModerationRequest.mockImplementation(async ({ content }) =>
+      content.includes('Nude') ? succeeded([{ label: 'NSFW', triggered: true }]) : clean
+    );
+
+    const draft = await draftSfwFace({ name: 'Nude Pinup Pack', userId: 1 });
+
+    expect(draft.sfwName).toBe('Retro Pinup Style');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    const revision = mockSubmitWorkflow.mock.calls[1][0].body.steps[0].input.messages;
+    expect(revision.at(-1).content).toContain('title is still rated nsfw');
+  });
+
+  it('returns the first draft when it already passes', async () => {
+    mockSubmitWorkflow.mockResolvedValueOnce(draftReply('Retro Pinup Style', '<p>ok</p>'));
+    mockCreateXGuardModerationRequest.mockResolvedValue(clean);
+    await draftSfwFace({ name: 'x', userId: 1 });
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses with a retryable message when the model gives no usable answer', async () => {
+    mockSubmitWorkflow.mockResolvedValueOnce({ data: { status: 'failed', steps: [] } });
+    await expect(draftSfwFace({ name: 'x', userId: 1 })).rejects.toThrow("couldn't draft");
   });
 });

@@ -1,6 +1,11 @@
-import { Group, Loader, Paper, Stack, Switch, Text } from '@mantine/core';
+import { Button, Group, Loader, Paper, Stack, Switch, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconAlertTriangle, IconCircleCheck, IconInfoCircle } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCircleCheck,
+  IconInfoCircle,
+  IconSparkles,
+} from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFormContext, useWatch } from 'react-hook-form';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
@@ -8,6 +13,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InputRTE, InputText } from '~/libs/form';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { normalizeSfwFaceText } from '~/shared/utils/model-sfw-face';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type SfwFaceForm = {
@@ -38,6 +44,28 @@ export function ModelSfwFaceFields({ modelId }: { modelId?: number }) {
   const setFace = (name: string | null, description: string | null) => {
     form.setValue('sfwName', name, { shouldDirty: true, shouldValidate: name !== null });
     form.setValue('sfwDescription', description, { shouldDirty: true });
+  };
+
+  const draftMutation = trpc.model.draftSfwFace.useMutation({
+    onSuccess: (draft) => setFace(draft.sfwName, draft.sfwDescription),
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) }),
+  });
+
+  const handleDraft = () => {
+    const { name, description, sfwName: currentName } = form.getValues();
+    const draft = () => draftMutation.mutate({ name, description, modelId });
+    if (!currentName || currentName === name) return draft();
+
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Replace your .com content?',
+        message: 'The draft replaces the .com title and description you have now.',
+        labels: { confirm: 'Replace', cancel: 'Keep mine' },
+        onConfirm: draft,
+      },
+    });
   };
 
   const handleToggle = (checked: boolean) => {
@@ -71,6 +99,20 @@ export function ModelSfwFaceFields({ modelId }: { modelId?: number }) {
         />
         {enabled && (
           <>
+            <Group justify="space-between" gap="xs">
+              <Text size="xs" c="dimmed">
+                Start from a draft written from your current title and description.
+              </Text>
+              <Button
+                size="compact-sm"
+                variant="light"
+                leftSection={<IconSparkles size={14} />}
+                loading={draftMutation.isPending}
+                onClick={handleDraft}
+              >
+                Draft a civitai.com version
+              </Button>
+            </Group>
             <Stack gap={4}>
               <VerdictLine verdict={nameVerdict} />
               <InputText

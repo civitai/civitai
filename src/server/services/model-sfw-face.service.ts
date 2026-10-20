@@ -1,12 +1,15 @@
-import type { XGuardModerationOutput } from '@civitai/client';
+import type { ChatCompletionStepTemplate, XGuardModerationOutput } from '@civitai/client';
+import { submitWorkflow } from '@civitai/client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   collectMatchedTerms,
   triggeredLabelKeys,
 } from '~/server/services/moderation-label-helpers';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
 /** The labels that set `Model.nsfw` on the .red text are the ones a .com field must clear. */
@@ -125,4 +128,134 @@ export async function assertSfwFaceSafe({
     throw throwBadRequestError(
       "We couldn't check the civitai.com title and description just now. Try saving again."
     );
+}
+
+const DRAFT_MODEL = 'openai/gpt-4o-mini';
+const DRAFT_WAIT_SECONDS = 45;
+
+const DRAFT_SYSTEM_PROMPT = `You rewrite the listing of an AI model (a LoRA, checkpoint or similar) so it can be shown on civitai.com, a site that shows no mature content.
+
+Rules:
+- Remove or neutralise sexual, explicit, suggestive and fetish language. Do not describe nudity or sexual acts.
+- Keep everything a user needs to use the model: what it does, the base model, trigger words exactly as given, recommended settings, usage notes, changelog and links.
+- Keep the creator's voice and structure. Do not add claims, ratings or new content.
+- The title names the model's style, subject or purpose with no sexual, nude, body-part, clothing-state or fetish words. Rename it when needed; keep the original name only when it is already suitable.
+- The description is HTML using only <p>, <h3>, <ul>, <ol>, <li>, <strong>, <em>, <code> and <a href>.
+- If the text is already suitable, return it with minimal changes.`;
+
+const DRAFT_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  jsonSchema: {
+    name: 'com_listing',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: { title: { type: 'string' }, description: { type: 'string' } },
+      required: ['title', 'description'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** Drafts a .com title and description from the .red ones. Nothing is saved. */
+export async function draftSfwFace({
+  name,
+  description,
+  modelId,
+  userId,
+}: {
+  name: string;
+  description?: string | null;
+  modelId?: number;
+  userId: number;
+}) {
+  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  const source = JSON.stringify({ title: name, description: description ?? '', triggerWords });
+  let draft = await requestDraft([{ role: 'user', content: source }], userId);
+
+  // One revision when the check still flags the draft, telling the model what it missed.
+  const verdicts = await checkSfwFace({
+    sfwName: draft.title,
+    sfwDescription: draft.description,
+    userId,
+  });
+  const feedback = flaggedFeedback(verdicts);
+  if (feedback)
+    draft = await requestDraft(
+      [
+        { role: 'user', content: source },
+        { role: 'assistant', content: JSON.stringify(draft) },
+        { role: 'user', content: feedback },
+      ],
+      userId
+    ).catch(() => draft);
+
+  return {
+    sfwName: draft.title.trim().slice(0, 255),
+    sfwDescription: sanitizeHtml(draft.description),
+  };
+}
+
+async function requestDraft(conversation: { role: string; content: string }[], userId: number) {
+  // The client types a message as `{ role }` only; the content rides along untyped.
+  const messages = [{ role: 'system', content: DRAFT_SYSTEM_PROMPT }, ...conversation];
+  const step: ChatCompletionStepTemplate = {
+    $type: 'chatCompletion',
+    input: {
+      model: DRAFT_MODEL,
+      temperature: 0.3,
+      responseFormat: DRAFT_RESPONSE_FORMAT,
+      messages,
+    },
+  };
+
+  const { data } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: { wait: DRAFT_WAIT_SECONDS },
+    body: { metadata: { purpose: 'model-sfw-face-draft', userId }, currencies: [], steps: [step] },
+  }).catch(() => ({ data: undefined }));
+
+  const content = (
+    data?.steps?.[0] as { output?: { choices?: { message?: { content?: string } }[] } } | undefined
+  )?.output?.choices?.[0]?.message?.content;
+  const draft = parseDraft(content);
+  if (data?.status !== 'succeeded' || !draft)
+    throw throwBadRequestError("We couldn't draft a civitai.com version just now. Try again.");
+  return draft;
+}
+
+function flaggedFeedback(verdicts: Partial<Record<SfwFaceCheckField, SfwFaceVerdict>>) {
+  const problems = (['sfwName', 'sfwDescription'] as const).flatMap((field) => {
+    const verdict = verdicts[field];
+    if (verdict?.status !== 'flagged') return [];
+    const part = field === 'sfwName' ? 'title' : 'description';
+    const terms = verdict.terms.length ? ` (for example: ${verdict.terms.join(', ')})` : '';
+    return [`The ${part} is still rated ${verdict.labels.join(', ')}${terms}.`];
+  });
+  if (!problems.length) return null;
+  return `${problems.join(
+    ' '
+  )} Rewrite it so it is suitable for civitai.com and answer with the same JSON shape.`;
+}
+
+function parseDraft(content: string | undefined) {
+  if (!content) return null;
+  try {
+    const parsed = JSON.parse(content) as { title?: unknown; description?: unknown };
+    if (typeof parsed.title !== 'string' || !parsed.title.trim()) return null;
+    return {
+      title: parsed.title,
+      description: typeof parsed.description === 'string' ? parsed.description : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getOwnTriggerWords({ modelId, userId }: { modelId: number; userId: number }) {
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId, model: { userId } },
+    select: { trainedWords: true },
+  });
+  return [...new Set(versions.flatMap((version) => version.trainedWords))];
 }
