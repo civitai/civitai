@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
 
 // One candidate slot, in stable orchestrator order. Either:
 //  - clean (downloaded to S3, picker may select it), or
@@ -93,7 +94,8 @@ export function CandidateImageModal({
 
   const effectiveSelection = selectedKey ?? currentImageUrl;
   const hasNewSelection = selectedKey != null && selectedKey !== currentImageUrl;
-  const hasLocked = candidates.some((c) => c.requiresUnlock);
+  // A capped slot stays hidden whatever is paid: the unlock never lifts the workflow's rating cap.
+  const hasUnlockable = candidates.some((c) => c.requiresUnlock && c.blockedReason !== NSFW_CAPPED);
   const hasMature = useMemo(() => candidates.some(isCandidateMature), [candidates]);
   // CTA selection is driven by the parent's domain — `onUnlock` is
   // populated only on red, `unlockHref` only on green. We never combine
@@ -123,7 +125,7 @@ export function CandidateImageModal({
             </>
           )}
         </Text>
-        {hasLocked && (
+        {hasUnlockable && (
           <div
             className="rounded-md p-3 mb-md flex flex-col items-center gap-2 mb-2"
             style={{
@@ -214,7 +216,9 @@ export function CandidateImageModal({
                         Mature — Locked
                       </Badge>
                       <Text size="xs" c="white" ta="center">
-                        Use the unlock button above to reveal.
+                        {slot.blockedReason === NSFW_CAPPED
+                          ? "This generation is limited to a lower rating, so this result can't be shown."
+                          : 'Use the unlock button above to reveal.'}
                       </Text>
                     </div>
                   </div>
