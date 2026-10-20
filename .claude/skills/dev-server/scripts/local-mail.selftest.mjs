@@ -1,5 +1,5 @@
 // Every env the daemon spawns sends mail to the local catcher, whatever the .env chain or the
-// daemon's own environment says. Built by the real loadEnvChain over real .env files.
+// daemon's own environment says.
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -41,7 +41,6 @@ try {
   writeFileSync(join(primary, '.env'), REAL);
   checkCatcher('primary .env with real mail:', spawnEnvFor(loadEnvChain([join(primary, '.env')])));
 
-  // The auth hub passes an empty chain; its floor is the daemon's own environment.
   process.env.EMAIL_HOST = 'smtp.example.net';
   process.env.EMAIL_PASS = 'real-pass';
   checkCatcher('daemon process.env with real mail:', spawnEnvFor({}));

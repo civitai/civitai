@@ -37,7 +37,7 @@ Required environment: database connection strings, authentication providers, S3/
 
 ## Email
 
-Local dev never uses real mail credentials. Every email goes to the Mailpit catcher in `docker-compose.base.yml` (`docker compose -f docker-compose.base.yml up -d mailpit`): SMTP on `localhost:1025`, inbox UI and API at http://localhost:1080. The dev-server daemon forces the catcher's `EMAIL_*` values into every app it starts, whatever the `.env` chain says, and `wt new` writes them into each `.env` it copies. Commented-out mail lines left in an older local `.env` are dead values; delete them. With Mailpit down a send fails with a connection error; nothing falls back to a real server.
+Local dev never uses real mail credentials. Every email goes to the Mailpit catcher in `docker-compose.base.yml` (`docker compose -f docker-compose.base.yml up -d mailpit`): SMTP on `localhost:1025`, inbox UI and API at http://localhost:1080. The dev-server daemon forces the catcher's `EMAIL_*` values into every app it starts, whatever the `.env` chain says, and `wt new` and `wt env --refresh` write them into each `.env` they copy. Commented-out mail lines left in an older local `.env` are dead values; delete them. With Mailpit down a send fails with a connection error; nothing falls back to a real server.
 
 ## Traps that cost hours
 

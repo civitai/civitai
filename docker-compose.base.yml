@@ -94,7 +94,7 @@ services:
     entrypoint: >
       /bin/sh -c "/usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb --ignore-existing minio/modelshare && /usr/bin/mc anonymous set public minio/modelshare && /usr/bin/mc mb --ignore-existing minio/images && /usr/bin/mc anonymous set public minio/images && exit 0"
 
-  # Local SMTP catcher: every email local dev sends lands here (UI at http://localhost:1080).
+  # Local SMTP catcher. UI is remapped to :1080, where maildev served it.
   mailpit:
     image: axllent/mailpit:v1.31.3
     environment:

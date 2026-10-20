@@ -1,13 +1,11 @@
 /**
  * Local dev mail goes to the Mailpit catcher in docker-compose.base.yml, never a real SMTP server.
  *
- * Two places apply it: the daemon overrides these keys in every env it spawns (main app, auth hub,
- * sibling apps), whatever the .env chain says; `wt new` / `wt env --refresh` rewrite them in every
- * .env they copy, so a bare `pnpm` command in a worktree is routed the same way.
+ * Applied by the daemon (`spawnEnvFor`) and by `routeEnvTextToCatcher` on every copied .env.
  *
- * All six keys are always written. The mail clients connect only when HOST, PORT, USER, PASS and
- * FROM are all non-empty, and a worktree .env missing one would inherit the primary's through the
- * daemon's key-by-key chain. Mailpit accepts any credentials, so USER/PASS are placeholders.
+ * All six keys are always written: the mail clients connect only when HOST, PORT, USER, PASS and
+ * FROM are all non-empty, and a bare `pnpm` run reads only the copied file. Mailpit accepts any
+ * credentials, so USER/PASS are placeholders.
  */
 
 export const LOCAL_MAIL_ENV = Object.freeze({
@@ -24,10 +22,7 @@ export const LOCAL_MAIL_LOG = `Email: routed to the local catcher (${LOCAL_MAIL_
 // Active and commented-out lines alike: a commented line is one edit away from live.
 const EMAIL_LINE = /^\s*#?\s*EMAIL_[A-Z_]*\s*=/;
 
-/**
- * Rewrite a .env file's text so every EMAIL_* line is replaced by the catcher values.
- * A file with no EMAIL_* line is returned unchanged: that app does not send mail.
- */
+/** A file with no EMAIL_* line is returned unchanged rather than gaining a mail block. */
 export function routeEnvTextToCatcher(text) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);

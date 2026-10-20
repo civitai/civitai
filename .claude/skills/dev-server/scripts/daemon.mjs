@@ -1910,9 +1910,8 @@ class AppSession extends AuthHub {
 // is several GB per checkout, so across many worktrees it fills the disk. Off for worktrees unless
 // the skill .env opts back in; a NEXT_DEV_FS_CACHE from the session's own .env chain wins either
 // way. The primary checkout keeps it.
-// What every child the daemon spawns runs on: the daemon's own env (PATH etc.), the .env chain over
-// it, and the local mail catcher over both. Vite gives process.env precedence over the .env files it
-// loads, so this also holds for the auth hub, which reads apps/auth/.env itself.
+// Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
+// apps/auth/.env itself) is routed to the catcher only because the keys are set here.
 function spawnEnvFor(envVars) {
   return { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
 }
