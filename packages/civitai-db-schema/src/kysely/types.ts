@@ -2901,6 +2901,15 @@ export type CsamReport = {
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
 };
+export type CsamReportAudit = {
+  id: Generated<number>;
+  csamReportId: number;
+  op: string;
+  oldDetails: unknown | null;
+  oldReportSentAt: Timestamp | null;
+  changedAt: Generated<Timestamp>;
+  changedBy: Generated<string>;
+};
 export type CustomerSubscription = {
   id: string;
   userId: number;
@@ -6087,6 +6096,7 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamReport: CsamReport;
+  CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
   Donation: Donation;
   DonationGoal: DonationGoal;

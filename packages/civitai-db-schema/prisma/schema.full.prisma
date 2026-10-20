@@ -6531,6 +6531,19 @@ model CsamReport {
   // modelVersionIds  Int[]     @default([])
 }
 
+/// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
+model CsamReportAudit {
+  id              Int       @id @default(autoincrement())
+  csamReportId    Int
+  op              String
+  oldDetails      Json?
+  oldReportSentAt DateTime?
+  changedAt       DateTime  @default(now())
+  changedBy       String    @default(dbgenerated("CURRENT_USER"))
+
+  @@index([csamReportId])
+}
+
 model Link {
   id         Int      @id @default(autoincrement())
   url        String
