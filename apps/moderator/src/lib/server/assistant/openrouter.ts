@@ -65,7 +65,12 @@ export async function complete(input: {
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const body = (await res.json()) as {
     choices?: {
-      message?: { content?: string | null; tool_calls?: ToolCall[]; reasoning?: string | null };
+      message?: {
+        content?: string | null;
+        tool_calls?: ToolCall[];
+        reasoning?: unknown;
+        reasoning_details?: unknown;
+      };
       finish_reason?: string | null;
     }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -80,7 +85,7 @@ export async function complete(input: {
     message: {
       content: choice.message.content ?? null,
       tool_calls: choice.message.tool_calls,
-      reasoning: choice.message.reasoning ?? null,
+      reasoning: reasoningOf(choice.message),
     },
     finishReason: choice.finish_reason ?? null,
     usage: {
@@ -88,4 +93,18 @@ export async function complete(input: {
       completion: body.usage?.completion_tokens ?? 0,
     },
   };
+}
+
+/**
+ * The reasoning text, from `reasoning` or, when a model family leaves that empty, the readable parts of
+ * `reasoning_details` (encrypted ones have no text). Anything not shaped as documented reads as none: it
+ * is display only, so it must never fail the turn that carried a good answer.
+ */
+export function reasoningOf(message: { reasoning?: unknown; reasoning_details?: unknown }) {
+  if (typeof message.reasoning === 'string' && message.reasoning.trim()) return message.reasoning;
+  if (!Array.isArray(message.reasoning_details)) return null;
+  const parts = message.reasoning_details.flatMap((d: { text?: unknown; summary?: unknown }) =>
+    typeof d?.text === 'string' ? [d.text] : typeof d?.summary === 'string' ? [d.summary] : []
+  );
+  return parts.join('\n\n').trim() || null;
 }
