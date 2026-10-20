@@ -24,7 +24,8 @@ import { describe, expect, it } from 'vitest';
  * enumerated by walking every Prisma and raw-SQL write call site under `src/server` instead of
  * by reading the router tree. That walk is a snapshot, not a guarantee: a writer added after it
  * is invisible here until someone lists it, so a green run still means "what is listed is still
- * wired", nothing wider.
+ * wired", nothing wider. Writers whose text a moderator reviews before it is shown were decided
+ * separately, as a product decision, and are not listed here.
  *
  * 868kw6t61. Nine surfaces called `throwOnBlockedLinkDomain` and stopped there, so they enforced
  * one of the two blocklists over the raw stored string while comments ran both over several
@@ -85,12 +86,13 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
-  'src/server/services/post.service.ts': 2,
+  'src/server/services/post.service.ts': 3,
   'src/server/services/question.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
   'src/server/services/storyline.service.ts': 2,
+  'src/server/services/tag.service.ts': 1,
   // 4: the two writers below, plus the template path's alias scan — a batch call and
   // a per-alias one, which runs only to find which alias the batch refused.
   'src/server/services/user-hub.service.ts': 4,
@@ -195,7 +197,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model.service.ts': { applyModelContentChange: 1, upsertModel: 2 },
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
-  'src/server/services/post.service.ts': { createPost: 1, updatePost: 1 },
+  'src/server/services/post.service.ts': { addPostTag: 1, createPost: 1, updatePost: 1 },
   'src/server/services/question.service.ts': { upsertQuestion: 1 },
   'src/server/services/rating-review.service.ts': { createRatingReview: 1 },
   'src/server/services/resourceReview.service.ts': {
@@ -205,6 +207,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   },
   'src/server/services/sticker-placement.service.ts': { createStickerPlacement: 1 },
   'src/server/services/storyline.service.ts': { createStoryline: 1, updateStoryline: 1 },
+  'src/server/services/tag.service.ts': { findOrCreateTagsByName: 1 },
   'src/server/services/user-hub.service.ts': {
     addUserHubSource: 1,
     upsertUserHub: 1,

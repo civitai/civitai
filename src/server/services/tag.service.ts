@@ -48,6 +48,7 @@ import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -922,6 +923,8 @@ export const findOrCreateTagsByName = async (tags: string[]) => {
     .filter(([, id]) => id === undefined)
     .map((t) => t[0]);
   if (newTags.length > 0) {
+    // Only names no Tag row has: attaching an existing tag is not new text.
+    await throwOnBlockedUserContent(newTags, { surface: 'post' });
     // prisma...my dude. you really can't return the created rows?
     await dbWrite.tag.createMany({
       data: newTags.map((x) => ({

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
@@ -1294,10 +1295,10 @@ export const upsertCollection = async ({
   // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
   // A grep for `note:` in a write position does not find it, because it is spread — this check was
   // deleted once on that evidence and had to be restored.
-  await throwOnBlockedUserContent([name, description, collectionItem.note], {
-    isModerator,
-    surface: 'collection',
-  });
+  await throwOnBlockedUserContent(
+    [name, description, collectionItem.note, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+    { isModerator, surface: 'collection' }
+  );
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image
