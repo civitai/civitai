@@ -8,11 +8,14 @@
   let {
     key,
     primary = false,
+    reasons = false,
     children,
     ...rest
   }: {
     key: number;
     primary?: boolean;
+    /** The decision offers reasons, so its key opens the reason list instead of submitting. */
+    reasons?: boolean;
     children: Snippet;
   } & Omit<ButtonProps, 'children' | 'size'> = $props();
 </script>
@@ -24,6 +27,7 @@
     primary ? 'bg-red-600 hover:bg-red-700' : 'border-dark-4 bg-transparent dark:bg-transparent'
   )}
   data-triage-key={key}
+  data-triage-reasons={reasons ? '' : undefined}
   {...rest}
 >
   <Kbd class="h-[13px] min-w-0 rounded-[3px] bg-black/25 px-[5px] text-[11px] font-semibold text-white">

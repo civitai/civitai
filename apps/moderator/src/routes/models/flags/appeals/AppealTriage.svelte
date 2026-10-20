@@ -21,9 +21,10 @@
     type AppealSource,
   } from '$lib/minor-flags/appeal-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
+  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
-  import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
+  import { flagInForce, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
   import { urlWith } from '$lib/url';
@@ -125,8 +126,12 @@
   selectionParam="appeal"
   queueLabel="Appeal queue"
   itemLabel="Appeal"
-  decisionEnabled={(row) => [flagInForce(row), true]}
-  ondecision={(_row, index) => pressDecisionKey(index)}
+  decisionEnabled={(row) => {
+    // Keys 3 and 4 are the two splits, offered only while both flags are in force.
+    const split = row.minor && poiInForce(row);
+    return [flagInForce(row), true, split, split];
+  }}
+  ondecision={(_row, index) => pressDecisionKey(index, openReasonPicker)}
   bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}

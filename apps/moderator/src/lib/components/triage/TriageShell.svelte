@@ -11,6 +11,7 @@
   import { optimisticEnhancer } from '$lib/form-action';
   import { submitDecisionForm } from '$lib/triage/decision-form';
   import { isTypingTarget, triageKeyAction } from '$lib/triage/keys';
+  import { reasonPicker } from '$lib/triage/reason-picker.svelte';
   import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
@@ -32,7 +33,7 @@
 
   /**
    * The master-detail triage every queue shares: a list on the left, the open item on the right,
-   * J/K to move, 1/2 to rule, and the list dimming decided items in place (offsets shift under
+   * J/K to move, digits to rule (a decision with reasons opens its reason list for a second press), and the list dimming decided items in place (offsets shift under
    * paging, so the page is only re-cut on request). The queues supply the rows and what they show.
    */
   let {
@@ -208,6 +209,7 @@
       defaultPrevented: e.defaultPrevented,
       isComposing: e.isComposing,
       typing: isTypingTarget(e.target as Element | null),
+      picking: reasonPicker.open !== null,
       decisionEnabled:
         selected && selectedRowKey !== null && !acted.has(selectedRowKey)
           ? decisionEnabled(selected)

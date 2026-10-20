@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   decisionEnabled,
   decisionReasonFor,
+  decisionReasonList,
   flagRefId,
   flaggedDecisionEnabled,
   flaggedDecisions,
@@ -55,13 +56,13 @@ describe('flaggedDecisions', () => {
     ]);
   });
 
-  it('offers both-flag decisions on keys 1 and 2, then one split per kept label', () => {
+  it('offers both-flag decisions first, then one split per kept label', () => {
     const decisions = flaggedDecisions([minorText, poiText]);
-    expect(decisions.map((d) => [d.label, d.keep, d.key])).toEqual([
-      ['Confirm both flags', ['minor:text-scan', 'poi:text-scan'], 1],
-      ['Revert both', [], 2],
-      ['Keep minor, revert real person', ['minor:text-scan'], undefined],
-      ['Revert minor, keep real person', ['poi:text-scan'], undefined],
+    expect(decisions.map((d) => [d.label, d.keep])).toEqual([
+      ['Confirm both flags', ['minor:text-scan', 'poi:text-scan']],
+      ['Revert both', []],
+      ['Keep minor, revert real person', ['minor:text-scan']],
+      ['Revert minor, keep real person', ['poi:text-scan']],
     ]);
   });
 
@@ -173,15 +174,15 @@ describe('needsReviewDecisions', () => {
 
   it('flags or does not flag a single held detection', () => {
     expect(needsReviewDecisions([held('poi')])).toEqual([
-      { label: 'Flag as real person', keep: ['poi:redetected'], key: 1 },
-      { label: "Don't flag", keep: [], key: 2 },
+      { label: 'Flag as real person', keep: ['poi:redetected'] },
+      { label: "Don't flag", keep: [] },
     ]);
   });
 
   it('flags a file match as minor or dismisses it', () => {
     expect(needsReviewDecisions([match])).toEqual([
-      { label: 'Flag as minor', keep: ['minor:file-match'], key: 1 },
-      { label: 'Dismiss match', keep: [], key: 2 },
+      { label: 'Flag as minor', keep: ['minor:file-match'] },
+      { label: 'Dismiss match', keep: [] },
     ]);
   });
 
@@ -190,9 +191,8 @@ describe('needsReviewDecisions', () => {
       {
         label: 'Flag as minor and real person',
         keep: ['minor:redetected', 'poi:redetected'],
-        key: 1,
       },
-      { label: "Don't flag", keep: [], key: 2 },
+      { label: "Don't flag", keep: [] },
       { label: 'Flag as minor only', keep: ['minor:redetected'] },
       { label: 'Flag as real person only', keep: ['poi:redetected'] },
     ]);
@@ -200,8 +200,8 @@ describe('needsReviewDecisions', () => {
 
   it('offers no split when a held minor detection and a file match name the same label', () => {
     expect(needsReviewDecisions([held('minor'), match])).toEqual([
-      { label: 'Flag as minor', keep: ['minor:redetected', 'minor:file-match'], key: 1 },
-      { label: "Don't flag", keep: [], key: 2 },
+      { label: 'Flag as minor', keep: ['minor:redetected', 'minor:file-match'] },
+      { label: "Don't flag", keep: [] },
     ]);
   });
 });
@@ -221,5 +221,19 @@ describe('file matches', () => {
         revert: 'Dismiss',
       })
     ).toBeNull();
+  });
+});
+
+describe('decisionReasonList', () => {
+  const groups = flaggedReasonGroups([minorText, poiText], { keep: 'Confirm', revert: 'Revert' })!;
+  const [confirm, revert, split] = flaggedDecisions([minorText, poiText]);
+
+  it('offers the keep reasons for a decision that keeps every flag', () => {
+    expect(decisionReasonList(groups, confirm, 2)).toBe(groups[0].reasons);
+  });
+
+  it('offers the revert reasons for a revert and for a split, whose reason explains its revert', () => {
+    expect(decisionReasonList(groups, revert, 2)).toBe(groups[1].reasons);
+    expect(decisionReasonList(groups, split, 2)).toBe(groups[1].reasons);
   });
 });

@@ -24,6 +24,7 @@
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
+  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { uniqueBy } from '$lib/triage/unique-by';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
@@ -47,11 +48,10 @@
   const parseKey = (raw: string) =>
     /^(\d+)(?::(?:minor|poi):(?:hash|redetected|text-scan))?$/.exec(raw)?.[1] ?? null;
 
-  // Keys 1 and 2 confirm and revert every flag on the row; each is on only when every flag allows it.
+  // Each decision key is on only when every flag allows its part; the first two confirm and revert every flag.
   const rowDecisionEnabled = (row: FlaggedRow) => {
     const flags = row.flags.map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal }));
     return flaggedDecisions(flags)
-      .slice(0, 2)
       .map((d) => decisionEnabled(flags, d));
   };
 
@@ -104,7 +104,7 @@
 
   // A decision key presses its button: a hash row's submits straight away, and a reasoned row's
   // submits with the reason already in the bar, or says what is missing.
-  const ondecision = (_row: FlaggedRow, index: number) => pressDecisionKey(index);
+  const ondecision = (_row: FlaggedRow, index: number) => pressDecisionKey(index, openReasonPicker);
 </script>
 
 {#snippet listHeader()}

@@ -28,6 +28,7 @@
     needsReviewSourceChips,
   } from '$lib/minor-flags/needs-review';
   import { pressDecisionKey } from '$lib/triage/decision-form';
+  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { uniqueBy } from '$lib/triage/unique-by';
   import type { NeedsReviewQueueData } from '$lib/server/minor-flag-queue';
@@ -51,11 +52,10 @@
   // One row per model. An older link's model:label or model:label:source key still opens that model.
   const parseKey = (raw: string) => /^(\d+)(?::[a-z:-]+)?$/.exec(raw)?.[1] ?? null;
 
-  // Keys 1 and 2 flag and dismiss every lead on the row; each is on only when every lead allows it.
+  // Each decision key is on only when every lead allows its part; the first two flag and dismiss every lead.
   const rowDecisionEnabled = (row: NeedsReviewRow) => {
     const leads = leadRefs(row).map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal }));
     return needsReviewDecisions(leads)
-      .slice(0, 2)
       .map((d) => decisionEnabled(leads, d));
   };
 
@@ -109,7 +109,7 @@
     defaultValue: DEFAULT_NEEDS_REVIEW_FILTERS.sort,
   } satisfies ChipGroup);
 
-  const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index);
+  const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index, openReasonPicker);
 
   // A held detection is timed by when the scan held it; a match-only row by its file's upload.
   const rowMeta = (row: NeedsReviewRow) => {

@@ -5,12 +5,15 @@
   let {
     buttons,
     fields,
+    picker,
     problem,
     hint,
   }: {
     buttons: Snippet;
     /** The second line: the reason and note a decision button submits with. */
     fields?: Snippet;
+    /** The numbered reason list a decision key opens, above the reason line. */
+    picker?: Snippet;
     /** Why the last decision was not submitted, e.g. no reason picked. */
     problem?: string | null;
     hint?: string;
@@ -19,6 +22,7 @@
 
 <div class="flex w-full flex-col gap-2.5">
   <div class="flex flex-wrap items-center gap-2">{@render buttons()}</div>
+  {#if picker}{@render picker()}{/if}
   {#if fields}
     <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">{@render fields()}</div>
   {/if}

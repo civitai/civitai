@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTypingTarget, TYPING_SELECTOR, triageKeyAction } from '../keys';
+import { isTypingTarget, reasonPickerKeyAction, TYPING_SELECTOR, triageKeyAction } from '../keys';
 
 const key = (k: string, over: Partial<Parameters<typeof triageKeyAction>[0]> = {}) =>
   triageKeyAction({
@@ -51,6 +51,66 @@ describe('triageKeyAction', () => {
     expect(key('j', { metaKey: true })).toBeNull();
     expect(key('2', { ctrlKey: true })).toBeNull();
     expect(key('k', { altKey: true })).toBeNull();
+  });
+});
+
+describe('triageKeyAction with more than two decisions', () => {
+  it('gives every decision a digit, in order', () => {
+    const decisionEnabled = [true, true, true, true];
+    expect(key('3', { decisionEnabled })).toEqual({ decision: 2 });
+    expect(key('4', { decisionEnabled })).toEqual({ decision: 3 });
+    expect(key('5', { decisionEnabled })).toBeNull();
+  });
+});
+
+describe('triageKeyAction while the reason list is open', () => {
+  it('leaves every key to the list, row navigation included', () => {
+    for (const k of ['j', 'k', '1', '2']) expect(key(k, { picking: true })).toBeNull();
+  });
+});
+
+describe('reasonPickerKeyAction', () => {
+  const pick = (k: string, over: Partial<Parameters<typeof reasonPickerKeyAction>[0]> = {}) =>
+    reasonPickerKeyAction({
+      key: k,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      repeat: false,
+      typing: false,
+      onControl: false,
+      reasonCount: 3,
+      hasSelection: true,
+      ...over,
+    });
+
+  it('picks the reason a digit names, and ignores digits past the list', () => {
+    expect(pick('1')).toEqual({ pick: 0 });
+    expect(pick('3')).toEqual({ pick: 2 });
+    expect(pick('4')).toBeNull();
+    expect(pick('0')).toBeNull();
+  });
+
+  it('submits on Enter only when a reason is selected', () => {
+    expect(pick('Enter')).toBe('submit');
+    expect(pick('Enter', { hasSelection: false })).toBeNull();
+  });
+
+  it('leaves Enter to a focused button so it is not pressed twice', () => {
+    expect(pick('Enter', { onControl: true })).toBeNull();
+  });
+
+  it('closes on Escape, even from the note field', () => {
+    expect(pick('Escape')).toBe('close');
+    expect(pick('Escape', { typing: true })).toBe('close');
+  });
+
+  it('does not take digits or Enter while typing, with a modifier, or on a key repeat', () => {
+    expect(pick('1', { typing: true })).toBeNull();
+    expect(pick('Enter', { typing: true })).toBeNull();
+    expect(pick('1', { metaKey: true })).toBeNull();
+    expect(pick('1', { repeat: true })).toBeNull();
+    expect(pick('Escape', { repeat: true })).toBeNull();
   });
 });
 

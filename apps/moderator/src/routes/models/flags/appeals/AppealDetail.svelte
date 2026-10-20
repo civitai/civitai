@@ -53,7 +53,7 @@
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
@@ -68,6 +68,8 @@
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
   import { SSR_PENDING } from '$lib/ssr-pending';
+  import { clickDecision } from '$lib/triage/decision-form';
+  import { closeReasonPicker, reasonPicker } from '$lib/triage/reason-picker.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
@@ -167,10 +169,25 @@
   const reason = $derived(draft.reason || suggested);
   let problem = $state<string | null>(null);
   let reasonSelect = $state<HTMLElement | null>(null);
+  let noteInput = $state<HTMLInputElement | null>(null);
+
+  // Key order: the two rulings, then the splits when both flags are in force.
+  const decisionKeys = $derived<AppealRuling[]>([
+    ...FLAG_APPEAL_RULING_CHOICES.map((c) => c.verdict),
+    ...(row.minor && poiOpen ? SPLIT_RULINGS : []),
+  ]);
+  const labelOf = (key: AppealRuling) =>
+    key === 'Rejected' || key === 'Approved' ? DECISION_LABEL[key] : RULINGS[key].label;
+  const reasonsFor = (key: AppealRuling) => {
+    const ruling = rulingOf(key);
+    return resolutionReasonsFor('flagAppeal', ruling.verdict, labelsFor(ruling));
+  };
 
   // One step: the ruling button submits with the reason and note already in the bar, unless they
   // cannot be recorded for that ruling, in which case nothing is sent and the bar says why.
   const decide: SubmitFunction = (input) => {
+    closeReasonPicker();
+    reasonPicker.awaitingNote = null;
     const key = input.formData.get('ruling');
     const ruling = typeof key === 'string' && key in RULINGS ? rulingOf(key as AppealRuling) : null;
     const unavailable = ruling ? unavailableFor(key as AppealRuling) : null;
@@ -197,34 +214,39 @@
 </script>
 
 {#snippet buttons()}
-  {#each FLAG_APPEAL_RULING_CHOICES as c, i (c.verdict)}
-    {@const unavailable = unavailableFor(c.verdict)}
+  {#each decisionKeys as key, i (key)}
+    {@const unavailable = unavailableFor(key)}
     <TriageKeyButton
       type="submit"
       key={i + 1}
       primary={i === 0}
+      reasons={reasonsFor(key).length > 0}
       name="ruling"
-      value={c.verdict}
-      formaction={actionHref(RULINGS[c.verdict].action)}
+      value={key}
+      formaction={actionHref(RULINGS[key].action)}
       disabled={!!unavailable}
       title={unavailable ?? undefined}
     >
-      {DECISION_LABEL[c.verdict]}
+      {labelOf(key)}
     </TriageKeyButton>
   {/each}
-  {#if row.minor && poiOpen}
-    {#each SPLIT_RULINGS as split (split)}
-      <Button
-        type="submit"
-        variant="outline"
-        name="ruling"
-        value={split}
-        formaction={actionHref(RULINGS[split].action)}
-        class="h-8 border-dark-4 bg-transparent px-3.5 text-[13px] font-normal text-dark-0 dark:bg-transparent"
-      >
-        {RULINGS[split].label}
-      </Button>
-    {/each}
+{/snippet}
+
+{#snippet picker()}
+  {@const key = reasonPicker.open === null ? undefined : decisionKeys[reasonPicker.open]}
+  {#if key}
+    <ReasonPicker
+      index={reasonPicker.open!}
+      label={labelOf(key)}
+      reasons={reasonsFor(key)}
+      current={reason}
+      note={draft.note}
+      onreason={(next) => {
+        draft = { ...draft, reason: next };
+        problem = null;
+      }}
+      onneednote={() => noteInput?.focus()}
+    />
   {/if}
 {/snippet}
 
@@ -246,6 +268,10 @@
       }
     }
     bind:select={reasonSelect}
+    bind:noteInput
+    onenter={() => {
+      if (reasonPicker.awaitingNote !== null) clickDecision(reasonPicker.awaitingNote);
+    }}
   />
 {/snippet}
 
@@ -297,7 +323,7 @@
       showPriorClear={false}
       showRulings={false}
       pastAppeals={row.pastAppeals}
-          modelAppeals={row.modelAppeals}
+      modelAppeals={row.modelAppeals}
     />
 
     <div class="grid gap-4 md:grid-cols-2">
@@ -311,6 +337,7 @@
       <input type="hidden" name="modelId" value={row.modelId} />
       <TriageDecisionBar
         {buttons}
+        picker={reasonPicker.open !== null ? picker : undefined}
         {fields}
         {problem}
         hint={decisionHint}

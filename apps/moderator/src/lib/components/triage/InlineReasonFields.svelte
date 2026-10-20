@@ -14,6 +14,8 @@
     reason = $bindable(''),
     note = $bindable(''),
     select = $bindable(null),
+    noteInput = $bindable(null),
+    onenter,
   }: {
     /** Every decision's reasons, grouped by decision. */
     options: DecisionReasons;
@@ -21,6 +23,10 @@
     note?: string;
     /** The select's trigger, for focusing it when a decision is refused for want of a reason. */
     select?: HTMLElement | null;
+    /** The note field, for moving to it when a reason needs a note. */
+    noteInput?: HTMLInputElement | null;
+    /** Enter in the note field, once a reason has asked for a note. */
+    onenter?: () => void;
   } = $props();
 
   const noteRequired = $derived(reasonRequiresNote(reason));
@@ -62,9 +68,13 @@
   maxlength={RESOLUTION_NOTE_MAX_LENGTH}
   required={noteRequired}
   bind:value={note}
+  bind:ref={noteInput}
   onkeydown={(e) => {
     // Enter would submit with the form's first button, a decision nobody picked.
-    if (e.key === 'Enter') e.preventDefault();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onenter?.();
+    }
   }}
   placeholder={noteRequired
     ? 'Say why (required for Other). Never shown to the user.'

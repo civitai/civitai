@@ -34,25 +34,25 @@ export const FLAG_LABEL_NAMES: Record<FlaggedLabel, string> = {
 };
 
 /** A decision button: the flags it keeps; every other flag on the row is reverted. */
-export type FlaggedDecision = { label: string; keep: string[]; key?: 1 | 2 };
+export type FlaggedDecision = { label: string; keep: string[] };
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
- * The decisions a row offers. Keys 1 and 2 confirm and revert every flag; with two labels, one split
- * per label keeps it and reverts the other. Two flags on the same label (a hash and a held minor) get
- * no split: "keep minor, revert minor" says nothing.
+ * The decisions a row offers, keyed by position. The first two confirm and revert every flag; with
+ * two labels, one split per label keeps it and reverts the other. Two flags on the same label (a hash
+ * and a held minor) get no split: "keep minor, revert minor" says nothing.
  */
 export function flaggedDecisions(flags: readonly FlagRef[]): FlaggedDecision[] {
   const ids = flags.map(flagRefId);
   if (flags.length === 1)
     return [
-      { label: `Confirm ${FLAG_LABEL_NAMES[flags[0].label]} flag`, keep: ids, key: 1 },
-      { label: 'Revert flag', keep: [], key: 2 },
+      { label: `Confirm ${FLAG_LABEL_NAMES[flags[0].label]} flag`, keep: ids },
+      { label: 'Revert flag', keep: [] },
     ];
   const all: FlaggedDecision[] = [
-    { label: flags.length === 2 ? 'Confirm both flags' : 'Confirm all flags', keep: ids, key: 1 },
-    { label: flags.length === 2 ? 'Revert both' : 'Revert all', keep: [], key: 2 },
+    { label: flags.length === 2 ? 'Confirm both flags' : 'Confirm all flags', keep: ids },
+    { label: flags.length === 2 ? 'Revert both' : 'Revert all', keep: [] },
   ];
   if (new Set(flags.map((f) => f.label)).size !== flags.length) return all;
   const splits = flags.map((kept) => ({
@@ -73,8 +73,8 @@ export function needsReviewDecisions(flags: readonly FlagRef[]): FlaggedDecision
   const labels = [...new Set(flags.map((f) => FLAG_LABEL_NAMES[f.label]))];
   const onlyMatches = flags.every((f) => f.source === 'file-match');
   const all: FlaggedDecision[] = [
-    { label: `Flag as ${labels.join(' and ')}`, keep: ids, key: 1 },
-    { label: onlyMatches ? 'Dismiss match' : "Don't flag", keep: [], key: 2 },
+    { label: `Flag as ${labels.join(' and ')}`, keep: ids },
+    { label: onlyMatches ? 'Dismiss match' : "Don't flag", keep: [] },
   ];
   if (flags.length < 2 || labels.length !== flags.length) return all;
   return [
@@ -171,6 +171,15 @@ export function planReasonProblem(
   }
   return null;
 }
+
+/** The reasons a decision's reason list offers: the keep reasons when it keeps every flag, else the
+ *  revert reasons, since a split's reason explains its revert. */
+export const decisionReasonList = (
+  groups: readonly { reasons: readonly ResolutionReason[] }[],
+  decision: Pick<FlaggedDecision, 'keep'>,
+  flagCount: number
+): readonly ResolutionReason[] =>
+  (decision.keep.length === flagCount ? groups[0] : groups[1]).reasons;
 
 /** The reasons the bar's select offers for keeping or reverting these flags, or null when none of
  *  them records a reason. */
