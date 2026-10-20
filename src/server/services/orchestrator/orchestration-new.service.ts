@@ -113,6 +113,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -2689,17 +2690,19 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'yuE2':
     case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
-    case 'polyGen':
+    case 'polyGen': {
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
       // (regardless of how many rigged/animated/motion-template variants
       // the workflow emitted).
-      if (!output.model) return [];
+      const primary = getPolyGenPrimaryModel(output);
+      if (!primary) return [];
+      const fbxIsPrimary = primary === output.fbxModel;
       return [
         {
-          ...(output.model as Model3dBlob),
+          ...primary,
           type: 'model3d' as const,
-          fbxModel: output.fbxModel ?? null,
+          fbxModel: fbxIsPrimary ? null : output.fbxModel ?? null,
           thumbnail: output.thumbnail ?? null,
           riggedModel: output.riggedModel ?? null,
           riggedFbxModel: output.riggedFbxModel ?? null,
@@ -2708,6 +2711,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
           basicAnimations: output.basicAnimations ?? null,
         },
       ];
+    }
     default:
       return [];
   }
