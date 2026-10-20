@@ -397,6 +397,40 @@ describe('the map', () => {
     expect(text(q('storyline-map-position'))).toBe('Chapter 2 of 3 on the canon path');
   });
 
+  // A long path is read from a window that starts deeper than chapter 1: the total counts from
+  // chapter 1 like the number does, and the bar stays within its track.
+  describe('on a path read from a window that starts at depth 30', () => {
+    const windowed = () => [
+      { ...chapter(31, 30), onMain: true },
+      { ...chapter(32, 31), onMain: true },
+      { ...chapter(33, 32), onMain: true },
+    ];
+    const barValue = () =>
+      document.body.querySelector('.mantine-Progress-section')?.getAttribute('aria-valuenow');
+
+    it('counts the total from chapter 1', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 33 on the canon path');
+    });
+
+    it('counts the chapters ahead on top of that', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 34 on the canon path');
+    });
+
+    it('fills the bar to the reader place in it', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 31 });
+      expect(parseFloat(barValue() ?? 'x')).toBeCloseTo((31 / 34) * 100, 5);
+    });
+
+    it('is full, not past full, at the end of the line', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(parseFloat(barValue() ?? 'x')).toBe(100);
+    });
+  });
+
   it('gives no total while the canon path is still being read', () => {
     mocks.aheadLoading = true;
     renderMap({ chapterIds: [1, 2], current: 2 });
