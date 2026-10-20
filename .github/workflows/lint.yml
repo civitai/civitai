@@ -759,9 +759,9 @@ jobs:
     # is the moderator app's pglite suites. Speed those up or shard this run before raising
     # this again.
     timeout-minutes: 30
-    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows: its *.pg.test.ts
-    # files skip themselves without the URL. Same pattern as the `unit` job's Postgres; the suites
-    # create and drop their own databases on this throwaway server.
+    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
+    # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
+    # own databases on this throwaway server.
     services:
       postgres:
         image: postgres:18

@@ -101,12 +101,15 @@ export function runAfterSaved(
     guarded[name] = execute
       ? ({
           ...tool,
-          execute: async (
-            input: unknown,
-            options: { toolCallId: string; abortSignal?: AbortSignal }
-          ) => {
-            await untilAborted(saved(options.toolCallId), options.abortSignal);
-            return execute(input as never, options as never);
+          execute: (input: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) => {
+            const run = (async () => {
+              await untilAborted(saved(options.toolCallId), options.abortSignal);
+              return execute(input as never, options as never);
+            })();
+            // A call the SDK lets go of after an abort must not surface as an unhandled rejection;
+            // whoever awaits it still gets the error.
+            run.catch(() => undefined);
+            return run;
           },
         } as typeof tool)
       : tool;

@@ -21,6 +21,10 @@ const env = z.object({
   RUN_STOP_GRACE_MS: z.coerce.number().int().positive().default(5000),
   /** The most runs one process works on at once (across users; each user has at most one). */
   RUN_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(50),
+  /** Ended runs (their journals and workflows) are deleted after this many days. */
+  RUN_RETENTION_DAYS: z.coerce.number().positive().default(7),
+  /** On SIGTERM, how long runs in this process get to finish before it exits (they resume on restart). */
+  RUN_SHUTDOWN_GRACE_MS: z.coerce.number().int().nonnegative().default(10_000),
   NODE_ENV: z.string().optional(),
 });
 
@@ -33,6 +37,8 @@ export type RunnerConfig = {
   wallClockMs: number;
   stopGraceMs: number;
   workerConcurrency: number;
+  retentionMs: number;
+  shutdownGraceMs: number;
 };
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): RunnerConfig {
@@ -51,5 +57,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): RunnerConfi
     wallClockMs: parsed.RUN_WALL_CLOCK_MS,
     stopGraceMs: parsed.RUN_STOP_GRACE_MS,
     workerConcurrency: parsed.RUN_WORKER_CONCURRENCY,
+    retentionMs: parsed.RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    shutdownGraceMs: parsed.RUN_SHUTDOWN_GRACE_MS,
   };
 }

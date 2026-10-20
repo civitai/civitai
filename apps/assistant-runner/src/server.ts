@@ -5,6 +5,7 @@ import { Runner } from './runner';
 import { refuseAll, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
 
 const config = loadConfig();
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
 const log: Logger = {
   info: (object, message) => app.log.info(object, message),
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
     workerConcurrency: config.workerConcurrency,
     logLevel: config.logLevel,
   });
+  runner.startMaintenance({ retentionMs: config.retentionMs, intervalMs: MAINTENANCE_INTERVAL_MS });
   await app.listen({ port: config.port, host: config.host });
   app.log.info({ executorId: config.executorId }, 'assistant-runner ready');
 }
@@ -49,8 +51,9 @@ async function shutdown(signal: string): Promise<void> {
   // Runs this process holds stay PENDING under its executor id; the replica that comes back with the
   // same id recovers them from their saved progress.
   try {
+    // No new runs or streams from here; runs in flight get a bounded grace.
     await app.close();
-    await runner.shutdown();
+    await runner.shutdown(config.shutdownGraceMs);
   } catch (error) {
     app.log.error({ err: error }, 'shutdown failed');
     process.exitCode = 1;

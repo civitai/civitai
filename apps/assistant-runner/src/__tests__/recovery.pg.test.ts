@@ -157,6 +157,13 @@ describePg('crash recovery', () => {
         .join('');
       throw new Error(`${error instanceof Error ? error.message : String(error)}${output}`);
     } finally {
+      // A runner left alive would dequeue the next test's run.
+      for (const child of children2) {
+        if (child.process.exitCode !== null || child.process.signalCode !== null) continue;
+        const exited = new Promise((resolve) => child.process.once('exit', resolve));
+        child.process.kill('SIGKILL');
+        await exited;
+      }
       rmSync(endDir, { recursive: true, force: true });
     }
   }, 240_000);

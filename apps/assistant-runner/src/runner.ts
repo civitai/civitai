@@ -33,6 +33,10 @@ import pg from 'pg';
 import { RunEmitter } from './emitter';
 import {
   acceptsTurn,
+  endedEvent,
+  hasEnded,
+  INTERRUPTED,
+  interruptedResume,
   resumeOf,
   savedTurn,
   shownMessages,
@@ -76,12 +80,16 @@ export const WORKFLOW_VERSION = 'reply-1';
 const MAX_RECOVERY_ATTEMPTS = 5;
 /** How long past its wall clock a run gets to write its own end before DBOS cancels it outright. */
 const HARD_TIMEOUT_GRACE_MS = 60_000;
-/** How often a pass checks whether its workflow was cancelled outright (the fallback Stop). */
-const CANCEL_POLL_MS = 1000;
 /** How long one journal read waits for a value before it is opened again: bounds a reader whose client left. */
 const READ_WINDOW_SECONDS = 10;
 
 const ACTIVE = ['ENQUEUED', 'PENDING'] as const;
+const TERMINAL = ['SUCCESS', 'ERROR', 'CANCELLED', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED'];
+/** The most ended runs one cleanup deletes, so a backlog is worked off in bounded batches. */
+const CLEANUP_BATCH = 500;
+/** What a reply cut off by an update says; Continue carries on from its saved steps. */
+const INTERRUPTED_BY_UPDATE =
+  'The assistant was updated while this reply ran. Continue to pick up where it left off.';
 /** How many times a start retries, 100 ms apart, while the user's previous run is finishing. */
 const ENQUEUE_ATTEMPTS = 20;
 
@@ -130,7 +138,7 @@ export interface LaunchOptions {
 
 /**
  * Runs replies as DBOS workflows: one workflow per reply, its id the run id, on the `replies` queue
- * partitioned by user (one active run per user). The workflow runs `AgentCore` in one step, so a
+ * with the user id as its deduplication id (one active run per user). The workflow runs `AgentCore` in one step, so a
  * crash re-runs the step from the reply's last saved progress, and journals the protocol's events to
  * a DBOS stream that any replica reads from any offset.
  */
@@ -140,6 +148,8 @@ export class Runner implements RunService {
   #marker: (() => Promise<boolean>) | undefined;
   #pool: pg.Pool | undefined;
   #ready = false;
+  #executorId = '';
+  #maintenance: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: RunnerDeps) {
     this.#deps = deps;
@@ -164,19 +174,88 @@ export class Runner implements RunService {
       logLevel: options.logLevel ?? 'info',
     });
     await DBOS.launch();
-    await DBOS.registerQueue(REPLIES_QUEUE, {
-      partitionConcurrency: 1,
-      workerConcurrency: options.workerConcurrency,
-    });
+    await DBOS.registerQueue(REPLIES_QUEUE, { workerConcurrency: options.workerConcurrency });
     this.#pool = new pg.Pool({ connectionString: options.databaseUrl, max: 4 });
+    this.#executorId = options.executorId;
     this.#ready = true;
   }
 
-  async shutdown(): Promise<void> {
+  /**
+   * Sweeps runs stranded on another workflow version now, then every `intervalMs` sweeps again and
+   * deletes runs that ended more than `retentionMs` ago.
+   */
+  startMaintenance(options: { retentionMs: number; intervalMs: number }): void {
+    const run = async (cleanup: boolean) => {
+      try {
+        await this.sweepStranded();
+        if (cleanup) await this.cleanup(options.retentionMs);
+      } catch (error) {
+        this.#deps.log.error({ err: error }, 'runner maintenance failed');
+      }
+    };
+    void run(false);
+    this.#maintenance = setInterval(() => void run(true), options.intervalMs);
+    this.#maintenance.unref();
+  }
+
+  /**
+   * Stops taking work. Runs this process holds get up to `graceMs` to finish; any still running stay
+   * PENDING under its executor id, and the process that comes back with that id recovers them.
+   */
+  async shutdown(graceMs = 0): Promise<void> {
     this.#ready = false;
-    await DBOS.shutdown();
+    if (this.#maintenance) clearInterval(this.#maintenance);
+    await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
     await this.#pool?.end();
     this.#pool = undefined;
+  }
+
+  /**
+   * Deletes the workflows, and with them the journals, of runs and stop markers that ended more than
+   * `olderThanMs` ago, at most a batch at a time. Returns how many it deleted. Safe on every replica.
+   */
+  async cleanup(olderThanMs: number): Promise<number> {
+    const ended = await DBOS.listWorkflows({
+      workflowName: [REPLY_WORKFLOW, STOP_MARKER_WORKFLOW],
+      status: TERMINAL as never,
+      completedBefore: new Date(Date.now() - olderThanMs).toISOString(),
+      limit: CLEANUP_BATCH,
+      loadInput: false,
+      loadOutput: false,
+    });
+    if (ended.length) await DBOS.deleteWorkflows(ended.map((run) => run.workflowID));
+    return ended.length;
+  }
+
+  /**
+   * Ends the runs this executor id left behind under another workflow version, which DBOS will not
+   * recover here: each is cancelled and its reply saved as interrupted, so its user's slot frees and
+   * the page offers Continue from the saved steps. A replica sweeps only its own executor id, so a
+   * run another replica (of any version) still holds is never touched. Returns the runs it ended.
+   */
+  async sweepStranded(): Promise<string[]> {
+    const runs = await DBOS.listWorkflows({
+      workflowName: REPLY_WORKFLOW,
+      status: [...ACTIVE],
+      executorId: this.#executorId,
+    });
+    const stranded = runs.filter(
+      (run) => run.applicationVersion !== undefined && run.applicationVersion !== WORKFLOW_VERSION
+    );
+    for (const run of stranded) {
+      await DBOS.cancelWorkflow(run.workflowID);
+      await this.#endTurnOnce(run, (turn) => ({
+        messages: shownMessages(turn),
+        status: 'error',
+        error: INTERRUPTED_BY_UPDATE,
+        errorKind: INTERRUPTED,
+      }));
+      this.#deps.log.warn(
+        { runId: run.workflowID, version: run.applicationVersion },
+        'ended a run left on another workflow version'
+      );
+    }
+    return stranded.map((run) => run.workflowID);
   }
 
   ready(): boolean {
@@ -218,7 +297,7 @@ export class Runner implements RunService {
           queueName: REPLIES_QUEUE,
           // One queued or running reply per user, enforced by the queue itself: two starts racing
           // past the check above cannot both enqueue. DBOS frees the id when the run ends.
-          enqueueOptions: { queuePartitionKey: userId, deduplicationID: userId },
+          enqueueOptions: { deduplicationID: userId },
           authenticatedUser: userId,
           workflowAttributes: { conversationId: request.conversationId, seq: request.turn.seq },
           timeoutMS: this.#deps.wallClockMs + HARD_TIMEOUT_GRACE_MS,
@@ -380,7 +459,7 @@ export class Runner implements RunService {
   ): Promise<ResumePoint | undefined> {
     const turn = savedTurn(head, input.seq);
     if (!turn) return undefined;
-    const saved = resumeOf(turn);
+    const saved = resumeOf(turn) ?? interruptedResume(turn);
     if (saved) return saved;
     const [previous] = await DBOS.listWorkflows({
       workflowName: REPLY_WORKFLOW,
@@ -411,6 +490,14 @@ export class Runner implements RunService {
     const journal = await this.#readJournal(runId);
     const head = await store.load(userId, conversationId);
     const turn = savedTurn(head, seq);
+    // This pass already ended the reply and died before DBOS recorded it: the end is not run again.
+    const last = journal.at(-1);
+    if (last?.type === 'run-ended') return { status: last.status, steps: last.steps };
+    if (journal.length > 0 && turn && hasEnded(turn)) {
+      const ended = endedEvent(turn);
+      await DBOS.writeStream(JOURNAL, ended);
+      return { status: ended.status, steps: ended.steps };
+    }
     const from = turn ? resumeOf(turn) : undefined;
     const startParts = from ? partsFromMessages(from.messages) : [];
 
@@ -485,12 +572,6 @@ export class Runner implements RunService {
       why.reason ??= 'ran_out';
       abort();
     }, remaining);
-    const cancelPoll = setInterval(() => {
-      void DBOS.getWorkflowStatus(runId).then(
-        (status) => status?.status === 'CANCELLED' && abort(),
-        () => undefined
-      );
-    }, CANCEL_POLL_MS);
 
     let outcome: AgentCoreOutcome | undefined;
     try {
@@ -520,7 +601,6 @@ export class Runner implements RunService {
       });
     } finally {
       clearTimeout(wallClock);
-      clearInterval(cancelPoll);
       stop.removeEventListener('abort', abort);
       await closeTools();
     }
@@ -631,12 +711,10 @@ export class Runner implements RunService {
       if (length > 0 && (await this.#eventAt(runId, length - 1))?.type === 'run-ended') return;
       this.#deps.log.warn({ runId }, 'stop did not land in time; cancelling the run');
       await DBOS.cancelWorkflow(runId);
-      const { conversationId, seq } = runAttributes(status);
-      await this.#deps.store.update(status.authenticatedUser!, conversationId, (head) => {
-        const turn = savedTurn(head, seq);
-        if (!head || !turn || (turn.assistant && turn.assistant.status !== 'running')) return null;
-        return withEnd(head, seq, { messages: shownMessages(turn), status: 'aborted' }, new Date());
-      });
+      await this.#endTurnOnce(status, (turn) => ({
+        messages: shownMessages(turn),
+        status: 'aborted',
+      }));
     } catch (error) {
       this.#deps.log.error({ err: error, runId }, 'forcing a stop failed');
     }
@@ -676,20 +754,50 @@ export class Runner implements RunService {
     return events;
   }
 
-  /** `run-ended` for a run that ended without journaling it, from what its head saved. */
+  /**
+   * `run-ended` for a run whose workflow ended without journaling it, from how its head says the
+   * reply ended. A head still `running` (the workflow was cancelled outright, timed out or ran out of
+   * recoveries, and nothing saved its end) gets that end written now, once, from the workflow's status.
+   */
   async #endFromHead(runId: string): Promise<RunEvent> {
     const status = await DBOS.getWorkflowStatus(runId);
-    const { conversationId, seq } = status ? runAttributes(status) : { conversationId: '', seq: 0 };
-    const head = status?.authenticatedUser
-      ? await this.#deps.store.load(status.authenticatedUser, conversationId)
-      : null;
-    const messages = shownMessages(savedTurn(head, seq));
+    if (!status) return { type: 'run-ended', status: 'error', messages: [], steps: 0 };
+    const turn = await this.#endTurnOnce(status, (running) => {
+      const messages = shownMessages(running);
+      if (
+        status.status === 'CANCELLED' &&
+        status.deadlineEpochMS &&
+        status.deadlineEpochMS <= Date.now()
+      )
+        return { messages, status: 'done', ranOut: true };
+      if (status.status === 'CANCELLED') return { messages, status: 'aborted' };
+      return { messages, status: 'error', error: 'The reply stopped unexpectedly.' };
+    });
+    if (turn && hasEnded(turn)) return endedEvent(turn);
     return {
       type: 'run-ended',
-      status: status?.status === 'CANCELLED' ? 'stopped' : 'error',
-      messages,
-      steps: countSteps(messages),
+      status: status.status === 'CANCELLED' ? 'stopped' : 'error',
+      messages: [],
+      steps: 0,
     };
+  }
+
+  /**
+   * Saves `end` as the reply's end when the head still has it unfinished (`running`, or not saved
+   * yet); a reply that already ended is left as it is. Resolves with the run's turn as it now stands.
+   */
+  async #endTurnOnce(
+    run: WorkflowStatus,
+    end: (turn: ReturnType<typeof savedTurn> & object) => EndedReply
+  ) {
+    const { conversationId, seq } = runAttributes(run);
+    if (!run.authenticatedUser) return undefined;
+    const head = await this.#deps.store.update(run.authenticatedUser, conversationId, (current) => {
+      const turn = savedTurn(current, seq);
+      if (!current || !turn || hasEnded(turn)) return null;
+      return withEnd(current, seq, end(turn), new Date());
+    });
+    return savedTurn(head, seq);
   }
 
   async #liveRun(userId: string): Promise<WorkflowStatus | undefined> {

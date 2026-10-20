@@ -7,7 +7,7 @@ import type {
   StoredConversationMetadata,
   TurnUser,
 } from '@civitai/components-chat/core';
-import type { ConversationPatchRequest } from '@civitai/components-chat/runner-protocol';
+import type { ConversationPatchRequest, RunEvent } from '@civitai/components-chat/runner-protocol';
 import type { ModelMessage } from 'ai';
 
 /**
@@ -120,6 +120,50 @@ export function resumeOf(turn: HeadTurn): ResumePoint | undefined {
 /** What the reply shows, read as the chat reads it (a reply saved `running` with its unfinished calls closed). */
 export function shownMessages(turn: HeadTurn | undefined): ModelMessage[] {
   return turn ? turnFrom(turn).assistant.messages : [];
+}
+
+/** The error kind of a reply that was cut off with its finished steps kept: Continue carries on from them. */
+export const INTERRUPTED = 'interrupted';
+
+/** Whether the turn's reply has ended in the head (it is saved, and not `running`). */
+export function hasEnded(turn: HeadTurn | undefined): boolean {
+  return turn?.assistant !== undefined && turn.assistant.status !== 'running';
+}
+
+/** `run-ended` for a reply whose end the head saved: how the client hears an end the journal lacks. */
+export function endedEvent(turn: HeadTurn): Extract<RunEvent, { type: 'run-ended' }> {
+  const reply = (turn.assistant ?? { messages: [], status: 'error' }) as EndedReply;
+  const messages = reply.messages ?? [];
+  const steps = messages.filter((message) => message.role === 'assistant').length;
+  if (reply.status === 'done') {
+    return {
+      type: 'run-ended',
+      status: reply.ranOut ? 'ran_out' : 'done',
+      messages,
+      steps,
+      ...(reply.stopped !== undefined ? { endedBy: reply.stopped } : {}),
+    };
+  }
+  if (reply.status === 'aborted') return { type: 'run-ended', status: 'stopped', messages, steps };
+  return {
+    type: 'run-ended',
+    status: 'error',
+    messages,
+    steps,
+    resumable: reply.errorKind === INTERRUPTED && steps > 0,
+  };
+}
+
+/**
+ * Where a retry of a reply that ended interrupted carries on from: its saved steps, every call in
+ * them already answered (a call that had not finished carries the interrupted result).
+ */
+export function interruptedResume(turn: HeadTurn | undefined): ResumePoint | undefined {
+  const reply = turn?.assistant as EndedReply | undefined;
+  if (reply?.status !== 'error' || reply.errorKind !== INTERRUPTED || !reply.messages.length)
+    return undefined;
+  const steps = reply.messages.filter((message) => message.role === 'assistant').length;
+  return { messages: reply.messages, steps, at: Date.now() };
 }
 
 function replaceReply(
