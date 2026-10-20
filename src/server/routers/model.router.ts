@@ -118,9 +118,26 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+/** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
+const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
+  middleware(async ({ ctx, next, input }) => {
+    const id = pick(input ?? {});
+    if (id && !ctx.user?.isModerator) {
+      const model = await dbRead.model.findUnique({
+        where: { id },
+        select: { poi: true, userId: true },
+      });
+      if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
+    }
+    return next();
+  });
+const modelByIdVisible = modelVisibleToViewer((input) => input.id);
+const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -229,6 +246,7 @@ export const modelRouter = router({
   getOwner: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelOwnerHandler),
   getAll: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -253,6 +271,7 @@ export const modelRouter = router({
   getVersions: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsSchema)
+    .use(modelByIdVisible)
     .query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -336,6 +355,7 @@ export const modelRouter = router({
   getModelDetailsForReview: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelDetailsForReviewHandler),
   restore: moderatorProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure
@@ -360,6 +380,7 @@ export const modelRouter = router({
   getSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
   requestReview: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
@@ -379,7 +400,7 @@ export const modelRouter = router({
   getWithCategoriesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelsWithCategoriesSchema)
-    .query(({ input }) => getAllModelsWithCategories(input)),
+    .query(({ input, ctx }) => getAllModelsWithCategories({ ...input, viewer: ctx.user })),
   setCategory: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setModelsCategorySchema)
@@ -391,10 +412,12 @@ export const modelRouter = router({
   getAssociatedResourcesCardData: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(getAssociatedResourcesCardDataHandler),
   getAssociatedResourcesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(({ input }) => getAssociatedResourcesSimple(input)),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
