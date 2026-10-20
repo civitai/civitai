@@ -15,20 +15,18 @@
 </script>
 
 {#if images.length}
-  <!-- As many columns as tiles (up to four), so two or three previews fill the row. -->
-  <div
-    class="grid grid-cols-2 gap-2.5 md:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]"
-    style:--tiles={Math.min(images.length, 4)}
-  >
+  <!-- Portrait tiles showing the whole picture: a wide, cropped tile cut off the faces and bodies
+       moderators judge on. -->
+  <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
       <a
         href={getEdgeUrl(image.url, { type: 'image', original: true })}
         target="_blank"
         rel="noreferrer"
         aria-label="Open image {i + 1} of {images.length} full size"
-        class="relative block h-[180px] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
+        class="relative block aspect-[3/4] overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
       >
-        <EdgeMedia src={image.url} type="image" width={450} class={blurred ? 'size-full scale-110 object-cover blur-xl' : 'size-full object-cover'} />
+        <EdgeMedia src={image.url} type="image" width={450} class={blurred ? 'size-full scale-110 object-contain blur-xl' : 'size-full object-contain'} />
         <span
           class="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-white"
         >
