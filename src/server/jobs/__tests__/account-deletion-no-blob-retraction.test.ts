@@ -267,8 +267,8 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
 
-  // remove-blocked-images: images whose owner is under a hold marker. This fixture holds no one.
-  if (sql.includes('JOIN "EvidenceHeldUser"')) return [];
+  // remove-blocked-images: owners under a hold marker. This fixture holds no one.
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
 }

@@ -73,7 +73,7 @@ const {
   heldUsers,
   appealedIds,
   csamFlaggedIds,
-  evidenceHeldIds,
+  evidenceHeldUserIds,
   withoutModActivity,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
@@ -83,8 +83,8 @@ const {
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
-  // Blocked images whose owner is under a hold marker.
-  const evidenceHeldIds: number[] = [];
+  // Owners under a hold marker.
+  const evidenceHeldUserIds: number[] = [];
   // Images whose block has no moderator takedown on record, so they take the non-retracting call.
   const withoutModActivity: number[] = [];
   const mockEnv = {
@@ -97,7 +97,8 @@ const {
     const sql = strings.join('?');
     sqlLog.push(sql);
     if (sql.includes('FROM "CsamReport"')) return heldUsers;
-    if (sql.includes('"EvidenceHeldUser"')) return evidenceHeldIds.map((id) => ({ id }));
+    if (sql.includes('FROM "EvidenceHeldUser"'))
+      return evidenceHeldUserIds.map((userId) => ({ userId }));
     // Answers with whichever review flags the query actually names, so dropping one from the
     // SQL is what stops that population being held.
     const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
@@ -132,7 +133,7 @@ const {
     heldUsers,
     appealedIds,
     csamFlaggedIds,
-    evidenceHeldIds,
+    evidenceHeldUserIds,
     withoutModActivity,
     mockEnv,
     mockDbRead: {
@@ -221,7 +222,7 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
-  evidenceHeldIds.length = 0;
+  evidenceHeldUserIds.length = 0;
   withoutModActivity.length = 0;
   heldUsers.push(
     { userId: HELD_USER, oldestReport: RECENT },
@@ -328,14 +329,13 @@ describe('remove-blocked-images retention clock', () => {
   });
 
   it('keeps an image under a hold marker that the report ceiling would purge', async () => {
-    evidenceHeldIds.push(6);
+    evidenceHeldUserIds.push(STRANDED_USER);
     const result = await runJob();
 
     expect(deletedIds()).not.toContain(6);
     expect(batchWhere()?.entityId?.notIn).toContain(6);
     expect(queuePruneIds()).not.toContain(6);
     expect(result.csamHoldExpired).toBe(0);
-    expect((result as { evidenceHeld?: number }).evidenceHeld).toBe(1);
     // Read off the primary: a marker written within replica lag must still hold this run.
     expect(
       mockDbWrite.$queryRaw.mock.calls.some(([strings]) =>

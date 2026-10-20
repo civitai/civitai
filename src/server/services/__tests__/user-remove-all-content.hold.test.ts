@@ -60,16 +60,23 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { removeAllContent } from '~/server/services/user.service';
 
 const TARGET = 4_242;
+/** Held, and not the account being wiped: a lookup keyed on the wrong user would find this one. */
+const OTHER_HELD = 4_277;
 const IMAGES = [
   { id: 1, url: 'a' },
   { id: 2, url: 'b' },
   { id: 3, url: 'c' },
 ];
 
-/** Answers the hold lookup; every other raw query gets the mock's default empty result. */
-function holdIs(held: boolean) {
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
-    strings.join('?').includes('"EvidenceHeldUser"') ? [{ held }] : []) as never);
+/** Answers the hold lookup from the user it binds; every other raw query gets an empty result. */
+function heldUsers(...userIds: number[]) {
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) =>
+    strings.join('?').includes('"EvidenceHeldUser"')
+      ? [{ held: values.some((v) => userIds.includes(v as number)) }]
+      : []) as never);
 }
 
 beforeEach(() => {
@@ -90,9 +97,10 @@ const imageDeletesForTarget = () =>
 
 describe('removeAllContent on an owner under a hold marker', () => {
   it('keeps the images, logs one line, and reports how many it kept', async () => {
-    holdIs(true);
+    heldUsers(TARGET);
 
-    const result = await removeAllContent({ id: TARGET, actorUserId: 9 });
+    // No actor, as the webhook caller passes: the lookup must be keyed on the account, not on it.
+    const result = await removeAllContent({ id: TARGET });
 
     expect(result).toEqual({ keptUnderHold: IMAGES.length });
     expect(deleteImageById).not.toHaveBeenCalled();
@@ -113,9 +121,9 @@ describe('removeAllContent on an owner under a hold marker', () => {
     ]);
   });
 
-  // The control: the same wipe of an owner with no hold deletes every image.
+  // The control: the same wipe of an owner with no hold deletes every image, while someone else is held.
   it('deletes every image of an owner with no hold', async () => {
-    holdIs(false);
+    heldUsers(OTHER_HELD);
 
     const result = await removeAllContent({ id: TARGET, actorUserId: 9 });
 

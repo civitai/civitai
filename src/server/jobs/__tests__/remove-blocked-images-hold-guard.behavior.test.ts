@@ -39,6 +39,7 @@ import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const NO_COPY = { holdForTrainingCopy: false };
@@ -78,9 +79,13 @@ const MANUAL = 22;
 const RELEASED = 23;
 const EXTENDED = 24;
 const MARKED = [RECENT_REPORTED, SECONDARY, MANUAL, RELEASED, EXTENDED];
+const LAPSED_USER = 11; // report sent a year and a day ago
+const LAPSED = 25;
+const LIVE_HELD = 26; // a held owner's image still on the site
 
 const BACKFILL_RECENT_USER = 30;
 const BACKFILL_EXPIRED_USER = 31;
+const BACKFILL_SECONDARY_USER = 32;
 const backfill = {
   rows: [] as { userId: number; releasedById: number | null; releaseReason: string | null }[],
   held: [] as number[],
@@ -99,7 +104,9 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL,
       "needsReview" text,
       "blockedFor" text,
-      metadata jsonb
+      metadata jsonb,
+      "updatedAt" timestamp(3),
+      "cascadeParentId" int
     );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
@@ -123,9 +130,10 @@ beforeAll(async () => {
   `);
   // Reports already sent when the migration runs, for its backfill.
   await holder.db.exec(`
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
-      (${BACKFILL_RECENT_USER}, now() - interval '30 days', now() - interval '30 days'),
-      (${BACKFILL_EXPIRED_USER}, now() - interval '400 days', now() - interval '400 days');
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
+      (${BACKFILL_RECENT_USER}, now() - interval '30 days', now() - interval '30 days',
+        '{"secondaryUserId": ${BACKFILL_SECONDARY_USER}}'),
+      (${BACKFILL_EXPIRED_USER}, now() - interval '400 days', now() - interval '400 days', '{}');
   `);
   await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   backfill.rows = (
@@ -295,15 +303,14 @@ describe('purgeHoldGuard on the delete', () => {
 
     it('deletes the image once the hold has ended', async () => {
       await holder.db.exec(`
-        UPDATE "EvidenceHold" SET "releaseAt" = now() - interval '1 day'
-        WHERE "userId" = ${RECENT_REPORT_USER}
+        INSERT INTO "Image" (id, "userId", ingestion) VALUES (${LAPSED}, ${LAPSED_USER}, 'Blocked');
+        INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
+          (${LAPSED_USER}, now() - interval '366 days', now() - interval '366 days');
       `);
 
-      await imageService.deleteImages([RECENT_REPORTED], true, {
-        onlyWhere: purgeHoldGuard([], NO_COPY),
-      });
+      await imageService.deleteImages([LAPSED], true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
 
-      expect(await remaining()).not.toContain(RECENT_REPORTED);
+      expect(await remaining()).not.toContain(LAPSED);
     });
   });
 
@@ -315,7 +322,7 @@ describe('purgeHoldGuard on the delete', () => {
     });
     afterEach(() => holder.db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold"`));
 
-    it("skips a held owner's rows, and their side effects, with no guard given", async () => {
+    it("keeps a held owner's rows with no guard given, and every requested id leaves search", async () => {
       const deleted = await imageService.deleteImages([PLAIN, ...MARKED], true);
 
       expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
@@ -328,7 +335,160 @@ describe('purgeHoldGuard on the delete', () => {
       const deindexed = vi
         .mocked(imagesSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
-      expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
+      expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, ...MARKED].sort((a, b) => a - b));
+    });
+
+    // The trigger writes the block in SQL; these are the app's own values for a moderator block, so
+    // the two spellings cannot drift apart unnoticed.
+    it("takes a held owner's live image off the site the way a moderator block does", async () => {
+      await holder.db.exec(`
+        INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview")
+        VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Scanned', 1, 'csam');
+      `);
+
+      await imageService.deleteImages([LIVE_HELD], true);
+
+      const row = (
+        await holder.db.query<Record<string, unknown>>(
+          `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview", "updatedAt" IS NOT NULL AS stamped
+           FROM "Image" WHERE id = ${LIVE_HELD}`
+        )
+      ).rows[0];
+      expect(row).toEqual({
+        ingestion: 'Blocked',
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: BlockedReason.Moderated,
+        needsReview: 'csam',
+        stamped: true,
+      });
+    });
+
+    it("fails a cascading delete of a held owner's image rather than orphan it", async () => {
+      await holder.db.exec(`
+        CREATE TABLE "CascadeParent" (id int PRIMARY KEY);
+        ALTER TABLE "Image" ADD CONSTRAINT image_cascade_parent FOREIGN KEY ("cascadeParentId")
+          REFERENCES "CascadeParent"(id) ON DELETE CASCADE;
+        INSERT INTO "CascadeParent" VALUES (1), (2);
+        UPDATE "Image" SET "cascadeParentId" = 1 WHERE id = ${MANUAL};
+        UPDATE "Image" SET "cascadeParentId" = 2 WHERE id = ${PLAIN};
+      `);
+      try {
+        await expect(holder.db.exec(`DELETE FROM "CascadeParent" WHERE id = 1`)).rejects.toThrow(
+          /cannot be deleted/
+        );
+        // The control: an unheld owner's image cascades as before.
+        await holder.db.exec(`DELETE FROM "CascadeParent" WHERE id = 2`);
+        expect(await remaining()).toContain(MANUAL);
+        expect(await remaining()).not.toContain(PLAIN);
+      } finally {
+        await holder.db.exec(`
+          UPDATE "Image" SET "cascadeParentId" = NULL;
+          ALTER TABLE "Image" DROP CONSTRAINT image_cascade_parent;
+          DROP TABLE "CascadeParent";
+        `);
+      }
+    });
+  });
+
+  describe('how a hold ends', () => {
+    beforeEach(insertMarkedOwners);
+
+    const holdIdOf = async (userId: number) =>
+      (
+        await holder.db.query<{ id: number }>(
+          `SELECT id FROM "EvidenceHold" WHERE "userId" = ${userId}`
+        )
+      ).rows[0].id;
+
+    it.each([
+      [
+        'moving the release date into the past',
+        `"releaseAt" = now() - interval '1 day'`,
+        RECENT_REPORT_USER,
+      ],
+      ['clearing an extension that is still running', `"extendedUntil" = NULL`, EXTENDED_USER],
+      ['moving the hold to another owner', `"userId" = 999`, MANUAL_USER],
+    ])('refuses %s without a recorded release', async (_name, set, userId) => {
+      const id = await holdIdOf(userId);
+      await expect(
+        holder.db.exec(`UPDATE "EvidenceHold" SET ${set} WHERE id = ${id}`)
+      ).rejects.toThrow(/recorded release/);
+    });
+
+    it('refuses to delete a hold that was never released, and allows it once released', async () => {
+      const id = await holdIdOf(MANUAL_USER);
+      await expect(holder.db.exec(`DELETE FROM "EvidenceHold" WHERE id = ${id}`)).rejects.toThrow(
+        /must be released/
+      );
+
+      await holder.db.exec(`
+        UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
+        WHERE id = ${id};
+        DELETE FROM "EvidenceHold" WHERE id = ${id};
+      `);
+      expect((await holder.db.query(`SELECT 1 FROM "EvidenceHold" WHERE id = ${id}`)).rows).toEqual(
+        []
+      );
+    });
+
+    // The control: an edit that keeps the hold running is not refused.
+    it('allows extending a running hold', async () => {
+      const id = await holdIdOf(RECENT_REPORT_USER);
+      await holder.db.exec(`
+        UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '2 years',
+          "extensionRequestedBy" = 'a', "extensionReference" = 'r' WHERE id = ${id}
+      `);
+      const row = (
+        await holder.db.query<{ ok: boolean }>(
+          `SELECT "extendedUntil" > now() + interval '1 year' AS ok FROM "EvidenceHold" WHERE id = ${id}`
+        )
+      ).rows[0];
+      expect(row.ok).toBe(true);
+    });
+  });
+
+  describe('the report trigger', () => {
+    const holdsOf = async (reportId: number) =>
+      (
+        await holder.db.query<{ userId: number; role: string; releaseAt: Date }>(
+          `SELECT "userId", role, "releaseAt" FROM "EvidenceHold"
+           WHERE "csamReportId" = ${reportId} ORDER BY role`
+        )
+      ).rows;
+    const sendReport = async (details: string) =>
+      (
+        await holder.db.query<{ id: number }>(
+          `INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
+           VALUES (40, now(), '${details}') RETURNING id`
+        )
+      ).rows[0].id;
+
+    it.each([['{"secondaryUserId": "abc"}'], ['{"secondaryUserId": 99999999999}']])(
+      'records a send with an unusable secondary id (%s) and holds only the subject',
+      async (details) => {
+        const id = await sendReport(details);
+        expect((await holdsOf(id)).map((h) => h.role)).toEqual(['subject']);
+      }
+    );
+
+    it('holds a secondary user added after the send', async () => {
+      const id = await sendReport('{}');
+      await holder.db.exec(
+        `UPDATE "CsamReport" SET details = '{"secondaryUserId": 41}' WHERE id = ${id}`
+      );
+      expect((await holdsOf(id)).map((h) => [h.role, h.userId])).toEqual([
+        ['secondary', 41],
+        ['subject', 40],
+      ]);
+    });
+
+    it("keeps the first send's release date when the send is recorded again", async () => {
+      const id = await sendReport('{}');
+      const [first] = await holdsOf(id);
+      await holder.db.exec(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() + interval '5 days' WHERE id = ${id}`
+      );
+      expect((await holdsOf(id))[0].releaseAt).toEqual(first.releaseAt);
     });
   });
 
@@ -351,7 +511,8 @@ describe('the migration backfill', () => {
         releasedById: -1,
         releaseReason: 'expired before table existed',
       },
+      { userId: BACKFILL_SECONDARY_USER, releasedById: null, releaseReason: null },
     ]);
-    expect(backfill.held).toEqual([BACKFILL_RECENT_USER]);
+    expect(backfill.held).toEqual([BACKFILL_RECENT_USER, BACKFILL_SECONDARY_USER]);
   });
 });

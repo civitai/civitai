@@ -6418,7 +6418,7 @@ model EvidenceHold {
   /// NULL holds until released.
   releaseAt       DateTime?
   extendedUntil   DateTime?
-  /// Who asked for the extension (e.g. a law-enforcement agency), and their reference.
+  /// Who asked for the extension, and their reference.
   extensionRequestedBy String?
   extensionReference   String?
   reason          String

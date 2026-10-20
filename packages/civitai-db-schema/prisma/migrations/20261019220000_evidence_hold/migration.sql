@@ -77,14 +77,20 @@ FOR EACH ROW EXECUTE FUNCTION evidence_hold_from_csam_report();
 
 -- Backstop for every deletion path, including ones written later: a held owner's image row is not
 -- deleted. A direct DELETE skips the row (it is absent from RETURNING, so callers never go on to
--- delete its stored file). A delete reached from another trigger, which includes a cascade from a
+-- delete its stored file) and removes the image the way a moderator block does, so a delete still
+-- takes it off the site. A delete reached from another trigger, which includes a cascade from a
 -- parent row, raises instead: skipping a cascaded row would leave it pointing at a deleted parent.
+-- The block's values are the app's own (`NsfwLevel.Blocked`, `BlockedReason.Moderated`), pinned by
+-- remove-blocked-images-hold-guard.behavior.test.ts.
 CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
 BEGIN
   IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN
     IF pg_trigger_depth() > 1 THEN
-      RAISE EXCEPTION 'Image % is under a hold and cannot be deleted', OLD."id";
+      RAISE EXCEPTION 'Image % cannot be deleted', OLD."id";
     END IF;
+    UPDATE "Image"
+    SET "ingestion" = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'moderated', "updatedAt" = now()
+    WHERE "id" = OLD."id" AND "ingestion" <> 'Blocked';
     RETURN NULL;
   END IF;
   RETURN OLD;
@@ -94,6 +100,37 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "Image_evidence_hold"
 BEFORE DELETE ON "Image"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_image();
+
+-- A hold only ends by date or by a recorded release. An edit that would end an active hold without
+-- one (a date moved into the past, an extension cleared, the owner changed) and the deletion of an
+-- unreleased row both raise.
+CREATE OR REPLACE FUNCTION evidence_hold_guard_end() RETURNS trigger AS $$
+DECLARE
+  -- COALESCE: a NULL "extendedUntil" compares to NULL, which would make the whole test NULL and skip
+  -- the raise.
+  was_active boolean := OLD."releasedAt" IS NULL AND (OLD."releaseAt" IS NULL
+    OR OLD."releaseAt" > now() OR COALESCE(OLD."extendedUntil" > now(), false));
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD."releasedAt" IS NULL THEN
+      RAISE EXCEPTION 'EvidenceHold % must be released before it is deleted', OLD."id";
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF was_active AND NEW."releasedAt" IS NULL AND (
+    NEW."userId" <> OLD."userId"
+    OR NOT (NEW."releaseAt" IS NULL OR NEW."releaseAt" > now()
+      OR COALESCE(NEW."extendedUntil" > now(), false))
+  ) THEN
+    RAISE EXCEPTION 'EvidenceHold % can only end by a recorded release', OLD."id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "EvidenceHold_guard_end"
+BEFORE UPDATE OR DELETE ON "EvidenceHold"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_guard_end();
 
 -- Existing sent reports. One whose year has already passed is recorded as released by the system
 -- user, never put back on hold; that set is the rows with this "releaseReason".

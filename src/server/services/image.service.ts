@@ -745,11 +745,22 @@ export const deleteImageById = async ({
       source: 'image-delete',
     });
 
-    const image = await dbWrite.image.delete({
-      where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
-    });
-    if (!image) return;
+    const image = await dbWrite.image
+      .delete({
+        where: { id },
+        select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
+      })
+      .catch((error) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+          return null;
+        throw error;
+      });
+    // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
+    // off the site instead). Either way it leaves search like any deleted image.
+    if (!image) {
+      await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
+      return;
+    }
 
     // A custom video thumbnail is cached under its video, and the row that names the video is
     // now gone, so `refreshThumbnailCache` can no longer find it.
@@ -900,7 +911,10 @@ export async function deleteImages(
 
     await Promise.all([
       queueImageSearchIndexUpdate({
-        ids: imageIds,
+        // Without a guard, every id the caller asked to delete leaves search, including a row a
+        // hold marker kept (the delete trigger takes it off the site instead). A guarded caller
+        // keeps the rows its guard excluded, so only those deleted leave.
+        ids: onlyWhere ? imageIds : ids,
         action: SearchIndexUpdateQueueAction.Delete,
       }),
       updatePostNsfwLevel(idsForPostUpdate),

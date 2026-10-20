@@ -2971,7 +2971,7 @@ export type EvidenceHold = {
   releaseAt: Timestamp | null;
   extendedUntil: Timestamp | null;
   /**
-   * Who asked for the extension (e.g. a law-enforcement agency), and their reference.
+   * Who asked for the extension, and their reference.
    */
   extensionRequestedBy: string | null;
   extensionReference: string | null;

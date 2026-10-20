@@ -629,14 +629,20 @@ export const removeBlockedImages = createJob(
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
     // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
-    // same replica-lag reason as above.
-    const evidenceHeld = (
-      await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT i.id FROM "Image" i
-        JOIN "EvidenceHeldUser" h ON h."userId" = i."userId"
-        WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
+    // planner misjudges how many owners match and scans every Blocked image instead of each owner's.
+    const evidenceHeldUserIds = (
+      await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
+    ).map((x) => x.userId);
+    const evidenceHeld = evidenceHeldUserIds.length
+      ? (
+          await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "userId" = ANY(${evidenceHeldUserIds}::int[])
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
       `
-    ).map((x) => x.id);
+        ).map((x) => x.id)
+      : [];
 
     const held = [...new Set([...heldActive, ...appealHeld, ...csamReviewHeld, ...evidenceHeld])];
     const jobQueue = await dbRead.jobQueue.findMany({
