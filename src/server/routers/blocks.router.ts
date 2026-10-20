@@ -13605,7 +13605,9 @@ const TRAINING_FOREIGN_DATA_MESSAGE =
 
 /**
  * A training quote may be confirmed only by a host that uploaded every blob it names
- * for this block instance; anything else is refused before consent is recorded.
+ * for this block instance; anything else is refused before consent is recorded. The
+ * key list is the caller's own, so this holds only while the procedure stays
+ * session-only — a block cannot reach it.
  */
 async function assertTrainingQuoteUploadedByHost(
   quoteId: string,

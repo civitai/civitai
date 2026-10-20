@@ -381,8 +381,77 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(consentMutate).toHaveBeenCalledWith({
       blockToken: 'tok_abc',
       quoteId: QUOTE_ID,
-      uploadedBlobKeys: ['k1.png', 'k2.png'],
+      uploadedBlobKeys: ['k2.png', 'k1.png'],
     });
+    replies.stop();
+  });
+
+  test('a partly failed upload hands over, and records, only the images that uploaded', async () => {
+    uploadConsumerBlob.mockImplementation(async (file: File) => {
+      if (file.name === 'BAD.png') throw new Error('upload failed');
+      return {
+        id: file.name,
+        url: `https://orchestration.civitai.com/v2/consumer/blobs/${file.name}`,
+      };
+    });
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'up_2', purpose: 'trainingData' });
+    const input = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+      if (!el) throw new Error('file input not found');
+      return el;
+    });
+    const png = (name: string) =>
+      new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+    await userEvent.upload(input, [png('OK.png'), png('BAD.png')]);
+    const useBtn = page.getByRole('button', { name: 'Use 1 image' });
+    await expect.element(useBtn).toBeInTheDocument();
+    // Nothing is handed over until the viewer accepts the partial set.
+    expect(replies.of('IMAGE_UPLOAD_RESULT')).toHaveLength(0);
+    await useBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('IMAGE_UPLOAD_RESULT');
+      if (!r) throw new Error('no upload reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'up_2',
+        selected: {
+          images: [
+            { url: 'https://orchestration.civitai.com/v2/consumer/blobs/OK.png', air: 'OK.png' },
+          ],
+        },
+      });
+    });
+
+    // The failed one was never recorded: a quote naming it is refused.
+    previewMutate.mockResolvedValue({ ...PREVIEW, itemKeys: ['OK.png', 'BAD.png'] });
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_partial', body: BODY });
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_partial',
+        error: 'training data not uploaded here',
+      });
+    });
+    expect(consentMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('PREPARE_TRAINING_DATASET without a requestId is dropped (nothing to answer)', async () => {
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('PREPARE_TRAINING_DATASET', { items: [] });
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_after' });
+    await vi.waitFor(() => {
+      if (replies.of('TRAINING_DATASET_RESULT').length === 0) throw new Error('no reply yet');
+    });
+    // Only the second message — which came after — was answered.
+    expect(replies.of('TRAINING_DATASET_RESULT').map((r) => r.payload)).toEqual([
+      { requestId: 'rq_after', error: 'removed' },
+    ]);
     replies.stop();
   });
 

@@ -14,7 +14,7 @@ import {
 
 /** Max images in one training dataset. */
 export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
-/** Max characters of one training caption — the orchestrator's own limit. */
+/** Max characters of one training caption. */
 export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 8192;
 
 const CONSUMER_BLOB_PATH_PREFIX = '/v2/consumer/blobs/';

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildTrainingConsentCopy,
@@ -106,6 +108,14 @@ describe('resolveTrainingConsentThumbnails', () => {
     ).toEqual(['https://o.civitai.com/v2/consumer/blobs/K1.jpeg?s=1']);
   });
 
+  it('shows at most twelve by default', () => {
+    const many = new Map(Array.from({ length: 13 }, (_, i) => [`k${i}`, `u${i}`] as const));
+    const keys = Array.from({ length: 13 }, (_, i) => `K${i}`);
+    expect(resolveTrainingConsentThumbnails({ itemKeys: keys }, many)).toEqual(
+      Array.from({ length: 12 }, (_, i) => `u${i}`)
+    );
+  });
+
   it('is null when the quote names any key this host did not upload', () => {
     expect(
       resolveTrainingConsentThumbnails({ itemKeys: ['K1.jpeg', 'K3.jpeg'] }, uploads)
@@ -165,5 +175,51 @@ describe('training submit replies', () => {
     expect(trainingSubmitReplyFromError(coded('FORBIDDEN', 'not confirmed'))).toEqual({
       error: 'not confirmed',
     });
+  });
+});
+
+/**
+ * THE CLIENT-BUNDLE RELATIONSHIP. `PageBlockHost` imports this gate statically, so
+ * everything it imports at RUNTIME ships in the page host's chunk. The dataset schema
+ * lives in `training-dataset.schema.ts` (zod only) so that `workflow.schema.ts` — and
+ * the step/recipe registries it imports — stays out. Pinned as a set: it fails if the
+ * closure GROWS or SHRINKS.
+ */
+describe('runTrainingGate runtime import closure', () => {
+  const SRC = resolve(__dirname, '../../..');
+  // Blind spots, acceptable for this module set: side-effect imports, dynamic
+  // `import()`, double-quoted specifiers and relative specifiers (recorded, not followed).
+  const IMPORT_RE = /^(import|export)\s+(?!type\b)[^;]*?from\s+'([^']+)'/gm;
+
+  function closure(entry: string): string[] {
+    const seen = new Set<string>();
+    const walk = (spec: string) => {
+      if (seen.has(spec)) return;
+      seen.add(spec);
+      if (!spec.startsWith('~/')) return;
+      const base = resolve(SRC, spec.slice(2));
+      if (/\.json$/.test(base)) return;
+      const file = [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`].find(existsSync);
+      if (!file) throw new Error(`unresolved import ${spec}`);
+      for (const m of readFileSync(file, 'utf8').matchAll(IMPORT_RE)) walk(m[2]);
+    };
+    walk(entry);
+    return [...seen].sort();
+  }
+
+  it('is exactly the gate, the app-name sanitizer, the slim schemas and zod', () => {
+    expect(closure('~/components/AppBlocks/runTrainingGate')).toEqual([
+      'zod',
+      '~/components/AppBlocks/appChromeName',
+      '~/components/AppBlocks/runTrainingGate',
+      '~/server/schema/blocks/civitai-image-url',
+      '~/server/schema/blocks/training-dataset.schema',
+    ]);
+  });
+
+  it('the walker sees through to the registries when workflow.schema IS imported (positive control)', () => {
+    expect(closure('~/server/schema/blocks/workflow.schema')).toContain(
+      '~/server/services/blocks/steps'
+    );
   });
 });

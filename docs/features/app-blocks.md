@@ -488,7 +488,8 @@ read that file. As of this writing the families are:
   The answer is `{ requestId, selected? }` with
   `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
   on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
-  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged. Logic:
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
+  `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.

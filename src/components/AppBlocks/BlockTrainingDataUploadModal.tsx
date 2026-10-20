@@ -62,7 +62,7 @@ export default function BlockTrainingDataUploadModal({
     const results: Array<TrainingDataUpload | null> = new Array(files.length).fill(null);
     let next = 0;
     const worker = async () => {
-      while (next < files.length) {
+      while (next < files.length && liveRef.current) {
         const index = next++;
         try {
           results[index] = await uploadTrainingDataImage(files[index]);

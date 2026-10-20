@@ -811,12 +811,6 @@ export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBo
 
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
-/**
- * Input of the shared consent pair (`blocks.previewQuoteGrant` /
- * `blocks.consentQuoteGrant`). The caller states the KIND it is confirming and the
- * quote id must be of that kind — a discriminated union, so a training id sent as a
- * step (or the reverse) is refused at the input rather than dispatched by its prefix.
- */
 /** Max blob keys a host may name as uploaded by it when confirming a training quote. */
 export const BLOCK_TRAINING_UPLOADED_KEYS_MAX = 1000;
 /**
@@ -826,6 +820,12 @@ export const BLOCK_TRAINING_UPLOADED_KEYS_MAX = 1000;
 export const blockTrainingUploadedBlobKeysSchema = z
   .array(z.string().min(1).max(128))
   .max(BLOCK_TRAINING_UPLOADED_KEYS_MAX);
+/**
+ * Input of the shared consent pair (`blocks.previewQuoteGrant` /
+ * `blocks.consentQuoteGrant`). The caller states the KIND it is confirming and the
+ * quote id must be of that kind — a discriminated union, so a training id sent as a
+ * step (or the reverse) is refused at the input rather than dispatched by its prefix.
+ */
 export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('training'),

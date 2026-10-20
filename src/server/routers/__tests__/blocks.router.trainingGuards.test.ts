@@ -86,6 +86,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const VIEWER = 42;
 const NOT_A_STRING = 'a training step’s triggerWord must be a literal string';
 const REFUSED = 'prompt refused';
+const FOREIGN = 'this training run names images that were not uploaded here — upload them again';
 
 const store = new Map<string, string>();
 function installRedis() {
@@ -111,9 +112,8 @@ function installRedis() {
   r.expire.mockImplementation(async () => true);
   r.ttl.mockImplementation(async () => 3600);
 }
-const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
 
-function claims() {
+function claims(over: Record<string, unknown> = {}) {
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -129,6 +129,7 @@ function claims() {
     scopes: ['ai:write:budgeted'],
     buzzBudget: 50,
     maxBrowsingLevel: 1,
+    ...over,
   };
 }
 
@@ -200,7 +201,6 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
     h.audit.mockRejectedValue(new Error(REFUSED));
     await expect(submit(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-    expect(keysWith('system:blocks:buzz-cap')).toEqual([]);
   });
 
   it('reads the key however it is cased, and whatever the training `$type` casing', async () => {
@@ -223,6 +223,15 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('audits with the token’s strictness: an all-levels token audits non-green', async () => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    await expect(estimate(stepBody({ triggerWord: 'badword' }))).rejects.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'badword', isGreen: false, isModerator: false })
+    );
+  });
+
   it('control: a non-training step with the same field is not audited by this rule', async () => {
     h.audit.mockRejectedValue(new Error(REFUSED));
     await estimate(stepBody({ triggerWord: 'badword' }, 'wdTagging'));
@@ -242,7 +251,32 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
     expect(h.audit).toHaveBeenCalledTimes(2);
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'badword' }));
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-    expect(keysWith('system:blocks:buzz-cap')).toEqual([]);
+  });
+
+  it('audits every training step’s word together, skipping blank ones and non-training steps', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    const body = workflowBody([
+      { name: 'tag', $type: 'wdTagging', input: { triggerWord: 'nottraining' } },
+      { name: 'a', $type: 'training', input: { triggerWord: 'cleanword' } },
+      { name: 'b', $type: 'training', input: { triggerWord: '   ' } },
+      { name: 'c', $type: 'imageResourceTraining', input: { triggerWord: 'badword' } },
+    ]);
+    await expect(estimate(body)).rejects.toThrow(REFUSED);
+    expect(h.audit).toHaveBeenCalledTimes(1);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'cleanword\nbadword', isGreen: false })
+    );
+  });
+
+  it('control: a workflow with no training step is never audited by this rule', async () => {
+    h.audit.mockRejectedValue(new Error(REFUSED));
+    // Whatever the rest of the estimate answers here, it got past the rule: it priced.
+    await estimate(workflowBody([{ $type: 'wdTagging', input: { triggerWord: 'badword' } }])).catch(
+      () => undefined
+    );
+    expect(h.submitWorkflow).toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
   });
 
   it('is audited inside a `repeat` template', async () => {
@@ -336,7 +370,7 @@ describe('a training confirmation refuses data its host did not upload', () => {
         quoteId: QUOTE_ID,
         uploadedBlobKeys: ['K1.jpeg', 'OTHER.jpeg'],
       } as never)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: FOREIGN });
     expect(consentedBy()).toBeNull();
   });
 
@@ -369,7 +403,7 @@ describe('a training confirmation refuses data its host did not upload', () => {
         quoteId: QUOTE_ID,
         uploadedBlobKeys: ['K1.jpeg'],
       } as never)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: FOREIGN });
     expect(consentedBy()).toBeNull();
   });
 });

@@ -515,7 +515,8 @@ export const INVENTORY = {
   // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
   //
   // The `bytes` variant (an app's own image, no picker) is the same type and the same reply, so
-  // it needs no entry either.
+  // it needs no entry either. Nor does `purpose: 'trainingData'` (several training images,
+  // `selected: { images }`): same type, same reply key.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',

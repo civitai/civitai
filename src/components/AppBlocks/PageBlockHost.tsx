@@ -206,8 +206,6 @@ const BlockGenerationSourceUploadModal = dynamic(
   { ssr: false }
 );
 
-// `purpose: 'trainingData'`: several private training images as consumer blobs, the
-// Training Studio's upload path.
 const BlockTrainingDataUploadModal = dynamic(() => import('./BlockTrainingDataUploadModal'), {
   ssr: false,
 });
@@ -3720,6 +3718,9 @@ export function PageBlockHost({
   // The training images THIS host uploaded for this block, by key identity → url. A
   // training quote naming any other key is never shown or confirmed (RUN_TRAINING).
   const trainingUploadsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    trainingUploadsRef.current = new Map();
+  }, [blockInstanceId]);
   // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
   const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
@@ -5061,7 +5062,8 @@ export function PageBlockHost({
                 await trpcUtils.client.blocks.consentTrainingQuote.mutate({
                   blockToken: token,
                   quoteId,
-                  uploadedBlobKeys: [...trainingUploadsRef.current.keys()],
+                  // Only the quoted keys, every one already checked as uploaded here.
+                  uploadedBlobKeys: preview.itemKeys.map(trainingBlobKeyIdentity),
                 });
                 let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
                 try {
@@ -5271,8 +5273,8 @@ export function PageBlockHost({
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
-  // Removed: training images are uploaded through OPEN_IMAGE_UPLOAD { purpose:
-  // 'trainingData' }. An older bundle still sending this gets a fixed refusal at once.
+  // Kept so a bundle still sending this fails at once instead of hanging. Training images
+  // now arrive via OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }.
   useEffect(() => {
     const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
       const requestId = (raw as { requestId?: unknown } | null | undefined)?.requestId;
