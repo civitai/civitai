@@ -103,6 +103,9 @@ export interface ModelCard {
   /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
    *  could be established. Hand-researched — re-check it when a card gains a version. */
   released?: string;
+  /** Why the card is no longer offered. A retired card stays in the catalog so past runs still resolve
+   *  (`cardByType`, `findByAir`), but no offer surface lists it and a submit naming its base is refused. */
+  retired?: string;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
 }
@@ -570,6 +573,8 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'caption',
     description: 'Cinematic video, quick to train.',
     released: '2025-11-21',
+    retired:
+      'The orchestrator has no Hunyuan training path: a `wan` 2.1 run trains its own fixed Wan 2.1 base and drops this model, so the card produced Wan 2.1 LoRAs.',
     versions: [
       {
         key: 'hy_720_fp8',
@@ -833,7 +838,12 @@ export const catalogFlagKeys = (): string[] => [
 /** Cards for a media, minus any gated card the viewer can't see. `enabledFlags` omitted → no gating applied
  *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). */
 export const cardsForMedia = (media: Media, enabledFlags?: ReadonlySet<string>): ModelCard[] =>
-  MODEL_CARDS.filter((c) => c.media === media && (!enabledFlags || isCardVisible(c, enabledFlags)));
+  MODEL_CARDS.filter(
+    (c) => c.media === media && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
+  );
+
+/** True when this AIR is the base of a retired card. */
+export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
 
 /**
  * The version label to show beside a card's name, blank when it only repeats it. A single-version card

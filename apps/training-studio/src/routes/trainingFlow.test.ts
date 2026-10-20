@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MODEL_CARDS, cardByType } from '$lib/data/trainingModels';
+import { MODEL_CARDS, cardByType, cardsForMedia } from '$lib/data/trainingModels';
 import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
@@ -305,5 +305,18 @@ describe('Custom base version', () => {
       versionOptions(card).some((v) => v.key === CUSTOM_VERSION_KEY)
     ).map((card) => card.type);
     expect(offered.sort()).toEqual(CUSTOM_CARDS);
+  });
+});
+
+describe('retired cards', () => {
+  it('offers no Hunyuan card, and the Wan card keeps both versions', () => {
+    const video = cardsForMedia('video', new Set());
+    expect(video.map((c) => c.type)).not.toContain('hunyuan');
+    const wan = video.find((c) => c.type === 'wan');
+    expect(wan?.versions.map((v) => v.modelVariant)).toEqual(['2.2', '2.1']);
+  });
+
+  it('still resolves a past Hunyuan run to its card', () => {
+    expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
   });
 });
