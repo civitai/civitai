@@ -318,7 +318,8 @@ node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason 
 | `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
 
 Dry run unless `--writable`, and the dry run is the server's: it lists each purchase's ledger legs and
-which are already refunded. Re-running refunds nothing twice. Behaviour and refusals:
+which are already refunded. Re-running refunds nothing twice, so a call that times out is safe to
+repeat. Behaviour and refusals:
 `docs/features/creator-shop.md` → "Refunding a purchase by hand".
 
 ---
