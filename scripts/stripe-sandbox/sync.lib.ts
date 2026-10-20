@@ -400,3 +400,155 @@ export function describePlan(steps: PlanStep[]) {
   for (const s of steps) counts[s.kind] = (counts[s.kind] ?? 0) + 1;
   return counts;
 }
+
+export type DbQuery = (
+  sql: string,
+  values: unknown[]
+) => Promise<{ rowCount?: number | null } | void>;
+
+export type DevDbConfig = {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+  ssl: boolean | { rejectUnauthorized: false };
+};
+
+const REDIRECTING_PARAMS = ['host', 'hostaddr', 'port', 'socket'];
+
+/**
+ * The only source of --dev-db's connection settings. Refuses any database whose host:port is not
+ * in `allowlist` (from the local STRIPE_SANDBOX_DB_HOSTS), so a sandbox key paired with a
+ * production URL never writes. The settings are built here from the checked URL, because pg's own
+ * parser lets `?host=` / `?port=` or a socket path override the host:port that was checked.
+ */
+export function devDatabaseConfig(
+  url: string | undefined,
+  allowlist: string | undefined
+): DevDbConfig {
+  const allowed = (allowlist ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  let parsed: URL | undefined;
+  try {
+    parsed = url ? new URL(url) : undefined;
+  } catch {
+    parsed = undefined;
+  }
+  const port = parsed?.port || '5432';
+  const target = parsed ? `${parsed.hostname}:${port}` : '(no DATABASE_URL)';
+  const refuse = (why: string) => new Error(`Refusing to write sandbox rows to ${target}: ${why}.`);
+
+  if (!parsed || !['postgres:', 'postgresql:'].includes(parsed.protocol))
+    throw refuse('not a postgres:// URL');
+  if (REDIRECTING_PARAMS.some((p) => parsed!.searchParams.has(p)))
+    throw refuse('the URL overrides its host or port in the query string');
+  if (!allowed.includes(target)) throw refuse('not in STRIPE_SANDBOX_DB_HOSTS');
+  // Only sslmode is mapped below; pg's own `ssl=` would otherwise be dropped to plaintext.
+  if (parsed.searchParams.has('ssl')) throw refuse('use sslmode, not ssl, in the URL');
+  const database = decodeURIComponent(parsed.pathname.slice(1));
+  if (!database) throw refuse('the URL names no database');
+
+  const sslmode = parsed.searchParams.get('sslmode');
+  return {
+    host: parsed.hostname,
+    port: Number(port),
+    database,
+    user: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    ssl:
+      !sslmode || sslmode === 'disable'
+        ? false
+        : sslmode === 'no-verify'
+        ? { rejectUnauthorized: false }
+        : true,
+  };
+}
+
+/**
+ * Mirrors `upsertProductRecord` / `upsertPriceRecord` in src/server/services/stripe.service.ts,
+ * which the app's webhook runs. Inserts or updates sandbox rows only: a row without `live_id` is
+ * never touched, and the plan reads tell the two catalogues apart by that key. A price is written
+ * only under a product row this run wrote.
+ */
+export async function upsertSandboxRows(query: DbQuery, sandbox: Catalogue) {
+  const written = { products: 0, prices: 0, skipped: 0 };
+  const writtenProducts = new Set<string>();
+  for (const p of sandbox.products.filter((p) => p.metadata?.[LIVE_ID_KEY])) {
+    const result = await query(
+      `INSERT INTO "Product" (id, active, name, description, metadata, "defaultPriceId", provider)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Stripe')
+       ON CONFLICT (id) DO UPDATE SET active = $2, name = $3, description = $4, metadata = $5,
+         "defaultPriceId" = $6
+       WHERE "Product".metadata ? '${LIVE_ID_KEY}'`,
+      [
+        p.id,
+        p.active,
+        p.name,
+        p.description ?? null,
+        JSON.stringify(p.metadata),
+        p.default_price ? idOf(p.default_price) : null,
+      ]
+    );
+    // A conflict with a row lacking live_id updates nothing; a dry run's query returns no count.
+    if (result?.rowCount === 0) {
+      written.skipped++;
+      continue;
+    }
+    written.products++;
+    writtenProducts.add(p.id);
+  }
+  const prices = sandbox.prices.filter(
+    (p) => p.metadata?.[LIVE_ID_KEY] && writtenProducts.has(idOf(p.product))
+  );
+  for (const p of prices) {
+    const result = await query(
+      `INSERT INTO "Price" (id, "productId", active, currency, description, type, "unitAmount",
+         interval, "intervalCount", metadata, provider)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Stripe')
+       ON CONFLICT (id) DO UPDATE SET "productId" = $2, active = $3, currency = $4,
+         description = $5, type = $6, "unitAmount" = $7, interval = $8, "intervalCount" = $9,
+         metadata = $10
+       WHERE "Price".metadata ? '${LIVE_ID_KEY}'`,
+      [
+        p.id,
+        idOf(p.product),
+        p.active,
+        p.currency,
+        p.nickname ?? null,
+        p.type,
+        p.unit_amount,
+        p.recurring?.interval ?? null,
+        p.recurring?.interval_count ?? null,
+        JSON.stringify(p.metadata),
+      ]
+    );
+    if (result?.rowCount === 0) written.skipped++;
+    else written.prices++;
+  }
+  return written;
+}
+
+export type DevDbClient = { query: DbQuery; end(): Promise<void> };
+
+/** Validates the target first, so nothing connects to a database that failed the check. */
+export async function writeDevDb({
+  url,
+  allowlist,
+  catalogue,
+  connect,
+}: {
+  url: string | undefined;
+  allowlist: string | undefined;
+  catalogue: Catalogue;
+  connect: (config: DevDbConfig) => Promise<DevDbClient>;
+}) {
+  const client = await connect(devDatabaseConfig(url, allowlist));
+  try {
+    return await upsertSandboxRows(client.query, catalogue);
+  } finally {
+    await client.end();
+  }
+}
