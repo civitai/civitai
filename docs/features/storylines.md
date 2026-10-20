@@ -15,7 +15,8 @@ section).
   in image detail. Opening it enters storyline mode.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
   move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
-  and chapter you are in; its x leaves, returning you to where you were in the feed.
+  and chapter you are in and opens the map; Leave the storyline at the bottom of the map returns you
+  to browsing that post's images.
 - **Where am I.** The chip opens a map of the storyline, a sheet that drops from the chip (a bottom
   sheet on a phone) while the image stays visible: the main path as a timeline, the forks off it, and
   how readers have split at each fork, from the first recorded choice. Any chapter on the map can be

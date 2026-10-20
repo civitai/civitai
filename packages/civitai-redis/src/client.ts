@@ -3025,7 +3025,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
     // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
-    // Cleared when a reader chooses at that chapter. See storyline.service.
+    // Rewritten on each choice. See storyline.service.
     STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
