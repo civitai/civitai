@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -39,7 +40,9 @@ export default PublicEndpoint(
       },
     })) ?? { modelVersion: null };
 
-    await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion, async () =>
+      getServerAuthSession({ req, res }).then((session) => session?.user)
+    );
   },
   ['GET'],
   // A file's hash never changes; this mapping only shifts when a version is
