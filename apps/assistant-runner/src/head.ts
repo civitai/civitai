@@ -1,4 +1,7 @@
+import { turnFrom } from '@civitai/components-chat/core';
 import type {
+  ConversationMetadata,
+  ConversationMetadataV3,
   ResumePoint,
   SavedTurnV3,
   StoredConversationMetadata,
@@ -7,7 +10,13 @@ import type {
 import type { ConversationPatchRequest } from '@civitai/components-chat/runner-protocol';
 import type { ModelMessage } from 'ai';
 
-// Stub: the head edits land in the next commit.
+/**
+ * Pure edits of the conversation head, written so the chat package's own reader (`turnFrom`,
+ * `conversationMetadataOf`) reads them as it reads a head the browser runner saved: v2 between
+ * replies, v3 while a reply is saved `running`.
+ */
+
+/** How a reply ended, as the head keeps it. The chat saves these extra fields too (`saved()` keeps them). */
 export interface EndedReply {
   messages: ModelMessage[];
   status: 'done' | 'error' | 'aborted';
@@ -18,30 +27,131 @@ export interface EndedReply {
   stopped?: string;
 }
 
+type Head = StoredConversationMetadata;
+type HeadTurn = SavedTurnV3;
+
+export function lastSeq(head: Head | null): number {
+  return Math.max(0, ...(head?.turns ?? []).map((turn) => turn.seq));
+}
+
+/**
+ * Whether a start may reply to `seq`: the next turn, or with `retry` the latest turn again, or the
+ * next one when the first start of it was refused before anything saved it.
+ */
+export function acceptsTurn(head: Head | null, seq: number, retry: boolean): boolean {
+  const last = lastSeq(head);
+  return retry ? seq === last || seq === last + 1 : seq === last + 1;
+}
+
 export interface TurnStart {
   conversationId: string;
   scope?: string;
   seq: number;
   user: TurnUser;
   now: Date;
+  /** Saved steps the reply carries on from: saved at once as `running`, so the head shows them. */
   from?: ResumePoint;
 }
 
-type Head = StoredConversationMetadata;
+/** The head with the user's turn saved as the reply starts (a new head when there is none). */
+export function startTurn(head: Head | null, start: TurnStart): Head {
+  const now = start.now.toISOString();
+  const base: Head = head ?? {
+    v: 2,
+    app: 'chat-cvt',
+    conversationId: start.conversationId,
+    title: firstMessageTitle(start.user.content),
+    titleSource: 'first-message',
+    createdAt: now,
+    updatedAt: now,
+    turns: [],
+    ...(start.scope ? { scope: start.scope } : {}),
+  };
+  const existing = base.turns.find((turn) => turn.seq === start.seq);
+  const turn: HeadTurn = {
+    seq: start.seq,
+    createdAt: existing?.createdAt ?? now,
+    user: existing?.user ?? start.user,
+    ...(start.from
+      ? { assistant: { messages: start.from.messages, status: 'running', savedAt: now } }
+      : {}),
+  };
+  const turns = [...(base.turns as HeadTurn[]).filter((t) => t.seq < start.seq), turn];
+  return versioned({ ...base, updatedAt: now }, turns);
+}
 
-const stub = (): never => {
-  throw new Error('not implemented');
-};
+/** The head with the reply saved `running` as far as `messages` go (a call with no result started and did not finish). */
+export function withProgress(head: Head, seq: number, messages: ModelMessage[], now: Date): Head {
+  const savedAt = now.toISOString();
+  return replaceReply(head, seq, { messages, status: 'running', savedAt }, savedAt);
+}
 
-export const lastSeq = (_head: Head | null): number => stub();
-export const acceptsTurn = (_head: Head | null, _seq: number, _retry: boolean): boolean => stub();
-export const startTurn = (_head: Head | null, _start: TurnStart): Head => stub();
-export const withProgress = (_head: Head, _seq: number, _m: ModelMessage[], _now: Date): Head =>
-  stub();
-export const withEnd = (_head: Head, _seq: number, _reply: EndedReply, _now: Date): Head => stub();
-export const withPatch = (_head: Head, _patch: ConversationPatchRequest, _now: Date): Head =>
-  stub();
-export const savedTurn = (_head: Head | null, _seq: number): SavedTurnV3 | undefined => stub();
-export const resumeOf = (_turn: SavedTurnV3): ResumePoint | undefined => stub();
-export const shownMessages = (_turn: SavedTurnV3 | undefined): ModelMessage[] => stub();
-export const firstMessageTitle = (_content: string): string => stub();
+/** The head with how the reply ended. */
+export function withEnd(head: Head, seq: number, reply: EndedReply, now: Date): Head {
+  return replaceReply(head, seq, reply as HeadTurn['assistant'] & object, now.toISOString());
+}
+
+export function withPatch(head: Head, patch: ConversationPatchRequest, now: Date): Head {
+  const next = { ...head, updatedAt: now.toISOString() } as Head;
+  if (patch.title !== undefined) {
+    next.title = patch.title;
+    next.titleSource = patch.titleSource ?? 'user';
+  }
+  if (patch.model === null) delete next.model;
+  else if (patch.model !== undefined) next.model = patch.model;
+  return next;
+}
+
+/** The saved turn `seq`, when the head has it. */
+export function savedTurn(head: Head | null, seq: number): HeadTurn | undefined {
+  return (head?.turns as HeadTurn[] | undefined)?.find((turn) => turn.seq === seq);
+}
+
+/**
+ * Where a reply saved `running` carries on from, read as the chat reads it: its saved steps, every
+ * call that finished with its result and every call that did not with the "interrupted" result, so
+ * nothing runs twice. `undefined` when it saved no step, or has no step left to take.
+ */
+export function resumeOf(turn: HeadTurn): ResumePoint | undefined {
+  if (turn.assistant?.status !== 'running') return undefined;
+  return turnFrom(turn).assistant.resume;
+}
+
+/** What the reply shows, read as the chat reads it (a reply saved `running` with its unfinished calls closed). */
+export function shownMessages(turn: HeadTurn | undefined): ModelMessage[] {
+  return turn ? turnFrom(turn).assistant.messages : [];
+}
+
+function replaceReply(
+  head: Head,
+  seq: number,
+  assistant: HeadTurn['assistant'],
+  updatedAt: string
+): Head {
+  const turns = (head.turns as HeadTurn[]).map((turn) =>
+    turn.seq === seq ? { ...turn, assistant } : turn
+  );
+  return versioned({ ...head, updatedAt }, turns);
+}
+
+/** v3 while any reply is saved `running`, v2 otherwise, as the chat writes them. */
+function versioned(head: Head, turns: HeadTurn[]): Head {
+  const running = turns.some((turn) => turn.assistant?.status === 'running');
+  return running
+    ? ({ ...head, v: 3, turns } satisfies ConversationMetadataV3)
+    : ({
+        ...head,
+        v: 2,
+        turns: turns as ConversationMetadata['turns'],
+      } satisfies ConversationMetadata);
+}
+
+/** The chat's own first-message title (`firstMessageTitle` in its thread store, not exported). */
+export function firstMessageTitle(content: string): string {
+  const flat = content.replace(/\s+/g, ' ').trim();
+  if (flat === '') return 'New chat';
+  if (flat.length <= 40) return flat;
+  const cut = flat.slice(0, 40);
+  const space = cut.lastIndexOf(' ');
+  return `${space > 20 ? cut.slice(0, space) : cut}…`;
+}

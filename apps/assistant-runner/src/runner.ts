@@ -1,17 +1,83 @@
-import type { ResumePoint } from '@civitai/components-chat/core';
-import type {
-  ConversationPatchRequest,
-  RunEndStatus,
-  RunSettings,
-  RunSummary,
-  StartRunRequest,
-  TurnUser,
+import {
+  AgentCore,
+  buildModelMessages,
+  buildSystemPrompt,
+  buildTurnContext,
+  contextBudget,
+  errorTrace,
+  humanize,
+  outputTokenCap,
+  partsFromMessages,
+  turnFrom,
+  type AgentCoreOutcome,
+  type AgentCoreRequest,
+  type ResumePoint,
+  type StoredConversationMetadata,
+  type Turn,
+  type TurnPart,
+} from '@civitai/components-chat/core';
+import {
+  applyRunEvent,
+  type ConversationPatchRequest,
+  type RunEndStatus,
+  type RunEvent,
+  type RunSettings,
+  type RunSummary,
+  type StartRunRequest,
+  type TurnUser,
 } from '@civitai/components-chat/runner-protocol';
+import { DBOS, Error as DBOSErrors, type WorkflowStatus } from '@dbos-inc/dbos-sdk';
+import type { ModelMessage, ToolSet } from 'ai';
+import pg from 'pg';
 
-import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
+import { RunEmitter } from './emitter';
+import {
+  acceptsTurn,
+  resumeOf,
+  savedTurn,
+  shownMessages,
+  startTurn,
+  withEnd,
+  withPatch,
+  withProgress,
+  type EndedReply,
+} from './head';
+import type {
+  ConversationStore,
+  Logger,
+  ModelProvider,
+  OpenTools,
+  ToolProvider,
+} from './interfaces';
+import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
 
-// Stub: the DBOS runner lands in the next commit.
+export const REPLY_WORKFLOW = 'reply';
+export const STOP_MARKER_WORKFLOW = 'reply-stop-marker';
+export const REPLIES_QUEUE = 'replies';
+export const JOURNAL = 'events';
+const SYSTEM_SCHEMA = 'dbos';
+const CONTROL = 'control';
+const STOP = 'stop';
+const DONE = 'done';
+
+/**
+ * DBOS recovers a crashed run only in a process of the same application version. Bump it when the
+ * reply workflow's sequence of DBOS calls changes, so a new image does not replay an old run's
+ * history against a different sequence.
+ */
+export const WORKFLOW_VERSION = 'reply-1';
+
+/** How long past its wall clock a run gets to write its own end before DBOS cancels it outright. */
+const HARD_TIMEOUT_GRACE_MS = 60_000;
+/** How often a pass checks whether its workflow was cancelled outright (the fallback Stop). */
+const CANCEL_POLL_MS = 1000;
+/** How long one journal read waits for a value before it is opened again: bounds a reader whose client left. */
+const READ_WINDOW_SECONDS = 10;
+
+const ACTIVE = ['ENQUEUED', 'PENDING'] as const;
+
+/** A reply's workflow input. Persisted by DBOS: it must never carry a credential. */
 export interface ReplyInput {
   runId: string;
   userId: string;
@@ -26,10 +92,16 @@ export interface ReplyInput {
   wallClockMs: number;
 }
 
+/** A reply's workflow output: also how a later retry of the same turn finds where to carry on from. */
 export interface ReplyOutput {
   status: RunEndStatus;
   steps: number;
   resume?: ResumePoint;
+}
+
+interface Begun {
+  deadline: number;
+  stoppedBeforeStart: boolean;
 }
 
 export interface RunnerDeps {
@@ -48,47 +120,666 @@ export interface LaunchOptions {
   logLevel?: string;
 }
 
-const stub = (): never => {
-  throw new Error('not implemented');
-};
-
+/**
+ * Runs replies as DBOS workflows: one workflow per reply, its id the run id, on the `replies` queue
+ * partitioned by user (one active run per user). The workflow runs `AgentCore` in one step, so a
+ * crash re-runs the step from the reply's last saved progress, and journals the protocol's events to
+ * a DBOS stream that any replica reads from any offset.
+ */
 export class Runner implements RunService {
-  constructor(_deps: RunnerDeps) {}
-  register(): void {}
-  async launch(_options: LaunchOptions): Promise<void> {
-    stub();
+  readonly #deps: RunnerDeps;
+  #reply: ((input: ReplyInput) => Promise<ReplyOutput>) | undefined;
+  #marker: (() => Promise<boolean>) | undefined;
+  #pool: pg.Pool | undefined;
+  #ready = false;
+
+  constructor(deps: RunnerDeps) {
+    this.#deps = deps;
   }
-  async shutdown(): Promise<void> {}
+
+  /** Registers the workflows. Once per process, before `launch`. */
+  register(): void {
+    this.#reply = DBOS.registerWorkflow((input: ReplyInput) => this.#workflow(input), {
+      name: REPLY_WORKFLOW,
+    });
+    this.#marker = DBOS.registerWorkflow(async () => true, { name: STOP_MARKER_WORKFLOW });
+  }
+
+  async launch(options: LaunchOptions): Promise<void> {
+    DBOS.setConfig({
+      name: 'assistant-runner',
+      systemDatabaseUrl: options.databaseUrl,
+      systemDatabaseSchemaName: SYSTEM_SCHEMA,
+      executorID: options.executorId,
+      applicationVersion: WORKFLOW_VERSION,
+      logLevel: options.logLevel ?? 'info',
+    });
+    await DBOS.launch();
+    // After launch: a queue registered before it is not persisted.
+    await DBOS.registerQueue(REPLIES_QUEUE, {
+      partitionConcurrency: 1,
+      workerConcurrency: options.workerConcurrency,
+    });
+    this.#pool = new pg.Pool({ connectionString: options.databaseUrl, max: 4 });
+    this.#ready = true;
+  }
+
+  async shutdown(): Promise<void> {
+    this.#ready = false;
+    await DBOS.shutdown();
+    await this.#pool?.end();
+    this.#pool = undefined;
+  }
+
   ready(): boolean {
-    return false;
+    return this.#ready;
   }
-  async start(_userId: string, _request: StartRunRequest): Promise<StartOutcome> {
-    return stub();
+
+  // ---------------------------------------------------------------------------------------------
+  // The run API
+
+  async start(userId: string, request: StartRunRequest): Promise<StartOutcome> {
+    const runId = runIdFor(userId, request.idempotencyKey);
+    const existing = await DBOS.getWorkflowStatus(runId);
+    if (existing) {
+      const attributes = runAttributes(existing);
+      return {
+        ok: true,
+        response: { v: 1, runId, conversationId: attributes.conversationId, seq: attributes.seq },
+      };
+    }
+    const live = await this.#liveRun(userId);
+    if (live)
+      return {
+        ok: false,
+        error: 'run-active',
+        message: 'Another reply is still running.',
+        runId: live.workflowID,
+      };
+
+    const head = await this.#deps.store.load(userId, request.conversationId);
+    if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
+      return {
+        ok: false,
+        error: 'stale-turn',
+        message: 'This chat has changed since; open it again.',
+      };
+    }
+    const input: ReplyInput = {
+      runId,
+      userId,
+      conversationId: request.conversationId,
+      ...(request.scope ? { scope: request.scope } : {}),
+      seq: request.turn.seq,
+      user: request.turn.user,
+      retry: request.turn.retry === true,
+      model: request.model,
+      settings: request.settings,
+      ...(request.page ? { page: request.page } : {}),
+      wallClockMs: this.#deps.wallClockMs,
+    };
+    await DBOS.startWorkflow(this.#replyWorkflow(), {
+      workflowID: runId,
+      queueName: REPLIES_QUEUE,
+      enqueueOptions: { queuePartitionKey: userId },
+      authenticatedUser: userId,
+      workflowAttributes: { conversationId: request.conversationId, seq: request.turn.seq },
+      timeoutMS: this.#deps.wallClockMs + HARD_TIMEOUT_GRACE_MS,
+    })(input);
+    return {
+      ok: true,
+      response: { v: 1, runId, conversationId: request.conversationId, seq: request.turn.seq },
+    };
   }
-  async lookup(_userId: string, _conversationId: string): Promise<RunSummary | null> {
-    return stub();
+
+  async lookup(userId: string, conversationId: string): Promise<RunSummary | null> {
+    const runs = await DBOS.listWorkflows({
+      workflowName: REPLY_WORKFLOW,
+      authenticatedUser: userId,
+      attributes: { conversationId },
+      status: [...ACTIVE],
+      sortDesc: true,
+      loadInput: true,
+    });
+    for (const run of runs) {
+      const length = await this.journalLength(run.workflowID);
+      if (length > 0 && (await this.#eventAt(run.workflowID, length - 1))?.type === 'run-ended')
+        continue;
+      const input = (run.input as [ReplyInput] | undefined)?.[0];
+      if (!input) continue;
+      return {
+        runId: run.workflowID,
+        conversationId,
+        seq: input.seq,
+        user: input.user,
+        startedAt: new Date(run.createdAt).toISOString(),
+        lastEventId: String(length - 1),
+      };
+    }
+    return null;
   }
-  async owns(_userId: string, _runId: string): Promise<boolean> {
-    return stub();
+
+  async owns(userId: string, runId: string): Promise<boolean> {
+    const status = await DBOS.getWorkflowStatus(runId);
+    return status?.workflowName === REPLY_WORKFLOW && status.authenticatedUser === userId;
   }
+
   async *events(
-    _runId: string,
-    _after: number | undefined,
-    _signal: AbortSignal
+    runId: string,
+    after: number | undefined,
+    signal: AbortSignal
   ): AsyncIterable<JournalEntry> {
-    yield stub();
+    let offset = after === undefined ? 0 : after + 1;
+    while (!signal.aborted) {
+      try {
+        for await (const event of DBOS.readStream<RunEvent>(runId, JOURNAL, {
+          offset,
+          timeoutSeconds: READ_WINDOW_SECONDS,
+        })) {
+          yield { id: offset, event };
+          offset++;
+          if (event.type === 'run-ended' || signal.aborted) return;
+        }
+      } catch (error) {
+        if (DBOSErrors.isStreamTimeoutError(error)) continue;
+        throw error;
+      }
+      // The workflow ended without journaling `run-ended`: it was cancelled outright (a Stop that did
+      // not land in time) or failed. The client still gets an end, built from the saved head.
+      const length = await this.journalLength(runId);
+      if (length > 0 && (await this.#eventAt(runId, length - 1))?.type === 'run-ended') return;
+      yield { id: Math.max(offset, length), event: await this.#endFromHead(runId) };
+      return;
+    }
   }
-  async stop(_userId: string, _runId: string): Promise<boolean> {
-    return stub();
+
+  async stop(userId: string, runId: string): Promise<boolean> {
+    if (!(await this.owns(userId, runId))) return false;
+    await this.#signalStop(runId);
+    return true;
   }
-  async stopByKey(_userId: string, _idempotencyKey: string): Promise<void> {
-    stub();
+
+  async stopByKey(userId: string, idempotencyKey: string): Promise<void> {
+    const runId = runIdFor(userId, idempotencyKey);
+    // Left for a start that has not arrived (its run then ends at once); idempotent by its id.
+    await DBOS.startWorkflow(this.#markerWorkflow(), {
+      workflowID: stopMarkerFor(runId),
+      authenticatedUser: userId,
+    })();
+    if (await DBOS.getWorkflowStatus(runId)) await this.#signalStop(runId);
   }
+
   async patch(
-    _userId: string,
-    _conversationId: string,
-    _patch: ConversationPatchRequest
+    userId: string,
+    conversationId: string,
+    patch: ConversationPatchRequest
   ): Promise<boolean> {
-    return stub();
+    const head = await this.#deps.store.update(userId, conversationId, (current) =>
+      current ? withPatch(current, patch, new Date()) : null
+    );
+    return head !== null;
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // The reply workflow
+
+  async #workflow(input: ReplyInput): Promise<ReplyOutput> {
+    const begun = await DBOS.runStep(() => this.#begin(input), { name: 'begin' });
+    const stop = new AbortController();
+    const why: { reason?: 'stopped' | 'ran_out' } = {};
+    // The pass and the wait for a Stop run side by side; DBOS reserves their step ids in call order.
+    const pass = DBOS.runStep(() => this.#pass(input, begun, stop.signal, why), { name: 'pass' });
+    const control = DBOS.recv<string>(CONTROL, {
+      deadlineEpochMS: begun.deadline + HARD_TIMEOUT_GRACE_MS,
+    });
+    control.then(
+      (message) => {
+        if (message !== STOP) return;
+        why.reason ??= 'stopped';
+        stop.abort();
+      },
+      () => undefined
+    );
+    const output = await pass;
+    // Wakes the wait above when no Stop came, so the workflow does not sit until its deadline.
+    await DBOS.send(input.runId, DONE, CONTROL);
+    await control.catch(() => null);
+    return output;
+  }
+
+  async #begin(input: ReplyInput): Promise<Begun> {
+    const stoppedBeforeStart = (await DBOS.getWorkflowStatus(stopMarkerFor(input.runId))) !== null;
+    const { store } = this.#deps;
+    const head = await store.load(input.userId, input.conversationId);
+    const from = input.retry ? await this.#retryPoint(input, head) : undefined;
+    await store.update(input.userId, input.conversationId, (current) =>
+      startTurn(current, {
+        conversationId: input.conversationId,
+        ...(input.scope ? { scope: input.scope } : {}),
+        seq: input.seq,
+        user: input.user,
+        now: new Date(),
+        ...(from ? { from } : {}),
+      })
+    );
+    return { deadline: Date.now() + input.wallClockMs, stoppedBeforeStart };
+  }
+
+  /** Where a retry of a failed turn carries on from: its saved progress, else the resume point the failed run left. */
+  async #retryPoint(
+    input: ReplyInput,
+    head: StoredConversationMetadata | null
+  ): Promise<ResumePoint | undefined> {
+    const turn = savedTurn(head, input.seq);
+    if (!turn) return undefined;
+    const saved = resumeOf(turn);
+    if (saved) return saved;
+    const [previous] = await DBOS.listWorkflows({
+      workflowName: REPLY_WORKFLOW,
+      authenticatedUser: input.userId,
+      attributes: { conversationId: input.conversationId, seq: input.seq },
+      status: 'SUCCESS',
+      sortDesc: true,
+      limit: 1,
+      loadOutput: true,
+    });
+    const output = previous?.output as ReplyOutput | undefined;
+    return output?.status === 'error' ? output.resume : undefined;
+  }
+
+  /**
+   * One pass of the reply: `AgentCore` from the reply's saved progress to its end. Runs again from the
+   * top after a crash; the head's progress then says where to carry on, and a call that had started
+   * and not finished is closed as interrupted, never run again.
+   */
+  async #pass(
+    input: ReplyInput,
+    begun: Begun,
+    stop: AbortSignal,
+    why: { reason?: 'stopped' | 'ran_out' }
+  ): Promise<ReplyOutput> {
+    const { runId, userId, conversationId, seq } = input;
+    const { store, log } = this.#deps;
+    const journal = await this.#readJournal(runId);
+    const head = await store.load(userId, conversationId);
+    const turn = savedTurn(head, seq);
+    const from = turn ? resumeOf(turn) : undefined;
+    const startParts = from ? partsFromMessages(from.messages) : [];
+
+    const core = new AgentCore({ change: () => emitter.partsChanged() });
+    const emitter = new RunEmitter({
+      write: (event) => DBOS.writeStream(JOURNAL, event),
+      parts: () => core.live?.parts,
+      shown: journal.length ? shownParts(journal) : startParts,
+      log,
+    });
+    if (journal.length === 0) {
+      emitter.emit({
+        type: 'run-started',
+        v: 1,
+        runId,
+        conversationId,
+        seq,
+        user: input.user,
+        parts: startParts,
+      });
+    }
+    const progress = new ProgressWriter(store, userId, conversationId, seq, log);
+
+    const end = async (
+      status: RunEndStatus,
+      reply: EndedReply,
+      outcome: Partial<AgentCoreOutcome> = {}
+    ): Promise<ReplyOutput> => {
+      await progress.end(reply);
+      emitter.flushParts();
+      const steps = outcome.resume?.steps ?? outcome.steps ?? countSteps(reply.messages);
+      emitter.emit({
+        type: 'run-ended',
+        status,
+        messages: reply.messages,
+        steps,
+        ...(status === 'done' && outcome.stopped !== undefined ? { endedBy: outcome.stopped } : {}),
+        ...(status === 'error' ? { resumable: outcome.resume !== undefined } : {}),
+      });
+      await emitter.drain();
+      emitter.close();
+      return { status, steps, ...(outcome.resume ? { resume: outcome.resume } : {}) };
+    };
+
+    const carried = from?.messages ?? [];
+    if (begun.stoppedBeforeStart || stop.aborted) {
+      return end(why.reason === 'ran_out' ? 'ran_out' : 'stopped', {
+        messages: carried,
+        status: 'aborted',
+      });
+    }
+    // Progress saved with every step it may take: there is nothing left to ask without starting over.
+    if (turn?.assistant?.status === 'running' && !from && turn.assistant.messages.length > 0) {
+      return end('ran_out', { messages: shownMessages(turn), status: 'done', ranOut: true });
+    }
+    const remaining = begun.deadline - Date.now();
+    if (remaining <= 0) return end('ran_out', { messages: carried, status: 'done', ranOut: true });
+
+    let tools: OpenTools | undefined;
+    let closing: Promise<void> | undefined;
+    const closeTools = () =>
+      (closing ??= tools
+        ?.close()
+        .catch((error) => log.warn({ err: error, runId }, 'closing the tools failed')));
+    const abort = () => {
+      core.abort();
+      void closeTools();
+    };
+    stop.addEventListener('abort', abort, { once: true });
+    if (stop.aborted) abort();
+    const wallClock = setTimeout(() => {
+      why.reason ??= 'ran_out';
+      abort();
+    }, remaining);
+    const cancelPoll = setInterval(() => {
+      void DBOS.getWorkflowStatus(runId).then(
+        (status) => status?.status === 'CANCELLED' && abort(),
+        () => undefined
+      );
+    }, CANCEL_POLL_MS);
+
+    let outcome: AgentCoreOutcome | undefined;
+    try {
+      outcome = await core.run({
+        seq,
+        ...(from ? { from } : {}),
+        tools: async () => {
+          tools = await this.#deps.tools.open({
+            userId,
+            runId,
+            conversationId,
+            ...(input.page ? { page: input.page } : {}),
+            signal: stop,
+          });
+          return tools.tools;
+        },
+        request: (toolSet) => this.#request(input, head, toolSet),
+        retrying: (attempt, trace) => {
+          emitter.flushParts();
+          emitter.emit({ type: 'network-retry', attempt, trace });
+        },
+        toolProgress: ({ messages }) => progress.save(messages),
+        stepFinished: ({ messages, calledTools }) => {
+          if (calledTools) progress.save(messages);
+        },
+        settled: () => emitter.flushParts(),
+      });
+    } finally {
+      clearTimeout(wallClock);
+      clearInterval(cancelPoll);
+      stop.removeEventListener('abort', abort);
+      await closeTools();
+    }
+
+    if (!outcome)
+      return end('error', {
+        messages: carried,
+        status: 'error',
+        error: 'The reply did not start.',
+      });
+    if (outcome.status === 'aborted') {
+      return why.reason === 'ran_out'
+        ? end('ran_out', { messages: outcome.messages, status: 'done', ranOut: true }, outcome)
+        : end('stopped', { messages: outcome.messages, status: 'aborted' }, outcome);
+    }
+    if (outcome.status === 'done') {
+      const reply: EndedReply = {
+        messages: outcome.messages,
+        status: 'done',
+        ...(outcome.stopped !== undefined ? { stopped: outcome.stopped } : {}),
+        ...(outcome.ranOut ? { ranOut: true } : {}),
+      };
+      return end(outcome.ranOut ? 'ran_out' : 'done', reply, outcome);
+    }
+    const human = humanize(outcome.error);
+    const trace = errorTrace(
+      outcome.error,
+      outcome.where ?? { stage: 'request', step: 0, msIntoStep: 0 }
+    );
+    emitter.flushParts();
+    emitter.emit({
+      type: 'error',
+      message: human.message,
+      ...(human.detail ? { detail: human.detail } : {}),
+      kind: human.kind,
+      trace,
+    });
+    return end(
+      'error',
+      {
+        messages: outcome.messages,
+        status: 'error',
+        error: human.message,
+        ...(human.detail ? { errorDetail: human.detail } : {}),
+        errorKind: human.kind,
+      },
+      outcome
+    );
+  }
+
+  #request(
+    input: ReplyInput,
+    head: StoredConversationMetadata | null,
+    tools: ToolSet
+  ): AgentCoreRequest {
+    const { settings } = input;
+    const earlier = (head?.turns ?? [])
+      .filter((turn) => turn.seq < input.seq)
+      .map((turn) => turnFrom(turn));
+    const current: Turn = {
+      seq: input.seq,
+      createdAt: new Date().toISOString(),
+      user: input.user,
+      assistant: { messages: [], status: 'streaming' },
+    };
+    const context = buildTurnContext({
+      attachments: input.user.attachments ?? [],
+      ...(settings.hostInstructions ? { hostInstructions: settings.hostInstructions } : {}),
+      spoken: settings.spokenReplies,
+    });
+    return {
+      model: this.#deps.models.languageModel({
+        userId: input.userId,
+        runId: input.runId,
+        model: input.model,
+      }),
+      // TODO(PR B): the App Assistant's own rules and gate, ported from the page.
+      system: buildSystemPrompt({
+        now: new Date(),
+        ...(settings.customInstructions ? { customInstructions: settings.customInstructions } : {}),
+        tools: Object.keys(tools),
+      }),
+      history: buildModelMessages([...earlier, current], () => undefined, {
+        context,
+        budget: contextBudget(),
+      }),
+      maxOutputTokens: outputTokenCap(settings.maxOutputTokens),
+    };
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Stop
+
+  async #signalStop(runId: string): Promise<void> {
+    const status = await DBOS.getWorkflowStatus(runId);
+    if (!status || !isActive(status)) return;
+    await DBOS.send(runId, STOP, CONTROL);
+    // A Stop the run does not act on in time (its process is wedged) is forced: the run is cancelled
+    // outright, which cannot journal `run-ended`, so its end is written to the head here instead.
+    setTimeout(() => void this.#forceStop(runId), this.#deps.stopGraceMs).unref();
+  }
+
+  async #forceStop(runId: string): Promise<void> {
+    try {
+      const status = await DBOS.getWorkflowStatus(runId);
+      if (!status || !isActive(status)) return;
+      const length = await this.journalLength(runId);
+      if (length > 0 && (await this.#eventAt(runId, length - 1))?.type === 'run-ended') return;
+      this.#deps.log.warn({ runId }, 'stop did not land in time; cancelling the run');
+      await DBOS.cancelWorkflow(runId);
+      const { conversationId, seq } = runAttributes(status);
+      await this.#deps.store.update(status.authenticatedUser!, conversationId, (head) => {
+        const turn = savedTurn(head, seq);
+        if (!head || !turn || (turn.assistant && turn.assistant.status !== 'running')) return null;
+        return withEnd(head, seq, { messages: shownMessages(turn), status: 'aborted' }, new Date());
+      });
+    } catch (error) {
+      this.#deps.log.error({ err: error, runId }, 'forcing a stop failed');
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // The journal
+
+  /** How many events the run's journal holds. */
+  async journalLength(runId: string): Promise<number> {
+    if (!this.#pool) throw new Error('runner is not launched');
+    // DBOS has no call for a stream's length; its stream rows are offset-keyed from 0 with no gaps.
+    const { rows } = await this.#pool.query<{ length: number }>(
+      `select coalesce(max("offset") + 1, 0)::int as length from "${SYSTEM_SCHEMA}".streams where workflow_uuid = $1 and key = $2`,
+      [runId, JOURNAL]
+    );
+    return rows[0]?.length ?? 0;
+  }
+
+  async #eventAt(runId: string, offset: number): Promise<RunEvent | undefined> {
+    try {
+      return await DBOS.readStreamOffset<RunEvent>(runId, JOURNAL, offset, { timeoutSeconds: 5 });
+    } catch (error) {
+      if (DBOSErrors.isStreamTimeoutError(error)) return undefined;
+      throw error;
+    }
+  }
+
+  async #readJournal(runId: string): Promise<RunEvent[]> {
+    const length = await this.journalLength(runId);
+    const events: RunEvent[] = [];
+    if (length === 0) return events;
+    for await (const event of DBOS.readStream<RunEvent>(runId, JOURNAL, { offset: 0 })) {
+      events.push(event);
+      if (events.length >= length) break;
+    }
+    return events;
+  }
+
+  /** `run-ended` for a run that ended without journaling it, from what its head saved. */
+  async #endFromHead(runId: string): Promise<RunEvent> {
+    const status = await DBOS.getWorkflowStatus(runId);
+    const { conversationId, seq } = status ? runAttributes(status) : { conversationId: '', seq: 0 };
+    const head = status?.authenticatedUser
+      ? await this.#deps.store.load(status.authenticatedUser, conversationId)
+      : null;
+    const messages = shownMessages(savedTurn(head, seq));
+    return {
+      type: 'run-ended',
+      status: status?.status === 'CANCELLED' ? 'stopped' : 'error',
+      messages,
+      steps: countSteps(messages),
+    };
+  }
+
+  async #liveRun(userId: string): Promise<WorkflowStatus | undefined> {
+    const runs = await DBOS.listWorkflows({
+      workflowName: REPLY_WORKFLOW,
+      authenticatedUser: userId,
+      status: [...ACTIVE],
+    });
+    for (const run of runs) {
+      const length = await this.journalLength(run.workflowID);
+      if (length === 0 || (await this.#eventAt(run.workflowID, length - 1))?.type !== 'run-ended')
+        return run;
+    }
+    return undefined;
+  }
+
+  #replyWorkflow(): (input: ReplyInput) => Promise<ReplyOutput> {
+    if (!this.#reply) throw new Error('runner workflows are not registered');
+    return this.#reply;
+  }
+
+  #markerWorkflow(): () => Promise<boolean> {
+    if (!this.#marker) throw new Error('runner workflows are not registered');
+    return this.#marker;
+  }
+}
+
+/**
+ * Saves a reply's progress to the head one save at a time: progress that comes in while a save is
+ * on its way goes with the next one (only the latest matters), and the end goes after all of it.
+ */
+class ProgressWriter {
+  #pending: ModelMessage[] | undefined;
+  #running: Promise<void> | undefined;
+
+  constructor(
+    private readonly store: ConversationStore,
+    private readonly userId: string,
+    private readonly conversationId: string,
+    private readonly seq: number,
+    private readonly log: Logger
+  ) {}
+
+  save(messages: ModelMessage[]): void {
+    this.#pending = messages;
+    this.#running ??= this.#drain();
+  }
+
+  async end(reply: EndedReply): Promise<void> {
+    this.#pending = undefined;
+    await this.#running;
+    await this.#write((head) => withEnd(head, this.seq, reply, new Date()));
+  }
+
+  async #drain(): Promise<void> {
+    while (this.#pending) {
+      const messages = this.#pending;
+      this.#pending = undefined;
+      await this.#write((head) => withProgress(head, this.seq, messages, new Date()));
+    }
+    this.#running = undefined;
+  }
+
+  async #write(
+    change: (head: StoredConversationMetadata) => StoredConversationMetadata
+  ): Promise<void> {
+    try {
+      await this.store.update(this.userId, this.conversationId, (head) =>
+        head ? change(head) : null
+      );
+    } catch (error) {
+      this.log.error(
+        { err: error, conversationId: this.conversationId, seq: this.seq },
+        'saving the reply to the head failed'
+      );
+    }
+  }
+}
+
+function runAttributes(status: WorkflowStatus): { conversationId: string; seq: number } {
+  const attributes = status.attributes ?? {};
+  return {
+    conversationId: String(attributes.conversationId ?? ''),
+    seq: Number(attributes.seq ?? 0),
+  };
+}
+
+function isActive(status: WorkflowStatus): boolean {
+  return (ACTIVE as readonly string[]).includes(status.status);
+}
+
+function countSteps(messages: ModelMessage[]): number {
+  return messages.filter((message) => message.role === 'assistant').length;
+}
+
+/** The parts a client shows after reading `journal`: what a pass that runs again carries on from. */
+function shownParts(journal: RunEvent[]): TurnPart[] {
+  const parts: TurnPart[] = [];
+  for (const event of journal) applyRunEvent(parts, event);
+  return parts;
 }
