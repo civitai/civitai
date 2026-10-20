@@ -152,6 +152,50 @@ describe('turns', () => {
     expect(await store.tokensToday(2)).toBe(150);
   });
 
+  it("split today's tokens by model, for this moderator only", async () => {
+    const turn = async (moderatorId: number, model: string, prompt: number, completion: number) => {
+      const chatId = await store.createChat({
+        moderatorId,
+        title: 'c',
+        seedUserId: null,
+        seedReportId: null,
+      });
+      const turnId = await store.startTurn({
+        chatId,
+        moderatorId,
+        prompt: 'q',
+        playbookSlug: null,
+        playbookVersion: null,
+        model,
+      });
+      await store.finishTurn(turnId, {
+        status: 'done',
+        toolCalls: [],
+        sources: [],
+        answer: 'a',
+        reasoning: null,
+        unverified: [],
+        error: null,
+        promptTokens: prompt,
+        completionTokens: completion,
+      });
+      return turnId;
+    };
+    await turn(1, 'b-model', 10, 1);
+    await turn(1, 'a-model', 20, 2);
+    await turn(1, 'a-model', 30, 3);
+    await turn(2, 'a-model', 999, 999);
+    const yesterday = await turn(1, 'a-model', 500, 500);
+    await pg.query(
+      `UPDATE assistant_turn SET created_at = now() - interval '2 days' WHERE id = $1`,
+      [yesterday]
+    );
+    expect(await store.tokensTodayByModel(1)).toEqual([
+      { model: 'a-model', promptTokens: 50, completionTokens: 5 },
+      { model: 'b-model', promptTokens: 10, completionTokens: 1 },
+    ]);
+  });
+
   it('close out a turn abandoned mid-run so the moderator can ask again', async () => {
     const id = await store.createChat({
       moderatorId: 1,

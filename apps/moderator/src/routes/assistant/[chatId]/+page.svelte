@@ -43,6 +43,8 @@
   // page per chat, so seeding once is enough.
   let prompt = $state(untrack(() => (data.turns.length ? '' : starterPrompt(data.chat))));
   let playbook = $state(NO_PLAYBOOK);
+  // Seeded from the chat's last turn; the layout remounts this page per chat.
+  let model = $state(untrack(() => data.model));
 
   async function send() {
     const text = prompt.trim();
@@ -53,7 +55,7 @@
     prompt = '';
     await streamTurn(
       chatId,
-      { prompt: text, playbook: playbook || null },
+      { prompt: text, playbook: playbook || null, model },
       (event: TurnEvent) => {
       if (event.type === 'tool') current.tools.push({ name: event.name, done: false, rows: null, error: null });
       else if (event.type === 'tool-done') {
@@ -88,6 +90,14 @@
   const playbookLabel = $derived(
     data.playbooks.find((p) => p.slug === playbook)?.title ?? 'No playbook'
   );
+  const modelLabel = $derived(data.models.find((m) => m.id === model)?.label ?? model);
+  const usd = (n: number) => (n < 0.01 && n > 0 ? '<$0.01' : `$${n.toFixed(2)}`);
+  // Per model, so "which price" is answered: the router picks the provider, so this is an estimate.
+  const spendDetail = $derived(
+    data.spend.byModel
+      .map((r) => `${r.label}: ${r.usd === null ? 'price unknown' : usd(r.usd)}`)
+      .join('\n')
+  );
 </script>
 
 <header class="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -111,6 +121,9 @@
   </form>
   <div class="flex items-center gap-2 text-xs text-dark-2">
     <span>{num(data.allowance.used)} / {num(data.allowance.cap)} tokens today</span>
+    {#if data.spend.byModel.length}
+      <span title={spendDetail}>· ≈ {usd(data.spend.usd)} today, estimated at list prices</span>
+    {/if}
     {#if canUse}
       <form method="POST" action="?/archive" use:enhance={archive.enhance}>
         <ConfirmButton
@@ -182,6 +195,16 @@
           <Select.Item value={NO_PLAYBOOK}>No playbook</Select.Item>
           {#each data.playbooks as p (p.slug)}
             <Select.Item value={p.slug}>{p.title}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      <Select.Root type="single" bind:value={() => model, (v) => (model = v || data.model)}>
+        <Select.Trigger class="w-full max-w-48 text-xs sm:w-48" aria-label="Model">
+          {modelLabel}
+        </Select.Trigger>
+        <Select.Content>
+          {#each data.models as m (m.id)}
+            <Select.Item value={m.id}>{m.label}</Select.Item>
           {/each}
         </Select.Content>
       </Select.Root>

@@ -284,6 +284,33 @@ export async function tokensToday(moderatorId: number): Promise<number> {
   return Number(row?.total ?? 0);
 }
 
+/** The same day's tokens split by model and direction, which is what a price applies to. */
+export async function tokensTodayByModel(
+  moderatorId: number
+): Promise<{ model: string; promptTokens: number; completionTokens: number }[]> {
+  const rows = await db()
+    .selectFrom('assistant_turn')
+    .select([
+      'model',
+      sql<string>`coalesce(sum(prompt_tokens), 0)`.as('prompt'),
+      sql<string>`coalesce(sum(completion_tokens), 0)`.as('completion'),
+    ])
+    .where('moderator_id', '=', moderatorId)
+    .where(
+      'created_at',
+      '>=',
+      sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`
+    )
+    .groupBy('model')
+    .orderBy('model')
+    .execute();
+  return rows.map((r) => ({
+    model: r.model,
+    promptTokens: Number(r.prompt),
+    completionTokens: Number(r.completion),
+  }));
+}
+
 export type AuditRow = Omit<Turn, 'sources'> & { chatTitle: string };
 
 export async function listAuditTurns({

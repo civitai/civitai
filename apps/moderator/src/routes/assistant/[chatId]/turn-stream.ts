@@ -7,7 +7,7 @@ import type { TurnEvent } from '$lib/assistant/types';
  */
 export async function streamTurn(
   chatId: number,
-  body: { prompt: string; playbook: string | null },
+  body: { prompt: string; playbook: string | null; model: string },
   onEvent: (event: TurnEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {

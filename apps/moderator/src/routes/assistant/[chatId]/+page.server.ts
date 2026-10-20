@@ -9,9 +9,11 @@ import {
   listPlaybooks,
   listTurns,
   renameChat,
-  tokensToday,
+  tokensTodayByModel,
 } from '$lib/server/assistant/store';
 import { DAILY_TOKEN_CAP, TURN_DEADLINE_MS } from '$lib/server/assistant/loop';
+import { assistantModel } from '$lib/server/assistant/openrouter';
+import { ASSISTANT_MODELS, estimateSpend, findModel } from '$lib/assistant/models';
 import { canSeeAddresses } from '$lib/server/access';
 import { redactAddresses } from '$lib/server/redact-addresses';
 
@@ -30,12 +32,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
   // Closes out a turn its process died during, which would otherwise hold the composer disabled.
   await hasRunningTurn(locals.user.id, TURN_DEADLINE_MS * 2);
   const text = canSeeAddresses(locals) ? (t: string) => t : redactAddresses;
-  const [turns, playbooks, used] = await Promise.all([
+  const [turns, playbooks, today] = await Promise.all([
     listTurns(chatId),
     listPlaybooks(),
-    tokensToday(locals.user.id),
+    tokensTodayByModel(locals.user.id),
   ]);
+  const used = today.reduce((sum, r) => sum + r.promptTokens + r.completionTokens, 0);
   return {
+    models: ASSISTANT_MODELS.map(({ id, label }) => ({ id, label })),
+    // A chat keeps the model it was last asked on, unless that model has left the list.
+    model: findModel(turns.at(-1)?.model)?.id ?? assistantModel(),
+    spend: estimateSpend(today),
     chat,
     turns,
     playbooks: playbooks.map(({ slug, title, summary }) => ({

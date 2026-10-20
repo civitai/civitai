@@ -1,11 +1,16 @@
 import { env } from '$env/dynamic/private';
+import { DEFAULT_ASSISTANT_MODEL, findModel } from '$lib/assistant/models';
 import { openrouterKey } from '../xguard-api';
 
 // The model call, and nothing else. Server-only: the key is read here and never leaves the process.
 
-const ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
-/** Configurable so a model trial needs no release. Every turn records the model it ran on. */
-export const assistantModel = () => env.ASSISTANT_MODEL?.trim() || ASSISTANT_MODEL;
+/**
+ * The model a question runs on when the moderator picks none: `ASSISTANT_MODEL` if it names a listed
+ * model, else the default. Only listed models were checked to route under the no-retention policy, so
+ * a setting outside the list is ignored rather than trusted.
+ */
+export const assistantModel = () =>
+  findModel(env.ASSISTANT_MODEL?.trim())?.id ?? DEFAULT_ASSISTANT_MODEL;
 
 export type ChatMessage =
   | { role: 'system' | 'user'; content: string }
@@ -54,12 +59,13 @@ export async function complete(input: {
       messages: input.messages,
       tools: input.tools?.length ? input.tools : undefined,
       tool_choice: input.tools?.length ? input.toolChoice ?? 'auto' : undefined,
-      temperature: 0.2,
+      temperature: findModel(input.model)?.noTemperature ? undefined : 0.2,
       // Reasoning tokens are billed and counted against the turn's budget; low keeps them short.
       reasoning: { effort: 'low' },
       // Account data goes into these prompts. Route only to providers that do not retain or train on
-      // what they are sent.
-      provider: { data_collection: 'deny' },
+      // what they are sent, and that honour every parameter sent (tools above all): a provider that
+      // drops them answers without the lookups.
+      provider: { data_collection: 'deny', require_parameters: true },
     }),
   });
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
