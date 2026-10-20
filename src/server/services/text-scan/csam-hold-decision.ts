@@ -137,17 +137,21 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       return;
     }
     case 'Article': {
-      const article = await dbWrite.article.findUnique({
-        where: { id: entityId },
-        select: { status: true, metadata: true },
-      });
-      if (!article || article.status === ArticleStatus.UnpublishedViolation) return;
-      const metadata = (article.metadata as ArticleMetadata | null) || {};
-      if (article.status !== ArticleStatus.Published) {
+      // The advisory lock is the one an ingestion recompute holds, so this status check and write
+      // cannot interleave with its publish. A Published article is never flipped by a recompute.
+      const published = await dbWrite.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${entityId})`;
+        const article = await tx.article.findUnique({
+          where: { id: entityId },
+          select: { status: true, metadata: true },
+        });
+        if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
+        const metadata = (article.metadata as ArticleMetadata | null) || {};
+        if (article.status === ArticleStatus.Published) return { metadata };
         // unpublishArticleById refuses anything not Published. The violation status is what stops
         // ingestion, the scheduler or the owner from publishing it later; it is not in search now.
-        await dbWrite.article.updateMany({
-          where: { id: entityId, status: { not: ArticleStatus.UnpublishedViolation } },
+        await tx.article.updateMany({
+          where: { id: entityId, status: article.status },
           data: {
             status: ArticleStatus.UnpublishedViolation,
             metadata: {
@@ -158,8 +162,10 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
             },
           },
         });
-        return;
-      }
+        return null;
+      });
+      if (!published) return;
+      const { metadata } = published;
       await unpublishArticleById({
         id: entityId,
         reason: ARTICLE_UNPUBLISH_REASON,

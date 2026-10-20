@@ -341,7 +341,7 @@ describe('textScan.resolveCsamHold', () => {
         expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
         expect(articleUpdate()).toHaveBeenCalledTimes(1);
         expect(articleUpdate()).toHaveBeenCalledWith({
-          where: { id: 55, status: { not: 'UnpublishedViolation' } },
+          where: { id: 55, status: row.status },
           data: {
             status: 'UnpublishedViolation',
             metadata: {
@@ -353,6 +353,18 @@ describe('textScan.resolveCsamHold', () => {
           },
         });
         expect(labelCalls()).toHaveLength(1);
+      });
+
+      it('takes the ingestion lock before reading and writing the article', async () => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({
+          status: 'Processing',
+          metadata: {},
+        });
+        await call({ holdId: 12, decision: 'remove' });
+        const lock = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0];
+        expect(lock).toBeDefined();
+        expect(lock).toBeLessThan(dbMock.dbWrite.article.findUnique.mock.invocationCallOrder[0]);
+        expect(lock).toBeLessThan(articleUpdate().mock.invocationCallOrder[0]);
       });
 
       it.each([
