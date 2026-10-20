@@ -70,7 +70,9 @@ beforeEach(() => {
     { accountId: 3, balance: 3_000 },
   ]);
   mocks.createBuzzTransactionMany.mockResolvedValue(undefined);
-  dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([{ userId: 2 }]);
+  dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+    { userId: 2, status: 'open', hold: true },
+  ]);
   dbMock.dbWrite.creatorProgramPayoutReviewRun.findFirst.mockResolvedValue({ id: 1 });
 });
 
@@ -92,16 +94,33 @@ describe('creators-program-settlement with held payouts', () => {
   });
 
   it('writes nothing when every creator is held', async () => {
-    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
-      { userId: 1 },
-      { userId: 2 },
-      { userId: 3 },
-    ]);
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue(
+      [1, 2, 3].map((userId) => ({ userId, status: 'open', hold: true }))
+    );
 
     await creatorsProgramSettleCash.run({}).result;
 
     expect(mocks.createBuzzTransactionMany).not.toHaveBeenCalled();
     expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('pays a cleared creator who did not bank last month, once cleared', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+      { userId: 2, status: 'open', hold: true },
+      { userId: 7, status: 'cleared', hold: false },
+    ]);
+    dbMock.dbWrite.user.findMany.mockResolvedValue([{ id: 7, onboarding: 0 }]);
+    mocks.getAccountsBalances.mockImplementation(async ({ accountIds }: { accountIds: number[] }) =>
+      accountIds.map((accountId) => ({ accountId, balance: accountId * 1_000 }))
+    );
+
+    await creatorsProgramSettleCash.run({}).result;
+
+    expect(mocks.getAccountsBalances).toHaveBeenCalledWith({
+      accountIds: [1, 2, 3, 7],
+      accountTypes: ['cashPending'],
+    });
+    expect(settledUserIds()).toEqual([1, 3, 7]);
   });
 
   it('settles everyone when nobody is held', async () => {

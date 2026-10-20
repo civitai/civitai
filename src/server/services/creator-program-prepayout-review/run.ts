@@ -121,6 +121,12 @@ function buildEvidence(
 export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<RunOutcome> {
   const startedAt = deps.now();
   const period = reviewPeriod(startedAt);
+  // After the 15th the period's batch has settled; a hold filed then would block the creator's
+  // next payout over money already paid.
+  if (startedAt.getUTCDate() > 14) {
+    deps.log?.('creator-program-prepayout-review-skipped', { period, reason: 'after the 14th' });
+    return { creditedCount: 0, evaluatedCount: 0, flaggedCount: 0, error: 'after the 14th' };
+  }
   const runId = await deps.store.startRun(period, startedAt);
   const outcome: RunOutcome = { creditedCount: 0, evaluatedCount: 0, flaggedCount: 0, error: null };
   const finish = async () => {

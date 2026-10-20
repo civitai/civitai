@@ -158,6 +158,16 @@ describe('runPrepayoutReview', () => {
     ]);
   });
 
+  it('does not review after the 14th, when the batch has already settled', async () => {
+    const { deps, store, queries } = makeDeps(batchRows, {
+      now: () => new Date('2026-11-15T06:00:00Z'),
+    });
+
+    expect((await runPrepayoutReview(deps)).error).toBe('after the 14th');
+    expect(store.startRun).not.toHaveBeenCalled();
+    expect(queries).toEqual([]);
+  });
+
   it('records a failed run when ClickHouse is unavailable', async () => {
     const { deps, store } = makeDeps(batchRows, { ch: null });
 

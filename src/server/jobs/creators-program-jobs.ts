@@ -195,13 +195,13 @@ export const creatorsProgramSettleCash = createJob(
 
     const month = dayjs().subtract(1, 'months').toDate();
     const participants = await getPoolParticipantsV2(month, true);
+    const period = dayjs(month).format('YYYY-MM');
+    const { heldUserIds, clearedUserIds, reviewed, tablesExist } = await getSettlementHolds(period);
     const balances = await getAccountsBalances({
-      accountIds: participants.map((p) => p.userId),
+      accountIds: [...new Set([...participants.map((p) => p.userId), ...clearedUserIds])],
       accountTypes: ['cashPending'],
     });
 
-    const period = dayjs(month).format('YYYY-MM');
-    const { heldUserIds, reviewed, tablesExist } = await getSettlementHolds(period);
     // A missing review alerts but does not stop the batch: only flagged creators are held.
     if (!reviewed)
       await logToAxiom({

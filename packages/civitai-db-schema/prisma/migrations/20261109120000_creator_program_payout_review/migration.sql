@@ -23,8 +23,6 @@ CREATE TABLE IF NOT EXISTS "CreatorProgramPayoutReview" (
   "decidedBy"         TEXT,
   "decisionNote"      TEXT,
   "askRef"            TEXT,
-  "releasedAt"        TIMESTAMP(3),
-  "releaseExternalId" TEXT,
   CONSTRAINT "CreatorProgramPayoutReview_status_check"
     CHECK ("status" IN ('open', 'escalated', 'cleared', 'withheld'))
 );

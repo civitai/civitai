@@ -15,6 +15,7 @@ const flag = (signals: string[]) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reviews.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe('saveFlag', () => {
@@ -31,51 +32,58 @@ describe('saveFlag', () => {
   });
 
   it.each([
-    [
-      'an open review on a re-run',
-      { status: 'open', signals: ['counterparty'], releasedAt: null },
-      ['counterparty'],
-    ],
+    ['an open review on a re-run', 'open', ['counterparty'], ['counterparty']],
     [
       'a cleared review with no new signal',
-      { status: 'cleared', signals: ['counterparty', 'restricted'], releasedAt: null },
+      'cleared',
+      ['counterparty', 'restricted'],
       ['restricted'],
     ],
-    [
-      'a released review, even with a new signal',
-      { status: 'cleared', signals: ['counterparty'], releasedAt: new Date() },
-      ['restricted'],
-    ],
-    [
-      'a withheld review',
-      { status: 'withheld', signals: ['counterparty'], releasedAt: null },
-      ['restricted'],
-    ],
-  ])('refreshes evidence and leaves the decision alone for %s', async (_, existing, signals) => {
-    reviews.findUnique.mockResolvedValue(existing);
+    ['a withheld review', 'withheld', ['counterparty'], ['restricted']],
+  ])(
+    'refreshes evidence and leaves the decision alone for %s',
+    async (_, status, seen, signals) => {
+      reviews.findUnique.mockResolvedValue({ status, signals: seen });
 
-    expect(await store.saveFlag(flag(signals))).toEqual({ created: false, reopened: false });
-    const [{ data }] = reviews.update.mock.calls[0];
-    expect(data).toMatchObject({ evidence: { note: 'today' }, evaluations: { increment: 1 } });
-    for (const key of ['status', 'hold', 'decidedAt', 'decidedBy'])
-      expect(data).not.toHaveProperty(key);
-  });
+      expect(await store.saveFlag(flag(signals))).toEqual({ created: false, reopened: false });
+      const [{ where, data }] = reviews.updateMany.mock.calls[0];
+      expect(where).toEqual({ period: '2026-10', userId: 9, status });
+      expect(data).toMatchObject({ evidence: { note: 'today' }, evaluations: { increment: 1 } });
+      for (const key of ['status', 'hold', 'decidedAt', 'decidedBy'])
+        expect(data).not.toHaveProperty(key);
+    }
+  );
 
   it('reopens a cleared hold when a signal appears that was not there when it was cleared', async () => {
-    reviews.findUnique.mockResolvedValue({
-      status: 'cleared',
-      signals: ['counterparty'],
-      releasedAt: null,
-    });
+    reviews.findUnique.mockResolvedValue({ status: 'cleared', signals: ['counterparty'] });
 
     expect(await store.saveFlag(flag(['restricted']))).toEqual({ created: false, reopened: true });
-    expect(reviews.update).toHaveBeenCalledWith({
-      where: { period_userId: { period: '2026-10', userId: 9 } },
+    expect(reviews.updateMany).toHaveBeenCalledWith({
+      where: { period: '2026-10', userId: 9, status: 'cleared' },
       data: expect.objectContaining({
         status: 'open',
         hold: true,
+        decidedBy: null,
         signals: ['counterparty', 'restricted'],
       }),
     });
+  });
+
+  it('re-reads when a decision lands between its read and its write', async () => {
+    // Read as open, cleared by a moderator before the write, so the new signal must reopen it.
+    reviews.findUnique
+      .mockResolvedValueOnce({ status: 'open', signals: ['counterparty'] })
+      .mockResolvedValueOnce({ status: 'cleared', signals: ['counterparty'] });
+    reviews.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+    expect(await store.saveFlag(flag(['restricted']))).toEqual({ created: false, reopened: true });
+  });
+
+  it('gives up rather than looping when the row keeps changing', async () => {
+    reviews.findUnique.mockResolvedValue({ status: 'open', signals: [] });
+    reviews.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(store.saveFlag(flag(['restricted']))).rejects.toThrow('kept changing');
+    expect(reviews.updateMany).toHaveBeenCalledTimes(3);
   });
 });

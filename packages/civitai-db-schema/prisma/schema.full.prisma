@@ -10630,8 +10630,6 @@ model CreatorProgramPayoutReview {
   decidedBy         String?
   decisionNote      String?
   askRef            String?
-  releasedAt        DateTime?
-  releaseExternalId String?
 
   @@unique([period, userId])
   @@index([userId])

@@ -6725,8 +6725,6 @@ export interface CreatorProgramPayoutReview {
   decidedBy: string | null;
   decisionNote: string | null;
   askRef: string | null;
-  releasedAt: Date | null;
-  releaseExternalId: string | null;
 }
 
 export interface CreatorProgramPayoutReviewRun {
