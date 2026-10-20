@@ -21,6 +21,7 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
+  expandBlurbs: vi.fn(async ({ html }: { html: string }) => ({ evaluated: true, html, uses: [] })),
   getReferencedBlurbIds: vi.fn(async () => []),
   reconcileBlurbReferences: vi.fn(async () => undefined),
 }));
@@ -39,7 +40,9 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 
 import {
   applyArticleContentChange,
+  deleteArticleById,
   linkArticleContentImages,
+  upsertArticle,
 } from '~/server/services/article.service';
 
 const ARTICLE_ID = 21;
@@ -69,10 +72,26 @@ beforeEach(() => {
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
     UNLINKED.map((row) => ({ imageId: row.id })) as never
   );
-  dbMock.dbWrite.image.findMany.mockImplementation((async ({ where, select }: any) =>
-    UNLINKED.filter((row) => matches(row, where)).map((row) =>
-      select?.userId ? row : { id: row.id }
-    )) as never);
+  dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+    UNLINKED.filter((row) => matches(row, where)).map((row) => ({ id: row.id }))) as never);
+  const stored = {
+    id: ARTICLE_ID,
+    userId: AUTHOR,
+    title: 'A title',
+    content: '<p>had images</p>',
+    coverId: null,
+    status: 'Draft',
+    scheduledAt: null,
+    publishedAt: null,
+    nsfwLevel: 1,
+    userNsfwLevel: 1,
+    lockedProperties: [],
+    metadata: {},
+  };
+  dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+  dbMock.dbRead.article.findUnique.mockResolvedValue(stored as never);
+  dbMock.dbWrite.article.update.mockResolvedValue(stored as never);
+  dbMock.dbWrite.article.delete.mockResolvedValue({ coverId: null } as never);
 });
 
 describe('linkArticleContentImages', () => {
@@ -108,12 +127,43 @@ describe('applyArticleContentChange', () => {
   it("deletes only the author's own unused image when the author removes the links", async () => {
     await save(AUTHOR);
 
-    expect(deleteImageById.mock.calls.map(([arg]: any) => arg.id)).toEqual([UNUSED_OWN.id]);
+    expect(deletedIds()).toEqual([UNUSED_OWN.id]);
   });
 
   it("deletes the author's unused image, not the editor's, when a moderator edits", async () => {
     await save(MODERATOR);
 
-    expect(deleteImageById.mock.calls.map(([arg]: any) => arg.id)).toEqual([UNUSED_OWN.id]);
+    expect(deletedIds()).toEqual([UNUSED_OWN.id]);
   });
+});
+
+const deletedIds = () => deleteImageById.mock.calls.map(([arg]: any) => arg.id);
+
+describe('upsertArticle', () => {
+  it("deletes the author's unused image when a moderator saves the edit", async () => {
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: MODERATOR,
+      isModerator: true,
+      title: 'A title',
+      content: '<p>no images left</p>',
+      status: 'Draft',
+    } as never);
+
+    expect(deletedIds()).toEqual([UNUSED_OWN.id]);
+  });
+});
+
+describe('deleteArticleById', () => {
+  it.each([
+    ['the author', AUTHOR, false],
+    ['a moderator', MODERATOR, true],
+  ])(
+    "deletes only the author's own unused images when %s deletes the article",
+    async (_, userId, isModerator) => {
+      await deleteArticleById({ id: ARTICLE_ID, userId, isModerator });
+
+      expect(deletedIds()).toEqual([UNUSED_OWN.id]);
+    }
+  );
 });

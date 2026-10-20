@@ -1557,6 +1557,10 @@ export async function applyArticleContentChange({
   return true;
 }
 
+/** An image an article's cleanup may delete: the author's own, in no post, connected to nothing else. */
+const unusedAuthorImage = (ownerId: number) =>
+  ({ userId: ownerId, postId: null, connections: { none: {} } } satisfies Prisma.ImageWhereInput);
+
 export const deleteArticleById = async ({
   id,
   userId,
@@ -1611,14 +1615,13 @@ export const deleteArticleById = async ({
       });
 
     // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    // Only delete images that have no remaining connections to ANY entity
     const contentImageIds = contentImageConnections
       .map((conn) => conn.imageId)
       .filter((imageId) => imageId !== deleted.coverId);
 
     if (contentImageIds.length > 0) {
       const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, connections: { none: {} } },
+        where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
         select: { id: true },
       });
 
@@ -1773,9 +1776,8 @@ export async function unpublishArticleById({
  * @param articleId - Article ID to link images to
  * @param content - Article HTML content
  * @param userId - User ID for image ownership
- * @param ownerId - The article's author. Content links images by media key alone, so an article
- *   can reference another user's image; only the author's own images, used nowhere else, are
- *   returned as orphans to delete.
+ * @param ownerId - The article's author: only their own images, used nowhere else, are returned
+ *   as orphans to delete.
  */
 export async function linkArticleContentImages({
   articleId,
@@ -1902,16 +1904,10 @@ export async function linkArticleContentImages({
       });
     }
 
-    // Find truly orphaned images: the author's own, in no post and connected to nothing else
     let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
-        where: {
-          id: { in: orphanedIds },
-          userId: ownerId,
-          postId: null,
-          connections: { none: {} },
-        },
+        where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },
       });
       trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
