@@ -259,6 +259,16 @@ describe('describeServerError', () => {
     expect(describeServerError('Post 1 must be at least 10 minutes from now.')).toContain('window');
     expect(describeServerError('Something else')).toBe('Something else');
   });
+
+  it('says nothing was created only when nothing was', () => {
+    const tooClose = 'Post 1 is too close to a post you already have scheduled.';
+    expect(describeServerError(tooClose)).toBe(
+      'Two posts would be too close together. Nothing was created.'
+    );
+    expect(describeServerError(tooClose, 3)).toBe(
+      'Two posts would be too close together. 3 posts were created before this.'
+    );
+  });
 });
 
 describe('promotedFromResource', () => {
