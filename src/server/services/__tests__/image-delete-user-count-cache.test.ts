@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
@@ -48,6 +49,8 @@ vi.mock('~/server/search-index', () => ({
 import * as imageService from '~/server/services/image.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imagesSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const { deleteImageById, deleteImages } = imageService;
 
@@ -85,6 +88,31 @@ describe('deleteImageById', () => {
 
     expect(bustSpy).toHaveBeenCalledTimes(1);
     expect(bustSpy).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  // A row the delete did not remove (a hold marker kept it, or it was already gone) still leaves
+  // search, and nothing else runs for it.
+  it('drops a row the delete did not remove from search, and stops there', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+    mockDbWrite.image.delete.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'x' })
+    );
+
+    await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(bustSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not treat any other delete failure as a removed row', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+    mockDbWrite.image.delete.mockRejectedValue(new Error('connection reset'));
+
+    await deleteImageById({ id: IMAGE_ID });
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).not.toHaveBeenCalled();
   });
 });
 
