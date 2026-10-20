@@ -170,6 +170,19 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
     expect((await imageRow(3)).blockedFor).toBe('tos');
   });
 
+  it('keeps a block carried by the ingestion state alone', async () => {
+    await insertImage(11, BANNED, 'Blocked', null, 0);
+
+    const outcome = await scan(loaded(11, BANNED, 'Blocked', null));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(11)).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
+  });
+
   it('records a block with no reason as moderated', async () => {
     await insertImage(6, BANNED, 'Blocked', null);
 

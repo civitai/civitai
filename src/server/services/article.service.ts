@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import type { NsfwLevel } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -2471,8 +2472,44 @@ export async function resolveArticleImageScan({
 const RESCAN_LIMIT = 3;
 const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
 
+const rescanImageSelect = {
+  id: true,
+  url: true,
+  type: true,
+  userId: true,
+  ingestion: true,
+  nsfwLevel: true,
+  nsfwLevelLocked: true,
+  blockedFor: true,
+} as const;
+
 /**
- * Rescan an article: re-queue all content images and re-submit text moderation.
+ * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
+ * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
+ * the block, which only a moderator decides; and an image someone other than the article's author
+ * owns, which the author has no say over.
+ */
+function canRescanArticleImage(
+  image: {
+    userId: number;
+    ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
+    nsfwLevelLocked: boolean;
+    blockedFor: string | null;
+  },
+  articleUserId: number
+) {
+  return (
+    image.userId === articleUserId &&
+    image.ingestion !== ImageIngestionStatus.Pending &&
+    !image.nsfwLevelLocked &&
+    !hasBlockMarker(image)
+  );
+}
+
+/**
+ * Rescan an article: re-queue its content images (see `canRescanArticleImage`) and re-submit
+ * text moderation.
  *
  * Resets ingestion to Rescan, clears contentScannedAt, and lets the normal
  * webhook flow (image scan + text moderation) drive the article back to a
@@ -2540,11 +2577,12 @@ export async function rescanArticle({
   }
 
   // --- Re-queue already-processed images for rescan ---
-  const connections = await dbRead.imageConnection.findMany({
+  // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
+  const connections = await dbWrite.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
     include: {
       image: {
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       },
     },
   });
@@ -2552,21 +2590,16 @@ export async function rescanArticle({
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
   // cover would never be re-queued without folding it in here.
   const cover = article.coverId
-    ? await dbRead.image.findUnique({
+    ? await dbWrite.image.findUnique({
         where: { id: article.coverId },
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       })
     : null;
 
   const candidates = connections.map((conn) => conn.image);
   if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
 
-  // Never re-scan a locked image: a moderator override sets `nsfwLevelLocked`,
-  // and re-queuing would let a hard-violation rescan overwrite that human
-  // decision, so the override must stay sticky.
-  const imagesToIngest = candidates.filter(
-    (image) => image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked
-  );
+  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
 
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
@@ -2697,28 +2730,34 @@ export async function rescanArticleImage({
     }
   }
 
-  const image = await dbRead.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id: imageId },
-    select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+    select: rescanImageSelect,
   });
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // Consistent with rescanArticle: never re-queue an in-flight or locked image.
-  if (image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked) {
-    // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
-    // then reports the article as in-progress (allComplete=false), which resumes
-    // the 15s status poll so the eventual result loads without a manual refresh.
-    await dbWrite.image.update({
-      where: { id: image.id },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-    enqueueImageIngestion({
-      images: [image],
-      name: 'article-rescan-image',
-      userId: article.userId,
-      lowPriority: true,
-    });
+  // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
+  // no attempt.
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw throwBadRequestError(
+      'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
+    );
   }
+
+  // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
+  // then reports the article as in-progress (allComplete=false), which resumes
+  // the 15s status poll so the eventual result loads without a manual refresh.
+  await dbWrite.image.update({
+    where: { id: image.id },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+  });
+  enqueueImageIngestion({
+    images: [image],
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
   attempts.push(Date.now());
