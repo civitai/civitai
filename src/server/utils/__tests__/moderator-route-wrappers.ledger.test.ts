@@ -493,7 +493,8 @@ describe('namesIdentifier and callsImported', () => {
 /**
  * Every route under `src/pages/api` that calls `requireFullScopeSession` directly, moderator-only
  * or not, so a route gaining or losing the call has to be listed here on purpose. Routes that get
- * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) are not listed, and this
+ * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) or a shared gate
+ * (`allowTrainingStudio`) are not listed, and this
  * checks only that the call exists; per-route behaviour is pinned in the
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
@@ -503,7 +504,6 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'auth/freshdesk',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
-  'training-studio/host',
   'user/orchestrator-key',
   'v1/block-tokens/index',
 ];

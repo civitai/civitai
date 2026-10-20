@@ -24,6 +24,12 @@ import { parseServiceStatus } from '$lib/service-status-core';
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
+  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
+   *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
+   *  cannot start training: the element refuses rather than submit unchecked. */
+  checkTrainingText?(input: {
+    triggerWord: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
@@ -110,6 +116,13 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     throw retried.err;
   };
 
+  const hostTextCheck: train.TrainingTextCheck = async (input) => {
+    if (!host.checkTrainingText)
+      throw new Error('Training is unavailable on this page right now. Reload and try again.');
+    const result = await host.checkTrainingText(input);
+    if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
+  };
+
   const submitOpts = (): train.SubmitOptions => ({
     // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
     traceMode: host.config.traceMode ?? 'events',
@@ -160,7 +173,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
 
     submitTraining: (runs) =>
-      call((client) => train.submitTrainingBatch(client, runs, submitOpts())),
+      call((client) =>
+        train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
+      ),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
@@ -182,7 +197,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         train.continueTraining(
           client,
           { workflowId, fromEpoch, addEpochs, currencies },
-          submitOpts()
+          { ...submitOpts(), checkText: hostTextCheck }
         )
       ),
 
