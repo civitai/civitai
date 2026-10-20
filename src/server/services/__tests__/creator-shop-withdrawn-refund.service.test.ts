@@ -437,6 +437,35 @@ describe('refundWithdrawnShopItem and a purchase already begun', () => {
     expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
   });
 
+  it('reverses the payouts of a begun platform-paid purchase once the item is taken down', async () => {
+    const platformPays = { ...marker('archive'), clawback: false };
+    itemMeta = {
+      purchases: 0,
+      withdrawnRefund: platformPays,
+      takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT },
+    };
+    purchases[0].meta = { withdrawnRefund: platformPays };
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(mocks.refundTransaction.mock.calls.map(([id]) => id)).toEqual([
+      'p-1-debit',
+      'p-1-payout',
+    ]);
+  });
+
+  it('stops beginning purchases once a takedown lands mid-run', async () => {
+    mocks.revokeCosmeticsFromUsers.mockImplementation(async () => {
+      itemMeta = { ...itemMeta, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+      return { revoked: 1 };
+    });
+
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(result).toEqual({ purchases: 2, refunded: 1, failures: 0 });
+    expect(purchases[1].meta ?? null).toBeNull();
+  });
+
   it('keeps what the purchase row already recorded when it stamps the terms', async () => {
     const payouts = [
       { userId: CREATOR, amount: 700, color: 'yellow', transactionId: 'p-1-payout' },
@@ -534,6 +563,9 @@ describe('sweepWithdrawnShopRefunds, run against Postgres', () => {
     await purchase('e1', 5, { day: 20 });
     await purchase('e2', 5, { userId: CREATOR });
     await purchase('e3', 5, { refunded: true });
+    // The stamp stays on a purchase once it is finished; that is not owed either.
+    await purchase('e4', 5, { refunded: true, meta: stamped });
+    await purchase('e5', 5, { userId: CREATOR, meta: stamped });
 
     await sweepWithdrawnShopRefunds();
 

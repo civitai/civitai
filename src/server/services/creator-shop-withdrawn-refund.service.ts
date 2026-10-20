@@ -159,7 +159,9 @@ async function markerStands(shopItemId: number, at: string) {
     where: { id: shopItemId },
     select: { meta: true },
   });
-  return ((current?.meta ?? {}) as CosmeticShopItemMeta).withdrawnRefund?.at === at;
+  const meta = (current?.meta ?? {}) as CosmeticShopItemMeta;
+  // A takedown landing mid-run owns every purchase not yet begun here.
+  return !meta.takedown && meta.withdrawnRefund?.at === at;
 }
 
 const logRefund = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
@@ -226,11 +228,15 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   const purchases = unrefunded
     .flatMap((purchase) => {
       const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
-      const terms =
-        started ??
-        (owedByMarker && purchase.purchasedAt <= new Date(owedByMarker.at)
-          ? owedByMarker
-          : undefined);
+      const terms = started
+        ? // Taken down since it began: finished as a takedown would, buyer first and the
+          // payouts reversed whatever the archive had said.
+          meta.takedown
+          ? { ...started, trigger: 'reject' as const, clawback: true }
+          : started
+        : owedByMarker && purchase.purchasedAt <= new Date(owedByMarker.at)
+        ? owedByMarker
+        : undefined;
       return terms ? [{ purchase, terms, started: !!started }] : [];
     })
     .slice(0, limit);
