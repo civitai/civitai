@@ -61,30 +61,6 @@ describe('amIBlockedByUser', () => {
     await expect(amIBlockedByUser({ userId: VIEWER })).resolves.toBe(false);
     expect(getCached).not.toHaveBeenCalled();
   });
-
-  it('resolves a username to an id and answers from the cache', async () => {
-    getCached.mockResolvedValue([{ id: BLOCKER, username: 'blocker' }]);
-    dbMock.dbRead.user.findFirst.mockResolvedValueOnce({ id: BLOCKER });
-
-    await expect(amIBlockedByUser({ userId: VIEWER, targetUsername: 'blocker' })).resolves.toBe(
-      true
-    );
-    expect(dbMock.dbRead.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { username: 'blocker' } })
-    );
-    expect(dbMock.dbRead.userEngagement.findFirst).not.toHaveBeenCalled();
-  });
-
-  it('returns false for an unknown username', async () => {
-    getCached.mockResolvedValue([{ id: BLOCKER, username: 'blocker' }]);
-    dbMock.dbRead.user.findFirst.mockResolvedValueOnce(null);
-
-    await expect(amIBlockedByUser({ userId: VIEWER, targetUsername: 'nobody' })).resolves.toBe(
-      false
-    );
-    // An unresolved username is answered before the cache is read.
-    expect(getCached).not.toHaveBeenCalled();
-  });
 });
 
 describe('amIBlockedByUser — confirmOnPrimary (interaction gates)', () => {

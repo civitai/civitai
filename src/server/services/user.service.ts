@@ -3065,12 +3065,10 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
 export async function amIBlockedByUser({
   userId,
   targetUserId,
-  targetUsername,
   confirmOnPrimary = false,
 }: {
   userId: number;
   targetUserId?: number;
-  targetUsername?: string;
   /**
    * Interaction gates (comment, reaction, tip) pass true: when the cache says "not
    * blocked", confirm against the primary. A cache entry can miss a block that just
@@ -3079,12 +3077,6 @@ export async function amIBlockedByUser({
    */
   confirmOnPrimary?: boolean;
 }) {
-  if (!(targetUserId || targetUsername)) return false;
-  if (!targetUserId && targetUsername)
-    targetUserId = (
-      await dbRead.user.findFirst({ where: { username: targetUsername }, select: { id: true } })
-    )?.id;
-
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
