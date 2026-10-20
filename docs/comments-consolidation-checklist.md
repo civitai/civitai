@@ -129,11 +129,13 @@ and flip order.
       `kyselyV3Read`/`kyselyV3Write` (`withTables`) that add `path` as select-only `string` and
       narrow `rootId`/`depth` to select-only; the shared clients keep the generated `DB` that the
       `@civitai/db-queries` signatures are typed against **(review)**
-- [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`: migration
-      `20261111120000_comment_v3_moderation_trigger` is written (2026-10-20), kept separate because
-      the enum value is expand/contract (**deploy regenerated client first**, then apply). Open:
-      apply it with the Phase 2 consumer below, and only if comments have not yet cut over to
-      text-scan (`text-scan/clavata-cutover.ts`); record the cutover answer here
+- [ ] **(moved to Phase 2)** Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value
+      `CommentV3`: its own migration, shipped with the Phase 2 consumer below so `main` never holds
+      a migration prod does not have (the Phase 1 copy was pulled back out, 2026-10-20). The
+      Phase 1 client already knows the enum value, so the deploy-before-apply order holds. Apply
+      only if comments have not yet cut over to text-scan (`text-scan/clavata-cutover.ts`), and
+      after the Phase 3 backfill or with the trigger disabled while it runs; record the cutover
+      answer here
 - [ ] **(moved to Phase 2)** `entity-moderation.ts` consumes the `CommentV3` JobQueue entity type:
       its flagged path files a `Report` through `ReportEntity`, so it needs the v3 report plumbing
       and a Kysely-backed selector (no Prisma delegate, D8). The scam auto-mute cleanup for v3
@@ -148,10 +150,15 @@ and flip order.
 - [x] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
       D8 this is the only thing that maintains `updatedAt` on them (generated)
 - [x] `pnpm run db:generate` clean (2026-10-20)
-- [ ] `pnpm run db:check-generated` clean on the PR, and `db:moderator:pull` tolerates the 13
-      `CommentTopic` partition children (dev apply)
-- [ ] Migration SQL written and committed (2026-10-20); **applied manually** to dev, then prod
-      (never `prisma migrate deploy`)
+- [x] `pnpm run db:check-generated` clean on the PR (#6448). `db:moderator:pull` introspects the
+      separate moderator database (`MODERATOR_DATABASE_URL`), so the partition children never
+      reach it
+- [x] Migration SQL `20261110120000_comment_v3_schema` merged (#6448) and **applied manually** to
+      prod 2026-10-20; the replica shows the 13 partitions with their cascade FKs, the shared
+      sequence as the id default on all three comment tables, the three triggers and every index.
+      `comment_shared_id_seq` was created under the default ACL, so the roles the old
+      `Comment_id_seq`/`CommentV2_id_seq` granted beyond the owner and app writer need granting by
+      hand (SQL given 2026-10-20)
 
 **Gate:** new tables live and empty in prod; client deployed knowing all new types.
 
