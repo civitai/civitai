@@ -5,7 +5,10 @@
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import PromptSegments from '$lib/components/PromptSegments.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
+  import { recheckCategories, type RecheckResult } from '$lib/restrictions/recheck';
   import { triggerOrigin, type SourceState } from '$lib/restrictions/origin';
   import {
     explainMatches,
@@ -34,6 +37,8 @@
     sourceState,
     selected,
     onToggle,
+    recheck,
+    recheckStatus,
   }: {
     /** Adjacent identical attempts; the first stands for all of them. */
     repeats: RestrictionTriggerView[];
@@ -44,6 +49,9 @@
     sourceState: SourceState | undefined;
     selected: boolean;
     onToggle: (keys: string[]) => void;
+    /** The current word list run over a prompt that recorded no match; absent when not applicable. */
+    recheck: RecheckResult | undefined;
+    recheckStatus: 'loading' | 'failed' | undefined;
   } = $props();
 
   const trigger = $derived(repeats[0]);
@@ -63,6 +71,11 @@
       : null
   );
   const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
+  const recheckCats = $derived(recheck ? recheckCategories(recheck) : []);
+  const recheckLegend = $derived(HIGHLIGHT_LEGEND.filter((l) => recheckCats.includes(l.cat)));
+  const awaitingRecheck = $derived(
+    noRecordedMatch && trigger.source !== 'External' && !recheck && !!recheckStatus
+  );
   const isRemix = $derived(origin.kind === 'remix' || origin.kind === 'legacy-remix');
   const canDiff = $derived(isRemix && !!source?.prompt && !!trigger.prompt);
   // A diff is only offered when the match was not already settled as identical.
@@ -243,20 +256,22 @@
               </div>
             {/each}
           </div>
-        {:else if noRecordedMatch && testerLink}
+        {:else if noRecordedMatch}
           <p class="m-0 text-xs text-dark-2">
-            Match not recorded.
-            <a
-              href={testerLink.href}
-              title={testerLink.prefilled ? undefined : 'Prompt too long to prefill'}
-              target="_blank"
-              rel="noreferrer"
-              class={LINK_CLASS}
-            >
-              Re-run in the prompt tester ↗
-            </a>
-            {#if !testerLink.prefilled}
-              <span>(prompt too long to prefill)</span>
+            Match not recorded at block time.
+            {#if testerLink}
+              <a
+                href={testerLink.href}
+                title={testerLink.prefilled ? undefined : 'Prompt too long to prefill'}
+                target="_blank"
+                rel="noreferrer"
+                class={LINK_CLASS}
+              >
+                Open in prompt tester ↗
+              </a>
+              {#if !testerLink.prefilled}
+                <span>(prompt too long to prefill)</span>
+              {/if}
             {/if}
           </p>
         {/if}
@@ -322,6 +337,43 @@
               highlight={highlights.negativePrompt}
             />
           </div>
+        {/if}
+
+        {#if recheck}
+          <div class="mt-2 space-y-2 rounded-md border border-dark-4 bg-dark-6 p-2">
+            <p class="m-0 text-xs font-semibold tracking-wide text-dark-2 uppercase">
+              Re-checked with the current word list
+              <span class="font-normal tracking-normal normal-case">
+                (not recorded at block time; text shown normalised)
+              </span>
+            </p>
+            {#if recheckCats.length}
+              <PromptSegments segments={recheck.prompt} />
+              {#if recheck.negativePrompt && recheck.negativePrompt.some((s) => s.category)}
+                <p class="m-0 text-xs text-dark-2">Negative prompt</p>
+                <PromptSegments segments={recheck.negativePrompt} />
+              {/if}
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-2">
+                {#each recheckLegend as l (l.cat)}
+                  <span class="inline-flex items-center gap-1">
+                    <span class="inline-block size-3 rounded {HIGHLIGHT_MARK[l.cat]}"></span>
+                    {l.label}
+                  </span>
+                {/each}
+              </div>
+            {:else}
+              <p class="m-0 text-sm text-dark-0">
+                The current word list finds no match. The rule may have changed since this was
+                blocked.
+              </p>
+            {/if}
+          </div>
+        {:else if awaitingRecheck}
+          <p class="mt-2 mb-0 text-xs text-dark-2">
+            {recheckStatus === 'failed'
+              ? 'Re-checking with the current word list failed.'
+              : 'Re-checking with the current word list…'}
+          </p>
         {/if}
 
         {#if trigger.inputImages?.length || trigger.inputVideo}

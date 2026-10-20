@@ -12,6 +12,8 @@ import {
 } from '$lib/restriction-types';
 import type { MediaType } from '../media/edge-url';
 import type { TriggerOrigin } from '$lib/restrictions/origin';
+import { planRecheck, type Recheck } from '$lib/restrictions/recheck';
+import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
@@ -244,6 +246,26 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     })),
     totalCount: count,
   };
+}
+
+/** Bounds the work for an account with an unusual number of distinct prompts. */
+const RECHECK_LIMIT = 200;
+
+/**
+ * Re-runs the current word lists over triggers that recorded no match. Segments are of the NORMALISED
+ * text, so they are shown beside the raw prompt, never in place of it. Server-only: it pulls the lists.
+ */
+export function recheckTriggers(triggers: readonly RestrictionTriggerView[]): Recheck {
+  const plan = planRecheck(triggers);
+  const results = plan.inputs.slice(0, RECHECK_LIMIT).map((input) => {
+    const { prompt, negativePrompt } = getPromptHighlightSegments(
+      input.prompt,
+      input.negativePrompt ?? null
+    );
+    return { prompt, negativePrompt };
+  });
+  const byKey = Object.fromEntries(Object.entries(plan.byKey).filter(([, i]) => i < RECHECK_LIMIT));
+  return { results, byKey };
 }
 
 export type SuspiciousMatch = {

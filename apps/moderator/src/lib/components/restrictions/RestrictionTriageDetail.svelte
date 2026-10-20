@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { deserialize, enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -22,6 +23,7 @@
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { unwiredRulingReason } from '$lib/restriction-types';
   import { originSummary, sourceState } from '$lib/restrictions/origin';
+  import { planRecheck, type Recheck } from '$lib/restrictions/recheck';
   import { groupRepeats } from '$lib/restrictions/trigger-groups';
   import { rulingLabel } from '$lib/restrictions/verdict-label';
   import type { RemixSource, RestrictionRow } from '$lib/server/user-restriction.service';
@@ -69,6 +71,32 @@
   // whose one possible outcome is a 400.
   const unwiredReason = $derived(unwiredRulingReason(row.type));
   const name = $derived(row.username ?? `#${row.userId}`);
+
+  // Fetched on open, per restriction: `load` does not re-run when the selection changes.
+  let rechecks = $state<Record<number, Recheck | 'loading' | 'failed'>>({});
+  const recheck = $derived(rechecks[row.id]);
+  const needsRecheck = $derived(planRecheck(row.triggers).inputs.length > 0);
+
+  $effect(() => {
+    const id = row.id;
+    if (!needsRecheck || untrack(() => rechecks[id])) return;
+    rechecks[id] = 'loading';
+    const body = new FormData();
+    body.set('userRestrictionId', String(id));
+    fetch(actionHref('recheck'), {
+      method: 'POST',
+      body,
+      headers: { 'x-sveltekit-action': 'true' },
+    })
+      .then(async (res) => {
+        const result = deserialize(await res.text());
+        rechecks[id] =
+          result.type === 'success' && result.data?.recheck
+            ? (result.data.recheck as Recheck)
+            : 'failed';
+      })
+      .catch(() => (rechecks[id] = 'failed'));
+  });
 
   const selected = new SvelteSet<string>();
   // A repeat group is one card: ticking it ticks every attempt in it, and the form still posts each key.
@@ -221,6 +249,10 @@
           sourceState={sourceId
             ? sourceState(sourceId, { sources, failed: sourcesFailed, notLoaded: sourcesNotLoaded })
             : undefined}
+          recheck={typeof recheck === 'object' && recheck.byKey[trigger.key] !== undefined
+            ? recheck.results[recheck.byKey[trigger.key]]
+            : undefined}
+          recheckStatus={recheck === 'loading' || recheck === 'failed' ? recheck : undefined}
           selected={group.triggers.every((r) => selected.has(r.key))}
           onToggle={toggle}
         />
