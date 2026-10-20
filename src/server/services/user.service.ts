@@ -1460,14 +1460,6 @@ export const removeAllContent = async ({
     SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${id}) AS held
   `;
   const keptUnderHold = hold?.held ? images.length : 0;
-  if (keptUnderHold)
-    logToAxiom({
-      name: 'remove-all-content',
-      type: 'info',
-      message: 'Kept images under a hold',
-      userId: id,
-      count: keptUnderHold,
-    }).catch(() => undefined);
   // remove images from s3 buckets before deleting them
   try {
     for (const image of images) {
@@ -1476,7 +1468,30 @@ export const removeAllContent = async ({
   } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
-  await dbWrite.post.deleteMany({ where: { userId: id } });
+  // A held owner's posts are kept, unpublished the way taking a model down unpublishes its posts.
+  let keptPostsUnderHold = 0;
+  if (hold?.held)
+    keptPostsUnderHold = await dbWrite.$executeRaw`
+      UPDATE "Post"
+      SET "metadata" = COALESCE("metadata", '{}') || jsonb_build_object(
+            'unpublishedAt', ${new Date().toISOString()}::text,
+            'unpublishedBy', ${actorUserId ?? -1}::int,
+            'prevPublishedAt', "publishedAt"
+          ),
+          "publishedAt" = NULL
+      WHERE "userId" = ${id} AND "publishedAt" IS NOT NULL
+    `;
+  else await dbWrite.post.deleteMany({ where: { userId: id } });
+  if (hold?.held)
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'info',
+      message: 'Kept content under a hold',
+      userId: id,
+      images: keptUnderHold,
+      unpublishedPosts: keptPostsUnderHold,
+    }).catch(() => undefined);
+
   await dbWrite.model.deleteMany({ where: { userId: id } });
   await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
   await dbWrite.chatMember.deleteMany({ where: { userId: id } });
@@ -1608,7 +1623,7 @@ export const removeAllContent = async ({
   }
 
   await wipeAccountFromDocStore(id);
-  return { keptUnderHold };
+  return { keptUnderHold, keptPostsUnderHold };
 };
 
 /**

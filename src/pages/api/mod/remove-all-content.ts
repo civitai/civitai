@@ -11,12 +11,12 @@ const schema = z.object({
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const { userId } = schema.parse(req.query);
 
-  const { keptUnderHold } = await removeAllContent({ id: userId });
+  const { keptUnderHold, keptPostsUnderHold } = await removeAllContent({ id: userId });
   const tracker = new Tracker(req, res);
   tracker.userActivity({
     type: 'RemoveContent',
     targetUserId: userId,
   });
 
-  return res.status(200).json({ userId, keptUnderHold });
+  return res.status(200).json({ userId, keptUnderHold, keptPostsUnderHold });
 });

@@ -108,6 +108,11 @@ BEGIN
     WHERE "id" = OLD."id" AND "ingestion" <> 'Blocked';
     UPDATE "Image" SET "postId" = NULL, "updatedAt" = now()
     WHERE "id" = OLD."id" AND "postId" IS NOT NULL;
+    -- Kept counts as moderated, so the account-deletion markers go even on a row already blocked:
+    -- restoring the account would otherwise put the image back (account-deletion-image-markers.ts).
+    UPDATE "Image"
+    SET "metadata" = "metadata" - 'accountDeletionPriorIngestion' - 'accountDeletionPriorBlockedFor'
+    WHERE "id" = OLD."id" AND ("metadata" -> 'accountDeletionPriorIngestion') IS NOT NULL;
     RETURN NULL;
   END IF;
   RETURN OLD;

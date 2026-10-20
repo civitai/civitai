@@ -48,7 +48,13 @@ vi.mock('~/server/search-index', () => ({
 
 import * as imageService from '~/server/services/image.service';
 import * as postService from '~/server/services/post.service';
-import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import {
+  imageMetaCache,
+  imageMetadataCache,
+  thumbnailCache,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imagesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -95,8 +101,17 @@ describe('deleteImageById', () => {
   // cache a delete busts is stale for it too, its post's included.
   it("busts a kept row's caches and its post's", async () => {
     const postBust = vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined);
-    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      strings.join('?').includes('"EvidenceHoldImage"')
+    const metaRefresh = vi.spyOn(imageMetaCache, 'refresh').mockResolvedValue(undefined as never);
+    const metadataRefresh = vi
+      .spyOn(imageMetadataCache, 'refresh')
+      .mockResolvedValue(undefined as never);
+    // Answers the kept-record lookup only for the id it binds.
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('?').includes('"EvidenceHoldImage"') &&
+      JSON.stringify(values).includes(String(IMAGE_ID))
         ? [{ imageId: IMAGE_ID, userId: OWNER_ID, postId: POST_ID }]
         : []) as never);
     mockDbWrite.image.delete.mockRejectedValue(
@@ -110,6 +125,17 @@ describe('deleteImageById', () => {
     ]);
     expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
     expect(postBust).toHaveBeenCalledWith([POST_ID]);
+    expect(metaRefresh).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(metadataRefresh).toHaveBeenCalledWith([IMAGE_ID]);
+    // The existence cache is what takes a blocked image off the site.
+    expect(vi.mocked(redisMock.sysRedis.packed.set)).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`:${IMAGE_ID}$`)),
+      'false',
+      expect.anything()
+    );
+    postBust.mockRestore();
+    metaRefresh.mockRestore();
+    metadataRefresh.mockRestore();
   });
 
   // Already gone: no kept record, so it leaves search and nothing else runs for it.

@@ -57,6 +57,7 @@ import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const NO_COPY = { holdForTrainingCopy: false };
@@ -382,6 +383,35 @@ describe('purgeHoldGuard on the delete', () => {
       expect(storage.deletedKeys.sort()).toEqual([`file-${PLAIN}`, `file-${RELEASED}`]);
     });
 
+    // Kept counts as moderated: the account-deletion markers go, already-blocked rows included, or
+    // restoring the account would un-block the image. Keys are the app's own constants.
+    it("drops a kept image's account-deletion markers, keeping the rest of its metadata", async () => {
+      await holder.db.query(
+        `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", metadata)
+         VALUES ($1, $2, 'Blocked', 'moderated', $3), ($4, $5, 'Blocked', 'moderated', $3)`,
+        [
+          LIVE_HELD,
+          MANUAL_USER,
+          JSON.stringify({
+            width: 1,
+            [PRIOR_INGESTION_KEY]: 'Scanned',
+            [PRIOR_BLOCKED_FOR_KEY]: null,
+          }),
+          POST_NEIGHBOUR,
+          PLAIN_USER,
+        ]
+      );
+      // The neighbour is unheld and deleted, so only the kept row is read back.
+      await imageService.deleteImages([LIVE_HELD, POST_NEIGHBOUR], true);
+
+      const rows = (
+        await holder.db.query<{ id: number; metadata: unknown }>(
+          `SELECT id, metadata FROM "Image" WHERE id IN (${LIVE_HELD}, ${POST_NEIGHBOUR})`
+        )
+      ).rows;
+      expect(rows).toEqual([{ id: LIVE_HELD, metadata: { width: 1 } }]);
+    });
+
     it('takes a kept image out of its post and records which post it was in', async () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", ingestion, "postId") VALUES
@@ -407,11 +437,13 @@ describe('purgeHoldGuard on the delete', () => {
       expect(await remaining()).toContain(LIVE_HELD);
       expect(await inPost()).toEqual([POST_NEIGHBOUR]);
       expect(await record()).toEqual([{ imageId: LIVE_HELD, userId: MANUAL_USER, postId: POST }]);
-      expect(postBust).toHaveBeenCalledWith([POST]);
+      // The deleted rows' bust runs too, empty here; the kept post is busted once.
+      expect(postBust.mock.calls.filter(([ids]) => (ids as number[]).length)).toEqual([[[POST]]]);
 
       // A second delete finds it already out of the post; the first record stands.
       await imageService.deleteImages([LIVE_HELD], true);
       expect(await record()).toEqual([{ imageId: LIVE_HELD, userId: MANUAL_USER, postId: POST }]);
+      postBust.mockRestore();
     });
 
     // The trigger writes the block in SQL; these are the app's own values for a moderator block, so

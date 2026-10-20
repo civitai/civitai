@@ -400,6 +400,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
       keptUnderHold: 0,
+      keptPostsUnderHold: 0,
     });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never

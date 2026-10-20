@@ -234,6 +234,8 @@ const heldOnPrimary = (fixture: Fixture) => fixture.primaryHeld ?? fixture.held;
  */
 const HOLD_KEEPS_BLOCKED =
   /NOT \(\s*(?:h\.held AND i\.ingestion = 'Blocked'|i\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+AND EXISTS \(SELECT 1 FROM "EvidenceHeldUser")/;
+/** A statement that reports whether its owner is held. */
+const HOLD_SELECTED = /EXISTS \(SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = \?\) AS held/;
 /** The worklist leaves a held owner's `AiNotVerified` rows alone too. */
 const HOLD_KEEPS_AI_NOT_VERIFIED = /"blockedFor" = \? AND NOT h\.held\)/;
 /** The worklist leaves a held owner's posts alone. */
@@ -468,19 +470,24 @@ function seed(next: Record<number, Fixture>) {
       const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
       if (sql.includes('"hasImages"')) {
-        const held = !!heldOnPrimary(fixture) && sql.includes('"EvidenceHeldUser"');
+        // Both read off the statement: the hold lookup it selects, and whether its image check
+        // leaves a held owner's kept (blocked) rows out.
+        const held = !!heldOnPrimary(fixture) && HOLD_SELECTED.test(sql);
         const state = {
           stillDeleted: !fixture.restored,
           held,
-          hasImages:
-            fixture.images.filter((id) => !held || ingestionOf(fixture, id) !== 'Blocked').length >
-            0,
+          hasImages: notKeptByHold(sql, fixture, held, fixture.images).length > 0,
         };
         if (fixture.restoredAfterCheck) fixture.restored = true;
         return Promise.resolve([state]);
       }
       if (sql.includes('"hasPending"'))
-        return Promise.resolve([{ hasPending: pendingImages(sql, values, fixture).length > 0 }]);
+        return Promise.resolve([
+          {
+            hasPending: pendingImages(sql, values, fixture).length > 0,
+            held: !!heldOnPrimary(fixture) && HOLD_SELECTED.test(sql),
+          },
+        ]);
       if (sql.includes('"stillDeleted"')) {
         const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
         if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
@@ -1478,7 +1485,12 @@ describe('an account under a hold marker', () => {
     );
     expect(result.deletedImages).toBe(0);
     expect(deletedPostIds).toEqual([]);
-    expect(result.deletedUsers).toBe(2);
+    // Logged apart: nothing of these accounts was deleted.
+    expect(result.deletedUsers).toBe(0);
+    expect(result.heldKeptUsers).toBe(2);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ deletedUsers: 0, heldKeptUsers: 2 })
+    );
   });
 
   it('leaves the account alone once every image is kept', async () => {
@@ -1507,6 +1519,48 @@ describe('an account under a hold marker', () => {
     const result = await run();
 
     expect(result.blockedImages).toBe(3);
+    expect(result.deletedUsers).toBe(0);
+    expect(result.heldKeptUsers).toBe(1);
+  });
+
+  it('attempts only the live images, never one already kept, and then lets the account go', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(4),
+        held: true,
+        ingestion: { 1: 'Blocked', 2: 'Blocked' },
+        blockedFor: { 1: 'moderated', 2: 'moderated' },
+      },
+    });
+
+    await run();
+    expect(mockDeleteImages.mock.calls.flatMap(([batch]) => batch as number[])).toEqual([3, 4]);
+
+    mockDeleteImages.mockClear();
+    await run();
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+  });
+
+  it("leaves a held grace account's AiNotVerified images as they are", async () => {
+    const seedGrace = (held: boolean) =>
+      seed({
+        7: {
+          deletedAt: NEWER,
+          images: ids(1),
+          meta: { imageRemoval: 'grace' },
+          held,
+          ingestion: { 1: 'Blocked' },
+          blockedFor: { 1: AI_NOT_VERIFIED },
+        },
+      });
+
+    seedGrace(true);
+    expect((await run()).blockedImages).toBe(0);
+
+    // The control: without the hold the same image is repointed for the purge.
+    seedGrace(false);
+    expect((await run()).blockedImages).toBe(1);
   });
 
   it('keeps the posts for a hold placed after the worklist read', async () => {

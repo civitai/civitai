@@ -33,12 +33,12 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('/api/mod/remove-all-content', () => {
   it('returns how many images the wipe kept', async () => {
-    removeAllContent.mockResolvedValue({ keptUnderHold: 7 });
+    removeAllContent.mockResolvedValue({ keptUnderHold: 7, keptPostsUnderHold: 2 });
 
     const res = await run('42');
 
     expect(removeAllContent).toHaveBeenCalledWith({ id: 42 });
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ userId: 42, keptUnderHold: 7 });
+    expect(res.json).toHaveBeenCalledWith({ userId: 42, keptUnderHold: 7, keptPostsUnderHold: 2 });
   });
 });

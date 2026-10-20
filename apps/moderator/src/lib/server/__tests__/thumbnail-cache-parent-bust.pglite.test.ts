@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
-import { REDIS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -13,7 +13,8 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * that entry is ever stored under.
  */
 
-const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
+const { dbHandle, del, sysSet, syncSearchIndexBulk } = vi.hoisted(() => ({
+  sysSet: vi.fn(async (_key: string, _value: string, _opts?: unknown) => undefined),
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
@@ -38,7 +39,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../redis', () => ({
   getRedis: () => ({ del }),
-  getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
+  getSysRedis: () => ({ packed: { set: sysSet } }),
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects: vi.fn(async () => undefined),
@@ -234,6 +235,7 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
 
   beforeEach(async () => {
     vi.mocked(bustPostGalleryCaches).mockClear();
+    sysSet.mockClear();
     await db.exec(`
       CREATE TABLE "CsamReport" (
         "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
@@ -254,6 +256,17 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
     const row = await db.query(`SELECT "postId" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`);
     expect(row.rows).toEqual([{ postId: null }]);
     expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
+    // The existence cache is what takes a blocked image off the site; meta and metadata go with it.
+    expect(sysSet.mock.calls.map(([k, v]) => [k, v])).toContainEqual([
+      `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${PLAIN_IMAGE_ID}`,
+      'false',
+    ]);
+    expect(bustedKeys()).toEqual(
+      expect.arrayContaining([
+        `${REDIS_KEYS.CACHES.IMAGE_META}:${PLAIN_IMAGE_ID}`,
+        `${REDIS_KEYS.CACHES.IMAGE_METADATA}:${PLAIN_IMAGE_ID}`,
+      ])
+    );
     expect(
       syncSearchIndexBulk.mock.calls
         .filter(([batch]) => batch.action === 'delete')

@@ -63,6 +63,8 @@ type UserDrain = {
   blockedImages: number;
   budgetUsed: number;
   drained: boolean;
+  /** Drained, but a hold marker keeps what is left: logged apart from the accounts emptied. */
+  held?: boolean;
   canceled: boolean;
   error?: unknown;
 };
@@ -165,7 +167,14 @@ async function drainUser(
     // Done once only kept images are left: a held owner keeps their posts, and the post delete
     // below refuses them anyway.
     if (state.held)
-      return { deletedImages, blockedImages: 0, budgetUsed, drained: true, canceled: false };
+      return {
+        deletedImages,
+        blockedImages: 0,
+        budgetUsed,
+        drained: true,
+        held: true,
+        canceled: false,
+      };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Post" WHERE "userId" = ${userId}
@@ -334,7 +343,7 @@ async function blockUserImages(
       await propagateBlock(touched);
     }
 
-    const [state] = await dbWrite.$queryRaw<{ hasPending: boolean }[]>`
+    const [state] = await dbWrite.$queryRaw<{ hasPending: boolean; held: boolean }[]>`
       SELECT EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i."userId" = ${userId}
@@ -342,7 +351,8 @@ async function blockUserImages(
             i.ingestion <> 'Blocked'::"ImageIngestionStatus"
             OR i."blockedFor" = ${BlockedReason.AiNotVerified}
           )
-      ) AS "hasPending"
+      ) AS "hasPending",
+      EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId}) AS held
     `;
 
     if (!state.hasPending) await queueBlockedImagesForDelete(userId);
@@ -352,6 +362,7 @@ async function blockUserImages(
       blockedImages,
       budgetUsed,
       drained: !state.hasPending,
+      held: state.held,
       canceled: false,
     };
   } catch (error) {
@@ -367,6 +378,7 @@ async function drainPage(
   deletedImages: number;
   blockedImages: number;
   deletedUsers: number;
+  heldKeptUsers: number;
   remaining: number;
   canceled: boolean;
   drainedThrough?: Date;
@@ -375,6 +387,7 @@ async function drainPage(
   let deletedImages = 0;
   let blockedImages = 0;
   let deletedUsers = 0;
+  let heldKeptUsers = 0;
   let canceled = false;
   let drainedThrough: Date | undefined;
   // A user left half-drained (by the budget, a cancel, or an error) has to be reached again
@@ -410,14 +423,23 @@ async function drainPage(
       }).catch(() => undefined);
 
     if (result.drained) {
-      deletedUsers += 1;
+      if (result.held) heldKeptUsers += 1;
+      else deletedUsers += 1;
       if (!stalled) drainedThrough = user.deletedAt;
     } else stalled = true;
 
     if (canceled) break;
   }
 
-  return { deletedImages, blockedImages, deletedUsers, remaining, canceled, drainedThrough };
+  return {
+    deletedImages,
+    blockedImages,
+    deletedUsers,
+    heldKeptUsers,
+    remaining,
+    canceled,
+    drainedThrough,
+  };
 }
 
 export const removeDeletedUserImages = createJob(
@@ -427,7 +449,14 @@ export const removeDeletedUserImages = createJob(
   '*/10 * * * *',
   async (ctx) => {
     const budget = await getImagePurgeBudget();
-    if (budget <= 0) return { paused: true, deletedImages: 0, blockedImages: 0, deletedUsers: 0 };
+    if (budget <= 0)
+      return {
+        paused: true,
+        deletedImages: 0,
+        blockedImages: 0,
+        deletedUsers: 0,
+        heldKeptUsers: 0,
+      };
 
     // A cancel is a clean stop, not a failure; converting the throw keeps it out of both the
     // per-user error log and the job runner's error counter.
@@ -508,6 +537,7 @@ export const removeDeletedUserImages = createJob(
     let deletedImages = freshRun.deletedImages;
     let blockedImages = freshRun.blockedImages;
     let deletedUsers = freshRun.deletedUsers;
+    let heldKeptUsers = freshRun.heldKeptUsers;
     let candidates = fresh.length;
     let wrapped = false;
 
@@ -564,6 +594,7 @@ export const removeDeletedUserImages = createJob(
         deletedImages += backlogRun.deletedImages;
         blockedImages += backlogRun.blockedImages;
         deletedUsers += backlogRun.deletedUsers;
+        heldKeptUsers += backlogRun.heldKeptUsers;
         candidates += backlog.length;
         if (backlogRun.drainedThrough) await setBacklogCursor(backlogRun.drainedThrough);
       }
@@ -575,13 +606,14 @@ export const removeDeletedUserImages = createJob(
       deletedImages,
       blockedImages,
       deletedUsers,
+      heldKeptUsers,
       freshDeletedImages: freshRun.deletedImages,
       freshDeletedUsers: freshRun.deletedUsers,
       candidates,
       budget,
     }).catch(() => undefined);
 
-    return { deletedImages, blockedImages, deletedUsers, wrapped };
+    return { deletedImages, blockedImages, deletedUsers, heldKeptUsers, wrapped };
   },
   { lockExpiration: 30 * 60, dedicated: true }
 );

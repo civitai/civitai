@@ -229,6 +229,7 @@ describe('removeAllContent → document store', () => {
 
     await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
       keptUnderHold: 0,
+      keptPostsUnderHold: 0,
     });
 
     // The main-database wipe ran in full regardless.
@@ -265,7 +266,10 @@ describe('removeAllContent → document store', () => {
         failures: [{ appId: app, ns: NS_PROD, error: 'lock timeout' }],
       }),
     };
-    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({ keptUnderHold: 0 });
+    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({
+      keptUnderHold: 0,
+      keptPostsUnderHold: 0,
+    });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls
       .map((c) => String(c[0]))
