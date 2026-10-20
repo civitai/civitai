@@ -22,7 +22,11 @@ import {
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
-import { getStorylineAppealRefusal } from '~/shared/utils/appeal';
+import {
+  DIRECT_LIFT_APPEAL_NOTE,
+  DIRECT_LIFT_APPEAL_REASON,
+  getStorylineAppealRefusal,
+} from '~/shared/utils/appeal';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getAllHiddenForUser,
@@ -619,15 +623,22 @@ export async function updateStoryline({
  * made, for the title the moderator reviewed, and records that text so a scan of it, a redelivered
  * verdict included, does not take it down again. Refused if the title has changed since: the new
  * one was never reviewed. A moderator's own takedown is not lifted here, and keeps it down.
+ *
+ * A lift that leaves the storyline up also approves the owner's open appeal of the takedown, marked
+ * as a direct lift (`DIRECT_LIFT_APPEAL_REASON`) rather than a reviewed appeal. While a moderator's
+ * takedown still holds, the appeal stays open: approving it would say the story is back up.
+ * `leaveAppealOpen` is for a caller that rules on that appeal itself.
  */
 export async function moderateStorylineTitle({
   id,
   moderatorNsfwLevel,
   liftScanTakedown,
+  moderatorId,
 }: {
   id: number;
   moderatorNsfwLevel?: number | null;
-  liftScanTakedown?: { reviewedTitle: string };
+  liftScanTakedown?: { reviewedTitle: string; leaveAppealOpen?: boolean };
+  moderatorId?: number;
 }) {
   if (moderatorNsfwLevel != null && !isStorylineCeilingLevel(moderatorNsfwLevel))
     throw throwBadRequestError('Invalid rating');
@@ -684,10 +695,39 @@ export async function moderateStorylineTitle({
         `moderator-${Date.now()}`
       );
   }
-  return dbWrite.storyline.findUniqueOrThrow({
+  const result = await dbWrite.storyline.findUniqueOrThrow({
     where: { id },
     select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
   });
+  if (liftScanTakedown && !liftScanTakedown.leaveAppealOpen && !result.tosViolation)
+    await approveAppealOfDirectLift(id, moderatorId);
+  return result;
+}
+
+/**
+ * The lift has already landed, so a failure here is logged and not thrown: failing the request
+ * would send the moderator back to a lift that now answers "not taken down by its title scan".
+ * The appeal stays on the title-appeals page, where a grant with nothing left to lift closes it.
+ */
+async function approveAppealOfDirectLift(id: number, moderatorId?: number) {
+  try {
+    await resolveEntityAppeal({
+      ids: [id],
+      entityType: EntityType.Storyline,
+      status: AppealStatus.Approved,
+      resolvedReason: DIRECT_LIFT_APPEAL_REASON,
+      internalNotes: DIRECT_LIFT_APPEAL_NOTE,
+      userId: moderatorId,
+    });
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-lift-appeal-close',
+      type: 'error',
+      message: 'takedown lifted, but its open appeal was not closed',
+      storylineId: id,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
 }
 
 const storylineTakedownSelect = {
@@ -771,7 +811,11 @@ export async function resolveStorylineTitleAppeal({
   // With nothing left to lift (an edited title rescanned clean, or a lift elsewhere), a grant only
   // closes the appeal.
   const lifted = grant && storyline.tosViolationByScan;
-  if (lifted) await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
+  if (lifted)
+    await moderateStorylineTitle({
+      id,
+      liftScanTakedown: { reviewedTitle, leaveAppealOpen: true },
+    });
 
   const closed = await resolveEntityAppeal({
     ids: [id],

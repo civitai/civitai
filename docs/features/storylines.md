@@ -69,7 +69,9 @@ section).
   in the moderator app: granting brings the storyline back and stops a recheck of the same title from
   taking it down again; denying leaves it down, and the creator can ask again. A grant is refused if
   the title was edited after the moderator saw it. A storyline a moderator took down cannot be
-  appealed this way.
+  appealed this way. A moderator who lifts the takedown directly, without a review, also approves
+  an open appeal of it, recorded as a direct lift and not a reviewed appeal; if a moderator's own
+  takedown still holds the storyline down, the appeal stays open.
 - **Rejoining branches.** The creator can bring two branches back together at the end of a
   chapter: "Add the next chapter", then "Join an existing chapter", offers a chapter already in the
   story as a way on. Nothing is copied. A link that would loop, skip chapters on a
