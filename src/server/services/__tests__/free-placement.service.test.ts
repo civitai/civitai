@@ -464,6 +464,8 @@ describe('the advisory locks have exactly one call site', () => {
   // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
+  // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
+  // ingestion lock, so an article removal serialises with a recompute. The only lock in its transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -477,6 +479,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/support-membership-code.service.ts',
+    'services/text-scan/csam-hold-decision.ts',
     'services/text-scan/prompt.ts',
   ];
 
