@@ -48,3 +48,28 @@ export function navCount(
   }
   return total;
 }
+
+export type SwitcherEntry = { label: string; href: string; external: boolean };
+
+/** Every page the sidebar can open, as "Group › Page"; a `tabs` group is one entry, as in the sidebar. */
+export function switcherEntries(
+  nav: NavLink[],
+  civitaiUrl: string,
+  trail: string[] = []
+): SwitcherEntry[] {
+  return nav.flatMap((link) => {
+    if (link.children && !link.tabs) {
+      return switcherEntries(link.children, civitaiUrl, [...trail, link.label]);
+    }
+    const href = navHref(link);
+    if (!href) return [];
+    const external = !!link.external;
+    return [
+      {
+        label: [...trail, link.label].join(' › '),
+        href: external ? `${civitaiUrl}${href}` : href,
+        external,
+      },
+    ];
+  });
+}
