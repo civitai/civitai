@@ -497,8 +497,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
               placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
               withAsterisk
             />
-            <ModelSfwFaceFields modelId={model?.id} />
-            {model?.id && <ModelCoverFields modelId={model.id} />}
+            {features.modelComFace && <ModelSfwFaceFields modelId={model?.id} />}
+            {features.modelComFace && model?.id && <ModelCoverFields modelId={model.id} />}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"
