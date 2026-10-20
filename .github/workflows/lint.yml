@@ -759,6 +759,20 @@ jobs:
     # is the moderator app's pglite suites. Speed those up or shard this run before raising
     # this again.
     timeout-minutes: 30
+    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows: its *.pg.test.ts
+    # files skip themselves without the URL. Same pattern as the `unit` job's Postgres; the suites
+    # create and drop their own databases on this throwaway server.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
