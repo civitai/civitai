@@ -44,7 +44,13 @@ function mockStored({
   lockedProperties = [] as string[],
   userId = OWNER_ID,
   userNsfwLevel = 1,
-}: { lockedProperties?: string[]; userId?: number; userNsfwLevel?: number } = {}) {
+  status = 'Draft',
+}: {
+  lockedProperties?: string[];
+  userId?: number;
+  userNsfwLevel?: number;
+  status?: string;
+} = {}) {
   const row = {
     id: ARTICLE_ID,
     title: 'Stored title',
@@ -52,7 +58,7 @@ function mockStored({
     coverId: null,
     userId,
     publishedAt: null,
-    status: 'Draft',
+    status,
     nsfwLevel: 1,
     userNsfwLevel,
     moderatorNsfwLevel: null,
@@ -141,5 +147,38 @@ describe('upsertArticle — moderator', () => {
     const data = updateData();
     expect(data.userNsfwLevel).toBe(8);
     expect(data.lockedProperties).toEqual(['userNsfwLevel', 'nsfw']);
+  });
+});
+
+describe('upsertArticle — status while unpublished for a violation', () => {
+  const MESSAGE = /unpublished for violating Terms of Service/;
+
+  beforeEach(() => mockStored({ status: 'UnpublishedViolation' }));
+
+  it.each(['Draft', 'Unpublished', 'Processing', 'Published'])(
+    'refuses an owner moving the article to %s without writing',
+    async (status) => {
+      await expect(upsert({ status })).rejects.toThrow(MESSAGE);
+
+      expect(mockDbWrite.article.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still saves content edits when the owner replays the stored status', async () => {
+    await upsert({ status: 'UnpublishedViolation', content: 'edited' });
+
+    expect(updateData().content).toBe('edited');
+  });
+
+  it('still saves content edits when the owner omits the status', async () => {
+    await upsert({ status: undefined, content: 'edited' });
+
+    expect(updateData().content).toBe('edited');
+  });
+
+  it.each(['Published', 'Draft'])('lets a moderator move the article to %s', async (status) => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status });
+
+    expect(mockDbWrite.article.update).toHaveBeenCalled();
   });
 });

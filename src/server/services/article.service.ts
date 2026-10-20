@@ -1106,14 +1106,14 @@ export const upsertArticle = async ({
     // user's original choice instead of being permanently anchored by a
     // prior clamp.
 
-    // Prevent owners from re-publishing articles unpublished for ToS violations
     if (
+      !isModerator &&
       article.status === ArticleStatus.UnpublishedViolation &&
-      data.status === ArticleStatus.Published &&
-      !isModerator
+      data.status &&
+      data.status !== article.status
     ) {
       throw throwBadRequestError(
-        'This article was unpublished for violating Terms of Service and cannot be republished. Please contact support if you believe this was in error.'
+        'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.'
       );
     }
 
