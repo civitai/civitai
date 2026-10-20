@@ -412,6 +412,7 @@ describe('a call cut by the REAL abort deadline, at the production default', () 
     // widen the bound and say by how much — do not delete it, and do not restate the residue figure
     // above without re-measuring it.
     const CLOCK_CONSISTENCY_SLACK_SECONDS = 0.001;
+    (await import('node:fs')).writeSync(2, `\nRESIDUE_MS=${((testObservedSeconds - seconds) * 1000).toFixed(3)}\n`); // MEASURE-TEMP
     expect(
       seconds,
       `the recorded duration must cover the whole ${(testObservedSeconds * 1000).toFixed(1)}ms ` +
