@@ -18,6 +18,8 @@ import {
   voidStrike,
 } from '~/server/services/strike.service';
 import { userMeta as userMetaSchema } from '~/server/schema/user.schema';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 
 export const createStrikeHandler = async ({
@@ -121,6 +123,17 @@ export const getMyStrikesHandler = async ({
 export const acceptTosAfterMuteHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     return await acceptTosAfterMute({ userId: ctx.user.id, domain: ctx.domain });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/** Whether accepting the Terms would lift this account's mute, for the muted notice to offer it. */
+export const getMyTosReacceptanceOfferHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
+  try {
+    if (!couldAwaitTosReacceptance(ctx.user)) return { offered: false };
+    return { offered: await shouldOfferTosReacceptance(ctx.user.id) };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

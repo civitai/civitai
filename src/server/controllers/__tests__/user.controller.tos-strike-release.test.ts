@@ -39,7 +39,11 @@ const SYSTEM_USER_ID = -1;
 
 type DbUser = { muted: boolean; mutedAt: Date | null; meta: Record<string, unknown> };
 
-const strikeMuted: DbUser = { muted: true, mutedAt: null, meta: { muteReason: 'strike-escalation' } };
+const strikeMuted: DbUser = {
+  muted: true,
+  mutedAt: null,
+  meta: { muteReason: 'strike-escalation' },
+};
 
 function fakeTransaction(user: DbUser, points: number, { pendingScamCase = false } = {}) {
   const userUpdate = vi.fn().mockResolvedValue({ id: USER_ID });

@@ -1614,7 +1614,11 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
  * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
-const TOS_ACCEPTANCE_KEYS = ['tosLastSeenDate', 'tosGreenLastSeenDate', 'tosRedLastSeenDate'] as const;
+const TOS_ACCEPTANCE_KEYS = [
+  'tosLastSeenDate',
+  'tosGreenLastSeenDate',
+  'tosRedLastSeenDate',
+] as const;
 
 export const setUserSettingHandler = async ({
   input,
