@@ -2364,6 +2364,12 @@ export const takedownCosmeticShopItem = async ({
 
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
+    // Read again from the primary: the refund this waited on appends its own history entry, and
+    // writing back the copy read before the wait would erase it.
+    const current = await dbWrite.cosmeticShopItem.findUnique({
+      where: { id },
+      select: { meta: true },
+    });
     const updated = await dbWrite.cosmeticShopItem.update({
       where: { id },
       data: {
@@ -2371,7 +2377,10 @@ export const takedownCosmeticShopItem = async ({
         listed: false,
         archivedAt: now,
         meta: appendItemHistory(
-          { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
+          {
+            ...((current?.meta ?? meta) as CosmeticShopItemMeta),
+            takedown: { reason, moderatorId, at: now.toISOString() },
+          },
           {
             at: now.toISOString(),
             userId: moderatorId,
@@ -2435,35 +2444,34 @@ export const takedownCosmeticShopItem = async ({
   const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
+  const archiveAndRefundBuyers = async () => {
+    updated = await archive();
+    // Primary, not the replica: a sale made seconds ago may not have replicated
+    // yet, and missing it would strip that buyer's cosmetic without refunding it.
+    purchases = await dbWrite.userCosmeticShopPurchases.findMany({
+      where: { shopItemId: id, refunded: false },
+      select: { userId: true, buzzTransactionId: true, unitAmount: true, meta: true },
+    });
+    await logTakedown('info', 'Takedown started', {
+      shopItemId: id,
+      moderatorId,
+      reason,
+      purchases: purchases.length,
+    });
+    await refundTakedownPurchases();
+    return true;
+  };
   // Held from the archive through the buyer refunds. A moderator's or a withdrawn-item refund
   // stamps purchases under this lock, and one stamping between the purchase read and these refunds
-  // would refund the same purchase alongside the takedown. Taken before anything changes, so a
-  // takedown that cannot get it leaves the item as it was, to be taken down again.
-  await withShopItemRefundLock(
-    id,
-    async () => {
-      updated = await archive();
-      // Primary, not the replica: a sale made seconds ago may not have replicated
-      // yet, and missing it would strip that buyer's cosmetic without refunding it.
-      purchases = await dbWrite.userCosmeticShopPurchases.findMany({
-        where: { shopItemId: id, refunded: false },
-        select: { userId: true, buzzTransactionId: true, unitAmount: true, meta: true },
-      });
-      await logTakedown('info', 'Takedown started', {
-        shopItemId: id,
-        moderatorId,
-        reason,
-        purchases: purchases.length,
-      });
-      await refundTakedownPurchases();
-    },
-    { wait: true }
-  );
-  // Unset only when the lock was never had: nothing ran.
-  if (!updated)
-    throw throwConflictError(
-      'A refund of this item is running. Nothing was changed; try the takedown again in a minute.'
-    );
+  // would refund the same purchase alongside the takedown.
+  const locked = await withShopItemRefundLock(id, archiveAndRefundBuyers, { wait: true });
+  // Not had in time, or Redis is down. A takedown pulls content and must not wait on either, so it
+  // runs without the lock, logged: a refund running now may refund a purchase alongside it.
+  if (!locked) {
+    await logTakedown('error', 'Takedown ran without the refund lock', { shopItemId: id });
+    await archiveAndRefundBuyers();
+  }
+  if (!updated) throw throwNotFoundError('Shop item not found');
 
   async function refundTakedownPurchases() {
     // Checked above; a hoisted declaration does not keep that narrowing.

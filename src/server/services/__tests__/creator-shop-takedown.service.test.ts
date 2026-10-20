@@ -816,7 +816,14 @@ describe('takedownCosmeticShopItem against a moderator refund of the same item',
         return { count: row ? 1 : 0 };
       }
     );
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+    // The refund's history append: one statement adding to the meta as it stands now.
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (_sql: TemplateStringsArray, entries: string) => {
+        const history = (itemMeta.history as unknown[]) ?? [];
+        itemMeta = { ...itemMeta, history: [...history, ...JSON.parse(entries)] };
+        return 1;
+      }
+    );
 
     // The ledger: a leg is refunded once; the takedown's prefix refund is refused whole if any
     // leg already was, as the Buzz service does.
@@ -918,19 +925,24 @@ describe('takedownCosmeticShopItem against a moderator refund of the same item',
         maxRetries: 60,
       },
     ]);
+    // The refund's history entry survives the takedown's write of the item.
+    expect((itemMeta.history as { kind: string }[]).map((e) => e.kind)).toEqual([
+      'refunded',
+      'takedown',
+    ]);
   });
 
-  it('changes nothing when the refund lock never frees, so it can be taken down again', async () => {
+  it('still takes the item down, logged, when the refund lock cannot be had', async () => {
     lockState.held.set('creator-shop-withdrawn-refund:42', new Promise(() => undefined));
     lockState.exhausted = true;
 
-    await expect(
-      takedownCosmeticShopItem({ id: 42, reason: 'tos', moderatorId: 999 })
-    ).rejects.toThrow(/Nothing was changed/);
-    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
-    expect(itemMeta.takedown).toBeUndefined();
-    expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(mocks.revokeCosmeticsFromUsers).not.toHaveBeenCalled();
-    expect(rows[0].refunded).toBe(false);
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'tos', moderatorId: 999 });
+
+    expect(itemMeta.takedown).toMatchObject({ reason: 'tos' });
+    expect(result.refunded).toBe(1);
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.logToAxiom.mock.calls.map(([entry]) => entry.message)).toContain(
+      'Takedown ran without the refund lock'
+    );
   });
 });
