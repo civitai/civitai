@@ -696,6 +696,7 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
+                faceBrowsingLevel: sfwBrowsingLevelsFlag,
                 ...slimModelImages,
               })
             ).items

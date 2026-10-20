@@ -71,6 +71,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
+import { ModelSfwFaceFields } from '~/components/Resource/Forms/ModelSfwFaceFields';
 
 const schema = modelUpsertSchema
   .extend({
@@ -105,6 +106,10 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
     error: 'Private models must be set to SFW only.',
     path: ['sfwOnly'],
+  })
+  .refine((data) => data.sfwName == null || data.sfwName.trim().length > 0, {
+    error: 'Cannot be empty',
+    path: ['sfwName'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -160,6 +165,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
+    sfwName: model?.sfwName ?? null,
+    sfwDescription: model?.sfwDescription ?? null,
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: initialType,
@@ -487,6 +494,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
               placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
               withAsterisk
             />
+            <ModelSfwFaceFields />
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"

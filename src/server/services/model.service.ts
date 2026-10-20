@@ -268,6 +268,11 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import {
+  normalizeSfwFaceInput,
+  resolveModelFace,
+  showsSfwFace,
+} from '~/shared/utils/model-sfw-face';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 
@@ -295,6 +300,8 @@ type ModelRaw = {
   name: string;
   meta?: ModelMeta | null;
   description?: string | null;
+  sfwName: string | null;
+  sfwDescription?: string | null;
   type: ModelType;
   poi?: boolean;
   minor?: boolean;
@@ -392,6 +399,7 @@ export const getModelsRaw = async ({
   publicVersionsOnly,
   _forceBaseModelMetrics,
   eventDecorationViewer,
+  faceBrowsingLevel,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -418,6 +426,11 @@ export const getModelsRaw = async ({
   ownerUserId?: number;
   /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
   publicVersionsOnly?: boolean;
+  /**
+   * The level that picks each model's .com or .red face when `input.browsingLevel` is a content
+   * filter rather than the viewer's (the featured block queries every level, then shows SFW only).
+   */
+  faceBrowsingLevel?: number;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
@@ -1090,8 +1103,10 @@ export const getModelsRaw = async ({
   const selectList = Prisma.sql`
       ${pSql}."modelId" as "id",
       m."name",
+      m."sfwName",
       ${ifDetails`
         m."description",
+        m."sfwDescription",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
@@ -1233,14 +1248,20 @@ export const getModelsRaw = async ({
     models.pop(); //Remove excess model
   }
 
+  const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
   return {
     items: withSpan('model:getAll:transform', () =>
       models
-        .map(({ rank, cursorId, meta, ...model }) => {
+        .map(({ rank, cursorId, meta, ...rawModel }) => {
+          const model = resolveModelFace(rawModel, showSfwFace);
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
-          let modelVersions = data.versions;
+          // A .com face has no per-version description; the .red one is not shown in its place.
+          let modelVersions =
+            showSfwFace && rawModel.sfwName != null
+              ? data.versions.map((version) => ({ ...version, description: '' }))
+              : data.versions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -1623,6 +1644,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   metricPrivacyEnabled = true,
   domain,
   eventDecorationViewer,
+  faceBrowsingLevel,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1633,6 +1655,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
   domain?: DomainColor;
+  /** See `getModelsRaw`. */
+  faceBrowsingLevel?: number;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1656,6 +1680,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     domain,
     include: ['cosmetics'],
     eventDecorationViewer,
+    faceBrowsingLevel,
   });
 
   const modelVersionIds = items
@@ -2939,10 +2964,13 @@ export const upsertModel = async (
     serverMeta?: Pick<ModelMeta, (typeof SERVER_OWNED_META_KEYS)[number]>;
   }
 ) => {
-  await throwOnBlockedUserContent([input.name, input.description], {
-    isModerator: input.isModerator,
-    surface: 'model',
-  });
+  await throwOnBlockedUserContent(
+    [input.name, input.description, input.sfwName, input.sfwDescription],
+    {
+      isModerator: input.isModerator,
+      surface: 'model',
+    }
+  );
 
   const {
     id,
@@ -2996,6 +3024,7 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
+  normalizeSfwFaceInput(data);
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,

@@ -879,7 +879,8 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
         description: truncate(removeTags(model.description ?? ''), { length: 150 }),
         images: versionImages,
-        ogEndpoint: `/api/og?type=model&id=${model.id}`,
+        // The preview is edge-cached for a week; a new URL per edit stops it outliving a .com face.
+        ogEndpoint: `/api/og?type=model&id=${model.id}&v=${new Date(model.updatedAt).getTime()}`,
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,

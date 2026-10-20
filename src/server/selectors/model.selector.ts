@@ -41,6 +41,8 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   description: true,
+  sfwName: true,
+  sfwDescription: true,
   poi: true,
   minor: true,
   sfwOnly: true,
@@ -189,6 +191,7 @@ export type AssociatedResourceModel = Prisma.ModelGetPayload<typeof associatedRe
 export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
+  sfwName: true,
   type: true,
   nsfw: true,
   nsfwLevel: true,

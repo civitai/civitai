@@ -212,6 +212,8 @@ export const modelUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
+  sfwName: z.string().trim().max(255).nullish(),
+  sfwDescription: getSanitizedStringSchema().nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),

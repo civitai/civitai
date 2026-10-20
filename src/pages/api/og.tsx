@@ -167,6 +167,8 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     select: {
       name: true,
       description: true,
+      sfwName: true,
+      sfwDescription: true,
       meta: true,
       userId: true,
       user: { select: { username: true, settings: true } },
@@ -236,10 +238,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       ].filter(isDefined)
     : [];
 
-  const description = publishedVersion.description || model.description || '';
+  // Link previews are fetched signed out, a viewer who always gets the .com face.
+  const { sfwName } = model;
+  const description =
+    sfwName != null
+      ? model.sfwDescription ?? ''
+      : publishedVersion.description || model.description || '';
 
   return {
-    title: model.name,
+    title: sfwName ?? model.name,
     description: cleanDescription(description),
     creator: model.user.username ?? 'Unknown',
     ...buildEntityImage(getSafeImage(image)),
