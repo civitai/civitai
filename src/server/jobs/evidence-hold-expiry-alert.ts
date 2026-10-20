@@ -1,9 +1,5 @@
 /**
- * Emails the people who can extend an evidence hold when one is about to end, so none ends unseen.
- * The moderator app's Evidence Holds page and badge show the same count; this reaches the people who
- * do not open that app. It sends every day the count is above zero, so an ignored alert repeats
- * rather than going quiet.
- *
+ * Daily email while any owner's hold is ending. No dedupe, so an ignored alert repeats.
  * The message carries a count, a date and a link, never an id: it leaves our systems.
  */
 
@@ -56,7 +52,6 @@ async function alertEndingEvidenceHolds() {
   const summary =
     `${owners} owner(s) with an evidence hold ending within ${EVIDENCE_HOLD_ENDING_DAYS} days, ` +
     `the earliest on ${date} (UTC).`;
-  // A failed send throws, and createJob logs the failure.
   await sendEmail({
     to: recipients,
     subject: `Evidence holds ending soon: ${owners}`,

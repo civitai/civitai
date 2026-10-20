@@ -130,7 +130,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
     // only these badges.
     bounded(countSiteAppeals),
-    // Bounded so a failure drops only this badge; the view it reads aggregates every hold row.
+    // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
   ]);
   return {

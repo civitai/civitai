@@ -1,17 +1,15 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-// Whose evidence hold is about to end, read per OWNER off "EvidenceHeldUser", the one definition of
-// held: its "heldUntil" is the latest end across the owner's active holds, NULL when one of them has no
-// end date. A report row reaching its date while another hold keeps its owner held is not an ending,
-// and counting rows would alarm on it. The moderator page, its badge and the main app's alert job all
-// read these, so they cannot disagree on who is ending.
+// Ending is read per OWNER off "EvidenceHeldUser" ("heldUntil" = latest end across the owner's
+// active holds), never per hold row: a row reaching its date while another hold keeps the owner
+// held is not an ending.
 
-/** How many days before its end a hold counts as ending. A fixed requirement, not a setting. */
+/** How many days before its end a hold counts as ending. */
 export const EVIDENCE_HOLD_ENDING_DAYS = 14;
 
-// A NULL "heldUntil" (no end date) never compares true, so it is never ending. The clock is read in
-// UTC, as the column is, so the window does not move with the session's time zone.
+// NULL "heldUntil" (held until released) is never ending. `now()` is shifted to UTC to match the
+// zoneless column, so the window doesn't move with the session time zone.
 const endingSoon = sql<boolean>`h."heldUntil" <= (now() AT TIME ZONE 'UTC') + make_interval(days => ${sql.lit(
   EVIDENCE_HOLD_ENDING_DAYS
 )})`;
@@ -31,7 +29,6 @@ export async function countEvidenceHoldsEnding(
     ])
     .where(endingSoon)
     .executeTakeFirstOrThrow();
-  // A count that arrived as a string ("0") would be truthy and send an alert for nobody.
   return { owners: Number(owners), earliest };
 }
 
@@ -63,7 +60,6 @@ export async function listEvidenceHeldOwners(
     .select(['h.userId', 'u.username', utc('h.heldUntil').as('heldUntil')]);
   if (endingOnly) query = query.where(endingSoon);
   const owners = await query
-    // Ascending puts NULLs last in Postgres.
     .orderBy('h.heldUntil')
     .orderBy('h.userId')
     .limit(limit + 1)
@@ -73,8 +69,7 @@ export async function listEvidenceHeldOwners(
   const page = owners.slice(0, limit);
   if (!page.length) return { items: [], hasMore: false };
 
-  // Every unreleased row, ended ones included: a report row past its date beside a hold still
-  // running is exactly the case the per-owner end exists for, so the page shows both.
+  // Ended rows too: an owner can be held by another row while this one has run out.
   const holds = await db
     .selectFrom('EvidenceHold')
     .select([

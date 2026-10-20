@@ -13,7 +13,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
  * Who is "ending", against the real hold migration: the view decides who is held and until when, and
- * these queries read it per owner. The page, its badge and the main app's alert job share them.
+ * these queries read it per owner.
  */
 
 const HOLD_MIGRATION = readFileSync(
@@ -24,7 +24,6 @@ const HOLD_MIGRATION = readFileSync(
   'utf-8'
 );
 
-// Owners, named for the case each pins.
 const IN_13_DAYS = 1;
 const IN_15_DAYS = 2;
 const NO_END = 3;
@@ -33,8 +32,8 @@ const ENDING_ROW_BESIDE_MANUAL = 5;
 const ENDING_ROW_BESIDE_LATER_REPORT = 6;
 const EXTENDED_PAST_WINDOW = 7;
 const TWO_ROWS_ENDING = 8; // two report rows both inside the window: one owner, not two
-const JUST_INSIDE = 9; // 14 days less an hour
-const JUST_OUTSIDE = 10; // 14 days and an hour
+const JUST_INSIDE = 9;
+const JUST_OUTSIDE = 10;
 const ENDED_ROW_BESIDE_MANUAL = 11;
 const NO_USER_ROW = 12; // held, account row gone: still listed, as the badge still counts them
 
@@ -52,11 +51,11 @@ const manual = (userId: number) =>
 const inDays = (days: number) => `now() + interval '${days} days'`;
 const inHours = (hours: number) => `now() + interval '${hours} hours'`;
 
-// A zoneless timestamp is parsed as host-local time, so on a UTC host a dropped `AT TIME ZONE 'UTC'`
-// would read correctly. Off UTC, it reads hours out.
 const hostTz = process.env.TZ;
 
 beforeAll(async () => {
+  // A zoneless timestamp is parsed as host-local time, so on a UTC host a dropped
+  // `AT TIME ZONE 'UTC'` would read correctly. Off UTC, it reads hours out.
   process.env.TZ = 'America/Chicago';
   pg = await PGlite.create();
   // As the app's sessions run: the zoneless columns hold UTC, which `now()` only writes in a UTC session.
@@ -94,8 +93,8 @@ beforeAll(async () => {
     ${manual(ENDED_ROW_BESIDE_MANUAL)}
     ${manual(NO_USER_ROW)}
   `);
-  // A report row already past its date: inserted with a past date it would never have been active,
-  // which the guard does not mind, and it is exactly what a row that ran out looks like.
+  // A report row already past its date: what a row that ran out looks like. Inserted that way, it
+  // was never active, which `evidence_hold_guard_end` (update and delete only) does not check.
   await pg.exec(report(ENDED_ROW_BESIDE_MANUAL, `now() - interval '1 day'`));
   db = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });

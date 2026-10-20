@@ -17,13 +17,12 @@ const querySchema = z.object({
   ending: z.enum(['1', '0']).optional().catch(undefined),
 });
 
-// Read-only. The page grant only decides who sees the nav entry and badge; who is held is for csam
-// filers.
+// The page grant alone is not enough: who is held is for csam filers.
 export const load: PageServerLoad = async ({ url, locals }) => {
   if (!locals.grants['csam.report.file']) error(403, denied('csam.report.file'));
   const { page, ending } = parseQuery(url, querySchema);
   const { owners: endingCount, earliest } = await countEvidenceHoldsEnding(dbRead);
-  // Unset, the filter is on whenever someone is ending, so following the badge lands on them.
+  // Default to the ending list while anyone is ending, so the badge lands on it.
   const endingOnly = ending === undefined ? endingCount > 0 : ending === '1';
   const offset = (page - 1) * PER_PAGE;
   const { items, hasMore } = await listEvidenceHeldOwners(dbRead, {
@@ -39,7 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     endingCount,
     earliest,
     windowDays: EVIDENCE_HOLD_ENDING_DAYS,
-    // Days left are counted from the moment the rows were read, on server and client alike.
+    // One timestamp for SSR and hydration, so days-left can't differ between them.
     asOf: Date.now(),
   };
 };

@@ -22,7 +22,6 @@
   const daysLeft = (end: Date) =>
     Math.max(0, Math.ceil((end.getTime() - data.asOf) / DAY_MS));
 
-  // A row's own end. One that has passed is shown, not hidden: its owner is still held by another row.
   const rowEnd = (hold: { releaseAt: Date | null; extendedUntil: Date | null }) => {
     if (!hold.releaseAt) return null;
     return hold.extendedUntil && hold.extendedUntil > hold.releaseAt
