@@ -1588,10 +1588,12 @@ export const updateModelVersionById = async ({
       // pre-guard value. When writeCount = 0 the guard blocked the write
       // and the original returned value is still authoritative.
       if (writeCount > 0) updated.publishedAt = publishedAt;
-      // Materialize the timed gate from the date the version carries, written by this call or not, for
-      // the reason given in publishModelVersionsWithEarlyAccess. No-op without a PaidAccess row.
+      // Materialize the timed gate from the date the version carries, as in
+      // publishModelVersionsWithEarlyAccess. No-op without a PaidAccess row.
       if (updated.publishedAt != null) {
-        await materializePaidAccessEndsAt(id, updated.publishedAt, tx);
+        await materializePaidAccessEndsAt(id, updated.publishedAt, tx, {
+          pendingOnly: writeCount === 0,
+        });
       }
     }
     return updated;
@@ -1681,6 +1683,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // (Scheduled) -> reschedule. Republish of an already-public version
         // is a no-op for this column.
         let livePublishedAt = currentVersion.publishedAt;
+        let wrotePublishedAt = false;
         if (publishedAt !== undefined) {
           const writeCount = await dbClient.$executeRaw`
             UPDATE "ModelVersion"
@@ -1688,17 +1691,20 @@ export const publishModelVersionsWithEarlyAccess = async ({
             WHERE id = ${currentVersion.id}
             AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
           `;
-          if (writeCount > 0) livePublishedAt = publishedAt;
+          wrotePublishedAt = writeCount > 0;
+          if (wrotePublishedAt) livePublishedAt = publishedAt;
         }
         // Materialize the timed gate (endsAt = publishedAt + timeframeDays) from the date the version
         // actually carries, whether or not this call wrote it. A version can arrive here already dated
         // in the past: the scheduled-publishing job passes no publishedAt, and "publish now" from a client
         // whose clock runs ahead lands as a schedule seconds out, then gets published directly once that
         // moment has passed. Materializing only on a write left those with endsAt NULL, which every read
-        // treats as a PERMANENT gate. No-op on permanent and ended gates; an active one gets the endsAt it
-        // already has.
+        // treats as a PERMANENT gate. Without a write it only fills a NULL endsAt: a set one is the date
+        // creators and buyers have seen. A write (Draft -> live, or a reschedule) moves it.
         if (livePublishedAt != null) {
-          await materializePaidAccessEndsAt(currentVersion.id, livePublishedAt, dbClient);
+          await materializePaidAccessEndsAt(currentVersion.id, livePublishedAt, dbClient, {
+            pendingOnly: !wrotePublishedAt,
+          });
         }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);

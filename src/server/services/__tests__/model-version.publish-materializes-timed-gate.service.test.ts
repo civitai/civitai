@@ -182,16 +182,47 @@ describe('publish materializes a timed gate from the publishedAt the version car
     expect(endsAtWrites()).toEqual([increaseDate(now, DAYS, 'days')]);
   });
 
-  it('a republish of an already-materialized active gate leaves endsAt where it was', async () => {
-    const endsAt = increaseDate(STORED_PUBLISHED_AT, DAYS, 'days');
-    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: DAYS, endsAt });
+  // An end date that is not publishedAt + timeframeDays: creators and buyers have seen it, so a publish
+  // that writes no publishedAt must not recompute it.
+  const handSetGate = () => ({
+    timeframeDays: DAYS,
+    endsAt: increaseDate(STORED_PUBLISHED_AT, DAYS + 7, 'days'),
+  });
+
+  it('publishModelVersionsWithEarlyAccess: a republish leaves an active gate’s endsAt alone', async () => {
+    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(handSetGate());
 
     await publishModelVersionsWithEarlyAccess({
       modelVersionIds: [VERSION_ID],
       publishedAt: new Date(),
     });
 
-    for (const written of endsAtWrites()) expect(written).toEqual(endsAt);
+    expect(dbMock.dbWrite.paidAccess.update).not.toHaveBeenCalled();
+  });
+
+  it('updateModelVersionById: a republish leaves an active gate’s endsAt alone', async () => {
+    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(handSetGate());
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ model: { meta: {} } });
+
+    await updateModelVersionById({
+      id: VERSION_ID,
+      data: { status: 'Published', publishedAt: new Date() },
+    });
+
+    expect(dbMock.dbWrite.paidAccess.update).not.toHaveBeenCalled();
+  });
+
+  it('a reschedule that writes publishedAt still moves an active gate’s endsAt', async () => {
+    guardWrites(1);
+    dbMock.dbWrite.paidAccess.findUnique.mockResolvedValue(handSetGate());
+    const rescheduled = new Date(Date.now() + 86_400_000);
+
+    await publishModelVersionsWithEarlyAccess({
+      modelVersionIds: [VERSION_ID],
+      publishedAt: rescheduled,
+    });
+
+    expect(endsAtWrites()).toEqual([increaseDate(rescheduled, DAYS, 'days')]);
   });
 
   it('a permanent gate stays permanent', async () => {
