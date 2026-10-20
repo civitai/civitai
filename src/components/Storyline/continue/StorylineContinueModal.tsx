@@ -26,7 +26,6 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 export type StorylineContinueModalProps = {
-  /** The chapter post being continued. */
   parentPostId: number;
   /** The contributor's post, when they started from it. */
   postId?: number;
@@ -37,7 +36,6 @@ export type StorylineContinueModalProps = {
   parentChapterId?: number;
 };
 
-/** Submit one of your posts as a continuation of someone's storyline chapter. */
 export default function StorylineContinueModal({
   parentPostId,
   postId: initialPostId,

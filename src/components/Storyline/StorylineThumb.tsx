@@ -19,11 +19,8 @@ export type StorylineThumbImage = {
 };
 
 /**
- * A portrait thumb, 3:4 unless `ratio` says 4:5, cropped near the top so faces survive. A '16/6'
- * thumb is the page banner's wide crop, centred unless `focusY` (the banner position, 0-100) says
- * where.
- * `undefined` while the image is loading, `null` when there is none to show (or none this viewer
- * may see).
+ * Crops near the top so faces survive. `image` is `undefined` while loading and `null` when there
+ * is none to show (or none this viewer may see).
  */
 export function StorylineThumb({
   image,
@@ -39,14 +36,13 @@ export function StorylineThumb({
   /** Rendered width in px; also sizes the image request. */
   width: number;
   ratio?: '3/4' | '4/5' | '16/6';
-  /** The picture's vertical focus, as a percent; defaults to near the top, or the middle when wide. */
+  /** The picture's vertical focus, as a percent. */
   focusY?: number;
   /** Fill the parent's width instead; `width` then only sizes the image request. */
   fluid?: boolean;
   /** Fades the picture, not what is laid over it. */
   dimmed?: boolean;
   className?: string;
-  /** Laid over the image, e.g. a chip. */
   children?: ReactNode;
 }) {
   return (

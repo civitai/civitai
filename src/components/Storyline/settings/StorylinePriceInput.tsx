@@ -3,8 +3,6 @@ import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlide
 import { storylinePriceCaption } from '~/components/Storyline/storyline-ui';
 
 /**
- * The price to continue one storyline, from Free up to the creator's cap.
- *
  * `''` means no price of its own, so the storyline follows the creator's default; `fallback` is
  * that inherited price, which is where the thumb rests.
  */

@@ -1,9 +1,8 @@
 export type CoverSlot = 'cover' | 'banner';
 
 /**
- * The shape each picker tile is drawn in: the crop the pick will show. The card cover is a portrait
- * crop; the page banner is wide, framed at the storyline's banner position, so a banner is chosen
- * from wide tiles and not from slices of a portrait one.
+ * Tiles are drawn in the crop the pick will show, so a banner is chosen from wide tiles and not
+ * from slices of a portrait one.
  */
 export function coverPickerTile(slot: CoverSlot, bannerPosition: number) {
   return slot === 'banner'

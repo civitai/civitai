@@ -8,10 +8,9 @@ function storylineChapterLabel(depth: number) {
   return `Ch ${depth + 1}`;
 }
 
-/** Past this many characters a title truncates in a chip and shows whole in a tooltip. */
+/** Titles longer than this get a tooltip with the whole title. */
 export const STORYLINE_CHIP_TITLE_CHARS = 28;
 
-/** The title, giving way before the chapter does when it is long. */
 function ChipLabel({ title, depth }: { title: string; depth: number }) {
   return (
     <span className="flex min-w-0">
@@ -31,7 +30,7 @@ function TitleTooltip({ title, children }: { title: string; children: ReactEleme
   );
 }
 
-/** Forwards ref and props so a Menu.Target can wrap it; `menu` adds the chevron. */
+/** Forwards ref and props so a Menu.Target can wrap it. */
 export const StorylinePill = forwardRef<
   HTMLButtonElement,
   {
@@ -67,9 +66,8 @@ export const StorylinePill = forwardRef<
 });
 
 /**
- * In storyline mode, the reader's place, in the stage toolbar: the storyline and chapter. It opens
- * and closes the map sheet, which drops from it; leaving the mode lives in that sheet. Forwards
- * its ref and props, so the sheet's popover can anchor to it and wire its aria attributes.
+ * Forwards its ref and props, so the map sheet's popover can anchor to it and wire its aria
+ * attributes.
  */
 export const StorylineModeChip = forwardRef<
   HTMLButtonElement,
@@ -101,10 +99,6 @@ export const StorylineModeChip = forwardRef<
   );
 });
 
-/**
- * Outside storyline mode, in the same toolbar slot: an invitation. A dark translucent chip, so it
- * reads over any stage, ending in the violet "Read the story" that enters the mode.
- */
 export function StorylineEntryChip({
   title,
   depth,

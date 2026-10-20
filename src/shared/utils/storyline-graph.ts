@@ -1,4 +1,3 @@
-/** `chapterId` continues `parentChapterId`. */
 export type StorylineEdge = { chapterId: number; parentChapterId: number };
 
 /** Keeps a rejoin's markers and the choosers that offer it readable. */
