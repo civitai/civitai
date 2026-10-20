@@ -70,6 +70,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/cosmetic-shop.service.ts': 3,
   'src/server/services/creator-announcement.service.ts': 1,
   'src/server/services/creator-mystery-pack.service.ts': 1,
+  'src/server/services/creator-service-deal-file.service.ts': 1,
   'src/server/services/creator-service-deal.service.ts': 2,
   'src/server/services/creator-service.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
@@ -77,6 +78,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/crucible.service.ts': 2,
   'src/server/services/image.service.ts': 2,
   'src/server/services/membership-gift.service.ts': 1,
+  'src/server/services/model-file.service.ts': 2,
   // `upsertModelVersion` holds 3: the description before and after blurb expansion, and the
   // name/trained-words diff against the stored row.
   'src/server/services/model-version.service.ts': 5,
@@ -166,6 +168,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   },
   'src/server/services/creator-announcement.service.ts': { upsertCreatorAnnouncement: 1 },
   'src/server/services/creator-mystery-pack.service.ts': { submitMysteryPack: 1 },
+  'src/server/services/creator-service-deal-file.service.ts': { requestServiceDealUpload: 1 },
   // `assertDealText` is the shared check every deal-event comment writer calls.
   'src/server/services/creator-service-deal.service.ts': {
     assertDealText: 1,
@@ -183,6 +186,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/crucible.service.ts': { createCrucible: 1, updateCrucible: 1 },
   'src/server/services/image.service.ts': { updateImageTechniques: 1, updateImageTools: 1 },
   'src/server/services/membership-gift.service.ts': { createMembershipGiftCheckout: 1 },
+  'src/server/services/model-file.service.ts': { createFile: 1, updateFile: 1 },
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
     upsertExplorationPrompt: 1,

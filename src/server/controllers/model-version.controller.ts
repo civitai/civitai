@@ -1093,8 +1093,11 @@ export const unpublishModelVersionHandler = async ({
 
 export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
+    // The primary, not a replica: this row is written back whole, so a lagging read would
+    // overwrite a fresh edit with stale values.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,
@@ -1135,8 +1138,10 @@ export const declineReviewHandler = async ({
   try {
     if (!ctx.user.isModerator) throw throwAuthorizationError();
 
+    // The primary, for the reason in requestReviewHandler.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,
