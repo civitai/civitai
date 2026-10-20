@@ -410,7 +410,10 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
     await publishModelVersionsWithEarlyAccess({ modelVersionIds: [1], continueOnError: true });
 
     // The bug: this call never happened. The publishedAt write itself must NOT run (anti-bump).
-    expect(mockMaterialize).toHaveBeenCalledWith(1, version().publishedAt, mockDbWrite);
+    // No write, so it may only fill a NULL endsAt.
+    expect(mockMaterialize).toHaveBeenCalledWith(1, version().publishedAt, mockDbWrite, {
+      pendingOnly: true,
+    });
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -436,7 +439,9 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
     });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite);
+    expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite, {
+      pendingOnly: false,
+    });
   });
 
   it('with a modelId, loads only that model’s versions to publish', async () => {
