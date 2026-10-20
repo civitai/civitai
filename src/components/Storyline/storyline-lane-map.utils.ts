@@ -9,6 +9,52 @@ import { createStorylineLaneRouter, layoutStorylineLanes } from '~/shared/utils/
 
 type LaneMapChapter = StorylinePathChapter & { firstImage: { id: number } | null };
 
+/** A lane's colour on the map, and wherever else a path is drawn in its lane's colour. */
+export const LANE_COLORS = ['blue', 'grape', 'teal', 'orange', 'pink', 'lime', 'cyan', 'yellow'];
+export const laneColor = (lane: number) =>
+  `var(--mantine-color-${LANE_COLORS[lane % LANE_COLORS.length]}-6)`;
+
+/**
+ * The lane the map draws a chapter in. Lane 0 is the canon column, so a chapter the layout put
+ * there that is not on the canon path gets the spare lane after the last.
+ */
+export const storylineDisplayLane = (
+  layout: { lanes: number },
+  node: { lane: number },
+  onCanon: boolean
+) => (node.lane === 0 && !onCanon ? layout.lanes : node.lane);
+
+/**
+ * The lane of each chapter of a reader's path that is off the main route, as the map draws it, for
+ * the viewer's rail to colour by. A chapter on the main route, or one the graph does not hold (it
+ * is capped, or still loading), is left out and keeps the plain look.
+ */
+export function getStorylinePathLanes(
+  graph:
+    | {
+        rootChapterId: number | null;
+        chapters: { chapterId: number }[];
+        edges: StorylineLaneEdge[];
+      }
+    | null
+    | undefined,
+  path: { chapterId: number; onMain: boolean }[]
+) {
+  const lanes = new Map<number, number>();
+  if (!graph?.rootChapterId) return lanes;
+  const layout = layoutStorylineLanes(
+    graph.rootChapterId,
+    graph.chapters.map((c) => c.chapterId),
+    graph.edges
+  );
+  const laneOf = new Map(layout.nodes.map((n) => [n.chapterId, n]));
+  for (const { chapterId, onMain } of path) {
+    const placed = laneOf.get(chapterId);
+    if (!onMain && placed) lanes.set(chapterId, storylineDisplayLane(layout, placed, false));
+  }
+  return lanes;
+}
+
 /**
  * Whether a storyline may have branches to map: some chapter is off its canon path. Any fork
  * leaves one there, while the canon path alone can stop short of a fork (at the first chapter
@@ -142,7 +188,10 @@ export function buildStorylineLaneList<N extends LaneListNode>(
   const spare = map?.layout.lanes ?? 1;
   const laneOf = new Map<number, number>();
   for (const node of mapNodes)
-    laneOf.set(node.chapterId, node.lane === 0 && !isCanonCell(node.chapterId) ? spare : node.lane);
+    laneOf.set(
+      node.chapterId,
+      storylineDisplayLane({ lanes: spare }, node, isCanonCell(node.chapterId))
+    );
 
   const nodes = map
     ? mapNodes.map((n) => ({ ...n, lane: laneOf.get(n.chapterId) as number }))

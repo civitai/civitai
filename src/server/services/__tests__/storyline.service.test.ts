@@ -136,6 +136,9 @@ const publishedPost = (overrides: Record<string, unknown> = {}) => ({
  * gives a different answer than one made with the right ones.
  */
 let blockedPairs: Array<[number, number]> = [];
+/** The SQL a raw call sends, with nested fragments (the main-route walk) composed in. */
+const sqlOfRaw = (strings: TemplateStringsArray, values: unknown[]) =>
+  Prisma.sql(strings, ...(values as Prisma.Sql[])).sql;
 const answerRaw = (client: { $queryRaw: { mockImplementation: (f: never) => unknown } }) =>
   client.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
     if (!strings.join('?').includes('"UserEngagement"')) return Promise.resolve([]);
@@ -1181,8 +1184,8 @@ describe('getStoryline: page fields', () => {
       ...storylineRow(),
       collaborators: [{ user: user(COLLABORATOR) }],
     } as never);
-    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
-      const sql = strings.join('?');
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = sqlOfRaw(strings, values);
       if (sql.includes('COUNT(DISTINCT'))
         return Promise.resolve([{ chapters: 4, contributors: 3 }]);
       if (sql.includes('GROUP BY c."userId"'))
@@ -1511,13 +1514,15 @@ describe('getStorylineCanonAhead', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    const sql = strings.join('?');
+    // The walk is the shared main-route fragment, composed into the query as Postgres gets it.
+    const composedSql = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    const sql = composedSql.sql;
     expect(sql).toContain('WHERE c.id = ?');
     expect(sql).toContain('e."parentChapterId" = main.id AND e.canon');
     expect(sql).toContain('WHERE main.hops < ?');
     // Route order: across a rejoin, depth (the first-parent distance) does not rise one per step.
     expect(sql).toContain('FROM main ORDER BY hops');
-    expect(values).toEqual([2, 199]);
+    expect(composedSql.values).toEqual([2, 199]);
   });
 
   it('serves nothing when the story is outside the reader level', async () => {
@@ -2671,7 +2676,8 @@ describe('covers and cast', () => {
       };
       const few = await queriesFor(2);
       expect(await queriesFor(50)).toBe(few);
-      expect(few).toBe(2);
+      // The path, the main route's chapter ids, and the first images.
+      expect(few).toBe(3);
     });
 
     it('gives the ways on their first images, none to a tombstone', async () => {
@@ -3011,8 +3017,8 @@ describe('covers and cast', () => {
         heroImagePosition: 50,
         collaborators: [{ user: cast(COLLABORATOR) }],
       } as never);
-      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = sqlOfRaw(strings, values);
         if (sql.includes('GROUP BY c."userId"')) return Promise.resolve([{ userId: STRANGER }]);
         if (sql.includes('WITH RECURSIVE main'))
           return Promise.resolve([
@@ -3577,9 +3583,9 @@ describe('a storyline the title scan holds as about a minor', () => {
         ...storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }),
         collaborators: [],
       } as never);
-      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
         Promise.resolve(
-          strings.join('?').includes('WITH RECURSIVE main')
+          sqlOfRaw(strings, values).includes('WITH RECURSIVE main')
             ? [
                 { id: 1, postId: 101, depth: 0, parentIds: [] },
                 { id: 2, postId: 102, depth: 1, parentIds: [] },

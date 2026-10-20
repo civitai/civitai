@@ -8,6 +8,7 @@ import {
   buildCanonLane,
   buildStorylineLaneList,
   buildStorylineLaneMap,
+  laneColor,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import {
@@ -42,10 +43,6 @@ type LaneNode = {
   read: Parameters<typeof storylineChapterLinkProps>[0]['read'];
   chapter: GraphChapter | CanonChapter;
 };
-
-const LANE_COLORS = ['blue', 'grape', 'teal', 'orange', 'pink', 'lime', 'cyan', 'yellow'];
-const laneColor = (lane: number) =>
-  `var(--mantine-color-${LANE_COLORS[lane % LANE_COLORS.length]}-6)`;
 
 /** Rows are fixed-height so branch lanes line up with the canon rows. */
 const SIZES = {

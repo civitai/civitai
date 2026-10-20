@@ -86,6 +86,33 @@ describe('buildStorylineRail', () => {
     expect(segments.map((s) => s.depth)).toEqual([5, 6, 7]);
   });
 
+  it('gives each path chapter off the main route its map lane, and no other segment one', () => {
+    const laneOf = new Map([
+      [14, 2],
+      [15, 2],
+      [16, 4],
+    ]);
+    const ahead = [chapter(17, 7, { childCount: 0 })];
+    const { segments } = rail(0, { laneOf, ahead });
+    expect(segments.map((s) => [s.chapter.chapterId, s.lane])).toEqual([
+      [10, null],
+      [11, null],
+      [12, null],
+      [13, null],
+      [14, 2],
+      [15, 2],
+      [16, 4],
+      // The canon line ahead is the main route: never coloured, even for an id the map holds.
+      [17, null],
+    ]);
+    expect(rail(0, { laneOf: new Map([[17, 3]]), ahead }).segments.at(-1)?.lane).toBeNull();
+  });
+
+  it('leaves every segment plain until the lanes are known', () => {
+    expect(rail(0).segments.map((s) => s.lane)).toEqual(Array(7).fill(null));
+    expect(rail(0, { laneOf: new Map() }).segments.map((s) => s.lane)).toEqual(Array(7).fill(null));
+  });
+
   it('shows a window around the current chapter on a long line', () => {
     const path = Array.from({ length: 40 }, (_, i) => chapter(100 + i, i));
     const { segments, clippedStart, clippedEnd } = rail(0, {

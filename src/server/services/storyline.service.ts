@@ -1458,6 +1458,34 @@ const onRoute = <T extends { depth: number }>(rows: RouteRow[], chapters: T[]) =
   }));
 
 /**
+ * The walk that defines a storyline's main route: from `rootChapterId`, each chapter's canon child
+ * in turn, at most `STORYLINE_PATH_LIMIT` chapters. A `main` CTE of the chapters it passes, with
+ * `hops` counting from the root. Every reader of the main route goes through it, so the route the
+ * page draws and the one the viewer's rail marks are the same chapters.
+ */
+const canonRouteWalk = (rootChapterId: number) => Prisma.sql`
+    WITH RECURSIVE main AS (
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
+      FROM "StorylineChapter" c
+      WHERE c.id = ${rootChapterId}
+      UNION ALL
+      SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1
+      FROM main
+      JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+      JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
+      WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
+    )`;
+
+/** The chapters on the main route from `rootChapterId`, by id alone: no posts, images or counts. */
+async function getStorylineMainRouteIds(rootChapterId: number) {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    ${canonRouteWalk(rootChapterId)}
+    SELECT main.id FROM main
+  `;
+  return new Set(rows.map((row) => row.id));
+}
+
+/**
  * The owner's main route from the first chapter: each chapter's canon child in turn, at most
  * `STORYLINE_PATH_LIMIT` chapters, with tombstones as in the reading path and how many ways on
  * each chapter has.
@@ -1481,17 +1509,7 @@ async function getStorylineMainPath({
   gate?: StorylineImageGateSource;
 }) {
   const rows = await dbRead.$queryRaw<RouteRow[]>`
-    WITH RECURSIVE main AS (
-      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
-      FROM "StorylineChapter" c
-      WHERE c.id = ${rootChapterId}
-      UNION ALL
-      SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1
-      FROM main
-      JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-      JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
-      WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
-    )
+    ${canonRouteWalk(rootChapterId)}
     SELECT main.id, main."postId", main.depth, main."removedAt",
       ARRAY(
         SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
@@ -1810,7 +1828,7 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   // reads are public, and the flag is a content classification.
   const {
     user: _user,
-    chapters: _chapters,
+    chapters: firstChapters,
     minorByScan,
     nsfwLevel: _nsfwLevel,
     moderatorNsfwLevel: _moderatorNsfwLevel,
@@ -1819,6 +1837,8 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   return {
     storyline: { ...rest, maxNsfwLevel: storylineCeiling({ ...rest, minorByScan }) },
     blockedUserIds,
+    /** Chapter 1, where the main route starts. */
+    rootChapterId: firstChapters[0]?.id ?? null,
   };
 }
 
@@ -1850,7 +1870,7 @@ export async function getStorylinePath({
     select: { storylineId: true },
   });
   if (!target) throw throwNotFoundError('Chapter not found');
-  const { storyline, blockedUserIds } = await getStorylineForRead(
+  const { storyline, blockedUserIds, rootChapterId } = await getStorylineForRead(
     target.storylineId,
     viewer,
     browsingLevel
@@ -1894,7 +1914,7 @@ export async function getStorylinePath({
       blockedUserIds,
     });
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const [posts, childCounts, joins] = await Promise.all([
+  const [posts, childCounts, joins, mainRouteIds] = await Promise.all([
     postIds.length
       ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
       : [],
@@ -1906,6 +1926,7 @@ export async function getStorylinePath({
         })
       : [],
     getRouteJoins(rows, tombstoneOf),
+    rootChapterId ? getStorylineMainRouteIds(rootChapterId) : new Set<number>(),
   ]);
   const postById = new Map(posts.map((p) => [p.id, p]));
   const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
@@ -1916,6 +1937,8 @@ export async function getStorylinePath({
       ...toPathChapter(row, post, tombstoneOf(post, !!row.removedAt)),
       childCount: childCountById.get(row.id) ?? 0,
       joins: joins.get(row.id) ?? [],
+      // On the owner's main route, which the viewer's rail leaves uncoloured.
+      onMain: mainRouteIds.has(row.id),
     };
   });
 
