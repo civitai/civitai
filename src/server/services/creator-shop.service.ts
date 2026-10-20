@@ -1267,9 +1267,11 @@ export const unarchiveCreatorShopItem = async ({
   if (meta.takedown)
     throw throwBadRequestError('This item was taken down and cannot be restored to sale');
   // Archiving a rejected item is blocked now, but items archived before that was
-  // true still exist, and restoring one would clear its verdict. Nothing appends
-  // to an archived item's history, so a verdict recorded there is still the last
-  // one — it cannot have aged out of the cap while the item sat archived.
+  // true still exist, and restoring one would clear its verdict. The only thing
+  // appended to an archived item's history is a withdrawn-item refund, and that
+  // only follows an archive made after rejected items could no longer be archived,
+  // so on those older items a verdict recorded there is still the last one — it
+  // cannot have aged out of the cap while the item sat archived.
   //
   // An item old enough to have no history at all leaves only `rejectionReason`,
   // which a change request sets too. That is not enough to convict, so it is

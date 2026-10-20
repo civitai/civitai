@@ -51,6 +51,13 @@ export const cosmeticShopItemHistoryEntry = z.object({
   changes: z.array(cosmeticShopItemHistoryChange).optional(),
 });
 
+const withdrawnRefundTerms = z.object({
+  trigger: z.enum(['reject', 'archive']),
+  clawback: z.boolean(),
+  userId: z.number(),
+  at: z.string(),
+});
+
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
@@ -127,14 +134,7 @@ export const cosmeticShopItemMeta = z.object({
   // `at` that are still unrefunded get refunded, and the creator's payouts reversed when
   // `clawback`. The withdrawn-refund job retries from it until none are left; approval and restore
   // clear it.
-  withdrawnRefund: z
-    .object({
-      trigger: z.enum(['reject', 'archive']),
-      clawback: z.boolean(),
-      userId: z.number(),
-      at: z.string(),
-    })
-    .optional(),
+  withdrawnRefund: withdrawnRefundTerms.optional(),
   // Append-only (capped) log of submissions, creator edits, review verdicts and
   // takedowns, so a re-review can see what changed and what was decided before.
   // Absent on items that predate it — the UI shows an empty state rather than
@@ -164,6 +164,9 @@ export const cosmeticPurchaseMeta = z.object({
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
   platformCut: z.number().optional(),
+  // Stamped before a withdrawn-item refund moves any money for this purchase: the terms it is
+  // finished on, even if the item's own marker is cleared before it is.
+  withdrawnRefund: withdrawnRefundTerms.optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;

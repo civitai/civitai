@@ -1,7 +1,9 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import type { Prisma } from '@prisma/client';
 import type {
+  CosmeticPurchaseMeta,
   CosmeticShopItemHistoryEntry,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
@@ -197,40 +199,67 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   const marker = meta.withdrawnRefund;
   // A takedown refunds and claws back on its own terms. A pack's members are listed, and
   // withheld, on their own, so withdrawing the pack withholds nothing its buyers hold.
-  if (!item || !marker || meta.takedown || item.cosmeticId == null)
+  if (!item || meta.takedown || item.cosmeticId == null)
     return { purchases: 0, refunded: 0, failures: 0 };
 
   const creatorId = item.cosmetic?.createdById ?? item.addedById;
-  const purchases = await dbWrite.userCosmeticShopPurchases.findMany({
+  const unrefunded = await dbWrite.userCosmeticShopPurchases.findMany({
     where: {
       shopItemId,
       refunded: false,
-      purchasedAt: { lte: new Date(marker.at) },
       // A creator buying their own item paid the platform; it is not a sale to refund.
       ...(creatorId ? { userId: { not: creatorId } } : {}),
     },
-    select: { userId: true, buzzTransactionId: true, unitAmount: true },
+    select: {
+      userId: true,
+      buzzTransactionId: true,
+      unitAmount: true,
+      purchasedAt: true,
+      meta: true,
+    },
     orderBy: { purchasedAt: 'asc' },
-    take: limit,
   });
+  // A purchase whose reversal has started carries the terms it started under, and is finished on
+  // them even after the item's marker is cleared: stopping halfway would leave some of its legs
+  // reversed and the rest not. Any other purchase is owed only while the marker stands.
+  const purchases = unrefunded
+    .flatMap((purchase) => {
+      const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
+      const terms =
+        started ?? (marker && purchase.purchasedAt <= new Date(marker.at) ? marker : undefined);
+      return terms ? [{ purchase, terms, started: !!started }] : [];
+    })
+    .slice(0, limit);
 
-  const refunded: typeof purchases = [];
+  const refunded: (typeof purchases)[number]['purchase'][] = [];
   const failures: { buzzTransactionId: string; userId: number; error: string }[] = [];
   const payoutFailures: (PayoutFailure & { buzzTransactionId: string })[] = [];
   let refundedValue = 0;
   let clawedBack = 0;
   let revoked = 0;
   let stopped = false;
-  for (const purchase of purchases) {
-    // An approval or a restore clears the marker; one landing mid-run stops what is left of it.
-    if (!(await markerStands(shopItemId, marker.at))) {
-      stopped = true;
-      break;
+  for (const { purchase, terms, started } of purchases) {
+    if (!started) {
+      // An approval or a restore clears the marker; one landing mid-run stops every purchase not
+      // yet begun.
+      if (stopped || !(await markerStands(shopItemId, terms.at))) {
+        stopped = true;
+        continue;
+      }
+      await dbWrite.userCosmeticShopPurchases.update({
+        where: { buzzTransactionId: purchase.buzzTransactionId },
+        data: {
+          meta: {
+            ...((purchase.meta ?? {}) as CosmeticPurchaseMeta),
+            withdrawnRefund: terms,
+          } as Prisma.InputJsonValue,
+        },
+      });
     }
     const outcome =
       purchase.unitAmount === 0
         ? ({ status: 'refunded', refunded: 0, clawedBack: 0, payoutFailures: [] } as const)
-        : await reversePurchase(purchase, marker);
+        : await reversePurchase(purchase, terms);
     if (outcome.status === 'failed') {
       failures.push({ ...purchase, error: outcome.error });
       await logRefund('error', 'Purchase refund failed', { shopItemId, ...purchase, ...outcome });
@@ -272,7 +301,7 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
 
     const entry: CosmeticShopItemHistoryEntry = {
       at: new Date().toISOString(),
-      userId: marker.userId,
+      userId: (marker ?? purchases[0].terms).userId,
       kind: 'refunded',
       note: `${refunded.length} purchase(s), ${refundedValue} Buzz refunded; ${clawedBack} Buzz reversed from payouts`,
     };
@@ -297,8 +326,7 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
 
   const summary = {
     shopItemId,
-    trigger: marker.trigger,
-    clawback: marker.clawback,
+    marker: marker ?? null,
     purchases: purchases.length,
     refunded: refunded.length,
     refundedValue,
@@ -326,19 +354,26 @@ export async function sweepWithdrawnShopRefunds({ limit = 50 }: { limit?: number
     SELECT i.id
     FROM "CosmeticShopItem" i
     LEFT JOIN "Cosmetic" c ON c.id = i."cosmeticId"
-    WHERE i.meta ? 'withdrawnRefund'
-      AND NOT i.meta ? 'takedown'
+    WHERE NOT coalesce(i.meta ? 'takedown', false)
       AND i."cosmeticId" IS NOT NULL
       AND EXISTS (
         SELECT 1 FROM "UserCosmeticShopPurchases" p
         WHERE p."shopItemId" = i.id
           AND NOT p.refunded
-          AND p."purchasedAt" <= ((i.meta->'withdrawnRefund'->>'at')::timestamptz AT TIME ZONE 'UTC')
           AND p."userId" IS DISTINCT FROM COALESCE(c."createdById", i."addedById")
+          AND (
+            -- Started under an earlier marker: finished whatever the item says now.
+            coalesce(p.meta ? 'withdrawnRefund', false)
+            OR (
+              i.meta ? 'withdrawnRefund'
+              AND p."purchasedAt" <=
+                ((i.meta->'withdrawnRefund'->>'at')::timestamptz AT TIME ZONE 'UTC')
+            )
+          )
       )
     -- Newest first: an item whose purchases can never be reversed is logged on every run and
     -- must not hold the window against items still being worked through.
-    ORDER BY (i.meta->'withdrawnRefund'->>'at') DESC
+    ORDER BY (i.meta->'withdrawnRefund'->>'at') DESC NULLS LAST
     LIMIT ${limit}
   `;
 

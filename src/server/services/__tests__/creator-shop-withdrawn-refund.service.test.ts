@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { PGlite } from '@electric-sql/pglite';
 import { NotificationCategory } from '~/server/common/enums';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 type Row = {
   transactionId: string;
@@ -75,6 +77,7 @@ type Purchase = {
   unitAmount: number;
   purchasedAt: Date;
   refunded: boolean;
+  meta?: Record<string, unknown> | null;
 };
 let purchases: Purchase[];
 let itemMeta: Record<string, unknown>;
@@ -167,20 +170,34 @@ beforeEach(() => {
       async ({
         where,
         orderBy,
-        take,
       }: {
-        where: { refunded: boolean; purchasedAt: { lte: Date }; userId?: { not: number } };
+        where: { refunded: boolean; userId?: { not: number } };
         orderBy?: { purchasedAt: 'asc' };
-        take?: number;
       }) => {
-        const rows = purchases.filter(
-          (p) =>
-            p.refunded === where.refunded &&
-            p.purchasedAt <= where.purchasedAt.lte &&
-            (where.userId === undefined || p.userId !== where.userId.not)
-        );
+        const rows = purchases
+          .filter(
+            (p) =>
+              p.refunded === where.refunded &&
+              (where.userId === undefined || p.userId !== where.userId.not)
+          )
+          .map((p) => ({ ...p, meta: p.meta ?? null }));
         if (orderBy) rows.sort((a, b) => a.purchasedAt.getTime() - b.purchasedAt.getTime());
-        return take === undefined ? rows : rows.slice(0, take);
+        return rows;
+      }
+    );
+  dbMock.dbWrite.userCosmeticShopPurchases.update
+    .mockReset()
+    .mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where: { buzzTransactionId: string };
+        data: { meta: Record<string, unknown> };
+      }) => {
+        const row = purchases.find((p) => p.buzzTransactionId === where.buzzTransactionId)!;
+        row.meta = data.meta;
+        return row;
       }
     );
   dbMock.dbWrite.userCosmeticShopPurchases.updateMany
@@ -370,6 +387,47 @@ describe('refundWithdrawnShopItem and a verdict landing mid-run', () => {
     expect(itemMeta.displayApproved).toBe(true);
     expect((itemMeta.history as { kind: string }[]).at(-1)).toMatchObject({ kind: 'refunded' });
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('refundWithdrawnShopItem and a purchase already begun', () => {
+  // Some of a purchase's legs reversed and the rest not: stopping there strands money on both
+  // sides, so a begun purchase is finished on the terms it began under.
+  it('finishes a purchase begun under a marker that has since been cleared', async () => {
+    itemMeta = { purchases: 0, withdrawnRefund: { ...marker('archive'), clawback: true } };
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (transactionId === 'p-1-debit') throw new Error('buzz 503');
+      ledger.refunded.add(transactionId);
+    });
+    await refundWithdrawnShopItem(ITEM, { limit: 1 });
+    expect(ledger.refunded.has('p-1-payout')).toBe(true);
+    expect(purchases.map((p) => p.refunded)).toEqual([false, false]);
+
+    // The creator restores the item, which clears the marker.
+    const { withdrawnRefund: _cleared, ...rest } = itemMeta;
+    itemMeta = rest;
+    mocks.refundTransaction.mockReset().mockImplementation(async (transactionId: string) => {
+      ledger.refunded.add(transactionId);
+    });
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(mocks.refundTransaction.mock.calls.map(([id]) => id)).toEqual(['p-1-debit']);
+    expect(result).toEqual({ purchases: 1, refunded: 1, failures: 0 });
+    // The purchase never begun stays with its buyer.
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+  });
+
+  it('stamps the terms on a purchase before moving any of its money', async () => {
+    const seen: unknown[] = [];
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      seen.push(purchases.find((p) => transactionId.startsWith(p.buzzTransactionId))?.meta);
+      ledger.refunded.add(transactionId);
+    });
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(seen).toHaveLength(4);
+    for (const meta of seen) expect(meta).toEqual({ withdrawnRefund: marker('reject') });
   });
 });
 
@@ -608,5 +666,73 @@ describe('sweepWithdrawnShopRefunds', () => {
 
     expect(result).toEqual({ items: 1, refunded: 2, failures: 0, busy: 0 });
     expect(purchases.map((p) => p.refunded)).toEqual([true, true]);
+  });
+});
+
+// The fake above applies the append in JS; this runs the real statement, so a wrong cap, order,
+// path or WHERE shows up here.
+describe('the history append, run against Postgres', () => {
+  let db: PGlite;
+  const OTHER_ITEM = 43;
+  const stored = async (id: number) =>
+    (
+      await db.query<{ meta: Record<string, unknown> }>(
+        'SELECT meta FROM "CosmeticShopItem" WHERE id = $1',
+        [id]
+      )
+    ).rows[0].meta;
+  const seed = async (id: number, meta: Record<string, unknown>) =>
+    db.query('INSERT INTO "CosmeticShopItem" (id, meta) VALUES ($1, $2)', [
+      id,
+      JSON.stringify(meta),
+    ]);
+  const entry = (n: number) => ({ at: 'then', userId: CREATOR, kind: 'edited', note: String(n) });
+
+  beforeEach(async () => {
+    db = new PGlite();
+    await db.exec('CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, meta jsonb)');
+    dbMock.dbWrite.$executeRaw.mockImplementation(pgliteRaw(db).executeRaw as never);
+  });
+
+  it('appends one entry and leaves every other key, and every other item, alone', async () => {
+    const before = { ...itemMeta, displayApproved: false, history: [entry(0), entry(1)] };
+    await seed(ITEM, before);
+    await seed(OTHER_ITEM, { purchases: 3, history: [entry(9)] });
+
+    await refundWithdrawnShopItem(ITEM);
+
+    const after = await stored(ITEM);
+    const { history, ...rest } = after;
+    const { history: _old, ...restBefore } = before;
+    expect(rest).toEqual(restBefore);
+    expect(history).toEqual([
+      entry(0),
+      entry(1),
+      expect.objectContaining({ kind: 'refunded', userId: MOD }),
+    ]);
+    expect(await stored(OTHER_ITEM)).toEqual({ purchases: 3, history: [entry(9)] });
+  });
+
+  it('keeps the newest entries at the cap, dropping the oldest', async () => {
+    await seed(ITEM, { ...itemMeta, history: Array.from({ length: 25 }, (_, i) => entry(i)) });
+
+    await refundWithdrawnShopItem(ITEM);
+
+    const { history } = (await stored(ITEM)) as { history: { note?: string; kind: string }[] };
+    expect(history).toHaveLength(25);
+    expect(history[0].note).toBe('1');
+    expect(history.at(-2)!.note).toBe('24');
+    expect(history.at(-1)!.kind).toBe('refunded');
+  });
+
+  it('starts a history on an item that has none', async () => {
+    await seed(ITEM, { purchases: 0 });
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(await stored(ITEM)).toEqual({
+      purchases: 0,
+      history: [expect.objectContaining({ kind: 'refunded' })],
+    });
   });
 });
