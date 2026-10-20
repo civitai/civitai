@@ -68,7 +68,7 @@
   }
 </script>
 
-<section class="flex min-w-0 flex-col rounded-xl border border-dark-4 bg-dark-6 p-5">
+<section class="flex min-h-0 min-w-0 flex-col overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
     <h2 class="text-sm font-semibold text-white">
       {promptKeyName(promptKey)}
