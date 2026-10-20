@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -1560,12 +1560,18 @@ export async function applyArticleContentChange({
 /**
  * An image an article's cleanup may delete: the author's own, in no post, and shown nowhere else.
  * Most of these relations null out on delete, so a missed one silently blanks that surface:
- * a new relation that displays an image belongs here.
+ * a new relation that displays an image belongs here. An image that is reported, awaiting review
+ * or blocked is kept too: moderation decides what happens to it, not an article edit.
  */
 export const unusedAuthorImage = (ownerId: number) =>
   ({
     userId: ownerId,
     postId: null,
+    needsReview: null,
+    ingestion: { not: ImageIngestionStatus.Blocked },
+    nsfwLevel: { not: NsfwLevel.Blocked },
+    blockedFor: null,
+    reports: { none: {} },
     article: { is: null },
     assignedUser: { is: null },
     connections: { none: {} },
@@ -1601,6 +1607,14 @@ export const unusedAuthorImage = (ownerId: number) =>
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
   } satisfies Prisma.ImageWhereInput);
+
+/** An owner with a safety report on file keeps every image: the report's review needs them. */
+async function ownerUnderSafetyReport(
+  db: Pick<Prisma.TransactionClient, 'csamReport'>,
+  ownerId: number
+) {
+  return (await db.csamReport.count({ where: { userId: ownerId } })) > 0;
+}
 
 export const deleteArticleById = async ({
   id,
@@ -1660,7 +1674,7 @@ export const deleteArticleById = async ({
       .map((conn) => conn.imageId)
       .filter((imageId) => imageId !== deleted.coverId);
 
-    if (contentImageIds.length > 0) {
+    if (contentImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
       const trulyOrphanedImages = await dbWrite.image.findMany({
         where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
         select: { id: true },
@@ -1946,7 +1960,7 @@ export async function linkArticleContentImages({
     }
 
     let trulyOrphanedIds: number[] = [];
-    if (orphanedIds.length > 0) {
+    if (orphanedIds.length > 0 && !(await ownerUnderSafetyReport(tx, ownerId))) {
       const trulyOrphaned = await tx.image.findMany({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },

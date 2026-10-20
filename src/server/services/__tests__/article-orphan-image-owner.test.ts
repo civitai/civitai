@@ -53,15 +53,41 @@ const SOMEONE_ELSE = 8;
 const MODERATOR = 99;
 
 /** `uses`: the other relations that show this image, by their Prisma relation name. */
-type Row = { id: number; userId: number; postId: number | null; uses: string[] };
+type Row = {
+  id: number;
+  userId: number;
+  postId: number | null;
+  uses: string[];
+  needsReview?: string | null;
+  ingestion?: string;
+  nsfwLevel?: number;
+  blockedFor?: string | null;
+};
+const row = (id: number, over: Partial<Row> = {}): Row => ({
+  id,
+  userId: AUTHOR,
+  postId: null,
+  uses: [],
+  needsReview: null,
+  ingestion: 'Scanned',
+  nsfwLevel: 1,
+  blockedFor: null,
+  ...over,
+});
 
 // Every image below was linked into the article and leaves it in the same edit.
-const UNUSED_OWN: Row = { id: 1, userId: AUTHOR, postId: null, uses: [] };
-const SOMEONE_ELSES: Row = { id: 2, userId: SOMEONE_ELSE, postId: null, uses: [] };
-const IN_A_POST: Row = { id: 3, userId: AUTHOR, postId: 500, uses: [] };
-const LINKED_ELSEWHERE: Row = { id: 4, userId: AUTHOR, postId: null, uses: ['connections'] };
-const ANOTHER_ARTICLES_COVER: Row = { id: 5, userId: AUTHOR, postId: null, uses: ['article'] };
-const A_CHALLENGE_COVER: Row = { id: 6, userId: AUTHOR, postId: null, uses: ['challengesCover'] };
+const UNUSED_OWN = row(1);
+const SOMEONE_ELSES = row(2, { userId: SOMEONE_ELSE });
+const IN_A_POST = row(3, { postId: 500 });
+const LINKED_ELSEWHERE = row(4, { uses: ['connections'] });
+const ANOTHER_ARTICLES_COVER = row(5, { uses: ['article'] });
+const A_CHALLENGE_COVER = row(6, { uses: ['challengesCover'] });
+// Moderation decides these, so an article edit never deletes them.
+const REPORTED = row(7, { uses: ['reports'] });
+const AWAITING_REVIEW = row(8, { needsReview: 'minor' });
+const BLOCKED = row(9, { ingestion: 'Blocked' });
+const BLOCKED_LEVEL = row(10, { ingestion: 'Error', nsfwLevel: 32 });
+const BLOCK_REASON = row(11, { ingestion: 'Error', blockedFor: 'tos' });
 const UNLINKED = [
   UNUSED_OWN,
   SOMEONE_ELSES,
@@ -69,6 +95,11 @@ const UNLINKED = [
   LINKED_ELSEWHERE,
   ANOTHER_ARTICLES_COVER,
   A_CHALLENGE_COVER,
+  REPORTED,
+  AWAITING_REVIEW,
+  BLOCKED,
+  BLOCKED_LEVEL,
+  BLOCK_REASON,
 ];
 
 const isUnusedCondition = (cond: unknown) =>
@@ -79,7 +110,9 @@ const isUnusedCondition = (cond: unknown) =>
 const matches = (row: Row, where: Record<string, any>) =>
   Object.entries(where).every(([key, cond]) => {
     if (key === 'id') return cond.in.includes(row.id);
-    if (key === 'userId' || key === 'postId') return row[key] === cond;
+    if (['userId', 'postId', 'needsReview', 'blockedFor'].includes(key))
+      return row[key as keyof Row] === cond;
+    if (key === 'ingestion' || key === 'nsfwLevel') return row[key] !== cond.not;
     // The content-url lookup: these tests save content with no images in it.
     if (key === 'url') return cond.in.length > 0;
     // `{ none: {} }` on a list relation, `{ is: null }` on a single one: the image is not used there.
@@ -114,6 +147,7 @@ beforeEach(() => {
   dbMock.dbRead.article.findUnique.mockResolvedValue(stored as never);
   dbMock.dbWrite.article.update.mockResolvedValue(stored as never);
   dbMock.dbWrite.article.delete.mockResolvedValue({ coverId: null } as never);
+  dbMock.dbWrite.csamReport.count.mockResolvedValue(0 as never);
 });
 
 describe('linkArticleContentImages', () => {
@@ -197,7 +231,6 @@ describe('deleteArticleById', () => {
 const PART_OF_THE_IMAGE: Record<string, string> = {
   user: 'the owner, checked by userId',
   post: 'checked by postId',
-  reports: 'reports on this image',
   reactions: 'reactions to this image',
   thread: 'comments on this image',
   tags: 'its tags',
@@ -229,5 +262,30 @@ describe('unusedAuthorImage', () => {
     const where = unusedAuthorImage(AUTHOR) as Record<string, unknown>;
     expect(relations.filter((r) => r in where && !isUnusedCondition(where[r]))).toEqual([]);
     expect(relations.length).toBeGreaterThan(Object.keys(PART_OF_THE_IMAGE).length);
+  });
+});
+
+describe('an owner with a safety report on file', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.csamReport.count.mockImplementation((async ({ where }: any) =>
+      where.userId === AUTHOR ? 1 : 0) as never);
+  });
+
+  it('keeps every image the edit unlinks', async () => {
+    const { orphanedImageIds } = await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(orphanedImageIds).toEqual([]);
+  });
+
+  it('keeps every content image when the article is deleted', async () => {
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toEqual([]);
   });
 });
