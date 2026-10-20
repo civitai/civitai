@@ -46,7 +46,6 @@ import {
 } from '~/shared/generation/avatar-deep-link';
 import {
   GENERATOR_DEEP_LINK_PARAMS,
-  applyGeneratorDeepLinkFields,
   generatorDeepLinkFields,
   type GeneratorDeepLinkFields,
 } from '~/shared/generation/generator-deep-link';
@@ -204,9 +203,8 @@ export function useGenerationIngestion(store: GenerationStore) {
 }
 
 /**
- * Opens the generator on a model, then sets the link's fields. Not before: the model load replaces
- * the form's values, so fields written first would be overwritten by the model's defaults. Skipped
- * when the load fails or another open replaced it while it was in flight.
+ * Opens the generator on a model, then sets the link's fields. Only once the model has landed, so
+ * a load that fails, or that another open replaces while in flight, leaves the form as it was.
  */
 export async function openWithDeepLinkFields(
   store: GenerationStore,
@@ -222,7 +220,7 @@ export async function openWithDeepLinkFields(
     return;
   }
   if (openSequence() !== sequence) return;
-  applyGeneratorDeepLinkFields(store, fields);
+  store.set(fields);
 }
 
 type GenerationData = NonNullable<ReturnType<typeof useGenerationGraphStore.getState>['data']>;

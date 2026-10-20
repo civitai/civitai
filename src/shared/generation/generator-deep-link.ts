@@ -1,8 +1,7 @@
 /**
  * The form fields a `/generate?modelVersionId=…` link may preset, e.g.
  * `&resolution=2k&thinkingMode=ultra`. Plain option fields only: never the prompt, the model or
- * resources. Order matters: a field's options can depend on an earlier one (Krea 3 offers Ultra
- * only at 2K), so each is set after the ones before it.
+ * resources.
  */
 export const GENERATOR_DEEP_LINK_PARAMS = ['resolution', 'thinkingMode'] as const;
 
@@ -23,15 +22,4 @@ export function generatorDeepLinkFields(params: URLSearchParams): GeneratorDeepL
     if (value && value.length <= MAX_VALUE_LENGTH) fields[key] = value;
   }
   return fields;
-}
-
-/** Writes the fields one at a time, in allowlist order. Call it after the model has loaded. */
-export function applyGeneratorDeepLinkFields(
-  store: { set: (values: Record<string, unknown>) => void },
-  fields: GeneratorDeepLinkFields
-) {
-  for (const key of GENERATOR_DEEP_LINK_PARAMS) {
-    const value = fields[key];
-    if (value !== undefined) store.set({ [key]: value });
-  }
 }
