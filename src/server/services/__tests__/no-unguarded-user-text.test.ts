@@ -85,6 +85,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/question.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
+  'src/server/services/sticker-placement.service.ts': 1,
   'src/server/services/storyline.service.ts': 2,
   // 4: the two writers below, plus the template path's alias scan — a batch call and
   // a per-alias one, which runs only to find which alias the batch refused.
@@ -196,6 +197,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateResourceReview: 1,
     upsertResourceReview: 1,
   },
+  'src/server/services/sticker-placement.service.ts': { createStickerPlacement: 1 },
   'src/server/services/storyline.service.ts': { createStoryline: 1, updateStoryline: 1 },
   'src/server/services/user-hub.service.ts': {
     addUserHubSource: 1,
