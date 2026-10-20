@@ -2870,6 +2870,8 @@ export const validateContestCollectionEntry = async ({
     const blocked = await amIBlockedByUser({
       userId,
       targetUserId: userChallenge.createdById ?? undefined,
+      // An entry is a write: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) throw throwBadRequestError('This challenge is not available.');
   }

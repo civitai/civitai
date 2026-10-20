@@ -349,7 +349,12 @@ describe('getImageGenerationData visibility', () => {
     await seed({});
     vi.mocked(amIBlockedByUser).mockResolvedValue(true);
     expect(await sees(OTHER)).toBe(false);
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    // A read: the block check stays cache-only.
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: false,
+    });
   });
 
   it('skips the block check for moderators and signed-out viewers', async () => {

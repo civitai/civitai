@@ -20,6 +20,7 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 
 const VIEWER = 101;
 const BLOCKER = 202;
@@ -65,6 +66,8 @@ describe('amIBlockedByUser', () => {
 
 describe('amIBlockedByUser — confirmOnPrimary (interaction gates)', () => {
   it('returns true when the primary has a Block the cache lacks', async () => {
+    dbMock.dbRead.userEngagement.findFirst.mockResolvedValue(null);
+
     await expect(
       amIBlockedByUser({ userId: VIEWER, targetUserId: BLOCKER, confirmOnPrimary: true })
     ).resolves.toBe(true);
@@ -103,6 +106,9 @@ describe('amIBlockedByUser — confirmOnPrimary (interaction gates)', () => {
 
 describe('throwIfBlockedByOwners — a comment/reaction gate', () => {
   it('denies when the primary has a Block the cache lacks', async () => {
+    // Differential: the replica has no row, so only a primary read can deny.
+    dbMock.dbRead.userEngagement.findFirst.mockResolvedValue(null);
+
     await expect(
       throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [BLOCKER] })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
@@ -122,6 +128,29 @@ describe('throwIfBlockedByOwners — a comment/reaction gate', () => {
     await expect(
       throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [BLOCKER] })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(dbMock.dbWrite.userEngagement.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertImageVisibleToViewer — the prompt-provenance mint gate', () => {
+  const IMAGE = { id: 9, userId: BLOCKER, nsfwLevel: 1, postId: null };
+
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([IMAGE]);
+    // Differential: only the primary has the Block.
+    dbMock.dbRead.userEngagement.findFirst.mockResolvedValue(null);
+  });
+
+  it('refuses the mint when only the primary has the Block', async () => {
+    await expect(
+      assertImageVisibleToViewer({ id: IMAGE.id, userId: VIEWER, confirmBlockOnPrimary: true })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('keeps read callers cache-only: no primary lookup', async () => {
+    await expect(assertImageVisibleToViewer({ id: IMAGE.id, userId: VIEWER })).resolves.toEqual(
+      IMAGE
+    );
     expect(dbMock.dbWrite.userEngagement.findFirst).not.toHaveBeenCalled();
   });
 });
