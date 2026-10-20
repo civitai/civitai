@@ -54,13 +54,30 @@ describe('getPlans by Stripe key mode', () => {
     expect(await plans(LIVE_KEY)).toEqual(['prod_live_gold']);
   });
 
-  it('shows a sandbox key only the sandbox copies', async () => {
-    expect(await plans(TEST_KEY)).toEqual(['prod_sandbox_gold']);
+  it.each([
+    ['no key', undefined],
+    ['a restricted live key', 'rk_live_00000000000000000000'],
+  ])('reads %s as live, so a catalogue without sandbox rows is listed whole', async (_, key) => {
+    dbMock.dbWrite.product.findMany.mockResolvedValue([liveGold]);
+    expect(await plans(key as string)).toEqual(['prod_live_gold']);
   });
 
-  it('leaves other providers alone under a sandbox key', async () => {
-    dbMock.dbWrite.product.findMany.mockResolvedValue([plan('pro_paddle_gold', 'Paddle')]);
-    expect(await plans(TEST_KEY, PaymentProvider.Paddle)).toEqual(['pro_paddle_gold']);
+  it.each([TEST_KEY, 'rk_test_00000000000000000000'])(
+    'shows a sandbox key (%s) only the sandbox copies',
+    async (key) => {
+      expect(await plans(key)).toEqual(['prod_sandbox_gold']);
+    }
+  );
+
+  it.each([LIVE_KEY, TEST_KEY])('leaves other providers alone (%s)', async (key) => {
+    dbMock.dbWrite.product.findMany.mockResolvedValue([
+      plan('pro_paddle_gold', 'Paddle'),
+      plan('pro_paddle_marked', 'Paddle', { live_id: 'x' }),
+    ]);
+    expect(await plans(key, PaymentProvider.Paddle)).toEqual([
+      'pro_paddle_gold',
+      'pro_paddle_marked',
+    ]);
   });
 });
 

@@ -8,8 +8,12 @@ export const LIVE_ID_KEY = 'live_id';
 
 export type StripeKeyMode = 'live' | 'test';
 
+export function isTestKey(key: string | undefined) {
+  return !!key && /^(sk|rk)_test_/.test(key);
+}
+
 export function stripeKeyMode(secretKey: string | undefined): StripeKeyMode {
-  return secretKey && /^(sk|rk)_test_/.test(secretKey) ? 'test' : 'live';
+  return isTestKey(secretKey) ? 'test' : 'live';
 }
 
 export function isSandboxCopy(metadata: unknown) {
