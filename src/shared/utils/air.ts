@@ -1,4 +1,5 @@
 import { Air } from '@civitai/client';
+import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/strength.constants';
 import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -212,8 +213,7 @@ export function rawAirGenerationResource(stored: {
     canGenerate: true,
     hasAccess: true,
     strength: stored.strength ?? 1,
-    minStrength: -1,
-    maxStrength: 2,
+    settings: { strength: DEFAULT_STRENGTH_RANGE },
     air: stored.air,
     workflowId: stored.workflowId,
     model: { id: stored.id, name: label, type: ModelType.LORA },

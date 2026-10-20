@@ -1,3 +1,4 @@
+import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/strength.constants';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -1213,8 +1214,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'SD 1.5',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1232,8 +1232,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'SDXL 1.0',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1251,8 +1250,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Pony',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1270,8 +1268,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'PonyV7',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1295,8 +1292,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Illustrious',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1314,8 +1310,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Chroma',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1333,8 +1328,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'NoobAI',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1352,8 +1346,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.1 D',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1371,8 +1364,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.1 Krea',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1390,8 +1382,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.2 D',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1409,8 +1400,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.2 Klein 9B',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1428,8 +1418,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.2 Klein 9B-base',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1447,8 +1436,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.2 Klein 4B',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1466,8 +1454,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.2 Klein 4B-base',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1485,8 +1472,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Qwen',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1504,8 +1490,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Seedream',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1523,8 +1508,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'HiDream',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       covered: true,
@@ -1553,8 +1537,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Flux.1 Kontext',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1572,8 +1555,7 @@ export const generationConfig = {
   //     trainedWords: [],
   //     baseModel: 'SD 3.5',
   //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
+  //     settings: { strength: DEFAULT_STRENGTH_RANGE },
   //     canGenerate: true,
   //     hasAccess: true,
   //     model: {
@@ -1591,8 +1573,7 @@ export const generationConfig = {
   //     trainedWords: [],
   //     baseModel: 'SD 3.5 Medium',
   //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
+  //     settings: { strength: DEFAULT_STRENGTH_RANGE },
   //     canGenerate: true,
   //     hasAccess: true,
   //     model: {
@@ -1614,8 +1595,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'OpenAI',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1640,8 +1620,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Imagen4',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1659,8 +1638,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'NanoBanana',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1678,8 +1656,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'ZImageTurbo',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1697,8 +1674,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'ZImageBase',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {
@@ -1717,8 +1693,7 @@ export const generationConfig = {
       trainedWords: [],
       baseModel: 'Other',
       strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       canGenerate: true,
       hasAccess: true,
       model: {

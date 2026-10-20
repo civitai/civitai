@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import '~/__tests__/mocks/db.mock';
 import { recommendedGenerationSettingsSchema } from '~/server/schema/model-version.schema';
 
-const { assertRecommendedSettingsForType } = await import(
+const { assertRecommendedSettingsForType, withPairedStrength } = await import(
   '~/server/services/model-version.service'
 );
 
@@ -75,5 +75,27 @@ describe('recommendedGenerationSettingsSchema', () => {
     expect(result.success).toBe(ok);
     if (result.success) expect(result.data.turboLora).toEqual(turboLora);
     else expect(result.error.issues[0]?.path).toEqual(['turboLora', 'strength']);
+  });
+});
+
+describe('withPairedStrength', () => {
+  const resource = {
+    id: 1,
+    strength: 1,
+    settings: { strength: { min: 0, max: 1, default: 1 } },
+    turbo: true,
+  };
+
+  it("takes the row's strength and nothing else from its settings JSON", () => {
+    const paired = withPairedStrength(resource, {
+      strength: 0.6,
+      minStrength: 5,
+      turbo: { steps: { min: 1, max: 2, default: 1 } },
+    });
+    expect(paired).toEqual({ ...resource, strength: 0.6 });
+  });
+
+  it.each([null, undefined, {}, { strength: null }])('leaves the resource alone for %s', (row) => {
+    expect(withPairedStrength(resource, row)).toBe(resource);
   });
 });

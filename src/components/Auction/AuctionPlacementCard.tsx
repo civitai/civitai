@@ -906,8 +906,7 @@ export const ModelPlacementCard = memo(function ModelPlacementCard({
                             // TODO make a discriminator so we dont have to do this
                             ...data.entityData,
                             strength: -1,
-                            minStrength: -1,
-                            maxStrength: -1,
+                            settings: { strength: { min: -1, max: -1, default: -1 } },
                             trainedWords: [],
                             canGenerate: true,
                             hasAccess: true,

@@ -31,7 +31,7 @@ function ecosystemTurboSettings(ecosystemKey: string): TurboSettings | undefined
 }
 
 function defaultTurboLora(turbo: TurboOption, model: unknown): ResourceData {
-  const own = (model as ResourceData | undefined)?.turboLora;
+  const own = (model as ResourceData | undefined)?.settings?.turboLora;
   return own ? turboLoraValue(own.id, own.strength) : turboLoraValue(turbo.lora);
 }
 
@@ -106,7 +106,7 @@ export function additionalResources<T>(
   };
 }
 
-/** A hydrated LoRA says so itself; a bare id is turbo when it is the family's default or the pick. */
+/** A hydrated LoRA carries the flag; a bare id is turbo when it is the family's default or the pick. */
 const isTurboResource = (resource: unknown, familyDefaultId: number, pick?: ResourceData) => {
   const r = resource as ResourceData | null | undefined;
   if (!r || typeof r.id !== 'number') return false;
@@ -210,7 +210,9 @@ const turboAwareSlider =
   (opts: SliderOpts, key: keyof TurboSettings, turbo: TurboOption) => (ctx: TurboSliderCtx) => {
     const { _ext, resources, turboLora } = ctx;
     const active = activeTurboLora(resources, turbo.lora, turboLora);
-    const band = active && (active.turbo?.[key] ?? ecosystemTurboSettings(_ext.ecosystem)?.[key]);
+    const band =
+      active &&
+      (active.recommendedSettings?.[key] ?? ecosystemTurboSettings(_ext.ecosystem)?.[key]);
     if (!active || !band) return perModelSlider(opts)(ctx);
     const clamp = (v: number) => Math.min(opts.max, Math.max(opts.min, v));
     const recommended = { min: clamp(band.min), max: clamp(band.max) };

@@ -51,11 +51,11 @@ export type EcosystemSupport = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
-/** A recommended value with the advisory band the generator paints around it. */
-export type RecommendedRange = { min: number; max: number; default: number };
+/** A default with its bounds. */
+export type Range = { min: number; max: number; default: number };
 
 /** The settings a turbo LoRA applies when it is on. */
-export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
+export type TurboSettings = { steps: Range; cfgScale: Range };
 
 /** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
 export const TURBO_PRESETS = {
@@ -81,7 +81,7 @@ export type EcosystemSettings = {
     engine?: string;
     /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
     turbo?: {
-      /** Prefills a LoRA version's turbo block; the generator uses it for a turbo LoRA whose own block is not loaded. */
+      /** Prefills a LoRA version's turbo settings; the generator uses it for a turbo LoRA whose own `recommendedSettings` are not loaded. */
       settings: TurboSettings;
     };
   };

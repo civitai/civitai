@@ -32,8 +32,11 @@ export type ResourceSelectValue = GenerationResource;
  * is a plain string on the wire. The picker hydrates by id when fields are
  * missing, so the prop type reflects that.
  */
-export type PartialResourceValue = Partial<Omit<GenerationResource, 'model' | 'epochDetails'>> & {
+export type PartialResourceValue = Partial<
+  Omit<GenerationResource, 'model' | 'epochDetails' | 'settings'>
+> & {
   id: number;
+  settings?: Partial<GenerationResource['settings']>;
   model?: { type?: string } & Partial<Omit<GenerationResource['model'], 'type'>>;
   epochDetails?: Partial<NonNullable<GenerationResource['epochDetails']>>;
 };

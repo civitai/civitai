@@ -1,10 +1,12 @@
 import * as z from 'zod';
+import { rangeSchema } from '~/shared/zod/range.schema';
 import type { Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionTermsSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
+import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/strength.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
@@ -45,8 +47,18 @@ const generationResourceSchemaBase = z.object({
     .object({ endsAt: z.coerce.date().nullable(), terms: modelVersionTermsSchema })
     .nullish(),
   canGenerate: z.boolean(),
-  minStrength: z.number().default(-1),
-  maxStrength: z.number().default(2),
+  settings: z
+    .object({
+      strength: rangeSchema,
+      clipSkip: z.number().optional(),
+      vae: z.number().optional(),
+      turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
+    })
+    .default({ strength: DEFAULT_STRENGTH_RANGE }),
+  turbo: z.boolean().optional(),
+  recommendedSettings: z
+    .object({ steps: rangeSchema.optional(), cfgScale: rangeSchema.optional() })
+    .optional(),
   image: imageSchema
     .pick({ url: true, type: true })
     .extend({ url: z.url().or(z.string().uuid()) })

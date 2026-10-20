@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { rangeSchema } from '~/shared/zod/range.schema';
+import type { ResourceSettings } from '~/shared/types/generation.types';
 import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
@@ -353,16 +355,17 @@ export const SNIPPETS: FieldDef<SnippetsValue> = {
 
 // --- resources / model ---------------------------------------------------------
 
-const turboRangeSchema = z.object({ min: z.number(), max: z.number(), default: z.number() });
-
 export const resourceSchema = z.object({
   id: z.number(),
   baseModel: z.string().optional(),
   model: z.object({ type: z.string() }),
   strength: z.number().optional(),
+  // Form state saved before the flag carries the band here; it still means turbo.
+  turbo: z.preprocess((v) => (v && typeof v === 'object' ? true : v), z.boolean().optional()),
   // Client-supplied: clamp before use.
-  turbo: z.object({ steps: turboRangeSchema, cfgScale: turboRangeSchema }).optional(),
-  turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
+  recommendedSettings: z
+    .object({ steps: rangeSchema.optional(), cfgScale: rangeSchema.optional() })
+    .optional(),
   trainedWords: z.array(z.string()).optional(),
   epochDetails: z.object({ epochNumber: z.number().optional() }).optional(),
   // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row) —
@@ -372,7 +375,10 @@ export const resourceSchema = z.object({
   workflowId: z.string().optional(),
   name: z.string().optional(),
 });
-export type ResourceData = z.infer<typeof resourceSchema>;
+/** `settings` is client state only: the output schema does not carry it, so nothing read from it reaches the request. */
+export type ResourceData = z.infer<typeof resourceSchema> & {
+  settings?: Partial<ResourceSettings>;
+};
 
 export const resourceInputSchema = z.union([
   z.number().transform((id) => ({ id })),

@@ -65,8 +65,9 @@ export function toResourceData(r: GenerationResource): ResourceData {
     // behaviour off the model, e.g. MOSS Image's turbo LoRA defaults
     model: { id: r.model?.id, type: r.model?.type } as ResourceData['model'],
     strength: r.strength,
-    ...(r.turbo && { turbo: r.turbo }),
-    ...(r.turboLora && { turboLora: r.turboLora }),
+    ...(r.turbo && { turbo: true }),
+    ...(r.recommendedSettings && { recommendedSettings: r.recommendedSettings }),
+    ...(r.settings?.turboLora && { settings: { turboLora: r.settings.turboLora } }),
     trainedWords: r.trainedWords && r.trainedWords.length > 0 ? r.trainedWords : undefined,
   };
 }

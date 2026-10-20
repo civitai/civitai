@@ -33,6 +33,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
+import { strengthSliderBounds } from '~/shared/constants/strength.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -255,7 +256,7 @@ function ResourceInfoCard({
   isPartiallySupported,
 }: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
+  const strengthBounds = strengthSliderBounds(resource.settings?.strength);
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
   const hasSubstitute = unavailable && resource.substitute?.canGenerate === true;
   const { domain } = useAppContext();
@@ -394,8 +395,8 @@ function ResourceInfoCard({
               className="flex-1"
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
-              min={!isSameMinMaxStrength ? resource.minStrength : -1}
-              max={!isSameMinMaxStrength ? resource.maxStrength : 2}
+              min={strengthBounds.min}
+              max={strengthBounds.max}
               step={0.05}
               reverse
             />

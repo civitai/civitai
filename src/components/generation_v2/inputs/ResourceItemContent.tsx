@@ -14,6 +14,7 @@
 import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { strengthSliderBounds } from '~/shared/constants/strength.constants';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
@@ -183,7 +184,7 @@ export function ResourceItemContent({
     !isDisabled &&
     ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type) &&
     onStrengthChange;
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
+  const strengthBounds = strengthSliderBounds(resource.settings?.strength);
 
   const modelUrl = getModelUrl({
     modelId: resource.model.id,
@@ -328,8 +329,8 @@ export function ResourceItemContent({
             className="flex-1"
             value={strengthValue ?? resource.strength ?? 1}
             onChange={(strength) => onStrengthChange(strength ?? 1)}
-            min={!isSameMinMaxStrength ? resource.minStrength : -1}
-            max={!isSameMinMaxStrength ? resource.maxStrength : 2}
+            min={strengthBounds.min}
+            max={strengthBounds.max}
             step={0.05}
             disabled={disabled}
           />

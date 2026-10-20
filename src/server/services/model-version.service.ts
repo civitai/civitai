@@ -561,6 +561,15 @@ export function assertRecommendedSettingsForType(
 }
 
 /**
+ * Recommended-resource rows only write `strength`; spreading the row's settings JSON would
+ * clobber the resource's hydrated `settings`.
+ */
+export function withPairedStrength<T extends { strength: number }>(resource: T, row: unknown): T {
+  const strength = (row as { strength?: number | null } | null | undefined)?.strength;
+  return strength != null ? { ...resource, strength } : resource;
+}
+
+/**
  * Only a deleted version is dropped (an unpublished one is kept); the id becomes every viewer's
  * default, so the server re-checks it is a turbo LoRA of this ecosystem.
  */

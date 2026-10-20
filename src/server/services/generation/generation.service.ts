@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/strength.constants';
 import {
   coverageAudience,
   coverageColumn,
@@ -696,13 +697,12 @@ const getModelVersionGenerationData = async ({
     }
   }
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
-  // Resolve VAE from linked components instead of vaeId
   if (checkpoint) {
     const vaeMap = await getLinkedVaeIds([checkpoint.id]);
     const vaeVersionId = vaeMap.get(checkpoint.id);
     if (vaeVersionId) {
       const [vae] = await getResourceData([vaeVersionId], { user, generation });
-      if (vae) resources.push({ ...vae, vaeId: undefined });
+      if (vae) resources.push(vae);
     }
   }
 
@@ -711,7 +711,7 @@ const getModelVersionGenerationData = async ({
   // Build params from checkpoint settings
   const params = mapDataToGraphInput(
     {
-      clipSkip: checkpoint?.clipSkip,
+      clipSkip: checkpoint?.settings.clipSkip,
     },
     deduped
   );
@@ -1348,7 +1348,7 @@ export async function getResourceData(
   );
 
   function transformGenerationData(
-    { settings, ...item }: GenerationResourceDataModel,
+    { settings, clipSkip, vaeId, ...item }: GenerationResourceDataModel,
     epochNumber?: number
   ) {
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
@@ -1407,16 +1407,23 @@ export async function getResourceData(
       // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
       // resourceDataCache, whose TTL would serve stale gating terms after a config change.
       paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      strength: settings?.strength ?? 1,
-      turbo: settings?.turbo ?? undefined,
-      turboLora: settings?.generation?.turboLora
-        ? {
+      settings: {
+        strength: {
+          min: settings?.minStrength ?? LORA_STRENGTH_BOUNDS.min,
+          max: settings?.maxStrength ?? LORA_STRENGTH_BOUNDS.max,
+          default: settings?.strength ?? 1,
+        },
+        ...(clipSkip != null && { clipSkip }),
+        ...(vaeId != null && { vae: vaeId }),
+        ...(settings?.generation?.turboLora && {
+          turboLora: {
             id: settings.generation.turboLora.id,
             strength: settings.generation.turboLora.strength ?? undefined,
-          }
-        : undefined,
+          },
+        }),
+      },
+      ...(settings?.turbo && { turbo: true, recommendedSettings: settings.turbo }),
+      strength: settings?.strength ?? 1,
       hasAccess,
       canGenerate,
       epochNumber,
