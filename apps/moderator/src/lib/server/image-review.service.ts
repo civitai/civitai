@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
+import { getFlagClearHolds } from './csam-flag-clear';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -188,11 +189,15 @@ export type CsamQueueUser = {
   userId: number;
   username: string | null;
   flagged: number;
+  /** Flagged and already removed, at any browsing level: what a bulk clear would clear. */
+  removed: number;
   latestImageId: number;
   /** Newest `reportSentAt` of the user's CSAM reports; null when none was sent. */
   reportSentAt: Date | null;
   /** Any CSAM report row for the user, sent or not. */
   reported: boolean;
+  /** A bulk clear of this user's flags would be refused. */
+  held: boolean;
 };
 
 /** The CSAM review queue as one row per owning user, most flagged first. Same rows and browsing-level
@@ -223,7 +228,7 @@ export async function getCsamQueueByUser({
   const userIds = page.map((g) => g.userId);
   if (!userIds.length) return { users: [], truncated };
 
-  const [users, reports] = await Promise.all([
+  const [users, reports, removed, holds] = await Promise.all([
     dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
     dbRead
       .selectFrom('CsamReport')
@@ -231,7 +236,17 @@ export async function getCsamQueueByUser({
       .where('userId', 'in', userIds)
       .groupBy('userId')
       .execute(),
+    dbRead
+      .selectFrom('Image')
+      .select(['userId', sql<number>`count(*)::int`.as('count')])
+      .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+      .where('ingestion', '=', 'Blocked')
+      .where('userId', 'in', userIds)
+      .groupBy('userId')
+      .execute(),
+    getFlagClearHolds(userIds),
   ]);
+  const removedByUser = new Map(removed.map((r) => [r.userId, Number(r.count)]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r.reportSentAt]));
 
@@ -240,9 +255,11 @@ export async function getCsamQueueByUser({
       userId: g.userId,
       username: usernames.get(g.userId) ?? null,
       flagged: Number(g.flagged),
+      removed: removedByUser.get(g.userId) ?? 0,
       latestImageId: Number(g.latestImageId),
       reportSentAt: reportsByUser.get(g.userId) ?? null,
       reported: reportsByUser.has(g.userId),
+      held: holds.has(g.userId),
     })),
     truncated,
   };
