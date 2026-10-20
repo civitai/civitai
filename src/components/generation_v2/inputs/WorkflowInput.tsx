@@ -291,6 +291,9 @@ const WorkflowSegmentButton = forwardRef<HTMLButtonElement, WorkflowSegmentButto
 
 WorkflowSegmentButton.displayName = 'WorkflowSegmentButton';
 
+/** Capped to the viewport so a long list scrolls instead of running off the bottom. */
+const DROPDOWN_CLASS = 'max-h-[70vh] overflow-y-auto';
+
 // =============================================================================
 // Workflow List Content (shared between Popover and Modal)
 // =============================================================================
@@ -710,7 +713,7 @@ export function WorkflowInput({
             onClick={handleImageClick}
           />
         </Popover.Target>
-        <Popover.Dropdown p="xs">
+        <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
           <WorkflowListContent
             categories={imageCategories}
             selectedValue={selected?.workflow.id}
@@ -740,7 +743,7 @@ export function WorkflowInput({
               onClick={handleVideoClick}
             />
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
             <WorkflowListContent
               categories={videoCategories}
               selectedValue={selected?.workflow.id}
@@ -771,7 +774,7 @@ export function WorkflowInput({
               onClick={handleAudioClick}
             />
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
             <WorkflowListContent
               categories={audioCategories}
               selectedValue={selected?.workflow.id}
@@ -802,7 +805,7 @@ export function WorkflowInput({
               onClick={handleModel3dClick}
             />
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p="xs" className={DROPDOWN_CLASS}>
             <WorkflowListContent
               categories={model3dCategories}
               selectedValue={selected?.workflow.id}
