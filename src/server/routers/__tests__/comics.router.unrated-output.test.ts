@@ -228,7 +228,7 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
     expect(mocks.updateWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true })
+      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true, throwOnError: true })
     );
     const [data] = writes();
     expect(data.status).toBe('Generating');
