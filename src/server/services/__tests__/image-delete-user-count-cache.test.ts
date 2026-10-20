@@ -47,6 +47,7 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
+import * as postService from '~/server/services/post.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imagesSearchIndex } from '~/server/search-index';
@@ -90,8 +91,28 @@ describe('deleteImageById', () => {
     expect(bustSpy).toHaveBeenCalledWith(OWNER_ID);
   });
 
-  // A row the delete did not remove (a hold marker kept it, or it was already gone) still leaves
-  // search, and nothing else runs for it.
+  // A hold marker's delete trigger kept the row, blocked it and took it out of its post: every
+  // cache a delete busts is stale for it too, its post's included.
+  it("busts a kept row's caches and its post's", async () => {
+    const postBust = vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined);
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"EvidenceHoldImage"')
+        ? [{ imageId: IMAGE_ID, userId: OWNER_ID, postId: POST_ID }]
+        : []) as never);
+    mockDbWrite.image.delete.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'x' })
+    );
+
+    await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
+    expect(postBust).toHaveBeenCalledWith([POST_ID]);
+  });
+
+  // Already gone: no kept record, so it leaves search and nothing else runs for it.
   it('drops a row the delete did not remove from search, and stops there', async () => {
     mockDbWrite.$queryRaw.mockResolvedValue([]);
     mockDbWrite.image.delete.mockRejectedValue(

@@ -728,6 +728,36 @@ export function attachTagsToImages<TImage extends { id: number }, TTag extends {
   return images.map((i) => ({ ...i, tags: tagsByImageId?.get(i.id) ?? [] }));
 }
 
+type KeptImage = { imageId: number; userId: number; postId: number | null };
+
+/** Of `ids`, the ones a hold marker's delete trigger kept, with the post each was taken out of. */
+async function getKeptImages(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<KeptImage[]>`
+    SELECT "imageId", "userId", "postId" FROM "EvidenceHoldImage"
+    WHERE "imageId" IN (${Prisma.join(ids)})
+  `;
+}
+
+/** A kept image is now blocked and out of its post, so the caches a delete busts are stale too. */
+async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
+  const ids = kept.map((x) => x.imageId);
+  const postIds = updatePosts ? uniq(kept.map((x) => x.postId).filter(isDefined)) : [];
+  await Promise.all([
+    invalidateManyImageExistence(ids),
+    imageMetaCache.refresh(ids),
+    imageMetadataCache.refresh(ids),
+    userImageVideoCountCaches.bust(uniq(kept.map((x) => x.userId))),
+    ...(postIds.length
+      ? [
+          updatePostNsfwLevel(postIds),
+          bustCachesForPosts(postIds),
+          postMetrics.queueUpdate(postIds),
+        ]
+      : []),
+  ]);
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -758,7 +788,11 @@ export const deleteImageById = async ({
     // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
     // off the site instead). Either way it leaves search like any deleted image.
     if (!image) {
-      await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
+      const [kept] = await getKeptImages([id]);
+      await Promise.all([
+        queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete }),
+        ...(kept ? [bustKeptImages([kept], updatePost)] : []),
+      ]);
       return;
     }
 
@@ -904,6 +938,11 @@ export async function deleteImages(
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
+    const returned = new Set(imageIds);
+    const kept =
+      !onlyWhere && results.length < ids.length
+        ? await getKeptImages(ids.filter((id) => !returned.has(id)))
+        : [];
     const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
@@ -927,6 +966,7 @@ export async function deleteImages(
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
       // Custom video thumbnails are cached under their video; see deleteImageById.
       ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
+      ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
     ]);
 
     await Limiter({ batchSize: 5 }).process(

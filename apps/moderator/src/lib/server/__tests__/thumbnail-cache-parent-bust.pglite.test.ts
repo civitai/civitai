@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { REDIS_KEYS } from '@civitai/redis';
@@ -58,6 +61,7 @@ const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
 const { deleteImagesByIds } = await import('../image-deletion');
+const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -212,5 +216,48 @@ describe('moderator writes that change a custom thumbnail', () => {
 
     expect(bustedKeys()).toEqual(expect.arrayContaining([key(VIDEO_ID), key(OTHER_VIDEO_ID)]));
     expect(reindexed().sort()).toEqual([VIDEO_ID, OTHER_VIDEO_ID]);
+  });
+});
+
+// A held owner's image is kept by the hold's delete trigger (the real migration, installed here),
+// blocked and taken out of its post: that post's gallery caches are as stale as for a delete.
+describe('deleteImagesByIds on an image a hold marker keeps', () => {
+  const HOLD_MIGRATION = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+    ),
+    'utf-8'
+  );
+  const OWNER = 42;
+  const POST = 900;
+
+  beforeEach(async () => {
+    vi.mocked(bustPostGalleryCaches).mockClear();
+    await db.exec(`
+      CREATE TABLE "CsamReport" (
+        "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
+        "details" JSONB NOT NULL DEFAULT '{}'
+      );
+      CREATE FUNCTION update_post_nsfw_levels(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+    `);
+    await db.exec(HOLD_MIGRATION);
+    await db.exec(`
+      INSERT INTO "EvidenceHold" ("userId", "role", "reason") VALUES (${OWNER}, 'manual', 'review');
+      UPDATE "Image" SET "userId" = ${OWNER}, "postId" = ${POST} WHERE "id" = ${PLAIN_IMAGE_ID};
+    `);
+  });
+
+  it('busts the post the image was taken out of, and the image leaves search', async () => {
+    await deleteImagesByIds([PLAIN_IMAGE_ID]);
+
+    const row = await db.query(`SELECT "postId" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`);
+    expect(row.rows).toEqual([{ postId: null }]);
+    expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
+    expect(
+      syncSearchIndexBulk.mock.calls
+        .filter(([batch]) => batch.action === 'delete')
+        .flatMap(([batch]) => batch.entityIds)
+    ).toEqual([PLAIN_IMAGE_ID]);
   });
 });

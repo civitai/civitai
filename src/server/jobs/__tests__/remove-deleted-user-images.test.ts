@@ -228,6 +228,26 @@ const EVIDENCE_HOLD =
 const blockedByHold = (sql: string, held: boolean | undefined) => !!held && EVIDENCE_HOLD.test(sql);
 const heldOnPrimary = (fixture: Fixture) => fixture.primaryHeld ?? fixture.held;
 
+/**
+ * A held owner's blocked image is one the hold's delete trigger already kept, so the drain leaves it
+ * alone. Read off both spellings the job uses: the worklist's `h.held` and the drain's subquery.
+ */
+const HOLD_KEEPS_BLOCKED =
+  /NOT \(\s*(?:h\.held AND i\.ingestion = 'Blocked'|i\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+AND EXISTS \(SELECT 1 FROM "EvidenceHeldUser")/;
+/** The worklist leaves a held owner's `AiNotVerified` rows alone too. */
+const HOLD_KEEPS_AI_NOT_VERIFIED = /"blockedFor" = \? AND NOT h\.held\)/;
+/** The worklist leaves a held owner's posts alone. */
+const HOLD_KEEPS_POSTS = /FROM "Post" p WHERE p\."userId" = u\.id\)\s+AND NOT h\.held/;
+const notKeptByHold = (
+  sql: string,
+  fixture: Fixture,
+  held: boolean | undefined,
+  images: number[]
+) =>
+  held && HOLD_KEEPS_BLOCKED.test(sql)
+    ? images.filter((id) => ingestionOf(fixture, id) !== 'Blocked')
+    : images;
+
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
 function passesPrimaryChoice(sql: string, fixture: Fixture) {
   const predicate = IMMEDIATE_PREDICATE.exec(sql)?.[1];
@@ -413,11 +433,17 @@ function seed(next: Record<number, Fixture>) {
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
+          const keptAi = fixture.held && HOLD_KEEPS_AI_NOT_VERIFIED.test(sql);
           const images =
             skipsBlockedForGraceOnly && immediate
-              ? fixture.images
-              : pendingImages(sql, values, fixture);
-          const posts = skipsGracePosts && !immediate ? [] : fixture.posts ?? [];
+              ? notKeptByHold(sql, fixture, fixture.held, fixture.images)
+              : pendingImages(sql, values, fixture).filter(
+                  (id) => !keptAi || ingestionOf(fixture, id) !== 'Blocked'
+                );
+          const posts =
+            (skipsGracePosts && !immediate) || (fixture.held && HOLD_KEEPS_POSTS.test(sql))
+              ? []
+              : fixture.posts ?? [];
           return (
             (selectsImageOwners && images.length > 0) || (selectsPostOwners && posts.length > 0)
           );
@@ -442,7 +468,14 @@ function seed(next: Record<number, Fixture>) {
       const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
       if (sql.includes('"hasImages"')) {
-        const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
+        const held = !!heldOnPrimary(fixture) && sql.includes('"EvidenceHeldUser"');
+        const state = {
+          stillDeleted: !fixture.restored,
+          held,
+          hasImages:
+            fixture.images.filter((id) => !held || ingestionOf(fixture, id) !== 'Blocked').length >
+            0,
+        };
         if (fixture.restoredAfterCheck) fixture.restored = true;
         return Promise.resolve([state]);
       }
@@ -468,7 +501,12 @@ function seed(next: Record<number, Fixture>) {
         if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve([]);
         if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         if (blockedByHold(sql, heldOnPrimary(fixture))) return Promise.resolve([]);
-        const images = pendingImages(sql, values, fixture);
+        const images = notKeptByHold(
+          sql,
+          fixture,
+          heldOnPrimary(fixture),
+          pendingImages(sql, values, fixture)
+        );
         const page = images.slice(0, limit).map((id) => ({
           id,
           wasBlocked: ingestionOf(fixture, id) === 'Blocked',
@@ -518,10 +556,19 @@ function seed(next: Record<number, Fixture>) {
     }
   );
 
+  // A held owner's rows are kept and blocked by the hold's delete trigger, and not returned.
   mockDeleteImages.mockImplementation(async (ids: number[]) => {
-    for (const fixture of Object.values(fixtures))
+    const deleted: number[] = [];
+    for (const fixture of Object.values(fixtures)) {
+      const requested = fixture.images.filter((id) => ids.includes(id));
+      if (heldOnPrimary(fixture)) {
+        for (const id of requested) (fixture.ingestion ??= {})[id] = 'Blocked';
+        continue;
+      }
       fixture.images = fixture.images.filter((id) => !ids.includes(id));
-    return ids.map((id) => ({ id }));
+      deleted.push(...requested);
+    }
+    return deleted.map((id) => ({ id }));
   });
 }
 
@@ -1414,8 +1461,10 @@ describe('an image carrying the moderator-only review flag', () => {
   });
 });
 
+// The delete still runs for a held owner, so the hold's trigger takes the images off the site; the
+// rows it keeps, and the owner's posts, stay.
 describe('an account under a hold marker', () => {
-  it('keeps the account out of both worklists', async () => {
+  it('attempts the delete of every live image, keeps the posts, and finishes the account', async () => {
     cursorStore[FRESH_KEY] = NEWER;
     seed({
       7: { deletedAt: RECENT, images: ids(10), posts: [900], held: true },
@@ -1424,29 +1473,48 @@ describe('an account under a hold marker', () => {
 
     const result = await run();
 
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
+    expect(mockDeleteImages.mock.calls.flatMap(([batch]) => batch as number[]).sort()).toEqual(
+      [...ids(10), ...ids(10, 100)].sort()
+    );
     expect(result.deletedImages).toBe(0);
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(2);
+  });
+
+  it('leaves the account alone once every image is kept', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(3),
+        posts: [900],
+        held: true,
+        ingestion: { 1: 'Blocked', 2: 'Blocked', 3: 'Blocked' },
+        blockedFor: { 3: AI_NOT_VERIFIED },
+      },
+    });
+
+    await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
   });
 
-  it('stops the image delete for a hold placed after the worklist read', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryHeld: true } });
+  it('blocks a grace account’s live images', async () => {
+    seed({
+      7: { deletedAt: NEWER, images: ids(3), meta: { imageRemoval: 'grace' }, held: true },
+    });
 
     const result = await run();
 
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(pagedImageIds).toEqual([]);
-    expect(result.deletedImages).toBe(0);
+    expect(result.blockedImages).toBe(3);
   });
 
-  it('stops the post delete for a hold placed after the worklist read', async () => {
+  it('keeps the posts for a hold placed after the worklist read', async () => {
     seed({ 7: { deletedAt: NEWER, images: [], posts: [900], primaryHeld: true } });
 
-    const result = await run();
+    await run();
 
     expect(deletedPostIds).toEqual([]);
-    expect(result.deletedUsers).toBe(0);
   });
 
   it('does not hold an account with no marker', async () => {

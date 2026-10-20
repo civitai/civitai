@@ -6431,6 +6431,15 @@ model EvidenceHold {
   @@index([userId])
 }
 
+/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
+/// is the post it was in, and nothing else records it.
+model EvidenceHoldImage {
+  imageId Int      @id
+  userId  Int
+  postId  Int?
+  keptAt  DateTime @default(now())
+}
+
 /// @view
 /// The owners with at least one active `EvidenceHold`.
 model EvidenceHeldUser {

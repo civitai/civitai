@@ -37,6 +37,15 @@ CREATE UNIQUE INDEX "EvidenceHold_csamReportId_userId_key"
 CREATE INDEX "EvidenceHold_userId_idx" ON "EvidenceHold" ("userId");
 
 -- The one definition of "held". Every reader goes through this view.
+-- An image the delete trigger below kept, and the post it was in when it was kept: the trigger takes
+-- it out of that post, and this row is the only record of where it was.
+CREATE TABLE "EvidenceHoldImage" (
+  "imageId" INTEGER PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "postId" INTEGER,
+  "keptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE VIEW "EvidenceHeldUser" AS
 SELECT
   "userId",
@@ -78,8 +87,10 @@ FOR EACH ROW EXECUTE FUNCTION evidence_hold_from_csam_report();
 -- Backstop for every deletion path, including ones written later: a held owner's image row is not
 -- deleted. A direct DELETE skips the row (it is absent from RETURNING, so callers never go on to
 -- delete its stored file) and removes the image the way a moderator block does, so a delete still
--- takes it off the site. A delete reached from another trigger, which includes a cascade from a
--- parent row, raises instead: skipping a cascaded row would leave it pointing at a deleted parent.
+-- takes it off the site. It also leaves its post, so the owner does not see a deleted image come
+-- back there; "EvidenceHoldImage" records which post. A delete reached from another trigger, which
+-- includes a cascade from a parent row, raises instead: skipping a cascaded row would leave it
+-- pointing at a deleted parent.
 -- The block's values are the app's own (`NsfwLevel.Blocked`, `BlockedReason.Moderated`), pinned by
 -- remove-blocked-images-hold-guard.behavior.test.ts.
 CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
@@ -88,9 +99,15 @@ BEGIN
     IF pg_trigger_depth() > 1 THEN
       RAISE EXCEPTION 'Image % cannot be deleted', OLD."id";
     END IF;
+    -- The first record stands: a later delete finds the image already out of its post.
+    INSERT INTO "EvidenceHoldImage" ("imageId", "userId", "postId")
+    VALUES (OLD."id", OLD."userId", OLD."postId")
+    ON CONFLICT ("imageId") DO NOTHING;
     UPDATE "Image"
     SET "ingestion" = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'moderated', "updatedAt" = now()
     WHERE "id" = OLD."id" AND "ingestion" <> 'Blocked';
+    UPDATE "Image" SET "postId" = NULL, "updatedAt" = now()
+    WHERE "id" = OLD."id" AND "postId" IS NOT NULL;
     RETURN NULL;
   END IF;
   RETURN OLD;

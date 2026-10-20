@@ -26,6 +26,21 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+// The stored-file delete, captured by key: the only place a file leaves storage.
+const storage = vi.hoisted(() => ({ deletedKeys: [] as string[] }));
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getB2ImageS3Client: () => ({
+    send: async (command: { input: { Key: string } }) => {
+      storage.deletedKeys.push(command.input.Key);
+      return {};
+    },
+  }),
+}));
+vi.mock('~/server/services/storage-resolver', () => ({
+  resolveMediaLocation: async () => ({ backend: 'b2Image' }),
+  registerMediaLocation: vi.fn(),
+}));
 vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -38,7 +53,9 @@ import * as imageService from '~/server/services/image.service';
 import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
+import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -82,6 +99,8 @@ const MARKED = [RECENT_REPORTED, SECONDARY, MANUAL, RELEASED, EXTENDED];
 const LAPSED_USER = 11; // report sent a year and a day ago
 const LAPSED = 25;
 const LIVE_HELD = 26; // a held owner's image still on the site
+const POST_NEIGHBOUR = 27; // an unheld owner's image in the same post
+const POST = 500;
 
 const BACKFILL_RECENT_USER = 30;
 const BACKFILL_EXPIRED_USER = 31;
@@ -161,12 +180,13 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(values as never[]));
-    if (!flat.text.includes('DELETE FROM "Image"')) return [];
+    if (!flat.text.includes('DELETE FROM "Image"') && !flat.text.includes('"EvidenceHoldImage"'))
+      return [];
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
 
   await holder.db.exec(`
-    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold";
+    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${PLAIN}, ${PLAIN_USER}, 'Blocked', NULL),
       (${APPEALED}, ${PLAIN_USER}, 'Blocked', 'appeal'),
@@ -345,6 +365,53 @@ describe('purgeHoldGuard on the delete', () => {
         .mocked(imagesSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, ...MARKED].sort((a, b) => a - b));
+    });
+
+    // Keyed on the rows the DELETE returned, never on the ids asked for: a kept image's file is
+    // the evidence.
+    it("deletes the stored file of each deleted image and never a kept one's", async () => {
+      await holder.db.exec(`UPDATE "Image" SET url = 'file-' || id`);
+      storage.deletedKeys = [];
+      setEnv({ DATABASE_IS_PROD: true });
+      try {
+        await imageService.deleteImages([PLAIN, ...MARKED], true);
+      } finally {
+        setEnv({ DATABASE_IS_PROD: false });
+      }
+
+      expect(storage.deletedKeys.sort()).toEqual([`file-${PLAIN}`, `file-${RELEASED}`]);
+    });
+
+    it('takes a kept image out of its post and records which post it was in', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Image" (id, "userId", ingestion, "postId") VALUES
+          (${LIVE_HELD}, ${MANUAL_USER}, 'Scanned', ${POST}),
+          (${POST_NEIGHBOUR}, ${PLAIN_USER}, 'Scanned', ${POST});
+      `);
+      const postBust = vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined);
+      const inPost = async () =>
+        (
+          await holder.db.query<{ id: number }>(
+            `SELECT id FROM "Image" WHERE "postId" = ${POST} ORDER BY id`
+          )
+        ).rows.map((r) => r.id);
+      const record = async () =>
+        (
+          await holder.db.query(
+            `SELECT "imageId", "userId", "postId" FROM "EvidenceHoldImage" ORDER BY "imageId"`
+          )
+        ).rows;
+
+      await imageService.deleteImages([LIVE_HELD], true);
+
+      expect(await remaining()).toContain(LIVE_HELD);
+      expect(await inPost()).toEqual([POST_NEIGHBOUR]);
+      expect(await record()).toEqual([{ imageId: LIVE_HELD, userId: MANUAL_USER, postId: POST }]);
+      expect(postBust).toHaveBeenCalledWith([POST]);
+
+      // A second delete finds it already out of the post; the first record stands.
+      await imageService.deleteImages([LIVE_HELD], true);
+      expect(await record()).toEqual([{ imageId: LIVE_HELD, userId: MANUAL_USER, postId: POST }]);
     });
 
     // The trigger writes the block in SQL; these are the app's own values for a moderator block, so

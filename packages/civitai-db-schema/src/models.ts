@@ -3968,6 +3968,13 @@ export interface EvidenceHold {
   releaseReason: string | null;
 }
 
+export interface EvidenceHoldImage {
+  imageId: number;
+  userId: number;
+  postId: number | null;
+  keptAt: Date;
+}
+
 export interface EvidenceHeldUser {
   userId: number;
   heldUntil: Date | null;

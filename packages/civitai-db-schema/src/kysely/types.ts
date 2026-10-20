@@ -2982,6 +2982,12 @@ export type EvidenceHold = {
   releasedById: number | null;
   releaseReason: string | null;
 };
+export type EvidenceHoldImage = {
+  imageId: number;
+  userId: number;
+  postId: number | null;
+  keptAt: Generated<Timestamp>;
+};
 export type FeaturedModelVersion = {
   id: Generated<number>;
   modelVersionId: number;
@@ -6037,6 +6043,7 @@ export type DB = {
   EventCosmeticScoreDaily: EventCosmeticScoreDaily;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
+  EvidenceHoldImage: EvidenceHoldImage;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;

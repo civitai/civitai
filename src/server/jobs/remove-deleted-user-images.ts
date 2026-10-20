@@ -122,7 +122,12 @@ async function drainUser(
           SELECT 1 FROM "Image" f
           WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
         )
-        AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
+        -- A held owner's delete is still attempted: the hold's trigger keeps the row and blocks it
+        -- instead. One it has already blocked is not attempted again.
+        AND NOT (
+          i.ingestion = 'Blocked'::"ImageIngestionStatus"
+          AND EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
+        )
       LIMIT ${budget}
     `;
 
@@ -142,13 +147,25 @@ async function drainUser(
       budgetUsed += batch.length;
     }
 
-    const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
+    const [state] = await dbWrite.$queryRaw<
+      { stillDeleted: boolean; held: boolean; hasImages: boolean }[]
+    >`
       SELECT
         EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
-        EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
+        h.held,
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          WHERE i."userId" = ${userId}
+            AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus")
+        ) AS "hasImages"
+      FROM (SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId}) AS held) h
     `;
     if (!state.stillDeleted || state.hasImages)
       return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
+    // Done once only kept images are left: a held owner keeps their posts, and the post delete
+    // below refuses them anyway.
+    if (state.held)
+      return { deletedImages, blockedImages: 0, budgetUsed, drained: true, canceled: false };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Post" WHERE "userId" = ${userId}
@@ -448,6 +465,9 @@ export const removeDeletedUserImages = createJob(
           THEN 'immediate' ELSE 'grace'
         END AS mode
       ) m
+      CROSS JOIN LATERAL (
+        SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" eh WHERE eh."userId" = u.id) AS held
+      ) h
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
         AND NOT EXISTS (
@@ -458,18 +478,22 @@ export const removeDeletedUserImages = createJob(
         AND NOT EXISTS (
           SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
         )
-        AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = u.id)
+        -- A held owner's images are kept by the hold's delete trigger, blocked; once every one is,
+        -- the owner has nothing left here until the hold ends.
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
             WHERE i."userId" = u.id
               AND (
-                m.mode = 'immediate'
+                (m.mode = 'immediate' AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus"))
                 OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-                OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+                OR (i."blockedFor" = ${BlockedReason.AiNotVerified} AND NOT h.held)
               )
           )
-          OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
+          OR (
+            m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+            AND NOT h.held
+          )
         )
       ORDER BY u."deletedAt" ASC
       LIMIT ${USERS_PER_RUN}
@@ -497,6 +521,9 @@ export const removeDeletedUserImages = createJob(
             THEN 'immediate' ELSE 'grace'
           END AS mode
         ) m
+        CROSS JOIN LATERAL (
+          SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" eh WHERE eh."userId" = u.id) AS held
+        ) h
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
@@ -508,18 +535,22 @@ export const removeDeletedUserImages = createJob(
           AND NOT EXISTS (
             SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )
-          AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = u.id)
+          -- A held owner's images are kept by the hold's delete trigger, blocked; once every one is,
+          -- the owner has nothing left here until the hold ends.
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i
               WHERE i."userId" = u.id
                 AND (
-                  m.mode = 'immediate'
+                  (m.mode = 'immediate' AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus"))
                   OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-                  OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+                  OR (i."blockedFor" = ${BlockedReason.AiNotVerified} AND NOT h.held)
                 )
             )
-            OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
+            OR (
+              m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+              AND NOT h.held
+            )
           )
         ORDER BY u."deletedAt" DESC
         LIMIT ${USERS_PER_RUN}

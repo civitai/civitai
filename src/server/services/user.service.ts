@@ -1452,13 +1452,10 @@ export const removeAllContent = async ({
   await dbWrite.comment.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
   await dbWrite.article.deleteMany({ where: { userId: id } });
-  await dbWrite.post.deleteMany({ where: { userId: id } });
-  await dbWrite.model.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
-  // A hold marker keeps every image of this owner: the delete would skip each one, so it is not
-  // attempted, and the caller is told how many were kept rather than reading the wipe as complete.
+  // Before the posts: deleting a post takes its images out of it, and a hold marker's delete trigger
+  // records which post an image it keeps was in. A held owner's images are kept (blocked and out of
+  // their posts instead), and the caller is told how many rather than reading the wipe as complete.
   const [hold] = await dbWrite.$queryRaw<{ held: boolean }[]>`
     SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${id}) AS held
   `;
@@ -1471,15 +1468,18 @@ export const removeAllContent = async ({
       userId: id,
       count: keptUnderHold,
     }).catch(() => undefined);
-  else {
-    // remove images from s3 buckets before deleting them
-    try {
-      for (const image of images) {
-        await deleteImageById({ id: image.id });
-      }
-    } catch (e) {}
-    await dbWrite.image.deleteMany({ where: { userId: id } });
-  }
+  // remove images from s3 buckets before deleting them
+  try {
+    for (const image of images) {
+      await deleteImageById({ id: image.id });
+    }
+  } catch (e) {}
+  await dbWrite.image.deleteMany({ where: { userId: id } });
+
+  await dbWrite.post.deleteMany({ where: { userId: id } });
+  await dbWrite.model.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
+  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
   await modelsSearchIndex.queueUpdate(
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
