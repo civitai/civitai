@@ -158,7 +158,6 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
-import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -2108,6 +2107,7 @@ export const unpublishModelVersionById = async ({
   await updateModelLastVersionAt({ id: version.model.id });
   await bustMvCache(version.id, version.model.id);
   // Its posts are unpublished with it, and one may hold the model's .com cover.
+  const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
   await updateModelNsfwLevels([version.model.id]);
 
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
