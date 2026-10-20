@@ -68,7 +68,8 @@ describe('mintSearchToken', () => {
       SEARCH_TOKEN_API_KEY_UID: PARENT_UID,
       NEXT_PUBLIC_SEARCH_HOST: 'http://localhost:7700',
     });
-    const now = Date.UTC(2026, 9, 20, 3, 0, 0);
+    // Signing refuses an expiry in the past, so the clock has to be the real one.
+    const now = Date.now();
     const minted = mintSearchToken({ id: 42 }, now);
 
     expect(minted?.expiresAt).toBe(now + SEARCH_TOKEN_TTL_MS);
