@@ -98,6 +98,7 @@ import {
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
+import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -183,6 +184,7 @@ const loadModelVersion = async ({
             uploadType: true,
             user: { select: { id: true } },
             availability: true,
+            meta: true,
           },
         },
         files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
@@ -350,9 +352,16 @@ const loadModelVersion = async ({
       version.model.user.id
     );
 
+    // The version editor shows what the model's hide/show settings make each metric. Only those
+    // settings leave here, and only to the owner or a moderator: the rest of the meta is internal.
+    const { meta: modelMeta, ...model } = version.model;
+    const editorModelMeta: ModelMeta | null = isOwnerOrMod
+      ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
+      : null;
+
     return {
       ...version,
-      model: { ...version.model, ownerMetricPrivacyDefaults },
+      model: { ...model, meta: editorModelMeta, ownerMetricPrivacyDefaults },
       licensingFee,
       canGenerate,
       wildcardSetId,
