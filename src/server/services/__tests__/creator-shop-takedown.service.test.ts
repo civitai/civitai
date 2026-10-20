@@ -425,6 +425,54 @@ describe('takedownCosmeticShopItem', () => {
     });
   });
 
+  // Payouts are written under the purchase prefix (`<prefix>:sell:...`), so the buyer's prefix
+  // refund can already have reversed them. Refunding one again by id asks the creator for it twice.
+  it('does not refund a payout the prefix refund already reversed', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: {
+          payouts: [
+            { userId: 11, amount: 500, color: 'yellow', transactionId: 'sell-tx-creator' },
+            { userId: 55, amount: 200, color: 'yellow', transactionId: 'sell-tx-reseller' },
+          ],
+          platformCut: 300,
+        },
+      },
+    ]);
+    mocks.refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [
+        {
+          originalTransactionId: 'buyer-debit',
+          refundTransactionId: 'r-1',
+          accountType: 'yellow',
+          amount: 1000,
+          originalExternalTransactionId: 'purchase-1-yellow',
+        },
+        {
+          originalTransactionId: 'sell-tx-creator',
+          refundTransactionId: 'r-2',
+          accountType: 'yellow',
+          amount: 500,
+          originalExternalTransactionId: 'purchase-1:sell:11:yellow',
+        },
+      ],
+      totalRefunded: 1500,
+      externalTransactionIdPrefix: 'purchase-1',
+    });
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundTransaction.mock.calls).toEqual([
+      ['sell-tx-reseller', expect.stringContaining('Cosmetic removed')],
+    ]);
+    expect(result).toMatchObject({ owedBack: 700, clawedBack: 700, failures: [] });
+  });
+
   it('claws nothing back from a creator who bought their own sticker and was paid nothing', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {
@@ -482,6 +530,25 @@ describe('takedownCosmeticShopItem', () => {
     expect(mocks.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
+  });
+
+  // A withdrawn-item refund that began on a purchase may have reversed some of its legs, and the
+  // prefix refund is refused whole over those: that run finishes it, not this one.
+  it('leaves a purchase a withdrawn-item refund has begun to that refund', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: { withdrawnRefund: { trigger: 'archive', clawback: true, userId: 11, at: 'then' } },
+      },
+      purchases[1],
+    ]);
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundMultiAccountTransaction.mock.calls).toEqual([
+      [expect.objectContaining({ externalTransactionIdPrefix: 'purchase-2' })],
+    ]);
+    expect(result).toMatchObject({ refunded: 1, failures: [] });
   });
 
   it('falls back to a reversing charge when a recorded payout has no transaction id', async () => {

@@ -140,8 +140,8 @@ The official shop's sections are a **curated CMS** (banner image, `placement`, `
 `creatorShop.takedownItem` (moderator-only, not flag-gated — it covers official shop items too) is the one-shot undo for a cosmetic that has to be pulled. `takedownCosmeticShopItem` in `creator-shop.service.ts`:
 
 1. **Stops sales first** — `status → Archived`, `listed = false`, `meta.takedown = { reason, moderatorId, at }`, official-shop section links deleted, featured slot freed. A taken-down item can never be unarchived back to sale.
-2. **Refunds every buyer** — `refundMultiAccountTransaction` per unrefunded `UserCosmeticShopPurchases` row (returns each color the buyer paid with) and flips `refunded = true`. Buyers are only ever refunded — nothing is charged back to them.
-3. **Takes back what the seller was paid** — `purchaseCosmeticShopItem` records each sale's payouts on `UserCosmeticShopPurchases.meta` (`{ payouts: [{ userId, amount, color, transactionId }], platformCut }`), so the takedown **refunds each payout transaction by id** — reseller cut included. Recorded payouts missing an id (the Buzz service returned none) fall back to a reversing charge from the recipient, one per recipient per color. The result reports `owedBack` / `clawedBack` plus `clawedBackPct`, the share of those sales it represents.
+2. **Refunds every buyer** — `refundMultiAccountTransaction` per unrefunded `UserCosmeticShopPurchases` row (returns each color the buyer paid with) and flips `refunded = true`. A purchase a withdrawn-item refund has already begun (`meta.withdrawnRefund` on the row) is skipped and listed in the log as `leftToWithdrawnRefund`: some of its legs may already be reversed, a prefix refund over those is refused whole, and that run finishes it (see "Withdrawn-item refunds"). Buyers are only ever refunded — nothing is charged back to them.
+3. **Takes back what the seller was paid** — `purchaseCosmeticShopItem` records each sale's payouts on `UserCosmeticShopPurchases.meta` (`{ payouts: [{ userId, amount, color, transactionId }], platformCut }`), so the takedown **refunds each payout transaction by id** — reseller cut included. Payouts sit under the purchase prefix, so the buyer refund can already have reversed them; those count toward `clawedBack` and are not refunded again. Recorded payouts missing an id (the Buzz service returned none) fall back to a reversing charge from the recipient, one per recipient per color. The result reports `owedBack` / `clawedBack` plus `clawedBackPct`, the share of those sales it represents.
    - **Legacy sales** (rows written before the payout column existed) have `meta = NULL` and fall back to re-deriving the split from the item: the creator's guaranteed slice only, with a resellable item's seller share reported as `unrecoveredResellerShare` for manual follow-up, since who took it was never recorded.
 4. **Strips ownership** — `revokeCosmeticsFromUsers` for every `UserCosmetic` row of that cosmetic (buyers, gifts, and the creator's own approval grant), which also unequips and refreshes entity caches / search indexes.
 
@@ -149,12 +149,22 @@ The creator's **submission fee is never refunded** — a takedown is a terms vio
 
 Money moves are best-effort per buyer: each is retried 3× (1s apart) before it's written off, and failures are collected in `failures` (stage + user + amount) instead of aborting the run. Everything lands in Axiom under `name: 'cosmetic-takedown'` — a start record, one `error` per written-off refund/clawback carrying the ids needed to finish it by hand, and a finish record with the run totals (`error` level if anything failed).
 
+## Withdrawn-item refunds
+
+Rejecting a creator cosmetic that has sold, or archiving one while it is withheld (see "Wearing a creator cosmetic"), refunds its buyers automatically. `creator-shop-withdrawn-refund.service.ts`:
+
+- **Trigger.** `reviewCreatorShopItem` (action `reject`, single cosmetics only) and `archiveCreatorShopItem` (item withheld) write `CosmeticShopItem.meta.withdrawnRefund = { trigger, clawback, userId, at }` in the same update as the verdict or archive, then start `refundWithdrawnShopItem(id, { limit: 25 })` in the request. Any other verdict and `unarchiveCreatorShopItem` clear the marker; buyers whose refund had not begun keep the cosmetic. Packs and mystery boxes are out of scope.
+- **Who pays.** The creator, in both cases: the buyer's debits are refunded and the creator's payouts reversed, which may take the creator negative (the ledger exempts refunds from its balance check).
+- **Per purchase.** Purchases made up to `at`, still unrefunded and not the creator's own. Each is stamped with the same terms on `UserCosmeticShopPurchases.meta.withdrawnRefund` before any money moves, and a stamped purchase is always finished on its stamp, even after the item's marker is cleared or the item is taken down. Each leg is refunded once (`refund-<transactionId>` on the ledger is checked first; a 409 counts as done only when that refund exists). The holding is revoked, scoped to the purchase's claim key, before the row is marked `refunded`.
+- **After.** One `cosmetic-shop-item-refunded` notification per buyer, a `refunded` history entry, and one Axiom record under `name: 'creator-shop-withdrawn-refund'`.
+- **Retry.** The request refunds at most 25 purchases. The `creator-shop-withdrawn-refunds` job (every 10 minutes) finishes the rest and anything a Buzz failure, a held lock or a dead process left behind. Runs are serialised per item with a distributed lock.
+
 ## Review history
 
 An edit-triggered re-review clears `rejectionReason` / `reviewedById` / `reviewedAt`, so without a log a moderator opening a re-queued item can't tell what the creator changed or what was decided last time. `CosmeticShopItemMeta.history` is that log — a capped (25, oldest dropped first) append-only array on the existing JSON column, no migration:
 
 ```ts
-{ at, userId, kind: 'submitted' | 'edited' | 'reviewed' | 'takedown', status?, action?, note?, changes?: [{ field, from?, to? }] }
+{ at, userId, kind: 'submitted' | 'edited' | 'reviewed' | 'takedown' | 'refunded', status?, action?, note?, changes?: [{ field, from?, to? }] }
 ```
 
 Every writer appends inside the `cosmeticShopItem.update` it was already making (`appendItemHistory` in `creator-shop.data.ts`) — recording history never costs an extra round trip:
@@ -163,6 +173,7 @@ Every writer appends inside the `cosmeticShopItem.update` it was already making 
 - `updateCreatorShopItem` appends `edited` with one `changes` row per moved field (name, description, artwork — carrying the **pre-swap `data.url`** — fit offsets, slug, uses, price-per-use, price, quantity), plus a `note` when the edit forced the item back into review and why. An edit that moves nothing appends nothing.
 - `reviewCreatorShopItem` appends `reviewed` with the action, the reviewer and the note — which is how the note **survives the next edit clearing `rejectionReason`**.
 - `takedownCosmeticShopItem` appends `takedown` alongside the `meta.takedown` record it already writes.
+- `refundWithdrawnShopItem` appends `refunded` after a run that refunded purchases. It is the one writer with a statement of its own: a single SQL update that touches only `history`, so it cannot write back meta a verdict changed during the run.
 
 `getCreatorShopReviewQueue` already selects `meta`, so the moderator detail pane renders it (`HistoryCard`, newest-first, previous-vs-current artwork thumbnails on a swap) with no query change. Items predating the feature show an explicit empty state. Moderator-only for now — the creator-facing manage view still shows only the current status + rejection reason.
 
@@ -179,6 +190,7 @@ Approval grants the creator their own copy, but owning a creator cosmetic is not
 
 ## Changelog
 
+- **2026-10-20** — Creator cosmetics rejected after selling, or archived while withheld, now refund their buyers automatically: the creator's payouts are reversed (even into a negative balance), the cosmetic is revoked per purchase, and buyers are notified. New job `creator-shop-withdrawn-refunds` (every 10 minutes) finishes what the request starts. New history kind `refunded`; `meta.withdrawnRefund` on the item and on `UserCosmeticShopPurchases`. A takedown no longer refunds a payout the buyer refund already reversed, and leaves purchases a withdrawn refund began. No migration.
 - **2026-10-19** — Creator cosmetics whose listing isn't approved, or was edited after approval, can no longer be worn: equip is refused, holders are unequipped on a non-approve verdict or a displayed-field edit, and the inventory marks them "In review, not equipable". No migration.
 - **2026-08-05** — Resale listings moved from `User.settings.creatorShop.resoldItemIds` to the `UserCosmeticShopItemResale` table (migration `20260805120000_add_cosmetic_shop_item_resale` — **apply manually**, then run `pnpm tsscript scripts/oneoffs/backfill-cosmetic-resale-listings.ts` to migrate existing resellers off the blob). Each row carries the `sellerShare` it was listed under, so lowering the item's share or turning `sellableByOthers` off no longer changes what an existing reseller is paid or removes the item from their shop; and "who resells my item?" is now an indexed lookup instead of a scan of every user's settings JSON. Creators can now also **edit** `sellableByOthers` / `sellerShare` after publishing without it reaching creators who already list the item. Withdrawing the item itself (delist / archive / takedown) *does* end their listings, with a notification, and bringing it back re-enters review so the cycle can't be used to reset resale terms.
 - **2026-08-05** — Per-item review history recorded on `CosmeticShopItem.meta.history` (submissions, creator edits with before → after per field, verdicts, takedowns) and surfaced in the moderator review queue.

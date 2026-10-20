@@ -81,6 +81,17 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: `/user/transactions`,
     }),
   },
+  // Event-driven (created in runWithdrawnRefund).
+  'cosmetic-shop-item-refunded': {
+    displayName: 'Shop: A cosmetic you bought was withdrawn',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" was withdrawn from the shop, so it's been taken off your account and your Buzz was refunded.`,
+      url: `/user/transactions`,
+    }),
+  },
   // Moveable (if created through API)
   'cosmetic-shop-item-added-to-section': {
     optIn: true,

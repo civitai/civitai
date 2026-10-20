@@ -28,6 +28,7 @@ import {
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
+import { refundWithdrawnShopItem } from '~/server/services/creator-shop-withdrawn-refund.service';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
 import {
@@ -1077,6 +1078,18 @@ const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; ti
     });
 };
 
+// The verdict or archive has landed whatever happens here; `sweepWithdrawnShopRefunds` finishes it.
+// Bounded, so the request does not wait on an item with hundreds of sales.
+const startWithdrawnRefund = (shopItemId: number) =>
+  refundWithdrawnShopItem(shopItemId, { limit: 25 }).catch((error) =>
+    logToAxiom({
+      level: 'error',
+      name: 'creator-shop-withdrawn-refund',
+      message: 'Withdrawn refund failed; the job retries it',
+      data: { shopItemId, error: error instanceof Error ? error.message : String(error) },
+    }).catch(() => undefined)
+  );
+
 export const archiveCreatorShopItem = async ({
   userId,
   isModerator,
@@ -1101,11 +1114,39 @@ export const archiveCreatorShopItem = async ({
       cosmeticId: existing.cosmeticId,
       sellerId: existing.addedById,
     });
+  // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
+  // are refunded and the creator pays: payouts are reversed even into a negative balance.
+  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
+  const now = new Date();
+  const withheld =
+    existing.cosmeticId != null &&
+    !isListingDisplayable({
+      status: existing.status,
+      meta,
+      rejectionReason: existing.rejectionReason,
+    });
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
+    data: {
+      status: CosmeticShopItemStatus.Archived,
+      archivedAt: now,
+      ...(withheld
+        ? {
+            meta: {
+              ...meta,
+              withdrawnRefund: {
+                trigger: 'archive',
+                clawback: true,
+                userId,
+                at: now.toISOString(),
+              },
+            } as Prisma.InputJsonValue,
+          }
+        : {}),
+    },
     select: creatorShopItemSelect,
   });
+  if (withheld) await startWithdrawnRefund(id);
 
   await endResaleListings({ shopItemId: id, title: existing.title });
 
@@ -1216,15 +1257,16 @@ export const unarchiveCreatorShopItem = async ({
     throw throwBadRequestError('Only archived items can be restored');
   // `preArchiveStatus` is a leftover from when restoring returned an item to
   // where it was; it now re-enters review either way, so drop any stored value.
-  const { preArchiveStatus, ...meta } = (existing.meta ?? {}) as CosmeticShopItemMeta & {
+  // A refund owed for the archive stops here: buyers whose refund had not begun keep the cosmetic.
+  const { preArchiveStatus, withdrawnRefund, ...meta } = (existing.meta ??
+    {}) as CosmeticShopItemMeta & {
     preArchiveStatus?: CosmeticShopItemStatus;
   };
   if (meta.takedown)
     throw throwBadRequestError('This item was taken down and cannot be restored to sale');
-  // Archiving a rejected item is blocked now, but items archived before that was
-  // true still exist, and restoring one would clear its verdict. Nothing appends
-  // to an archived item's history, so a verdict recorded there is still the last
-  // one — it cannot have aged out of the cap while the item sat archived.
+  // Items archived while rejected predate the block on archiving them, and restoring one would
+  // clear its verdict. Refund history entries only follow newer archives, so on those older items
+  // a recorded verdict is still the last one and cannot have aged out of the cap.
   //
   // An item old enough to have no history at all leaves only `rejectionReason`,
   // which a change request sets too. That is not enough to convict, so it is
@@ -2150,9 +2192,15 @@ export const reviewCreatorShopItem = async ({
   // The verdict is recorded on the history too, not just on rejectionReason —
   // the next edit clears that column, and a re-review needs to see what was
   // said last time.
+  // A rejection refunds the item's buyers and reverses the creator's payouts. Any other verdict
+  // stops a refund an earlier rejection left unfinished.
+  const withdrawnRefund: CosmeticShopItemMeta['withdrawnRefund'] =
+    action === 'reject' && item.cosmeticId != null
+      ? { trigger: 'reject', clawback: true, userId: reviewerId, at: now.toISOString() }
+      : undefined;
   const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
     appendItemHistory(
-      { ...meta, ...extra },
+      { ...meta, ...extra, withdrawnRefund },
       {
         at: now.toISOString(),
         userId: reviewerId,
@@ -2212,6 +2260,7 @@ export const reviewCreatorShopItem = async ({
   // have to come off sale too.
   if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
   if (action !== 'approve') await unequipWithheldCosmetic(item.cosmeticId);
+  if (withdrawnRefund) await startWithdrawnRefund(id);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {
@@ -2375,6 +2424,8 @@ export const takedownCosmeticShopItem = async ({
   // folding the two together would make a total loss read like a partial one.
   let unrecoveredPackPool = 0;
   let refundedValue = 0;
+  let reversedWithPurchase = 0;
+  const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
   await logTakedown('info', 'Takedown started', {
@@ -2385,6 +2436,12 @@ export const takedownCosmeticShopItem = async ({
   });
 
   for (const purchase of purchases) {
+    // A withdrawn-item refund has begun on this one, and may have reversed some of its legs; a
+    // prefix refund over those is refused whole. That run finishes it (`refundWithdrawnShopItem`).
+    if ((purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund) {
+      leftToWithdrawnRefund.push(purchase.buzzTransactionId);
+      continue;
+    }
     const price = purchase.unitAmount;
     // Unreachable for anything the current code writes — a purchase computing to
     // zero is refused rather than completed. Kept because the failure mode if a
@@ -2451,9 +2508,13 @@ export const takedownCosmeticShopItem = async ({
     // paid nothing, and must not be charged back a re-derived share.
     const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
     if (recordedPayouts) {
+      // Payouts are keyed under the purchase prefix, so the refund above may have reversed them.
+      const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
       for (const payout of recordedPayouts) {
         if (payout.amount <= 0) continue;
-        if (payout.transactionId)
+        if (payout.transactionId && reversed.has(payout.transactionId))
+          reversedWithPurchase += payout.amount;
+        else if (payout.transactionId)
           refundablePayouts.push({
             userId: payout.userId,
             amount: payout.amount,
@@ -2525,7 +2586,7 @@ export const takedownCosmeticShopItem = async ({
     }
   }
 
-  let clawedBack = 0;
+  let clawedBack = reversedWithPurchase;
   // Refunding the payout transaction is the cleanest reversal: the Buzz service
   // ties it to the original, so it can't double-apply and needs no external id of
   // our own.
@@ -2742,6 +2803,7 @@ export const takedownCosmeticShopItem = async ({
   }
 
   const owedBack =
+    reversedWithPurchase +
     refundablePayouts.reduce((sum, p) => sum + p.amount, 0) +
     [...clawback.values()].reduce((sum, amount) => sum + amount, 0);
 
@@ -2760,6 +2822,7 @@ export const takedownCosmeticShopItem = async ({
     revokedFrom: revoked,
     placementsRemoved,
     failures,
+    leftToWithdrawnRefund,
   });
 
   return {
