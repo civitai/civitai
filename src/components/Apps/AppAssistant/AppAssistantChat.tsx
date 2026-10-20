@@ -4,6 +4,7 @@ import { Alert, Center, Loader } from '@mantine/core';
 import type {
   BeforeSendDetail,
   ChatMcpServer,
+  ChatSubagents,
   ChatTool,
   ChatToolGate,
   ChatToolResult,
@@ -16,7 +17,10 @@ import {
   APP_ASSISTANT_MCP,
   APP_ASSISTANT_PLACEHOLDER,
 } from '~/components/Apps/AppAssistant/assistantChatConfig';
-import { buildAssistantSystemPrompt } from '~/components/Apps/AppAssistant/assistantInstructions';
+import {
+  buildAssistantSystemPrompt,
+  buildAssistantSystemPromptWithSubagents,
+} from '~/components/Apps/AppAssistant/assistantInstructions';
 import {
   listenBeforeSend,
   listenChatChange,
@@ -49,6 +53,16 @@ export interface AppAssistantChatProps {
   /** Asked before the chat asks again for a failed reply (no `before-send`); true keeps it from asking. */
   onReplyResume?: (trigger: ReplyResumeDetail['trigger']) => boolean;
   onChatChange?: (chatId: string | null) => void;
+  /** Read-only subagents; unset keeps them off. */
+  subagents?: ChatSubagents;
+}
+
+function applySubagents(el: CivitaiChat, subagents: ChatSubagents | undefined) {
+  // Never assigned while off, so the chat runs exactly as it does without the feature.
+  if (subagents || el.subagents !== undefined) el.subagents = subagents;
+  el.systemPrompt = subagents
+    ? buildAssistantSystemPromptWithSubagents
+    : buildAssistantSystemPrompt;
 }
 
 export function AppAssistantChat({
@@ -63,8 +77,11 @@ export function AppAssistantChat({
   onBeforeSend,
   onReplyResume,
   onChatChange,
+  subagents,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
+  const subagentsRef = useRef(subagents);
+  subagentsRef.current = subagents;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,7 +106,7 @@ export function AppAssistantChat({
       // Set after upgrade: a property assigned before would shadow the element's accessor.
       const el = ref.current as CivitaiChat;
       el.mcp = APP_ASSISTANT_MCP;
-      el.systemPrompt = buildAssistantSystemPrompt;
+      applySubagents(el, subagentsRef.current);
       el.examples = APP_ASSISTANT_EXAMPLES;
       el.placeholder = APP_ASSISTANT_PLACEHOLDER;
       el.app = app;
@@ -115,6 +132,11 @@ export function AppAssistantChat({
     if (!ready || !ref.current) return;
     (ref.current as CivitaiChat).mcpServers = mcpServers;
   }, [ready, mcpServers]);
+
+  useEffect(() => {
+    if (!ready || !ref.current) return;
+    applySubagents(ref.current as CivitaiChat, subagents);
+  }, [ready, subagents]);
 
   useEffect(() => {
     if (!ready || !ref.current) return;

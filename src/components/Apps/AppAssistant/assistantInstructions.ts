@@ -27,9 +27,21 @@ export const APP_ASSISTANT_RULES = [
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
 ].join('\n');
 
+/** When to start a read-only subagent; in the system prompt only while subagents are on. */
+export const APP_ASSISTANT_SUBAGENT_RULES = [
+  '- dispatch_agent starts a read-only subagent. Use it when you need a conclusion drawn from many files or pages, not their contents: for example "how does the SDK do auth?" or "which components use X?".',
+  '- Do it yourself when the work is small, when your next step depends on the details rather than a summary, or when the user is waiting on a quick answer. A subagent cannot change files, run commands, start the dev server or the preview, or run the tests or the typecheck.',
+  '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
+].join('\n');
+
 /** The chat's built-in rules, then App Assistant's. */
 export function buildAssistantSystemPrompt(defaults: string): string {
   return `${defaults}\n\n${APP_ASSISTANT_RULES}`;
+}
+
+/** {@link buildAssistantSystemPrompt}, then when to start a subagent. */
+export function buildAssistantSystemPromptWithSubagents(defaults: string): string {
+  return `${buildAssistantSystemPrompt(defaults)}\n${APP_ASSISTANT_SUBAGENT_RULES}`;
 }
 
 /** What the page tells the assistant before every reply. */

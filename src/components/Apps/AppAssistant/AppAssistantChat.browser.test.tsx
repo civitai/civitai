@@ -23,8 +23,18 @@ vi.mock('@civitai/components-chat/civitai-chat/define', () => {
       'civitai-chat',
       class extends HTMLElement {
         #app: unknown;
+        #subagents: unknown;
         /** What was already set when `app` (which starts the chat) was. */
         atStart: unknown = null;
+        /** Every value assigned to `subagents`, in order. */
+        subagentsAssigned: unknown[] = [];
+        get subagents() {
+          return this.#subagents;
+        }
+        set subagents(value: unknown) {
+          this.subagentsAssigned.push(value);
+          this.#subagents = value;
+        }
         get app() {
           return this.#app;
         }
@@ -40,6 +50,7 @@ vi.mock('@civitai/components-chat/civitai-chat/define', () => {
             systemPrompt: self.systemPrompt,
             examples: self.examples,
             placeholder: self.placeholder,
+            subagents: this.#subagents,
             configured: m.configureChat.mock.calls.length,
           };
           this.#app = value;
@@ -50,6 +61,9 @@ vi.mock('@civitai/components-chat/civitai-chat/define', () => {
 });
 
 const { AppAssistantChat } = await import('./AppAssistantChat');
+const { APP_ASSISTANT_RULES, buildAssistantSystemPrompt, buildAssistantSystemPromptWithSubagents } =
+  await import('./assistantInstructions');
+const { APP_ASSISTANT_SUBAGENTS } = await import('./assistantSubagents');
 
 const tokens = (): AssistantTokenProvider => ({
   getToken: vi.fn(async () => 'chat-token'),
@@ -63,8 +77,11 @@ type ChatEl = HTMLElement & {
     systemPrompt: unknown;
     examples: unknown;
     placeholder: unknown;
+    subagents: unknown;
     configured: number;
   } | null;
+  subagents?: unknown;
+  subagentsAssigned: unknown[];
   mcp?: unknown;
   examples?: { title: string; prompt: string }[];
   placeholder?: string;
@@ -117,8 +134,35 @@ describe('AppAssistantChat', () => {
       systemPrompt: chatEl().systemPrompt,
       examples: chatEl().examples,
       placeholder: chatEl().placeholder,
+      subagents: undefined,
       configured: 1,
     });
+  });
+
+  test('without subagents, never sets them, and the system prompt is the one without them', async () => {
+    const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };
+    const { rerender } = await renderWithProviders(<AppAssistantChat {...props} />);
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    await rerender(<AppAssistantChat {...props} instructions={() => 'again'} />);
+    expect(chatEl().subagentsAssigned).toEqual([]);
+    expect(chatEl().systemPrompt).toBe(buildAssistantSystemPrompt);
+    expect(chatEl().systemPrompt!('BUILT-IN')).toBe(`BUILT-IN\n\n${APP_ASSISTANT_RULES}`);
+  });
+
+  test('with subagents, gives them and the rules for them to the chat before it starts', async () => {
+    const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };
+    const { rerender } = await renderWithProviders(
+      <AppAssistantChat {...props} subagents={APP_ASSISTANT_SUBAGENTS} />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    expect(chatEl().atStart?.subagents).toBe(APP_ASSISTANT_SUBAGENTS);
+    expect(chatEl().atStart?.systemPrompt).toBe(buildAssistantSystemPromptWithSubagents);
+    expect(chatEl().systemPrompt!('BUILT-IN')).toContain('dispatch_agent');
+
+    // Turned off later: the chat stops offering them, and the prompt stops naming them.
+    await rerender(<AppAssistantChat {...props} />);
+    await vi.waitFor(() => expect(chatEl().subagents).toBeUndefined());
+    expect(chatEl().systemPrompt).toBe(buildAssistantSystemPrompt);
   });
 
   test('offers app-building examples and hint in place of the chat’s media ones', async () => {
