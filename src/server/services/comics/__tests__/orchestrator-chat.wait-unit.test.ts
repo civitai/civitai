@@ -331,6 +331,8 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
       new Set([
         'server/services/blocks/steps/text-output-moderation.ts:SCAN_WAIT_SECONDS',
         'server/services/comics/orchestrator-chat.ts:CHAT_COMPLETION_WAIT_SECONDS',
+        'server/services/model-sfw-face.service.ts:DRAFT_WAIT_SECONDS',
+        'server/services/model-sfw-face.service.ts:SFW_FACE_CHECK_WAIT_SECONDS',
         'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
         'server/services/product-badge.service.ts:30',
         'server/services/training.service.ts:0',
