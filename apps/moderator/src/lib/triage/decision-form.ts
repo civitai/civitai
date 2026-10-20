@@ -26,7 +26,9 @@ const decisionButton = (index: number) =>
 
 let defaultOpener: ((index: number) => void) | undefined;
 
-/** Registers what a decision key with reasons opens. The reason-list state lives in a rune module
+/** Registers what a decision key with reasons opens. `reason-picker.svelte.ts` calls this when it
+ *  loads and TriageShell imports that module, so a page calling `pressDecisionKey` outside TriageShell
+ *  gets a plain click. The reason-list state lives in a rune module
  *  this file stays free of, so tests can import it. */
 export const setReasonOpener = (open: (index: number) => void) => {
   defaultOpener = open;
@@ -46,9 +48,10 @@ export const pressDecisionKey = (
   else button.click();
 };
 
-/** Focus is on a button of the picker or the decision bar, which Enter already presses. */
-export const isDecisionControl = (target: { closest?: (selector: string) => unknown } | null) =>
-  !!target?.closest?.('[data-triage-actions] button, [data-reason-picker] button');
+/** Focus is on a button or link that Enter should activate itself: any of them except the selected
+ *  row's link, which is where focus rests after a ruling or a row click and so carries no intent. */
+export const keepsNativeEnter = (target: { closest?: (selector: string) => unknown } | null) =>
+  !!target?.closest?.('button, a') && !target.closest('a[aria-current="true"]');
 
 /** Presses a decision's button whatever it offers: how the reason list finishes the decision. */
 export const clickDecision = (index: number) => decisionButton(index)?.click();

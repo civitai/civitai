@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   clickDecision,
-  isDecisionControl,
+  keepsNativeEnter,
   pressDecisionKey,
   setReasonOpener,
 } from '../decision-form';
@@ -111,18 +111,32 @@ describe('pressDecisionKey default opener', () => {
   });
 });
 
-describe('isDecisionControl', () => {
-  it('is true for a button in the decision bar or the picker, false for a row link', () => {
+describe('keepsNativeEnter', () => {
+  const link = (current: boolean) => {
+    const a = document.createElement('a');
+    if (current) a.setAttribute('aria-current', 'true');
+    document.body.append(a);
+    return a;
+  };
+
+  it('leaves Enter to the list on the selected row link, where focus rests after a ruling', () => {
+    expect(keepsNativeEnter(link(true))).toBe(false);
+  });
+
+  it('keeps Enter native on any other link, so another row, a chip or a pager still opens', () => {
+    expect(keepsNativeEnter(link(false))).toBe(true);
+  });
+
+  it('keeps Enter native on a button of the decision bar or the picker', () => {
     renderBar();
-    const row = document.createElement('a');
-    document.body.append(row);
-    const picker = document.createElement('div');
-    picker.setAttribute('data-reason-picker', '');
+    expect(keepsNativeEnter(document.querySelector('[data-triage-actions] button'))).toBe(true);
     const pick = document.createElement('button');
-    picker.append(pick);
-    document.body.append(picker);
-    expect(isDecisionControl(document.querySelector('[data-triage-actions] button'))).toBe(true);
-    expect(isDecisionControl(pick)).toBe(true);
-    expect(isDecisionControl(row)).toBe(false);
+    document.body.append(pick);
+    expect(keepsNativeEnter(pick)).toBe(true);
+  });
+
+  it('does not apply to focus that is on no control at all', () => {
+    expect(keepsNativeEnter(document.body)).toBe(false);
+    expect(keepsNativeEnter(null)).toBe(false);
   });
 });

@@ -34,7 +34,8 @@ export type ReasonPickerKeyEvent = {
   repeat: boolean;
   /** Focus is in a field or overlay, where digits and Enter mean something else. */
   typing: boolean;
-  /** Focus is on a button or link, which Enter already presses. */
+  /** Focus is on a button or link that Enter should activate itself (see `keepsNativeEnter`), so the
+   *  list leaves the key alone and stays open. */
   onControl: boolean;
   reasonCount: number;
   /** A reason is selected or suggested, so Enter has something to submit. */

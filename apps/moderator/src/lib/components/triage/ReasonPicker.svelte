@@ -3,7 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import { reasonRequiresNote, type ResolutionReason } from '@civitai/shared/resolution-reasons';
-  import { clickDecision, isDecisionControl } from '$lib/triage/decision-form';
+  import { clickDecision, keepsNativeEnter } from '$lib/triage/decision-form';
   import { suggestedReason } from '$lib/triage/decision-reasons';
   import { isTypingTarget, reasonPickerKeyAction } from '$lib/triage/keys';
   import {
@@ -70,7 +70,7 @@
       altKey: e.altKey,
       repeat: e.repeat,
       typing: isTypingTarget(target),
-      onControl: isDecisionControl(target),
+      onControl: keepsNativeEnter(target),
       reasonCount: shown.length,
       hasSelection: !!selected,
     });
@@ -86,7 +86,6 @@
 
 <div
   role="group"
-  data-reason-picker
   aria-label="Pick a reason"
   class="flex flex-wrap items-center gap-1.5 rounded-md border border-dark-4 bg-dark-7 p-2"
 >
