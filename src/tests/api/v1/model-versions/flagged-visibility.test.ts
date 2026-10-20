@@ -64,6 +64,7 @@ function version(id: number, modelId: number, poi: boolean) {
     name: 'v1',
     baseModel: 'SD 1.5',
     status: 'Published',
+    availability: 'Public',
     nsfwLevel: 1,
     licensingFee: null,
     files: [
@@ -80,7 +81,15 @@ function version(id: number, modelId: number, poi: boolean) {
       },
     ],
     metrics: [],
-    model: { name: `Model ${modelId}`, type: 'Checkpoint', nsfw: false, poi, mode: null },
+    model: {
+      name: `Model ${modelId}`,
+      type: 'Checkpoint',
+      nsfw: false,
+      poi,
+      mode: null,
+      availability: 'Public',
+      userId: OWNER,
+    },
   } as any;
 }
 const FLAGGED = version(100, FLAGGED_MODEL, true);
@@ -197,12 +206,22 @@ describe('POST /api/v1/model-versions/by-hash/ids', () => {
     dbMock.dbRead.modelFile.findMany.mockResolvedValueOnce([
       {
         modelVersionId: FLAGGED.id,
-        modelVersion: { modelId: FLAGGED_MODEL, model: { poi: true } },
+        modelVersion: {
+          id: FLAGGED.id,
+          modelId: FLAGGED_MODEL,
+          availability: 'Public',
+          model: { poi: true, availability: 'Public', userId: OWNER },
+        },
         hashes: [{ hash: 'A'.repeat(64) }],
       },
       {
         modelVersionId: CONTROL.id,
-        modelVersion: { modelId: CONTROL_MODEL, model: { poi: false } },
+        modelVersion: {
+          id: CONTROL.id,
+          modelId: CONTROL_MODEL,
+          availability: 'Public',
+          model: { poi: false, availability: 'Public', userId: OWNER },
+        },
         hashes: [{ hash: 'B'.repeat(64) }],
       },
     ]);
