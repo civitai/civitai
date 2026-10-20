@@ -144,8 +144,9 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
         { userId: OTHER_USER, modelId: 30, type: 'Favorite' },
       ],
     });
-    // Several reactions on one image (row order within an image is what the caller groups by),
-    // every enum value, and another user's reactions on the same images.
+    // Several reactions on one image, every enum value, and another user's reactions on the same
+    // images. Row order is intentionally NOT compared (`expectParity` sorts both sides): neither
+    // path has an ORDER BY, so neither promises the within-image order the caller groups in.
     await prisma.imageReaction.createMany({
       data: [
         { imageId: 40, userId: USER, reaction: 'Like' },

@@ -34,6 +34,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
   // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
   // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
+  //
+  // 🔴 ON MOVES THE READ OFF PRISMA'S POOL ONTO THE SHARED `pgDbRead` POOL (kyselyRead is built
+  // over it, src/server/db/kyselyDb.ts). Two properties of the ON state to check before flipping:
+  //  - That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`, whose default is 0 = WAIT FOREVER
+  //    (packages/civitai-db/src/env.ts). Prisma's pool times out instead. So the environment must
+  //    set a non-zero DATABASE_CONNECTION_TIMEOUT, or a saturated pool hangs these requests.
+  //  - Failures surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer
+  //    maps a pool timeout to TIMEOUT.
+  // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
