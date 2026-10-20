@@ -61,7 +61,11 @@ import {
   whatIfPresetImageGen,
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import {
+  NSFW_CAPPED,
+  NSFW_CAPPED_MESSAGE,
+  WorkflowData,
+} from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
@@ -3711,6 +3715,8 @@ export const comicsRouter = router({
               ? 'This generation produced mature content that cannot be viewed on this site.'
               : blockedReason === 'canUpgrade'
               ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
+              : blockedReason === NSFW_CAPPED
+              ? NSFW_CAPPED_MESSAGE
               : `Generation blocked: ${blockedReason}.`;
 
           if (
