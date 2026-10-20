@@ -446,6 +446,8 @@ export function devDatabaseConfig(
   if (REDIRECTING_PARAMS.some((p) => parsed!.searchParams.has(p)))
     throw refuse('the URL overrides its host or port in the query string');
   if (!allowed.includes(target)) throw refuse('not in STRIPE_SANDBOX_DB_HOSTS');
+  // Only sslmode is mapped below; pg's own `ssl=` would otherwise be dropped to plaintext.
+  if (parsed.searchParams.has('ssl')) throw refuse('use sslmode, not ssl, in the URL');
   const database = decodeURIComponent(parsed.pathname.slice(1));
   if (!database) throw refuse('the URL names no database');
 

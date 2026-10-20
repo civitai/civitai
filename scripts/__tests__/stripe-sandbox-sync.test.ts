@@ -329,6 +329,7 @@ describe('devDatabaseConfig', () => {
     ['a query-string port override', `${DEV}&port=6543`, LIST],
     ['a socket path', 'socket://u:p@devdb.local:5432/var/run/postgresql?db=civitai', LIST],
     ['a url with no database', 'postgresql://u:p@devdb.local:5432/', LIST],
+    ['an ssl= param this does not map', 'postgresql://u:p@devdb.local:5432/civitai?ssl=true', LIST],
     ['an unparseable url', 'not a url', LIST],
   ])('refuses %s', (_, url, allowlist) => {
     expect(() => devDatabaseConfig(url, allowlist)).toThrow(/Refusing/);
