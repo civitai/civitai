@@ -1,7 +1,16 @@
 import { error as kitError } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { BUDGET_NOTICE, fitJson, MAX_ROUNDS, REASONING_NOTE, runTurn, type AnyTool } from '../loop';
+import {
+  BUDGET_NOTICE,
+  fitJson,
+  MAX_REASONING_CHARS,
+  MAX_ROUNDS,
+  REASONING_CUT,
+  REASONING_NOTE,
+  runTurn,
+  type AnyTool,
+} from '../loop';
 import type { Completion, ToolCall } from '../openrouter';
 import type { ToolResult } from '../tools';
 
@@ -224,6 +233,42 @@ describe('runTurn', () => {
     await run;
     const messages = (complete.mock.calls[0][0] as { messages: { content: string }[] }).messages;
     expect(messages.at(-1)?.content).toBe(`q${REASONING_NOTE}`);
+  });
+
+  it("keeps every round's reasoning, in order, and never sends it back to the model", async () => {
+    const thinking = (content: string | null, thought: string, calls: ToolCall[] = []) => {
+      const r = reply(content, calls);
+      r.message.reasoning = thought;
+      return r;
+    };
+    const { run, complete } = turn([
+      thinking(null, '- need the account', [call('lookup', { userId: 5 })]),
+      thinking('It is [user:5].', '- found it'),
+    ]);
+    const out = await run;
+    expect(out.reasoning).toBe('- need the account\n\n- found it');
+    expect(JSON.stringify(complete.mock.calls[1][0])).not.toContain('need the account');
+  });
+
+  it('records no reasoning when the model returns none', async () => {
+    const { run } = turn([reply('ok')]);
+    expect((await run).reasoning).toBeNull();
+  });
+
+  it('keeps the reasoning when the turn fails after it, so a failed turn can be read', async () => {
+    const first = reply(null, [call('lookup', { userId: 5 })]);
+    first.message.reasoning = '- need the account';
+    const { run } = turn([first]);
+    const out = await run;
+    expect(out.status).toBe('error');
+    expect(out.reasoning).toBe('- need the account');
+  });
+
+  it('cuts reasoning past the cap and says so', async () => {
+    const long = reply('ok');
+    long.message.reasoning = 'x'.repeat(MAX_REASONING_CHARS + 50);
+    const { run } = turn([long]);
+    expect((await run).reasoning).toBe('x'.repeat(MAX_REASONING_CHARS) + REASONING_CUT);
   });
 
   // SvelteKit's `error()` throws an HttpError, which is not an `Error`.

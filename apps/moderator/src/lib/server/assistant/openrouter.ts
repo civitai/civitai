@@ -24,7 +24,8 @@ export type ToolSpec = {
 };
 
 export type Completion = {
-  message: { content: string | null; tool_calls?: ToolCall[] };
+  /** `reasoning`: the model's own reasoning for this call, when it returns any. Never sent back to it. */
+  message: { content: string | null; tool_calls?: ToolCall[]; reasoning?: string | null };
   finishReason: string | null;
   usage: { prompt: number; completion: number };
 };
@@ -64,7 +65,7 @@ export async function complete(input: {
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const body = (await res.json()) as {
     choices?: {
-      message?: { content?: string | null; tool_calls?: ToolCall[] };
+      message?: { content?: string | null; tool_calls?: ToolCall[]; reasoning?: string | null };
       finish_reason?: string | null;
     }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -76,7 +77,11 @@ export async function complete(input: {
       `OpenRouter returned no message${body.error?.message ? `: ${body.error.message}` : ''}`
     );
   return {
-    message: { content: choice.message.content ?? null, tool_calls: choice.message.tool_calls },
+    message: {
+      content: choice.message.content ?? null,
+      tool_calls: choice.message.tool_calls,
+      reasoning: choice.message.reasoning ?? null,
+    },
     finishReason: choice.finish_reason ?? null,
     usage: {
       prompt: body.usage?.prompt_tokens ?? 0,

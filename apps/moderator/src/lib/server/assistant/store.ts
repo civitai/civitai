@@ -139,6 +139,7 @@ export type Turn = {
   toolCalls: TurnToolCall[];
   sources: TurnSource[];
   answer: string | null;
+  reasoning: string | null;
   unverified: string[];
   error: string | null;
   model: string;
@@ -160,6 +161,7 @@ const turnColumns = [
   'tool_calls as toolCalls',
   'sources',
   'answer',
+  'reasoning',
   'unverified',
   'error',
   'model',
@@ -215,6 +217,7 @@ export async function finishTurn(
     toolCalls: TurnToolCall[];
     sources: TurnSource[];
     answer: string | null;
+    reasoning: string | null;
     unverified: string[];
     error: string | null;
     promptTokens: number;
@@ -229,6 +232,7 @@ export async function finishTurn(
       tool_calls: sql`${JSON.stringify(outcome.toolCalls)}::jsonb`,
       sources: sql`${JSON.stringify(outcome.sources)}::jsonb`,
       answer: outcome.answer,
+      reasoning: outcome.reasoning,
       unverified: sql`${JSON.stringify(outcome.unverified)}::jsonb`,
       error: outcome.error,
       prompt_tokens: outcome.promptTokens,
@@ -304,6 +308,7 @@ export async function listAuditTurns({
       't.status',
       't.tool_calls as toolCalls',
       't.answer',
+      't.reasoning',
       't.unverified',
       't.error',
       't.model',
