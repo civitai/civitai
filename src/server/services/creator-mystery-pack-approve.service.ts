@@ -70,10 +70,12 @@ async function readBox(tx: Tx, boxId: number) {
   return box;
 }
 
-const pendingRevisionOf = async (tx: Tx, boxId: number) =>
+export const pendingRevisionOf = async (tx: Tx, boxId: number) =>
   (
-    await tx.$queryRaw<{ id: number; baseVersion: number; proposal: MysteryPackProposal }[]>`
-      SELECT id, "baseVersion", proposal FROM "BoxRevision"
+    await tx.$queryRaw<
+      { id: number; baseVersion: number; proposal: MysteryPackProposal; createdAt: Date }[]
+    >`
+      SELECT id, "baseVersion", proposal, "createdAt" FROM "BoxRevision"
       WHERE "boxDefinitionId" = ${boxId} AND status = 'pending'`
   )[0];
 

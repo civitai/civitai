@@ -1313,6 +1313,11 @@ export const deleteCreatorShopItem = async ({
   // Deleting wipes purchase records — a moderator-only action; creators archive.
   if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // The box, its pending edit and any boxes buyers hold would outlive the listing.
+  if (existing.itemDefinitionId != null)
+    throw throwBadRequestError(
+      "A mystery pack's listing can't be deleted: reject or revert the pack"
+    );
   // The creator's own listing is what withholds its cosmetic, so a withheld one leaves that on the
   // cosmetic before it goes; holders of an approved one keep wearing it.
   const keepWithheld =
@@ -2005,8 +2010,8 @@ export const getCreatorShopReviewQueue = async ({
       (t): t is CosmeticType => t !== PACK_FILTER_VALUE && t !== MYSTERY_PACK_FILTER_VALUE
     ) ?? [];
   const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
-  // Only when asked for, until the review pane can show a pack's contents and odds.
-  const mysteryPacksWanted = !!cosmeticTypes?.includes(MYSTERY_PACK_FILTER_VALUE);
+  const mysteryPacksWanted =
+    !cosmeticTypes?.length || cosmeticTypes.includes(MYSTERY_PACK_FILTER_VALUE);
   const singlesWanted = !cosmeticTypes?.length || types.length > 0;
 
   // A specific status filters to it (including Archived); no status = every
@@ -2088,6 +2093,10 @@ export const getCreatorShopReviewQueue = async ({
         // A pack has no cosmetic, so its author is the lister — without this the
         // review panel has nobody to attribute it to.
         addedBy: { select: { id: true, username: true, image: true } },
+        itemDefinitionId: true,
+        itemDefinition: {
+          select: { revisions: { where: { status: 'pending' }, select: { id: true } } },
+        },
         cosmetic: {
           select: {
             id: true,

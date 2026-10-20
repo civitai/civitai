@@ -126,11 +126,13 @@ describe('getCreatorShopReviewQueue', () => {
     expect(armsOf()).toHaveLength(2);
   });
 
-  // Until the review pane can show a pack's contents and odds (the next PR lifts this).
-  it('leaves mystery packs out of the unfiltered view', async () => {
+  it('includes mystery packs in the unfiltered view', async () => {
     await getCreatorShopReviewQueue(baseInput);
-    expect(armsOf().length).toBeGreaterThan(0);
-    expect(mysteryArm()).toBeUndefined();
+    expect(mysteryArm()).toEqual({
+      itemDefinition: { sellerId: { not: null } },
+      status: { not: 'Archived' },
+    });
+    expect(armsOf()).toHaveLength(3);
   });
 
   it("filters mystery packs by their creator's username", async () => {

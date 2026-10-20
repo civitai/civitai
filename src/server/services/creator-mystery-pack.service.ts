@@ -118,23 +118,29 @@ type ContentRow = {
   unitAmount: number | null;
 };
 
-/** Values and checks each content by the creator's own listing of it (`addedById`) only. */
-export async function checkProposal(
+export type EvaluatedContent = ContentRow & {
+  /** Null while the content has a problem: only a valid listing has a value. */
+  value: number | null;
+  problem: string | null;
+};
+
+type ProposalInput = {
+  creatorId: number;
+  steepness: CreatorBoxSteepness;
+  tiers: number[][];
+  price: number;
+  stickersEnabled: boolean;
+};
+
+/**
+ * Every check `checkProposal` makes, reported rather than thrown, so the review pane can show why an
+ * approval would fail. Values and checks each content by the creator's own listing of it
+ * (`addedById`) only. Bounds are null unless the layout and every content are valid.
+ */
+export async function evaluateProposal(
   client: Tx,
-  {
-    creatorId,
-    steepness,
-    tiers,
-    price,
-    stickersEnabled,
-  }: {
-    creatorId: number;
-    steepness: CreatorBoxSteepness;
-    tiers: number[][];
-    price: number;
-    stickersEnabled: boolean;
-  }
-): Promise<{ proposal: MysteryPackProposal; weights: number[]; values: Map<number, number> }> {
+  { creatorId, steepness, tiers, price, stickersEnabled }: ProposalInput
+) {
   const ids = tiers.flat();
   const rows = await client.$queryRaw<ContentRow[]>`
     SELECT c.id AS "cosmeticId", c.name, c.type::text AS type, c."createdById", c.data,
@@ -152,10 +158,9 @@ export async function checkProposal(
     WHERE c.id = ANY(${ids}::int[])`;
   const byId = new Map(rows.map((row) => [row.cosmeticId, row]));
   const missing = ids.filter((id) => !byId.has(id));
-  if (missing.length) throw throwBadRequestError(`These items don't exist: ${missing.join(', ')}`);
 
   const now = new Date();
-  for (const row of rows) {
+  const contents: EvaluatedContent[] = rows.map((row) => {
     const candidate: CreatorBoxCandidate = {
       cosmeticId: row.cosmeticId,
       type: row.type,
@@ -179,45 +184,65 @@ export async function checkProposal(
       stickersEnabled,
       now,
     });
-    // Named only when it's the creator's own: an id alone mustn't reveal another cosmetic's name.
-    const label = row.createdById === creatorId ? row.name : `Item #${row.cosmeticId}`;
-    if (problem) throw throwBadRequestError(`${label}: ${problem}`);
-  }
+    const value = problem
+      ? null
+      : creatorBoxContentValue(
+          { listed: row.listed!, unitAmount: row.unitAmount! },
+          cosmeticPriceFloor(row.type)
+        );
+    return { ...row, value, problem };
+  });
 
   const layout = creatorBoxWeights(
     tiers.map((tier) => tier.length),
     steepness
   );
-  if (!layout.ok) throw throwBadRequestError(layout.reason);
+  const values = new Map(contents.map((content) => [content.cosmeticId, content.value]));
+  const allValued = !missing.length && contents.every((content) => content.value !== null);
+  const bounds =
+    layout.ok && allValued
+      ? creatorBoxPriceBounds(
+          tiers.map((tier, t) => ({
+            weight: layout.weights[t],
+            values: tier.map((id) => values.get(id)!),
+          })),
+          COSMETIC_PRICE_FLOOR_MIN
+        )
+      : null;
+  return {
+    missing,
+    contents,
+    layout,
+    bounds,
+    priceProblem: bounds ? creatorBoxPriceProblem(price, bounds) : null,
+  };
+}
 
-  const values = new Map(
-    rows.map((row) => [
-      row.cosmeticId,
-      creatorBoxContentValue(
-        { listed: row.listed!, unitAmount: row.unitAmount! },
-        cosmeticPriceFloor(row.type)
-      ),
-    ])
-  );
-  const bounds = creatorBoxPriceBounds(
-    tiers.map((tier, t) => ({
-      weight: layout.weights[t],
-      values: tier.map((id) => values.get(id)!),
-    })),
-    COSMETIC_PRICE_FLOOR_MIN
-  );
-  const priceProblem = creatorBoxPriceProblem(price, bounds);
+/** `evaluateProposal`, refusing the first problem it finds. */
+export async function checkProposal(
+  client: Tx,
+  input: ProposalInput
+): Promise<{ proposal: MysteryPackProposal; weights: number[]; values: Map<number, number> }> {
+  const { missing, contents, layout, priceProblem } = await evaluateProposal(client, input);
+  if (missing.length) throw throwBadRequestError(`These items don't exist: ${missing.join(', ')}`);
+  for (const content of contents) {
+    // Named only when it's the creator's own: an id alone mustn't reveal another cosmetic's name.
+    const label =
+      content.createdById === input.creatorId ? content.name : `Item #${content.cosmeticId}`;
+    if (content.problem) throw throwBadRequestError(`${label}: ${content.problem}`);
+  }
+  if (!layout.ok) throw throwBadRequestError(layout.reason);
   if (priceProblem) throw throwBadRequestError(priceProblem);
 
-  const names = CREATOR_BOX_TIERS[tiers.length];
+  const names = CREATOR_BOX_TIERS[input.tiers.length];
   return {
     proposal: {
-      steepness,
-      tiers: tiers.map((cosmeticIds, t) => ({ key: names[t].key, cosmeticIds })),
-      price,
+      steepness: input.steepness,
+      tiers: input.tiers.map((cosmeticIds, t) => ({ key: names[t].key, cosmeticIds })),
+      price: input.price,
     },
     weights: layout.weights,
-    values,
+    values: new Map(contents.map((content) => [content.cosmeticId, content.value!])),
   };
 }
 
