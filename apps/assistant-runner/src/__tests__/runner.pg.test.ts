@@ -7,12 +7,22 @@ import {
   type RunEvent,
   type StartRunRequest,
 } from '@civitai/components-chat/runner-protocol';
+import { DBOS } from '@dbos-inc/dbos-sdk';
+import type { ModelMessage } from 'ai';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app';
 import type { ModelProvider } from '../interfaces';
+import { startTurn, withProgress } from '../head';
 import { MemoryConversationStore } from '../memory-store';
-import { Runner, type RunnerDeps } from '../runner';
+import {
+  REPLIES_QUEUE,
+  REPLY_WORKFLOW,
+  Runner,
+  WORKFLOW_VERSION,
+  type RunnerDeps,
+} from '../runner';
 import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
 import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
 import { scriptedModel, toolResults } from '../test-support/scripted-model';
@@ -554,6 +564,192 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(
       (await post('/conversations/c-missing/patch', as(user), { v: 1, title: 'x' })).status
     ).toBe(404);
+  });
+
+  async function sql<T extends pg.QueryResultRow>(text: string, values: unknown[] = []) {
+    const client = new pg.Client({ connectionString: db.url });
+    await client.connect();
+    try {
+      return (await client.query<T>(text, values)).rows;
+    } finally {
+      await client.end();
+    }
+  }
+
+  it('ends a stream whose run-ended was never journaled with how the head says the reply ended', async () => {
+    const user = 'u-lost-end';
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-lost-end', model: 'tools' })
+    );
+    const runId = start.body!.runId as string;
+    const original = ended(await events(runId, user));
+    expect(original.status).toBe('done');
+    // As if the journal write of run-ended had failed while the run itself finished.
+    await sql(
+      `delete from dbos.streams where workflow_uuid = $1 and "offset" = (select max("offset") from dbos.streams where workflow_uuid = $1)`,
+      [runId]
+    );
+    const replayed = await events(runId, user);
+    expect(ended(replayed)).toMatchObject({
+      type: 'run-ended',
+      status: 'done',
+      messages: original.messages,
+    });
+  });
+
+  it('records the end of a run cancelled outright in the head, once, and ends its stream with it', async () => {
+    const user = 'u-cancelled';
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-cancelled', model: 'hang' })
+    );
+    const runId = start.body!.runId as string;
+    await events(runId, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+    await DBOS.cancelWorkflow(runId);
+    const entries = await events(runId, user);
+    expect(ended(entries).status).toBe('stopped');
+    const head = await store.load(user, 'c-cancelled');
+    expect(head!.v).toBe(2);
+    expect(head!.turns[0]!.assistant).toMatchObject({ status: 'aborted' });
+    // The user's slot is free again.
+    expect(await runner.lookup(user, 'c-cancelled')).toBeNull();
+  });
+
+  it('deletes the journals and workflows of runs that ended before the retention cutoff, and nothing live', async () => {
+    const done = await post(
+      '/runs',
+      as('u-retention'),
+      startBody({ conversationId: 'c-retention', model: 'tools' })
+    );
+    const doneId = done.body!.runId as string;
+    await events(doneId, 'u-retention');
+    await post('/runs/stop', as('u-retention'), {
+      v: 1,
+      idempotencyKey: 'never-started',
+      conversationId: 'c-retention',
+    });
+    const live = await post(
+      '/runs',
+      as('u-retention-live'),
+      startBody({ conversationId: 'c-retention-live', model: 'hang' })
+    );
+    const liveId = live.body!.runId as string;
+    await events(liveId, 'u-retention-live', {
+      stopWhen: ({ event }) => event.type === 'tool-call',
+    });
+    // Settled: the finished run's workflow has recorded its output.
+    await DBOS.getResult(doneId);
+
+    expect(await runner.cleanup(60 * 60 * 1000)).toBe(0);
+    expect(await runner.cleanup(0)).toBeGreaterThanOrEqual(2);
+    expect(await DBOS.getWorkflowStatus(doneId)).toBeNull();
+    expect(await runner.journalLength(doneId)).toBe(0);
+    expect(
+      await sql(`select 1 from dbos.workflow_status where workflow_name = 'reply-stop-marker'`)
+    ).toEqual([]);
+    expect(await DBOS.getWorkflowStatus(liveId)).toMatchObject({ status: 'PENDING' });
+    expect(await runner.journalLength(liveId)).toBeGreaterThan(0);
+
+    await post(`/runs/${liveId}/stop`, as('u-retention-live'), { v: 1 });
+    expect(ended(await events(liveId, 'u-retention-live')).status).toBe('stopped');
+  });
+
+  it('ends a run stranded on an old workflow version as resumable, frees its user, and lets Continue carry on', async () => {
+    const user = 'u-stranded';
+    const recordsBefore = calls.record;
+    const finished: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'old-a', toolName: 'record', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'old-a',
+            toolName: 'record',
+            output: { type: 'text', value: 'recorded' },
+          },
+        ],
+      },
+    ];
+    await store.update(user, 'c-stranded', () =>
+      withProgress(
+        startTurn(null, {
+          conversationId: 'c-stranded',
+          seq: 1,
+          user: { content: 'Old run.', attachments: [] },
+          now: new Date(),
+        }),
+        1,
+        finished,
+        new Date()
+      )
+    );
+    // A run an earlier image started: another workflow version, on this runner's executor id.
+    const strandedId = `run_stranded_${randomUUID().replace(/-/g, '')}`;
+    await DBOS.enqueueWorkflowWithOptions(
+      {
+        queueName: REPLIES_QUEUE,
+        workflowName: REPLY_WORKFLOW,
+        workflowID: strandedId,
+        appVersion: 'reply-0',
+        deduplicationID: user,
+        authenticatedUser: user,
+        attributes: { conversationId: 'c-stranded', seq: 1 },
+      },
+      { runId: strandedId, userId: user, conversationId: 'c-stranded', seq: 1 }
+    );
+    await sql(`update dbos.workflow_status set executor_id = 'test' where workflow_uuid = $1`, [
+      strandedId,
+    ]);
+    expect(WORKFLOW_VERSION).not.toBe('reply-0');
+    // A current run of another user, which the sweep must leave alone.
+    const live = await post(
+      '/runs',
+      as('u-stranded-live'),
+      startBody({ conversationId: 'c-stranded-live', model: 'hang' })
+    );
+    const liveId = live.body!.runId as string;
+    await events(liveId, 'u-stranded-live', {
+      stopWhen: ({ event }) => event.type === 'tool-call',
+    });
+
+    expect(await runner.sweepStranded()).toEqual([strandedId]);
+    expect(await runner.sweepStranded()).toEqual([]);
+    expect(await DBOS.getWorkflowStatus(strandedId)).toMatchObject({ status: 'CANCELLED' });
+    expect(await DBOS.getWorkflowStatus(liveId)).toMatchObject({ status: 'PENDING' });
+
+    const head = await store.load(user, 'c-stranded');
+    expect(head!.v).toBe(2);
+    expect(head!.turns[0]!.assistant).toMatchObject({
+      status: 'error',
+      errorKind: 'interrupted',
+      messages: finished,
+    });
+    const end = ended(await events(strandedId, user));
+    expect(end).toMatchObject({ status: 'error', resumable: true, steps: 1, messages: finished });
+
+    // Continue: a retry of the turn carries on from the saved step, without running its tool again.
+    const retry = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true })
+    );
+    expect(retry.status).toBe(201);
+    const entries = await events(retry.body!.runId as string, user);
+    expect(ended(entries).status).toBe('done');
+    expect(calls.record).toBe(recordsBefore);
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toMatchObject([
+      { kind: 'tool', toolName: 'record', state: 'done' },
+    ]);
+
+    await post(`/runs/${liveId}/stop`, as('u-stranded-live'), { v: 1 });
+    expect(ended(await events(liveId, 'u-stranded-live')).status).toBe('stopped');
   });
 
   it('keeps every credential the request carried out of what DBOS persists and out of the head', async () => {

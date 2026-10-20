@@ -25,7 +25,12 @@ interface Child {
 }
 
 /** A runner process on `databaseUrl` under `executorId`; resolves once it listens. */
-function startRunner(databaseUrl: string, executorId: string, dir: string): Promise<Child> {
+function startRunner(
+  databaseUrl: string,
+  executorId: string,
+  dir: string,
+  env: Record<string, string> = {}
+): Promise<Child> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', fixture], {
       cwd: appDir,
@@ -35,6 +40,7 @@ function startRunner(databaseUrl: string, executorId: string, dir: string): Prom
         RUNNER_EXECUTOR_ID: executorId,
         FIXTURE_DIR: dir,
         NODE_ENV: 'test',
+        ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -82,6 +88,78 @@ describePg('crash recovery', () => {
     await db?.drop();
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
+
+  it('a runner killed after saving the reply’s end but before journaling it does not run the reply again', async () => {
+    const endDir = mkdtempSync(join(tmpdir(), 'assistant-runner-end-'));
+    const children2: Child[] = [];
+    try {
+      const calls = () =>
+        existsSync(join(endDir, 'calls.log'))
+          ? readFileSync(join(endDir, 'calls.log'), 'utf8').trim().split('\n')
+          : [];
+      const headers = { authorization: 'Bearer user:u-end', 'content-type': 'application/json' };
+      const first = await startRunner(db.url, 'executor-end', endDir, {
+        FIXTURE_SCRIPT: 'short',
+        FIXTURE_HOLD_AFTER_END: '1',
+      });
+      children.push(first.process);
+      children2.push(first);
+      const start = await fetch(`http://127.0.0.1:${first.port}/runs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          v: 1,
+          idempotencyKey: 'end-1',
+          conversationId: 'c-end',
+          turn: { seq: 1, user: { content: 'Do it once.', attachments: [] } },
+          model: 'scripted',
+          settings: {
+            maxOutputTokens: 1024,
+            tier: 'auto',
+            allowMature: false,
+            autoRunLimit: 0,
+            spokenReplies: false,
+          },
+        }),
+      });
+      expect(start.status).toBe(201);
+      const { runId } = (await start.json()) as { runId: string };
+      // The store holds the run right after it saved the end: killed in that window.
+      const headFile = join(endDir, 'heads', 'u-end--c-end.json');
+      await until('the reply’s end to be saved', () =>
+        existsSync(headFile) && readFileSync(headFile, 'utf8').includes('"status":"done"')
+          ? true
+          : undefined
+      );
+      first.process.kill('SIGKILL');
+      await new Promise((resolve) => first.process.once('exit', resolve));
+      expect(calls().map((line) => line.split(' ')[0])).toEqual(['record']);
+
+      const second = await startRunner(db.url, 'executor-end', endDir, { FIXTURE_SCRIPT: 'short' });
+      children.push(second.process);
+      children2.push(second);
+      const entries = await readEvents(
+        `http://127.0.0.1:${second.port}/runs/${runId}/events`,
+        { authorization: headers.authorization },
+        { timeoutMs: 45_000 }
+      );
+      expect(entries.filter(({ event }) => event.type === 'run-ended')).toHaveLength(1);
+      expect(entries.at(-1)!.event).toMatchObject({ type: 'run-ended', status: 'done' });
+      // The model was not asked again, so the tool did not run again.
+      expect(calls().map((line) => line.split(' ')[0])).toEqual(['record']);
+      expect(readFileSync(headFile, 'utf8')).toContain('"status":"done"');
+      const exited = new Promise((resolve) => second.process.once('exit', resolve));
+      second.process.kill('SIGTERM');
+      await exited;
+    } catch (error) {
+      const output = children2
+        .map((child, index) => `\n[runner ${index}]\n${child.output()}`)
+        .join('');
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${output}`);
+    } finally {
+      rmSync(endDir, { recursive: true, force: true });
+    }
+  }, 240_000);
 
   it('a runner killed mid-tool is recovered under the same executor id, and no tool that ran runs again', async () => {
     let first: Child | undefined;
