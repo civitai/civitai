@@ -58,9 +58,9 @@ export const trainingStatusFields: {
 };
 
 /**
- * Decision (2026-10-18): a dataset is fixed once training has started, so the run's results and its
- * review describe the bytes on record. Before the first run, and after a run that failed or expired
- * (a retry), a new dataset may be uploaded. A denied dataset is never replaced.
+ * A dataset is fixed once training has started, so the run's results and its review describe the
+ * bytes on record. Before the first run, and after a run that failed or expired (a retry), a new
+ * dataset may be uploaded. A denied dataset is never replaced.
  */
 export const datasetEditableTrainingStatuses: (TrainingStatus | null)[] = [
   null,
@@ -71,7 +71,7 @@ export const datasetEditableTrainingStatuses: (TrainingStatus | null)[] = [
 export const isDatasetEditable = (status: TrainingStatus | null | undefined) =>
   datasetEditableTrainingStatuses.includes(status ?? null);
 
-/** A run in progress or under moderation keeps its version: only a moderator may delete or merge it away. */
+/** A run in progress or under moderation keeps its version: the owner can't delete it or merge it away. */
 export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
   TrainingStatus.Submitted,
   TrainingStatus.Processing,

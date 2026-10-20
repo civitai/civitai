@@ -722,7 +722,7 @@ export default function UserTrainingModels() {
           const isPaused = mv.trainingStatus === TrainingStatus.Paused;
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const isRunning = isSubmitted || isProcessing;
-          // A denied version stays on record; deleting the whole model (its only version) is a soft delete.
+          // A denied version stays on record, but a model's only version goes with the (soft-deleted) model.
           const deletesVersion = mv.model._count.modelVersions > 1;
           const isNotDeletable =
             isRunning ||

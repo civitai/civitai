@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The orchestrator's callback (and the owner's recheck, which runs the same code) moves a version
-// whose run has started to whatever the run reports, including the statuses an owner may not move it
-// back to. That write must not go through the owner's status rules. Stubs mirror
+// The orchestrator callback and the owner's recheck (both call updateTrainingWorkflowRecords) write
+// the run's status without the owner's status rules. Stubs mirror
 // training-continued-epoch-numbering.test.ts.
 vi.mock('@civitai/client', () => ({ handleError: vi.fn() }));
 vi.mock('@aws-sdk/lib-storage', () => {

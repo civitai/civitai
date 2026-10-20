@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// An owner can't delete a version while its training run is in progress, under review or denied;
-// a moderator can. Mock scaffold mirrors model-version.deregister.service.test.ts.
+// Mock scaffold mirrors model-version.deregister.service.test.ts.
 
 const mockDbWrite = dbMock.dbWrite;
 
@@ -71,7 +70,6 @@ import { deleteVersionById } from '~/server/services/model-version.service';
 const VERSION_ID = 4242;
 
 function stubVersion(trainingStatus: string | null) {
-  // The status row the delete locks before anything else.
   mockDbWrite.$queryRaw.mockResolvedValue([{ trainingStatus }] as never);
   mockDbWrite.modelFile.findMany.mockResolvedValue([
     {

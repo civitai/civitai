@@ -1445,7 +1445,7 @@ export const deleteVersionById = async ({
   let modelFileHashes: string[] = [];
 
   const version = await dbWrite.$transaction(async (tx) => {
-    // Locked, so a run moving to review can't land between this check and the delete.
+    // Locked, so a run can't enter a locked status between this check and the delete.
     const [run] = await tx.$queryRaw<{ trainingStatus: TrainingStatus | null }[]>`
       SELECT "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
     `;
@@ -3492,8 +3492,7 @@ export const mergeVersions = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
-      // 0. A source is deleted by the merge, and its files move to the target. Locked (in id order)
-      // so a run can't change status under these checks.
+      // 0. Lock the rows, in id order, so a run can't change status under these checks.
       const runs = await tx.$queryRaw<
         { id: number; name: string; status: ModelStatus; trainingStatus: TrainingStatus | null }[]
       >`
@@ -3510,8 +3509,8 @@ export const mergeVersions = async ({
         throw throwBadRequestError(
           `Version "${lockedSource.name}" has a training run in progress, under review or denied, and can't be merged.`
         );
-      // A dataset that has been trained on stays fixed; on a target that still takes a new dataset
-      // it could be replaced under the run's results, which travel with it in its metadata.
+      // A trained dataset stays fixed: its run's results live in the file's metadata, so it can't
+      // move to a version that still takes a new dataset.
       const target = runs.find((r) => r.id === targetVersionId);
       const trainedSourceIds = sourceRuns
         .filter((r) => !isDatasetEditable(r.trainingStatus))

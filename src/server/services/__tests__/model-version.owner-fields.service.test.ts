@@ -170,7 +170,7 @@ describe('upsertModelVersion — Denied and Paused training status is moderator-
     [TrainingStatus.Processing, TrainingStatus.Approved],
     [TrainingStatus.Submitted, TrainingStatus.Approved],
     [TrainingStatus.Expired, TrainingStatus.Pending],
-    // A stale form replaying the status it loaded; both keep the dataset fixed.
+    // A stale form re-sending InReview after the run moved to Approved.
     [TrainingStatus.Approved, TrainingStatus.InReview],
   ] as const)('lets an owner move %s to %s', async (from, to) => {
     seedExisting({ trainingStatus: from });
@@ -198,7 +198,6 @@ describe('upsertModelVersion — Denied and Paused training status is moderator-
 });
 
 describe('upsertModelVersion — an owner cannot reopen a started run for a new dataset', () => {
-  // Pending, Failed, Expired and no status are the ones a new dataset upload is accepted in.
   const refused = [
     [TrainingStatus.InReview, TrainingStatus.Pending],
     [TrainingStatus.Approved, TrainingStatus.Pending],
@@ -224,7 +223,6 @@ describe('upsertModelVersion — an owner cannot reopen a started run for a new 
     expect(written().trainingStatus).toBe(TrainingStatus.Pending);
   });
 
-  // The status read before the transaction can be stale by the time the row is locked.
   it('judges the move against the locked row, not the earlier read', async () => {
     seedExisting({ trainingStatus: TrainingStatus.Pending });
     mockTx.$queryRaw.mockResolvedValueOnce([

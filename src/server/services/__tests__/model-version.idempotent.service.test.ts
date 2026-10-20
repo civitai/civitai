@@ -263,7 +263,6 @@ describe('mergeVersions file remaps', () => {
   const PAST_REMAP = 'reached the steps after the file remap';
   const fileFindMany = vi.fn();
   const fileUpdateMany = vi.fn();
-  // The locked status rows: nothing here is training, so the merge checks pass.
   const versionRows = vi.fn(async () =>
     [TARGET, SOURCE].map((id) => ({
       id,
@@ -387,17 +386,13 @@ describe('mergeVersions file remaps', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// mergeVersions keeps a version whose training run is in progress, under review or denied, and a
-// trained dataset off a version that still takes a new one
-// ---------------------------------------------------------------------------
 describe('mergeVersions training runs', () => {
   const OWNER = 7;
   const MODEL = 1;
   const TARGET = 100;
   const SOURCE = 101;
 
-  // Reaching the file move (step 2) means every check before it passed.
+  // Reaching the first write means every check before it passed.
   const PAST_CHECKS = 'reached the file move';
   const versionRows = vi.fn();
   const datasetFindFirst = vi.fn();
