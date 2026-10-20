@@ -2,10 +2,9 @@ import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import {
   decidePayoutReview,
-  PayoutReviewError,
   payoutReviewDecisionSchema,
 } from '~/server/services/creator-program-prepayout-review/hold';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /** Records a decision on a held Creator Program payout: escalate, clear or withhold. */
 export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextApiResponse) {
@@ -17,7 +16,6 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   try {
     return res.status(200).json(await decidePayoutReview(parsed.data));
   } catch (e) {
-    if (e instanceof PayoutReviewError) return res.status(e.status).json({ error: e.message });
-    throw e;
+    return handleEndpointError(res, e);
   }
 });

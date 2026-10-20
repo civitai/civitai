@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { OnboardingSteps } from '~/server/common/enums';
-import { decidePayoutReview, getSettlementHolds, PayoutReviewError } from '../hold';
+import { decidePayoutReview, getSettlementHolds } from '../hold';
 
 const reviews = dbMock.dbWrite.creatorProgramPayoutReview;
 
@@ -82,7 +82,7 @@ describe('decidePayoutReview', () => {
   ] as const)('refuses to %s a %s review', async (action, status) => {
     reviews.findUnique.mockResolvedValue(review({ status }));
 
-    await expect(decide(action)).rejects.toMatchObject({ status: 409 });
+    await expect(decide(action)).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(reviews.updateMany).not.toHaveBeenCalled();
   });
 
@@ -90,7 +90,7 @@ describe('decidePayoutReview', () => {
     // The decider read evaluation 3; the 06:00 run has since re-evaluated it with a new signal.
     reviews.findUnique.mockResolvedValue(review({ evaluations: 4 }));
 
-    await expect(decide('clear')).rejects.toMatchObject({ status: 409 });
+    await expect(decide('clear')).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(reviews.updateMany).not.toHaveBeenCalled();
   });
 
@@ -98,6 +98,6 @@ describe('decidePayoutReview', () => {
     reviews.findUnique.mockResolvedValue(review());
     reviews.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(decide('clear')).rejects.toBeInstanceOf(PayoutReviewError);
+    await expect(decide('clear')).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });

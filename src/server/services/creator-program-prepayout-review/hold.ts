@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -91,24 +92,19 @@ const TRANSITIONS: Record<PayoutReviewDecision['action'], string[]> = {
   withhold: ['open', 'escalated'],
 };
 
-export class PayoutReviewError extends Error {
-  constructor(readonly status: 404 | 409, message: string) {
-    super(message);
-  }
-}
+const conflict = (message: string) => new TRPCError({ code: 'CONFLICT', message });
 
 /** A cleared creator is paid by the next settlement run on the 15th; nothing here moves money. */
 export async function decidePayoutReview(input: PayoutReviewDecision, now = new Date()) {
   const review = await dbWrite.creatorProgramPayoutReview.findUnique({ where: { id: input.id } });
-  if (!review) throw new PayoutReviewError(404, `No review ${input.id}`);
+  if (!review) throw new TRPCError({ code: 'NOT_FOUND', message: `No review ${input.id}` });
 
   if (review.evaluations !== input.evaluations)
-    throw new PayoutReviewError(
-      409,
+    throw conflict(
       `Review ${review.id} has newer evidence (evaluation ${review.evaluations}); read it again`
     );
   if (!TRANSITIONS[input.action].includes(review.status))
-    throw new PayoutReviewError(409, `Cannot ${input.action} a review that is ${review.status}`);
+    throw conflict(`Cannot ${input.action} a review that is ${review.status}`);
 
   const status = { escalate: 'escalated', clear: 'cleared', withhold: 'withheld' }[input.action];
   // Conditional on what was read, so neither a racing decision nor a re-run adding evidence the
@@ -124,7 +120,7 @@ export async function decidePayoutReview(input: PayoutReviewDecision, now = new 
       askRef: input.askRef ?? review.askRef,
     },
   });
-  if (!count) throw new PayoutReviewError(409, `Review ${review.id} changed while deciding it`);
+  if (!count) throw conflict(`Review ${review.id} changed while deciding it`);
 
   await logToAxiom({
     name: 'creator-program-payout-review-decision',
