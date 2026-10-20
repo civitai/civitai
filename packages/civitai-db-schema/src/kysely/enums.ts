@@ -368,6 +368,12 @@ export const EntityModerationStatus = {
 } as const;
 export type EntityModerationStatus =
   (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
+export const TextScanHoldStatus = {
+  Pending: 'Pending',
+  Dismissed: 'Dismissed',
+  Confirmed: 'Confirmed',
+} as const;
+export type TextScanHoldStatus = (typeof TextScanHoldStatus)[keyof typeof TextScanHoldStatus];
 export const ImageEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',

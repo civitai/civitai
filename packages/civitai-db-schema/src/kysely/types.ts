@@ -50,6 +50,7 @@ import type {
   MediaType,
   BlockImageReason,
   EntityModerationStatus,
+  TextScanHoldStatus,
   ImageEngagementType,
   ImageOnModelType,
   TagTarget,
@@ -5348,6 +5349,34 @@ export type Technique = {
   enabled: Generated<boolean>;
   type: TechniqueType;
 };
+export type TextScanHold = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  label: string;
+  textHash: string;
+  status: Generated<TextScanHoldStatus>;
+  /**
+   * Content author. A plain column so the hold keeps it after the account is deleted.
+   */
+  userId: number | null;
+  /**
+   * The text as composed for the scan.
+   */
+  text: string;
+  reason: string;
+  workflowId: string | null;
+  promptId: number | null;
+  contentAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  decidedAt: Timestamp | null;
+  decidedById: number | null;
+  decisionNote: string | null;
+  hiddenAt: Timestamp | null;
+  restoredAt: Timestamp | null;
+  meta: unknown | null;
+};
 export type TextScanPrompt = {
   id: Generated<number>;
   key: string;
@@ -6158,6 +6187,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanHold: TextScanHold;
   TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;

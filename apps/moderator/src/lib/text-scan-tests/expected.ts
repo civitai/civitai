@@ -8,7 +8,7 @@ import {
 } from '../text-scan-lab/types';
 import type { Workspace } from './types';
 
-export const FLAG_LABELS = ['poi', 'minor', 'scam'] as const;
+export const FLAG_LABELS = ['poi', 'minor', 'scam', 'csam'] as const;
 export type FlagLabel = (typeof FLAG_LABELS)[number];
 
 export type NsfwRange = { min: NsfwLevelName; max: NsfwLevelName };
@@ -18,10 +18,18 @@ export type Expected = {
   poi?: boolean;
   minor?: boolean;
   scam?: boolean;
+  csam?: boolean;
   modelRules?: { ruleIds: number[] };
 };
 
-export const LABEL_ORDER: readonly LabLabel[] = ['nsfw', 'poi', 'minor', 'scam', 'modelRules'];
+export const LABEL_ORDER: readonly LabLabel[] = [
+  'nsfw',
+  'poi',
+  'minor',
+  'scam',
+  'csam',
+  'modelRules',
+];
 export const MAX_EXPECTED_RULES = 200;
 const MALFORMED = 'The expectation is malformed.';
 
@@ -47,6 +55,7 @@ export const expectedSchema = z.object({
   poi: z.boolean().optional(),
   minor: z.boolean().optional(),
   scam: z.boolean().optional(),
+  csam: z.boolean().optional(),
   modelRules: z
     .object({
       ruleIds: z

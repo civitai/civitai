@@ -51,6 +51,26 @@ export type EcosystemSupport = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
+/** A recommended value with the advisory band the generator paints around it. */
+export type RecommendedRange = { min: number; max: number; default: number };
+
+/** The settings a turbo LoRA applies when it is on. */
+export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
+
+/** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
+export const TURBO_PRESETS = {
+  /** The MOSS Image DMD LoRAs, designed to run without CFG. */
+  mossDmd: {
+    steps: { min: 4, max: 8, default: 8 },
+    cfgScale: { min: 1, max: 1, default: 1 },
+  },
+  /** The Anima turbo / DMD2 LoRAs: CFG stays at 1 unless the step count goes up. */
+  animaDmd2: {
+    steps: { min: 8, max: 16, default: 12 },
+    cfgScale: { min: 1, max: 1.4, default: 1 },
+  },
+} as const satisfies Record<string, TurboSettings>;
+
 export type EcosystemSettings = {
   ecosystemId: number;
   defaults?: {
@@ -59,6 +79,13 @@ export type EcosystemSettings = {
     modelLocked?: boolean;
     /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
     engine?: string;
+    /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
+    turbo?: {
+      /** The LoRA the generator's Turbo picker starts on. */
+      lora?: { id: number };
+      /** Prefills a LoRA version's turbo block; the generator's fallback for anything it left unset. */
+      settings: TurboSettings;
+    };
   };
 };
 
@@ -1455,6 +1482,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2945208 },
+      turbo: { settings: TURBO_PRESETS.animaDmd2 },
     },
   },
   {
@@ -1795,6 +1823,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MossImage,
     defaults: {
       model: { id: 3409867 },
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -4468,6 +4497,11 @@ export function getEcosystemDefaults(
     ...parentDefaults,
     ...settings?.defaults,
   };
+}
+
+/** The turbo numbers for an ecosystem, or undefined where turbo LoRAs are not a thing. */
+export function getEcosystemTurboSettings(ecosystemId: number): TurboSettings | undefined {
+  return getEcosystemDefaults(ecosystemId)?.turbo?.settings;
 }
 
 // =============================================================================

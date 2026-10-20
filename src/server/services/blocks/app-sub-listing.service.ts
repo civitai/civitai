@@ -1339,7 +1339,16 @@ const QUEUE_WHERE = {
   OR: [{ status: 'pending' }, { status: 'approved', pendingSubmittedAt: { not: null } }],
 } satisfies Prisma.AppSubListingWhereInput;
 
-const imageSelect = { select: { url: true } } as const;
+// `nsfwLevel` is for the moderator review's click-to-reveal only: this read is behind
+// `moderatorProcedure` (`listSubListingQueue`), never a public projection.
+const imageSelect = { select: { url: true, nsfwLevel: true } } as const;
+
+/**
+ * The image a queue row shows, as the moderator review's click-to-reveal reads it: its level
+ * (`ReviewMediaReveal`). `imageUrl` is the stored image key; `imageNsfwLevel` is null when the
+ * row has no image.
+ */
+type SubListingQueueImage = { imageUrl: string | null; imageNsfwLevel: number | null };
 
 export type SubListingQueueRow = {
   id: string;
@@ -1350,8 +1359,8 @@ export type SubListingQueueRow = {
   author: { id: number; username: string | null; image: string | null };
   /** Where an off-site parent's card links to; null for an on-site parent. */
   externalHref: string | null;
-  live: SubListingContent & { imageUrl: string | null };
-  pending: (SubListingContent & { imageUrl: string | null; submittedAt: Date }) | null;
+  live: SubListingContent & SubListingQueueImage;
+  pending: (SubListingContent & SubListingQueueImage & { submittedAt: Date }) | null;
   createdAt: Date;
   moderatedAt: Date | null;
   /** Echoed back by `moderateSubListing`, so a decision applies only to what was shown. */
@@ -1417,6 +1426,7 @@ export async function listSubListingQueue(
           subPath: r.subPath,
           contentRating: r.contentRating,
           imageUrl: r.image?.url ?? null,
+          imageNsfwLevel: r.image?.nsfwLevel ?? null,
         },
         pending:
           r.pendingSubmittedAt && r.pendingTitle != null && r.pendingSubPath != null
@@ -1427,6 +1437,7 @@ export async function listSubListingQueue(
                 subPath: r.pendingSubPath,
                 contentRating: r.pendingContentRating,
                 imageUrl: r.pendingImage?.url ?? null,
+                imageNsfwLevel: r.pendingImage?.nsfwLevel ?? null,
                 submittedAt: r.pendingSubmittedAt,
               }
             : null,

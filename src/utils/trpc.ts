@@ -228,6 +228,7 @@ export function isAuthedBrowser() {
  */
 export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
+  'article.getOfficialTag',
   'bug.getLatest',
   'changelog.getLatest',
   'cosmetic.getEventDecorationsForSearch',

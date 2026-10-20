@@ -74,6 +74,7 @@
         empty="This collection holds nothing."
         truncated={evidence.images.truncated}
         paging={evidence.images}
+        owners={evidence.images.owners}
       />
     </section>
   {/if}

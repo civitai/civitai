@@ -130,6 +130,18 @@ describe('mergeTextScanOutputs', () => {
     ).toEqual({ scam: [1] });
   });
 
+  it('detects csam if any segment does, with that segment flagged', () => {
+    expect(
+      mergeTextScanOutputs(
+        [{ csam: { detected: false, reason: 'c0' } }, { csam: { detected: true, reason: 'c1' } }],
+        ['csam']
+      )
+    ).toEqual({
+      output: { csam: { detected: true, reason: 'c1' } },
+      flaggedSegments: { csam: [1] },
+    });
+  });
+
   it('outputs only the requested labels', () => {
     const merged = mergeTextScanOutputs(
       [
@@ -173,6 +185,16 @@ describe('stricterThanStored', () => {
       stricterThanStored({ ...stored, triggeredLabels: ['modelRules'] }, matched, ['modelRules'])
     ).toEqual([]);
     expect(stricterThanStored({ ...stored, labels: matched }, matched, ['modelRules'])).toEqual([]);
+  });
+
+  it('raises a detected csam unless it is already stored', () => {
+    const csam = { csam: { detected: true, reason: 'test' } };
+    const stored = { nsfwLevel: null, triggeredLabels: [] as string[] };
+    expect(stricterThanStored(stored, csam, ['csam'])).toEqual(['csam']);
+    expect(
+      stricterThanStored(stored, { csam: { detected: false, reason: 'test' } }, ['csam'])
+    ).toEqual([]);
+    expect(stricterThanStored({ ...stored, labels: csam }, csam, ['csam'])).toEqual([]);
   });
 
   it('drops an equal or lower level, a PG level, and a flag stored in either field', () => {

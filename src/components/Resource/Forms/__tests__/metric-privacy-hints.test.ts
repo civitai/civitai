@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  describeInheritedMetric,
+  metricPrivacyAccessFor,
   inheritedMetricPrivacy,
 } from '~/components/Resource/Forms/metric-privacy-hints';
 
@@ -42,14 +42,28 @@ describe('inheritedMetricPrivacy', () => {
     expect(states.downloads).toEqual({ hidden: null, source: 'owner' });
     expect(states.generations).toEqual({ hidden: true, source: 'model' });
   });
+
+  it('reads the owner’s defaults when the server supplied them to a moderator', () => {
+    const states = inheritedMetricPrivacy({
+      level: 'model',
+      isOwner: false,
+      ownerDefaults: { buzz: true, downloads: false, generations: false },
+    });
+    expect(states.buzz).toEqual({ hidden: true, source: 'owner' });
+    expect(states.downloads).toEqual({ hidden: false, source: 'owner' });
+  });
 });
 
-describe('describeInheritedMetric', () => {
-  it.each([
-    [{ hidden: true, source: 'account' } as const, 'Hidden, from your account default'],
-    [{ hidden: false, source: 'model' } as const, 'Shown, from this model'],
-    [{ hidden: null, source: 'owner' } as const, "Follows the owner's account default"],
-  ])('%o reads %s', (state, text) => {
-    expect(describeInheritedMetric(state)).toBe(text);
+describe('metricPrivacyAccessFor', () => {
+  // access follows the owner's membership, not the editor's
+  it('gives a moderator editing someone else’s model live controls', () => {
+    expect(metricPrivacyAccessFor({ isOwner: false, ownerHasMembership: false })).toBe('moderator');
+  });
+
+  it('gives an owner controls only while their membership is active', () => {
+    expect(metricPrivacyAccessFor({ isOwner: true, ownerHasMembership: true })).toBe('owner');
+    expect(metricPrivacyAccessFor({ isOwner: true, ownerHasMembership: false })).toBe(
+      'owner-inactive'
+    );
   });
 });

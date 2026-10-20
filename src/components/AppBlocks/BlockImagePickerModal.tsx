@@ -14,6 +14,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
@@ -649,14 +650,12 @@ function PickGrid({
           <Text size="sm" c="dimmed">
             No usable images found in the most recent pages.
           </Text>
-          <Button
+          <LoadMoreButton
             size="xs"
             variant="default"
             onClick={() => fetchPage(onLoadMore)}
             loading={fetching || !!load}
-          >
-            Load more
-          </Button>
+          />
         </Stack>
       ) : null}
     </VirtualTiles>

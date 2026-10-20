@@ -6,6 +6,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import PlaybookFields from '../PlaybookFields.svelte';
+  import ToolList from '../ToolList.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -76,6 +77,7 @@
         summary={data.current?.summary ?? ''}
         body={data.current?.body ?? ''}
       />
+      <ToolList tools={data.tools} />
       {#if edit.error}<ErrorAlert message={edit.error} />{/if}
       <Button type="submit" disabled={edit.submitting}>Save as a new version</Button>
     </form>

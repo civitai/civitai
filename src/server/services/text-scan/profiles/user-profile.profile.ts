@@ -8,7 +8,7 @@ import {
 
 registerTextScanProfile({
   entityType: 'UserProfile',
-  labels: ['scam'],
+  labels: ['scam', 'csam'],
   load: async (userIds) => {
     const rows = await dbWrite.userProfile.findMany({
       where: { userId: { in: userIds } },

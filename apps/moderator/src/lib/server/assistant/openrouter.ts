@@ -1,8 +1,11 @@
+import { env } from '$env/dynamic/private';
 import { openrouterKey } from '../xguard-api';
 
 // The model call, and nothing else. Server-only: the key is read here and never leaves the process.
 
-export const ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
+const ASSISTANT_MODEL = 'z-ai/glm-5.3-flash';
+/** Configurable so a model trial needs no release. Every turn records the model it ran on. */
+export const assistantModel = () => env.ASSISTANT_MODEL?.trim() || ASSISTANT_MODEL;
 
 export type ChatMessage =
   | { role: 'system' | 'user'; content: string }
@@ -29,6 +32,8 @@ export type Completion = {
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
 export async function complete(input: {
+  /** Passed in, not read here, so the turn's recorded model is the one that ran. */
+  model: string;
   messages: ChatMessage[];
   tools?: ToolSpec[];
   /** `none` asks for an answer from what is already in the conversation. */
@@ -44,11 +49,13 @@ export async function complete(input: {
     },
     signal: input.signal,
     body: JSON.stringify({
-      model: ASSISTANT_MODEL,
+      model: input.model,
       messages: input.messages,
       tools: input.tools?.length ? input.tools : undefined,
       tool_choice: input.tools?.length ? input.toolChoice ?? 'auto' : undefined,
       temperature: 0.2,
+      // Reasoning tokens are billed and counted against the turn's budget; low keeps them short.
+      reasoning: { effort: 'low' },
       // Account data goes into these prompts. Route only to providers that do not retain or train on
       // what they are sent.
       provider: { data_collection: 'deny' },
