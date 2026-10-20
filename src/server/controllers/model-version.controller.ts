@@ -423,10 +423,7 @@ export const toggleNotifyEarlyAccessHandler = async ({
 const asUserTier = (tier: string | null): SessionUser['tier'] =>
   (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
 
-/**
- * The files of the bounty entry `userId` awarded, to copy into the version they create from the
- * bounty. Each must be the entry author's own upload.
- */
+/** Throws unless every file is the entry author's own upload. Null when there is nothing to copy. */
 async function getAwardedEntryFiles({ bountyId, userId }: { bountyId: number; userId: number }) {
   const entry = await dbRead.bountyEntry.findFirst({
     where: { bountyId, benefactors: { some: { userId } } },
@@ -748,7 +745,7 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
-    // Checked before the version is written, so a refused file never leaves a version without it.
+    // Before the write: a refused file must not leave a half-built version behind.
     const bountyCopy =
       !input.id && bountyId ? await getAwardedEntryFiles({ bountyId, userId }) : null;
 

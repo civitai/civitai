@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { updateEntityFiles } from '~/server/services/file.service';
 
-// Bounty and bounty-entry saves send their files back with ids; a file is only updated as part of
-// the item being saved.
-
 const ENTRY = 55;
 const OWN_FILE = 1;
 const OTHER_ITEMS_FILE = 2;

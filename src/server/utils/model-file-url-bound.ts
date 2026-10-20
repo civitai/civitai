@@ -216,11 +216,7 @@ export async function findClientFileUrlMiss({
   return miss;
 }
 
-/**
- * A bounty entry's files are uploaded by its author, so one copied into the version the awarder
- * creates must be under the author's own upload prefix (rule 1, judged for the author). There is no
- * moderator exemption: the url was chosen by the author, not by the caller.
- */
+/** Rule 1 for the entry's author. No moderator exemption: the author chose the url, not the caller. */
 export function assertBountyEntryFileUrlAllowed({
   url,
   authorId,
@@ -228,13 +224,14 @@ export function assertBountyEntryFileUrlAllowed({
   bountyEntryId,
 }: {
   url: string;
-  authorId: number;
+  authorId: number | null;
   userId: number;
   bountyEntryId: number;
 }) {
   const parsed = parseUploadObjectUrl(url);
   let reason: ClientFileUrlMiss;
   if (!parsed.ok) reason = parsed.reason;
+  else if (authorId == null) reason = 'other-user-prefix';
   else {
     const key = classifyUploadKey(parsed.key, authorId);
     if (key.kind === 'own-upload') return;

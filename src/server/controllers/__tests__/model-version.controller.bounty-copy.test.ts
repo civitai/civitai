@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 
-// Creating a version from a bounty copies the files of the entry the caller awarded. Harness mirrors
-// model-version.controller.licensing-lineage.test.ts.
+// Harness mirrors model-version.controller.licensing-lineage.test.ts.
 
 const { mockUpsertModelVersion, mockGetModel, mockCreateFile, mockGetFilesByEntity } = vi.hoisted(
   () => ({

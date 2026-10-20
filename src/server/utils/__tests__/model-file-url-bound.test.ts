@@ -365,4 +365,15 @@ describe('assertBountyEntryFileUrlAllowed', () => {
       })
     );
   });
+
+  it('refuses a file on an entry with no author', () => {
+    expect(() =>
+      assertBountyEntryFileUrlAllowed({
+        url: r2Path(`default/${AUTHOR}/lora.safetensors`),
+        authorId: null,
+        userId: ME,
+        bountyEntryId: ENTRY,
+      })
+    ).toThrowError(/can't be copied into a model version/);
+  });
 });
