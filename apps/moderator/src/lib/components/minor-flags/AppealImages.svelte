@@ -4,7 +4,14 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
 
-  let { images }: { images: AppealCoverImage[] } = $props();
+  let {
+    images,
+    blurred = false,
+  }: {
+    images: AppealCoverImage[];
+    /** Hides the pictures behind a blur; the rating label stays readable. */
+    blurred?: boolean;
+  } = $props();
 </script>
 
 {#if images.length}
@@ -21,7 +28,7 @@
         aria-label="Open image {i + 1} of {images.length} full size"
         class="relative block h-[180px] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
-        <EdgeMedia src={image.url} type="image" width={450} class="size-full object-cover" />
+        <EdgeMedia src={image.url} type="image" width={450} class={blurred ? 'size-full scale-110 object-cover blur-xl' : 'size-full object-cover'} />
         <span
           class="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-white"
         >

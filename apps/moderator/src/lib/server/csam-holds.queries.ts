@@ -21,7 +21,7 @@ export type CsamHoldRow = {
   chatId: number | null;
   /** The post's title or the model's name; null for other types, or when the content is gone or untitled. */
   title: string | null;
-  /** Whether the held post or model is still published; null for types with no such state. */
+  /** Whether the held post or model is still published, false when its row is gone; null for types with no such state. */
   live: boolean | null;
   status: string;
   decidedAt: Date | null;
@@ -111,7 +111,7 @@ export async function listCsamHolds({
       sql<string | null>`coalesce(p.title, m.name)`.as('title'),
       sql<
         boolean | null
-      >`case h."entityType" when 'Post' then p."publishedAt" is not null when 'Model' then m.status::text = 'Published' end`.as(
+      >`case h."entityType" when 'Post' then p."publishedAt" is not null when 'Model' then coalesce(m.status::text = 'Published', false) end`.as(
         'live'
       ),
     ]);
@@ -156,4 +156,40 @@ export async function countPendingCsamHolds(entityType?: string): Promise<number
   if (entityType) query = query.where('h.entityType', '=', entityType);
   const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
   return Number(row?.count ?? 0);
+}
+
+export type CsamHoldImage = { id: number; url: string; nsfwLevel: number };
+
+/** The first `limit` images of a held post in post order, and how many it has in all. Videos are left out:
+ *  the preview renders stills. */
+export async function getPostHoldImages(
+  postId: number,
+  limit: number
+): Promise<{ images: CsamHoldImage[]; total: number }> {
+  const rows = await dbRead
+    .selectFrom('Image as i')
+    .select(['i.id', 'i.url', 'i.nsfwLevel', sql<string>`count(*) over ()`.as('total')])
+    .where('i.postId', '=', postId)
+    .where(sql<boolean>`i.type::text = 'image'`)
+    .orderBy(sql`i.index asc nulls last`)
+    .orderBy('i.id', 'asc')
+    .limit(limit)
+    .execute();
+  return {
+    images: rows.map(({ id, url, nsfwLevel }) => ({ id, url, nsfwLevel })),
+    total: rows.length ? Number(rows[0].total) : 0,
+  };
+}
+
+/** What a hold points at, for reading its content; null when the id is not a csam hold. */
+export async function getCsamHoldRef(
+  holdId: number
+): Promise<{ entityType: string; entityId: number } | null> {
+  const row = await dbRead
+    .selectFrom('TextScanHold as h')
+    .select(['h.entityType', 'h.entityId'])
+    .where('h.id', '=', holdId)
+    .where('h.label', '=', 'csam')
+    .executeTakeFirst();
+  return row ?? null;
 }

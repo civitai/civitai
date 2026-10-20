@@ -299,6 +299,13 @@ describe('quotedPhrases', () => {
     expect(quotedPhrases(`Odd '' and 'x' quotes`)).toEqual([]);
   });
 
+  it('does not let a quote that never closes swallow the text up to the next one', () => {
+    const rambling = 'x'.repeat(300);
+    expect(quotedPhrases(`He wrote "start of ${rambling} and later "closed" here`)).toEqual([
+      'closed',
+    ]);
+  });
+
   it('lists a repeated phrase once', () => {
     expect(quotedPhrases(`'same one' then "same one"`)).toEqual(['same one']);
   });

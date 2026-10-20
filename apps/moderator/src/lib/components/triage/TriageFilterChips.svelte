@@ -44,6 +44,12 @@
     'inline-flex items-center gap-1 rounded px-1 py-[3px] text-xs text-dark-2 outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500/50';
 </script>
 
+{#snippet count(group: ChipGroup, value: string)}
+  {#if group.counts?.[value] != null}
+    <span class="tabular-nums text-dark-2">{group.counts[value]}</span>
+  {/if}
+{/snippet}
+
 <div class="flex flex-wrap items-center gap-1.5">
   {#each chips as { group, value } (`${group.key}:${value}`)}
     {@const active = group.active === value}
@@ -84,10 +90,11 @@
         class="{TEXT_CONTROL} h-auto border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg]:size-3"
       >
         {sort.labels[sort.active]}
+        {@render count(sort, sort.active)}
       </Select.Trigger>
       <Select.Content>
         {#each sort.values as value (value)}
-          <Select.Item {value}>{sort.labels[value]}</Select.Item>
+          <Select.Item {value}>{sort.labels[value]} {@render count(sort, value)}</Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>

@@ -21,9 +21,13 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../user-actions.service', () => ({ callModEndpoint }));
 
-const { countCsamHoldsByType, countPendingCsamHolds, decideCsamHold, listCsamHolds } = await import(
-  '../csam-holds.service'
-);
+const {
+  countCsamHoldsByType,
+  countPendingCsamHolds,
+  decideCsamHold,
+  getPostHoldImages,
+  listCsamHolds,
+} = await import('../csam-holds.service');
 
 const OLDEST_PENDING: CsamHoldQuery = {
   status: 'pending',
@@ -90,6 +94,12 @@ beforeEach(async () => {
   await db.exec(`
     CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP);
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL);
+    CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
+      "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
+    INSERT INTO "Image" VALUES
+      (1, 'k-a', 'image', 10, 2, 4), (2, 'k-b', 'image', 10, 1, 1), (3, 'k-c', 'video', 10, 0, 1),
+      (4, 'k-d', 'image', 10, 3, 1), (5, 'k-e', 'image', 10, 4, 1), (6, 'k-f', 'image', 10, 5, 1),
+      (7, 'k-g', 'image', 60, 0, 1);
     INSERT INTO "Post" VALUES (10, 'A post title', '2026-10-01'), (60, NULL, NULL);
     INSERT INTO "Model" VALUES (70, 'A model name', 'Published');
   `);
@@ -146,6 +156,12 @@ describe('listCsamHolds', () => {
     expect(byId.get(6)?.live).toBe(false); // unpublished post
     expect(byId.get(3)?.live).toBe(false); // post that no longer exists
     expect(byId.get(2)?.live).toBeNull(); // chat message
+  });
+
+  it('says a held model whose row is gone is not live', async () => {
+    await seed([{ id: 8, createdAt: '2026-10-05', entityType: 'Model' }]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, search: { id: 80 } });
+    expect(items.map((h) => [h.id, h.live])).toEqual([[8, false]]);
   });
 
   it('lists only pending csam holds, oldest first', async () => {
@@ -319,5 +335,22 @@ describe('decideCsamHold', () => {
   ] as const)('treats %s as a failure', async (_, decision, status) => {
     callModEndpoint.mockResolvedValue({ ok: true, body: status ? { status } : {} });
     expect(await decideCsamHold({ holdId: 3, decision })).toMatchObject({ ok: false });
+  });
+});
+
+describe('getPostHoldImages', () => {
+  it('returns the first images of the post in order with the true count, skipping videos', async () => {
+    const result = await getPostHoldImages(10, 4);
+    expect(result.images).toEqual([
+      { id: 2, url: 'k-b', nsfwLevel: 1 },
+      { id: 1, url: 'k-a', nsfwLevel: 4 },
+      { id: 4, url: 'k-d', nsfwLevel: 1 },
+      { id: 5, url: 'k-e', nsfwLevel: 1 },
+    ]);
+    expect(result.total).toBe(5);
+  });
+
+  it('is empty for a post with no images or no row', async () => {
+    expect(await getPostHoldImages(30, 4)).toEqual({ images: [], total: 0 });
   });
 });

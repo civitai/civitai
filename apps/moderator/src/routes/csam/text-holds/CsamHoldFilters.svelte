@@ -3,7 +3,6 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
-  import { cn } from '@civitai/ui/utils.js';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
@@ -28,20 +27,12 @@
     entityType: string | null;
     /** Holds per type for the shown status and search, plus `all`; null when they could not be read. */
     typeCounts: Record<string, number> | null;
-    /** Every pending hold, whatever the list is narrowed to; null when it could not be read. */
+    /** Every pending hold, whatever the list is narrowed to; shown beside Pending in the status menu, null when it could not be read. */
     pendingCount: number | null;
   } = $props();
 
   const SELECTION = 'hold';
   const ALL = 'all';
-
-  const statusHref = (value: string) =>
-    chipHref(
-      page.url,
-      { key: 'status', defaultValue: DEFAULT_CSAM_HOLD_FILTERS.status, active: filters.status },
-      value,
-      SELECTION
-    );
 
   const split = $derived(splitEmptyTypes(CSAM_HOLD_ENTITY_TYPES, typeCounts, entityType));
   const typeGroup = $derived({
@@ -56,6 +47,15 @@
     defaultValue: ALL,
     counts: typeCounts ?? undefined,
   } satisfies ChipGroup);
+  const statusGroup = $derived({
+    key: 'status',
+    label: 'Status',
+    values: CSAM_HOLD_STATUSES,
+    labels: CSAM_HOLD_STATUS_LABELS,
+    active: filters.status,
+    defaultValue: DEFAULT_CSAM_HOLD_FILTERS.status,
+    counts: pendingCount === null ? undefined : { pending: pendingCount },
+  } satisfies ChipGroup);
   const sortGroup = $derived({
     key: 'sort',
     label: 'Sort',
@@ -68,33 +68,7 @@
   const emptyHref = (type: string) => chipHref(page.url, typeGroup, type, SELECTION);
 </script>
 
-<div class="flex flex-col gap-2.5">
-  <nav
-    aria-label="Hold status"
-    class="inline-flex self-start rounded-md border border-dark-4 bg-dark-8 p-0.5"
-  >
-    {#each CSAM_HOLD_STATUSES as value (value)}
-      {@const active = filters.status === value}
-      <a
-        href={statusHref(value)}
-        data-sveltekit-noscroll
-        data-sveltekit-keepfocus
-        aria-current={active ? 'true' : undefined}
-        class={cn(
-          'inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors',
-          active ? 'bg-dark-5 text-white' : 'text-dark-1 hover:text-white'
-        )}
-      >
-        {CSAM_HOLD_STATUS_LABELS[value]}
-        {#if value === 'pending' && pendingCount}
-          <span
-            class="rounded-full bg-red-600 px-1.5 text-[11px] leading-4 font-semibold text-white tabular-nums"
-            >{pendingCount}</span
-          >
-        {/if}
-      </a>
-    {/each}
-  </nav>
+<div class="flex flex-col gap-1.5">
 
   <TriageFilterChips groups={[typeGroup]} selectionParam={SELECTION}>
     {#snippet trailing()}
@@ -126,5 +100,8 @@
     {/snippet}
   </TriageFilterChips>
 
-  <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
+    <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+  </div>
 </div>

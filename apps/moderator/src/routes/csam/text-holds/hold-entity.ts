@@ -73,6 +73,10 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
+/** Only posts and models show pictures in the detail pane. */
+export const holdHasImages = (entityType: string) =>
+  entityType === 'Post' || entityType === 'Model';
+
 const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
   (CSAM_HOLD_ENTITY_TYPES as readonly string[]).includes(value);
 
@@ -138,14 +142,16 @@ export const CSAM_HOLD_CONFIRMS: Partial<
 };
 
 const MIN_PHRASE = 2;
+// A quote that never closes would otherwise run on to the next quote mark and highlight the text between.
+const MAX_PHRASE = 120;
 const WORD = '\\p{L}\\p{N}';
 // A quote opens after a non-word character and closes before one, so an apostrophe inside a word
 // ("author's", "isn't") is not one.
 const QUOTED = [
-  `(?<![${WORD}])'([^'\\n]+?)'(?![${WORD}])`,
-  `"([^"\\n]+?)"`,
-  `“([^”\\n]+?)”`,
-  `(?<![${WORD}])‘([^’\\n]+?)’(?![${WORD}])`,
+  `(?<![${WORD}])'([^'\\n]{1,${MAX_PHRASE}}?)'(?![${WORD}])`,
+  `"([^"\\n]{1,${MAX_PHRASE}}?)"`,
+  `“([^”\\n]{1,${MAX_PHRASE}}?)”`,
+  `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
 ];
 
 /** The phrases a hold's reason quotes from the text, to highlight in it. */
