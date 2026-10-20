@@ -236,6 +236,15 @@ describe('purgeHoldGuard on the delete', () => {
     expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, UNSENT]);
   });
 
+  // An unsent report writes no hold marker, so the run's ceiling still reaches its owner.
+  it('purges an unsent open report the run judged past the ceiling', async () => {
+    await imageService.deleteImages(ALL, true, {
+      onlyWhere: purgeHoldGuard([OPEN_REPORT_USER], NO_COPY),
+    });
+
+    expect(await remaining()).not.toContain(REPORTED);
+  });
+
   it('applies the guard to every batch, not only the first', async () => {
     const extra = Array.from({ length: 150 }, (_, i) => 1000 + i);
     const lastFlagged = extra[extra.length - 1];
@@ -363,6 +372,22 @@ describe('purgeHoldGuard on the delete', () => {
       });
     });
 
+    it("leaves a held owner's already removed image exactly as it was", async () => {
+      await holder.db.exec(`
+        INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "blockedFor")
+        VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', ${NsfwLevel.Blocked}, 'AiNotVerified');
+      `);
+
+      await imageService.deleteImages([LIVE_HELD], true);
+
+      const row = (
+        await holder.db.query<Record<string, unknown>>(
+          `SELECT ingestion, "blockedFor", "updatedAt" FROM "Image" WHERE id = ${LIVE_HELD}`
+        )
+      ).rows[0];
+      expect(row).toEqual({ ingestion: 'Blocked', blockedFor: 'AiNotVerified', updatedAt: null });
+    });
+
     it("fails a cascading delete of a held owner's image rather than orphan it", async () => {
       await holder.db.exec(`
         CREATE TABLE "CascadeParent" (id int PRIMARY KEY);
@@ -462,6 +487,31 @@ describe('purgeHoldGuard on the delete', () => {
            VALUES (40, now(), '${details}') RETURNING id`
         )
       ).rows[0].id;
+
+    // The way the app records a send: the report row exists first, unsent, and is updated.
+    it('holds nothing while a report is unsent, and its owner for a year once it is sent', async () => {
+      const id = (
+        await holder.db.query<{ id: number }>(
+          `INSERT INTO "CsamReport" ("userId", details) VALUES (42, '{}') RETURNING id`
+        )
+      ).rows[0].id;
+      expect(await holdsOf(id)).toEqual([]);
+
+      await holder.db.exec(`UPDATE "CsamReport" SET "reportSentAt" = now() WHERE id = ${id}`);
+
+      const held = (
+        await holder.db.query<{ inAYear: boolean; heldUntilMatches: boolean }>(
+          `SELECT abs(extract(epoch FROM h."releaseAt" - (c."reportSentAt" + interval '1 year'))) < 1
+                    AS "inAYear",
+                  v."heldUntil" = h."releaseAt" AS "heldUntilMatches"
+           FROM "EvidenceHold" h
+           JOIN "CsamReport" c ON c.id = h."csamReportId"
+           JOIN "EvidenceHeldUser" v ON v."userId" = h."userId"
+           WHERE h."csamReportId" = ${id} AND h.role = 'subject'`
+        )
+      ).rows;
+      expect(held).toEqual([{ inAYear: true, heldUntilMatches: true }]);
+    });
 
     it.each([['{"secondaryUserId": "abc"}'], ['{"secondaryUserId": 99999999999}']])(
       'records a send with an unusable secondary id (%s) and holds only the subject',
