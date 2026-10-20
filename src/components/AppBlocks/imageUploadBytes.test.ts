@@ -56,9 +56,12 @@ describe('resolveImageUploadBytes', () => {
     expect(resolveImageUploadBytes({ requestId: 'r', bytes })).toEqual({ kind: 'invalid' });
   });
 
-  it('refuses bytes with purpose generationSource (that purpose creates no Image row)', () => {
+  it('refuses bytes with purpose generationSource or trainingData (neither creates an Image row)', () => {
     expect(
       resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'generationSource' })
+    ).toEqual({ kind: 'invalid' });
+    expect(
+      resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'trainingData' })
     ).toEqual({ kind: 'invalid' });
     expect(
       resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'display' }).kind

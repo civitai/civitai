@@ -3,13 +3,14 @@ import {
   buildTrainingConsentCopy,
   isTrainingSubmitTransportError,
   resolveRunTrainingRequest,
+  resolveTrainingConsentThumbnails,
   trainingSubmitReplyFromError,
   trainingSubmitReplyFromResult,
   type TrainingQuotePreview,
 } from '~/components/AppBlocks/runTrainingGate';
 
 const OK = { ready: true, signedIn: true, reviewNack: false };
-const BODY = { kind: 'training', quoteId: 'tq_1', datasetId: 'tds_1' };
+const BODY = { kind: 'training', quoteId: 'tq_1', items: [{ air: 'K1', caption: '' }] };
 
 describe('resolveRunTrainingRequest', () => {
   it('drops only what has no requestId to answer', () => {
@@ -52,7 +53,7 @@ describe('buildTrainingConsentCopy', () => {
     epochs: 5,
     steps: 1500,
     expiresAt: 'x',
-    thumbnails: [],
+    itemKeys: ['K1'],
     shortfall: 0,
   };
 
@@ -60,7 +61,7 @@ describe('buildTrainingConsentCopy', () => {
     const copy = buildTrainingConsentCopy({ appName: 'Trainer', preview: PREVIEW });
     expect(copy.priceLine).toBe('This run costs 1,234 Buzz, charged when it starts.');
     expect(copy.confirmLabel).toBe('Train for 1,234 Buzz');
-    expect(copy.intro).toBe('Trainer wants to train a LoRA on 7 images from your account.');
+    expect(copy.intro).toBe('Trainer wants to train a LoRA on 7 images you uploaded.');
     expect(copy.details).toEqual([
       'Base model: SDXL',
       'Length: 5 epochs, 1500 steps',
@@ -84,6 +85,35 @@ describe('buildTrainingConsentCopy', () => {
     expect(buildTrainingConsentCopy({ appName: '\u200B', preview: PREVIEW }).intro).toMatch(
       /^This app wants/
     );
+  });
+});
+
+describe('resolveTrainingConsentThumbnails', () => {
+  const uploads = new Map([
+    ['k1.jpeg', 'https://o.civitai.com/v2/consumer/blobs/K1.jpeg?s=1'],
+    ['k2.jpeg', 'https://o.civitai.com/v2/consumer/blobs/K2.jpeg?s=2'],
+  ]);
+
+  it('shows this host’s own upload of each quoted key, in the quote’s order', () => {
+    expect(resolveTrainingConsentThumbnails({ itemKeys: ['K2.jpeg', 'K1.jpeg'] }, uploads)).toEqual(
+      [
+        'https://o.civitai.com/v2/consumer/blobs/K2.jpeg?s=2',
+        'https://o.civitai.com/v2/consumer/blobs/K1.jpeg?s=1',
+      ]
+    );
+    expect(
+      resolveTrainingConsentThumbnails({ itemKeys: ['K1.jpeg', 'K2.jpeg'] }, uploads, 1)
+    ).toEqual(['https://o.civitai.com/v2/consumer/blobs/K1.jpeg?s=1']);
+  });
+
+  it('is null when the quote names any key this host did not upload', () => {
+    expect(
+      resolveTrainingConsentThumbnails({ itemKeys: ['K1.jpeg', 'K3.jpeg'] }, uploads)
+    ).toBeNull();
+    expect(resolveTrainingConsentThumbnails({ itemKeys: ['K1.jpeg'] }, new Map())).toBeNull();
+    expect(
+      resolveTrainingConsentThumbnails({ itemKeys: undefined as unknown as string[] }, uploads)
+    ).toBeNull();
   });
 });
 

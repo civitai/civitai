@@ -6,6 +6,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { renderWithProviders } from '../../../test/component-setup';
 import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as ConsumerBlobUploadMod from '~/utils/consumer-blob-upload';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
@@ -15,16 +16,25 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * the SERVER'S price (never a number from the block), a dismissal replies
  * `declined` with nothing confirmed or submitted, a confirmation records consent
  * through the session-only procedure BEFORE the submit, and a block that is not
- * ready is refused without a dialog.
+ * ready is refused without a dialog. A quote naming images this host did not upload
+ * for the block is refused before any dialog.
  */
 
-const { previewMutate, consentMutate, submitMutate } = vi.hoisted(() => ({
+const { previewMutate, consentMutate, submitMutate, uploadConsumerBlob } = vi.hoisted(() => ({
   previewMutate: vi.fn(),
   consentMutate: vi.fn(),
   submitMutate: vi.fn(),
+  uploadConsumerBlob: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/components/Login/useSignInToUpload', () => ({
+  useSignInToUpload: () => ({ signedOut: false, requireSignIn: () => false }),
+}));
+vi.mock('~/utils/consumer-blob-upload', async (importOriginal) => ({
+  ...(await importOriginal<typeof ConsumerBlobUploadMod>()),
+  uploadConsumerBlob: (...a: unknown[]) => uploadConsumerBlob(...a),
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -156,7 +166,7 @@ const QUOTE_ID = `tq_${'a'.repeat(32)}`;
 // never render — the strict wire schema would also reject it at the server.
 const BODY = {
   kind: 'training',
-  datasetId: `tds_${'b'.repeat(32)}`,
+  items: [{ air: 'K1.png', caption: 'a' }],
   quoteId: QUOTE_ID,
   displayPrice: 7,
 };
@@ -168,7 +178,8 @@ const PREVIEW = {
   epochs: 5,
   steps: null,
   expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-  thumbnails: [],
+  // No keys: these tests are about the dialog. The upload linkage has its own tests below.
+  itemKeys: [] as string[],
   shortfall: 0,
 };
 const SNAPSHOT = { workflowId: '42-1', status: 'pending' };
@@ -210,7 +221,11 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
       expect(r.payload).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
       expectReplyKeys('RUN_TRAINING', 'success', ['snapshot'], r.payload);
     });
-    expect(consentMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', quoteId: QUOTE_ID });
+    expect(consentMutate).toHaveBeenCalledWith({
+      blockToken: 'tok_abc',
+      quoteId: QUOTE_ID,
+      uploadedBlobKeys: [],
+    });
     expect(submitMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', body: BODY });
     expect(consentMutate.mock.invocationCallOrder[0]).toBeLessThan(
       submitMutate.mock.invocationCallOrder[0]
@@ -309,6 +324,65 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
     expect(consentMutate).not.toHaveBeenCalled();
     expect(submitMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('🔴 images uploaded here run: the thumbnails are this host’s uploads, and the confirmation names them', async () => {
+    uploadConsumerBlob.mockImplementation(async (file: File) => ({
+      id: file.name,
+      url: `https://orchestration.civitai.com/v2/consumer/blobs/${file.name}?sig=${file.name}`,
+    }));
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'up_1', purpose: 'trainingData' });
+    const input = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+      if (!el) throw new Error('file input not found');
+      return el;
+    });
+    const png = (name: string) =>
+      new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+    await userEvent.upload(input, [png('K1.png'), png('K2.png')]);
+    const urlOf = (key: string) =>
+      `https://orchestration.civitai.com/v2/consumer/blobs/${key}?sig=${key}`;
+    await vi.waitFor(() => {
+      const r = replies.last('IMAGE_UPLOAD_RESULT');
+      if (!r) throw new Error('no upload reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'up_1',
+        selected: {
+          images: [
+            { url: urlOf('K1.png'), air: 'K1.png' },
+            { url: urlOf('K2.png'), air: 'K2.png' },
+          ],
+        },
+      });
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', ['selected'], r.payload);
+    });
+
+    previewMutate.mockResolvedValue({ ...PREVIEW, imageCount: 2, itemKeys: ['K2.png', 'K1.png'] });
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_up', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    const thumbs = Array.from(
+      page.getByTestId('block-training-thumbs').element().querySelectorAll('img')
+    ).map((img) => img.getAttribute('src'));
+    expect(thumbs).toEqual([urlOf('K2.png'), urlOf('K1.png')]);
+
+    await expect.element(confirmBtn, { timeout: 4000 }).toBeEnabled();
+    await confirmBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_up', snapshot: SNAPSHOT });
+    });
+    expect(consentMutate).toHaveBeenCalledWith({
+      blockToken: 'tok_abc',
+      quoteId: QUOTE_ID,
+      uploadedBlobKeys: ['k1.png', 'k2.png'],
+    });
     replies.stop();
   });
 

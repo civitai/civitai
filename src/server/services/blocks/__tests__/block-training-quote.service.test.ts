@@ -5,7 +5,6 @@ import {
   blockTrainingBodySchema,
   type BlockTrainingBody,
 } from '~/server/schema/blocks/workflow.schema';
-import type { BlockTrainingDataset } from '../block-training-dataset.service';
 import {
   BLOCK_TRAINING_QUOTE_TTL_SECONDS,
   claimTrainingQuote,
@@ -22,29 +21,10 @@ import {
  * and the QUOTE record a viewer confirms and a submit claims exactly once.
  */
 
-const DATASET: BlockTrainingDataset = {
-  v: 1,
-  datasetId: `tds_${'a'.repeat(32)}`,
-  userId: 42,
-  appBlockId: 'apb_1',
-  blockInstanceId: 'page_apb_1',
-  items: [
-    {
-      imageId: 1,
-      air: 'https://o.example/v2/consumer/blobs/k1.jpeg',
-      caption: 'a',
-      thumbnailUrl: 't1',
-    },
-    {
-      imageId: 2,
-      air: 'https://o.example/v2/consumer/blobs/k2.jpeg',
-      caption: 'b',
-      thumbnailUrl: 't2',
-    },
-  ],
-  count: 2,
-  createdAt: 'x',
-};
+const ITEMS = [
+  { air: 'https://orchestration.civitai.com/v2/consumer/blobs/K1.jpeg?sig=1', caption: 'a' },
+  { air: 'K2.jpeg', caption: 'b' },
+];
 
 const SDXL_PARAMS = {
   engine: 'ai-toolkit',
@@ -70,7 +50,7 @@ const SDXL_PARAMS = {
 function body(over: Record<string, unknown> = {}): BlockTrainingBody {
   return blockTrainingBodySchema.parse({
     kind: 'training',
-    datasetId: DATASET.datasetId,
+    items: ITEMS,
     engine: 'ai-toolkit',
     model: 'sdxl',
     params: SDXL_PARAMS,
@@ -86,7 +66,6 @@ const FLAGS = { aiToolkitSdxl: true, trainingStepsPricing: true };
 function resolve(over: Partial<Parameters<typeof resolveBlockTrainingRun>[0]> = {}) {
   return resolveBlockTrainingRun({
     body: body(),
-    dataset: DATASET,
     status: OPEN,
     features: FLAGS,
     isModerator: false,
@@ -95,7 +74,7 @@ function resolve(over: Partial<Parameters<typeof resolveBlockTrainingRun>[0]> = 
 }
 
 describe('resolveBlockTrainingRun — the step', () => {
-  it('builds one ai-toolkit step over the stored blob dataset, with no timeout and no name', () => {
+  it('builds one ai-toolkit step over the body’s blob keys, with no timeout and no name', () => {
     const { step, modelKey, ecosystem, epochs, steps } = resolve();
     expect(modelKey).toBe('sdxl');
     expect(ecosystem).toBe('sdxl');
@@ -108,12 +87,12 @@ describe('resolveBlockTrainingRun — the step', () => {
     expect('metadata' in step).toBe(false);
     const input = step.input as unknown as Record<string, unknown>;
     expect(input.engine).toBe('ai-toolkit');
-    // The dataset is the STORED blob list — never anything the body carried.
+    // The Training Studio's shape, each air reduced to its bare key by the schema.
     expect(input.trainingData).toEqual({
       type: 'blobs',
       items: [
-        { air: 'https://o.example/v2/consumer/blobs/k1.jpeg', caption: 'a' },
-        { air: 'https://o.example/v2/consumer/blobs/k2.jpeg', caption: 'b' },
+        { air: 'K1.jpeg', caption: 'a' },
+        { air: 'K2.jpeg', caption: 'b' },
       ],
     });
     expect(input.triggerWord).toBe('mychar');
@@ -205,7 +184,14 @@ describe('hashTrainingBody', () => {
     );
     expect(hashTrainingBody(body({ triggerWord: 'other' }))).not.toBe(base);
     expect(hashTrainingBody(body({ params: { ...SDXL_PARAMS, epochs: 6 } }))).not.toBe(base);
-    expect(hashTrainingBody(body({ datasetId: `tds_${'c'.repeat(32)}` }))).not.toBe(base);
+    expect(hashTrainingBody(body({ items: [ITEMS[0]] }))).not.toBe(base);
+    expect(hashTrainingBody(body({ items: [{ ...ITEMS[0], caption: 'z' }, ITEMS[1]] }))).not.toBe(
+      base
+    );
+    // One blob, two spellings: the same body once the schema has read it.
+    expect(hashTrainingBody(body({ items: [{ air: 'K1.jpeg', caption: 'a' }, ITEMS[1]] }))).toBe(
+      base
+    );
   });
 });
 
@@ -215,7 +201,7 @@ describe('the quote record', () => {
     ...binding,
     total: 1200,
     bodyHash: 'h',
-    datasetId: DATASET.datasetId,
+    itemKeys: ['K1.jpeg', 'K2.jpeg'],
     imageCount: 2,
     modelKey: 'sdxl',
     modelName: 'SDXL',
@@ -285,6 +271,8 @@ describe('the quote record', () => {
 });
 
 describe('readTrainingRunGeneration', () => {
+  const owner = { userId: 42, appBlockId: 'apb_1' };
+
   it.each([
     [null, 0],
     ['3', 3],
@@ -293,6 +281,17 @@ describe('readTrainingRunGeneration', () => {
     ['junk', 0],
   ])('reads %s as %s', async (raw, expected) => {
     redisMock.sysRedis.get.mockResolvedValueOnce(raw);
-    expect(await readTrainingRunGeneration(body())).toBe(expected);
+    expect(await readTrainingRunGeneration(owner, body())).toBe(expected);
+  });
+
+  it('is kept per viewer and app: another viewer’s identical body reads another counter', async () => {
+    redisMock.sysRedis.get.mockReset();
+    redisMock.sysRedis.get.mockResolvedValue(null);
+    await readTrainingRunGeneration(owner, body());
+    await readTrainingRunGeneration({ ...owner, userId: 7 }, body());
+    await readTrainingRunGeneration({ ...owner, appBlockId: 'apb_2' }, body());
+    const keys = redisMock.sysRedis.get.mock.calls.map((c) => c[0]);
+    expect(new Set(keys).size).toBe(3);
+    expect(keys[0]).toBe(`system:blocks:training-runs:42:apb_1:${hashTrainingBody(body())}`);
   });
 });

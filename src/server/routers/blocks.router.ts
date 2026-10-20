@@ -23,6 +23,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
 import type {
+  BlockQuoteBinding,
   BlockQuoteGrantKind,
   BlockQuoteGrantRecord,
 } from '~/server/services/blocks/block-quote-grant.service';
@@ -70,7 +71,6 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
-  checkBlockTrainingDatasetRateLimit,
   checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -131,7 +131,7 @@ import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
   blockEstimateBatchInputSchema,
-  blockTrainingDatasetItemsSchema,
+  blockTrainingUploadedBlobKeysSchema,
   blockWorkflowBodySchema,
 } from '~/server/schema/blocks/workflow.schema';
 import type {
@@ -238,6 +238,8 @@ import {
   resolveBlockWorkflowGraph,
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
+import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
+import { findForeignTrainingBlobKeys } from '~/server/schema/blocks/training-dataset.schema';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
@@ -6288,71 +6290,6 @@ export const blocksRouter = router({
     }),
 
   /**
-   * ── TRAINING DATASET: the `kind:'training'` data primitive. ─────────────────
-   *
-   * A block names the viewer's image ids and per-image captions; the server
-   * admits only the viewer's OWN images that pass the gated-image predicate under
-   * the token's maturity ceiling, moderates the captions, imports the admitted
-   * images into orchestrator blobs under the viewer's orchestrator token, and
-   * returns an opaque `datasetId` bound to this subject, app and install. The
-   * training body names that handle — never images, blob references or a count.
-   *
-   * Same gates as the training estimate/submit (page token, ordinary viewer, spend
-   * scope, runtime + training flags on the token subject), so an app cannot prepare
-   * a dataset for a run it could not submit.
-   *
-   * RATE LIMIT — its own image-weighted bucket keyed per (install, viewer): a page
-   * app's install id is shared by every viewer, and the publish bucket would let one
-   * viewer's dataset starve another's (and the app's publishing). Charged before any
-   * image is read. MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
-   */
-  prepareTrainingDataset: publicProcedure
-    .input(
-      z.object({
-        blockToken: z.string().min(1),
-        items: blockTrainingDatasetItemsSchema,
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
-      }
-      const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
-      const rate = await checkBlockTrainingDatasetRateLimit(
-        claims.blockInstanceId,
-        userId,
-        input.items.length
-      );
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
-      const { resolveViewerBrowsingLevel } = await import(
-        '~/server/services/blocks/block-gated-images.service'
-      );
-      const { prepareBlockTrainingDataset } = await import(
-        '~/server/services/blocks/block-training-dataset.service'
-      );
-      const { allowMatureContent } = resolveBlockMaturity(claims);
-      const token = await getOrchestratorToken(userId, ctx);
-      return prepareBlockTrainingDataset({
-        actor: {
-          userId,
-          appBlockId: claims.appBlockId,
-          blockInstanceId: claims.blockInstanceId,
-          browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
-          allowMatureContent,
-        },
-        items: input.items,
-        token,
-        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
-      });
-    }),
-
-  /**
    * ── The viewer-confirmed quote CONSENT PAIR — one pair for both kinds. ───────
    *
    * `previewQuoteGrant` resolves everything a host confirm shows from the
@@ -6362,7 +6299,8 @@ export const blocksRouter = router({
    * that exact quote; the submit refuses a quote no one confirmed.
    *
    * Both are bound to a signed-in browser session whose user is the token subject
-   * (API-key and OAuth-token requests refused).
+   * (API-key and OAuth-token requests refused). A training CONFIRMATION also names the
+   * blob keys the confirming host uploaded, and refuses a quote naming any other.
    *
    * 🔴 THE CALLER NAMES THE KIND, AND THE ID MUST BE OF THAT KIND
    * (`blockQuoteGrantConsentInputSchema`). The kind is never inferred from the id: a
@@ -6387,8 +6325,7 @@ export const blocksRouter = router({
    * ── RUN_TRAINING's consent pair, under its ORIGINAL names. ─────────────────
    *
    * Thin delegates to the shared handlers for the training kind, kept because hosts
-   * already call them; their inputs and results are unchanged (the preview also
-   * carries the shared `dailyLimit` / `exceedsDailyLimit` fields, additively).
+   * already call them.
    */
   previewTrainingQuote: guardedProcedure
     .meta({ blockApiKeys: true })
@@ -6408,6 +6345,7 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+        uploadedBlobKeys: blockTrainingUploadedBlobKeysSchema,
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -12067,6 +12005,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   const { ctx, claims, body, storeQuote } = opts;
   const userId = await assertStepRequestAllowed(claims);
   assertPassThroughStepTypeAllowed(body.$type, body.input);
+  await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12280,6 +12219,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // A refusal here therefore costs no orchestrator call and has nothing to
   // refund. A denylist the wire does not consult is decoration.
   assertPassThroughStepTypeAllowed(body.$type, body.input);
+  await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
@@ -12858,6 +12798,7 @@ async function estimateMultiStepWorkflow(opts: {
   const userId = await assertStepRequestAllowed(claims);
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
+  await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -12940,6 +12881,7 @@ async function submitMultiStepWorkflow(opts: {
   // nothing to refund.
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
+  await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -13359,7 +13301,7 @@ async function submitMultiStepWorkflow(opts: {
 // handlers (`previewQuoteGrantFor` / `consentQuoteGrantFor`) and the submit
 // (`submitConfirmedQuoteWorkflow`). What genuinely differs is a kind ARM built by the
 // kind's own entry point (`submitTrainingWorkflow`, `submitConfirmedPassThroughStepWorkflow`):
-// the dataset binding and run resolution, the run identity (`trainingRunKey` vs the
+// run resolution, the run identity (`trainingRunKey` vs the
 // consumed quote), the ceiling (training clamps, a step refuses above its maximum),
 // what the preview adds, and the copy. Neither kind charges an author fee.
 //
@@ -13412,7 +13354,7 @@ const QUOTED_GRANT_COPY = {
 
 /**
  * THE token rule for every viewer-confirmed quote, both kinds, and every phase that
- * touches one (estimate grant, dataset preparation, preview, consent, submit) — the
+ * touches one (estimate grant, preview, consent, submit) — the
  * refusal message, or the token's per-call budget.
  *
  * 🔴 ONE RULE FOR BOTH KINDS, AND THE TEST FOR IT IS "CAN THE VIEWER REACH A HOST
@@ -13468,8 +13410,8 @@ async function isQuotedGrantKindEnabled(
 
 /**
  * The hard gate every viewer-confirmed request passes first — training estimate,
- * dataset preparation, preview, consent and submit, for both kinds — so a caller can
- * never price, prepare or confirm a job it could not submit. See
+ * preview, consent and submit, for both kinds — so a caller can never price or
+ * confirm a job it could not submit. See
  * `quotedGrantTokenGate` for the token rule; then the subject, the App Blocks
  * kill-switch, the kind's flag and the subject's feature flags. Hub/OAuth claims never
  * reach the tRPC bridge (`verifyBlockToken` admits only signed block JWTs).
@@ -13562,8 +13504,8 @@ async function readConsentDailyLimit(
  * by; `null` when the balance could not be read), and the viewer's own daily limit
  * (`dailyLimit`, `exceedsDailyLimit` — on an ordinary page token the submit refuses
  * such a job too, whatever the viewer clicks; on a private run this read is the only
- * check, see the note at the read below). The kind adds what its dialog shows: the dataset for training, the
- * `$type` for a step.
+ * check, see the note at the read below). The kind adds what its dialog shows: the run and its
+ * blob keys for training (the host shows its own uploads for them), the `$type` for a step.
  */
 async function previewQuoteGrantFor(
   kind: BlockQuoteGrantKind,
@@ -13648,18 +13590,47 @@ async function previewQuoteGrantFor(
     exceedsDailyLimit: limit?.exceeds ?? false,
   };
   if (kind === 'step') return { ...shared, stepType: String(quote.stepType) };
-  const { loadBlockTrainingDataset } = await import(
-    '~/server/services/blocks/block-training-dataset.service'
-  );
-  const dataset = await loadBlockTrainingDataset(String(quote.datasetId), binding);
   return {
     ...shared,
     imageCount: quote.imageCount as number,
     modelName: quote.modelName as string,
     epochs: quote.epochs as number | null,
     steps: quote.steps as number | null,
-    thumbnails: (dataset?.items ?? []).slice(0, 12).map((item) => item.thumbnailUrl),
+    itemKeys: quote.itemKeys as string[],
   };
+}
+
+const TRAINING_FOREIGN_DATA_MESSAGE =
+  'this training run names images that were not uploaded here — upload them again';
+
+/**
+ * A training quote may be confirmed only by a host that uploaded every blob it names
+ * for this block instance; anything else is refused before consent is recorded.
+ */
+async function assertTrainingQuoteUploadedByHost(
+  quoteId: string,
+  binding: BlockQuoteBinding,
+  uploadedBlobKeys: string[] | undefined
+): Promise<void> {
+  if (!uploadedBlobKeys) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'confirming a training run needs the blob keys this host uploaded',
+    });
+  }
+  const { readQuoteGrant } = await import('~/server/services/blocks/block-quote-grant.service');
+  const quote = await readQuoteGrant<BlockQuoteGrantRecord & { itemKeys?: unknown }>(
+    'training',
+    quoteId,
+    binding
+  );
+  if (!quote) return; // the consent write answers this one, as for every kind
+  if (findForeignTrainingBlobKeys(quote.itemKeys, uploadedBlobKeys).length > 0) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: TRAINING_FOREIGN_DATA_MESSAGE,
+    });
+  }
 }
 
 /**
@@ -13675,7 +13646,7 @@ async function consentQuoteGrantFor(
   kind: BlockQuoteGrantKind,
   ctx: Context,
   sessionUserId: number,
-  input: { blockToken: string; quoteId: string }
+  input: { blockToken: string; quoteId: string; uploadedBlobKeys?: string[] }
 ) {
   const { claims, auth } = await authorizeQuotedGrantConsentRequest(
     kind,
@@ -13694,12 +13665,15 @@ async function consentQuoteGrantFor(
   const { recordQuoteGrantConsent } = await import(
     '~/server/services/blocks/block-quote-grant.service'
   );
-  const updated = await recordQuoteGrantConsent(
-    kind,
-    input.quoteId,
-    { userId: auth.userId, appBlockId: claims.appBlockId, blockInstanceId: claims.blockInstanceId },
-    sessionUserId
-  );
+  const binding = {
+    userId: auth.userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  };
+  if (kind === 'training') {
+    await assertTrainingQuoteUploadedByHost(input.quoteId, binding, input.uploadedBlobKeys);
+  }
+  const updated = await recordQuoteGrantConsent(kind, input.quoteId, binding, sessionUserId);
   if (!updated) {
     throw new TRPCError({
       code: 'NOT_FOUND',
@@ -14268,9 +14242,9 @@ const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
  * A training `$type` (`training`, `imageResourceTraining`) is never a CONFIRMED step.
  *
  * A confirmed quote is what lets a job cost more than the per-call budget. For training
- * that grant belongs to `kind:'training'`, which is what binds the server-prepared
- * dataset to the viewer, audits the captions and prompts, resolves the run against the
- * training service's own gates and checks the training flag. A training `$type` granted
+ * that grant belongs to `kind:'training'`, which resolves the run against the training
+ * service's own gates, checks the training flag, and is confirmed only by the host that
+ * uploaded its images. A training `$type` granted
  * a STEP quote would run above the budget, under the step flag, with none of that.
  *
  * ⚠️ WHAT THIS DOES NOT CHANGE: a training `$type` priced WITHIN the per-call budget
@@ -14442,25 +14416,14 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
 
 // ── The TRAINING kind (`kind:'training'`, `tq_…`) ──────────────────────────────
 //
-// An ai-toolkit LoRA run on a server-prepared dataset of the viewer's own images. Its
+// An ai-toolkit LoRA run on consumer blobs the page host uploaded for the viewer. Its
 // confirmation, gate and submit are the shared ones above; what is training-specific
-// is below: the dataset binding, run resolution and audit, the run-keyed identity
+// is below: run resolution, the trigger-word rule, the run-keyed identity
 // (`trainingRunKey`), and its preview fields.
 //
 // Labels are constants (metric cardinality), like the pass-through arm's.
 const TRAINING_ENGINE_LABEL = 'training';
 const TRAINING_RECIPE_LABEL = '__training__';
-
-/**
- * The training gate — the shared `assertQuotedGrantRequestAllowed` for the training
- * kind. Kept under this name for its callers (estimate, dataset preparation).
- */
-async function assertTrainingRequestAllowed(
-  claims: BlockClaims,
-  ctx: Context
-): Promise<QuotedGrantAuth> {
-  return assertQuotedGrantRequestAllowed('training', claims, ctx);
-}
 
 /**
  * The training run's tags: the provenance set every block workflow carries, with
@@ -14510,52 +14473,6 @@ async function quoteBlockTrainingStep(opts: {
 }
 
 /**
- * The dataset a `kind:'training'` body names, bound to this subject, app and install —
- * or a refusal. Reads only the dataset record; the estimate uses this alone.
- */
-async function loadBoundBlockTrainingDataset(
-  claims: BlockClaims,
-  userId: number,
-  datasetId: string
-) {
-  const { loadBlockTrainingDataset } = await import(
-    '~/server/services/blocks/block-training-dataset.service'
-  );
-  const dataset = await loadBlockTrainingDataset(datasetId, {
-    userId,
-    appBlockId: claims.appBlockId,
-    blockInstanceId: claims.blockInstanceId,
-  });
-  if (!dataset) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
-  }
-  return dataset;
-}
-
-/**
- * The bound dataset with every image re-admitted on the primary — the submit's check,
- * run before anything is charged.
- */
-async function loadEligibleBlockTrainingDataset(
-  claims: BlockClaims,
-  userId: number,
-  datasetId: string
-) {
-  const dataset = await loadBoundBlockTrainingDataset(claims, userId, datasetId);
-  const { assertBlockTrainingDatasetStillEligible } = await import(
-    '~/server/services/blocks/block-training-dataset.service'
-  );
-  const { resolveViewerBrowsingLevel } = await import(
-    '~/server/services/blocks/block-gated-images.service'
-  );
-  await assertBlockTrainingDatasetStillEligible(
-    dataset,
-    resolveViewerBrowsingLevel(claims.maxBrowsingLevel)
-  );
-  return dataset;
-}
-
-/**
  * The viewer's Buzz across the accounts a training run or a confirmed step charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
  * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
@@ -14582,9 +14499,7 @@ async function estimateTrainingWorkflow(opts: {
   body: BlockTrainingBody;
 }) {
   const { ctx, claims, body } = opts;
-  const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
-  // Binding only: images are re-admitted at submit, before anything is charged.
-  const dataset = await loadBoundBlockTrainingDataset(claims, userId, body.datasetId);
+  const { userId, user, features } = await assertQuotedGrantRequestAllowed('training', claims, ctx);
 
   const { getTrainingServiceStatus } = await import('~/server/services/training.service');
   const { resolveBlockTrainingRun, hashTrainingBody, storeTrainingQuote } = await import(
@@ -14592,14 +14507,16 @@ async function estimateTrainingWorkflow(opts: {
   );
   const run = resolveBlockTrainingRun({
     body,
-    dataset,
     status: await getTrainingServiceStatus(),
     features,
     isModerator: !!user.isModerator,
   });
-
-  // App-supplied text that drives sample generation — moderated like a prompt.
-  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+  await assertBlockTrainingTriggerWordsAllowed({
+    claims,
+    userId,
+    user,
+    steps: trainingBodyTriggerWordSteps(body),
+  });
 
   const step = { ...run.step, name: BLOCK_STEP_NAME };
   const token = await getOrchestratorToken(userId, ctx);
@@ -14623,8 +14540,8 @@ async function estimateTrainingWorkflow(opts: {
     blockInstanceId: claims.blockInstanceId,
     total,
     bodyHash: hashTrainingBody(body),
-    datasetId: dataset.datasetId,
-    imageCount: dataset.count,
+    itemKeys: body.items.map((item) => item.air),
+    imageCount: body.items.length,
     modelKey: run.modelKey,
     modelName: run.modelName,
     ecosystem: run.ecosystem,
@@ -14642,7 +14559,7 @@ async function estimateTrainingWorkflow(opts: {
       trainingQuote: {
         quoteId: quote.quoteId,
         total,
-        imageCount: dataset.count,
+        imageCount: body.items.length,
         expiresAt: quote.expiresAt,
       },
     },
@@ -14650,28 +14567,36 @@ async function estimateTrainingWorkflow(opts: {
 }
 
 /**
- * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
- * body's trigger word + sample prompts. Not a generation submit, so it joins the
- * `other` moderation-source population.
+ * THE trigger-word rule for every App Blocks carrier of a training run — `kind:'training'`,
+ * a pass-through `kind:'step'`, every step of a `kind:'workflow'` — called by each
+ * estimate and submit before any quote or reservation. A trigger word that cannot be
+ * read as a literal string is refused; the rest are audited like a prompt.
  */
-async function auditBlockTrainingText(opts: {
+async function assertBlockTrainingTriggerWordsAllowed(opts: {
   claims: BlockClaims;
   userId: number;
-  user: SessionUser;
-  text: string;
+  /** The token subject's session user, when the caller already holds it. */
+  user?: SessionUser;
+  steps: ReadonlyArray<{ $type: string; input: unknown }>;
 }): Promise<void> {
-  const { claims, userId, user, text } = opts;
+  const { claims, userId, steps } = opts;
+  const collected = collectTrainingTriggerWords(steps);
+  if ('error' in collected) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
+  }
+  const text = collected.triggerWords
+    .map((word) => word.trim())
+    .filter((word) => word.length > 0)
+    .join('\n');
   if (text.length === 0) return;
+  const user = opts.user ?? (await getBlockSessionUser(userId));
   const { isGreen } = resolveBlockMaturity(claims);
   await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
 }
 
-/** A training body's own free text, joined for one audit. */
-function trainingBodyAuditText(body: BlockTrainingBody): string {
-  return [body.triggerWord, ...body.samplePrompts]
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .join('\n');
+/** A `kind:'training'` body as the one training step the trigger-word rule reads. */
+function trainingBodyTriggerWordSteps(body: BlockTrainingBody) {
+  return [{ $type: 'training', input: { triggerWord: body.triggerWord } }];
 }
 
 /**
@@ -14680,9 +14605,8 @@ function trainingBodyAuditText(body: BlockTrainingBody): string {
  * The orchestrator `externalId` is keyed on the RUN (`trainingRunKey`): a retry after an
  * ambiguous failure — which needs a fresh quote — dedupes there instead of charging
  * twice, and a deliberate re-run after a definite submit is a new run (the run
- * generation advances only on a definite submit). The dataset is re-admitted on the
- * primary, and the run re-resolved against fresh service status and flags, before
- * anything is charged.
+ * generation advances only on a definite submit). The run is re-resolved against fresh
+ * service status and flags, and its trigger word re-audited, before anything is charged.
  */
 async function submitTrainingWorkflow(opts: {
   ctx: Context;
@@ -14707,12 +14631,15 @@ async function submitTrainingWorkflow(opts: {
       bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},
-      runIdentity: async () => ({
-        externalId: composeTrainingBlockExternalId(
-          trainingRunKey(claims.appBlockId, body, await readTrainingRunGeneration(body))
-        ),
-        onDefiniteSubmit: () => bumpTrainingRunGeneration(body),
-      }),
+      runIdentity: async (auth) => {
+        const owner = { userId: auth.userId, appBlockId: claims.appBlockId };
+        return {
+          externalId: composeTrainingBlockExternalId(
+            trainingRunKey(claims.appBlockId, body, await readTrainingRunGeneration(owner, body))
+          ),
+          onDefiniteSubmit: () => bumpTrainingRunGeneration(owner, body),
+        };
+      },
       // 0 = refused. The per-run maximum is the clamp inside the ceiling; the shared
       // submit refuses a re-quote above it.
       ceiling: (quote, userId) => {
@@ -14727,16 +14654,19 @@ async function submitTrainingWorkflow(opts: {
             };
       },
       plan: async ({ userId, user, features }) => {
-        const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
         const { getTrainingServiceStatus } = await import('~/server/services/training.service');
         const run = resolveBlockTrainingRun({
           body,
-          dataset,
           status: await getTrainingServiceStatus(),
           features,
           isModerator: !!user.isModerator,
         });
-        await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+        await assertBlockTrainingTriggerWordsAllowed({
+          claims,
+          userId,
+          user,
+          steps: trainingBodyTriggerWordSteps(body),
+        });
         // `name` is what the snapshot/publish extractors key on.
         const step = { ...run.step, name: BLOCK_STEP_NAME };
         return {

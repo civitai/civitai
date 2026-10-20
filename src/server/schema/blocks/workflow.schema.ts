@@ -27,6 +27,7 @@ import {
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
 import { jsonLengthWithin, measureJsonLength } from '~/server/schema/blocks/json-length';
+import { blockTrainingDatasetItemsSchema } from '~/server/schema/blocks/training-dataset.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -794,10 +795,9 @@ export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBo
 
 // ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
 //
-// Trains a LoRA with the ai-toolkit engine on a dataset the server prepared
-// (`blocks.prepareTrainingDataset`) from the viewer's own images. The body names
-// that dataset by an opaque handle; the images, their blob references and the
-// image COUNT never come from the block.
+// Trains a LoRA with the ai-toolkit engine on consumer blobs the page host uploaded
+// for the viewer (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`) — the same upload
+// path and `{ air, caption }` items as the Training Studio.
 //
 // 🔴 THERE IS NO `maxBuzz` AND NO TIMEOUT KNOB, ON PURPOSE. The price is the
 // orchestrator's own quote for exactly this step, taken by the estimate and stored
@@ -809,8 +809,6 @@ export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBo
 // rejected. `params` is the training form's own ai-toolkit schema
 // (`aiToolkitTrainingParamsSchema`), so the two cannot drift.
 
-/** Opaque handle to a server-prepared training dataset. */
-export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
 /** Opaque handle to a server-stored training quote. */
 export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
 /**
@@ -819,11 +817,21 @@ export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
  * quote id must be of that kind — a discriminated union, so a training id sent as a
  * step (or the reverse) is refused at the input rather than dispatched by its prefix.
  */
+/** Max blob keys a host may name as uploaded by it when confirming a training quote. */
+export const BLOCK_TRAINING_UPLOADED_KEYS_MAX = 1000;
+/**
+ * The blob keys the confirming host uploaded for this block instance. Required by a
+ * training CONFIRMATION, which refuses a quote naming any other key.
+ */
+export const blockTrainingUploadedBlobKeysSchema = z
+  .array(z.string().min(1).max(128))
+  .max(BLOCK_TRAINING_UPLOADED_KEYS_MAX);
 export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('training'),
     blockToken: z.string().min(1),
     quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+    uploadedBlobKeys: blockTrainingUploadedBlobKeysSchema.optional(),
   }),
   z.object({
     kind: z.literal('step'),
@@ -840,8 +848,8 @@ export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
 /** Max characters of a base-model key (`trainingModelInfo` key). */
 export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
 // The dataset item schema lives in its own dependency-free module so the page host
-// can validate a `PREPARE_TRAINING_DATASET` payload without pulling this file (and
-// the step/recipe registries it imports) into the client bundle.
+// can read it without pulling this file (and the step/recipe registries it imports)
+// into the client bundle.
 export {
   BLOCK_TRAINING_CAPTION_MAX_CHARS,
   BLOCK_TRAINING_DATASET_MAX_ITEMS,
@@ -851,7 +859,7 @@ export {
 export const blockTrainingBodySchema = z
   .object({
     kind: z.literal('training'),
-    datasetId: z.string().regex(BLOCK_TRAINING_DATASET_ID_REGEX),
+    items: blockTrainingDatasetItemsSchema,
     engine: z.literal('ai-toolkit'),
     // A base-model key from the training form's catalog (`trainingModelInfo`);
     // resolved and gated server-side. Custom AIRs are not accepted in v1.
