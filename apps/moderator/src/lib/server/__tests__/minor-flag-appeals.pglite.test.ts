@@ -394,18 +394,22 @@ describe('row context', () => {
   });
 
   it('counts model appeals on other models sharing a SHA256 with this one, by status', async () => {
-    const withHash = async (modelId: number, hash: string, type = 'SHA256') => {
+    const withHash = async (
+      modelId: number,
+      hash: string,
+      { hashType = 'SHA256', fileType = 'Model' } = {}
+    ) => {
       await db.query(
         `INSERT INTO "ModelVersion" ("id","modelId","baseModel") VALUES ($1,$2,'SDXL')`,
         [900 + modelId, modelId]
       );
-      await db.query(
-        `INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, 'Model')`,
-        [900 + modelId]
-      );
+      await db.query(`INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, $2)`, [
+        900 + modelId,
+        fileType,
+      ]);
       await db.query(`INSERT INTO "ModelFileHash" VALUES ($1, $2, $3)`, [
         900 + modelId,
-        type,
+        hashType,
         hash,
       ]);
     };
@@ -415,7 +419,9 @@ describe('row context', () => {
     await withHash(2, 'shared');
     await withHash(3, 'shared');
     await withHash(4, 'other');
-    await withHash(5, 'shared', 'AutoV2');
+    await withHash(5, 'shared', { hashType: 'AutoV2' });
+    // Model 6 shares only a VAE: a shared config or VAE must not link unrelated models.
+    await withHash(6, 'shared', { fileType: 'VAE' });
     await db.exec(`
       INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","category") VALUES
         (70, 99, 'Model', 3, 'Rejected', '2026-06-01', NULL),
@@ -423,10 +429,11 @@ describe('row context', () => {
         (72, 99, 'Model', 4, 'Rejected', '2026-06-03', NULL),
         (73, 99, 'Model', 3, 'Rejected', '2026-06-04', 'Model'),
         (74, 99, 'Image', 3, 'Rejected', '2026-06-05', NULL),
-        (75, 99, 'Model', 5, 'Rejected', '2026-06-06', NULL);
+        (75, 99, 'Model', 5, 'Rejected', '2026-06-06', NULL),
+        (76, 99, 'Model', 6, 'Rejected', '2026-06-07', NULL);
     `);
     // Model 2 holds the seeded Approved appeal and its own pending one; model 3 its pending one plus
-    // the two rejections. Model 1's own appeal, the category and Image appeals, and models 4 and 5 are out.
+    // the two rejections. Model 1's own appeal, the category and Image appeals, and models 4, 5 and 6 are out.
     expect((await rowFor(1)).sameFileAppeals).toEqual({
       approved: 1,
       rejected: 2,

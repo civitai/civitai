@@ -15,7 +15,7 @@ export const pastAppealsText = (past: {
   return parts.length ? parts.join(', ') : 'none';
 };
 
-type AppealCounts = { approved: number; rejected: number; void: number; pending: number };
+export type AppealCounts = { approved: number; rejected: number; void: number; pending: number };
 
 export const appealTotal = (c: AppealCounts) => c.approved + c.rejected + c.void + c.pending;
 

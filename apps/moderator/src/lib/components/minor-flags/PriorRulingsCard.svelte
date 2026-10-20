@@ -1,7 +1,12 @@
 <script lang="ts">
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { dateTime } from '$lib/format';
-  import { ago, pastAppealsText, sameFileAppealsText } from '$lib/minor-flags/appeal-row';
+  import {
+    ago,
+    pastAppealsText,
+    sameFileAppealsText,
+    type AppealCounts,
+  } from '$lib/minor-flags/appeal-row';
   import {
     clearViaLabel,
     rulingText,
@@ -28,9 +33,9 @@
     showPriorClear: boolean;
     showRulings: boolean;
     /** The uploader's earlier appeals, when the row carries them. */
-    pastAppeals?: { approved: number; rejected: number; void: number; pending: number };
-    /** Earlier appeals on this model, when the row carries them. */
-    sameFileAppeals?: { approved: number; rejected: number; void: number; pending: number };
+    pastAppeals?: AppealCounts;
+    /** Appeals on other models sharing a file with this one, when the row carries them. */
+    sameFileAppeals?: AppealCounts;
     /** Whether the owner has an appeal open on this model, when the row knows. */
     appealOpen?: boolean;
   } = $props();

@@ -31,6 +31,7 @@ import type {
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
 import type { ModelFlagDetail, ScanRows } from '$lib/minor-flags/model-detail';
+import type { AppealCounts } from '$lib/minor-flags/appeal-row';
 import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
 
 /**
@@ -164,8 +165,6 @@ const searchPredicate = (
     orSeed ? sql` OR ${orSeed(id)}` : sql``
   })`;
 };
-
-export type AppealCounts = { approved: number; rejected: number; void: number; pending: number };
 
 export type SameFileAppeals = AppealCounts & { models: number };
 
@@ -325,7 +324,7 @@ LEFT JOIN LATERAL (
 ) ap ON TRUE
 `;
 
-/** Model-flag appeals on OTHER models that share a SHA256 with this one, by outcome, plus how many
+/** Model-flag appeals on OTHER models that share a SHA256 weights file with this one, by outcome, plus how many
  *  models they sit on. Owners re-upload a denied file as a new model and appeal again. `pg` carries
  *  "modelId"; hash, file and version lookups all have an index. */
 const sameFileAppealsJoin = sql`
@@ -340,15 +339,22 @@ LEFT JOIN LATERAL (
     AND sa."entityId" IN (
       SELECT ov."modelId"
       FROM "ModelVersion" mv
-      JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
+      JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
       JOIN "ModelFileHash" mh ON mh."fileId" = mf.id AND mh.type = 'SHA256'
       JOIN "ModelFileHash" oh ON oh.hash = mh.hash AND oh.type = 'SHA256'
-      JOIN "ModelFile" ofl ON ofl.id = oh."fileId"
+      JOIN "ModelFile" ofl ON ofl.id = oh."fileId" AND ofl.type = 'Model'
       JOIN "ModelVersion" ov ON ov.id = ofl."modelVersionId"
       WHERE mv."modelId" = pg."modelId"
     )
 ) mp ON TRUE
 `;
+
+/** The select-list entry for `sameFileAppealsJoin`'s counts. */
+const sameFileAppealsSelect = sql`jsonb_build_object(
+  'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
+  'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0),
+  'models', COALESCE(mp.models, 0)
+) AS "sameFileAppeals"`;
 
 const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
 
@@ -497,11 +503,7 @@ export async function getMinorFlagAppealsForReview({
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals",
-           jsonb_build_object(
-             'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
-             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0),
-             'models', COALESCE(mp.models, 0)
-           ) AS "sameFileAppeals",
+           ${sameFileAppealsSelect},
            ya.nth AS "appealNthThisYear",
            ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
            ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
@@ -850,11 +852,7 @@ const flaggedPageSql = <R>(
            'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
            'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
          ) AS "pastAppeals",
-           jsonb_build_object(
-             'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
-             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0),
-             'models', COALESCE(mp.models, 0)
-           ) AS "sameFileAppeals",
+           ${sameFileAppealsSelect},
          CASE WHEN pg."hasTextScanFlag"
               THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
          CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"

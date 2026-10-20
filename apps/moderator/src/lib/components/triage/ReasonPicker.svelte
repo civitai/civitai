@@ -3,10 +3,14 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import { reasonRequiresNote, type ResolutionReason } from '@civitai/shared/resolution-reasons';
-  import { clickDecision } from '$lib/triage/decision-form';
+  import { clickDecision, isDecisionControl } from '$lib/triage/decision-form';
   import { suggestedReason } from '$lib/triage/decision-reasons';
   import { isTypingTarget, reasonPickerKeyAction } from '$lib/triage/keys';
-  import { closeReasonPicker, reasonPicker } from '$lib/triage/reason-picker.svelte';
+  import {
+    awaitReasonNote,
+    closeReasonPicker,
+    noteReasonChosen,
+  } from '$lib/triage/reason-picker.svelte';
 
   /**
    * The second press of a decision key: the reasons of one decision, each behind a digit. A digit (or a
@@ -38,14 +42,17 @@
     shown.some((r) => r.value === current) ? current : suggestedReason(shown)
   );
 
-  // Closes the list when the bar goes (another row opened, or the item was decided).
+  // Closes the list when the bar goes. It leaves the wait for a note alone: `choose` sets that just
+  // before this list unmounts, and the form clears it when the bar itself goes.
   $effect(() => () => closeReasonPicker());
 
   const choose = async (value: string) => {
     onreason(value);
     closeReasonPicker();
-    if (reasonRequiresNote(value) && !note.trim()) {
-      reasonPicker.awaitingNote = index;
+    const needsNote = reasonRequiresNote(value);
+    noteReasonChosen(needsNote);
+    if (needsNote && !note.trim()) {
+      awaitReasonNote(index);
       onneednote();
       return;
     }
@@ -63,7 +70,7 @@
       altKey: e.altKey,
       repeat: e.repeat,
       typing: isTypingTarget(target),
-      onControl: !!target?.closest?.('button, a'),
+      onControl: isDecisionControl(target),
       reasonCount: shown.length,
       hasSelection: !!selected,
     });
@@ -79,6 +86,7 @@
 
 <div
   role="group"
+  data-reason-picker
   aria-label="Pick a reason"
   class="flex flex-wrap items-center gap-1.5 rounded-md border border-dark-4 bg-dark-7 p-2"
 >

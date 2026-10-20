@@ -24,7 +24,6 @@
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
-  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { uniqueBy } from '$lib/triage/unique-by';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
@@ -104,7 +103,7 @@
 
   // A decision key presses its button: a hash row's submits straight away, and a reasoned row's
   // submits with the reason already in the bar, or says what is missing.
-  const ondecision = (_row: FlaggedRow, index: number) => pressDecisionKey(index, openReasonPicker);
+  const ondecision = (_row: FlaggedRow, index: number) => pressDecisionKey(index);
 </script>
 
 {#snippet listHeader()}

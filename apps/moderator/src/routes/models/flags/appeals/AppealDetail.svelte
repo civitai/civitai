@@ -68,13 +68,18 @@
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
   import { SSR_PENDING } from '$lib/ssr-pending';
-  import { clickDecision } from '$lib/triage/decision-form';
-  import { closeReasonPicker, reasonPicker } from '$lib/triage/reason-picker.svelte';
+  import {
+    closeReasonPickerBeyond,
+    noteReasonChosen,
+    reasonPicker,
+    resetReasonPicker,
+    submitAwaitingNote,
+  } from '$lib/triage/reason-picker.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
-  import { resolutionReasonsFor } from '@civitai/shared/resolution-reasons';
+  import { reasonRequiresNote, resolutionReasonsFor } from '@civitai/shared/resolution-reasons';
   import {
     decisionReasonOptions,
     decisionReasonProblem,
@@ -176,6 +181,9 @@
     ...FLAG_APPEAL_RULING_CHOICES.map((c) => c.verdict),
     ...(row.minor && poiOpen ? SPLIT_RULINGS : []),
   ]);
+  // The list and its wait for a note belong to this bar; the splits can vanish under an open list.
+  $effect(() => () => resetReasonPicker());
+  $effect(() => closeReasonPickerBeyond(decisionKeys.length));
   const labelOf = (key: AppealRuling) =>
     key === 'Rejected' || key === 'Approved' ? DECISION_LABEL[key] : RULINGS[key].label;
   const reasonsFor = (key: AppealRuling) => {
@@ -186,8 +194,7 @@
   // One step: the ruling button submits with the reason and note already in the bar, unless they
   // cannot be recorded for that ruling, in which case nothing is sent and the bar says why.
   const decide: SubmitFunction = (input) => {
-    closeReasonPicker();
-    reasonPicker.awaitingNote = null;
+    resetReasonPicker();
     const key = input.formData.get('ruling');
     const ruling = typeof key === 'string' && key in RULINGS ? rulingOf(key as AppealRuling) : null;
     const unavailable = ruling ? unavailableFor(key as AppealRuling) : null;
@@ -258,6 +265,7 @@
       (next) => {
         draft = { ...draft, reason: next };
         problem = null;
+        noteReasonChosen(reasonRequiresNote(next));
       }
     }
     bind:note={
@@ -269,9 +277,7 @@
     }
     bind:select={reasonSelect}
     bind:noteInput
-    onenter={() => {
-      if (reasonPicker.awaitingNote !== null) clickDecision(reasonPicker.awaitingNote);
-    }}
+    onenter={() => submitAwaitingNote(decisionKeys.length)}
   />
 {/snippet}
 

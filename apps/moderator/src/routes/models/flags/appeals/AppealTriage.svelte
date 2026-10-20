@@ -21,7 +21,6 @@
     type AppealSource,
   } from '$lib/minor-flags/appeal-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
-  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import { flagInForce, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
@@ -131,7 +130,7 @@
     const split = row.minor && poiInForce(row);
     return [flagInForce(row), true, split, split];
   }}
-  ondecision={(_row, index) => pressDecisionKey(index, openReasonPicker)}
+  ondecision={(_row, index) => pressDecisionKey(index)}
   bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}
@@ -157,8 +156,9 @@
     >
       {#snippet badges()}
         <AppealTags {row} />
-        {#if sameFileAppealBadge(row.sameFileAppeals)}
-          <MetaChip tone="amber">{sameFileAppealBadge(row.sameFileAppeals)}</MetaChip>
+        {@const sameFile = sameFileAppealBadge(row.sameFileAppeals)}
+        {#if sameFile}
+          <MetaChip tone="amber">{sameFile}</MetaChip>
         {/if}
         <CrossTabChips
           chips={crossTabChips(

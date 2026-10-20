@@ -28,7 +28,6 @@
     needsReviewSourceChips,
   } from '$lib/minor-flags/needs-review';
   import { pressDecisionKey } from '$lib/triage/decision-form';
-  import { openReasonPicker } from '$lib/triage/reason-picker.svelte';
   import { formActionHref } from '$lib/triage/queue';
   import { uniqueBy } from '$lib/triage/unique-by';
   import type { NeedsReviewQueueData } from '$lib/server/minor-flag-queue';
@@ -109,7 +108,7 @@
     defaultValue: DEFAULT_NEEDS_REVIEW_FILTERS.sort,
   } satisfies ChipGroup);
 
-  const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index, openReasonPicker);
+  const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index);
 
   // A held detection is timed by when the scan held it; a match-only row by its file's upload.
   const rowMeta = (row: NeedsReviewRow) => {

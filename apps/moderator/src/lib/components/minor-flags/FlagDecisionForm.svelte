@@ -2,7 +2,7 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
-  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import { reasonRequiresNote, type ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
@@ -17,9 +17,14 @@
     type FlagRef,
     type FlaggedDecision,
   } from '$lib/minor-flags/flagged-decision';
-  import { clickDecision } from '$lib/triage/decision-form';
   import { decisionReasonOptions, suggestedReason } from '$lib/triage/decision-reasons';
-  import { closeReasonPicker, reasonPicker } from '$lib/triage/reason-picker.svelte';
+  import {
+    closeReasonPickerBeyond,
+    noteReasonChosen,
+    reasonPicker,
+    resetReasonPicker,
+    submitAwaitingNote,
+  } from '$lib/triage/reason-picker.svelte';
   import type { Outcome } from '$lib/triage/queue';
 
   type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
@@ -67,14 +72,18 @@
   const reasonsFor = (i: number) =>
     reasonGroups ? decisionReasonList(reasonGroups, decisions[i], flags.length) : [];
 
+  // The list and its wait for a note belong to this bar: a row or tab change must not leave them for
+  // the next one, and a re-derive can drop the decision the list is open on.
+  $effect(() => () => resetReasonPicker());
+  $effect(() => closeReasonPickerBeyond(decisions.length));
+
   const outcomeOf = (keep: string[]) =>
     keep.length === flags.length ? 'Flagged' : keep.length === 0 ? 'Not flagged' : 'Split';
 
   // One step: the decision button submits with the reason and note already in the bar, unless they
   // cannot be recorded for that decision, in which case nothing is sent and the bar says why.
   const decide: SubmitFunction = async (input) => {
-    closeReasonPicker();
-    reasonPicker.awaitingNote = null;
+    resetReasonPicker();
     const posted = input.formData.get('keep');
     const index = decisions.findIndex((d) => d.keep.join(',') === posted);
     const refusal =
@@ -110,7 +119,7 @@
 </script>
 
 {#snippet decisionButtons()}
-  {#each decisions as d, i (d.label)}
+  {#each decisions as d, i (d.keep.join(','))}
     {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
     <TriageKeyButton
       type="submit"
@@ -154,6 +163,7 @@
         (next) => {
           draft = { ...draft, reason: next };
           problem = null;
+          noteReasonChosen(reasonRequiresNote(next));
         }
       }
       bind:note={
@@ -165,9 +175,7 @@
       }
       bind:select={reasonSelect}
       bind:noteInput
-      onenter={() => {
-        if (reasonPicker.awaitingNote !== null) clickDecision(reasonPicker.awaitingNote);
-      }}
+      onenter={() => submitAwaitingNote(decisions.length)}
     />
   {/if}
 {/snippet}

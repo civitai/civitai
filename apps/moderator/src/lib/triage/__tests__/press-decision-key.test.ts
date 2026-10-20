@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { clickDecision, pressDecisionKey } from '../decision-form';
+import {
+  clickDecision,
+  isDecisionControl,
+  pressDecisionKey,
+  setReasonOpener,
+} from '../decision-form';
 
 /** The decision bar as the detail pane renders it: one form, one submit button per decision key. */
 function renderBar({
@@ -92,5 +97,32 @@ describe('pressDecisionKey', () => {
     const opened: number[] = [];
     pressDecisionKey(0, (index) => opened.push(index));
     expect(opened).toEqual([]);
+  });
+});
+
+describe('pressDecisionKey default opener', () => {
+  it('opens the registered list when the queue passes none, so a decision with reasons never submits', () => {
+    const submitted = renderBar({ withReasons: [1] });
+    const opened: number[] = [];
+    setReasonOpener((index) => opened.push(index));
+    pressDecisionKey(0);
+    expect(opened).toEqual([0]);
+    expect(submitted).toEqual([]);
+  });
+});
+
+describe('isDecisionControl', () => {
+  it('is true for a button in the decision bar or the picker, false for a row link', () => {
+    renderBar();
+    const row = document.createElement('a');
+    document.body.append(row);
+    const picker = document.createElement('div');
+    picker.setAttribute('data-reason-picker', '');
+    const pick = document.createElement('button');
+    picker.append(pick);
+    document.body.append(picker);
+    expect(isDecisionControl(document.querySelector('[data-triage-actions] button'))).toBe(true);
+    expect(isDecisionControl(pick)).toBe(true);
+    expect(isDecisionControl(row)).toBe(false);
   });
 });
