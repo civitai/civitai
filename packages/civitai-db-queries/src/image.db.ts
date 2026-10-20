@@ -90,3 +90,28 @@ export async function getImageGenerationFields(db: Kysely<DB>, id: number) {
     .executeTakeFirst();
   return row ?? null;
 }
+
+/**
+ * One user's reactions across a set of images: the rows behind `getUserReactionsForImages`, in the
+ * shape of the Prisma `imageReaction.findMany({ select: { imageId, reaction } })` it replaces.
+ *
+ * - `reaction` is the SCALAR `ReviewReactions` enum, which pg returns as plain text — no enum-array
+ *   parser is involved.
+ * - Deliberately NOT ordered, as the source had no `orderBy`. The caller groups by image and pushes
+ *   in row order, so the order of reactions WITHIN one image follows the row order the planner
+ *   returns on either path; neither path ever promised one.
+ * - Empty `imageIds` short-circuits: Kysely would compile `IN ()`, a Postgres syntax error, where
+ *   Prisma returned `[]`.
+ */
+export async function listImageReactionsMany(
+  db: Kysely<DB>,
+  input: { imageIds: number[]; userId: number }
+) {
+  if (!input.imageIds.length) return [];
+  return db
+    .selectFrom('ImageReaction')
+    .select(['imageId', 'reaction'])
+    .where('imageId', 'in', input.imageIds)
+    .where('userId', '=', input.userId)
+    .execute();
+}

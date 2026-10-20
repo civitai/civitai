@@ -20,6 +20,30 @@ export enum FLIPT_FEATURE_FLAGS {
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+  // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
+  // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
+  // DEFAULT-OFF: `isFlipt` returns false for an unknown flag or an unreachable Flipt, which keeps
+  // the Prisma path. Both paths read the same replica and return the same rows.
+  //
+  // 🔴 BOOLEAN ONLY. Evaluated once per call with no entityId and no context (a single cached key,
+  // so the gate adds no per-user cache churn on a hot path); a percentage rollout hashes the literal
+  // 'global' and is 0% or 100%, and a segment rule matches nothing.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
+  // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
+  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
+  // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
+  //
+  // 🔴 ON MOVES THE READ OFF PRISMA'S POOL ONTO THE SHARED `pgDbRead` POOL (kyselyRead is built
+  // over it, src/server/db/kyselyDb.ts). Two properties of the ON state to check before flipping:
+  //  - That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`, whose default is 0 = WAIT FOREVER
+  //    (packages/civitai-db/src/env.ts). Prisma's pool times out instead. So the environment must
+  //    set a non-zero DATABASE_CONNECTION_TIMEOUT, or a saturated pool hangs these requests.
+  //  - Failures surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer
+  //    maps a pool timeout to TIMEOUT.
+  // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
+  KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
