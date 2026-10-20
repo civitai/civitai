@@ -180,6 +180,8 @@ describe('a recompute of the rating from tags', () => {
 
 describe('a moderator block', () => {
   beforeEach(() => {
+    // The block chains `.then` off this write; the shared db mock has no default for `updateMany`.
+    dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 2 } as never);
     dbMock.dbRead.image.findMany.mockResolvedValue([
       { id: AVATAR, userId: AVATAR_OWNER, postId: null, nsfwLevel: 1, blockedFor: null },
       { id: OTHER_IMAGE, userId: AVATAR_OWNER, postId: null, nsfwLevel: 1, blockedFor: null },
