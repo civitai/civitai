@@ -19,10 +19,11 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withRetries } from '~/server/utils/errorHandling';
 
 /**
- * Refunds the buyers of a Creator Shop item that was withdrawn after it sold: rejected by a
- * moderator, or archived while withheld. Either way the creator's payouts are reversed. The
- * trigger is `meta.withdrawnRefund`, written by the verdict or the archive; this reads it, so
- * the immediate call and the retry job do the same thing.
+ * Refunds the buyers of a Creator Shop item that was withdrawn after it sold (rejected by a
+ * moderator, or archived while withheld), and the purchases a moderator names through
+ * `refundShopPurchases`. A verdict or archive always reverses the creator's payouts; a manual
+ * refund only when `clawback`. The trigger is `meta.withdrawnRefund`; this reads it, so the
+ * immediate call and the retry job do the same thing.
  *
  * Each reversal is the Buzz service's own refund of one transaction, recorded as
  * `refund-<transactionId>`, so a transaction is refunded at most once however often this runs.
@@ -30,7 +31,11 @@ import { withRetries } from '~/server/utils/errorHandling';
  * loses the cosmetic only then.
  */
 
-const DESCRIPTION = 'Refund: Creator Shop item withdrawn';
+const DESCRIPTIONS = {
+  reject: 'Refund: Creator Shop item withdrawn',
+  archive: 'Refund: Creator Shop item withdrawn',
+  manual: 'Refund: Creator Shop purchase',
+} as const;
 const MONEY_RETRIES = 3;
 const MONEY_RETRY_DELAY_MS = 1000;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -81,43 +86,51 @@ type PurchaseOutcome =
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Refunds one transaction unless its `refund-<id>` is already on the ledger. */
-async function refundOnce(transactionId: string) {
+async function refundOnce(transactionId: string, description: string) {
   if (await getTransactionByExternalId(`refund-${transactionId}`)) return;
   await withRetries(
-    () => refundTransactionOnce(transactionId, DESCRIPTION),
+    () => refundTransactionOnce(transactionId, description),
     MONEY_RETRIES,
     MONEY_RETRY_DELAY_MS
   );
 }
 
-async function reversePurchase(
-  purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
-  { clawback, trigger }: { clawback: boolean; trigger: 'reject' | 'archive' }
-): Promise<PurchaseOutcome> {
+/** The purchase's debits and payouts, or why they can't be reversed. The dry run reads this too. */
+async function readPurchaseLedger(purchase: {
+  buzzTransactionId: string;
+  userId: number;
+  unitAmount: number;
+}): Promise<
+  { error: string } | { error?: undefined; debits: LedgerRow[]; payouts: LedgerRow[]; paid: number }
+> {
   let rows: LedgerRow[];
   try {
     rows = await getMultiAccountTransactionsByPrefix(purchase.buzzTransactionId);
   } catch (error) {
-    return { status: 'failed', error: messageOf(error) };
+    return { error: messageOf(error) };
   }
   const { debits, payouts, other } = classifyPurchaseLedger(purchase, rows);
-  if (other.length)
-    return {
-      status: 'failed',
-      error: `unexpected transactions under the purchase: ${other.length}`,
-    };
+  if (other.length) return { error: `unexpected transactions under the purchase: ${other.length}` };
   const paid = debits.reduce((sum, t) => sum + t.amount, 0);
   if (paid !== purchase.unitAmount)
-    return {
-      status: 'failed',
-      error: `debits ${paid} do not match the price ${purchase.unitAmount}`,
-    };
+    return { error: `debits ${paid} do not match the price ${purchase.unitAmount}` };
+  return { debits, payouts, paid };
+}
+
+async function reversePurchase(
+  purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
+  { clawback, trigger }: Pick<RefundTerms, 'clawback' | 'trigger'>
+): Promise<PurchaseOutcome> {
+  const description = DESCRIPTIONS[trigger];
+  const ledger = await readPurchaseLedger(purchase);
+  if (ledger.error !== undefined) return { status: 'failed', error: ledger.error };
+  const { debits, payouts, paid } = ledger;
 
   // Payouts first, and nothing is refunded until they are all back: the creator pays on archive.
   if (clawback && trigger === 'archive') {
     for (const t of [...payouts, ...debits]) {
       try {
-        await refundOnce(t.transactionId);
+        await refundOnce(t.transactionId, description);
       } catch (error) {
         return { status: 'failed', error: messageOf(error) };
       }
@@ -129,7 +142,7 @@ async function reversePurchase(
   // The buyer first: until every debit is back the purchase stays owed and the job retries it.
   for (const t of debits) {
     try {
-      await refundOnce(t.transactionId);
+      await refundOnce(t.transactionId, description);
     } catch (error) {
       return { status: 'failed', error: messageOf(error) };
     }
@@ -140,7 +153,7 @@ async function reversePurchase(
   const payoutFailures: PayoutFailure[] = [];
   for (const t of clawback ? payouts : []) {
     try {
-      await refundOnce(t.transactionId);
+      await refundOnce(t.transactionId, description);
       clawedBack += t.amount;
     } catch (error) {
       payoutFailures.push({
@@ -163,10 +176,92 @@ async function markerStands(shopItemId: number, at: string) {
   return !meta.takedown && meta.withdrawnRefund?.at === at;
 }
 
-const logRefund = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ level, name: 'creator-shop-withdrawn-refund', message, data }).catch(
-    () => undefined
-  );
+const logRefund = (
+  level: 'info' | 'error',
+  message: string,
+  data: Record<string, unknown>,
+  name = 'creator-shop-withdrawn-refund'
+) => logToAxiom({ level, name, message, data }).catch(() => undefined);
+
+type RefundTerms = NonNullable<CosmeticPurchaseMeta['withdrawnRefund']>;
+type OwedPurchase = {
+  userId: number;
+  buzzTransactionId: string;
+  unitAmount: number;
+  meta: Prisma.JsonValue;
+};
+
+/** Records the terms on the purchase before any of its money moves, so a retry finishes on them. */
+async function stampTerms(purchase: OwedPurchase, terms: RefundTerms) {
+  await dbWrite.userCosmeticShopPurchases.update({
+    where: { buzzTransactionId: purchase.buzzTransactionId },
+    data: {
+      meta: {
+        ...((purchase.meta ?? {}) as CosmeticPurchaseMeta),
+        withdrawnRefund: terms,
+      } as Prisma.InputJsonValue,
+    },
+  });
+}
+
+/**
+ * Reverses one stamped purchase, takes the cosmetic back and marks it refunded. `marked` is false
+ * when another run marked it first; that run counts it.
+ */
+async function settlePurchase(
+  purchase: OwedPurchase,
+  terms: RefundTerms,
+  cosmeticId: number
+): Promise<
+  | { status: 'failed'; error: string }
+  | {
+      status: 'refunded';
+      marked: boolean;
+      refunded: number;
+      clawedBack: number;
+      payoutFailures: PayoutFailure[];
+      revoked: number;
+    }
+> {
+  const outcome: PurchaseOutcome =
+    purchase.unitAmount === 0
+      ? { status: 'refunded', refunded: 0, clawedBack: 0, payoutFailures: [] }
+      : await reversePurchase(purchase, terms);
+  if (outcome.status === 'failed') return outcome;
+  // Taken back before the purchase is marked, so a run that dies in between is retried and a
+  // refunded buyer never keeps it. Scoped to this purchase: a holding obtained any other way was
+  // not paid for here.
+  const { revoked } = await revokeCosmeticsFromUsers({
+    userIds: [purchase.userId],
+    cosmeticIds: [cosmeticId],
+    claimKeys: [purchase.buzzTransactionId],
+  });
+  const { count } = await dbWrite.userCosmeticShopPurchases.updateMany({
+    where: { buzzTransactionId: purchase.buzzTransactionId, refunded: false },
+    data: { refunded: true },
+  });
+  return { ...outcome, marked: count > 0, revoked };
+}
+
+async function appendHistoryInPlace(shopItemId: number, entry: CosmeticShopItemHistoryEntry) {
+  // One statement touching only `history`: writing back the whole meta read earlier would undo a
+  // verdict that landed during the run, marker included.
+  await dbWrite.$executeRaw`
+    UPDATE "CosmeticShopItem"
+    SET meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{history}', (
+      SELECT coalesce(jsonb_agg(kept.e ORDER BY kept.o), '[]'::jsonb)
+      FROM (
+        SELECT x.e, x.o
+        FROM jsonb_array_elements(
+          coalesce(meta->'history', '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb
+        ) WITH ORDINALITY AS x(e, o)
+        ORDER BY x.o DESC
+        LIMIT ${CREATOR_SHOP_HISTORY_LIMIT}
+      ) kept
+    ))
+    WHERE id = ${shopItemId}
+  `;
+}
 
 /**
  * Runs the refund for one item. Serialised per item, so two verdicts landing together, or a
@@ -184,8 +279,8 @@ export async function refundWithdrawnShopItem(
   );
 }
 
-async function runWithdrawnRefund(shopItemId: number, limit?: number) {
-  const item = await dbWrite.cosmeticShopItem.findUnique({
+const loadItem = (shopItemId: number) =>
+  dbWrite.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
       id: true,
@@ -196,6 +291,13 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
       cosmetic: { select: { createdById: true } },
     },
   });
+type RefundableItem = NonNullable<Awaited<ReturnType<typeof loadItem>>>;
+
+// A creator buying their own item paid the platform; it is not a sale to refund.
+const creatorOf = (item: RefundableItem) => item.cosmetic?.createdById ?? item.addedById;
+
+async function runWithdrawnRefund(shopItemId: number, limit?: number) {
+  const item = await loadItem(shopItemId);
   const meta = (item?.meta ?? {}) as CosmeticShopItemMeta;
   const marker = meta.withdrawnRefund;
   // A pack's members are listed, and withheld, on their own, so withdrawing the pack withholds
@@ -204,12 +306,11 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   // A takedown refunds and claws back on its own terms, except purchases already begun here.
   const owedByMarker = meta.takedown ? undefined : marker;
 
-  const creatorId = item.cosmetic?.createdById ?? item.addedById;
+  const creatorId = creatorOf(item);
   const unrefunded = await dbWrite.userCosmeticShopPurchases.findMany({
     where: {
       shopItemId,
       refunded: false,
-      // A creator buying their own item paid the platform; it is not a sale to refund.
       ...(creatorId ? { userId: { not: creatorId } } : {}),
     },
     select: {
@@ -255,20 +356,9 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
         stopped = true;
         continue;
       }
-      await dbWrite.userCosmeticShopPurchases.update({
-        where: { buzzTransactionId: purchase.buzzTransactionId },
-        data: {
-          meta: {
-            ...((purchase.meta ?? {}) as CosmeticPurchaseMeta),
-            withdrawnRefund: terms,
-          } as Prisma.InputJsonValue,
-        },
-      });
+      await stampTerms(purchase, terms);
     }
-    const outcome =
-      purchase.unitAmount === 0
-        ? ({ status: 'refunded', refunded: 0, clawedBack: 0, payoutFailures: [] } as const)
-        : await reversePurchase(purchase, terms);
+    const outcome = await settlePurchase(purchase, terms, item.cosmeticId);
     if (outcome.status === 'failed') {
       failures.push({ ...purchase, error: outcome.error });
       await logRefund('error', 'Purchase refund failed', { shopItemId, ...purchase, ...outcome });
@@ -278,21 +368,8 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
       payoutFailures.push({ ...failure, buzzTransactionId: purchase.buzzTransactionId });
       await logRefund('error', 'Payout clawback failed', { shopItemId, ...purchase, ...failure });
     }
-    // Taken back before the purchase is marked, so a run that dies in between is retried and a
-    // refunded buyer never keeps it. Scoped to this purchase: a holding obtained any other way was
-    // not paid for here.
-    revoked += (
-      await revokeCosmeticsFromUsers({
-        userIds: [purchase.userId],
-        cosmeticIds: [item.cosmeticId],
-        claimKeys: [purchase.buzzTransactionId],
-      })
-    ).revoked;
-    const { count } = await dbWrite.userCosmeticShopPurchases.updateMany({
-      where: { buzzTransactionId: purchase.buzzTransactionId, refunded: false },
-      data: { refunded: true },
-    });
-    if (!count) continue;
+    revoked += outcome.revoked;
+    if (!outcome.marked) continue;
     refunded.push(purchase);
     refundedValue += outcome.refunded;
     clawedBack += outcome.clawedBack;
@@ -308,29 +385,12 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
         details: { title: item.title },
       }).catch(() => undefined);
 
-    const entry: CosmeticShopItemHistoryEntry = {
+    await appendHistoryInPlace(shopItemId, {
       at: new Date().toISOString(),
       userId: (marker ?? purchases[0].terms).userId,
       kind: 'refunded',
       note: `${refunded.length} purchase(s), ${refundedValue} Buzz refunded; ${clawedBack} Buzz reversed from payouts`,
-    };
-    // One statement touching only `history`: writing back the whole meta read earlier would undo a
-    // verdict that landed during the run, marker included.
-    await dbWrite.$executeRaw`
-      UPDATE "CosmeticShopItem"
-      SET meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{history}', (
-        SELECT coalesce(jsonb_agg(kept.e ORDER BY kept.o), '[]'::jsonb)
-        FROM (
-          SELECT x.e, x.o
-          FROM jsonb_array_elements(
-            coalesce(meta->'history', '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb
-          ) WITH ORDINALITY AS x(e, o)
-          ORDER BY x.o DESC
-          LIMIT ${CREATOR_SHOP_HISTORY_LIMIT}
-        ) kept
-      ))
-      WHERE id = ${shopItemId}
-    `;
+    });
   }
 
   const summary = {
@@ -399,4 +459,274 @@ export async function sweepWithdrawnShopRefunds({ limit = 50 }: { limit?: number
     }
   }
   return { items: due.length, refunded, failures, busy };
+}
+
+type LegPlan = {
+  kind: 'debit' | 'payout';
+  transactionId: string;
+  accountId: number;
+  amount: number;
+  alreadyRefunded: boolean;
+};
+type PurchaseRefundResult = {
+  buzzTransactionId: string;
+  userId?: number;
+  shopItemId?: number;
+  status: 'planned' | 'refunded' | 'skipped-already-refunded' | 'failed';
+  error?: string;
+  legs?: LegPlan[];
+  refunded?: number;
+  clawedBack?: number;
+  payoutFailures?: PayoutFailure[];
+};
+type RefundablePurchase = OwedPurchase & { shopItemId: number; refunded: boolean };
+
+const PURCHASE_REFUND_LOG = 'creator-shop-purchase-refund';
+
+const loadPurchases = (ids: string[]) =>
+  dbWrite.userCosmeticShopPurchases.findMany({
+    where: { buzzTransactionId: { in: ids } },
+    select: {
+      userId: true,
+      shopItemId: true,
+      buzzTransactionId: true,
+      unitAmount: true,
+      refunded: true,
+      meta: true,
+    },
+  });
+
+function refusal(purchase: RefundablePurchase, item: RefundableItem | null, clawback: boolean) {
+  if (!item) return 'shop item not found';
+  // A pack's members are granted on their own, so there is no single holding to take back.
+  if (item.cosmeticId == null) return 'packs are not supported';
+  if ((item.meta as CosmeticShopItemMeta | null)?.takedown)
+    return 'the item was taken down; the takedown refunds its purchases';
+  if (purchase.userId === creatorOf(item)) return "the creator's own purchase is not a sale";
+  const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
+  if (started && started.clawback !== clawback)
+    return `a refund already began with clawback ${started.clawback}`;
+  return null;
+}
+
+/** The legs a real run would reverse, read the way it reads them. */
+async function planLegs(
+  purchase: RefundablePurchase,
+  clawback: boolean
+): Promise<{ error: string } | { error?: undefined; legs: LegPlan[] }> {
+  if (purchase.unitAmount === 0) return { legs: [] };
+  const ledger = await readPurchaseLedger(purchase);
+  if (ledger.error !== undefined) return ledger;
+  const legs = [
+    ...ledger.debits.map((t) => ({ kind: 'debit' as const, ...t })),
+    ...(clawback ? ledger.payouts.map((t) => ({ kind: 'payout' as const, ...t })) : []),
+  ];
+  return {
+    legs: await Promise.all(
+      legs.map(async ({ kind, transactionId, accountId, amount }) => ({
+        kind,
+        transactionId,
+        accountId,
+        amount,
+        alreadyRefunded: !!(await getTransactionByExternalId(`refund-${transactionId}`)),
+      }))
+    ),
+  };
+}
+
+/**
+ * A moderator's refund of named purchases, on the withdrawn-item path. Terms are stamped first, so
+ * the withdrawn-refund job finishes a purchase a run leaves part done (unless a takedown lands
+ * first, which finishes it as a takedown) and a second call refunds nothing twice. `dryRun` moves
+ * nothing.
+ */
+export async function refundShopPurchases({
+  buzzTransactionIds,
+  clawback,
+  reason,
+  dryRun,
+  moderatorId,
+}: {
+  buzzTransactionIds: string[];
+  clawback: boolean;
+  reason: string;
+  dryRun: boolean;
+  moderatorId: number;
+}) {
+  const ids = [...new Set(buzzTransactionIds)];
+  const results = new Map<string, PurchaseRefundResult>(
+    ids.map((id) => [id, { buzzTransactionId: id, status: 'failed', error: 'purchase not found' }])
+  );
+  const list = () => ids.map((id) => results.get(id)!);
+
+  try {
+    const found = await loadPurchases(ids);
+    for (const shopItemId of new Set(found.map((p) => p.shopItemId))) {
+      const owned = found.filter((p) => p.shopItemId === shopItemId);
+      if (dryRun) {
+        await planItem(shopItemId, owned, clawback, results);
+        continue;
+      }
+      const ran = await withDistributedLock(
+        {
+          key: `creator-shop-withdrawn-refund:${shopItemId}`,
+          ttl: 60,
+          autoRenew: true,
+          maxRetries: 0,
+        },
+        () =>
+          refundItemPurchases(
+            shopItemId,
+            owned.map((p) => p.buzzTransactionId),
+            { clawback, moderatorId },
+            results
+          )
+      );
+      if (ran === null)
+        for (const p of owned)
+          results.set(p.buzzTransactionId, {
+            buzzTransactionId: p.buzzTransactionId,
+            userId: p.userId,
+            shopItemId,
+            status: 'failed',
+            error: 'another refund of this item is running; try again',
+          });
+    }
+  } finally {
+    // Written even when the call throws: it is the only record of what earlier purchases moved.
+    if (!dryRun) {
+      const outcome = list();
+      await logRefund(
+        outcome.some((r) => r.status === 'failed' || r.payoutFailures?.length) ? 'error' : 'info',
+        'Purchase refund finished',
+        { moderatorId, reason, clawback, buzzTransactionIds: ids, results: outcome },
+        PURCHASE_REFUND_LOG
+      );
+    }
+  }
+
+  const outcome = list();
+  const totals = {
+    planned: outcome.filter((r) => r.status === 'planned').length,
+    refunded: outcome.filter((r) => r.status === 'refunded').length,
+    skipped: outcome.filter((r) => r.status === 'skipped-already-refunded').length,
+    failed: outcome.filter((r) => r.status === 'failed').length,
+    refundedValue: outcome.reduce((sum, r) => sum + (r.refunded ?? 0), 0),
+    clawedBack: outcome.reduce((sum, r) => sum + (r.clawedBack ?? 0), 0),
+  };
+  return { dryRun, totals, results: outcome };
+}
+
+async function planItem(
+  shopItemId: number,
+  purchases: RefundablePurchase[],
+  clawback: boolean,
+  results: Map<string, PurchaseRefundResult>
+) {
+  const item = await loadItem(shopItemId);
+  for (const purchase of purchases) {
+    const id = purchase.buzzTransactionId;
+    const base = { buzzTransactionId: id, userId: purchase.userId, shopItemId };
+    if (purchase.refunded) {
+      results.set(id, { ...base, status: 'skipped-already-refunded' });
+      continue;
+    }
+    const refused = refusal(purchase, item, clawback);
+    const plan = refused ? { error: refused } : await planLegs(purchase, clawback);
+    results.set(
+      id,
+      plan.error !== undefined
+        ? { ...base, status: 'failed', error: plan.error }
+        : { ...base, status: 'planned', legs: plan.legs }
+    );
+  }
+}
+
+async function refundItemPurchases(
+  shopItemId: number,
+  ids: string[],
+  { clawback, moderatorId }: { clawback: boolean; moderatorId: number },
+  results: Map<string, PurchaseRefundResult>
+) {
+  // Read again under the lock: a run that held it may have refunded some of these.
+  const purchases = await loadPurchases(ids);
+  const terms: RefundTerms = {
+    trigger: 'manual',
+    clawback,
+    userId: moderatorId,
+    at: new Date().toISOString(),
+  };
+  const refunded: RefundablePurchase[] = [];
+  let title: string | undefined;
+  let refundedValue = 0;
+  let clawedBack = 0;
+  for (const purchase of purchases) {
+    const id = purchase.buzzTransactionId;
+    const base = { buzzTransactionId: id, userId: purchase.userId, shopItemId };
+    if (purchase.refunded) {
+      results.set(id, { ...base, status: 'skipped-already-refunded' });
+      continue;
+    }
+    try {
+      // Read per purchase: a takedown does not take this lock, and owns every purchase not yet
+      // stamped once it lands.
+      const item = await loadItem(shopItemId);
+      const refused = refusal(purchase, item, clawback);
+      if (refused || item?.cosmeticId == null) {
+        results.set(id, { ...base, status: 'failed', error: refused ?? 'shop item not found' });
+        continue;
+      }
+      title = item.title;
+      // A purchase already begun is finished on the terms it began under.
+      const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
+      if (!started) await stampTerms(purchase, terms);
+      const outcome = await settlePurchase(purchase, started ?? terms, item.cosmeticId);
+      if (outcome.status === 'failed') {
+        results.set(id, { ...base, status: 'failed', error: outcome.error });
+        continue;
+      }
+      // Logged now: once the purchase is marked, a later failure in this call leaves no other
+      // record of a payout that did not come back.
+      for (const failure of outcome.payoutFailures)
+        await logRefund(
+          'error',
+          'Payout clawback failed',
+          { ...base, ...failure },
+          PURCHASE_REFUND_LOG
+        );
+      if (!outcome.marked) {
+        results.set(id, { ...base, status: 'skipped-already-refunded' });
+        continue;
+      }
+      results.set(id, {
+        ...base,
+        status: 'refunded',
+        refunded: outcome.refunded,
+        clawedBack: outcome.clawedBack,
+        payoutFailures: outcome.payoutFailures,
+      });
+      refunded.push(purchase);
+      refundedValue += outcome.refunded;
+      clawedBack += outcome.clawedBack;
+    } catch (error) {
+      results.set(id, { ...base, status: 'failed', error: messageOf(error) });
+    }
+  }
+  if (!refunded.length) return;
+
+  for (const userId of new Set(refunded.map((p) => p.userId)))
+    await createNotification({
+      type: 'cosmetic-shop-purchase-refunded',
+      userId,
+      category: NotificationCategory.System,
+      key: `cosmetic-shop-purchase-refunded:${shopItemId}:${userId}:${terms.at}`,
+      details: { title },
+    }).catch(() => undefined);
+  // The reason stays in Axiom: item history reaches the creator, and a reason can describe a buyer.
+  await appendHistoryInPlace(shopItemId, {
+    at: terms.at,
+    userId: moderatorId,
+    kind: 'refunded',
+    note: `${refunded.length} purchase(s) refunded by a moderator, ${refundedValue} Buzz refunded; ${clawedBack} Buzz reversed from payouts`,
+  }).catch(() => undefined);
 }

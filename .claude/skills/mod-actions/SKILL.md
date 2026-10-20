@@ -1,11 +1,11 @@
 ---
 name: mod-actions
-description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting. All via Civitai tRPC API."
+description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds. All via Civitai tRPC API."
 ---
 
 # Moderator Actions
 
-Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting.
+Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds.
 
 All scripts use the Civitai tRPC API with Bearer token authentication, ensuring actions go through the proper service layer with full side effects.
 
@@ -41,6 +41,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 | `content.mjs` | Content moderation | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, mod-rule |
 | `model3ds.mjs` | 3D Models moderation | list, get, files, unpublish, delete, restore, set-nsfw-level, toggle-tos, toggle-poi, toggle-minor, toggle-nsfw, toggle-unlisted |
 | `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
+| `shop.mjs` | Creator Shop | refund |
 
 ---
 
@@ -306,9 +307,26 @@ node .claude/skills/mod-actions/csam.mjs create-report 3879899 --type GeneratedI
 
 ---
 
+## shop.mjs — Creator Shop
+
+```bash
+node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason <text> (--clawback | --no-clawback) [--writable]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
+
+Dry run unless `--writable` (the server's dry run lists each purchase's ledger legs). Re-running is safe.
+`--no-clawback` means Civitai pays the refund, `--clawback` the creator. Choose per case: an agent's
+`--writable` run needs Justin's approval card, and the card must name the clawback value.
+Refusals and behaviour: `docs/features/creator-shop.md` → "Refunding a purchase by hand".
+
+---
+
 ## Global Options
 
-All scripts support:
+All scripts except `shop.mjs` (dry run by default; `--writable` writes) support:
 
 | Flag | Description |
 |------|-------------|
@@ -319,7 +337,7 @@ All scripts support:
 
 ## Safety Notes
 
-- **Always use `--dry-run` first** for destructive/write actions
+- **Always use `--dry-run` first** for destructive/write actions (`shop.mjs`: omit `--writable` first)
 - All actions are logged in the ModActivity table
 - Ban actions invalidate user sessions immediately
 - CSAM reports are submitted to NCMEC — use with extreme care

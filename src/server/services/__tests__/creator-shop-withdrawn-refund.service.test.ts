@@ -62,7 +62,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
   };
 });
 
-const { refundWithdrawnShopItem, sweepWithdrawnShopRefunds } = await import(
+const { refundShopPurchases, refundWithdrawnShopItem, sweepWithdrawnShopRefunds } = await import(
   '../creator-shop-withdrawn-refund.service'
 );
 
@@ -79,6 +79,7 @@ type Purchase = {
   purchasedAt: Date;
   refunded: boolean;
   meta?: Record<string, unknown> | null;
+  shopItemId?: number;
 };
 let purchases: Purchase[];
 let itemMeta: Record<string, unknown>;
@@ -149,7 +150,12 @@ beforeEach(() => {
     meta: itemMeta,
     cosmetic: { createdById: CREATOR },
   });
-  dbMock.dbWrite.cosmeticShopItem.findUnique.mockReset().mockImplementation(async () => item());
+  // Any other id is a second live item with the same cosmetic and creator.
+  dbMock.dbWrite.cosmeticShopItem.findUnique
+    .mockReset()
+    .mockImplementation(async ({ where }: { where: { id: number } }) =>
+      where.id === ITEM ? item() : { ...item(), id: where.id, meta: { purchases: 0 } }
+    );
   dbMock.dbWrite.cosmeticShopItem.update
     .mockReset()
     .mockImplementation(async ({ data }: { data: { meta: Record<string, unknown> } }) => {
@@ -165,27 +171,31 @@ beforeEach(() => {
       itemMeta = { ...itemMeta, history: history.slice(-cap) };
       return 1;
     });
-  dbMock.dbWrite.userCosmeticShopPurchases.findMany
-    .mockReset()
-    .mockImplementation(
-      async ({
-        where,
-        orderBy,
-      }: {
-        where: { refunded: boolean; userId?: { not: number } };
-        orderBy?: { purchasedAt: 'asc' };
-      }) => {
-        const rows = purchases
-          .filter(
-            (p) =>
-              p.refunded === where.refunded &&
-              (where.userId === undefined || p.userId !== where.userId.not)
-          )
-          .map((p) => ({ ...p, meta: p.meta ?? null }));
-        if (orderBy) rows.sort((a, b) => a.purchasedAt.getTime() - b.purchasedAt.getTime());
-        return rows;
-      }
-    );
+  dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockReset().mockImplementation(
+    async ({
+      where,
+      orderBy,
+    }: {
+      where: {
+        refunded?: boolean;
+        userId?: { not: number };
+        buzzTransactionId?: { in: string[] };
+      };
+      orderBy?: { purchasedAt: 'asc' };
+    }) => {
+      const rows = purchases
+        .filter(
+          (p) =>
+            (where.refunded === undefined || p.refunded === where.refunded) &&
+            (where.userId === undefined || p.userId !== where.userId.not) &&
+            (where.buzzTransactionId === undefined ||
+              where.buzzTransactionId.in.includes(p.buzzTransactionId))
+        )
+        .map((p) => ({ ...p, shopItemId: p.shopItemId ?? ITEM, meta: p.meta ?? null }));
+      if (orderBy) rows.sort((a, b) => a.purchasedAt.getTime() - b.purchasedAt.getTime());
+      return rows;
+    }
+  );
   dbMock.dbWrite.userCosmeticShopPurchases.update
     .mockReset()
     .mockImplementation(
@@ -931,5 +941,326 @@ describe('each leg is refunded once', () => {
 
     expect(result).toEqual({ purchases: 2, refunded: 1, failures: 1 });
     expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+  });
+});
+
+describe('refundShopPurchases', () => {
+  const refund = (
+    buzzTransactionIds: string[],
+    { clawback = true, dryRun = false }: { clawback?: boolean; dryRun?: boolean } = {}
+  ) =>
+    refundShopPurchases({
+      buzzTransactionIds,
+      clawback,
+      dryRun,
+      reason: 'chargeback',
+      moderatorId: MOD,
+    });
+
+  const TAKEN_DOWN = 'the item was taken down; the takedown refunds its purchases';
+
+  beforeEach(() => {
+    itemMeta = { purchases: 0 };
+  });
+
+  it('a dry run reports what the real run would do with each purchase', async () => {
+    purchases = [
+      sale(101, 'p-1'),
+      sale(102, 'p-2'),
+      { ...sale(103, 'p-3'), refunded: true },
+      sale(CREATOR, 'own'),
+      { ...sale(104, 'free', 0), unitAmount: 0 },
+    ];
+    purchases[1].unitAmount = 1200;
+
+    const result = await refund(['p-1', 'p-2', 'p-3', 'own', 'free'], {
+      clawback: false,
+      dryRun: true,
+    });
+
+    expect(
+      result.results.map(({ buzzTransactionId, status, error, legs }) => ({
+        buzzTransactionId,
+        status,
+        error,
+        legs: legs?.map((l) => l.transactionId),
+      }))
+    ).toEqual([
+      { buzzTransactionId: 'p-1', status: 'planned', error: undefined, legs: ['p-1-debit'] },
+      {
+        buzzTransactionId: 'p-2',
+        status: 'failed',
+        error: 'debits 1000 do not match the price 1200',
+        legs: undefined,
+      },
+      {
+        buzzTransactionId: 'p-3',
+        status: 'skipped-already-refunded',
+        error: undefined,
+        legs: undefined,
+      },
+      {
+        buzzTransactionId: 'own',
+        status: 'failed',
+        error: "the creator's own purchase is not a sale",
+        legs: undefined,
+      },
+      { buzzTransactionId: 'free', status: 'planned', error: undefined, legs: [] },
+    ]);
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('a dry run refuses a taken-down item, as the real run does', async () => {
+    itemMeta = { purchases: 0, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+
+    const result = await refund(['p-1'], { dryRun: true });
+
+    expect(result.results[0]).toMatchObject({ status: 'failed', error: TAKEN_DOWN });
+  });
+
+  it('a dry run moves nothing and lists the legs it would reverse', async () => {
+    ledger.refunded.add('p-1-payout');
+
+    const result = await refund(['p-1'], { dryRun: true });
+
+    expect(result.results).toEqual([
+      {
+        buzzTransactionId: 'p-1',
+        userId: 101,
+        shopItemId: ITEM,
+        status: 'planned',
+        legs: [
+          {
+            kind: 'debit',
+            transactionId: 'p-1-debit',
+            accountId: 101,
+            amount: 1000,
+            alreadyRefunded: false,
+          },
+          {
+            kind: 'payout',
+            transactionId: 'p-1-payout',
+            accountId: 0,
+            amount: 700,
+            alreadyRefunded: true,
+          },
+        ],
+      },
+    ]);
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(mocks.revokeCosmeticsFromUsers).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userCosmeticShopPurchases.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userCosmeticShopPurchases.updateMany).not.toHaveBeenCalled();
+    expect(purchases.map((p) => p.refunded)).toEqual([false, false]);
+  });
+
+  it('refunds only the named purchase, reverses its payout and takes the cosmetic back', async () => {
+    const result = await refund(['p-1']);
+
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+    expect(mocks.revokeCosmeticsFromUsers.mock.calls).toEqual([
+      [{ userIds: [101], cosmeticIds: [COSMETIC], claimKeys: ['p-1'] }],
+    ]);
+    expect(result.totals).toEqual({
+      planned: 0,
+      refunded: 1,
+      skipped: 0,
+      failed: 0,
+      refundedValue: 1000,
+      clawedBack: 700,
+    });
+    expect(mocks.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'cosmetic-shop-purchase-refunded', userId: 101 })
+    );
+    const entry = (itemMeta.history as { kind: string; userId: number; note: string }[]).at(-1)!;
+    expect(entry).toMatchObject({ kind: 'refunded', userId: MOD });
+    // The creator can read the history; the reason may describe the buyer.
+    expect(entry.note).not.toContain('chargeback');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'creator-shop-purchase-refund',
+        data: expect.objectContaining({ moderatorId: MOD, reason: 'chargeback' }),
+      })
+    );
+  });
+
+  it('leaves the creator paid without clawback', async () => {
+    await refund(['p-1'], { clawback: false });
+
+    expect(refundedIds()).toEqual(['p-1-debit']);
+    expect(purchases[0].refunded).toBe(true);
+  });
+
+  it('refunds once when called twice', async () => {
+    await refund(['p-1', 'p-2']);
+    const again = await refund(['p-1', 'p-2']);
+
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout', 'p-2-debit', 'p-2-payout']);
+    expect(again.results.map((r) => r.status)).toEqual([
+      'skipped-already-refunded',
+      'skipped-already-refunded',
+    ]);
+  });
+
+  it('reports each purchase on its own in a mixed call', async () => {
+    purchases = [sale(CREATOR, 'own'), sale(101, 'p-1'), sale(102, 'p-2')];
+    purchases[2].meta = { withdrawnRefund: { ...marker('reject'), clawback: false } };
+
+    const result = await refund(['own', 'p-1', 'p-2', 'missing']);
+
+    expect(
+      result.results.map(({ buzzTransactionId, status, error }) => ({
+        buzzTransactionId,
+        status,
+        error,
+      }))
+    ).toEqual([
+      {
+        buzzTransactionId: 'own',
+        status: 'failed',
+        error: "the creator's own purchase is not a sale",
+      },
+      { buzzTransactionId: 'p-1', status: 'refunded', error: undefined },
+      {
+        buzzTransactionId: 'p-2',
+        status: 'failed',
+        error: 'a refund already began with clawback false',
+      },
+      { buzzTransactionId: 'missing', status: 'failed', error: 'purchase not found' },
+    ]);
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+  });
+
+  it('refuses purchases on a taken-down item, which the takedown refunds', async () => {
+    itemMeta = { purchases: 0, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+
+    const result = await refund(['p-1']);
+
+    expect(result.results[0]).toMatchObject({ status: 'failed', error: TAKEN_DOWN });
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(purchases[0].meta ?? null).toBeNull();
+  });
+
+  it('stops stamping purchases once a takedown lands mid-call', async () => {
+    mocks.revokeCosmeticsFromUsers.mockImplementation(async () => {
+      itemMeta = { ...itemMeta, takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT } };
+      return { revoked: 1 };
+    });
+
+    const result = await refund(['p-1', 'p-2']);
+
+    expect(result.results.map((r) => [r.status, r.error])).toEqual([
+      ['refunded', undefined],
+      ['failed', TAKEN_DOWN],
+    ]);
+    expect(purchases[1].meta ?? null).toBeNull();
+  });
+
+  it('moves nothing while another refund of the item holds the lock', async () => {
+    locks.held.add(`creator-shop-withdrawn-refund:${ITEM}`);
+
+    const result = await refund(['p-1']);
+
+    expect(result.results[0]).toMatchObject({
+      status: 'failed',
+      error: 'another refund of this item is running; try again',
+    });
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(purchases[0].refunded).toBe(false);
+  });
+
+  it('refunds the purchases of another item while one item is busy', async () => {
+    const OTHER = 43;
+    purchases = [sale(101, 'p-1'), { ...sale(102, 'q-1'), shopItemId: OTHER }];
+    // The busy item comes second, so marking it busy must not touch what the first one refunded.
+    locks.held.add(`creator-shop-withdrawn-refund:${OTHER}`);
+
+    const result = await refund(['p-1', 'q-1']);
+
+    expect(result.results.map((r) => [r.buzzTransactionId, r.shopItemId, r.status])).toEqual([
+      ['p-1', ITEM, 'refunded'],
+      ['q-1', OTHER, 'failed'],
+    ]);
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+    expect(dbMock.dbWrite.$executeRaw.mock.calls.map((call) => call.at(-1))).toEqual([ITEM]);
+    expect(mocks.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 101,
+        key: expect.stringMatching(new RegExp(`^cosmetic-shop-purchase-refunded:${ITEM}:101:`)),
+      })
+    );
+  });
+
+  it('skips a purchase another run refunded between the first read and the lock', async () => {
+    const read = dbMock.dbWrite.userCosmeticShopPurchases.findMany.getMockImplementation()!;
+    let reads = 0;
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockImplementation(async (args) => {
+      if (++reads === 2) purchases[0].refunded = true;
+      return read(args);
+    });
+
+    const result = await refund(['p-1']);
+
+    expect(result.results[0].status).toBe('skipped-already-refunded');
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('takes each purchase once when it is named twice', async () => {
+    const result = await refund(['p-1', 'p-1']);
+
+    expect(result.results).toHaveLength(1);
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+  });
+
+  it('records what moved when a later purchase throws', async () => {
+    const working = mocks.refundTransaction.getMockImplementation()!;
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (transactionId === 'p-1-payout') throw new Error('creator account locked');
+      return working(transactionId);
+    });
+    mocks.revokeCosmeticsFromUsers.mockImplementation(async ({ userIds }) => {
+      if (userIds[0] === 102) throw new Error('db down');
+      return { revoked: 1 };
+    });
+    loggingMock.logToAxiom.mockClear();
+
+    const result = await refund(['p-1', 'p-2']);
+
+    expect(result.results.map((r) => [r.status, r.error])).toEqual([
+      ['refunded', undefined],
+      ['failed', 'db down'],
+    ]);
+    expect(result.results[0].payoutFailures).toEqual([
+      expect.objectContaining({ transactionId: 'p-1-payout', error: 'creator account locked' }),
+    ]);
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry)
+      .filter((entry) => entry.name === 'creator-shop-purchase-refund')
+      .map((entry) => entry.message);
+    expect(logged).toEqual(['Payout clawback failed', 'Purchase refund finished']);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a part-done purchase stamped, and the job finishes it', async () => {
+    const working = mocks.refundTransaction.getMockImplementation()!;
+    mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (transactionId === 'p-1-debit') throw new Error('buzz 503');
+      return working(transactionId);
+    });
+
+    const first = await refund(['p-1']);
+    mocks.refundTransaction.mockImplementation(working);
+
+    expect(first.results[0]).toMatchObject({ status: 'failed' });
+    expect(purchases[0].meta).toEqual({
+      withdrawnRefund: expect.objectContaining({ trigger: 'manual', clawback: true, userId: MOD }),
+    });
+
+    const swept = await refundWithdrawnShopItem(ITEM);
+
+    expect(swept).toEqual({ purchases: 1, refunded: 1, failures: 0 });
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+    expect(ledger.refunded).toEqual(new Set(['p-1-debit', 'p-1-payout']));
   });
 });
