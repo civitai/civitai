@@ -648,8 +648,10 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
     if (appEnv.noDir.length) console.log(`env files: skipped ${appEnv.noDir.length} whose app is not on this branch (${appEnv.noDir.join(', ')})`);
   } catch (error) {
     if (error.code === 'DEV_DB_MISSING')
-      fail(`${error.message}
-The worktree exists without its env files; then run: node .claude/skills/dev-server/cli.mjs wt env "${target}", and pnpm install there.`);
+      fail(
+        `${error.message}\nThe worktree exists without its env files; then run: ` +
+          `node .claude/skills/dev-server/cli.mjs wt env "${target}", and pnpm install there.`
+      );
     console.warn(`warning: could not copy env files -- ${error.message}`);
   }
 

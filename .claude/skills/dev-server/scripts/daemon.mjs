@@ -1916,8 +1916,8 @@ class AppSession extends AuthHub {
   }
 
   // In a worktree the DB keys skip the chain's base, the primary's app .env, which may name a
-  // database other than dev (the shared auth hub's does). A key neither the worktree's app .env nor
-  // its root chain sets is removed rather than inherited.
+  // database other than dev. A key neither the worktree's app .env nor its root chain sets is
+  // removed rather than inherited.
   databaseEnv() {
     if (samePath(this.worktree, primaryCheckout)) return null;
     return appDatabaseEnv(loadEnvFile(resolve(this.path, '.env')), loadEnvChain(this.rootEnvPaths));
