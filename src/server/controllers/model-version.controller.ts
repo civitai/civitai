@@ -70,6 +70,7 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
+import { getVersionByIdWithGenerationChildren } from '~/server/services/model-version-generation-children.service';
 import {
   getModel,
   queueModelEarlyAccessReindex,
@@ -143,7 +144,7 @@ const loadModelVersion = async ({
   const { id, withFiles } = input;
 
   try {
-    const version = await getVersionById({
+    const version = await getVersionByIdWithGenerationChildren({
       id,
       forceWriteDb,
       select: {
@@ -193,21 +194,8 @@ const loadModelVersion = async ({
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
-        recommendedResources: {
-          select: {
-            id: true,
-            resource: {
-              select: {
-                id: true,
-                // name: true,
-                // trainedWords: true,
-                // baseModel: true,
-                // model: { select: { id: true, name: true, type: true } },
-              },
-            },
-            settings: true,
-          },
-        },
+        // `recommendedResources` and `generationCoverage` come from
+        // getVersionByIdWithGenerationChildren's single raw statement, not nested selects.
         monetization: {
           select: {
             id: true,
@@ -224,7 +212,6 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
     if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
