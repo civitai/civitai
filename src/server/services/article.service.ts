@@ -819,6 +819,9 @@ export const getArticleById = async ({
   }
 };
 
+const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
+  'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
+
 export const upsertArticle = async ({
   id,
   userId,
@@ -837,6 +840,7 @@ export const upsertArticle = async ({
 }) => {
   // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
   let writingNeverPublishedDraft = false;
+  let writingWithoutViolationStatus = false;
   try {
     const officialTag = await getOfficialArticleTag();
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
@@ -1112,9 +1116,7 @@ export const upsertArticle = async ({
       data.status &&
       data.status !== article.status
     ) {
-      throw throwBadRequestError(
-        'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.'
-      );
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     }
 
     // SECURITY: Validate image scan status before allowing publish
@@ -1220,8 +1222,15 @@ export const upsertArticle = async ({
     // Guarded: the job may have taken this draft live since the read, and an unguarded write would
     // revert it to Draft and re-fire the go-live side effects on the next publish.
     writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    // A removal landing between the read and this write must not be overwritten by the owner.
+    writingWithoutViolationStatus =
+      !writingNeverPublishedDraft &&
+      !isModerator &&
+      article.status !== ArticleStatus.UnpublishedViolation;
     const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
       ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : writingWithoutViolationStatus
+      ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
@@ -1302,6 +1311,7 @@ export const upsertArticle = async ({
       return updated;
     });
     writingNeverPublishedDraft = false;
+    writingWithoutViolationStatus = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -1358,6 +1368,12 @@ export const upsertArticle = async ({
       throw throwBadRequestError(
         'This article was published while you were editing it. Reload it and save again.'
       );
+    if (
+      writingWithoutViolationStatus &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     throw throwDbError(error);
   }
 };

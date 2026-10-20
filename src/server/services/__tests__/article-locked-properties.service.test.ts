@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -180,5 +181,56 @@ describe('upsertArticle — status while unpublished for a violation', () => {
     await upsert({ userId: MODERATOR_ID, isModerator: true, status });
 
     expect(mockDbWrite.article.update).toHaveBeenCalled();
+  });
+});
+
+describe('upsertArticle — write guard against a status changed during the save', () => {
+  const MESSAGE = /unpublished for violating Terms of Service and its status cannot be changed/;
+  const updateWhere = () => mockDbWrite.article.update.mock.calls[0]?.[0]?.where;
+  const p2025 = () =>
+    new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'test' });
+
+  it.each(['Published', 'Processing'])(
+    'refuses to overwrite a row that is now UnpublishedViolation when %s was read',
+    async (status) => {
+      mockStored({ status });
+
+      await upsert({ status });
+
+      expect(updateWhere()).toEqual({ id: ARTICLE_ID, status: { not: 'UnpublishedViolation' } });
+    }
+  );
+
+  it('reports the status lock when that guard matches no row', async () => {
+    mockStored({ status: 'Published' });
+    mockDbWrite.article.update.mockRejectedValue(p2025());
+
+    await expect(upsert({ status: 'Published' })).rejects.toThrow(MESSAGE);
+  });
+
+  it('does not guard a moderator write', async () => {
+    mockStored({ status: 'Published' });
+
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status: 'Published' });
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID });
+  });
+
+  it('does not guard a content edit on an article already stored as UnpublishedViolation', async () => {
+    mockStored({ status: 'UnpublishedViolation' });
+
+    await upsert({ status: undefined, content: 'edited' });
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID });
+    expect(updateData().content).toBe('edited');
+  });
+
+  it('keeps the never-published-draft guard and its own message', async () => {
+    mockStored({ status: 'Draft' });
+    mockDbWrite.article.update.mockRejectedValue(p2025());
+
+    await expect(upsert({ status: 'Draft' })).rejects.toThrow(/published while you were editing/);
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID, status: 'Draft', publishedAt: null });
   });
 });
