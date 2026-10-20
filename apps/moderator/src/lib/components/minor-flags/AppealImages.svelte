@@ -15,8 +15,7 @@
 </script>
 
 {#if images.length}
-  <!-- Portrait tiles showing the whole picture: a wide, cropped tile cut off the faces and bodies
-       moderators judge on. -->
+  <!-- Four columns whatever the count, so every model's tiles are the same size to compare. -->
   <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
       <a
@@ -24,9 +23,16 @@
         target="_blank"
         rel="noreferrer"
         aria-label="Open image {i + 1} of {images.length} full size"
-        class="relative block aspect-[3/4] overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
+        class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
-        <EdgeMedia src={image.url} type="image" width={450} class={blurred ? 'size-full scale-110 object-contain blur-xl' : 'size-full object-contain'} />
+        <EdgeMedia
+          src={image.url}
+          type="image"
+          width={450}
+          class={blurred
+            ? 'size-full scale-110 object-cover object-top blur-xl'
+            : 'size-full object-cover object-top'}
+        />
         <span
           class="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-white"
         >
