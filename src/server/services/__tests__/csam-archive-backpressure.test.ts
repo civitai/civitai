@@ -175,7 +175,15 @@ vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) =
   getConsumerStrikes: (...args: unknown[]) => mockGetConsumerStrikes(...args),
 }));
 
+vi.mock('~/server/services/file.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getFileForModelVersion: (...args: unknown[]) => mockGetFileForModelVersion(...args),
+}));
+
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
+const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
+  status: 'not-found',
+});
 let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 
 import {
@@ -235,6 +243,46 @@ describe('getCsamsToArchive', () => {
     const args = dbMock.dbRead.csamReport.findMany.mock.calls.at(-1)?.[0];
     expect(args?.orderBy).toBeDefined();
     expect(args?.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('leaves out a report whose archive was skipped, so it is not retried every run', async () => {
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      { id: 1, details: {} },
+      { id: 2, details: { archiveSkipped: 'training data not found' } },
+      { id: 3, details: null },
+    ] as never);
+    const reports = await getCsamsToArchive();
+    expect(reports.map((r) => r.id)).toEqual([1, 3]);
+  });
+});
+
+describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
+  const report = {
+    id: 4545,
+    userId: 919191,
+    reportedById: 5,
+    reportId: 79,
+    type: 'TrainingData',
+    details: { modelVersionIds: [31] },
+    images: [],
+  };
+
+  it('records the skip and leaves archivedAt unset, so the report still holds evidence', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId, username: 'u' });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'training data not found'
+    );
+
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
+      where: { id: report.id },
+      data: { details: { modelVersionIds: [31], archiveSkipped: 'training data not found' } },
+    });
   });
 });
 
