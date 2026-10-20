@@ -926,6 +926,9 @@ importers:
 
   apps/assistant-runner:
     dependencies:
+      '@ai-sdk/openai-compatible':
+        specifier: 2.0.77
+        version: 2.0.77(zod@4.4.3)
       '@civitai/components-chat':
         specifier: 0.21.0
         version: 0.21.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.4.3)
@@ -938,6 +941,9 @@ importers:
       fastify:
         specifier: ^5.2.1
         version: 5.9.0
+      jose:
+        specifier: 6.0.12
+        version: 6.0.12
       pg:
         specifier: ^8.13.1
         version: 8.16.3
