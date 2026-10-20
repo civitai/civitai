@@ -138,16 +138,13 @@ describe('detectionKind', () => {
 describe('detectionCopy', () => {
   it('does not claim a prior clear for a first detection', () => {
     const copy = detectionCopy('first');
-    expect(copy.badge).toBe('First detection');
-    expect(copy.explanation).not.toMatch(/edited|after it was cleared/i);
-    expect(copy.explanation).not.toMatch(/has ruled|never ruled|no ruling/i);
+    expect(copy.provenance).toBe('first detection');
     expect(copy.showsPriorClear).toBe(false);
   });
 
   it('describes a re-detection as text found after a human clear', () => {
     const copy = detectionCopy('redetected');
-    expect(copy.badge).toBe('Re-detected');
-    expect(copy.explanation).toMatch(/after it was cleared/);
+    expect(copy.provenance).toBe('re-detection after a clear');
     expect(copy.showsPriorClear).toBe(true);
   });
 });

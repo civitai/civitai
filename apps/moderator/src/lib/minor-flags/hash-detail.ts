@@ -7,6 +7,9 @@ export type HashDetail = {
     hash: string;
     /** Version of THIS model that carried the matched hash; Pending rows already know their own. */
     modelVersionId: number | null;
+    /** This model's file carrying the hash. */
+    fileName: string;
+    fileSizeKB: number;
   } | null;
   detail: {
     modelCoverUrl: string | null;

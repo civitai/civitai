@@ -5,7 +5,12 @@
  * The race does NOT cancel the query: a timed-out call still holds its pool connection for its full
  * duration. Fine for a badge that runs once a minute behind a cache; not fine per-request.
  */
-export const bounded = async <T>(run: () => Promise<T>, ms = 3_000): Promise<T | null> => {
+export const bounded = async <T>(
+  run: () => Promise<T>,
+  ms = 3_000,
+  /** Hears a failure, which otherwise reads as null like a timeout. */
+  onError?: (err: unknown) => void
+): Promise<T | null> => {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -14,7 +19,8 @@ export const bounded = async <T>(run: () => Promise<T>, ms = 3_000): Promise<T |
         timer = setTimeout(() => resolve(null), ms);
       }),
     ]);
-  } catch {
+  } catch (err) {
+    onError?.(err);
     return null;
   } finally {
     clearTimeout(timer);

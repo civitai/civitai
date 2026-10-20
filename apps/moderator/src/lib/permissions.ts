@@ -134,6 +134,14 @@ export const PERMISSIONS = [
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
+  // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
+  // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
+  // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.
+  {
+    id: 'modelFlags.detections.decide',
+    label: 'Flag or dismiss held text-scan detections (Model Flags)',
+  },
+  { id: 'modelFlags.fileMatches.decide', label: 'Flag or dismiss file matches (Model Flags)' },
   // Page access is `/assistant`; this is the right to run turns (model spend), so a role can see the
   // page and audit without running them.
   { id: 'assistant.use', label: 'Ask the mod assistant and edit its playbooks' },
