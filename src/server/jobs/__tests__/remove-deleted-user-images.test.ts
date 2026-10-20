@@ -235,6 +235,8 @@ const heldOnPrimary = (fixture: Fixture) => fixture.primaryHeld ?? fixture.held;
 const HOLD_KEEPS_BLOCKED =
   /NOT \(\s*(?:h\.held AND i\.ingestion = 'Blocked'|i\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+AND EXISTS \(SELECT 1 FROM "EvidenceHeldUser")/;
 /** A statement that reports whether its owner is held. */
+/** A worklist that would leave a held owner's posts alone (it must not: they are copied and deleted). */
+const HOLD_SKIPS_POSTS = /FROM "Post" p WHERE p\."userId" = u\.id\)[^)]*NOT h\.held/;
 const HOLD_SELECTED = /EXISTS \(SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = \?\) AS held/;
 /** The worklist leaves a held owner's `AiNotVerified` rows alone too. */
 const HOLD_KEEPS_AI_NOT_VERIFIED = /"blockedFor" = \? AND NOT h\.held\)/;
@@ -440,7 +442,10 @@ function seed(next: Record<number, Fixture>) {
               : pendingImages(sql, values, fixture).filter(
                   (id) => !keptAi || ingestionOf(fixture, id) !== 'Blocked'
                 );
-          const posts = skipsGracePosts && !immediate ? [] : fixture.posts ?? [];
+          const posts =
+            (skipsGracePosts && !immediate) || (fixture.held && HOLD_SKIPS_POSTS.test(sql))
+              ? []
+              : fixture.posts ?? [];
           return (
             (selectsImageOwners && images.length > 0) || (selectsPostOwners && posts.length > 0)
           );
@@ -1573,6 +1578,24 @@ describe('an account under a hold marker', () => {
     });
 
     expect((await run()).blockedImages).toBe(2);
+  });
+
+  it('selects a held account for its posts once every image is kept', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(2),
+        posts: [900],
+        held: true,
+        ingestion: { 1: 'Blocked', 2: 'Blocked' },
+        blockedFor: { 1: 'moderated', 2: 'moderated' },
+      },
+    });
+
+    await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([900]);
   });
 
   it('deletes the posts of a held account with no images left, and tallies it as held', async () => {

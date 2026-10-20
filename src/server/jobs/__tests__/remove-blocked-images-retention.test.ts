@@ -352,6 +352,29 @@ describe('remove-blocked-images retention clock', () => {
     expect(execLog.map((e) => e.sql)).toContain('SELECT evidence_hold_purge_unheld()');
   });
 
+  // e.g. the function not there yet while the hand-applied migration lags the deploy.
+  it('still deletes when the sweep fails', async () => {
+    mockLogToAxiom.mockResolvedValueOnce(undefined);
+    const recordOnly = mockDbWrite.$executeRaw.getMockImplementation()!;
+    mockDbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join('?').includes('evidence_hold_purge_unheld'))
+          throw new Error('function evidence_hold_purge_unheld() does not exist');
+        return recordOnly(strings, ...values);
+      }
+    );
+    try {
+      await runJob();
+    } finally {
+      mockDbWrite.$executeRaw.mockImplementation(recordOnly);
+    }
+
+    expect(deletedIds()).toContain(1);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'evidence hold sweep failed' })
+    );
+  });
+
   it('does not alert for a hold that is merely live', async () => {
     heldUsers.length = 0;
     heldUsers.push({ userId: HELD_USER, oldestReport: RECENT });

@@ -586,25 +586,37 @@ describe('purgeHoldGuard on the delete', () => {
   describe('what a hold keeps of a deleted post, and for how long', () => {
     beforeEach(async () => {
       await insertMarkedOwners();
+      // LAPSED_USER's only hold ended by its date; RELEASED_USER's was released.
       await holder.db.exec(`
         TRUNCATE "Post", "EvidenceHoldPost";
-        INSERT INTO "Post" (id, "userId", title, detail, "publishedAt", "modelVersionId", "collectionId", metadata) VALUES
-          (1, ${MANUAL_USER}, 't1', 'd1', now(), 70, 80, '{"k": 1}'),
-          (2, ${SECONDARY_USER}, 't2', NULL, NULL, NULL, NULL, NULL),
-          (3, ${PLAIN_USER}, 't3', 'd3', now(), NULL, NULL, NULL);
+        INSERT INTO "EvidenceHold" ("userId", role, reason, "releaseAt")
+          VALUES (${LAPSED_USER}, 'manual', 'review', now() - interval '1 day');
+        INSERT INTO "Post" (id, "userId", title, detail, "createdAt", "publishedAt", "modelVersionId", "collectionId", metadata) VALUES
+          (1, ${MANUAL_USER}, 't1', 'd1', '2025-01-02 03:04:05', '2025-02-03 04:05:06', 70, 80, '{"k": 1}'),
+          (2, ${SECONDARY_USER}, 't2', NULL, '2025-03-04 05:06:07', NULL, NULL, NULL, NULL),
+          (3, ${PLAIN_USER}, 't3', 'd3', now(), now(), NULL, NULL, NULL),
+          (4, ${RELEASED_USER}, 't4', NULL, now(), NULL, NULL, NULL, NULL),
+          (5, ${LAPSED_USER}, 't5', NULL, now(), NULL, NULL, NULL, NULL);
       `);
     });
 
     const snapshots = async () =>
       (
         await holder.db.query<Record<string, unknown>>(
-          `SELECT "postId", "userId", title, detail, "createdAt" IS NOT NULL AS dated,
-             "publishedAt" IS NOT NULL AS published, "modelVersionId", "collectionId", metadata
+          `SELECT "postId", "userId", title, detail, "createdAt"::text AS "createdAt",
+             "publishedAt"::text AS "publishedAt", "modelVersionId", "collectionId", metadata
            FROM "EvidenceHoldPost" ORDER BY "postId"`
         )
       ).rows;
+    const keptImages = async () =>
+      (
+        await holder.db.query<{ imageId: number }>(
+          `SELECT "imageId" FROM "EvidenceHoldImage" ORDER BY "imageId"`
+        )
+      ).rows.map((r) => r.imageId);
 
-    // Any delete, the owner's own included; a manual hold and a report's secondary user alike.
+    // Any delete, the owner's own included; a manual hold and a report's secondary user alike. An
+    // owner whose hold was released, or ended by its date, is not held.
     it("copies a held owner's post as it deletes it, and only a held owner's", async () => {
       await holder.db.exec(`DELETE FROM "Post"`);
 
@@ -615,8 +627,8 @@ describe('purgeHoldGuard on the delete', () => {
           userId: MANUAL_USER,
           title: 't1',
           detail: 'd1',
-          dated: true,
-          published: true,
+          createdAt: '2025-01-02 03:04:05',
+          publishedAt: '2025-02-03 04:05:06',
           modelVersionId: 70,
           collectionId: 80,
           metadata: { k: 1 },
@@ -626,8 +638,8 @@ describe('purgeHoldGuard on the delete', () => {
           userId: SECONDARY_USER,
           title: 't2',
           detail: null,
-          dated: true,
-          published: false,
+          createdAt: '2025-03-04 05:06:07',
+          publishedAt: null,
           modelVersionId: null,
           collectionId: null,
           metadata: null,
@@ -635,7 +647,7 @@ describe('purgeHoldGuard on the delete', () => {
       ]);
     });
 
-    it("purges an owner's kept posts and images when their hold is released", async () => {
+    it("purges an owner's kept posts and images when their last hold is released", async () => {
       await holder.db.exec(`
         DELETE FROM "Post";
         INSERT INTO "EvidenceHoldImage" ("imageId", "userId", "postId") VALUES
@@ -646,21 +658,44 @@ describe('purgeHoldGuard on the delete', () => {
 
       // The control: the still-held owner's rows stay.
       expect((await snapshots()).map((r) => r.postId)).toEqual([2]);
-      expect((await holder.db.query(`SELECT "imageId" FROM "EvidenceHoldImage"`)).rows).toEqual([
-        { imageId: SECONDARY },
-      ]);
+      expect(await keptImages()).toEqual([SECONDARY]);
+    });
+
+    it('keeps them while another hold on the same owner is still running', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Post" (id, "userId") VALUES (6, ${RECENT_REPORT_USER});
+        DELETE FROM "Post";
+        INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${RECENT_REPORTED}, ${RECENT_REPORT_USER});
+        INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${RECENT_REPORT_USER}, 'manual', 'review');
+        UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
+        WHERE "userId" = ${RECENT_REPORT_USER} AND role = 'manual';
+      `);
+
+      expect((await snapshots()).map((r) => r.postId)).toEqual([1, 2, 6]);
+      expect(await keptImages()).toEqual([RECENT_REPORTED]);
+    });
+
+    it("purges an owner's rows when their released hold row is deleted", async () => {
+      await holder.db.exec(`
+        INSERT INTO "EvidenceHoldPost" ("postId", "userId") VALUES (9, ${RELEASED_USER});
+        DELETE FROM "EvidenceHold" WHERE "userId" = ${RELEASED_USER};
+      `);
+
+      expect(await snapshots()).toEqual([]);
     });
 
     it('sweeps the rows of an owner whose hold ended by its date', async () => {
       await holder.db.exec(`
         DELETE FROM "Post";
         INSERT INTO "EvidenceHoldPost" ("postId", "userId") VALUES (9, ${LAPSED_USER});
-        INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${LAPSED}, ${LAPSED_USER});
+        INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES
+          (${LAPSED}, ${LAPSED_USER}), (${MANUAL}, ${MANUAL_USER});
         SELECT evidence_hold_purge_unheld();
       `);
 
+      // The controls: the held owners' rows stay.
       expect((await snapshots()).map((r) => r.postId)).toEqual([1, 2]);
-      expect((await holder.db.query(`SELECT "imageId" FROM "EvidenceHoldImage"`)).rows).toEqual([]);
+      expect(await keptImages()).toEqual([MANUAL]);
     });
   });
 
