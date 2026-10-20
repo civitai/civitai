@@ -344,7 +344,8 @@ describe('model and uploader facts', () => {
       INSERT INTO "Tag" VALUES (1, 'style'), (2, 'anime');
       INSERT INTO "TagsOnModels" VALUES (1, 1), (1, 2);
       INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId")
-        VALUES (20, 'Model', 50, 'Approved', 1), (21, 'Model', 51, 'Rejected', 1), (22, 'Model', 1, 'Pending', 1);
+        VALUES (20, 'Model', 50, 'Approved', 1), (21, 'Model', 51, 'Rejected', 1), (22, 'Model', 1, 'Pending', 1),
+          (23, 'Model', 1, 'Rejected', 2);
     `);
     const [row] = (await needsReview({ limit: 10 })).items;
     expect(row).toMatchObject({
@@ -355,6 +356,8 @@ describe('model and uploader facts', () => {
       tagCount: 2,
       otherFlaggedModels: 1,
       pastAppeals: { approved: 1, rejected: 1, void: 0, pending: 1 },
+      // Every owner's appeals on this model, the open one included.
+      modelAppeals: { approved: 0, rejected: 1, void: 0, pending: 1 },
     });
   });
 });

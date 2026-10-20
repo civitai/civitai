@@ -393,6 +393,32 @@ describe('row context', () => {
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
   });
 
+  it('counts earlier appeals on the same model by status, leaving out the one in view', async () => {
+    // Model 1: a rejected and an approved appeal from an earlier owner, a second rejected one from this
+    // owner. The category appeal, the Image appeal and model 2's appeal are not model 1's flag appeals.
+    await db.exec(`
+      INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","category") VALUES
+        (70, 99, 'Model', 1, 'Rejected', '2026-06-01', NULL),
+        (71, 99, 'Model', 1, 'Approved', '2026-06-02', NULL),
+        (72, 10, 'Model', 1, 'Rejected', '2026-06-03', NULL),
+        (73, 10, 'Model', 1, 'Pending', '2026-06-04', 'Model'),
+        (74, 10, 'Image', 1, 'Rejected', '2026-06-05', NULL);
+    `);
+    expect((await rowFor(1)).modelAppeals).toEqual({
+      approved: 1,
+      rejected: 2,
+      void: 0,
+      pending: 0,
+    });
+    // Model 2 has its own appeal in view plus the seeded earlier approved one.
+    expect((await rowFor(2)).modelAppeals).toEqual({
+      approved: 1,
+      rejected: 0,
+      void: 0,
+      pending: 0,
+    });
+  });
+
   it("numbers the appeal among the uploader's model appeals this year, any status", async () => {
     // Owner 10: three July appeals, then this one (Oct 1), then model 5's (Oct 5); the Image appeal
     // and appeals from last year do not count.

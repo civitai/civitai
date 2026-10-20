@@ -3,8 +3,10 @@ import {
   ago,
   appealDecisionHint,
   clipList,
+  modelAppealsText,
   modelRef,
   pastAppealsText,
+  repeatAppealBadge,
   shortHash,
   yearMonth,
 } from '../appeal-row';
@@ -17,6 +19,29 @@ describe('pastAppealsText', () => {
   });
   it('says none when there is no history', () => {
     expect(pastAppealsText({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBe('none');
+  });
+});
+
+describe('modelAppealsText', () => {
+  it('lists rejections first and pluralises the count', () => {
+    expect(modelAppealsText({ approved: 1, rejected: 2, void: 0, pending: 0 })).toBe(
+      '3 earlier appeals (2 rejected, 1 approved)'
+    );
+    expect(modelAppealsText({ approved: 0, rejected: 1, void: 0, pending: 0 })).toBe(
+      '1 earlier appeal (1 rejected)'
+    );
+  });
+  it('is null when the model was never appealed', () => {
+    expect(modelAppealsText({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
+  });
+});
+
+describe('repeatAppealBadge', () => {
+  it('counts every earlier appeal, open ones included, and hides at zero', () => {
+    expect(repeatAppealBadge({ approved: 1, rejected: 1, void: 0, pending: 1 })).toBe(
+      'Appealed 3× before'
+    );
+    expect(repeatAppealBadge({ approved: 0, rejected: 0, void: 0, pending: 0 })).toBeNull();
   });
 });
 

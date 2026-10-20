@@ -165,6 +165,8 @@ const searchPredicate = (
   })`;
 };
 
+export type AppealCounts = { approved: number; rejected: number; void: number; pending: number };
+
 export type MinorHashReviewRow = {
   modelId: number;
   modelName: string;
@@ -190,7 +192,9 @@ export type MinorHashReviewRow = {
   tagCount: number;
   coverImages: AppealCoverImage[];
   otherFlaggedModels: number;
-  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+  pastAppeals: AppealCounts;
+  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
+  modelAppeals: AppealCounts;
 };
 
 export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
@@ -224,7 +228,9 @@ export type MinorFlagAppealRow = {
   flaggedByUsername: string | null;
   flaggedByAt: Date | null;
   otherFlaggedModels: number;
-  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+  pastAppeals: AppealCounts;
+  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
+  modelAppeals: AppealCounts;
   /** This appeal's place among the uploader's model appeals this calendar year, counting it. */
   appealNthThisYear: number;
   /** Auto-flagged lists this model too (a hash flag in its window or an open text-scan flag), so
@@ -315,6 +321,18 @@ LEFT JOIN LATERAL (
   FROM "Appeal" pa
   WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL ${exclude}
 ) ap ON TRUE
+`;
+
+/** Appeals on this one model by outcome; `exclude` drops the appeal being viewed, if any. */
+const modelAppealsJoin = (exclude: RawBuilder<unknown>) => sql`
+LEFT JOIN LATERAL (
+  SELECT count(*) FILTER (WHERE ma.status::text = 'Approved')::int AS approved,
+         count(*) FILTER (WHERE ma.status::text = 'Rejected')::int AS rejected,
+         count(*) FILTER (WHERE ma.status::text = 'Void')::int AS void,
+         count(*) FILTER (WHERE ma.status::text = 'Pending')::int AS pending
+  FROM "Appeal" ma
+  WHERE ma."entityType" = 'Model' AND ma."entityId" = pg."modelId" AND ma.category IS NULL ${exclude}
+) mp ON TRUE
 `;
 
 const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
@@ -464,6 +482,10 @@ export async function getMinorFlagAppealsForReview({
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals",
+           jsonb_build_object(
+             'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
+             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0)
+           ) AS "modelAppeals",
            ya.nth AS "appealNthThisYear",
            ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
            ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
@@ -490,6 +512,7 @@ export async function getMinorFlagAppealsForReview({
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
     ) ls ON TRUE
     ${pastAppealsJoin(sql`AND pa.id <> pg."appealId"`)}
+    ${modelAppealsJoin(sql`AND ma.id <> pg."appealId"`)}
     LEFT JOIN LATERAL (
       SELECT count(*)::int + 1 AS nth
       FROM "Appeal" ya
@@ -571,7 +594,9 @@ export type ModelFlagsRow = {
   tagCount: number;
   coverImages: AppealCoverImage[];
   otherFlaggedModels: number;
-  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+  pastAppeals: AppealCounts;
+  /** Appeals on this one model, by any owner; the viewed appeal is left out on the Appeals tab. */
+  modelAppeals: AppealCounts;
 };
 
 /** One model waiting in Auto-flagged. */
@@ -809,6 +834,10 @@ const flaggedPageSql = <R>(
            'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
            'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
          ) AS "pastAppeals",
+           jsonb_build_object(
+             'approved', COALESCE(mp.approved, 0), 'rejected', COALESCE(mp.rejected, 0),
+             'void', COALESCE(mp.void, 0), 'pending', COALESCE(mp.pending, 0)
+           ) AS "modelAppeals",
          CASE WHEN pg."hasTextScanFlag"
               THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
          CASE WHEN pg."hasScanFlag" THEN ${scanRowsSql} END AS "scanRows"
@@ -826,6 +855,7 @@ const flaggedPageSql = <R>(
   ${coverImagesJoin}
   ${uploaderFlagsJoin}
   ${pastAppealsJoin(sql``)}
+  ${modelAppealsJoin(sql``)}
   ${extra.joins}
   ORDER BY ${outer}
 `;

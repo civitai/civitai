@@ -1,7 +1,7 @@
 <script lang="ts">
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { dateTime } from '$lib/format';
-  import { ago, pastAppealsText } from '$lib/minor-flags/appeal-row';
+  import { ago, modelAppealsText, pastAppealsText } from '$lib/minor-flags/appeal-row';
   import {
     clearViaLabel,
     rulingText,
@@ -17,6 +17,7 @@
     showPriorClear,
     showRulings,
     pastAppeals,
+    modelAppeals,
     appealOpen,
   }: {
     title?: string;
@@ -28,6 +29,8 @@
     showRulings: boolean;
     /** The uploader's earlier appeals, when the row carries them. */
     pastAppeals?: { approved: number; rejected: number; void: number; pending: number };
+    /** Earlier appeals on this model, when the row carries them. */
+    modelAppeals?: { approved: number; rejected: number; void: number; pending: number };
     /** Whether the owner has an appeal open on this model, when the row knows. */
     appealOpen?: boolean;
   } = $props();
@@ -37,7 +40,8 @@
   const none = $derived(
     showRulings && Array.isArray(rulings) && rulings.length === 0 && !showPriorClear
   );
-  const visible = $derived(showPriorClear || listed.length > 0 || !!pastAppeals || none);
+  const modelAppealsLine = $derived(modelAppeals ? modelAppealsText(modelAppeals) : null);
+  const visible = $derived(showPriorClear || listed.length > 0 || !!pastAppeals || !!modelAppealsLine || none);
 </script>
 
 {#if visible}
@@ -74,6 +78,9 @@
           No moderator has ruled on this model yet.{#if appealOpen === false}
             The owner has no open appeal.{/if}
         </p>
+      {/if}
+      {#if modelAppealsLine}
+        <p class="m-0">This model: {modelAppealsLine}.</p>
       {/if}
       {#if pastAppeals}
         <p class="m-0">This uploader's earlier appeals: {pastAppealsText(pastAppeals)}.</p>
