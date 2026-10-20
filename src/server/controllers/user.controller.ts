@@ -140,6 +140,8 @@ import {
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
@@ -1612,6 +1614,11 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
  * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
+const TOS_ACCEPTANCE_KEYS = [
+  'tosLastSeenDate',
+  'tosGreenLastSeenDate',
+  'tosRedLastSeenDate',
+] as const;
 
 export const setUserSettingHandler = async ({
   input,
@@ -1678,6 +1685,12 @@ export const setUserSettingHandler = async ({
     // the cached entry's own TTL; a misreported write is not bounded by anything.
     if (sessionProjectedSettingChanged)
       await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
+
+    // The site-wide ToS-update modal records acceptance through this write alone, so the strike-mute
+    // release must run here too.
+    const acceptedTos = TOS_ACCEPTANCE_KEYS.some((key) => restInput[key] !== undefined);
+    if (acceptedTos && couldAwaitTosReacceptance(ctx.user))
+      await releaseStrikeMuteOnTosAcceptance(id).catch(handleLogError);
 
     return newSettings;
   } catch (error) {
