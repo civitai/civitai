@@ -103,7 +103,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
       },
       {
-        // Records which chapters the drawer reads children for, and answers from childrenByChapter.
         useQueries: (
           build: (t: { storyline: { getChildren: (input: unknown) => unknown } }) => unknown[]
         ) => {

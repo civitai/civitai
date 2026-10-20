@@ -115,7 +115,6 @@ describe('StorylineChapterRail path colour', () => {
     expect(bar(container, 5).style.background).toBe('var(--mantine-color-pink-6)');
     expect(bar(container, 4).className).not.toContain('bg-white');
     expect(segment(container, 5).getAttribute('data-lane')).toBe('4');
-    // The trunk keeps the plain bar.
     expect(bar(container, 2).style.background).toBe('');
     expect(bar(container, 2).className).toContain('bg-white');
     expect(segment(container, 2).hasAttribute('data-lane')).toBe(false);
@@ -133,7 +132,6 @@ describe('StorylineChapterRail path colour', () => {
     const container = render(4);
     const ring = segment(container, 4).querySelector<HTMLElement>('[role="group"]')!;
     expect(ring.getAttribute('style')).toContain('--tw-ring-color: var(--mantine-color-grape-6)');
-    // On the trunk the ring is unchanged.
     expect(segment(render(0), 1).querySelector('[role="group"]')?.getAttribute('style')).toBeNull();
   });
 

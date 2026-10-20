@@ -13,10 +13,8 @@ import {
 } from '~/components/Storyline/StartStorylineModal';
 
 /**
- * The start form sends the post, the title and the ceiling the creator chose, and refuses a ceiling
- * below chapter 1's own rating: a storyline whose first chapter is above its ceiling would hide its
- * own start. Beside the title it shows the post's first image, which becomes the cover, and it
- * says in chips what continuing will cost and who reviews it.
+ * The ceiling cannot go below chapter 1's own rating: that storyline would hide its own start (the
+ * rule is in StartStorylineModal.tsx).
  */
 
 const mocks = vi.hoisted(() => ({

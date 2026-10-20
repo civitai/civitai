@@ -53,7 +53,7 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showSuccessNotification: (input: { title: string }) => calls.push(`success:${input.title}`),
   showErrorNotification: (input: { title: string }) => calls.push(`error:${input.title}`),
 }));
-// The search index and avatar fetches are not what these tests are about.
+// Network-bound: search index and avatar fetches.
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({
   QuickSearchDropdown: ({
     onItemSelected,
@@ -550,7 +550,7 @@ describe('StorylineQueueList rows', () => {
     const el = list([{ ...row(7), post: { ...row(7).post, coverImage: cover } }]);
     const card = el.querySelector('[data-testid="storyline-queue-row-7"]') as HTMLElement;
 
-    // Accept, Endorse, Decline, and nothing from the guard's explainer.
+    // Nothing from the guard's explainer.
     expect([...card.querySelectorAll('button')].map((node) => node.textContent)).toEqual([
       'Accept',
       'Endorse',
@@ -645,7 +645,6 @@ const settingsForm = (
     ...overrides,
   });
 
-/** A SegmentedControl option, found by its visible label inside the named control. */
 function option(el: Element, control: string, label: string) {
   const root = el.querySelector(`[aria-label="${control}"]`);
   expect(root, `control "${control}"`).not.toBeNull();

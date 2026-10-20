@@ -187,8 +187,8 @@ describe('StorylineModeChip', () => {
     expect(renderChip(true).chip?.getAttribute('aria-expanded')).toBe('true');
   });
 
-  // Sunita, 2026-10-14: the chip has no x. Leaving lives at the foot of the map sheet, and closing
-  // the image leaves too. Do not put a second control back on the chip.
+  // The chip has no x. Leaving lives at the foot of the map sheet, and closing the image leaves
+  // too. Do not put a second control back on the chip.
   it('is one button that toggles the map, with no leave control of its own', () => {
     const { c, chip, onToggleMap } = renderChip(true);
     act(() => chip?.click());
@@ -328,8 +328,8 @@ describe('where the chip goes', () => {
   });
 });
 
-// Sunita, 2026-10-14: the guard's rating pill truncates to "P..." on thumbs this small and reads as
-// broken. The map drops it; the blur stays. The end card's larger covers keep theirs.
+// The guard's rating pill truncates to "P..." on thumbs this small and reads as broken. The map
+// drops it; the blur stays. The end card's larger covers keep theirs.
 describe('the map thumbs', () => {
   it('stay blurred but carry no rating pill', () => {
     const image = { id: 9, url: 'u', nsfwLevel: 4 };

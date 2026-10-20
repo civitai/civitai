@@ -34,8 +34,8 @@ vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
 }));
 
 const { createStorylinePlacement } = await import('~/server/services/storyline-placement.service');
-// Real, not stubbed: the D2 tests below run the free tier's own predicates over
-// the rows a storyline submission writes.
+// Real, not stubbed: the tests below run the free tier's own predicates over the rows a storyline
+// submission writes.
 const { getFreePlacementAllowance, hasUsedFreePlacementOn } = await import(
   '~/server/services/free-placement.service'
 );
@@ -157,7 +157,9 @@ const givenPost = (
     ...overrides,
   });
 
-/** What meilin's assert returns for a placer it lets through. */
+/**
+ * What the storyline service's `assertCanContinueStoryline` returns for a placer it lets through.
+ */
 const givenAccess = ({
   isCollaborator = false,
   whoCanContinue = 'Anyone',
@@ -233,10 +235,6 @@ beforeEach(() => {
 });
 
 describe('createStorylinePlacement — priced at zero', () => {
-  // The closing condition for zero-priced surfaces: one placer, one storyline,
-  // one UTC day, five continuations, all land. On a sticker or a remix gallery
-  // the second would be refused by the daily allowance and the third by the
-  // once-per-target rule; here neither applies because these are not free rows.
   it('lands five continuations on one zero-priced storyline in one day', async () => {
     for (let i = 0; i < 5; i++)
       await expect(submit({ postId: CONTINUATION + i })).resolves.toEqual({ id: i + 1 });
@@ -274,8 +272,7 @@ describe('createStorylinePlacement — priced at zero', () => {
     const hours = (expiresAt.getTime() - before) / 3_600_000;
     expect(hours).toBeGreaterThanOrEqual(PLACEMENT_SURFACES.storyline.expiryHours - 0.01);
     expect(hours).toBeLessThan(PLACEMENT_SURFACES.storyline.expiryHours + 0.01);
-    // Its own figure: 48h is what every other surface uses, so a fallback to
-    // another surface's expiry would not pass the window above.
+    // Its own expiry: a fallback to another surface's would not pass the window above.
     expect(PLACEMENT_SURFACES.storyline.expiryHours).not.toBe(
       PLACEMENT_SURFACES.sticker.expiryHours
     );
@@ -283,11 +280,10 @@ describe('createStorylinePlacement — priced at zero', () => {
 });
 
 /**
- * D2, end to end: a zero-priced continuation spends neither the placer's daily
- * free allowance nor their once-per-target free placement. Run through the free
- * tier's own predicates (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`),
- * over the rows the storyline path wrote, so this goes red if either side moves:
- * a storyline row written as `free`, or an allowance count that stops selecting
+ * A zero-priced continuation spends neither the placer's daily free allowance nor their
+ * once-per-target free placement. Run through the free tier's own predicates
+ * (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`) over the rows the storyline path wrote,
+ * so this goes red if a storyline row is written as `free`, or the allowance count stops selecting
  * on `free`.
  */
 describe('createStorylinePlacement — the free allowance is untouched', () => {
@@ -403,8 +399,7 @@ describe('createStorylinePlacement — the rules that hold at any price', () => 
     expect(rows).toHaveLength(0);
   });
 
-  // The closing condition for posts as targets: a continuation offers the
-  // placer's OWN post. Someone else's would put the placer's name on it.
+  // A continuation offers the placer's OWN post; someone else's would put the placer's name on it.
   it('refuses offering a post the placer does not own', async () => {
     givenPost({ userId: PLACER + 1 });
     await expect(submit()).rejects.toThrow(new RegExp(STORYLINE_REFUSALS.notYourPost));
@@ -568,7 +563,6 @@ describe('createStorylinePlacement — who may continue', () => {
   });
 
   it('refuses a stranger on a collaborators-only storyline, before writing', async () => {
-    // What the storyline service's assert does for this placer.
     assertCanContinueStoryline.mockRejectedValue(new Error(STORYLINE_REFUSALS.collaboratorsOnly));
 
     await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.collaboratorsOnly);

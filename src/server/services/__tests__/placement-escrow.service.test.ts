@@ -1986,12 +1986,9 @@ describe('a free placement never touches the money path', () => {
 });
 
 /**
- * A zero-priced storyline continuation is NOT a free placement: it is written
- * `free: false, amount: 0`, so it spends no daily allowance and holds no free
- * slot, and it never calls `holdPlacementEscrow`. Settlement has no special
- * case for it. These pin that every outcome on such a row moves no Buzz, plans
- * no leg (a zero leg could never get a receipt and would sit in the unpaid
- * sweep forever), and still flips the status.
+ * A zero-priced continuation holds no escrow, so every outcome on it moves no Buzz and plans no leg
+ * (a zero leg could never get a receipt and would sit in the unpaid sweep forever), and still flips
+ * the status.
  */
 describe('a zero-priced storyline continuation', () => {
   const zero = () => givenPlacement({ surface: 'storyline', free: false, amount: 0 });
@@ -2538,9 +2535,8 @@ describe('event points on approval', () => {
   });
 });
 
-// The storyline service is replaced by its one export the settle path calls,
-// so what is under test is WHEN settlement writes the edge, not the edge rules
-// (those are storyline.service.test.ts's).
+// Only `writeChapterEdgeForPlacement` is replaced: what is under test is WHEN settlement writes the
+// edge, not the edge rules (storyline.service.test.ts's).
 const writeChapterEdgeForPlacement = vi.fn(async (..._args: unknown[]) => ({
   chapterId: 500,
   created: true,
@@ -2594,27 +2590,20 @@ describe('a write inside the settlement transaction', () => {
     });
 
   /**
-   * The suite's `$transaction` double does not roll back. These tests are about
-   * what a throw inside the transaction leaves behind, so here it does: both
-   * tables are restored to their state at BEGIN when the callback throws.
-   *
-   * And the callback gets its own client, not `dbWrite` itself: it reaches the
-   * same tables, but a write made through the global `dbWrite` instead of the
-   * transaction's client is then told apart, which is the whole point of
-   * running the edge write inside the settlement.
+   * The suite's `$transaction` double does not roll back; here it does (both tables restored to
+   * BEGIN when the callback throws), and the callback gets its own client so a write through the
+   * global `dbWrite` is told apart.
    */
   const realTransaction = dbWriteMock.$transaction;
   const txClients: unknown[] = [];
   /**
-   * The parent chapter lookup, on the transaction's client only. The global
-   * `dbWrite` answers with someone else's storyline, so the owner check read
-   * through the wrong client refuses every approval and is seen.
+   * On the transaction's client only: the global `dbWrite` answers with someone else's storyline,
+   * so an owner check read through it refuses every approval.
    */
   const storylineOwner = vi.fn();
   /**
-   * The continuation post, on the transaction's client only. The global client
-   * answers that it is gone, so a readiness check read outside the settlement
-   * refuses every approval and is seen.
+   * On the transaction's client only: the global client answers that the post is gone, so a
+   * readiness check read outside the settlement refuses every approval.
    */
   const txPostFind = vi.fn();
   const globalChapterFind = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
@@ -2623,12 +2612,10 @@ describe('a write inside the settlement transaction', () => {
   beforeEach(() => {
     writeChapterEdgeForPlacement.mockReset();
     writeChapterEdgeForPlacement.mockResolvedValue({ chapterId: 500, created: true });
-    // The parent chapter's storyline belongs to the placement's owner, as it must.
     storylineOwner.mockReset();
     storylineOwner.mockResolvedValue({ storyline: { userId: OWNER } });
     globalChapterFind.mockResolvedValue({ storyline: { userId: OWNER + 99 } });
     txClients.length = 0;
-    // A finished continuation post: the approval checks its images first.
     txPostFind.mockReset();
     txPostFind.mockResolvedValue(READY_POST);
     dbWriteMock.post.findUnique.mockResolvedValue(null);
@@ -2699,7 +2686,6 @@ describe('a write inside the settlement transaction', () => {
         },
       });
 
-      // The settle transaction's own client, not the global one, and before commit.
       const settleTx = txClients.at(-1);
       expect(settleTx).not.toBe(dbWriteMock);
       expect(seen).toEqual([
@@ -2858,7 +2844,6 @@ describe('a write inside the settlement transaction', () => {
 
       expect(db.placements.get(1)!.status).toBe('pending');
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
-      // Read against the chapter being continued.
       expect(storylineOwner).toHaveBeenCalledWith(
         expect.objectContaining({ where: { postId: CHAPTER_POST } })
       );
@@ -2911,7 +2896,6 @@ describe('a write inside the settlement transaction', () => {
         { ...READY_POST, images: [{ ...SCANNED, ingestion: 'Pending' }] },
         'storyline: that post is not ready yet',
       ],
-      // A verdict, not a wait: told apart from the three above.
       [
         'with a minor image',
         {},
@@ -2948,9 +2932,8 @@ describe('a write inside the settlement transaction', () => {
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
     });
 
-    // Changed deliberately: this used to decline, keeping the decline fee for an
-    // owner who could never have accepted it. It is refunded in full instead, by
-    // the orphaned-continuation job or at its deadline, so declining must fail.
+    // Declining must fail: an orphaned continuation is refunded in full by the
+    // orphaned-continuation job or at its deadline, not declined with the fee kept.
     it('refuses to decline when the parent post is no longer a chapter, and leaves it pending', async () => {
       givenContinuation();
       storylineOwner.mockResolvedValue(null);
@@ -2962,7 +2945,8 @@ describe('a write inside the settlement transaction', () => {
       expect(db.placements.get(1)!.status).toBe('pending');
     });
 
-    // Petra's notification tells an auto-approval from the owner's by this.
+    // The approval notification names the owner only when `resolvedById` is set
+    // (storyline.notifications.ts).
     it('records the owner as resolver on their approval, and nobody on an auto-approval', async () => {
       givenContinuation();
       await actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' });
@@ -2991,8 +2975,6 @@ describe('a write inside the settlement transaction', () => {
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
     });
 
-    // Zero-priced is the default storyline, and it must stay a path that moves
-    // no Buzz at all: there is no hold, so every leg computes to zero.
     it.each(['approve', 'decline'] as const)(
       'moves no money when zero-priced: %s',
       async (action) => {
@@ -3014,9 +2996,9 @@ describe('a write inside the settlement transaction', () => {
       expect(legsFor(1)).toEqual({});
     });
 
-    // Product rule, kept from the surface config: a declined PRICED continuation
-    // keeps the standard 30% decline fee, as remix galleries do. Changing it is
-    // the surface's `defaultDeclineFeeRate`, and this test with it.
+    // Product rule, from the surface config: a declined PRICED continuation keeps the surface's
+    // default decline fee, as remix galleries do. Changing it is `defaultDeclineFeeRate`, and this
+    // test with it.
     it('keeps the decline fee for the owner and refunds the rest when a priced one is declined', async () => {
       givenContinuation({ amount: 1000 });
       await holdStoryline(1000);
