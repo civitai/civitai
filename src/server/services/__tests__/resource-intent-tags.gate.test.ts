@@ -50,6 +50,15 @@ describe('gateEligibleEcosystems', () => {
     expect([...gateEligibleEcosystems(index(published), 'addon', ['LORA'])]).toEqual([2]);
   });
 
+  it("counts the requested kind's resources, cached per kind", () => {
+    const idx = {
+      ...index(fill(floor, [2])),
+      kinds: { addon: { ecosystems: fill(floor, [2]) }, checkpoint: { ecosystems: [] } },
+    } as unknown as TagIndex;
+    expect([...gateEligibleEcosystems(idx, 'addon', ['LORA'])]).toEqual([2]);
+    expect([...gateEligibleEcosystems(idx, 'checkpoint', ['Checkpoint'])]).toEqual([]);
+  });
+
   it('pools the resources of every base model in the gate, and reaches the floor exactly', () => {
     const published = [...fill(floor - 1, [1]), [0], ...fill(floor - 1, [2])];
     expect([...gateEligibleEcosystems(index(published), 'addon', ['LORA'])].sort()).toEqual([0, 1]);

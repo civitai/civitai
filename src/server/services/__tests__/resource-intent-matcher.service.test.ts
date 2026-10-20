@@ -1091,6 +1091,21 @@ describe('🔴 findRankedCandidates — the request-time gates on a ranked list 
     );
   });
 
+  it('a gated type with no base model gets no clause, not a bare type', async () => {
+    const gate = new Map([
+      ['LORA', ['Krea 2']],
+      ['DoRA', []],
+    ] as const);
+    await findRankedCandidates({
+      ...opts,
+      baseModel: gate,
+      modelTypes: ['LORA', 'DoRA'],
+      modelIds: [7],
+    });
+    expect(meiliArgsOf().filter).not.toContain('type = "DoRA"');
+    expect(meiliArgsOf().filter).toContain('(type = "LORA" AND versions.baseModel IN ["Krea 2"])');
+  });
+
   it('an empty gate makes no query rather than one with no type clause', async () => {
     const gate = new Map([['LORA', []]] as const);
     expect(await findRankedCandidates({ ...opts, baseModel: gate, modelIds: [7] })).toEqual([]);

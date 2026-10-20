@@ -306,7 +306,7 @@ export type TagScoreResult = {
   weights: Map<number, number>;
   /**
    * Why nothing was ranked, when nothing was: `no_tags`, no tag passed the gate; `no_ecosystem`, no
-   * baseModel and no ecosystem has enough training users (or is in `rankableEcosystems`);
+   * baseModel and no ecosystem both has enough training users and is in `rankableEcosystems`;
    * `unknown_ecosystem`, the ecosystem is not in the index. `ok` with no candidates means the
    * ranking ran and matched nothing.
    */

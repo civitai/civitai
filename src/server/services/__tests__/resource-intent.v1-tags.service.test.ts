@@ -78,6 +78,9 @@ const { RESOURCE_INTENT_TAGS_SPEC_HASH } = await import(
   '~/server/services/resource-intent-tags/spec'
 );
 const { RESOURCE_INTENT_COOC_SPEC } = await import('~/server/services/resource-intent-cooc/spec');
+const { V1_TAGS_MIN_ECOSYSTEM_RESOURCES } = await import(
+  '~/server/services/resource-intent-tags/gate'
+);
 const { CoocCountAccumulator } = await import('~/server/services/resource-intent-cooc/build');
 const { loadScores } = await import('~/server/services/resource-intent-cooc/score');
 
@@ -107,7 +110,7 @@ const VOCAB = 'd'.repeat(64);
  * SDXL add-ons fill the catalogue past the floor a tag-chosen ecosystem needs (both ecosystems' gates
  * admit SDXL 1.0), so they rank nothing but keep both ecosystems choosable.
  */
-const CATALOGUE_FILL = 300;
+const CATALOGUE_FILL = V1_TAGS_MIN_ECOSYSTEM_RESOURCES;
 function tagIndex(ecosystemUsers = [200, 150]): TagIndex {
   const vocabulary = [
     { key: 'zephyr', idf: 2, near: [], explicit: false },
@@ -618,6 +621,21 @@ describe('served v1_tags cache hit', () => {
 
 describe('🔴 the shadow beside another arm', () => {
   const SHADOW = { ...CTX, poolMerge: true, v1Shadow: true };
+
+  it('gates as the served arm does: the tag-chosen ecosystem by its gate, a caller baseModel exactly', async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: 'zephyr' }, SHADOW);
+    await flush();
+    const tagChosen = mockV1Candidates.mock.calls[0][0] as { baseModel: Map<string, string[]> };
+    expect(tagChosen.baseModel.get('LORA')).toEqual(expect.arrayContaining(['SDXL Lightning']));
+    expect(shadowRow()).toMatchObject({ shadowSuggestionIds: V1_IDS, ecosystemSource: 'tags' });
+
+    mockInsert.mockClear();
+    mockStage1();
+    await getResourceIntent({ prompt: 'zephyr', baseModel: 'SDXL 1.0' }, SHADOW);
+    await flush();
+    expect(mockV1Candidates.mock.calls[1][0]).toMatchObject({ baseModel: 'SDXL 1.0' });
+  });
 
   it('records the v1 list it would have served, and serves the POOL_MERGE list unchanged', async () => {
     mockStage1();

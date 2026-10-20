@@ -457,12 +457,7 @@ function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
   return scoreTagRequest(index, req, TAG_SCORE_PARAMS, rankable);
 }
 
-/**
- * The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list.
- * A caller's baseModel gates by its exact name. A tag-chosen ecosystem gates by every base model
- * whose resources generate on it (`ecosystemBaseModelGate`): most of its candidates are published
- * under a sibling's name, so its own name alone lists next to nothing.
- */
+/** The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list. */
 async function listV1Tags(
   score: TagScoreResult,
   req: {
