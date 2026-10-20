@@ -5480,6 +5480,7 @@ model CosmeticShopItem {
   resales   UserCosmeticShopItemResale[]
   members   CosmeticShopItemCosmetic[]
 
+  @@index([cosmeticId])
   @@index([itemDefinitionId])
 }
 
