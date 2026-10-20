@@ -39,8 +39,15 @@ import {
   type TagIndexServing,
 } from '~/server/services/resource-intent-tags/holder';
 import {
+  ecosystemBaseModelGate,
+  gateEligibleEcosystems,
+} from '~/server/services/resource-intent-tags/gate';
+import {
   scoreTagRequest,
+  TAG_SCORE_PARAMS,
+  type TagIndex,
   type TagKind,
+  type TagRequest,
   type TagScoreResult,
 } from '~/server/services/resource-intent-tags/score';
 import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
@@ -441,10 +448,30 @@ export type V1FallbackReason =
 /** Resolves after the current turn's microtasks, i.e. after the route has written the response. */
 const afterResponse = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-/** The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list. */
+const v1ModelTypes = (kind: TagKind) =>
+  kind === 'checkpoint' ? (['Checkpoint'] as const) : RESOURCE_INTENT_COOC_SPEC.addonTypes;
+
+/** The v1 score, the tags choosing only an ecosystem with enough resources under its gate. */
+function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
+  const rankable = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
+  return scoreTagRequest(index, req, TAG_SCORE_PARAMS, rankable);
+}
+
+/**
+ * The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list.
+ * A caller's baseModel gates by its exact name. A tag-chosen ecosystem gates by every base model
+ * whose resources generate on it (`ecosystemBaseModelGate`): most of its candidates are published
+ * under a sibling's name, so its own name alone lists next to nothing.
+ */
 async function listV1Tags(
   score: TagScoreResult,
-  req: { kind: TagKind; browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+  req: {
+    kind: TagKind;
+    baseModel: string | undefined;
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+  }
 ): Promise<{
   entries: ResourceIntentShortlistEntry[];
   suggestions: ResourceIntentSuggestion[];
@@ -456,11 +483,14 @@ async function listV1Tags(
       suggestions: [],
       fallbackReason: score.status === 'ok' ? 'unknown_ecosystem' : score.status,
     };
+  const modelTypes = v1ModelTypes(req.kind);
   const entries = await findRankedCandidates({
     maxModels: V1_TAGS_LIST_MODELS,
     modelIds: score.candidates.map((c) => c.modelId),
-    modelTypes: req.kind === 'checkpoint' ? ['Checkpoint'] : RESOURCE_INTENT_COOC_SPEC.addonTypes,
-    baseModel: score.ecosystem,
+    modelTypes,
+    baseModel: req.baseModel
+      ? score.ecosystem
+      : ecosystemBaseModelGate(score.ecosystem, modelTypes),
     browsingLevel: req.browsingLevel,
     coverage: req.coverage,
     cap: req.cap,
@@ -517,12 +547,8 @@ async function v1TagsShadow(
   try {
     const serving = await tagIndexSnapshotHolder().resolve();
     if (!serving.snapshot) return columns({ shadowReason: serving.fallbackReason });
-    const req = { kind, browsingLevel: ctx.browsingLevel };
-    const score = scoreTagRequest(serving.snapshot.index, {
-      ...req,
-      prompt: input.prompt,
-      baseModel: input.baseModel,
-    });
+    const req = { kind, browsingLevel: ctx.browsingLevel, baseModel: input.baseModel };
+    const score = scoreV1Tags(serving.snapshot.index, { ...req, prompt: input.prompt });
     tags = v1TagColumns(serving.snapshot, score, input.baseModel);
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     const listed = await listV1Tags(score, { ...req, coverage, cap });
@@ -787,7 +813,7 @@ export async function getResourceIntent(
       if (arm === 'v1_tags') {
         // Role-free: stage 1 runs only for `intent`/`criteria` (and the fallback's role filter).
         if (tagServing?.snapshot) {
-          tagScore = scoreTagRequest(tagServing.snapshot.index, {
+          tagScore = scoreV1Tags(tagServing.snapshot.index, {
             prompt: input.prompt,
             baseModel: input.baseModel,
             kind: 'addon',
@@ -795,6 +821,7 @@ export async function getResourceIntent(
           });
           const listed = await listV1Tags(tagScore, {
             kind: 'addon',
+            baseModel: input.baseModel,
             browsingLevel: ctx.browsingLevel,
             coverage,
             cap,
