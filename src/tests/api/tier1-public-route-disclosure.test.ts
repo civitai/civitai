@@ -101,6 +101,9 @@ vi.mock('~/server/services/tensor-metadata.service', () => ({
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: mockFetchThroughCache,
+  // The download routes' blocklist read; resolves to no blocklist, as the bare mock above did
+  // before that read moved onto this helper.
+  fetchThroughCacheWithDeadline: vi.fn(),
 }));
 vi.mock('~/server/utils/rate-limiting', () => ({
   createLimiter: () => ({ hasExceededLimit: mockHasExceededLimit, increment: mockIncrement }),

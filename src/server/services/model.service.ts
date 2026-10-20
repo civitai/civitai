@@ -277,11 +277,14 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
   user,
   select,
+  db: dbOverride,
 }: GetByIdInput & {
   user?: SessionUser;
   select: TSelect;
+  /** The client to read with, for a caller that has already made the lag-routing decision. */
+  db?: typeof dbRead;
 }) => {
-  const db = await getDbWithoutLag('model', id);
+  const db = dbOverride ?? (await getDbWithoutLag('model', id));
   const result = await db.model.findFirst({
     where: {
       id,
@@ -2132,6 +2135,7 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
 
   if (!result) return null;
   await userModelCountCache.refresh(result.userId);
+  await bustPublicModelResponseCache(id);
 
   return { id, userId: result.userId };
 };
@@ -2316,6 +2320,8 @@ export const permaDeleteModelById = async ({
       }
     }
   }
+  // The row is gone; drop the shared copies so a deleted model stops serving a cached 200.
+  await bustPublicModelResponseCache(id);
 
   return deletedModel;
 };
@@ -4380,6 +4386,7 @@ export const getRecentlyBid = async ({ take, userId }: LimitOnly & { userId: num
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
   await userModelCountCache.refresh(model.userId);
+  await bustPublicModelResponseCache(id);
 };
 
 export async function toggleLockComments({ id, locked }: { id: number; locked: boolean }) {
@@ -4388,6 +4395,7 @@ export async function toggleLockComments({ id, locked }: { id: number; locked: b
     SET meta = jsonb_set(meta, '{commentsLocked}', to_jsonb(${locked}))
     WHERE id = ${id}
   `;
+  await bustPublicModelResponseCache(id);
 }
 
 export const getSimpleModelWithVersions = async ({

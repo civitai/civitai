@@ -110,6 +110,7 @@ import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.se
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
+import { getModelWithDetailsCached } from '~/server/services/model-detail-cache.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -229,11 +230,13 @@ export const getModelHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const model = await getModel({
-      ...input,
-      user: ctx.user,
-      select: modelWithDetailsSelect,
-    });
+    const model = ctx.features.modelPublicPayloadCache
+      ? await getModelWithDetailsCached({ id: input.id, viewerId: ctx.user?.id })
+      : await getModel({
+          ...input,
+          user: ctx.user,
+          select: modelWithDetailsSelect,
+        });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {

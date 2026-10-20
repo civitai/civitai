@@ -1,8 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { fetchThroughCacheWithDeadline } from '~/server/utils/cache-helpers';
 
 /** The two operator-maintained KeyValue rows every download route checks. */
 export type DownloadBlocklistKey = 'ip-blacklist' | 'user-blacklist';
@@ -31,7 +30,6 @@ export const DOWNLOAD_BLOCKLIST_TTL = CacheTTL.xs;
  * its result is ignored.
  */
 export const DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS = 500;
-const CACHE_TIMED_OUT = Symbol('download-blocklist-cache-timed-out');
 
 async function readBlocklistRow(key: DownloadBlocklistKey): Promise<unknown> {
   const row = await dbRead.keyValue.findUnique({ where: { key } });
@@ -47,36 +45,14 @@ async function readBlocklistRow(key: DownloadBlocklistKey): Promise<unknown> {
  * `parseIpBlocklist` / `parseUserBlocklist` keep running per request at the call site and a
  * malformed row still refuses the request the same way.
  *
- * Every cache failure resolves to a database read, never to an empty list:
- * - Redis read errors: `fetchThroughCache` already fails open to the origin fetch.
- * - A cold key whose refill lock another request holds: `retryCount: 0` makes that throw at once
- *   instead of sleeping, and the catch below reads the row directly, as the routes did before.
- * - A cache call still unsettled after `DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS` (a stalled Redis
- *   read, or a slow refill by this request): the row is read directly.
- * A database error is rethrown unchanged, so the routes fail exactly as they did without the cache.
+ * Every cache failure resolves to a database read, never to an empty list (see
+ * `fetchThroughCacheWithDeadline` for each case). A database error is rethrown unchanged, so the
+ * routes fail exactly as they did without the cache.
  */
 export async function getDownloadBlocklistValue(key: DownloadBlocklistKey): Promise<unknown> {
-  let originFailed = false;
-  try {
-    const cached = await withTimeoutFallback<unknown>(
-      fetchThroughCache(
-        `${REDIS_KEYS.CACHES.DOWNLOAD_BLOCKLIST}:${key}`,
-        async () => {
-          try {
-            return await readBlocklistRow(key);
-          } catch (error) {
-            originFailed = true;
-            throw error;
-          }
-        },
-        { ttl: DOWNLOAD_BLOCKLIST_TTL, retryCount: 0 }
-      ),
-      DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS,
-      CACHE_TIMED_OUT
-    );
-    if (cached !== CACHE_TIMED_OUT) return cached;
-  } catch (error) {
-    if (originFailed) throw error;
-  }
-  return readBlocklistRow(key);
+  return fetchThroughCacheWithDeadline(
+    `${REDIS_KEYS.CACHES.DOWNLOAD_BLOCKLIST}:${key}`,
+    () => readBlocklistRow(key),
+    { ttl: DOWNLOAD_BLOCKLIST_TTL, deadlineMs: DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS }
+  );
 }
