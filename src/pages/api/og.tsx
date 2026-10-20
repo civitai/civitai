@@ -169,6 +169,8 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       description: true,
       sfwName: true,
       sfwDescription: true,
+      coverImageId: true,
+      sfwCoverImageId: true,
       meta: true,
       userId: true,
       user: { select: { username: true, settings: true } },
@@ -203,7 +205,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  const [metric, image] = await Promise.all([
+  // Link previews are fetched signed out, a viewer who gets the .com cover when the face is on.
+  const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
+  const previewableImage = {
+    tosViolation: false,
+    needsReview: null,
+    ingestion: 'Scanned' as const,
+  };
+  const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
         where: { modelId: id },
@@ -215,16 +225,26 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         },
       })
       .catch(() => null),
+    // The creator's own showcase, as the version-images cache orders it; community posts on the
+    // version never lead the preview.
     dbRead.image.findFirst({
       where: {
-        post: { publishedAt: { not: null }, modelVersionId: publishedVersion.id },
-        tosViolation: false,
-        needsReview: null,
-        ingestion: 'Scanned',
+        post: { publishedAt: { not: null }, modelVersionId: publishedVersion.id, ...ownPosts },
+        ...previewableImage,
       },
       select: ogImageSelect,
-      orderBy: { index: 'asc' },
+      orderBy: [{ postId: 'asc' }, { index: 'asc' }],
     }),
+    coverId
+      ? dbRead.image.findFirst({
+          where: {
+            id: coverId,
+            post: { publishedAt: { not: null }, modelVersion: { modelId: id }, ...ownPosts },
+            ...previewableImage,
+          },
+          select: ogImageSelect,
+        })
+      : null,
   ]);
 
   const stats: StatItem[] = metric
@@ -249,7 +269,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     title: sfwName ?? model.name,
     description: cleanDescription(description),
     creator: model.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(image)),
+    ...buildEntityImage(getSafeImage(coverImage) ?? getSafeImage(defaultImage)),
     stats,
   };
 }
