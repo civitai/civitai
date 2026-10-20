@@ -400,3 +400,85 @@ export function describePlan(steps: PlanStep[]) {
   for (const s of steps) counts[s.kind] = (counts[s.kind] ?? 0) + 1;
   return counts;
 }
+
+export type DbQuery = (sql: string, values: unknown[]) => Promise<unknown>;
+
+/**
+ * The only source of --dev-db's connection string. Refuses any database not named in `allowlist`
+ * (host:port entries, from the local STRIPE_SANDBOX_DB_HOSTS), so a sandbox key paired with a
+ * production URL never writes.
+ */
+export function devDatabaseUrl(url: string | undefined, allowlist: string | undefined): string {
+  const allowed = (allowlist ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  let host = '';
+  try {
+    host = url ? new URL(url).host : '';
+  } catch {
+    host = '';
+  }
+  if (!host || !allowed.includes(host)) {
+    throw new Error(
+      `Refusing to write sandbox rows to ${
+        host || '(no DATABASE_URL)'
+      }: not in STRIPE_SANDBOX_DB_HOSTS.`
+    );
+  }
+  return url as string;
+}
+
+/**
+ * Mirrors `upsertProductRecord` / `upsertPriceRecord` in src/server/services/stripe.service.ts,
+ * which the app's webhook runs. Inserts or updates sandbox rows only: a row without `live_id` is
+ * never touched, and the plan reads tell the two catalogues apart by that key.
+ */
+export async function upsertSandboxRows(query: DbQuery, sandbox: Catalogue) {
+  const products = sandbox.products.filter((p) => p.metadata?.[LIVE_ID_KEY]);
+  const productIds = new Set(products.map((p) => p.id));
+  const prices = sandbox.prices.filter(
+    (p) => p.metadata?.[LIVE_ID_KEY] && productIds.has(idOf(p.product))
+  );
+  for (const p of products) {
+    await query(
+      `INSERT INTO "Product" (id, active, name, description, metadata, "defaultPriceId", provider)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Stripe')
+       ON CONFLICT (id) DO UPDATE SET active = $2, name = $3, description = $4, metadata = $5,
+         "defaultPriceId" = $6
+       WHERE "Product".metadata ? '${LIVE_ID_KEY}'`,
+      [
+        p.id,
+        p.active,
+        p.name,
+        p.description ?? null,
+        JSON.stringify(p.metadata),
+        p.default_price ? idOf(p.default_price) : null,
+      ]
+    );
+  }
+  for (const p of prices) {
+    await query(
+      `INSERT INTO "Price" (id, "productId", active, currency, description, type, "unitAmount",
+         interval, "intervalCount", metadata, provider)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Stripe')
+       ON CONFLICT (id) DO UPDATE SET "productId" = $2, active = $3, currency = $4,
+         description = $5, type = $6, "unitAmount" = $7, interval = $8, "intervalCount" = $9,
+         metadata = $10
+       WHERE "Price".metadata ? '${LIVE_ID_KEY}'`,
+      [
+        p.id,
+        idOf(p.product),
+        p.active,
+        p.currency,
+        p.nickname ?? null,
+        p.type,
+        p.unit_amount,
+        p.recurring?.interval ?? null,
+        p.recurring?.interval_count ?? null,
+        JSON.stringify(p.metadata),
+      ]
+    );
+  }
+  return { products: products.length, prices: prices.length };
+}

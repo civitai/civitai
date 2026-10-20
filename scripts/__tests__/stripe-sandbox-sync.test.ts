@@ -2,9 +2,11 @@ import type Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyPlan,
+  devDatabaseUrl,
   createSandboxWriter,
   LIVE_ID_KEY,
   planSync,
+  upsertSandboxRows,
   type Catalogue,
 } from '../stripe-sandbox/sync.lib';
 
@@ -309,5 +311,51 @@ describe('planSync + applyPlan', () => {
     await sync(liveCatalogue(), sb);
     expect(sb.cat.products.filter((p) => p.metadata[LIVE_ID_KEY] === 'prod_gold')).toHaveLength(1);
     expect(sb.cat.products).toHaveLength(3);
+  });
+});
+
+describe('devDatabaseUrl', () => {
+  const DEV = 'postgresql://u:p@devdb.local:5432/civitai';
+
+  it.each([
+    ['no allowlist', DEV, undefined],
+    ['an empty allowlist', DEV, ' , '],
+    ['no database url', undefined, 'devdb.local:5432'],
+    ['a host not listed', 'postgresql://u:p@proddb.internal:5432/civitai', 'devdb.local:5432'],
+    [
+      'the listed host on another port',
+      'postgresql://u:p@devdb.local:6543/civitai',
+      'devdb.local:5432',
+    ],
+    ['an unparseable url', 'not a url', 'devdb.local:5432'],
+  ])('refuses %s', (_, url, allowlist) => {
+    expect(() => devDatabaseUrl(url, allowlist)).toThrow(/Refusing/);
+  });
+
+  it('returns a listed database url', () => {
+    expect(devDatabaseUrl(DEV, 'other:1, devdb.local:5432')).toBe(DEV);
+  });
+});
+
+describe('upsertSandboxRows', () => {
+  it('writes only synced rows, products first, and never updates a row without live_id', async () => {
+    const sb = fakeSandbox();
+    sb.cat.products.push(product({ id: 'prod_handmade', name: 'Made in the sandbox UI' }));
+    const ids = await sync(liveCatalogue(), sb);
+    const calls: { sql: string; id: unknown }[] = [];
+    await upsertSandboxRows(async (sql, values) => {
+      calls.push({ sql, id: values[0] });
+    }, sb.cat);
+
+    expect(calls.map((c) => c.id)).toEqual([
+      ids.products.prod_gold,
+      ids.products.prod_bare,
+      ids.prices.price_gold_m,
+      ids.prices.price_gold_y,
+    ]);
+    for (const { sql } of calls)
+      expect(sql.replace(/\s+/g, ' ')).toMatch(
+        /DO UPDATE SET .* WHERE "(Product|Price)"\.metadata \? 'live_id'$/
+      );
   });
 });

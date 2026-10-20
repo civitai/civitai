@@ -64,6 +64,11 @@ key a membership checkout fails at `prices.retrieve` until the sandbox rows are 
 
 The plan list (`getPlans`) reads the key mode: under a sandbox key it lists only Stripe rows whose
 metadata carries `live_id`, and under a live key it hides them (`src/server/utils/stripe-key-mode.ts`).
-So one database can hold both catalogues. The Buzz packages always come from the live row, since
+So one database can hold both catalogues. To put the sandbox rows in, run the sync with
+`--apply --dev-db`: it upserts the stamped sandbox rows into `DATABASE_URL` and never touches a row
+without `live_id`. It refuses unless `DATABASE_URL`'s `host:port` is listed in
+`STRIPE_SANDBOX_DB_HOSTS` (comma-separated, set in your local `.env`), so a sandbox key paired with
+a production URL never writes. A database cloned from production on a schedule loses the rows at
+each refresh; re-run it after. The Buzz packages always come from the live row, since
 a Buzz charge sends an amount, not a price id. A live-key app built before this filter still lists
 sandbox rows, so check who reads a shared database before writing them into it.
