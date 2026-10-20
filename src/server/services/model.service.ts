@@ -271,6 +271,7 @@ import { Flags } from '~/shared/utils/flags';
 import {
   hasCompleteSfwFace,
   hoistCoverImage,
+  imagesForFace,
   normalizeSfwFaceInput,
   pickCoverImageId,
   resolveModelFace,
@@ -1731,11 +1732,15 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
   const coverImages = await getCoverImages({
-    coverIds: items.map((model) => pickCoverImageId(model, showSfwFace)),
+    covers: items.map((model) => ({
+      modelId: model.id,
+      ownerId: model.user.id,
+      shownVersionId: model.modelVersions[0]?.id,
+      coverId: pickCoverImageId(model, showSfwFace),
+    })),
     modelVersionImages,
     // Under a base-model filter the card shows that version, so a cover from another stays put.
     sameVersionOnly: !!input.baseModels?.length,
-    shownVersionIds: modelVersionIds,
   });
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
@@ -1783,10 +1788,10 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const coverId = pickCoverImageId(model, showSfwFace);
-        const versionImages = hoistCoverImage(
-          modelVersionImages[version.id]?.images ?? [],
-          coverId ? coverImages.get(coverId) : undefined
+        const versionImages = imagesForFace(
+          hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
+          model,
+          showSfwFace
         );
         const filteredImages = excludedTagIds
           ? versionImages.filter(
@@ -3058,15 +3063,19 @@ export const upsertModel = async (
   const sfwFaceChanged =
     (data.sfwName !== undefined && data.sfwName !== beforeUpdate?.sfwName) ||
     (data.sfwDescription !== undefined && data.sfwDescription !== beforeUpdate?.sfwDescription);
-  if (!isModerator && data.sfwName && sfwFaceChanged)
-    await assertSfwFaceSafe({
-      sfwName: data.sfwName,
-      sfwDescription: data.sfwDescription ?? beforeUpdate?.sfwDescription,
-      userId,
-    });
   const coverChanged =
     (data.coverImageId !== undefined && data.coverImageId !== beforeUpdate?.coverImageId) ||
     (data.sfwCoverImageId !== undefined && data.sfwCoverImageId !== beforeUpdate?.sfwCoverImageId);
+  // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
+  // that lists a mature model on .com), still has its whole face checked.
+  const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
+    await assertSfwFaceSafe({
+      sfwName: storedSfwName,
+      sfwDescription:
+        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      userId,
+    });
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
@@ -5705,7 +5714,22 @@ export const privateModelFromTraining = async ({
 }: PrivateModelFromTrainingInput & {
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
-  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+  // The .com face and covers are set from the model editor, where they are checked; a model
+  // created from training starts without them.
+  const {
+    id,
+    tagsOnModels,
+    user,
+    templateId,
+    bountyId,
+    meta,
+    status,
+    sfwName: _sfwName,
+    sfwDescription: _sfwDescription,
+    coverImageId: _coverImageId,
+    sfwCoverImageId: _sfwCoverImageId,
+    ...data
+  } = input;
 
   // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
   const model = await dbWrite.model.findUnique({

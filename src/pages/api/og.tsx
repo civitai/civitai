@@ -205,7 +205,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  // Link previews are fetched signed out, a viewer who gets the .com cover when the face is on.
+  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
   const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
   const previewableImage = {
@@ -258,7 +258,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       ].filter(isDefined)
     : [];
 
-  // Link previews are fetched signed out, a viewer who always gets the .com face.
+  // Link previews have no signed-in viewer, so they always get the .com face when one is set.
   const { sfwName } = model;
   const description =
     sfwName != null

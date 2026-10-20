@@ -41,8 +41,13 @@ so no .com browsing level matches it. Once its .com face is complete (a .com tit
 matches .com in the feed, both metric tables and search, with no filter changes. Its `nsfw` flag
 and its .red standing do not change.
 
-If the cover is deleted, moderated, or re-rated out of PG/PG-13, the next level computation drops
-the extra level and the model leaves .com again.
+The cover only counts while it is a scanned, unflagged image on one of the creator's published
+posts on a published version of the model. The level is recomputed when the face or a cover is
+saved, when one of the creator's images or posts on the model is deleted, blocked or otherwise
+moderated, when a version is unpublished, and when an image's rating changes. When the cover stops
+qualifying, the model leaves .com again.
+
+For a mature model shown through its face, the feed sends .com viewers only its PG/PG-13 images.
 
 `hasSfwFace` on model responses and search documents marks a complete face. The client-side drop
 of mature models on .com and the model page's redirect to .red both exempt it.

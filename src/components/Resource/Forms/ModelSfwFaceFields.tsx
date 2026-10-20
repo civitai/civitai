@@ -167,7 +167,6 @@ function useSfwFaceVerdict(
       setState(undefined);
       return;
     }
-    // A newer value supersedes a check still in flight.
     let superseded = false;
     setState({ checking: true });
     mutateAsync({ [field]: debounced })

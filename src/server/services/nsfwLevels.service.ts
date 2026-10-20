@@ -557,11 +557,13 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
           WHERE m."sfwName" IS NOT NULL
             AND i.id = m."sfwCoverImageId"
             AND cv."modelId" = m.id
+            AND cv.status = 'Published'
             AND p."userId" = m."userId"
             AND p."publishedAt" IS NOT NULL
             AND i."nsfwLevel" != 0
             AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) = i."nsfwLevel"
             AND i."needsReview" IS NULL
+            AND i."acceptableMinor" = FALSE
             AND i."tosViolation" = FALSE
             AND i.ingestion = 'Scanned'
         ), 0)

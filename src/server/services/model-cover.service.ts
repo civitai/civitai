@@ -46,44 +46,62 @@ export async function assertCoverImagesValid({
 }
 
 /**
- * The chosen covers, by image id. A cover already among the shown versions' images is taken from
- * there; one on another version comes through the same cached, creator-only version-image read, so
- * it carries the same shape and the same filters. A dangling id is simply absent.
+ * The chosen cover for each model, by model id. A cover counts only when it is the model owner's
+ * image on one of the model's own versions; a cover already among the shown version's images comes
+ * from there, and one on another version through the same cached, creator-only version-image read,
+ * so it carries the same shape and filters. A dangling or foreign id is simply absent.
  */
 export async function getCoverImages({
-  coverIds,
+  covers,
   modelVersionImages,
   sameVersionOnly,
-  shownVersionIds,
 }: {
-  coverIds: (number | null)[];
+  covers: { modelId: number; ownerId: number; shownVersionId?: number; coverId: number | null }[];
   modelVersionImages: Record<number, { images: ImagesForModelVersions[] }>;
   sameVersionOnly: boolean;
-  shownVersionIds: number[];
 }) {
-  const wanted = new Set(coverIds.filter(isDefined));
   const found = new Map<number, ImagesForModelVersions>();
-  if (!wanted.size) return found;
+  const wanted = covers.filter(
+    (cover): cover is typeof cover & { coverId: number } => cover.coverId != null
+  );
+  if (!wanted.length) return found;
 
-  const collect = (entries: { images: ImagesForModelVersions[] }[]) => {
-    for (const entry of entries)
-      for (const image of entry.images) if (wanted.has(image.id)) found.set(image.id, image);
-  };
-  collect(Object.values(modelVersionImages));
-
-  const missing = [...wanted].filter((id) => !found.has(id));
-  if (!missing.length || sameVersionOnly) return found;
+  const pending: typeof wanted = [];
+  for (const cover of wanted) {
+    const shown = cover.shownVersionId ? modelVersionImages[cover.shownVersionId]?.images : [];
+    const image = shown?.find((candidate) => candidate.id === cover.coverId);
+    if (image) found.set(cover.modelId, image);
+    else pending.push(cover);
+  }
+  if (!pending.length || sameVersionOnly) return found;
 
   const rows = await dbRead.image.findMany({
-    where: { id: { in: missing } },
-    select: { post: { select: { modelVersionId: true } } },
+    where: { id: { in: pending.map((cover) => cover.coverId) } },
+    select: {
+      id: true,
+      post: {
+        select: { userId: true, modelVersionId: true, modelVersion: { select: { modelId: true } } },
+      },
+    },
   });
-  const otherVersionIds = [
-    ...new Set(rows.map((row) => row.post?.modelVersionId).filter(isDefined)),
-  ].filter((id) => !shownVersionIds.includes(id));
-  if (otherVersionIds.length)
-    collect(Object.values(await getImagesForModelVersionCache(otherVersionIds)));
+  const located = pending.flatMap((cover) => {
+    const row = rows.find((candidate) => candidate.id === cover.coverId);
+    const versionId = row?.post?.modelVersionId;
+    const owned =
+      row?.post?.modelVersion?.modelId === cover.modelId && row.post.userId === cover.ownerId;
+    return owned && versionId ? [{ ...cover, versionId }] : [];
+  });
+  if (!located.length) return found;
 
+  const byVersion = await getImagesForModelVersionCache([
+    ...new Set(located.map((cover) => cover.versionId)),
+  ]);
+  for (const cover of located) {
+    const image = byVersion[cover.versionId]?.images.find(
+      (candidate) => candidate.id === cover.coverId
+    );
+    if (image) found.set(cover.modelId, image);
+  }
   return found;
 }
 

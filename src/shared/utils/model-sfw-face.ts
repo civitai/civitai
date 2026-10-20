@@ -97,3 +97,16 @@ export function hoistCoverImage<T extends { id: number }>(images: T[], cover: T 
   if (!cover) return images;
   return [cover, ...images.filter((image) => image.id !== cover.id)];
 }
+
+/** A mature model listed on .com through its face sends that viewer only its PG/PG-13 images. */
+export function imagesForFace<T extends { nsfwLevel: number }>(
+  images: T[],
+  model: { nsfw?: boolean; hasSfwFace?: boolean },
+  showSfwFace: boolean
+) {
+  if (!showSfwFace || !model.nsfw || !model.hasSfwFace) return images;
+  return images.filter(
+    (image) =>
+      image.nsfwLevel !== 0 && (image.nsfwLevel & sfwBrowsingLevelsFlag) === image.nsfwLevel
+  );
+}
