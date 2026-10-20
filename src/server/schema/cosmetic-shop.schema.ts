@@ -131,9 +131,9 @@ export const cosmeticShopItemMeta = z.object({
     })
     .optional(),
   // Set when a moderator rejects the item or it is archived while withheld: purchases made up to
-  // `at` that are still unrefunded get refunded, and the creator's payouts reversed when
-  // `clawback`. The withdrawn-refund job retries from it until none are left; approval and restore
-  // clear it.
+  // `at` that are still unrefunded get refunded and the creator's payouts reversed. Every writer
+  // sets `clawback: true` today; it stays explicit because the terms are copied onto purchase rows
+  // and finished as stored. The withdrawn-refund job retries from it; approval and restore clear it.
   withdrawnRefund: withdrawnRefundTerms.optional(),
   // Append-only (capped) log of submissions, creator edits, review verdicts and
   // takedowns, so a re-review can see what changed and what was decided before.

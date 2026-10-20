@@ -20,9 +20,9 @@ import { withRetries } from '~/server/utils/errorHandling';
 
 /**
  * Refunds the buyers of a Creator Shop item that was withdrawn after it sold: rejected by a
- * moderator (the creator's payouts are reversed too), or archived while withheld (the platform
- * carries the refund). The trigger is `meta.withdrawnRefund`, written by the verdict or the
- * archive; this reads it, so the immediate call and the retry job do the same thing.
+ * moderator, or archived while withheld. Either way the creator's payouts are reversed. The
+ * trigger is `meta.withdrawnRefund`, written by the verdict or the archive; this reads it, so
+ * the immediate call and the retry job do the same thing.
  *
  * Each reversal is the Buzz service's own refund of one transaction, recorded as
  * `refund-<transactionId>`, so a transaction is refunded at most once however often this runs.
@@ -113,8 +113,7 @@ async function reversePurchase(
       error: `debits ${paid} do not match the price ${purchase.unitAmount}`,
     };
 
-  // An archive is the creator's own act, so the platform must not end up carrying a refund the
-  // creator was to pay: their payouts come back first, and until they do nothing is refunded.
+  // Payouts first, and nothing is refunded until they are all back: the creator pays on archive.
   if (clawback && trigger === 'archive') {
     for (const t of [...payouts, ...debits]) {
       try {

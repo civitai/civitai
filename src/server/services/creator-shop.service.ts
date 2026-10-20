@@ -1115,8 +1115,7 @@ export const archiveCreatorShopItem = async ({
       sellerId: existing.addedById,
     });
   // Archiving an item its buyers can't wear ends any chance of it coming back for them, so they
-  // are refunded. Archiving is the creator's own act, so the creator pays: their payouts are
-  // reversed, even into a negative balance (Justin, 2026-10-20).
+  // are refunded and the creator pays: payouts are reversed even into a negative balance.
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const withheld =
@@ -1265,12 +1264,9 @@ export const unarchiveCreatorShopItem = async ({
   };
   if (meta.takedown)
     throw throwBadRequestError('This item was taken down and cannot be restored to sale');
-  // Archiving a rejected item is blocked now, but items archived before that was
-  // true still exist, and restoring one would clear its verdict. The only thing
-  // appended to an archived item's history is a withdrawn-item refund, and that
-  // only follows an archive made after rejected items could no longer be archived,
-  // so on those older items a verdict recorded there is still the last one — it
-  // cannot have aged out of the cap while the item sat archived.
+  // Items archived while rejected predate the block on archiving them, and restoring one would
+  // clear its verdict. Refund history entries only follow newer archives, so on those older items
+  // a recorded verdict is still the last one and cannot have aged out of the cap.
   //
   // An item old enough to have no history at all leaves only `rejectionReason`,
   // which a change request sets too. That is not enough to convict, so it is

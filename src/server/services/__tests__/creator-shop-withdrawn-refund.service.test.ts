@@ -438,14 +438,14 @@ describe('refundWithdrawnShopItem and a purchase already begun', () => {
     expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
   });
 
-  it('reverses the payouts of a begun platform-paid purchase once the item is taken down', async () => {
-    const platformPays = { ...marker('archive'), clawback: false };
+  it('reverses the payouts of a purchase stamped without clawback once the item is taken down', async () => {
+    const noClawback = { ...marker('archive'), clawback: false };
     itemMeta = {
       purchases: 0,
-      withdrawnRefund: platformPays,
+      withdrawnRefund: noClawback,
       takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT },
     };
-    purchases[0].meta = { withdrawnRefund: platformPays };
+    purchases[0].meta = { withdrawnRefund: noClawback };
 
     await refundWithdrawnShopItem(ITEM);
 

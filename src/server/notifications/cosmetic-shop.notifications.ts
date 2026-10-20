@@ -81,7 +81,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: `/user/transactions`,
     }),
   },
-  // Event-driven (created in refundWithdrawnShopItem).
+  // Event-driven (created in runWithdrawnRefund).
   'cosmetic-shop-item-refunded': {
     displayName: 'Shop: A cosmetic you bought was withdrawn',
     category: NotificationCategory.System,
