@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -53,7 +54,7 @@ export async function applyRatingReviewMigration(db: PGlite): Promise<void> {
 
 /** Prelude + the old table's real migration, WITHOUT the migration under test. */
 export async function freshPreMigrationDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await db.exec(PRELUDE);
   await db.exec(migration('20260522120000_article_rating_review'));
   return db;
