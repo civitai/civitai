@@ -126,6 +126,14 @@ describe('a sent report', () => {
     expect(await audit(id)).toEqual([{ op: 'update', oldDetails: null }]);
   });
 
+  it('refuses a non-object over details that hold nothing', async () => {
+    const id = await insertReport(30, null);
+    await expect(
+      db.pg.query(`UPDATE "CsamReport" SET details = '[1]' WHERE id = $1`, [id])
+    ).rejects.toThrow();
+    expect(await audit(id)).toEqual([]);
+  });
+
   it.each([
     ['nulled details', `details = 'null'`],
     ['emptied details', `details = '{}'`],
@@ -156,7 +164,9 @@ describe('a sent report', () => {
 
     it('is refused after a year while hold status cannot be read', async () => {
       const id = await insertReport(400);
-      await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow();
+      await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
+        'hold status is unavailable'
+      );
       expect(await exists(id)).toBe(true);
     });
 
