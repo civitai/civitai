@@ -11,7 +11,10 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import {
+  throwOnBlockedCommentContent,
+  throwOnBlockedUserContent,
+} from '~/server/services/blocklist.service';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -2276,6 +2279,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createProjectSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2363,6 +2370,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const data: Record<string, any> = {};
       if (input.name !== undefined) data.name = input.name;
@@ -2429,7 +2440,11 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createChapterSchema)
     .use(isProjectOwner)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       // Auto-increment position (use dbWrite to reduce read→write race window)
       const lastChapter = await dbWrite.comicChapter.findFirst({
         where: { projectId: input.projectId },
@@ -2462,6 +2477,10 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const updated = await dbWrite.comicChapter.update({
         where: {
@@ -2763,6 +2782,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createReferenceSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user!.isModerator,
+        surface: 'comic',
+      });
       const reference = await dbWrite.comicReference.create({
         data: {
           userId: ctx.user!.id,
@@ -4549,6 +4572,10 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.chapterName, {
+        isModerator: ctx.user?.isModerator,
+        surface: 'comic',
+      });
       // Check how many queue slots the user has available upfront.
       // Panels that fit will be submitted immediately; the rest get enqueued
       // for the background job to process when slots free up.
@@ -6170,6 +6197,10 @@ export const comicsRouter = router({
       if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const updated = await dbWrite.comicReference.update({
         where: { id: input.referenceId },
         data: { name: input.name },

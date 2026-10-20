@@ -198,6 +198,7 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getCosmeticsForEntity,
   getEventDecorationsForEntity,
@@ -7928,6 +7929,10 @@ export async function updateImageTools({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-tool' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, toolId, notes }) =>
       dbWrite.imageTool.update({
@@ -8007,6 +8012,10 @@ export async function updateImageTechniques({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-technique' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, techniqueId, notes }) =>
       dbWrite.imageTechnique.update({

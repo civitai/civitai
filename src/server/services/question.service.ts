@@ -11,6 +11,7 @@ import type {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   limit = 20,
@@ -66,6 +67,7 @@ export const upsertQuestion = async ({
   tags,
   userId,
 }: UpsertQuestionInput & { userId: number }) => {
+  await throwOnBlockedUserContent([title, content], { surface: 'question' });
   const tagsToCreate = tags?.filter(isNotTag) ?? [];
   const tagsToUpdate = tags?.filter(isTag) ?? [];
 
