@@ -3,7 +3,6 @@ import { mutedNoticeVariant } from '~/components/Generation/muted-notice.utils';
 
 describe('mutedNoticeVariant', () => {
   it('sends a two-strike mute to the Terms instead of promising a moderator review', () => {
-    // That tier lifts on acceptance and nobody reviews it, so the review copy left users waiting.
     expect(mutedNoticeVariant({ mutedAt: null, tosReacceptanceOffered: true })).toBe(
       'accept-terms'
     );

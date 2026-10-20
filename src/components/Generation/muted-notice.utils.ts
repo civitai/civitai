@@ -1,8 +1,8 @@
 export type MutedNoticeVariant = 'upheld' | 'accept-terms' | 'pending-review';
 
 /**
- * Which restriction the muted notice describes. A two-strike mute also leaves `mutedAt` null, but no
- * moderator reviews it: it lifts when the user accepts the Terms, so the review copy would be false.
+ * A two-strike mute also has `mutedAt` null, but it lifts on accepting the Terms, not by moderator
+ * review.
  */
 export function mutedNoticeVariant({
   mutedAt,

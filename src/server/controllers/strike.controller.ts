@@ -129,7 +129,6 @@ export const acceptTosAfterMuteHandler = async ({ ctx }: { ctx: ProtectedContext
   }
 };
 
-/** Whether accepting the Terms would lift this account's mute, for the muted notice to offer it. */
 export const getMyTosReacceptanceOfferHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     if (!couldAwaitTosReacceptance(ctx.user)) return { offered: false };

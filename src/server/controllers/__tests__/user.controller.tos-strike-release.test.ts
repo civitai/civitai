@@ -3,15 +3,8 @@ import type * as UserService from '~/server/services/user.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 /**
- * Accepting the Terms through the site-wide ToS-update modal must lift a two-strike mute.
- *
- * That modal records acceptance through `user.setSettings` and calls nothing else, so before the
- * release ran from this write, a strike-muted user who accepted it stayed muted, and the modal never
- * offered itself again because the accepted hash was now current.
- *
- * The strike service, the mute release and the mod-activity writer are all real here; only the
- * transaction client is a fake, so the assertions read the row and the audit insert the release
- * actually makes.
+ * Only the transaction client is fake: the strike service, the release and the mod-activity writer are
+ * real, so the assertions read the user update and the audit insert the release makes.
  */
 
 const { mockGetUserSettings, mockPatchUserSettings, mockHandleLogError } = vi.hoisted(() => ({
@@ -162,8 +155,6 @@ describe('setUserSettingHandler: ToS acceptance releases a two-strike mute', () 
   });
 
   it('still returns the saved settings when the release fails', async () => {
-    // The acceptance has already been written; reporting it as failed would have the modal tell the
-    // user their acceptance did not save.
     const saved = { tosLastSeenDate: new Date('2026-10-20') };
     mockPatchUserSettings.mockResolvedValue(saved);
     dbMock.dbWrite.$transaction.mockRejectedValue(new Error('lock timeout'));

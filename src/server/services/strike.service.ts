@@ -591,9 +591,6 @@ export async function acceptTosAfterMute({
 }
 
 /**
- * The release half of a Terms acceptance, for every path that records one: the mute prompt, and the
- * site-wide ToS-update modal, which writes the acceptance through `user.setSettings` and nothing else.
- *
  * Reads and decides INSIDE a write transaction that first locks the account row, the row strike
  * escalation writes. Deciding on the replica, or before the lock, loses whatever happened in between —
  * a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale `meta`

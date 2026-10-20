@@ -6,7 +6,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { showErrorNotification } from '~/utils/notifications';
-import { TOS_REACCEPTANCE_SECTION } from '~/server/common/tos-reacceptance';
+import {
+  stillRestrictedAfterAcceptance,
+  TOS_REACCEPTANCE_SECTION,
+} from '~/server/common/tos-reacceptance';
 
 const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), { ssr: false });
 
@@ -47,7 +50,7 @@ export function useOpenTosReacceptance() {
           // The service distinguishes 'a moderator muted you' and 'you are queued for review' from a
           // release. Closing the modal on those without a word leaves the user believing they are
           // unblocked, and their next action refused again with no explanation.
-          if (!result?.unmuted) {
+          if (stillRestrictedAfterAcceptance(result)) {
             showErrorNotification({
               title: 'Your account is still restricted',
               error: new Error(
@@ -75,8 +78,7 @@ export function useOpenTosReacceptance() {
  * One subscription on the shared `MutationCache` rather than a handler per call site: every muted write
  * in the app is refused by the same tRPC guard (`isMuted`), so one place catches all ~33 routers'
  * mutations. Note this covers tRPC mutations only — generation is gated separately by prompt auditing,
- * and REST endpoints refuse on their own. Most write controls are hidden from muted accounts, so the
- * muted notice offers the same modal directly (`useOpenTosReacceptance`).
+ * and REST endpoints refuse on their own.
  */
 export function useTosReacceptancePrompt() {
   const queryClient = useQueryClient();
