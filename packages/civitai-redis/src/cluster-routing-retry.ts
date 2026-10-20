@@ -74,7 +74,9 @@ function errText(err: unknown): string {
   }
   // Plain object / unknown — best-effort stringify of message-like fields.
   const anyErr = err as { name?: unknown; message?: unknown; code?: unknown };
-  return [anyErr.name, anyErr.code, anyErr.message].filter((x) => typeof x === 'string').join(': ');
+  return [anyErr.name, anyErr.code, anyErr.message]
+    .filter((x) => typeof x === 'string')
+    .join(': ');
 }
 
 /**

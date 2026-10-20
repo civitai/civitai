@@ -184,10 +184,7 @@ describe('createCachedArray L1 — byte-identical + TTL + bounded', () => {
     const big = 'x'.repeat(1000);
     const lookupFn = vi.fn(
       async (ids: number[]) =>
-        Object.fromEntries(ids.map((id) => [id, { id, name: `${big}-${id}` }])) as Record<
-          string,
-          Row
-        >
+        Object.fromEntries(ids.map((id) => [id, { id, name: `${big}-${id}` }])) as Record<string, Row>
     );
     const cache = createCachedArray<Row>({
       key: 'test:l1bytes' as never,
@@ -216,10 +213,7 @@ describe('createCachedArray L1 — byte-identical + TTL + bounded', () => {
     const huge = 'y'.repeat(10000); // ~20KB, larger than the 4KB budget
     const lookupFn = vi.fn(
       async (ids: number[]) =>
-        Object.fromEntries(ids.map((id) => [id, { id, name: `${huge}-${id}` }])) as Record<
-          string,
-          Row
-        >
+        Object.fromEntries(ids.map((id) => [id, { id, name: `${huge}-${id}` }])) as Record<string, Row>
     );
     const cache = createCachedArray<Row>({
       key: 'test:l1huge' as never,
@@ -266,11 +260,10 @@ describe('createCachedArray L1 — byte-identical + TTL + bounded', () => {
 describe('createCachedArray L1 — positive-only (no negative pinning)', () => {
   it('never L1-caches a notFound id; it re-checks Redis each time', async () => {
     // id 2 never has a DB row → notFound. mGet stays empty (no positive redis entry).
-    const lookupFn = vi.fn(
-      async (ids: number[]) =>
-        Object.fromEntries(
-          ids.filter((id) => id !== 2).map((id) => [id, { id, name: `db-${id}` }])
-        ) as Record<string, Row>
+    const lookupFn = vi.fn(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.filter((id) => id !== 2).map((id) => [id, { id, name: `db-${id}` }])
+      ) as Record<string, Row>
     );
     const cache = createCachedArray<Row>({
       key: 'test:l1nf' as never,

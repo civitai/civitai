@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from '../sys-inflight';
+import {
+  decSysInflight,
+  getSysInflight,
+  incSysInflight,
+  resetSysInflight,
+} from '../sys-inflight';
 import { ClusterSelfHealWatchdog } from '../cluster-selfheal';
 import type { ClusterSelfHealConfig, ClusterSelfHealDeps } from '../cluster-selfheal';
 

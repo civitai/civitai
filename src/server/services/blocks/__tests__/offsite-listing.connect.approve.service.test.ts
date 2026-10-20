@@ -99,19 +99,17 @@ beforeEach(() => {
  * Stage a first-time CONNECT approve: a pending connect request → a DRAFT connect
  * listing (externalUrl null, revisionOfId null), on both the replica + primary.
  */
-function stageConnectApprove(
-  overrides: {
-    requestedScopes?: number;
-    justifications?: Record<string, string>;
-    /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
-     * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
-    primaryRequestedScopes?: number;
-    primaryJustifications?: Record<string, string>;
-    primaryAllowedScopes?: number;
-    /** The listing's destination. `null` → the actionability gate refuses go-live. */
-    externalUrl?: string | null;
-  } = {}
-) {
+function stageConnectApprove(overrides: {
+  requestedScopes?: number;
+  justifications?: Record<string, string>;
+  /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
+   * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
+  primaryRequestedScopes?: number;
+  primaryJustifications?: Record<string, string>;
+  primaryAllowedScopes?: number;
+  /** The listing's destination. `null` → the actionability gate refuses go-live. */
+  externalUrl?: string | null;
+} = {}) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_c',
     status: 'pending',
@@ -217,9 +215,7 @@ describe('approveExternalRequest — CONNECT approve→live (validateExternalUrl
     // The first-time flip only sets status + contentRating; it never rewrites the
     // connect fields, so the reviewed connectClientId/scopes/justifications persist
     // on the same (now-approved) row.
-    const flip = mockWrite.appListing.updateMany.mock.calls[0][0] as {
-      data: Record<string, unknown>;
-    };
+    const flip = mockWrite.appListing.updateMany.mock.calls[0][0] as { data: Record<string, unknown> };
     expect(flip.data).toEqual({ status: 'approved', contentRating: 'g' });
     expect(flip.data).not.toHaveProperty('connectRequestedScopes');
   });
@@ -289,11 +285,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
     });
 
     const res = await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
-    expect(res).toEqual({
-      publishRequestId: 'alpr_r',
-      listingId: 'apl_parent',
-      slug: 'parent-slug',
-    });
+    expect(res).toEqual({ publishRequestId: 'alpr_r', listingId: 'apl_parent', slug: 'parent-slug' });
 
     // The copy onto the LIVE parent carries the UPDATED connect scopes.
     const copy = mockWrite.appListing.update.mock.calls[0][0] as {
@@ -308,7 +300,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
     });
   });
 
-  it("🔴 a REVISION that would strip the live listing's destination is REFUSED — nothing copied", async () => {
+  it('🔴 a REVISION that would strip the live listing\'s destination is REFUSED — nothing copied', async () => {
     // The "break an already-live listing" case. A revision writes NO status, so the
     // status-transition gates never see it — but it copies `externalUrl` /
     // `connectClientId` straight onto an approved parent. A shadow with no

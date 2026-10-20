@@ -73,12 +73,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({
-    uploadToCF: vi.fn(),
-    files: [],
-    resetFiles: vi.fn(),
-    removeImage: vi.fn(),
-  }),
+  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
 }));
 
 vi.mock('~/utils/notifications', () => ({

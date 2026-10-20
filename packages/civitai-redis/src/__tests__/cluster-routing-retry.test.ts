@@ -20,7 +20,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the app's `~/env/server`; cluster-selfheal.ts follows the same caller-supplied-config pattern).
 
 import { ClientClosedError, ClientOfflineError } from 'redis';
-import { isTransientClusterRoutingError, withClusterRoutingRetry } from '../cluster-routing-retry';
+import {
+  isTransientClusterRoutingError,
+  withClusterRoutingRetry,
+} from '../cluster-routing-retry';
 
 // The exact fleet-wide throw measured during a live rolling update (getSlotRandomNode reads
 // `.replicas` off an undefined slot entry while the slot map is mid-rediscovery).
@@ -126,7 +129,7 @@ describe('isTransientClusterRoutingError', () => {
     expect(isTransientClusterRoutingError(nodeClientConnectPromiseThrow())).toBe(true);
   });
 
-  it('is TRUE for a bare "Cannot read properties of undefined (reading \'connectPromise\')" TypeError', () => {
+  it("is TRUE for a bare \"Cannot read properties of undefined (reading 'connectPromise')\" TypeError", () => {
     expect(
       isTransientClusterRoutingError(
         new TypeError("Cannot read properties of undefined (reading 'connectPromise')")
@@ -439,9 +442,9 @@ describe('withClusterRoutingRetry', () => {
     const exec = vi.fn().mockRejectedValue(original);
     const rediscover = vi.fn().mockRejectedValue(new Error('rediscover failed'));
 
-    await expect(withClusterRoutingRetry(exec, { rediscover, sleep: noSleep })).rejects.toBe(
-      original
-    ); // still the ORIGINAL routing error, not the rediscover error
+    await expect(
+      withClusterRoutingRetry(exec, { rediscover, sleep: noSleep })
+    ).rejects.toBe(original); // still the ORIGINAL routing error, not the rediscover error
   });
 
   it('works without a rediscover hook (retries still occur)', async () => {

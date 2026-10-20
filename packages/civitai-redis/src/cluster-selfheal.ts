@@ -294,10 +294,12 @@ export class ClusterSelfHealWatchdog {
     // mid-jitter tick single-flights out and the wedge can't double-fire.
     const reconnectChain: Promise<void> =
       jitterMs > 0
-        ? this.deps.delay(jitterMs).then(() => {
-            this.deps.log(`${this.prefix}: reconnecting after ${jitterMs}ms jitter`);
-            return this.deps.reconnect();
-          })
+        ? this.deps
+            .delay(jitterMs)
+            .then(() => {
+              this.deps.log(`${this.prefix}: reconnecting after ${jitterMs}ms jitter`);
+              return this.deps.reconnect();
+            })
         : this.deps.reconnect();
 
     // Fire-and-forget; the watchdog stays responsive (single-flight guard prevents overlap).

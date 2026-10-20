@@ -248,12 +248,7 @@ describe('both reads use the exact builders, on the right client', () => {
     const read = async (viewerBrowsingLevel?: number) => {
       markerDb({ blockPublishedAppId: MARKER });
       dbMock.dbRead.oauthClient.findUnique.mockResolvedValue(withRIcon);
-      return readPostAppChip({
-        postId: POST_ID,
-        user: USER,
-        host: 'civitai.red',
-        viewerBrowsingLevel,
-      });
+      return readPostAppChip({ postId: POST_ID, user: USER, host: 'civitai.red', viewerBrowsingLevel });
     };
     expect((await read(5))?.iconUrl).toEqual(expect.stringContaining('svc-r.png'));
     expect((await read(undefined))?.iconUrl).toBeNull();

@@ -31,9 +31,7 @@ describe('withCommandDeadline', () => {
     process.on('unhandledRejection', onUnhandled);
     try {
       // Rejects AFTER the deadline already fired — Promise.race must reap it.
-      const late = new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error('late')), 40)
-      );
+      const late = new Promise<string>((_, reject) => setTimeout(() => reject(new Error('late')), 40));
       await expect(withCommandDeadline(late, 10)).rejects.toThrow(/timed out/);
       // Give the late rejection time to fire into the (already-settled) race.
       await new Promise((r) => setTimeout(r, 60));

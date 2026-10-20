@@ -171,7 +171,10 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
  */
 export function usePendingSave(key: string, debouncer: Debouncer) {
   const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
-  useEffect(() => registerPendingSave(key, debouncer.flush), [registerPendingSave, key, debouncer]);
+  useEffect(
+    () => registerPendingSave(key, debouncer.flush),
+    [registerPendingSave, key, debouncer]
+  );
 }
 // #endregion
 

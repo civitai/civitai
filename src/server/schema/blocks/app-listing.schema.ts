@@ -209,9 +209,7 @@ export function validateListingImage(
   if (meta.mimeType != null && !LISTING_ASSET_ALLOWED_MIME.includes(meta.mimeType as never)) {
     return {
       ok: false,
-      reason: `unsupported image type "${
-        meta.mimeType
-      }" (allowed: ${LISTING_ASSET_ALLOWED_MIME.join(', ')})`,
+      reason: `unsupported image type "${meta.mimeType}" (allowed: ${LISTING_ASSET_ALLOWED_MIME.join(', ')})`,
     };
   }
   const cap = KIND_SIZE_CAP[kind];
@@ -237,60 +235,33 @@ export function validateListingImage(
     const minSide = Math.min(width, height);
     const maxSide = Math.max(width, height);
     if (axisAware && (aspect < LISTING_ICON_ASPECT_MIN || aspect > LISTING_ICON_ASPECT_MAX)) {
-      return {
-        ok: false,
-        reason: `icon must be square-ish (aspect ${aspect.toFixed(
-          2
-        )} outside ${LISTING_ICON_ASPECT_MIN}–${LISTING_ICON_ASPECT_MAX})`,
-      };
+      return { ok: false, reason: `icon must be square-ish (aspect ${aspect.toFixed(2)} outside ${LISTING_ICON_ASPECT_MIN}–${LISTING_ICON_ASPECT_MAX})` };
     }
     if (minSide < LISTING_ICON_MIN_PX) {
-      return {
-        ok: false,
-        reason: `icon must be at least ${LISTING_ICON_MIN_PX}px on its shorter side (got ${minSide}px)`,
-      };
+      return { ok: false, reason: `icon must be at least ${LISTING_ICON_MIN_PX}px on its shorter side (got ${minSide}px)` };
     }
     if (maxSide > LISTING_ICON_MAX_PX) {
-      return {
-        ok: false,
-        reason: `icon must be at most ${LISTING_ICON_MAX_PX}px on its longer side (got ${maxSide}px)`,
-      };
+      return { ok: false, reason: `icon must be at most ${LISTING_ICON_MAX_PX}px on its longer side (got ${maxSide}px)` };
     }
   } else if (kind === 'cover') {
     if (axisAware && (aspect < LISTING_COVER_ASPECT_MIN || aspect > LISTING_COVER_ASPECT_MAX)) {
-      return {
-        ok: false,
-        reason: `cover must be landscape (aspect ${aspect.toFixed(
-          2
-        )} outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})`,
-      };
+      return { ok: false, reason: `cover must be landscape (aspect ${aspect.toFixed(2)} outside ${LISTING_COVER_ASPECT_MIN}–${LISTING_COVER_ASPECT_MAX})` };
     }
     // Stated over the WIDTH specifically, not the shorter side, so a transposed
     // reading can flip it either way — orientation-sensitive despite not being an
     // aspect band.
     if (axisAware && width < LISTING_COVER_MIN_WIDTH_PX) {
-      return {
-        ok: false,
-        reason: `cover must be at least ${LISTING_COVER_MIN_WIDTH_PX}px wide (got ${width}px)`,
-      };
+      return { ok: false, reason: `cover must be at least ${LISTING_COVER_MIN_WIDTH_PX}px wide (got ${width}px)` };
     }
   } else {
     if (
       axisAware &&
       (aspect < LISTING_SCREENSHOT_ASPECT_MIN || aspect > LISTING_SCREENSHOT_ASPECT_MAX)
     ) {
-      return {
-        ok: false,
-        reason: `screenshot aspect ${aspect.toFixed(
-          2
-        )} is outside ${LISTING_SCREENSHOT_ASPECT_MIN}–${LISTING_SCREENSHOT_ASPECT_MAX}`,
-      };
+      return { ok: false, reason: `screenshot aspect ${aspect.toFixed(2)} is outside ${LISTING_SCREENSHOT_ASPECT_MIN}–${LISTING_SCREENSHOT_ASPECT_MAX}` };
     }
     if (Math.min(width, height) < LISTING_SCREENSHOT_MIN_PX) {
-      return {
-        ok: false,
-        reason: `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side`,
-      };
+      return { ok: false, reason: `screenshot must be at least ${LISTING_SCREENSHOT_MIN_PX}px on its shorter side` };
     }
   }
   return { ok: true };
@@ -310,10 +281,7 @@ export type ListingAssetsQueryInput = z.infer<typeof listingAssetsQuerySchema>;
 /** Poll the scan status of freshly-attached asset images (icon/cover/screenshots).
  *  Bounded to the icon + cover + the ≤8 screenshot cap. */
 export const assetScanStatusesSchema = z.object({
-  imageIds: z
-    .array(imageId)
-    .min(1)
-    .max(MAX_LISTING_SCREENSHOTS + 2),
+  imageIds: z.array(imageId).min(1).max(MAX_LISTING_SCREENSHOTS + 2),
 });
 export type AssetScanStatusesInput = z.infer<typeof assetScanStatusesSchema>;
 
