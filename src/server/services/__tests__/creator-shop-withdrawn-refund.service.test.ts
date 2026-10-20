@@ -415,6 +415,41 @@ describe('refundWithdrawnShopItem and a purchase already begun', () => {
     expect(result).toEqual({ purchases: 1, refunded: 1, failures: 0 });
     // The purchase never begun stays with its buyer.
     expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+    // Recorded under the terms it began with, though the item no longer carries them.
+    expect((itemMeta.history as { kind: string; userId: number }[]).at(-1)).toMatchObject({
+      kind: 'refunded',
+      userId: MOD,
+    });
+  });
+
+  it('finishes a begun purchase on a taken-down item and leaves the rest to the takedown', async () => {
+    itemMeta = {
+      purchases: 0,
+      withdrawnRefund: marker('reject'),
+      takedown: { reason: 'tos', moderatorId: MOD, at: MARKED_AT },
+    };
+    purchases[0].meta = { withdrawnRefund: marker('reject') };
+
+    const result = await refundWithdrawnShopItem(ITEM);
+
+    expect(result).toEqual({ purchases: 1, refunded: 1, failures: 0 });
+    expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
+    expect(purchases.map((p) => p.refunded)).toEqual([true, false]);
+  });
+
+  it('keeps what the purchase row already recorded when it stamps the terms', async () => {
+    const payouts = [
+      { userId: CREATOR, amount: 700, color: 'yellow', transactionId: 'p-1-payout' },
+    ];
+    purchases[0].meta = { payouts, platformCut: 300 };
+
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(purchases[0].meta).toEqual({
+      payouts,
+      platformCut: 300,
+      withdrawnRefund: marker('reject'),
+    });
   });
 
   it('stamps the terms on a purchase before moving any of its money', async () => {
@@ -428,6 +463,81 @@ describe('refundWithdrawnShopItem and a purchase already begun', () => {
 
     expect(seen).toHaveLength(4);
     for (const meta of seen) expect(meta).toEqual({ withdrawnRefund: marker('reject') });
+  });
+});
+
+// Runs the sweep's own query, so which items it picks up is the statement's answer, not a fake's.
+describe('sweepWithdrawnShopRefunds, run against Postgres', () => {
+  let db: PGlite;
+  const picked: number[] = [];
+
+  beforeEach(async () => {
+    db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "createdById" int);
+      CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "cosmeticId" int, "addedById" int, meta jsonb);
+      CREATE TABLE "UserCosmeticShopPurchases" (
+        "buzzTransactionId" text PRIMARY KEY, "shopItemId" int, "userId" int,
+        refunded boolean, "purchasedAt" timestamp(3), meta jsonb
+      );
+      INSERT INTO "Cosmetic" VALUES (7, ${CREATOR});
+    `);
+    dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
+    // Each item the sweep picks up is read once; nothing else is needed to know which.
+    picked.length = 0;
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation(
+      async ({ where }: { where: { id: number } }) => {
+        picked.push(where.id);
+        return null;
+      }
+    );
+  });
+
+  const item = (id: number, meta: Record<string, unknown>) =>
+    db.query(`INSERT INTO "CosmeticShopItem" VALUES ($1, 7, ${CREATOR}, $2)`, [
+      id,
+      JSON.stringify(meta),
+    ]);
+  const purchase = (
+    P: string,
+    shopItemId: number,
+    { userId = 101, refunded = false, day = 10, meta = null as unknown }
+  ) =>
+    db.query(`INSERT INTO "UserCosmeticShopPurchases" VALUES ($1, $2, $3, $4, $5, $6)`, [
+      P,
+      shopItemId,
+      userId,
+      refunded,
+      `2026-10-${day}T00:00:00.000Z`,
+      meta === null ? null : JSON.stringify(meta),
+    ]);
+  const stamped = { withdrawnRefund: marker('reject') };
+
+  it('picks up what is owed, and only that', async () => {
+    // Owed under the item's marker.
+    await item(1, { withdrawnRefund: marker('reject') });
+    await purchase('a', 1, {});
+    // Marker cleared, one purchase begun under it: still owed.
+    await item(2, { purchases: 0 });
+    await purchase('b', 2, { meta: stamped });
+    // Marker cleared, nothing begun: not owed.
+    await item(3, { purchases: 0 });
+    await purchase('c', 3, {});
+    // Taken down, but one purchase already begun here: this path finishes it.
+    await item(4, { withdrawnRefund: marker('reject'), takedown: { reason: 'r' } });
+    await purchase('d', 4, { meta: stamped });
+    // Taken down, nothing begun: the takedown settles it.
+    await item(6, { withdrawnRefund: marker('reject'), takedown: { reason: 'r' } });
+    await purchase('f', 6, {});
+    // Bought after the verdict, the creator's own, or already refunded: not owed.
+    await item(5, { withdrawnRefund: marker('reject') });
+    await purchase('e1', 5, { day: 20 });
+    await purchase('e2', 5, { userId: CREATOR });
+    await purchase('e3', 5, { refunded: true });
+
+    await sweepWithdrawnShopRefunds();
+
+    expect(picked.sort()).toEqual([1, 2, 4]);
   });
 });
 

@@ -1259,7 +1259,7 @@ export const unarchiveCreatorShopItem = async ({
     throw throwBadRequestError('Only archived items can be restored');
   // `preArchiveStatus` is a leftover from when restoring returned an item to
   // where it was; it now re-enters review either way, so drop any stored value.
-  // A refund owed for the archive stops here: buyers who were not refunded keep the cosmetic.
+  // A refund owed for the archive stops here: buyers whose refund had not begun keep the cosmetic.
   const { preArchiveStatus, withdrawnRefund, ...meta } = (existing.meta ??
     {}) as CosmeticShopItemMeta & {
     preArchiveStatus?: CosmeticShopItemStatus;
@@ -2430,6 +2430,7 @@ export const takedownCosmeticShopItem = async ({
   let unrecoveredPackPool = 0;
   let refundedValue = 0;
   let reversedWithPurchase = 0;
+  const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
   await logTakedown('info', 'Takedown started', {
@@ -2440,6 +2441,12 @@ export const takedownCosmeticShopItem = async ({
   });
 
   for (const purchase of purchases) {
+    // A withdrawn-item refund has begun on this one, and may have reversed some of its legs; a
+    // prefix refund over those is refused whole. That run finishes it (`refundWithdrawnShopItem`).
+    if ((purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund) {
+      leftToWithdrawnRefund.push(purchase.buzzTransactionId);
+      continue;
+    }
     const price = purchase.unitAmount;
     // Unreachable for anything the current code writes — a purchase computing to
     // zero is refused rather than completed. Kept because the failure mode if a
@@ -2820,6 +2827,7 @@ export const takedownCosmeticShopItem = async ({
     revokedFrom: revoked,
     placementsRemoved,
     failures,
+    leftToWithdrawnRefund,
   });
 
   return {

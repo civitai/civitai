@@ -197,10 +197,11 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
   });
   const meta = (item?.meta ?? {}) as CosmeticShopItemMeta;
   const marker = meta.withdrawnRefund;
-  // A takedown refunds and claws back on its own terms. A pack's members are listed, and
-  // withheld, on their own, so withdrawing the pack withholds nothing its buyers hold.
-  if (!item || meta.takedown || item.cosmeticId == null)
-    return { purchases: 0, refunded: 0, failures: 0 };
+  // A pack's members are listed, and withheld, on their own, so withdrawing the pack withholds
+  // nothing its buyers hold.
+  if (!item || item.cosmeticId == null) return { purchases: 0, refunded: 0, failures: 0 };
+  // A takedown refunds and claws back on its own terms, except purchases already begun here.
+  const owedByMarker = meta.takedown ? undefined : marker;
 
   const creatorId = item.cosmetic?.createdById ?? item.addedById;
   const unrefunded = await dbWrite.userCosmeticShopPurchases.findMany({
@@ -226,7 +227,10 @@ async function runWithdrawnRefund(shopItemId: number, limit?: number) {
     .flatMap((purchase) => {
       const started = (purchase.meta as CosmeticPurchaseMeta | null)?.withdrawnRefund;
       const terms =
-        started ?? (marker && purchase.purchasedAt <= new Date(marker.at) ? marker : undefined);
+        started ??
+        (owedByMarker && purchase.purchasedAt <= new Date(owedByMarker.at)
+          ? owedByMarker
+          : undefined);
       return terms ? [{ purchase, terms, started: !!started }] : [];
     })
     .slice(0, limit);
@@ -354,18 +358,19 @@ export async function sweepWithdrawnShopRefunds({ limit = 50 }: { limit?: number
     SELECT i.id
     FROM "CosmeticShopItem" i
     LEFT JOIN "Cosmetic" c ON c.id = i."cosmeticId"
-    WHERE NOT coalesce(i.meta ? 'takedown', false)
-      AND i."cosmeticId" IS NOT NULL
+    WHERE i."cosmeticId" IS NOT NULL
       AND EXISTS (
         SELECT 1 FROM "UserCosmeticShopPurchases" p
         WHERE p."shopItemId" = i.id
           AND NOT p.refunded
           AND p."userId" IS DISTINCT FROM COALESCE(c."createdById", i."addedById")
           AND (
-            -- Started under an earlier marker: finished whatever the item says now.
+            -- Started under an earlier marker: finished whatever the item says now, takedown
+            -- included.
             coalesce(p.meta ? 'withdrawnRefund', false)
             OR (
-              i.meta ? 'withdrawnRefund'
+              NOT coalesce(i.meta ? 'takedown', false)
+              AND i.meta ? 'withdrawnRefund'
               AND p."purchasedAt" <=
                 ((i.meta->'withdrawnRefund'->>'at')::timestamptz AT TIME ZONE 'UTC')
             )

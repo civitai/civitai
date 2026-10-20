@@ -532,6 +532,25 @@ describe('takedownCosmeticShopItem', () => {
     expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
   });
 
+  // A withdrawn-item refund that began on a purchase may have reversed some of its legs, and the
+  // prefix refund is refused whole over those: that run finishes it, not this one.
+  it('leaves a purchase a withdrawn-item refund has begun to that refund', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: { withdrawnRefund: { trigger: 'archive', clawback: true, userId: 11, at: 'then' } },
+      },
+      purchases[1],
+    ]);
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundMultiAccountTransaction.mock.calls).toEqual([
+      [expect.objectContaining({ externalTransactionIdPrefix: 'purchase-2' })],
+    ]);
+    expect(result).toMatchObject({ refunded: 1, failures: [] });
+  });
+
   it('falls back to a reversing charge when a recorded payout has no transaction id', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {
