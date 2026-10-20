@@ -48,6 +48,9 @@ describe('getVisibleCommentCount', () => {
 
     // Before this change the count always issued two statements (pinnedAt null + not null).
     expect(dbMock.dbRead.comment.count).toHaveBeenCalledTimes(1);
+    // ...and read each of the viewer's exclusion lists twice, once per where. getComments reads
+    // each once more, so 2 here means the count read each list once.
+    for (const list of [hidden, blockedBy, blocked]) expect(list).toHaveBeenCalledTimes(2);
     const [listWhere] = dbMock.dbRead.comment.findMany.mock.calls.map(([arg]) => arg.where);
     const { pinnedAt, ...listWhereWithoutPin } = listWhere;
     expect(pinnedAt).toBeNull();
@@ -147,6 +150,7 @@ const rows: Row[] = [
   row(8, { hidden: null }), // NULL hidden matches neither `hidden: false` nor `hidden: true`
   row(9, { userId: 9 }), // a blocker, unpinned
   row(10, { userId: 9, pinnedAt: PIN }), // a blocker, pinned
+  row(12, { userId: 9, pinnedAt: PIN }), // a second pinned blocker row, so a pinned/unpinned where swap changes the owner's total
   row(11, { userId: 1, pinnedAt: PIN }), // a hidden user
 ];
 
@@ -170,8 +174,8 @@ describe('getVisibleCommentCount parity with the lists', () => {
   };
 
   it.each([
-    ['viewer with no exclusions', {}, false, undefined, 6],
-    ['moderator', {}, true, undefined, 7],
+    ['viewer with no exclusions', {}, false, undefined, 7],
+    ['moderator', {}, true, undefined, 8],
     ['hidden comments view', { hidden: true }, false, undefined, 1],
     [
       'viewer with a hidden user and a blocker',
