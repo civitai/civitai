@@ -413,6 +413,29 @@ export function cacheReporterArgv(cacheMode, args, reporterPath) {
   return [...(named ? [] : ['--reporter=default']), `--reporter=${reporterPath}`];
 }
 
+/**
+ * The `VITEST_MAX_WORKERS` a queued run's child should see, given the argv it will run.
+ *
+ * Vitest reads that variable AFTER it merges the CLI (vitest 4.1.11, `resolveConfig`:
+ * `if (process.env.VITEST_MAX_WORKERS) resolved.maxWorkers = …`), so an inherited copy beats the
+ * `--max-workers` this queue passes. The daemon passes its own environment on, and a box whose
+ * user env says 4 pinned every queued suite at 4 workers, whatever `test config --max-workers`
+ * said: measured 2026-10-20, 3-4 forks over 30 s under `--max-workers=12`, and every full unit run
+ * from 10-19 21:41Z on hit the 30-minute cap. So the variable follows the argv: the width named
+ * there, or cleared when the argv names none (an uncapped run stays uncapped).
+ *
+ * `undefined` clears it: spawn drops keys whose value is undefined.
+ */
+export function vitestWorkersEnv(argv) {
+  for (let i = argv.length - 1; i >= 0; i--) {
+    const m = String(argv[i]).match(/^--max(?:-w|W)orkers(?:=(.*))?$/);
+    if (!m) continue;
+    const value = m[1] ?? argv[i + 1];
+    return value === undefined ? undefined : String(value);
+  }
+  return undefined;
+}
+
 export function defaultStartRun({
   worktree,
   args,
@@ -468,6 +491,8 @@ export function defaultStartRun({
         // Set or cleared, never inherited: a cached run's own children would otherwise pass it on.
         CIVITAI_TEST_CACHE_CORE:
           resultCache && existsSync(sharedCacheCorePath) ? sharedCacheCorePath : undefined,
+        // Vitest lanes only: the width this run asked for, never the daemon's. See vitestWorkersEnv.
+        ...(capWorkers ? { VITEST_MAX_WORKERS: vitestWorkersEnv(argv) } : {}),
       },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
