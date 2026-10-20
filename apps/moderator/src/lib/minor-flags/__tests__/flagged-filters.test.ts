@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { flagChipValues } from '../flagged-filters';
+import { FLAG_CHIP_VALUES } from '../flagged-filters';
 
-describe('flagChipValues', () => {
-  it('shows no flag chips when no flag filter is set', () => {
-    expect(flagChipValues('all')).toEqual([]);
-  });
-  it('keeps the chip of a flag filter an older link still sets, so it can be switched off', () => {
-    expect(flagChipValues('minor')).toEqual(['minor']);
-    expect(flagChipValues('poi')).toEqual(['poi']);
+describe('FLAG_CHIP_VALUES', () => {
+  it('offers the minor and real-person chips', () => {
+    expect(FLAG_CHIP_VALUES).toEqual(['minor', 'poi']);
   });
 });

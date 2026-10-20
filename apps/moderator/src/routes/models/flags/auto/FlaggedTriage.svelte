@@ -20,7 +20,7 @@
     FLAGGED_SORT_LABELS,
     FLAGGED_SOURCES,
     FLAGGED_SOURCE_LABELS,
-    flagChipValues,
+    FLAG_CHIP_VALUES,
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
@@ -68,7 +68,7 @@
   );
   const filtersActive = $derived(Object.keys(flaggedFilterParams(data.flaggedFilters)).length > 0);
 
-  // Source chips, with "All" clearing them; a flag chip shows only while a link still sets one.
+  // Source chips, with "All" clearing them.
   const chipGroups = $derived.by(() => {
     const f = data.flaggedFilters;
     return [
@@ -84,7 +84,7 @@
       {
         key: 'flag',
         label: 'Flag',
-        values: flagChipValues(f.flag),
+        values: FLAG_CHIP_VALUES,
         labels: FLAGGED_FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_FLAGGED_FILTERS.flag,
