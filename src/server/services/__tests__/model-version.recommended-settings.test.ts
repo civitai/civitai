@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// The service module is a hub; nothing below reaches a database, so its import graph is cut here.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+import { describe, expect, it } from 'vitest';
+import '~/__tests__/mocks/db.mock';
+import { recommendedGenerationSettingsSchema } from '~/server/schema/model-version.schema';
 
 const { assertRecommendedSettingsForType } = await import(
   '~/server/services/model-version.service'
@@ -64,5 +63,17 @@ describe('assertRecommendedSettingsForType', () => {
         { modelType: 'Checkpoint', baseModel: 'MOSS Image' }
       )
     ).not.toThrow();
+  });
+});
+
+describe('recommendedGenerationSettingsSchema', () => {
+  it.each([
+    ['keeps a strength on the default turbo LoRA', { id: 1, strength: 0.6 }, true],
+    ['refuses a strength past the generator range', { id: 1, strength: 2.5 }, false],
+  ])('%s', (_, turboLora, ok) => {
+    const result = recommendedGenerationSettingsSchema.safeParse({ turboLora });
+    expect(result.success).toBe(ok);
+    if (result.success) expect(result.data.turboLora).toEqual(turboLora);
+    else expect(result.error.issues[0]?.path).toEqual(['turboLora', 'strength']);
   });
 });

@@ -50,11 +50,13 @@ export function ResourceSelectFiltersDropdown() {
     filters: selectFilters,
     setFilters: setSelectFilters,
     turboPinned,
+    excludeTurbo,
   } = useResourceSelectContext();
   const features = useFeatureFlags();
   const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
   const canFilterTurbo =
     !turboPinned &&
+    !excludeTurbo &&
     (resources.length === 0 ||
       resources.some((r) => TURBO_VARIANT_MODEL_TYPES.includes(r.type as ModelType)));
   // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the

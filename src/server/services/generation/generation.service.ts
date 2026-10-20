@@ -1410,6 +1410,13 @@ export async function getResourceData(
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
+      turbo: settings?.turbo ?? undefined,
+      turboLora: settings?.generation?.turboLora
+        ? {
+            id: settings.generation.turboLora.id,
+            strength: settings.generation.turboLora.strength ?? undefined,
+          }
+        : undefined,
       hasAccess,
       canGenerate,
       epochNumber,

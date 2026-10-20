@@ -134,6 +134,22 @@ export function BaseGenerationForm() {
   );
 }
 
+/** A checkpoint's own turbo LoRA rides on its hydrated data, but the store holds a default checkpoint as a bare id, so the graph would never see it. */
+function useModelWriteBack(store: GenerationStore) {
+  const { getResourceData } = useResourceDataContext();
+  useEffect(() => {
+    function writeBack() {
+      const state = store.getSnapshot().state as Record<string, unknown>;
+      const model = state.model as PartialResourceValue | undefined;
+      if (!model?.id || !needsHydration(model)) return;
+      const data = getResourceData(model.id);
+      if (data) store.set({ model: data });
+    }
+    writeBack();
+    return store.subscribe(writeBack);
+  }, [store, getResourceData]);
+}
+
 /**
  * Resource-hydration sync: register the ids of PARTIAL
  * resource values (a default model is just `{id, model:{type}}`) with
@@ -185,6 +201,7 @@ function useResourceHydrationSync(store: GenerationStore) {
 
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
   useResourceHydrationSync(store);
+  useModelWriteBack(store);
   useGenerationIngestion(store);
   useGenerationTour();
   const output = useOutputType(store);

@@ -576,6 +576,27 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(page.getByTestId('edge-media')).toHaveAttribute('src', 'x-video');
   });
 
+  test('a plain LoRA shows no Turbo badge', async () => {
+    const r = makeResource({ model: { id: 1, name: 'M', type: 'LORA' } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Turbo', { exact: true }).query()).toBeNull();
+  });
+
+  test('a turbo LoRA shows the Turbo badge and keeps its strength slider', async () => {
+    const r = makeResource({
+      model: { id: 1, name: 'M', type: 'LORA' },
+      turbo: {
+        steps: { min: 4, max: 8, default: 8 },
+        cfgScale: { min: 1, max: 1, default: 1 },
+      },
+    });
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
+
+    await expect.element(page.getByText('Turbo', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByTestId('strength-slider')).toBeInTheDocument();
+  });
+
   test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
     // Distinct min/max (NOT the -1/2 fallbacks) so the min/max wiring has teeth:
     // a mutation that hardcodes the isSameMinMaxStrength fallback would be caught.

@@ -71,6 +71,8 @@ export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'child
   allowRemove?: boolean;
   /** Whether to allow swapping the selected resource (set to false to lock the resource) */
   allowSwap?: boolean;
+  /** No border or radius on the card: it fills a container that draws its own. */
+  flush?: boolean;
   /** Source context for resource selection */
   selectSource?: ResourceSelectSource;
   /** Whether the input is disabled */
@@ -101,6 +103,7 @@ interface ResourceCardProps {
   disabled?: boolean;
   allowSwap?: boolean;
   options?: ResourceSelectOptions;
+  flush?: boolean;
 }
 
 function ResourceCard({
@@ -113,6 +116,7 @@ function ResourceCard({
   disabled,
   allowSwap = true,
   options,
+  flush,
 }: ResourceCardProps) {
   const status = getResourceStatus(resource, options);
   const statusClasses = getStatusClasses(status);
@@ -121,7 +125,7 @@ function ResourceCard({
   return (
     <div
       className={clsx(
-        'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
+        !flush && 'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
         'bg-gray-0 dark:bg-dark-6',
         'p-2',
         statusClasses.border,
@@ -208,6 +212,7 @@ export function ResourceSelectInput({
   options = {},
   allowRemove = true,
   allowSwap = true,
+  flush,
   selectSource = 'generation',
   disabled,
   resourceType,
@@ -309,6 +314,7 @@ export function ResourceSelectInput({
         disabled={disabled}
         allowSwap={allowSwap}
         options={options}
+        flush={flush}
       />
       {/* Version selector for models with multiple versions */}
       {showVersionSelector && versions && (

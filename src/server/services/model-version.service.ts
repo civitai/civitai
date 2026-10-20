@@ -549,15 +549,28 @@ export function assertRecommendedSettingsForType(
     );
 }
 
-/** The default turbo LoRA reference survives that LoRA being unpublished or edited; only a deleted version is dropped. */
+/**
+ * Only a deleted version is dropped (an unpublished one is kept); the id becomes every viewer's
+ * default, so the server re-checks it is a turbo LoRA of this ecosystem.
+ */
 async function withExistingTurboLora<T extends ModelVersionUpsertInput['settings']>(
-  settings: T
+  settings: T,
+  baseModel: string | undefined
 ): Promise<T> {
   const id = settings?.generation?.turboLora?.id;
   if (!id) return settings;
-  const lora = await getVersionById({ id, select: { id: true } });
-  if (lora) return settings;
-  return { ...settings, generation: { ...settings?.generation, turboLora: null } };
+  const lora = await getVersionById({
+    id,
+    select: { id: true, baseModel: true, settings: true, model: { select: { type: true } } },
+  });
+  if (!lora) return { ...settings, generation: { ...settings?.generation, turboLora: null } };
+  const sameEcosystem =
+    getBaseModelConfig(lora.baseModel).ecosystemId ===
+    getBaseModelConfig(baseModel ?? '').ecosystemId;
+  const isTurbo = !!(lora.settings as { turbo?: unknown } | null)?.turbo;
+  if (!TURBO_VARIANT_MODEL_TYPES.includes(lora.model.type) || !sameEcosystem || !isTurbo)
+    throw throwBadRequestError('The default turbo LoRA must be a turbo LoRA of this ecosystem');
+  return settings;
 }
 
 export const upsertModelVersion = async ({
@@ -629,7 +642,7 @@ export const upsertModelVersion = async ({
     select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
   assertRecommendedSettingsForType(settings, { modelType: model.type, baseModel: data.baseModel });
-  settings = await withExistingTurboLora(settings);
+  settings = await withExistingTurboLora(settings, data.baseModel);
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
