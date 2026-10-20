@@ -146,7 +146,7 @@ function versioned(head: Head, turns: HeadTurn[]): Head {
       } satisfies ConversationMetadata);
 }
 
-/** The chat's own first-message title (`firstMessageTitle` in its thread store, not exported). */
+/** The chat's own first-message title (`firstMessageTitle` in its thread store, not in the package's exports). */
 export function firstMessageTitle(content: string): string {
   const flat = content.replace(/\s+/g, ' ').trim();
   if (flat === '') return 'New chat';

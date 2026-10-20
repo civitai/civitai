@@ -27,10 +27,7 @@ const usage = {
   outputTokens: { total: 5, text: 5, reasoning: 0 },
 };
 
-/**
- * A model that answers each step as `script` says, without a network or a token. `calls` counts the
- * requests it was asked, so a test can tell whether a stopped run asked anything at all.
- */
+/** A model that answers each step as `script` says, without a network or a token. */
 export function scriptedModel(
   script: (prompt: Prompt) => ScriptedStep,
   options: { chunkChars?: number; chunkDelayMs?: number } = {}

@@ -68,14 +68,14 @@ function fakeService(overrides: Partial<RunService> = {}) {
     },
     stop: async (userId, runId) => {
       note('stop')(userId, runId);
-      return runId === 'r1';
+      return userId === 'u1' && runId === 'r1';
     },
     stopByKey: async (userId, key) => {
       note('stopByKey')(userId, key);
     },
     patch: async (userId, conversationId, patch) => {
       note('patch')(userId, conversationId, patch);
-      return conversationId === 'c1';
+      return userId === 'u1' && conversationId === 'c1';
     },
     ready: () => true,
     ...overrides,
@@ -211,7 +211,10 @@ describe('the run API', () => {
       },
     });
     const base = await serve({ service, authenticator: bearerAuthenticator, keepaliveMs: 20 });
-    const response = await fetch(`${base}/runs/r1/events`, { headers: user1 });
+    const response = await fetch(`${base}/runs/r1/events`, {
+      headers: user1,
+      signal: AbortSignal.timeout(2000),
+    });
     const reader = response.body!.getReader();
     let text = '';
     while (!text.includes(': keepalive')) {
@@ -226,26 +229,77 @@ describe('the run API', () => {
   it('answers stops with 202, and 404 for a run the user does not have', async () => {
     const { service, seen } = fakeService();
     const base = await serve({ service, authenticator: bearerAuthenticator });
-    const post = (path: string, body: unknown) =>
+    const post = (path: string, body: unknown, headers: Record<string, string> = user1) =>
       fetch(`${base}${path}`, {
         method: 'POST',
-        headers: { ...user1, 'content-type': 'application/json' },
+        headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
+    const user2 = { authorization: 'Bearer user:u2' };
     expect((await post('/runs/r1/stop', { v: 1 })).status).toBe(202);
     expect((await post('/runs/r9/stop', { v: 1 })).status).toBe(404);
+    expect((await post('/runs/r1/stop', { v: 1 }, user2)).status).toBe(404);
+    expect((await post('/conversations/c1/patch', { v: 1, title: 'x' }, user2)).status).toBe(404);
     expect(
       (await post('/runs/stop', { v: 1, idempotencyKey: 'k1', conversationId: 'c1' })).status
     ).toBe(202);
     expect((await post('/conversations/c1/patch', { v: 1, title: 'New' })).status).toBe(204);
     expect((await post('/conversations/c2/patch', { v: 1, title: 'New' })).status).toBe(404);
-    expect(seen.find((call) => call.method === 'stopByKey')).toEqual({
-      method: 'stopByKey',
-      userId: 'u1',
-      args: ['k1'],
-    });
+    expect(seen.filter((call) => call.method === 'stopByKey')).toEqual([
+      { method: 'stopByKey', userId: 'u1', args: ['k1'] },
+    ]);
   });
 
+  it('answers each refusal with its protocol status, and hides internal failures', async () => {
+    const forbidden = await serve({
+      service: fakeService().service,
+      authenticator: { authenticate: async () => ({ ok: false, status: 403, message: 'Banned.' }) },
+    });
+    const refused = await fetch(`${forbidden}/runs?conversationId=c1`);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ v: 1, error: 'refused', message: 'Banned.' });
+    await app?.close();
+
+    const anonymous = await serve({
+      service: fakeService().service,
+      authenticator: { authenticate: async () => ({ ok: true, userId: '' }) },
+    });
+    expect((await fetch(`${anonymous}/runs?conversationId=c1`)).status).toBe(401);
+    await app?.close();
+
+    const { service } = fakeService({
+      start: async () => ({ ok: false, error: 'unavailable', message: 'Busy.' }),
+      lookup: async () => {
+        throw new Error('internal detail 7f3a');
+      },
+    });
+    const base = await serve({ service, authenticator: bearerAuthenticator });
+    const start = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: { ...user1, 'content-type': 'application/json' },
+      body: JSON.stringify(startRequest),
+    });
+    expect(start.status).toBe(503);
+    expect(await start.json()).toEqual({ v: 1, error: 'unavailable', message: 'Busy.' });
+
+    const failed = await fetch(`${base}/runs?conversationId=c1`, { headers: user1 });
+    expect(failed.status).toBe(503);
+    const body = await failed.text();
+    expect(JSON.parse(body)).toMatchObject({ v: 1, error: 'unavailable' });
+    expect(body).not.toContain('7f3a');
+
+    // A body that is not JSON is the client's to fix: 4xx, which the client does not retry.
+    const garbled = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: { ...user1, 'content-type': 'application/json' },
+      body: '{not json',
+    });
+    expect(garbled.status).toBe(400);
+    expect(await garbled.json()).toMatchObject({ v: 1, error: 'bad-request' });
+  });
+
+  // An invariant guard: Fastify's default request serializer already logs no headers. It fails if a
+  // serializer that does is ever configured.
   it('never logs a request header (they carry the viewer’s credentials)', async () => {
     const lines: string[] = [];
     const stream = new Writable({

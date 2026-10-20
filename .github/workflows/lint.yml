@@ -745,8 +745,8 @@ jobs:
     # jobs keep the blame attributable: a red app suite should not make the package suites
     # look broken. Costs one more `pnpm install`; these suites run in seconds.
     #
-    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
-    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # Not `continue-on-error`, for the same reason as `packages`: no browser and no Next module
+    # graph (its only database is the throwaway Postgres service below). As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
     # Selection is by vitest config, so an app without one is silently not covered here. Every app

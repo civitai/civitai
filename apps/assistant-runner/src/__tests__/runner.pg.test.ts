@@ -21,6 +21,9 @@ import { readEvents, type ReadEntry } from '../test-support/sse';
 // Runs against a real Postgres (CI's `App unit tests` job provides one). Without
 // ASSISTANT_RUNNER_TEST_DATABASE_URL the whole file skips.
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
+// In CI a lost URL must fail, not skip: the other suites would keep the app's job green.
+if (process.env.CI && !TEST_DATABASE_URL)
+  throw new Error('ASSISTANT_RUNNER_TEST_DATABASE_URL is not set in CI');
 
 const LONG_TEXT = 'The quick brown fox jumps over the lazy dog, again and again. '.repeat(10);
 
@@ -45,7 +48,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     },
   });
   const scripts: Record<string, () => ReturnType<typeof scriptedModel>> = {
-    long: () => scriptedModel(() => ({ text: LONG_TEXT })),
+    long: () => scriptedModel(() => ({ text: LONG_TEXT }), { chunkDelayMs: 1 }),
     tools: () =>
       scriptedModel((prompt) =>
         toolResults(prompt) === 0
@@ -89,7 +92,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       error: (object, message) => console.error(message, object),
     },
     wallClockMs: 60_000,
-    stopGraceMs: 5000,
+    // Far past the graceful-stop bound below, so a stop that only the forced fallback ends fails it.
+    stopGraceMs: 20_000,
   };
 
   beforeAll(async () => {
@@ -261,6 +265,55 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(ended(await events(first.body!.runId as string, user)).status).toBe('stopped');
   });
 
+  it('keeps one user’s idempotency key from naming another user’s run', async () => {
+    const key = randomUUID();
+    const first = await post(
+      '/runs',
+      as('u-key-a'),
+      startBody({ conversationId: 'c-key-a', model: 'hang', key })
+    );
+    const runId = first.body!.runId as string;
+    await events(runId, 'u-key-a', { stopWhen: ({ event }) => event.type === 'tool-call' });
+
+    // Another user's stop with the same key reaches nothing of A's.
+    expect(
+      (
+        await post('/runs/stop', as('u-key-b'), {
+          v: 1,
+          idempotencyKey: key,
+          conversationId: 'c-key-a',
+        })
+      ).status
+    ).toBe(202);
+    expect(await runner.lookup('u-key-a', 'c-key-a')).toMatchObject({ runId });
+    // Nor does their start with it return A's run.
+    const second = await post(
+      '/runs',
+      as('u-key-b'),
+      startBody({ conversationId: 'c-key-b', model: 'tools', key })
+    );
+    expect(second.status).toBe(201);
+    expect(second.body!.runId).not.toBe(runId);
+
+    await post(`/runs/${runId}/stop`, as('u-key-a'), { v: 1 });
+    expect(ended(await events(runId, 'u-key-a')).status).toBe('stopped');
+  });
+
+  it('lets only one of two racing starts for the same user run', async () => {
+    const user = 'u-race';
+    const [a, b] = await Promise.all([
+      post('/runs', as(user), startBody({ conversationId: 'c-race-1', model: 'hang' })),
+      post('/runs', as(user), startBody({ conversationId: 'c-race-2', model: 'hang' })),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    const winner = a.status === 201 ? a : b;
+    const loser = a.status === 201 ? b : a;
+    expect(loser.body).toMatchObject({ error: 'run-active' });
+    const runId = winner.body!.runId as string;
+    await post(`/runs/${runId}/stop`, as(user), { v: 1 });
+    expect(ended(await events(runId, user)).status).toBe('stopped');
+  });
+
   it('refuses a turn that is not the next one', async () => {
     const stale = await post(
       '/runs',
@@ -286,7 +339,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const stoppedAt = Date.now();
     expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
     const rest = await events(runId, user, { lastEventId: upToCall.at(-1)!.id });
-    expect(Date.now() - stoppedAt).toBeLessThan(5000);
+    expect(Date.now() - stoppedAt).toBeLessThan(10_000);
     expect(ended(rest).status).toBe('stopped');
     expect(calls.waitAborted).toBe(before.waitAborted + 1);
     expect(tools.stats.closed).toBe(before.closed + 1);
@@ -353,7 +406,15 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         as(user),
         startBody({ conversationId: 'c-clock', model: 'hang' })
       );
-      const entries = await events(start.body!.runId as string, user, { timeoutMs: 20_000 });
+      const runId = start.body!.runId as string;
+      // The clock cuts off a call in flight, not a run that had already run out before it began.
+      const upToCall = await events(runId, user, {
+        stopWhen: ({ event }) => event.type === 'tool-call',
+      });
+      const entries = await events(runId, user, {
+        lastEventId: upToCall.at(-1)!.id,
+        timeoutMs: 20_000,
+      });
       expect(ended(entries).status).toBe('ran_out');
       const head = await store.load(user, 'c-clock');
       expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done', ranOut: true });
@@ -380,6 +441,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       run: { runId, conversationId: 'c-lookup', seq: 1, user: { content: 'Wait for me.' } },
     });
     expect(Number(live.run.lastEventId)).toBeGreaterThanOrEqual(seen.at(-1)!.id);
+    expect(Number(live.run.lastEventId)).toBeLessThan(await runner.journalLength(runId));
     // Another viewer sees no run of this conversation.
     expect(
       await fetch(`${base}/runs?conversationId=c-lookup`, { headers: as('u-lookup-other') }).then(
@@ -389,6 +451,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(
       (await fetch(`${base}/runs/${runId}/events`, { headers: as('u-lookup-other') })).status
     ).toBe(404);
+
+    // Nor can it stop the run.
+    expect((await post(`/runs/${runId}/stop`, as('u-lookup-other'), { v: 1 })).status).toBe(404);
+    expect(await runner.lookup(user, 'c-lookup')).not.toBeNull();
 
     await post(`/runs/${runId}/stop`, as(user), { v: 1 });
     await events(runId, user);
@@ -474,7 +540,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
 
     expect(await tableCount(db.url, 'dbos')).toBeGreaterThan(5);
     // Positive control: the scan finds what the run did persist (the user's words, in its input and journal).
-    expect((await rowsContaining(db.url, 'dbos', content)).length).toBeGreaterThan(0);
+    const persisted = await rowsContaining(db.url, 'dbos', content);
+    expect(persisted.length).toBeGreaterThan(0);
+    // ...including the journal, so the scan below reads the stream values too.
+    expect(persisted.some((row) => row.startsWith('streams:'))).toBe(true);
     expect(await rowsContaining(db.url, 'dbos', sentinel)).toEqual([]);
     expect(JSON.stringify([...store.heads.values()])).not.toContain(sentinel);
     expect(JSON.stringify(entries)).not.toContain(sentinel);

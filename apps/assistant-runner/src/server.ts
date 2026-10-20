@@ -12,7 +12,7 @@ const log: Logger = {
   error: (object, message) => app.log.error(object, message),
 };
 
-// TODO(PR B): the real authenticator, model, tools and conversation store. Until then every run-API
+// TODO: the real authenticator, model, tools and conversation store. Until then every run-API
 // request is refused (401), so nothing reaches the unconfigured services below.
 const runner = new Runner({
   models: unconfiguredModel,

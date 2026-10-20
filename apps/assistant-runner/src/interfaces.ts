@@ -5,7 +5,7 @@ import type { RunPageState } from '@civitai/components-chat/runner-protocol';
 import type { LanguageModel, ToolSet } from 'ai';
 
 /**
- * The four seams PR A fakes and PR B fills in. None of them is handed a credential by the runner:
+ * The four seams a deployment fills in (tests use fakes). None of them is handed a credential by the runner:
  * the runner passes a user id, and an implementation that needs a token mints it itself, per call,
  * inside its own fetch. Anything passed to a DBOS workflow or returned from a step is persisted in
  * Postgres, so a token must never cross these interfaces as an argument or a return value.

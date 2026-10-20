@@ -12,6 +12,8 @@ import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
 import { readEvents } from '../test-support/sse';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
+if (process.env.CI && !TEST_DATABASE_URL)
+  throw new Error('ASSISTANT_RUNNER_TEST_DATABASE_URL is not set in CI');
 
 const appDir = fileURLToPath(new URL('../..', import.meta.url));
 const fixture = fileURLToPath(new URL('../test-support/fixture-server.ts', import.meta.url));
@@ -82,6 +84,25 @@ describePg('crash recovery', () => {
   });
 
   it('a runner killed mid-tool is recovered under the same executor id, and no tool that ran runs again', async () => {
+    let first: Child | undefined;
+    let second: Child | undefined;
+    try {
+      ({ first, second } = await crashAndRecover((child) => {
+        if (!first) first = child;
+        else second = child;
+      }));
+    } catch (error) {
+      // The runners' own output is the only record of why a recovery did not happen.
+      const output = `\n[first runner]\n${first?.output() ?? ''}\n[second runner]\n${
+        second?.output() ?? ''
+      }`;
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${output}`);
+    }
+  }, 240_000);
+
+  async function crashAndRecover(
+    started: (child: Child) => void
+  ): Promise<{ first: Child; second: Child }> {
     const headers = { authorization: 'Bearer user:u-crash', 'content-type': 'application/json' };
     const calls = () =>
       existsSync(join(dir, 'calls.log'))
@@ -90,6 +111,7 @@ describePg('crash recovery', () => {
 
     const first = await startRunner(db.url, 'executor-a', dir);
     children.push(first.process);
+    started(first);
     const start = await fetch(`http://127.0.0.1:${first.port}/runs`, {
       method: 'POST',
       headers,
@@ -127,6 +149,7 @@ describePg('crash recovery', () => {
 
     const second = await startRunner(db.url, 'executor-a', dir);
     children.push(second.process);
+    started(second);
     const entries = await readEvents(
       `http://127.0.0.1:${second.port}/runs/${runId}/events`,
       { authorization: headers.authorization },
@@ -149,6 +172,9 @@ describePg('crash recovery', () => {
     });
     expect(parts.at(-1)).toEqual({ kind: 'text', text: 'All done.' });
 
+    const exited = new Promise((resolve) => second.process.once('exit', resolve));
     second.process.kill('SIGTERM');
-  });
+    await exited;
+    return { first, second };
+  }
 });

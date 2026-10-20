@@ -1,6 +1,6 @@
 import type { Authenticator, ConversationStore, ModelProvider, ToolProvider } from './interfaces';
 
-// TODO(PR B): replace each of these with the real implementation: the viewer's civitai token
+// TODO: replace each of these with the real implementation: the viewer's civitai token
 // verified by the auth hub, orchestration as the model with a token minted per request, the
 // sandbox MCP tools, and the orchestrator-backed conversation head.
 

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
  */
 export function runIdFor(userId: string, idempotencyKey: string): string {
   return `run_${createHash('sha256')
-    .update(`${userId}\n${idempotencyKey}`)
+    .update(JSON.stringify([userId, idempotencyKey]))
     .digest('hex')
     .slice(0, 32)}`;
 }

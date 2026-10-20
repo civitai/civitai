@@ -72,18 +72,10 @@ describe('the head the runner saves, read by the chat package', () => {
     expect(read(head)?.v).toBe(3);
     const resume = resumeOf(head.turns[0]!);
     expect(resume?.steps).toBe(2);
+    // The call that started and did not finish goes back as an error result, so it is not run again.
     expect(resume?.messages.at(-1)).toMatchObject({
       role: 'tool',
-      content: [
-        {
-          type: 'tool-result',
-          toolCallId: 'b',
-          output: {
-            type: 'error-text',
-            value: 'interrupted: this call did not finish and was not re-run',
-          },
-        },
-      ],
+      content: [{ type: 'tool-result', toolCallId: 'b', output: { type: 'error-text' } }],
     });
   });
 
@@ -156,6 +148,7 @@ describe('acceptsTurn', () => {
 describe('firstMessageTitle', () => {
   it('cuts a long first message at a word', () => {
     expect(firstMessageTitle('   ')).toBe('New chat');
+    expect(firstMessageTitle('a'.repeat(50))).toBe(`${'a'.repeat(40)}…`);
     expect(firstMessageTitle('one two three four five six seven eight nine ten')).toBe(
       'one two three four five six seven eight…'
     );

@@ -37,7 +37,6 @@ export type RunnerConfig = {
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): RunnerConfig {
   const parsed = env.parse(source);
-  // Two processes sharing an executor id would both recover the same crashed runs and run them twice.
   if (parsed.NODE_ENV === 'production' && !parsed.RUNNER_EXECUTOR_ID) {
     throw new Error(
       'RUNNER_EXECUTOR_ID is required in production (a stable id per replica, e.g. the pod name)'

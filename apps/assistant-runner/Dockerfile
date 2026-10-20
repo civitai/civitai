@@ -1,7 +1,7 @@
 # assistant-runner (apps/assistant-runner) — Fastify + DBOS Node service, built from the pnpm monorepo.
 # Mirrors apps/orchestrator-gateway/Dockerfile (multi-stage node:22-alpine, corepack pnpm, filtered
-# frozen install, tsup build, `pnpm deploy --prod` runtime). It imports no Prisma client, so the
-# install skips the root's `db:generate`.
+# frozen install, tsup build, `pnpm deploy --prod` runtime). `--ignore-scripts` skips the root's
+# `db:generate`; safe because this app imports no Prisma client.
 #
 # Build with the REPO ROOT as the context, pointing at this file:
 #   docker build -f apps/assistant-runner/Dockerfile -t civitai-assistant-runner .

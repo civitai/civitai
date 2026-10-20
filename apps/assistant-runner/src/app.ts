@@ -141,6 +141,20 @@ export function buildApp(options: AppOptions): FastifyInstance {
     for (const stream of streams) stream.abort();
   });
 
+  app.setErrorHandler((error, request, reply) => {
+    const status = (error as { statusCode?: number }).statusCode;
+    // Fastify's own refusals (a body that is not JSON, or too large): asking again would not help.
+    if (status !== undefined && status >= 400 && status < 500)
+      return refuse(reply, 'bad-request', 'The request is not one this runner reads.');
+    request.log.error({ err: error }, 'request failed');
+    const body: RunErrorResponse = {
+      v: 1,
+      error: 'unavailable',
+      message: 'The runner could not do that just now.',
+    };
+    return reply.code(503).send(body);
+  });
+
   app.get('/healthz', async () => ({ ok: true }));
   app.get('/readyz', async (_request, reply) =>
     service.ready() ? { ok: true } : reply.code(503).send({ ok: false })
@@ -150,6 +164,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
     const result = await authenticator.authenticate(request.headers);
     if (!result.ok)
       return refuse(reply, result.status === 403 ? 'refused' : 'unauthorized', result.message);
+    // An empty id would put every such viewer in one namespace, able to see and stop each other's runs.
+    if (typeof result.userId !== 'string' || !result.userId)
+      return refuse(reply, 'unauthorized', 'Sign in.');
     request.userId = result.userId;
   };
 

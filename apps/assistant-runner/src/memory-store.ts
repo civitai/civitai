@@ -2,7 +2,7 @@ import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 
 import type { ConversationStore } from './interfaces';
 
-/** A conversation store in this process's memory, for tests and local runs. Lost on exit. */
+/** A conversation store in this process's memory, for tests. Lost on exit. */
 export class MemoryConversationStore implements ConversationStore {
   readonly heads = new Map<string, StoredConversationMetadata>();
 

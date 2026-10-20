@@ -39,7 +39,6 @@ import {
   startTurn,
   withEnd,
   withPatch,
-  withProgress,
   type EndedReply,
 } from './head';
 import type {
@@ -49,6 +48,7 @@ import type {
   OpenTools,
   ToolProvider,
 } from './interfaces';
+import { ProgressWriter, runAfterSaved } from './progress';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
 
@@ -68,6 +68,12 @@ const DONE = 'done';
  */
 export const WORKFLOW_VERSION = 'reply-1';
 
+/**
+ * How many times DBOS recovers one run after its process died. Each recovery asks the model for the
+ * step in flight again, so a run that kills its process every time must not loop; a deploy restart
+ * counts as one too.
+ */
+const MAX_RECOVERY_ATTEMPTS = 5;
 /** How long past its wall clock a run gets to write its own end before DBOS cancels it outright. */
 const HARD_TIMEOUT_GRACE_MS = 60_000;
 /** How often a pass checks whether its workflow was cancelled outright (the fallback Stop). */
@@ -76,6 +82,8 @@ const CANCEL_POLL_MS = 1000;
 const READ_WINDOW_SECONDS = 10;
 
 const ACTIVE = ['ENQUEUED', 'PENDING'] as const;
+/** How many times a start retries, 100 ms apart, while the user's previous run is finishing. */
+const ENQUEUE_ATTEMPTS = 20;
 
 /** A reply's workflow input. Persisted by DBOS: it must never carry a credential. */
 export interface ReplyInput {
@@ -141,6 +149,7 @@ export class Runner implements RunService {
   register(): void {
     this.#reply = DBOS.registerWorkflow((input: ReplyInput) => this.#workflow(input), {
       name: REPLY_WORKFLOW,
+      maxRecoveryAttempts: MAX_RECOVERY_ATTEMPTS,
     });
     this.#marker = DBOS.registerWorkflow(async () => true, { name: STOP_MARKER_WORKFLOW });
   }
@@ -155,7 +164,6 @@ export class Runner implements RunService {
       logLevel: options.logLevel ?? 'info',
     });
     await DBOS.launch();
-    // After launch: a queue registered before it is not persisted.
     await DBOS.registerQueue(REPLIES_QUEUE, {
       partitionConcurrency: 1,
       workerConcurrency: options.workerConcurrency,
@@ -175,27 +183,12 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  // ---------------------------------------------------------------------------------------------
-  // The run API
-
   async start(userId: string, request: StartRunRequest): Promise<StartOutcome> {
     const runId = runIdFor(userId, request.idempotencyKey);
-    const existing = await DBOS.getWorkflowStatus(runId);
-    if (existing) {
-      const attributes = runAttributes(existing);
-      return {
-        ok: true,
-        response: { v: 1, runId, conversationId: attributes.conversationId, seq: attributes.seq },
-      };
-    }
+    const existing = await this.#existingStart(userId, runId);
+    if (existing) return existing;
     const live = await this.#liveRun(userId);
-    if (live)
-      return {
-        ok: false,
-        error: 'run-active',
-        message: 'Another reply is still running.',
-        runId: live.workflowID,
-      };
+    if (live) return runActive(live.workflowID);
 
     const head = await this.#deps.store.load(userId, request.conversationId);
     if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
@@ -218,14 +211,30 @@ export class Runner implements RunService {
       ...(request.page ? { page: request.page } : {}),
       wallClockMs: this.#deps.wallClockMs,
     };
-    await DBOS.startWorkflow(this.#replyWorkflow(), {
-      workflowID: runId,
-      queueName: REPLIES_QUEUE,
-      enqueueOptions: { queuePartitionKey: userId },
-      authenticatedUser: userId,
-      workflowAttributes: { conversationId: request.conversationId, seq: request.turn.seq },
-      timeoutMS: this.#deps.wallClockMs + HARD_TIMEOUT_GRACE_MS,
-    })(input);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await DBOS.startWorkflow(this.#replyWorkflow(), {
+          workflowID: runId,
+          queueName: REPLIES_QUEUE,
+          // One queued or running reply per user, enforced by the queue itself: two starts racing
+          // past the check above cannot both enqueue. DBOS frees the id when the run ends.
+          enqueueOptions: { queuePartitionKey: userId, deduplicationID: userId },
+          authenticatedUser: userId,
+          workflowAttributes: { conversationId: request.conversationId, seq: request.turn.seq },
+          timeoutMS: this.#deps.wallClockMs + HARD_TIMEOUT_GRACE_MS,
+        })(input);
+        break;
+      } catch (error) {
+        if (!(error instanceof DBOSErrors.DBOSQueueDuplicatedError)) throw error;
+        // The same start racing itself landed first.
+        const same = await this.#existingStart(userId, runId);
+        if (same) return same;
+        // The user's previous run journaled its end and is finishing; its slot frees in a moment.
+        const live = await this.#liveRun(userId);
+        if (live || attempt >= ENQUEUE_ATTEMPTS) return runActive(live?.workflowID);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
     return {
       ok: true,
       response: { v: 1, runId, conversationId: request.conversationId, seq: request.turn.seq },
@@ -306,7 +315,7 @@ export class Runner implements RunService {
       workflowID: stopMarkerFor(runId),
       authenticatedUser: userId,
     })();
-    if (await DBOS.getWorkflowStatus(runId)) await this.#signalStop(runId);
+    if (await this.owns(userId, runId)) await this.#signalStop(runId);
   }
 
   async patch(
@@ -319,9 +328,6 @@ export class Runner implements RunService {
     );
     return head !== null;
   }
-
-  // ---------------------------------------------------------------------------------------------
-  // The reply workflow
 
   async #workflow(input: ReplyInput): Promise<ReplyOutput> {
     const begun = await DBOS.runStep(() => this.#begin(input), { name: 'begin' });
@@ -340,11 +346,13 @@ export class Runner implements RunService {
       },
       () => undefined
     );
-    const output = await pass;
-    // Wakes the wait above when no Stop came, so the workflow does not sit until its deadline.
-    await DBOS.send(input.runId, DONE, CONTROL);
-    await control.catch(() => null);
-    return output;
+    try {
+      return await pass;
+    } finally {
+      // Wakes the wait above when no Stop came, so the workflow does not sit until its deadline.
+      await DBOS.send(input.runId, DONE, CONTROL);
+      await control.catch(() => null);
+    }
   }
 
   async #begin(input: ReplyInput): Promise<Begun> {
@@ -497,7 +505,7 @@ export class Runner implements RunService {
             ...(input.page ? { page: input.page } : {}),
             signal: stop,
           });
-          return tools.tools;
+          return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
         request: (toolSet) => this.#request(input, head, toolSet),
         retrying: (attempt, trace) => {
@@ -589,7 +597,7 @@ export class Runner implements RunService {
         runId: input.runId,
         model: input.model,
       }),
-      // TODO(PR B): the App Assistant's own rules and gate, ported from the page.
+      // TODO: the App Assistant's own rules and gate, ported from the page.
       system: buildSystemPrompt({
         now: new Date(),
         ...(settings.customInstructions ? { customInstructions: settings.customInstructions } : {}),
@@ -698,6 +706,14 @@ export class Runner implements RunService {
     return undefined;
   }
 
+  /** The answer to a start whose run already exists (a retried start): `undefined` when it does not. */
+  async #existingStart(userId: string, runId: string): Promise<StartOutcome | undefined> {
+    const existing = await DBOS.getWorkflowStatus(runId);
+    if (!existing || existing.authenticatedUser !== userId) return undefined;
+    const { conversationId, seq } = runAttributes(existing);
+    return { ok: true, response: { v: 1, runId, conversationId, seq } };
+  }
+
   #replyWorkflow(): (input: ReplyInput) => Promise<ReplyOutput> {
     if (!this.#reply) throw new Error('runner workflows are not registered');
     return this.#reply;
@@ -709,56 +725,13 @@ export class Runner implements RunService {
   }
 }
 
-/**
- * Saves a reply's progress to the head one save at a time: progress that comes in while a save is
- * on its way goes with the next one (only the latest matters), and the end goes after all of it.
- */
-class ProgressWriter {
-  #pending: ModelMessage[] | undefined;
-  #running: Promise<void> | undefined;
-
-  constructor(
-    private readonly store: ConversationStore,
-    private readonly userId: string,
-    private readonly conversationId: string,
-    private readonly seq: number,
-    private readonly log: Logger
-  ) {}
-
-  save(messages: ModelMessage[]): void {
-    this.#pending = messages;
-    this.#running ??= this.#drain();
-  }
-
-  async end(reply: EndedReply): Promise<void> {
-    this.#pending = undefined;
-    await this.#running;
-    await this.#write((head) => withEnd(head, this.seq, reply, new Date()));
-  }
-
-  async #drain(): Promise<void> {
-    while (this.#pending) {
-      const messages = this.#pending;
-      this.#pending = undefined;
-      await this.#write((head) => withProgress(head, this.seq, messages, new Date()));
-    }
-    this.#running = undefined;
-  }
-
-  async #write(
-    change: (head: StoredConversationMetadata) => StoredConversationMetadata
-  ): Promise<void> {
-    try {
-      await this.store.update(this.userId, this.conversationId, (head) =>
-        head ? change(head) : null
-      );
-    } catch (error) {
-      this.log.error(
-        { err: error, conversationId: this.conversationId, seq: this.seq },
-        'saving the reply to the head failed'
-      );
-    }
-  }
+function runActive(runId: string | undefined): StartOutcome {
+  return {
+    ok: false,
+    error: 'run-active',
+    message: 'Another reply is still running.',
+    ...(runId ? { runId } : {}),
+  };
 }
 
 function runAttributes(status: WorkflowStatus): { conversationId: string; seq: number } {

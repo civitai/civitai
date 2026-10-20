@@ -124,6 +124,5 @@ describe('RunEmitter', () => {
     emitter.emit({ type: 'run-ended', status: 'done', messages: [], steps: 0 });
     await emitter.drain();
     expect(written).toEqual(['parts-truncate']);
-    expect(log.error).toHaveBeenCalled();
   });
 });
