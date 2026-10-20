@@ -21,6 +21,8 @@ export type StorylineRailSegment<T extends RailChapter> = {
   joins: boolean;
   /** The current chapter's images, as indexes into the carousel's images. Empty on the others. */
   ticks: number[];
+  /** The map's lane for a path chapter off the main route, which colours it; null when plain. */
+  lane: number | null;
 };
 
 /**
@@ -33,6 +35,7 @@ export function buildStorylineRail<T extends RailChapter>({
   imageChapterIds,
   index,
   aheadKnown,
+  laneOf,
   window = STORYLINE_RAIL_WINDOW,
 }: {
   path: T[];
@@ -43,6 +46,8 @@ export function buildStorylineRail<T extends RailChapter>({
   index: number;
   /** Whether the canon line ahead has arrived. Until it has, the path's end is not marked as forking. */
   aheadKnown: boolean;
+  /** The lane of each path chapter off the main route, once known. The canon line ahead has none. */
+  laneOf?: ReadonlyMap<number, number>;
   window?: number;
 }) {
   const line = [
@@ -64,6 +69,7 @@ export function buildStorylineRail<T extends RailChapter>({
       leaves: (chapter.childCount ?? 0) > onward,
       joins: (chapter.joins?.length ?? 0) > 0,
       ticks: current ? ticks : [],
+      lane: kind === 'path' ? laneOf?.get(chapter.chapterId) ?? null : null,
     };
   });
 

@@ -1,8 +1,13 @@
 import { UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { useMemo } from 'react';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
-import { useStorylineCanonAhead } from '~/components/Storyline/storyline.queries';
+import {
+  useStorylineCanonAhead,
+  useStorylinePathLanes,
+} from '~/components/Storyline/storyline.queries';
+import { laneColor } from '~/components/Storyline/storyline-lane-map.utils';
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylineRailSegment } from '~/components/Storyline/storyline-rail.utils';
 import { buildStorylineRail } from '~/components/Storyline/storyline-rail.utils';
@@ -11,7 +16,9 @@ const STUB = 'pointer-events-none absolute bottom-1/2 h-2.5 w-0.5 bg-[var(--mant
 
 /**
  * Storyline-mode replacement for the carousel dots. Pink stubs mark where other paths leave or
- * join; they are marks only, since the map lists forks for the stops nearest the end alone.
+ * join; they are marks only, since the map lists forks for the stops nearest the end alone. A
+ * reader off the main route sees their path's chapters in the colour of the lane the map draws
+ * them in.
  */
 export function StorylineChapterRail({
   storyline,
@@ -29,6 +36,7 @@ export function StorylineChapterRail({
   const end = path.chapters[path.chapters.length - 1];
   const canonAhead = useStorylineCanonAhead(end?.chapterId, { enabled: true, forks: false });
   type RailLineChapter = (typeof path.chapters)[number] | (typeof canonAhead.ahead)[number];
+  const laneOf = useStorylinePathLanes(path.storyline.id, path.chapters);
   const rail = useMemo(
     () =>
       buildStorylineRail<RailLineChapter>({
@@ -37,8 +45,9 @@ export function StorylineChapterRail({
         imageChapterIds: images.map((image) => chapterIdOfImage(image.id)),
         index,
         aheadKnown: canonAhead.isSuccess,
+        laneOf,
       }),
-    [path.chapters, canonAhead.ahead, canonAhead.isSuccess, images, chapterIdOfImage, index]
+    [path.chapters, canonAhead.ahead, canonAhead.isSuccess, images, chapterIdOfImage, index, laneOf]
   );
   // jumpToChapter opens a chapter's first walked image, so a chapter with none cannot be jumped to.
   const readable = useMemo(
@@ -60,7 +69,7 @@ export function StorylineChapterRail({
     >
       {rail.clippedStart && <Ellipsis label="Earlier chapters not shown" />}
       {rail.segments.map((segment) => {
-        const { chapter, kind, current, leaves, joins, ticks } = segment;
+        const { chapter, kind, current, leaves, joins, ticks, lane } = segment;
         const label = railLabel(segment);
         return (
           <div
@@ -72,6 +81,7 @@ export function StorylineChapterRail({
             data-chapter-id={chapter.chapterId}
             data-kind={kind}
             data-current={current || undefined}
+            data-lane={lane ?? undefined}
           >
             {joins && (
               <span
@@ -86,6 +96,14 @@ export function StorylineChapterRail({
                 aria-label={label}
                 aria-current="step"
                 className="flex size-full items-center gap-0.5 rounded-full bg-white/15 px-1.5 ring-1 ring-white/40"
+                style={
+                  lane === null
+                    ? undefined
+                    : ({
+                        background: `color-mix(in srgb, ${laneColor(lane)} 30%, transparent)`,
+                        '--tw-ring-color': laneColor(lane),
+                      } as CSSProperties)
+                }
               >
                 {ticks.map((imageIndex, i) => (
                   <UnstyledButton
@@ -112,9 +130,15 @@ export function StorylineChapterRail({
                 <span
                   className={clsx(
                     'h-1 w-full rounded border border-solid border-gray-4 shadow-2xl',
-                    !chapter.post ? 'bg-gray-6' : 'bg-white',
+                    !chapter.post ? 'bg-gray-6' : lane === null && 'bg-white',
                     kind === 'ahead' ? 'opacity-30' : 'dark:opacity-60'
                   )}
+                  // A removed chapter keeps its plain grey, whatever lane it sat in.
+                  style={
+                    lane !== null && chapter.post
+                      ? { background: laneColor(lane), borderColor: laneColor(lane) }
+                      : undefined
+                  }
                 />
               </UnstyledButton>
             )}

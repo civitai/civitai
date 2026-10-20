@@ -2,6 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { getStorylinePathLanes } from '~/components/Storyline/storyline-lane-map.utils';
 import {
   canonAheadForkStops,
   getPathImagesPaging,
@@ -114,6 +115,20 @@ export function useStorylineGraph(id: number, options: { enabled: boolean }) {
     [query.data, hiddenUserIds]
   );
   return { data, isLoading: enabled && query.isLoading };
+}
+
+/**
+ * The map's lane for each chapter of the reader's path that is off the main route, for the rail to
+ * colour by. The graph is read only when some chapter is off the main route, so a reader on the
+ * main route (nearly every reader) makes no request for it. Until it arrives the lanes are empty.
+ */
+export function useStorylinePathLanes(
+  storylineId: number,
+  path: { chapterId: number; onMain: boolean }[]
+) {
+  const offMain = path.some((chapter) => !chapter.onMain);
+  const { data: graph } = useStorylineGraph(storylineId, { enabled: offMain });
+  return useMemo(() => getStorylinePathLanes(graph, path), [graph, path]);
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */

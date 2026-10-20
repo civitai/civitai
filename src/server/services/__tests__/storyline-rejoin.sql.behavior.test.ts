@@ -262,3 +262,52 @@ describe('getStorylineCanonAhead into a rejoin', () => {
     expect(joinsAt(ahead)).toEqual([[R, [12]]]);
   });
 });
+
+describe('getStorylinePath marks the owner’s main route', () => {
+  const onMain = (chapters: { chapterId: number; onMain: boolean }[]) =>
+    chapters.map((c) => [c.chapterId, c.onMain]);
+
+  it('flags the chapters on the canon route from chapter 1, and none of a branch', async () => {
+    const { chapters } = await read(AFTER_R, [24]);
+    expect(onMain(chapters)).toEqual([
+      [1, true],
+      [2, true],
+      [3, true],
+      // Branch B: 21 is reached by a non-canon link, and its own canon children inherit nothing.
+      [21, false],
+      [22, false],
+      [23, false],
+      [24, false],
+      // R is on the main route by A's end, however the reader came to it.
+      [R, true],
+      [AFTER_R, true],
+    ]);
+  });
+
+  it('agrees with the canon route the main path reads', async () => {
+    const mainRoute = [
+      1,
+      ...(
+        await getStorylineCanonAhead({
+          chapterId: 1,
+          viewer: undefined,
+          browsingLevel: NsfwLevel.PG,
+        })
+      ).map((c) => c.chapterId),
+    ];
+    expect(mainRoute).toEqual([1, 2, 3, 11, 12, R, AFTER_R]);
+    for (const via of [undefined, [24]]) {
+      const { chapters } = await read(AFTER_R, via);
+      expect(chapters.map((c) => c.onMain)).toEqual(
+        chapters.map((c) => mainRoute.includes(c.chapterId))
+      );
+    }
+  });
+
+  it('flags nothing for a storyline with no first chapter, rather than failing the read', async () => {
+    const found = await r.storyline.findUnique({ where: { id: 1 } } as never);
+    r.storyline.findUnique.mockResolvedValueOnce({ ...found, chapters: [] } as never);
+    const { chapters } = await read(3);
+    expect(chapters.map((c) => c.onMain)).toEqual([false, false, false]);
+  });
+});
