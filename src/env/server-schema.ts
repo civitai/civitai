@@ -1115,9 +1115,15 @@ export const serverSchema = z
     // signs the runner's viewer tokens and run grants with; the runner holds only its public half.
     // Unset, the runner endpoints answer 503.
     ASSISTANT_RUNNER_SIGNING_KEY: z.string().optional(),
-    // The secret the runner presents when it trades a run grant for a short-lived token. Unset or
-    // blank, that endpoint answers 503.
-    ASSISTANT_RUNNER_SECRET: z.string().optional(),
+    // The secret the runner presents when it trades a run grant for a short-lived token: at least 32
+    // characters. Unset or blank (a bare key in a ConfigMap arrives as ''), that endpoint answers
+    // 503; blank is accepted here so it cannot stop the app from booting.
+    ASSISTANT_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'ASSISTANT_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: z.coerce
       .number()

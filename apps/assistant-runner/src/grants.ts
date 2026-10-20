@@ -2,26 +2,16 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type pg from 'pg';
 
-import type { GrantStore, StoredGrant } from './interfaces';
+import type { EndedReply } from './head';
+import type { GrantStore, PendingEnd, StoredGrant } from './interfaces';
 
 /** The runner's own tables, apart from DBOS's `dbos` schema. */
 export const RUNNER_SCHEMA = 'assistant_runner';
 const TABLE = `"${RUNNER_SCHEMA}".run_grants`;
-/** DBOS's system schema, where it records each run's status (see `runner.ts`). */
-const DBOS_SCHEMA = 'dbos';
-const TERMINAL = ['SUCCESS', 'ERROR', 'CANCELLED', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED'];
 /**
- * How long a grant outlives its run's end. A run cancelled outright, or one that failed, gets its end
- * written to the head by whoever reads its stream next (`Runner#endFromHead`), which needs the grant.
- */
-const AFTER_END_MS = 15 * 60 * 1000;
-/** A grant saved for a start that never became a run (the start failed after saving it). */
-const ORPHAN_MS = 15 * 60 * 1000;
-
-/**
- * Run grants, one row per run, in the runner's database. Written when a run starts, deleted when it
- * ends by itself, and swept once expired or a while after its run ended any other way. What is here
- * mints only together with the runner's secret, and only until each grant's expiry.
+ * Run grants, one row per run, in the runner's database. Written when a run starts, deleted on every
+ * end path the runner owns once the end is in the head, and swept once expired. What is here mints
+ * only together with the runner's secret, and only until each grant's expiry.
  */
 export class RunGrants implements GrantStore {
   readonly #pool: pg.Pool;
@@ -42,7 +32,9 @@ export class RunGrants implements GrantStore {
            conversation_id text not null,
            grant_token text not null,
            expires_at timestamptz not null,
-           created_at timestamptz not null default now()
+           created_at timestamptz not null default now(),
+           pending_seq integer,
+           pending_end jsonb
          );
          create index if not exists run_grants_conversation on ${TABLE} (user_id, conversation_id, expires_at desc);`
       )
@@ -85,18 +77,45 @@ export class RunGrants implements GrantStore {
     return rows[0]?.grant_token ?? null;
   }
 
-  async sweep(): Promise<number> {
-    const now = Date.now();
-    const { rowCount } = await this.#pool.query(
-      `delete from ${TABLE} g
-       where g.expires_at <= now()
-          or exists (
-               select 1 from "${DBOS_SCHEMA}".workflow_status w
-               where w.workflow_uuid = g.run_id and w.status = any($1::text[]) and w.updated_at < $2)
-          or (g.created_at < now() - make_interval(secs => $3)
-              and not exists (select 1 from "${DBOS_SCHEMA}".workflow_status w where w.workflow_uuid = g.run_id))`,
-      [TERMINAL, now - AFTER_END_MS, ORPHAN_MS / 1000]
+  async forgetUnlessEndPending(runId: string): Promise<void> {
+    await this.#pool.query(`delete from ${TABLE} where run_id = $1 and pending_end is null`, [
+      runId,
+    ]);
+  }
+
+  async markEndPending(runId: string, seq: number, reply: EndedReply): Promise<void> {
+    await this.#pool.query(
+      `update ${TABLE} set pending_seq = $2, pending_end = $3 where run_id = $1`,
+      [runId, seq, JSON.stringify(reply)]
     );
+  }
+
+  async pendingEnds(): Promise<PendingEnd[]> {
+    const { rows } = await this.#pool.query<{
+      run_id: string;
+      user_id: string;
+      conversation_id: string;
+      pending_seq: number;
+      pending_end: EndedReply;
+    }>(
+      `select run_id, user_id, conversation_id, pending_seq, pending_end from ${TABLE}
+       where pending_end is not null and expires_at > now() order by created_at limit 100`
+    );
+    return rows.map((row) => ({
+      runId: row.run_id,
+      userId: row.user_id,
+      conversationId: row.conversation_id,
+      seq: row.pending_seq,
+      reply: row.pending_end,
+    }));
+  }
+
+  /**
+   * Deletes the grants that expired: they mint nothing any more. Every end path the runner owns
+   * deletes its run's grant itself (`Runner`), so this only catches what those missed.
+   */
+  async sweep(): Promise<number> {
+    const { rowCount } = await this.#pool.query(`delete from ${TABLE} where expires_at <= now()`);
     return rowCount ?? 0;
   }
 }

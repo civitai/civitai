@@ -36,8 +36,10 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
   key every request is refused (401).
 - **Run grants.** A start (`POST /runs`) also carries a **run grant** in `X-Run-Grant`: an ES256 JWT
   from `GET /api/apps/assistant/run-grant?conversationId=&idempotencyKey=` (a full-scope session and
-  App Assistant consent), bound to the viewer, the conversation and the start's idempotency key, for
-  about 2 h 10 min (`ASSISTANT_RUNNER_GRANT_TTL_SECONDS`). A start whose grant is missing, expired, of
+  App Assistant consent), naming the viewer, the conversation and the start's idempotency key, for
+  about 2 h 10 min (`ASSISTANT_RUNNER_GRANT_TTL_SECONDS`). The runner checks the conversation and key
+  when it starts the run (and the conversation at a patch); the tokens the grant mints are the
+  user's, user-wide, as the browser's are. A start whose grant is missing, expired, of
   another kind, or for another viewer, conversation or key is refused (403 `refused`). The page sets
   it per start from its `remoteRunner.fetch`, which sees the start's body. A
   `POST /conversations/<id>/patch` may carry a grant for that conversation (any key); without one it
@@ -47,9 +49,12 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
   the journal. Each model or store request trades the grant, with the runner's own secret, at
   civitai's internal mint endpoint for a 5-minute App Assistant token of the purpose it needs
   (`chat`), inside that request's own fetch, and keeps it in memory until a minute before it
-  expires. civitai re-checks the user's App Assistant consent on every mint, so turning the
-  assistant off stops a reply at its next request. A grant is deleted when its run ends by itself;
-  the maintenance sweep deletes expired ones and those of runs that ended any other way.
+  expires; a Stop stops waiting for a mint at once. On every mint civitai runs the same gates as the
+  browser's token route (ban, onboarding, mute, email verification, the App Assistant flag) on the
+  user as its database has them now, then the consent check, so any of them going off ends a reply at
+  its next request with a refusal that is never retried. A grant is deleted on every end the runner
+  writes to the head; an end it could not save after retries is kept with the grant and written by
+  the maintenance pass while the grant is live. The sweep deletes expired grants.
 - **The model** is orchestration's OpenAI-compatible `POST /v1/chat/completions`
   (`ORCHESTRATION_URL`), asked as the browser's App Assistant asks it: the chat package's provider
   name and options, the viewer's own `chat` token (so orchestration bills the viewer under the App
@@ -114,20 +119,20 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
 ## Threat model
 
 - **What each credential can do.** A viewer token reads and stops the viewer's own runs, and with
-  a grant starts one, for about 5 minutes. A run grant mints App Assistant tokens for one user, and
-  only together with the runner's secret, until it expires; it starts nothing by itself. A minted
+  a grant starts one, for about 5 minutes. A run grant mints user-wide App Assistant tokens for one
+  user, and only together with the runner's secret, until it expires; it starts nothing by itself. A minted
   token is the same 5-minute App Assistant token the browser gets today.
 - **The runner's database alone mints nothing**: it holds grants but not the runner's secret.
 - **The runner's secret alone mints nothing**: civitai mints only for a grant it signed.
 - **Database and secret together** mint, for live grants only, until each expires (2 h 10 min at
-  most), and only while the user's App Assistant consent stands; civitai rate-limits mints per grant.
+  most), and only while the user passes App Assistant's gates and consent.
 - **The runner cannot forge** a viewer token or a grant: it holds civitai's public key only. The two
   kinds have distinct `aud` and `typ`, so neither passes as the other.
 - **A cookie never reaches the runner as a credential**: it reads the `Authorization` and
   `X-Run-Grant` headers only, and logs neither.
-- **Revocation.** Revoking App Assistant's consent under connected apps stops every mint at once; a
-  run in flight ends at its next model or store request. A ban or the feature flag going off does not
-  (see the known gaps).
+- **Revocation.** Revoking App Assistant's consent, a ban, a mute, a lost email verification or the
+  feature flag going off stops every mint at once; a run in flight ends at its next model or store
+  request.
 
 
 ## Environment
@@ -176,7 +181,8 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 ## Not built yet
 
-- The real `ToolProvider`: the sandbox MCP tools (with `sandbox` tokens from the same grant), with
+- The real `ToolProvider`: the sandbox MCP tools (with `sandbox` tokens from the same grant, a purpose
+  B1 does not mint), with
   Stop closing the transport. Until then a configured runner gives a reply no tools.
 - The App Assistant gate on the server (`set_checklist`, `report_ready`, `create_app`, the tool-call
   cap) and its `tool-reported` events.
@@ -194,5 +200,3 @@ Known gaps:
   slot until DBOS's workflow timeout cancels it, or until the user stops it.
 - A run ends `ran_out` two minutes before its grant expires, if that comes before its wall clock (a
   run that waited long in the queue, or was recovered late), so it can still save its end.
-- A ban or a lost feature flag does not stop a run in flight: the mint endpoint re-checks consent
-  only, not the gates the grant endpoint checks.

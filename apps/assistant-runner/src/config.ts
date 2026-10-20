@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DEFAULT_CONTEXT_BUDGET_TOKENS, DEFAULT_MAX_STEPS } from './defaults';
+
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
@@ -38,7 +40,10 @@ const env = z.object({
    * run-API request is refused (401) and nothing below is used.
    */
   RUNNER_TOKEN_PUBLIC_KEY: z.string().optional(),
-  /** The runner's own secret, which civitai checks when the runner trades a grant for a token. */
+  /**
+   * The runner's own secret, which civitai checks when the runner trades a grant for a token: at
+   * least 32 characters (after trimming), as civitai requires of its copy.
+   */
   RUNNER_SECRET: z.string().optional(),
   /** civitai's base URL, where the runner trades grants for tokens. */
   CIVITAI_URL: z.url().optional(),
@@ -48,9 +53,13 @@ const env = z.object({
    * The most steps (paid model requests) one reply takes, as the page's `configureChat({ maxSteps })`.
    * App Assistant's page uses 1000.
    */
-  RUN_MAX_STEPS: z.coerce.number().int().min(2).max(1000).default(1000),
+  RUN_MAX_STEPS: z.coerce.number().int().min(2).max(1000).default(DEFAULT_MAX_STEPS),
   /** About how many tokens of earlier conversation a reply sends. App Assistant's page uses 64000. */
-  RUN_CONTEXT_BUDGET_TOKENS: z.coerce.number().int().positive().default(64_000),
+  RUN_CONTEXT_BUDGET_TOKENS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_CONTEXT_BUDGET_TOKENS),
   NODE_ENV: z.string().optional(),
 });
 
@@ -105,11 +114,16 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): RunnerConfi
   };
 }
 
+/** The shortest runner secret either side accepts. */
+export const MIN_SECRET_LENGTH = 32;
+
 function civitaiConfig(parsed: z.infer<typeof env>): CivitaiConfig | undefined {
   // A PEM pasted into one line of an env file carries its newlines as `\n`.
   const publicKey = parsed.RUNNER_TOKEN_PUBLIC_KEY?.trim().replace(/\\n/g, '\n');
   if (!publicKey) return undefined;
   const secret = parsed.RUNNER_SECRET?.trim();
+  if (secret && secret.length < MIN_SECRET_LENGTH)
+    throw new Error(`RUNNER_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
   const missing = [
     !secret && 'RUNNER_SECRET',
     !parsed.CIVITAI_URL && 'CIVITAI_URL',

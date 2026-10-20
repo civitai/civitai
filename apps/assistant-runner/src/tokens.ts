@@ -12,8 +12,10 @@ import type { Authenticator } from './interfaces';
  * neither. Each kind has its own `aud` and `typ`, so one is never accepted as the other.
  *
  * - The viewer token says who a run-API request acts for (`Authorization: Bearer`), about 5 minutes.
- * - The run grant lets the runner act for that viewer in one conversation for one run's life (about
- *   2 h 10 min): the runner trades it, with its own secret, for short-lived tokens at civitai.
+ * - The run grant lets the runner mint tokens for that viewer while it is live (about 2 h 10 min):
+ *   the runner trades it, with its own secret, for short-lived tokens at civitai. Those tokens are
+ *   the user's, user-wide, as the browser's are; the conversation and idempotency key it names are
+ *   checked by the runner at start (and the conversation at a patch), not by civitai's mint.
  */
 export const TOKEN_ISSUER = 'civitai';
 export const TOKEN_ALGORITHM = 'ES256';

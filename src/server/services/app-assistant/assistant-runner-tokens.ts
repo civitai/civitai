@@ -1,6 +1,7 @@
 import { createPrivateKey, createPublicKey, randomUUID, type KeyObject } from 'node:crypto';
 import { jwtVerify, SignJWT } from 'jose';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 
 /**
  * The credentials civitai signs for App Assistant's server runner (`apps/assistant-runner`), both
@@ -9,9 +10,10 @@ import { env } from '~/env/server';
  * the other. The runner's `src/tokens.ts` reads exactly these values.
  *
  * - A viewer token says who a run-API request acts for, for five minutes.
- * - A run grant lets the runner act for the viewer in one conversation, for one start (its
- *   idempotency key), for one run's life. The runner trades it, with its own secret, for
- *   five-minute tokens at `/api/internal/app-assistant/runner-token`.
+ * - A run grant lets the runner mint tokens for the viewer while it is live. The runner trades it,
+ *   with its own secret, for five-minute, user-wide App Assistant tokens at
+ *   `/api/internal/app-assistant/runner-token`. The conversation and idempotency key it names
+ *   (`cid`, `key`) are checked by the runner at start and patch; the mint does not read them.
  */
 export const ASSISTANT_RUNNER_ISSUER = 'civitai';
 export const RUNNER_VIEWER_AUDIENCE = 'assistant-runner:viewer';
@@ -22,25 +24,41 @@ export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
 const ALGORITHM = 'ES256';
 const CLOCK_SKEW_SECONDS = 30;
 
-let cached: { pem: string; privateKey: KeyObject; publicKey: KeyObject } | undefined;
+let cached:
+  | { pem: string; pair: { privateKey: KeyObject; publicKey: KeyObject } | null }
+  | undefined;
 
-/** The signing key pair, or `null` when none is configured. Read per call, so a changed env applies. */
+/**
+ * The signing key pair, or `null` when none is configured or the configured one is unusable. Read
+ * per call, so a changed env applies; parsed once per value, and an unusable value is logged once
+ * (never its contents) and answered as no key (503) from then on.
+ */
 function keys(): { privateKey: KeyObject; publicKey: KeyObject } | null {
   const pem = env.ASSISTANT_RUNNER_SIGNING_KEY?.trim().replace(/\\n/g, '\n');
   if (!pem) return null;
-  if (cached?.pem !== pem) {
-    try {
-      const privateKey = createPrivateKey(pem);
-      // ES256 signs with P-256 only: any other key would parse here and fail at the first signature.
-      const curve = privateKey.asymmetricKeyDetails?.namedCurve;
-      if (privateKey.asymmetricKeyType !== 'ec' || curve !== 'prime256v1') return null;
-      cached = { pem, privateKey, publicKey: createPublicKey(privateKey) };
-    } catch {
-      // A key that does not parse is no key: the endpoints answer 503, as when it is unset.
-      return null;
-    }
+  if (cached?.pem !== pem) cached = { pem, pair: parse(pem) };
+  return cached.pair;
+}
+
+function parse(pem: string): { privateKey: KeyObject; publicKey: KeyObject } | null {
+  let reason: string;
+  try {
+    const privateKey = createPrivateKey(pem);
+    // ES256 signs with P-256 only: any other key would parse here and fail at the first signature.
+    const curve = privateKey.asymmetricKeyDetails?.namedCurve;
+    if (privateKey.asymmetricKeyType === 'ec' && curve === 'prime256v1')
+      return { privateKey, publicKey: createPublicKey(privateKey) };
+    reason = `a ${privateKey.asymmetricKeyType ?? 'unknown'} key${
+      curve ? ` on ${curve}` : ''
+    }, not EC P-256`;
+  } catch {
+    reason = 'not a private key in PEM';
   }
-  return cached;
+  logToAxiom({
+    type: 'app-assistant.runner-signing-key.unusable',
+    message: `ASSISTANT_RUNNER_SIGNING_KEY is unusable (${reason}); the runner endpoints answer 503`,
+  }).catch(() => undefined);
+  return null;
 }
 
 export function isAssistantRunnerConfigured(): boolean {

@@ -4,9 +4,9 @@ import type { Logger } from './interfaces';
 
 /**
  * What a minted token is for, as civitai's `AppAssistantTokenPurpose`: `chat` spends Buzz through
- * orchestration (model calls and the conversation store); `sandbox` only identifies the user.
+ * orchestration (model calls and the conversation store). The sandbox tools (B2) add `sandbox`.
  */
-export type TokenPurpose = 'chat' | 'sandbox';
+export type TokenPurpose = 'chat';
 
 /** The civitai endpoint the runner trades a grant at, relative to `CIVITAI_URL`. */
 export const MINT_PATH = 'api/internal/app-assistant/runner-token';
@@ -16,11 +16,15 @@ const MINT_TIMEOUT_MS = 15_000;
 /** The most tokens kept in memory; past it, expired ones are dropped first, then the oldest. */
 const MAX_CACHED = 5_000;
 
-/** Why civitai would not mint: the user turned the assistant off, or the grant is no longer good. */
+/**
+ * Why civitai would not mint. `refused` (a gate refused the user: banned, restricted, the feature
+ * off) and `consent_required` (they turned the assistant off) end the reply for good;
+ * `invalid_grant` too; only `unavailable` is worth asking again.
+ */
 export class MintRefusedError extends Error {
   override name = 'MintRefusedError';
   constructor(
-    readonly code: 'consent_required' | 'invalid_grant' | 'rate_limited' | 'unavailable',
+    readonly code: 'refused' | 'consent_required' | 'invalid_grant' | 'unavailable',
     message: string,
     readonly status: number
   ) {
@@ -56,7 +60,15 @@ export class TokenMinter {
     this.#options = options;
   }
 
-  async token(grant: string, purpose: TokenPurpose, { fresh = false } = {}): Promise<string> {
+  /**
+   * `signal` ends this caller's wait (a Stop), not the mint itself, which other callers for the same
+   * grant may share and which its own timeout bounds.
+   */
+  async token(
+    grant: string,
+    purpose: TokenPurpose,
+    { fresh = false, signal }: { fresh?: boolean; signal?: AbortSignal } = {}
+  ): Promise<string> {
     const key = `${purpose}:${createHash('sha256').update(grant).digest('base64url')}`;
     const now = this.#now();
     const hit = this.#cache.get(key);
@@ -67,7 +79,7 @@ export class TokenMinter {
       pending = this.#mint(grant, purpose, key).finally(() => this.#inflight.delete(key));
       this.#inflight.set(key, pending);
     }
-    return pending;
+    return signal ? untilAborted(pending, signal) : pending;
   }
 
   async #mint(grant: string, purpose: TokenPurpose, key: string): Promise<string> {
@@ -90,6 +102,7 @@ export class TokenMinter {
       token?: unknown;
       expiresAt?: unknown;
       code?: unknown;
+      error?: unknown;
     } | null;
     if (!response.ok || typeof body?.token !== 'string') {
       if (body?.code === 'consent_required') {
@@ -108,9 +121,18 @@ export class TokenMinter {
           401
         );
       }
-      if (response.status === 429) {
-        log.warn({ purpose }, 'civitai refused to mint: too many for this grant');
-        throw new MintRefusedError('rate_limited', 'This reply asked for too many tokens.', 429);
+      if (body?.code === 'refused') {
+        log.warn(
+          { purpose, status: response.status },
+          'civitai refused to mint: the user is refused'
+        );
+        throw new MintRefusedError(
+          'refused',
+          typeof body.error === 'string' && body.error
+            ? body.error
+            : 'App Assistant is not available on this account.',
+          403
+        );
       }
       // A 401 or 403 with neither code is civitai refusing the runner itself (its secret): a
       // deployment fault, not the user's, so it is logged as one.
@@ -145,5 +167,30 @@ export class TokenMinter {
   }
 }
 
-/** Where a provider gets a token of a purpose; `fresh` skips the cached one (after a 401). */
-export type TokenSource = (purpose: TokenPurpose, options?: { fresh?: boolean }) => Promise<string>;
+/**
+ * Where a provider gets a token of a purpose; `fresh` skips the cached one (after a 401), `signal`
+ * stops waiting for it.
+ */
+export type TokenSource = (
+  purpose: TokenPurpose,
+  options?: { fresh?: boolean; signal?: AbortSignal }
+) => Promise<string>;
+
+/** `promise`, or a rejection as soon as `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}

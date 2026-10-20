@@ -37,8 +37,15 @@ const grants = new RunGrants(pool);
  * looks up grants on the pool above, so sharing one pool could leave every connection held by a
  * lock owner waiting for another. A waiter that gets no connection in time fails, not hangs.
  */
+// Sized to the runs one process works on (each has at most one save in flight, plus a patch now
+// and then), within 8 to 32. A lock is held for one read and at most three writes to orchestration,
+// never across a mint (the store mints before it locks).
 const lockPool = createPool(
-  { connectionString: config.databaseUrl, max: 16, connectionTimeoutMillis: 60_000 },
+  {
+    connectionString: config.databaseUrl,
+    max: Math.min(32, Math.max(8, config.workerConcurrency)),
+    connectionTimeoutMillis: 60_000,
+  },
   'runner-locks'
 );
 

@@ -87,26 +87,34 @@ export class OrchestrationConversationStore implements ConversationStore {
   }
 
   async load(userId: string, conversationId: string): Promise<StoredConversationMetadata | null> {
-    return (await this.#head(userId, conversationId))?.metadata ?? null;
+    return (
+      (await this.#head(this.#options.tokens(userId, conversationId), conversationId))?.metadata ??
+      null
+    );
   }
 
-  update(
+  async update(
     userId: string,
     conversationId: string,
     change: (head: StoredConversationMetadata | null) => StoredConversationMetadata | null
   ): Promise<StoredConversationMetadata | null> {
+    const source = this.#options.tokens(userId, conversationId);
+    // Minted before the lock is taken, so a lock (and its connection) is never held across a mint;
+    // only a fresh token after an orchestration 401 is minted under it.
+    const token = await source('chat');
+    const tokens: TokenSource = (purpose, options) =>
+      options?.fresh ? source(purpose, options) : Promise.resolve(token);
     return this.#options.lock.run(`cvt-head:${userId}:${conversationId}`, async () => {
-      const head = await this.#head(userId, conversationId);
+      const head = await this.#head(tokens, conversationId);
       const next = change(head ? structuredClone(head.metadata) : null);
       if (!next) return head?.metadata ?? null;
-      await this.#write(userId, conversationId, head, next);
+      await this.#write(tokens, conversationId, head, next);
       return next;
     });
   }
 
-  async #head(userId: string, conversationId: string): Promise<Head | undefined> {
-    const { orchestration, tokens } = this.#options;
-    const page = await orchestration.queryWorkflows(tokens(userId, conversationId), {
+  async #head(tokens: TokenSource, conversationId: string): Promise<Head | undefined> {
+    const page = await this.#options.orchestration.queryWorkflows(tokens, {
       tags: [APP_TAG, HEAD_TAG, conversationTag(conversationId)],
       take: 5,
     });
@@ -114,13 +122,12 @@ export class OrchestrationConversationStore implements ConversationStore {
   }
 
   async #write(
-    userId: string,
+    tokens: TokenSource,
     conversationId: string,
     head: Head | undefined,
     next: StoredConversationMetadata
   ): Promise<void> {
-    const { orchestration, tokens: tokensFor, log } = this.#options;
-    const tokens = tokensFor(userId, conversationId);
+    const { orchestration, log } = this.#options;
     const seq = lastSeq(next);
     if (head && lastSeq(head.metadata) >= seq) {
       await orchestration.updateWorkflow(tokens, head.workflowId, { metadata: next });

@@ -50,17 +50,18 @@ export interface AppAssistantRefusal {
 
 type GateContext = { user: SessionUser; req?: NextApiRequest | IncomingMessage };
 
-/** The `guardedProcedure` gates, then the feature gate. */
-export async function getAppAssistantRefusal({
-  user,
-  req,
-}: GateContext): Promise<AppAssistantRefusal | null> {
+/** What the account gates read: the fields `guardedProcedure` checks. */
+type GatedAccount = Pick<SessionUser, 'bannedAt' | 'onboarding' | 'muted'> &
+  Parameters<typeof requiresEmailVerification>[0];
+
+/** The account gates `guardedProcedure` applies, as one predicate both entry points share. */
+function accountRefusal(user: GatedAccount): AppAssistantRefusal | null {
   if (user.bannedAt)
     return {
       status: 403,
       error: 'You cannot perform this action because your account has been banned',
     };
-  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz))
+  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz))
     return {
       status: 403,
       error: 'You must complete the onboarding process before performing this action',
@@ -72,10 +73,60 @@ export async function getAppAssistantRefusal({
     };
   if (requiresEmailVerification(user))
     return { status: 403, error: 'Verify your email address to do this' };
-  const features = await getFeatureFlagsAsync({ user, req });
-  if (!canAccessAppAssistant(features))
-    return { status: 403, error: 'App Assistant is not available on this account' };
   return null;
+}
+
+/** The feature gate: App Assistant is on for this user. */
+async function featureRefusal(ctx: GateContext): Promise<AppAssistantRefusal | null> {
+  const features = await getFeatureFlagsAsync(ctx);
+  return canAccessAppAssistant(features)
+    ? null
+    : { status: 403, error: 'App Assistant is not available on this account' };
+}
+
+/** The `guardedProcedure` gates, then the feature gate, for a signed-in session's user. */
+export async function getAppAssistantRefusal({
+  user,
+  req,
+}: GateContext): Promise<AppAssistantRefusal | null> {
+  return accountRefusal(user) ?? (await featureRefusal({ user, req }));
+}
+
+/**
+ * The same gates for a user known only by id (the server runner's mints, which have no session):
+ * the gated fields are read fresh from the primary database on every call, never from a cached
+ * session, so a ban, a mute or a lost email verification stops the next mint.
+ *
+ * The feature gate is evaluated with no request. The flags it reads (`appBlocks`, `appAssistant`)
+ * carry no region or host restriction, so a request would only add the runner's own host and
+ * region, which say nothing about the user; without one they are evaluated as for the user on
+ * civitai.com. Flipt's targeting attributes that only the session carries (tier, early-adopter,
+ * granted permissions) come from the session cache when it has the user; every refusal field above
+ * comes from the database and wins.
+ */
+export async function getAppAssistantRefusalForUserId(
+  userId: number
+): Promise<AppAssistantRefusal | null> {
+  const row = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      bannedAt: true,
+      onboarding: true,
+      muted: true,
+      emailVerified: true,
+      meta: true,
+      isModerator: true,
+    },
+  });
+  if (!row) return { status: 403, error: 'App Assistant is not available on this account' };
+  const refused = accountRefusal(row);
+  if (refused) return refused;
+  // Imported here, not at the top: the session client is built at module load, and only this path needs it.
+  const { sessionClient } = await import('~/server/auth/session-client');
+  const cached = await sessionClient.getSessionUserById(userId).catch(() => null);
+  const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
+  return featureRefusal({ user });
 }
 
 export interface AppAssistantToken {

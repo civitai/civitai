@@ -36,7 +36,11 @@ export class OrchestrationModels implements ModelProvider {
     const freeTier = new FreeTier(() => orchestration.getFreeTier(tokens));
     const tier = context.tier;
     return createAssistantModel(
-      { getToken: ({ fresh } = {}) => tokens('chat', { fresh }) },
+      // A Stop stops waiting for a mint at once, rather than after its timeout.
+      {
+        getToken: ({ fresh } = {}) =>
+          tokens('chat', { fresh, ...(context.signal ? { signal: context.signal } : {}) }),
+      },
       {
         baseUrl,
         model: context.model,
@@ -62,8 +66,13 @@ export function refusalsAsAnswers(inner: typeof fetch): typeof fetch {
       return await inner(input, init);
     } catch (error) {
       if (!(error instanceof MintRefusedError)) throw error;
+      // Refused and consent_required end the reply for good, as invalid_grant does: never retried.
       const status =
-        error.code === 'unavailable' ? 503 : error.code === 'consent_required' ? 403 : 400;
+        error.code === 'unavailable'
+          ? 503
+          : error.code === 'consent_required' || error.code === 'refused'
+          ? 403
+          : 400;
       return Response.json({ error: { message: error.message, code: error.code } }, { status });
     }
   };

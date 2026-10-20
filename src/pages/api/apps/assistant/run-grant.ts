@@ -18,9 +18,12 @@ const query = z.object({
 
 /**
  * A run grant for App Assistant's server runner: the page asks for one as it starts a reply there,
- * and sends it with the start (`X-Run-Grant`). It lets the runner act for the user in that one
- * conversation, for that one start, for one run's life, so the reply keeps going after the page
- * closes. Needs a full-scope session, as the token route does, and the user's App Assistant consent.
+ * and sends it with the start (`X-Run-Grant`), so the reply keeps going after the page closes. While
+ * it is live (`ASSISTANT_RUNNER_GRANT_TTL_SECONDS`), the runner can trade it for App Assistant tokens
+ * for the user: those tokens are user-wide, as the browser's are. The conversation and idempotency
+ * key it names are checked by the runner when it starts the run (the conversation also when it
+ * writes a patch), not by the mint. Needs a full-scope session, as the token route does, the App
+ * Assistant gates, and the user's App Assistant consent.
  *
  *   GET ?conversationId=&idempotencyKey= → `{ grant, expiresAt }`, or 403 `consent_required`
  */

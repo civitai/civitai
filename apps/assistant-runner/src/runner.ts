@@ -234,6 +234,7 @@ export class Runner implements RunService {
     const run = async (cleanup: boolean) => {
       try {
         await this.sweepStranded();
+        await this.repairPendingEnds();
         if (cleanup) {
           await this.cleanup(options.retentionMs);
           await this.#deps.grants.sweep();
@@ -294,12 +295,13 @@ export class Runner implements RunService {
     );
     for (const run of stranded) {
       await DBOS.cancelWorkflow(run.workflowID);
-      await this.#endTurnOnce(run, (turn) => ({
+      const turn = await this.#endTurnOnce(run, (turn) => ({
         messages: shownMessages(turn),
         status: 'error',
         error: INTERRUPTED_BY_UPDATE,
         errorKind: INTERRUPTED,
       }));
+      if (turn && hasEnded(turn)) await this.#forgetGrant(run.workflowID);
       this.#deps.log.warn(
         { runId: run.workflowID, version: run.applicationVersion },
         'ended a run left on another workflow version'
@@ -525,14 +527,49 @@ export class Runner implements RunService {
       await DBOS.send(input.runId, DONE, CONTROL);
       await control.catch(() => null);
     }
-    // The reply saved its own end: nothing of this run needs to act for the viewer any more. A run
-    // that ends any other way keeps its grant until the sweep, so whoever writes its end can.
+    // The reply saved its own end: nothing of this run needs to act for the viewer any more. An end
+    // that could not be saved keeps the grant (`markEndPending`) until `repairPendingEnds` writes it.
     await this.#deps.grants
-      .delete(input.runId)
+      .forgetUnlessEndPending(input.runId)
       .catch((error) =>
         this.#deps.log.warn({ err: error, runId: input.runId }, 'forgetting a run grant failed')
       );
     return output;
+  }
+
+  /** Deletes a run's grant once its end is in the head; a failure only leaves it to expire. */
+  async #forgetGrant(runId: string): Promise<void> {
+    await this.#deps.grants
+      .delete(runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId }, 'forgetting a run grant failed')
+      );
+  }
+
+  /**
+   * Writes the ends that runs journaled but could not save to the head (`markEndPending`), while
+   * their grants are live, and then forgets those grants. Returns how many it wrote. Safe on every
+   * replica: a head that already has the end is left as it is.
+   */
+  async repairPendingEnds(): Promise<number> {
+    let repaired = 0;
+    for (const pending of await this.#deps.grants.pendingEnds()) {
+      try {
+        await this.#deps.store.update(pending.userId, pending.conversationId, (current) => {
+          const turn = savedTurn(current, pending.seq);
+          if (!current || !turn || hasEnded(turn)) return null;
+          return withEnd(current, pending.seq, pending.reply, new Date());
+        });
+        await this.#forgetGrant(pending.runId);
+        repaired++;
+      } catch (error) {
+        this.#deps.log.warn(
+          { err: error, runId: pending.runId },
+          'writing a pending reply end to the head failed'
+        );
+      }
+    }
+    return repaired;
   }
 
   async #begin(input: ReplyInput): Promise<Begun> {
@@ -631,7 +668,13 @@ export class Runner implements RunService {
       reply: EndedReply,
       outcome: Partial<AgentCoreOutcome> = {}
     ): Promise<ReplyOutput> => {
-      await progress.end(reply);
+      // An end that could not be saved after its retries is kept with the grant, so it lands later.
+      if (!(await progress.end(reply)))
+        await this.#deps.grants
+          .markEndPending(runId, seq, reply)
+          .catch((error) =>
+            log.error({ err: error, runId }, 'keeping a reply end to save later failed')
+          );
       emitter.flushParts();
       const steps = outcome.resume?.steps ?? outcome.steps ?? countSteps(reply.messages);
       emitter.emit({
@@ -694,7 +737,7 @@ export class Runner implements RunService {
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet),
+        request: (toolSet) => this.#request(input, head, toolSet, stop),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -761,7 +804,8 @@ export class Runner implements RunService {
   #request(
     input: ReplyInput,
     head: StoredConversationMetadata | null,
-    tools: ToolSet
+    tools: ToolSet,
+    signal: AbortSignal
   ): AgentCoreRequest {
     const { settings } = input;
     const earlier = (head?.turns ?? [])
@@ -785,6 +829,7 @@ export class Runner implements RunService {
         conversationId: input.conversationId,
         model: input.model,
         tier: settings.tier,
+        signal,
       }),
       // TODO: the App Assistant's own rules and gate, ported from the page.
       system: buildSystemPrompt({
@@ -820,10 +865,11 @@ export class Runner implements RunService {
       if (length > 0 && (await this.#eventAt(runId, length - 1))?.type === 'run-ended') return;
       this.#deps.log.warn({ runId }, 'stop did not land in time; cancelling the run');
       await DBOS.cancelWorkflow(runId);
-      await this.#endTurnOnce(status, (turn) => ({
+      const turn = await this.#endTurnOnce(status, (turn) => ({
         messages: shownMessages(turn),
         status: 'aborted',
       }));
+      if (turn && hasEnded(turn)) await this.#forgetGrant(runId);
     } catch (error) {
       this.#deps.log.error({ err: error, runId }, 'forcing a stop failed');
     }
@@ -887,7 +933,10 @@ export class Runner implements RunService {
       this.#deps.log.warn({ err: error, runId }, 'writing the end of a run to the head failed');
       return undefined;
     });
-    if (turn && hasEnded(turn)) return endedEvent(turn);
+    if (turn && hasEnded(turn)) {
+      await this.#forgetGrant(runId);
+      return endedEvent(turn);
+    }
     return {
       type: 'run-ended',
       status: status.status === 'CANCELLED' ? 'stopped' : 'error',
