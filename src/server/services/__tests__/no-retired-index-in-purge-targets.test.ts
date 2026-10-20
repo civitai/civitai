@@ -92,6 +92,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const PURGE_FILE = 'src/server/meilisearch/util.ts';
 const ATTR_FILE = 'src/server/search-index/filterable-attributes.ts';
 const INDEX_DIR = 'src/server/search-index';
+const RETIRED_FILE = 'src/server/search-index/retired-indexes.ts';
 
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 
@@ -420,11 +421,26 @@ for (const entry of readdirSync(path.join(REPO_ROOT, INDEX_DIR))) {
   if (m) (processorsByConst[m[1]] ??= []).push(rel);
 }
 
-/** `retired: true` on the processor config — the state, not the word appearing somewhere. */
+/** Index constants listed in `RETIRED_SEARCH_INDEXES`, the list processors read `retired` from. */
+const retiredList = new Set(
+  read(RETIRED_FILE)
+    .match(/RETIRED_SEARCH_INDEXES[^=]*=\s*\[([^\]]*)\]/)?.[1]
+    .match(/[A-Z][A-Z0-9_]*/g) ?? []
+);
+
+/**
+ * The processor config is retired — the state, not the word appearing somewhere: either
+ * `retired: true`, or `retired: isRetiredSearchIndex(INDEX_ID)` with its index on the list.
+ */
 const isRetired = (constName: string) =>
-  (processorsByConst[constName] ?? []).some((rel) =>
-    /^\s*retired:\s*true\s*,?\s*$/m.test(read(rel))
-  );
+  (processorsByConst[constName] ?? []).some((rel) => {
+    const text = read(rel);
+    return (
+      /^\s*retired:\s*true\s*,?\s*$/m.test(text) ||
+      (/^\s*retired:\s*isRetiredSearchIndex\(INDEX_ID\)\s*,?\s*$/m.test(text) &&
+        retiredList.has(constName))
+    );
+  });
 
 /**
  * Declared filterable attributes for an index constant: the `filterableAttributesByIndex` map

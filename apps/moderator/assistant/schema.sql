@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS assistant_turn (
     CHECK (status IN ('running', 'done', 'error', 'capped'))
 );
 
+-- Added after the table shipped, so an ALTER rather than a column above: re-running this file adds it
+-- to an existing table. The model's reasoning for the turn, every round in order, shown collapsed
+-- beside the answer. Null when the model returned none.
+ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS reasoning text;
+
 CREATE INDEX IF NOT EXISTS assistant_turn_chat_idx ON assistant_turn (chat_id, id);
 -- One answer in flight per MODERATOR. The daily token cap is checked before a turn starts, so
 -- concurrent turns would each pass it; one at a time bounds the overshoot to one model call. (It also

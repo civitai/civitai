@@ -21,7 +21,6 @@ import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
-import type { StorylineCoverImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
@@ -36,9 +35,6 @@ import {
   getStorylineChapterName,
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
-
-/** A way on from a chapter, with its first image once the reads carry it. */
-type ForkChild = StorylineChild & { firstImage?: StorylineCoverImage | null };
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -55,9 +51,8 @@ export function openStorylineEarlyAccess({
 }
 
 /**
- * The fork point at the end of a chapter. The first child is the main path and gets the lead
- * card with the Read action; the order is the server's (canon, endorsed collaborators, then by
- * readers). Writing a continuation sits below reading.
+ * The fork point at the end of a chapter. The first child is the main path and gets the lead card;
+ * the order is the server's (canon, endorsed collaborators, then by readers).
  */
 export function StorylineEndOfChapter({
   chapterId,
@@ -81,7 +76,6 @@ export function StorylineEndOfChapter({
   parentPostId?: number;
   /** The reader made this storyline: they add chapters directly, never by continuing it. */
   isOwner?: boolean;
-  /** 'section' renders inline in a page instead of covering the viewer's stage. */
   layout?: 'overlay' | 'section';
 }) {
   const { data: children, isLoading } = useStorylineChildren(chapterId);
@@ -97,7 +91,7 @@ export function StorylineEndOfChapter({
   const [main, ...others] = (children ?? []).map((child) => ({
     ...child,
     depth: chapterDepth + 1,
-  })) as ForkChild[];
+  })) as StorylineChild[];
   const ended = !children?.length && !isLoading;
 
   return (
@@ -233,7 +227,7 @@ function ShareBar({ percent, hidden }: { percent: number; hidden?: boolean }) {
   );
 }
 
-/** Who wrote it; the chapter number too when the title does not already say it. */
+/** Author, plus the chapter number unless an untitled chapter's name already is it. */
 function byline(child: StorylineChild) {
   const author = child.post?.username ? `by ${child.post.username}` : '';
   if (child.post && !child.post.title) return author;
@@ -255,7 +249,7 @@ function LeadFork({
   shares,
   onContinue,
 }: {
-  child: ForkChild;
+  child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
@@ -350,7 +344,7 @@ function OtherFork({
   shares,
   onContinue,
 }: {
-  child: ForkChild;
+  child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
 }) {
@@ -409,8 +403,8 @@ function OtherFork({
 }
 
 /**
- * The whole card opens the way on, under the image's own blur toggle. A hidden chapter opens too:
- * the story can go on past it, and the reader steps through it as before.
+ * The whole card opens the way on, under the image's own blur toggle. A hidden chapter opens too,
+ * so the story can go on past it.
  */
 function ForkOpener({
   child,
@@ -452,7 +446,6 @@ const closedCopy = {
   collaboratorsOnly: 'Collaborators only',
 } as const;
 
-/** Submit a post the reader already made as the next chapter, through the storyline's review. */
 export function StorylineContinueWithPost({ parentPostId }: { parentPostId: number }) {
   const terms = useStorylineContinueTerms(parentPostId);
   if (!terms) return null;

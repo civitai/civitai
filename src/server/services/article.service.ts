@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -38,6 +39,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -839,10 +841,10 @@ export const upsertArticle = async ({
   try {
     const officialTag = await getOfficialArticleTag();
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
-    await throwOnBlockedUserContent([data.title, data.content], {
-      isModerator,
-      surface: 'article',
-    });
+    await throwOnBlockedUserContent(
+      [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+      { isModerator, surface: 'article' }
+    );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level
@@ -1040,6 +1042,7 @@ export const upsertArticle = async ({
             articleId: result.id,
             content: result.content,
             userId,
+            ownerId: result.userId,
             coverId: result.coverId,
           });
 
@@ -1459,6 +1462,7 @@ export async function applyArticleContentChange({
           articleId: id,
           content,
           userId,
+          ownerId,
           coverId,
           cleanupOnly: !scanContent,
         });
@@ -1554,6 +1558,82 @@ export async function applyArticleContentChange({
   return true;
 }
 
+/**
+ * An image an article's cleanup may delete: the author's own, in no post, and shown nowhere else.
+ * Most of these relations null out on delete, so a missed one silently blanks that surface:
+ * a new relation that displays an image belongs here. An image that is reported, awaiting review
+ * or blocked is kept too: moderation decides what happens to it, not an article edit.
+ */
+export const unusedAuthorImage = (ownerId: number) =>
+  ({
+    userId: ownerId,
+    postId: null,
+    needsReview: null,
+    ingestion: { not: ImageIngestionStatus.Blocked },
+    nsfwLevel: { not: NsfwLevel.Blocked },
+    blockedFor: null,
+    reports: { none: {} },
+    article: { is: null },
+    assignedUser: { is: null },
+    connections: { none: {} },
+    collectionItems: { none: {} },
+    collections: { none: {} },
+    UserProfile: { none: {} },
+    userProfileSfwCover: { none: {} },
+    announcementCovers: { none: {} },
+    clubCover: { none: {} },
+    clubHeader: { none: {} },
+    clubAvatar: { none: {} },
+    clubTierCover: { none: {} },
+    clubPostCoverImage: { none: {} },
+    purchasableRewards: { none: {} },
+    CosmeticShopSection: { none: {} },
+    comicPanels: { none: {} },
+    comicReferenceImages: { none: {} },
+    comicProjectCover: { none: {} },
+    comicProjectHero: { none: {} },
+    challengesCover: { none: {} },
+    challengeWins: { none: {} },
+    challengeEventCovers: { none: {} },
+    model3dThumbnails: { none: {} },
+    model3dSources: { none: {} },
+    appListingIcons: { none: {} },
+    appListingCovers: { none: {} },
+    appListingScreenshots: { none: {} },
+    appSubListingImages: { none: {} },
+    appSubListingPendingImages: { none: {} },
+    crucibles: { none: {} },
+    crucibleHeroes: { none: {} },
+    crucibleEntries: { none: {} },
+    storylineCovers: { none: {} },
+    storylineHeroes: { none: {} },
+  } satisfies Prisma.ImageWhereInput);
+
+/**
+ * Drops images used as a service offering's cover. That column has no Prisma relation, so
+ * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
+ */
+async function withoutOfferingCovers(
+  db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
+  imageIds: number[]
+) {
+  if (!imageIds.length) return imageIds;
+  const covers = await db.serviceOffering.findMany({
+    where: { coverImageId: { in: imageIds } },
+    select: { coverImageId: true },
+  });
+  const used = new Set(covers.map((offering) => offering.coverImageId));
+  return imageIds.filter((id) => !used.has(id));
+}
+
+/** An owner with a safety report on file keeps every image: the report's review needs them. */
+async function ownerUnderSafetyReport(
+  db: Pick<Prisma.TransactionClient, 'csamReport'>,
+  ownerId: number
+) {
+  return (await db.csamReport.count({ where: { userId: ownerId } })) > 0;
+}
+
 export const deleteArticleById = async ({
   id,
   userId,
@@ -1608,18 +1688,21 @@ export const deleteArticleById = async ({
       });
 
     // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    // Only delete images that have no remaining connections to ANY entity
     const contentImageIds = contentImageConnections
       .map((conn) => conn.imageId)
       .filter((imageId) => imageId !== deleted.coverId);
 
-    if (contentImageIds.length > 0) {
+    if (contentImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
       const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, connections: { none: {} } },
+        where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
         select: { id: true },
       });
 
-      for (const { id: imageId } of trulyOrphanedImages) {
+      const deletable = await withoutOfferingCovers(
+        dbWrite,
+        trulyOrphanedImages.map((img) => img.id)
+      );
+      for (const imageId of deletable) {
         await deleteImageById({ id: imageId }).catch((error) => {
           handleLogError(error, 'article-content-image-cleanup', {
             articleId: id,
@@ -1770,17 +1853,21 @@ export async function unpublishArticleById({
  * @param articleId - Article ID to link images to
  * @param content - Article HTML content
  * @param userId - User ID for image ownership
+ * @param ownerId - The article's author: only their own images, used nowhere else, are returned
+ *   as orphans to delete.
  */
 export async function linkArticleContentImages({
   articleId,
   content,
   userId,
+  ownerId,
   coverId,
   cleanupOnly,
 }: {
   articleId: number;
   content: string;
   userId: number;
+  ownerId: number;
   coverId?: number | null;
   cleanupOnly?: boolean;
 }): Promise<{ orphanedImageIds: number[] }> {
@@ -1894,17 +1981,16 @@ export async function linkArticleContentImages({
       });
     }
 
-    // Find truly orphaned images (no connections to ANY entity)
     let trulyOrphanedIds: number[] = [];
-    if (orphanedIds.length > 0) {
+    if (orphanedIds.length > 0 && !(await ownerUnderSafetyReport(tx, ownerId))) {
       const trulyOrphaned = await tx.image.findMany({
-        where: {
-          id: { in: orphanedIds },
-          connections: { none: {} },
-        },
+        where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },
       });
-      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = await withoutOfferingCovers(
+        tx,
+        trulyOrphaned.map((img) => img.id)
+      );
     }
 
     return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
@@ -2471,8 +2557,44 @@ export async function resolveArticleImageScan({
 const RESCAN_LIMIT = 3;
 const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
 
+const rescanImageSelect = {
+  id: true,
+  url: true,
+  type: true,
+  userId: true,
+  ingestion: true,
+  nsfwLevel: true,
+  nsfwLevelLocked: true,
+  blockedFor: true,
+} as const;
+
 /**
- * Rescan an article: re-queue all content images and re-submit text moderation.
+ * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
+ * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
+ * the block, which only a moderator decides; and an image someone other than the article's author
+ * owns, which the author has no say over.
+ */
+function canRescanArticleImage(
+  image: {
+    userId: number;
+    ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
+    nsfwLevelLocked: boolean;
+    blockedFor: string | null;
+  },
+  articleUserId: number
+) {
+  return (
+    image.userId === articleUserId &&
+    image.ingestion !== ImageIngestionStatus.Pending &&
+    !image.nsfwLevelLocked &&
+    !hasBlockMarker(image)
+  );
+}
+
+/**
+ * Rescan an article: re-queue its content images (see `canRescanArticleImage`) and re-submit
+ * text moderation.
  *
  * Resets ingestion to Rescan, clears contentScannedAt, and lets the normal
  * webhook flow (image scan + text moderation) drive the article back to a
@@ -2535,16 +2657,18 @@ export async function rescanArticle({
       articleId: id,
       content: article.content,
       userId: article.userId,
+      ownerId: article.userId,
       coverId: article.coverId,
     });
   }
 
   // --- Re-queue already-processed images for rescan ---
-  const connections = await dbRead.imageConnection.findMany({
+  // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
+  const connections = await dbWrite.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
     include: {
       image: {
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       },
     },
   });
@@ -2552,21 +2676,16 @@ export async function rescanArticle({
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
   // cover would never be re-queued without folding it in here.
   const cover = article.coverId
-    ? await dbRead.image.findUnique({
+    ? await dbWrite.image.findUnique({
         where: { id: article.coverId },
-        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+        select: rescanImageSelect,
       })
     : null;
 
   const candidates = connections.map((conn) => conn.image);
   if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
 
-  // Never re-scan a locked image: a moderator override sets `nsfwLevelLocked`,
-  // and re-queuing would let a hard-violation rescan overwrite that human
-  // decision, so the override must stay sticky.
-  const imagesToIngest = candidates.filter(
-    (image) => image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked
-  );
+  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
 
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
@@ -2697,28 +2816,34 @@ export async function rescanArticleImage({
     }
   }
 
-  const image = await dbRead.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id: imageId },
-    select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+    select: rescanImageSelect,
   });
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // Consistent with rescanArticle: never re-queue an in-flight or locked image.
-  if (image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked) {
-    // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
-    // then reports the article as in-progress (allComplete=false), which resumes
-    // the 15s status poll so the eventual result loads without a manual refresh.
-    await dbWrite.image.update({
-      where: { id: image.id },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-    enqueueImageIngestion({
-      images: [image],
-      name: 'article-rescan-image',
-      userId: article.userId,
-      lowPriority: true,
-    });
+  // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
+  // no attempt.
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw throwBadRequestError(
+      'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
+    );
   }
+
+  // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
+  // then reports the article as in-progress (allComplete=false), which resumes
+  // the 15s status poll so the eventual result loads without a manual refresh.
+  await dbWrite.image.update({
+    where: { id: image.id },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+  });
+  enqueueImageIngestion({
+    images: [image],
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
   attempts.push(Date.now());

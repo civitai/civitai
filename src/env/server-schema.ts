@@ -472,6 +472,10 @@ export const serverSchema = z
     AXIOM_DATASTREAM: z.string().optional(),
     SEARCH_HOST: z.url().optional(),
     SEARCH_API_KEY: z.string().optional(),
+    // Search-only Meilisearch key (value + uid) that signs per-viewer browser search tokens.
+    // Unset = browsers keep using NEXT_PUBLIC_SEARCH_CLIENT_KEY.
+    SEARCH_TOKEN_API_KEY: z.string().optional(),
+    SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
@@ -1223,9 +1227,9 @@ export const serverSchema = z
     //   (GET /zones?name=civit.ai) and cached in-process. Optional.
     APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
     // Storylines: how many readers must choose at the end of a chapter before each way on's
-    // share is shown. A whole number of at least 1; anything else means the default of 1.
-    // Read as a string and parsed by `storylineShareMinChoices`, so a bad value cannot stop the
-    // server from starting.
+    // share is shown. A whole number of at least 1; anything else means the default. Read as a
+    // string and parsed by `storylineShareMinChoices`, so a bad value cannot stop the server
+    // from starting.
     STORYLINE_SHARE_MIN_CHOICES: z.string().optional(),
   })
   .superRefine((env, ctx) => {

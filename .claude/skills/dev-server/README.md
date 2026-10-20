@@ -86,6 +86,9 @@ Standalone scripts, no vitest. Run any of them directly:
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs      # .env layering + which object is read
 node .claude/skills/dev-server/scripts/app-registry.selftest.mjs   # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs        # the DB host line never emits a credential
+node .claude/skills/dev-server/scripts/local-mail.selftest.mjs     # every spawned env sends mail to the local catcher
+node .claude/skills/dev-server/scripts/blank-keys.selftest.mjs     # worktree envs carry CSAM_* keys empty
+node .claude/skills/dev-server/scripts/dev-db.selftest.mjs         # worktree app envs use the primary root .env's database
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs      # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs

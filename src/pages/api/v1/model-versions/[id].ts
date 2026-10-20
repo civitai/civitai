@@ -15,6 +15,10 @@ import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import {
+  getHiddenModelVersionIds,
+  isPrivateModelVersion,
+} from '~/server/services/model-visibility.service';
 import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -84,6 +88,7 @@ export default MixedAuthEndpoint(async function handler(
          LIMIT 1) AS "vaeId",
         mv."uploadType",
         mv."usageControl",
+        mv."availability",
         COALESCE(
           (
             SELECT json_agg(
@@ -143,7 +148,9 @@ export default MixedAuthEndpoint(async function handler(
             'type', m.type,
             'nsfw', m.nsfw,
             'poi', m.poi,
-            'mode', m.mode
+            'mode', m.mode,
+            'availability', m.availability,
+            'userId', m."userId"
           )
           FROM "Model" m
           WHERE m.id = mv."modelId"
@@ -155,7 +162,7 @@ export default MixedAuthEndpoint(async function handler(
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion, async () => user);
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -177,7 +184,9 @@ export async function prepareModelVersionResponse(
   // `null` means known-ungated; only `undefined` self-fetches.
   paidAccess?: PublicPaidAccessDto | null
 ) {
-  const { files, model, metrics, vaeId, ...version } = modelVersion;
+  // `availability` and the owner only decide visibility; they are not part of the response.
+  const { files, model: modelRow, metrics, vaeId, availability, ...version } = modelVersion;
+  const { availability: modelAvailability, userId: ownerId, ...model } = modelRow;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
   files.push(...vae);
   const castedFiles = files as Array<
@@ -292,17 +301,29 @@ export async function prepareModelVersionResponse(
   };
 }
 
+type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+/**
+ * `getViewer` is only called for a version of a flagged or Private model, so a public caller pays
+ * for no session lookup. A version the viewer may not see gets the same 404 as one that does not
+ * exist.
+ */
 export async function resModelVersionDetails(
   req: NextApiRequest,
   res: NextApiResponse,
-  modelVersion: ModelVersionApiReturn | null
+  modelVersion: ModelVersionApiReturn | null,
+  getViewer: () => Promise<Viewer>
 ) {
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  const hidden =
+    !!modelVersion && (await getHiddenModelVersionIds([modelVersion], getViewer)).size > 0;
+  if (!modelVersion || hidden) return res.status(404).json({ error: 'Model not found' });
 
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
   const body = await prepareModelVersionResponse(modelVersion, baseUrl);
   if (!body) return res.status(404).json({ error: 'Missing model file' });
+  // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
+  if (isPrivateModelVersion(modelVersion)) res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);
 }

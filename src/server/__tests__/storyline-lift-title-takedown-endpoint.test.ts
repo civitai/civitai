@@ -100,6 +100,7 @@ describe('/api/mod/storyline/lift-title-takedown', () => {
     expect(moderateStorylineTitle).toHaveBeenCalledExactlyOnceWith({
       id: 10,
       liftScanTakedown: { reviewedTitle: 'The title I read' },
+      moderatorId: MODERATOR.id,
     });
     expect(json).toEqual({
       storylineId: 10,

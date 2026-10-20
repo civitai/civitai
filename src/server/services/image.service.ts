@@ -198,6 +198,7 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getCosmeticsForEntity,
   getEventDecorationsForEntity,
@@ -222,7 +223,10 @@ import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
   getCosmeticsForUsers,
+  getProfilePictureUserIds,
   getProfilePicturesForUsers,
+  refreshProfilePicturesForImages,
+  refreshProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -292,7 +296,7 @@ import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
-import { getImageGenerationFields } from '@civitai/db-queries/image';
+import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
@@ -745,6 +749,10 @@ export const deleteImageById = async ({
       source: 'image-delete',
     });
 
+    // Also before the delete: `User.profilePictureId` is `onDelete: SetNull`, so afterwards nothing
+    // says whose avatar this was. Non-throwing for the same reason as the resolver above.
+    const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
@@ -776,6 +784,7 @@ export const deleteImageById = async ({
       userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
       ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
+      refreshProfilePicturesForUsers(profilePictureUserIds),
     ]);
 
     return image;
@@ -1170,6 +1179,10 @@ export async function handleBlockImages({
     });
   }
 
+  // Blocking a whole account can be tens of thousands of ids; its own avatar is the one that matters.
+  if (userId) await refreshProfilePicturesForUsers([userId]);
+  else await refreshProfilePicturesForImages(images.map((x) => x.id));
+
   // Prevent remix-source audit job from re-flagging blocked images
   await markRemixSourceReviewed(images);
 
@@ -1190,7 +1203,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await refreshThumbnailCache(ids);
+  await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -2866,10 +2879,16 @@ export const getUserReactionsForImages = async ({
 }) => {
   if (!imageIds.length) return {} as Record<number, ReviewReactions[]>;
 
-  const rows = await dbRead.imageReaction.findMany({
-    where: { imageId: { in: imageIds }, userId },
-    select: { imageId: true, reaction: true },
-  });
+  // A/B of the Prisma query engine's per-query CPU on this high-volume read: one flag evaluation per
+  // call (never per row). Both paths read the replica and return the same `{ imageId, reaction }`
+  // rows, pinned by src/server/db/__tests__/kysely-prisma-parity.test.ts.
+  const useKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_IMAGE_REACTIONS);
+  const rows: { imageId: number; reaction: ReviewReactions }[] = useKysely
+    ? await listImageReactionsMany(kyselyRead, { imageIds, userId })
+    : await dbRead.imageReaction.findMany({
+        where: { imageId: { in: imageIds }, userId },
+        select: { imageId: true, reaction: true },
+      });
 
   return rows.reduce((acc, { imageId, reaction }) => {
     acc[imageId] ??= [] as ReviewReactions[];
@@ -6741,6 +6760,13 @@ export async function createImage({
     verifiedSourceImageIds
   );
   const metadata = stripBlockProvenanceMetadata(image.metadata);
+  // A banned owner's new image is stored blocked, like the media the ban already blocked. It is still
+  // scanned, so the row is rated if the block is ever lifted; the scan result keeps the block.
+  const owner = await dbWrite.user.findUnique({
+    where: { id: image.userId },
+    select: { bannedAt: true },
+  });
+  const ownerBanned = !!owner?.bannedAt;
   const result = await dbWrite.image.create({
     data: {
       ...pickClientImageColumns(image),
@@ -6758,7 +6784,13 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
-      ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
+      ingestion: ownerBanned
+        ? ImageIngestionStatus.Blocked
+        : skipIngestion
+        ? ImageIngestionStatus.PendingManualAssignment
+        : undefined,
+      blockedFor: ownerBanned ? BlockedReason.Moderated : undefined,
+      nsfwLevel: ownerBanned ? NsfwLevel.Blocked : undefined,
     },
     select: { id: true },
   });
@@ -7534,7 +7566,11 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
+    await Promise.all([
+      imageMetadataCache.refresh(id),
+      refreshThumbnailCache(id),
+      refreshProfilePicturesForImages([id]),
+    ]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7635,7 +7671,7 @@ export async function raiseOwnImageNsfwLevel({
   `;
   if (!raised) return false;
 
-  await refreshThumbnailCache(id);
+  await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
@@ -7915,6 +7951,10 @@ export async function updateImageTools({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-tool' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, toolId, notes }) =>
       dbWrite.imageTool.update({
@@ -7994,6 +8034,10 @@ export async function updateImageTechniques({
   user: SessionUser;
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await throwOnBlockedUserContent(
+    data.map((x) => x.notes),
+    { isModerator: user.isModerator, surface: 'image-technique' }
+  );
   await dbWrite.$transaction(
     data.map(({ imageId, techniqueId, notes }) =>
       dbWrite.imageTechnique.update({

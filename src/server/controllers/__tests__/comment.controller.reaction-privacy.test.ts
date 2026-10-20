@@ -6,7 +6,13 @@ const svc = vi.hoisted(() => ({
   getCommentById: vi.fn(),
 }));
 
-vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+vi.mock('~/server/services/user.service', () => ({
+  amIBlockedByUser: vi.fn(async () => false),
+  getCosmeticsAndProfilePicturesForUsers: vi.fn(async () => () => ({
+    profilePicture: null,
+    cosmetics: [],
+  })),
+}));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedCommentContent: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/rewards', () => ({ reportAcceptedReward: { apply: vi.fn() } }));

@@ -105,6 +105,8 @@ export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS)
 export const PACK_FILTER_VALUE = 'Pack' as const;
 /** Review-queue filter value for a creator's mystery pack: a box listing whose box has a seller. */
 export const MYSTERY_PACK_FILTER_VALUE = 'MysteryPack' as const;
+/** Above this value the review pane shows a content's shelf sales: a real price, not just a claimed one. */
+export const SHELF_SALES_VALUE_THRESHOLD = 5_000;
 /** A shop type filter: a CosmeticType, or the pack pseudo-type. */
 export type ShopFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
 export const shopFilterTypeSchema = z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)]);
@@ -763,6 +765,14 @@ export type TakedownCosmeticShopItemInput = z.infer<typeof takedownCosmeticShopI
 export const takedownCosmeticShopItemSchema = z.object({
   id: z.number(),
   reason: z.string().min(1).max(1000),
+});
+
+export type RefundShopPurchasesInput = z.infer<typeof refundShopPurchasesSchema>;
+export const refundShopPurchasesSchema = z.object({
+  buzzTransactionIds: z.array(z.string().min(1)).min(1).max(50),
+  clawback: z.boolean(),
+  reason: z.string().min(1).max(1000),
+  dryRun: z.boolean().default(true),
 });
 
 export const reviewQueueSortValues = ['oldest', 'newest'] as const;

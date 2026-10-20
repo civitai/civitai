@@ -162,8 +162,6 @@ internal members:
       `S3_IMAGE_UPLOAD_SECRET`.
     - `WEBHOOK_TOKEN` — any random string; it authenticates requests to the
       webhook endpoint.
-    - `EMAIL_USER`, `EMAIL_PASS`, and `EMAIL_FROM` (a valid email format) — any
-      values, but they must be set for user registration to work.
 2. On an empty database, populate it. These are slow and destructive, which is
    why no bootstrap runs them for you:
     ```sh
@@ -174,7 +172,7 @@ internal members:
 
 Please report any issues with these commands to us on [discord][discord-url].
 
-_&ast; Note that account creation will run emails through maildev, which can be accessed at [http://localhost:1080](http://localhost:1080)._
+_&ast; Note that account creation will run emails through Mailpit, which can be accessed at [http://localhost:1080](http://localhost:1080)._
 
 ### Altering your user
 

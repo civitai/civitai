@@ -28,7 +28,7 @@ import { isDev, isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
-import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { Report } from '@civitai/cybertipline-tools';
 import {
@@ -448,7 +448,7 @@ async function constructReportPayload({
           email: reportingUser?.email,
         },
         contactPerson: {
-          email: 'report@civitai.com',
+          email: CYBERTIP_CONTACT_EMAIL,
         },
       },
       personOrUserReported: userId
@@ -520,7 +520,7 @@ async function getInitialReportData(report: CsamReportProps) {
         firstName: reportingUser.name ?? undefined,
       },
       contactPerson: {
-        email: [{ email: 'report@civitai.com' }],
+        email: [{ email: CYBERTIP_CONTACT_EMAIL }],
       },
     },
     personOrUserReported: {
@@ -879,7 +879,7 @@ async function reportExternalLink(report: CsamReportProps) {
         firstName: reportingUser.name ?? undefined,
       },
       contactPerson: {
-        email: [{ email: 'report@civitai.com' }],
+        email: [{ email: CYBERTIP_CONTACT_EMAIL }],
       },
     },
     personOrUserReported: {

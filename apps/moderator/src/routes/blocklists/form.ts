@@ -23,3 +23,13 @@ export function parseRowId(raw: FormDataEntryValue | null): number | undefined |
   const id = Number(raw);
   return Number.isInteger(id) && id > 0 ? id : null;
 }
+
+/**
+ * Entries that would save but never take effect. The profanity filter checks its benign words
+ * against the single `\w+` run around a match (`extractFullWord` in the main app's
+ * `profanity-simple`), so an entry with a space or punctuation in it can never equal one.
+ */
+export function inertEntries(type: string, items: string[]): string[] {
+  if (type !== 'ProfanityBenignWord') return [];
+  return items.filter((item) => /[\s\W]/.test(item));
+}

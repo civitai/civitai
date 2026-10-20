@@ -39,7 +39,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   return { ...queue, wide: true, games, storylines, serviceOfferings };
 };
 
-// Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
+// The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.
 export const actions: Actions = {
   ...reportStatusActions(),
   /**
@@ -80,8 +80,7 @@ export const actions: Actions = {
 
   /**
    * Takes the reported storyline down, then sets the report Actioned (which pays the reporters).
-   * Held as a moderator's takedown, so a clean rescan of its title cannot lift it. Already down by
-   * a moderator still actions the report: the content it is about is down.
+   * Already down by a moderator still actions the report.
    */
   takeDownStoryline: async ({ request, locals, params, getClientAddress }) => {
     const type = reportEntityForSlug(params.slug);
@@ -160,10 +159,7 @@ export const actions: Actions = {
     };
   },
 
-  /**
-   * Lifts a moderator's takedown. The report's status is left as it is. A takedown the title scan
-   * holds is not lifted here, so the storyline can stay down, and the moderator is told so.
-   */
+  /** Leaves the report's status as it is. */
   restoreStoryline: async ({ request, locals, params }) => {
     const type = reportEntityForSlug(params.slug);
     if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))

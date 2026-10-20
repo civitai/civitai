@@ -1429,14 +1429,15 @@ export async function getResourceData(
   async function getResourceDataSubstitutes(
     resources: ReturnType<typeof transformGenerationData>[]
   ) {
-    const modelIdsThatRequireSubstitutes = resources
-      .filter((x) => !x.covered || !x.hasAccess)
-      .map((x) => x.model.id);
+    const resourcesThatRequireSubstitutes = resources.filter((x) => !x.covered || !x.hasAccess);
+    const modelIdsThatRequireSubstitutes = resourcesThatRequireSubstitutes.map((x) => x.model.id);
 
     const substituteDb = await getDbWithoutLagBatch('model', modelIdsThatRequireSubstitutes);
     const substituteIds = await substituteDb.modelVersion
       .findMany({
         where: {
+          // A version the staged rule covers would otherwise match itself.
+          id: { notIn: resourcesThatRequireSubstitutes.map((x) => x.id) },
           status: 'Published',
           generationCoverage: { [coverageColumn(next)]: true },
           modelId: { in: modelIdsThatRequireSubstitutes },

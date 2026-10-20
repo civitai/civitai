@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { explainHarness } from './test/harness';
-import { getImageGenerationFields } from './image.db';
+import { getImageGenerationFields, listImageReactionsMany } from './image.db';
 
 const h = explainHarness();
 
@@ -20,6 +20,18 @@ describe.skipIf(!h.hasDb)('image.db queries EXPLAIN against the real schema', ()
     const plan = await h.explainLast({ disableSeqScan: true });
     expect(plan).toMatch(
       /Index (Only )?Scan using "Image_pkey" on "Image"[^\n]*\n\s*Index Cond: \(id = 42\)/
+    );
+  });
+
+  it('listImageReactionsMany plans, reading ImageReaction through its (imageId, userId, reaction) key', async () => {
+    // Distinct values: 7 is the user, never an image id, so the Index Cond shows which is which.
+    await listImageReactionsMany(h.db, { imageIds: [11, 22, 33], userId: 7 });
+    // Seq scans disabled for the same reason as above. Plain or bitmap index scan are both fine;
+    // what is pinned is that BOTH predicates reach the unique index's condition, so a lost
+    // `userId` filter (every viewer's reactions) cannot pass as a narrower scan.
+    const plan = await h.explainLast({ disableSeqScan: true });
+    expect(plan).toMatch(
+      /(Index (Only )?Scan using|Bitmap Index Scan on) "ImageReaction_imageId_userId_reaction_key"[^\n]*\n\s*Index Cond: [^\n]*"imageId"[^\n]*"userId" = 7/
     );
   });
 });

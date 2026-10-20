@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executableSchemaSql, pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
@@ -21,7 +22,7 @@ vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => kysely }));
 const store = await import('../store');
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
   kysely = new Kysely({ dialect: pgliteDialect(pg) });
 });
@@ -141,6 +142,7 @@ describe('turns', () => {
         toolCalls: [],
         sources: [],
         answer: 'a',
+        reasoning: null,
         unverified: [],
         error: null,
         promptTokens: 100,
@@ -149,6 +151,50 @@ describe('turns', () => {
     }
     expect(await store.tokensToday(1)).toBe(300);
     expect(await store.tokensToday(2)).toBe(150);
+  });
+
+  it("split today's tokens by model, for this moderator only", async () => {
+    const turn = async (moderatorId: number, model: string, prompt: number, completion: number) => {
+      const chatId = await store.createChat({
+        moderatorId,
+        title: 'c',
+        seedUserId: null,
+        seedReportId: null,
+      });
+      const turnId = await store.startTurn({
+        chatId,
+        moderatorId,
+        prompt: 'q',
+        playbookSlug: null,
+        playbookVersion: null,
+        model,
+      });
+      await store.finishTurn(turnId, {
+        status: 'done',
+        toolCalls: [],
+        sources: [],
+        answer: 'a',
+        reasoning: null,
+        unverified: [],
+        error: null,
+        promptTokens: prompt,
+        completionTokens: completion,
+      });
+      return turnId;
+    };
+    await turn(1, 'b-model', 10, 1);
+    await turn(1, 'a-model', 20, 2);
+    await turn(1, 'a-model', 30, 3);
+    await turn(2, 'a-model', 999, 999);
+    const yesterday = await turn(1, 'a-model', 500, 500);
+    await pg.query(
+      `UPDATE assistant_turn SET created_at = now() - interval '2 days' WHERE id = $1`,
+      [yesterday]
+    );
+    expect(await store.tokensTodayByModel(1)).toEqual([
+      { model: 'a-model', promptTokens: 50, completionTokens: 5 },
+      { model: 'b-model', promptTokens: 10, completionTokens: 1 },
+    ]);
   });
 
   it('close out a turn abandoned mid-run so the moderator can ask again', async () => {
@@ -203,6 +249,7 @@ describe('turns', () => {
       toolCalls,
       sources,
       answer: 'see [user:5]',
+      reasoning: '- look up 5',
       unverified: ['user:6'],
       error: null,
       promptTokens: 7,
@@ -214,9 +261,23 @@ describe('turns', () => {
       playbookVersion: 3,
       toolCalls,
       sources,
+      reasoning: '- look up 5',
       unverified: ['user:6'],
       totalTokens: 10,
     });
+    expect((await store.listAuditTurns({}))[0]).toMatchObject({ reasoning: '- look up 5' });
+  });
+
+  it('adds the reasoning column to a table created before it existed', async () => {
+    // The file is re-run in place, so the ALTER must apply to an existing table and re-run cleanly.
+    await pg.query(`ALTER TABLE assistant_turn DROP COLUMN reasoning`);
+    await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
+    await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
+    const cols = await pg.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'assistant_turn' AND column_name = 'reasoning'`
+    );
+    expect(cols.rows).toHaveLength(1);
   });
 });
 

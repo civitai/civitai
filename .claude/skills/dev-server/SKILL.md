@@ -240,7 +240,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 
 A session layers its `.env` files — the primary checkout's as the base, the worktree's own on top —
 and then applies a per-service **overlay** on that. The overlay only restates the keys for the
-services it names, so nothing else in the chain moves.
+services it names, so nothing else in the chain moves. Last, the daemon forces the local mail
+catcher's `EMAIL_*` into every env it spawns (main app, auth hub, sibling apps), so a `.env` value
+for those keys never wins.
 
 **No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
 so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
@@ -278,7 +280,7 @@ repoint the app at a hub that is not running). `mode: dev` therefore never means
 production".
 
 ⚠️ **Apps have no env modes.** `--prod`/`--dev` apply to the main app only; an app runs on its `.env`
-chain with no overlay. `start --app <name> --prod db` is refused rather than silently ignored.
+chain with no overlay (apart from the forced local-mail `EMAIL_*`). `start --app <name> --prod db` is refused rather than silently ignored.
 
 **Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
 service is unreliable:
@@ -370,8 +372,11 @@ Things worth knowing before you rely on it:
   holding nothing. The slot frees when the child process exits.
 - **A queued run whose caller stopped polling is dropped** after 10 minutes, so a dead agent cannot
   hold the queue. `test wait` polls every 2s, so a live waiter never trips this.
-- **A run that overruns 30 minutes is killed** and reported as `timeout`. If the kill produces no
-  exit, the slot is released anyway after a grace period rather than held forever.
+- **A run that overruns 60 minutes is killed** and reported as `timeout`. If the kill produces no
+  exit, the slot is released anyway after a grace period rather than held forever. Tune it with
+  `TEST_RUN_TIMEOUT_MIN` in the skill's `.env` or live with `test config --run-timeout <min>`;
+  the live change reaches runs already running. (30 until 2026-10-20: a full unit suite on a busy
+  shared box overran it on every run, and each kill threw the run away.)
 - **A daemon restart drops the queue.** `test wait` treats an unknown run id as terminal and exits
   nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
   you.
@@ -523,10 +528,18 @@ answers 200s and looks completely healthy — the only thing that contradicts yo
 base, with `<worktree>/apps/<name>/.env` layered on top when the worktree has one. Those files are
 gitignored, so a fresh worktree has neither — the base is what makes it start at all.
 
-⚠️ **That base may point at a production database**, and the fall-through means a fresh worktree
-inherits it without anyone choosing it. The app prints the `DATABASE_URL` **host** (never the
-credential) on startup and carries it as `dbHost` in `app` / `status` output — read it before you
-click anything that writes.
+**Except the database.** In a worktree, `DATABASE_URL` and `DATABASE_REPLICA_URL` never come from
+the primary's app `.env`, which may name a database other than dev: they come from the worktree's own
+app `.env` if it sets them, else from the root `.env` chain (primary root, then the worktree's root).
+A key neither sets is removed from the spawn env, so the app refuses to start rather than inherit
+one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand;
+a replica it does not set then follows that database. Every `CSAM_*` key in the spawn env of a
+worktree app, or of the main app in a worktree, is set empty, wherever it came from, including keys
+only named in the files `vite dev` / `next dev` read themselves (`.env`, `.env.local`,
+`.env.development`, `.env.development.local` in the app's or tree's directory): both loaders let a
+key already in the environment win, an empty one included.
+The app prints the `DATABASE_URL` **host** (never the credential) on startup and carries it as
+`dbHost` in `app` / `status` output — read it before you click anything that writes.
 
 `storage` and `notifications` are **not** here. They were registered and could never start: no
 `vite.config.ts` (their dev script is `tsx watch src/server.ts`) and no `.env`, so every attempt died
@@ -596,7 +609,7 @@ The hub works behind the RGB proxy too. When you browse dev at `https://civitai-
 
 ### Logging in
 
-- **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
+- **Email magic-link** lands in the local Mailpit inbox (http://localhost:1080): the daemon forces every app's `EMAIL_*` to the catcher, so start it with `docker compose -f docker-compose.base.yml up -d mailpit`.
 - **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
 - Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
 
@@ -719,10 +732,20 @@ What's already handled:
   ```
 
 - **Every app `.env`, on `wt new`.** The root `.env` and each `apps/*/.env` (any untracked
-  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, so a tree also
-  works for a bare `pnpm`/`prisma` command that reads `.env` itself. A copy is a snapshot: when the
-  primary's file changes, `wt env <worktree> --refresh` re-copies every one the primary edited more
-  recently, over the tree's version. Without `--refresh`, existing files are never touched.
+  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, except that
+  every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, and every
+  `DATABASE_URL` / `DATABASE_REPLICA_URL` line takes the primary **root** `.env`'s value (commented
+  ones dropped), and every `CSAM_*` line (commented ones too) keeps its key with an empty value, so
+  a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
+  app `.env` pointed at another database, and never carries storage credentials for the restricted
+  bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
+  re-copies every one the primary edited more recently, over the tree's version. Without
+  `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
+  copied before either existed. Env files only the tree has (a hand-made `.env.local`) get their
+  `CSAM_*` keys emptied too; their database lines stay as written. A hand edit to a tree's app
+  database therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
+  while a file to copy has one, `wt new` and `wt env` exit 1 and write none of them.
 
   It reports three states, because two were misleading. `set` is a skill with its own file.
   `root` is one with no file whose every declared key the root `.env` supplies — most skills fall
@@ -739,7 +762,7 @@ What's already handled:
   is precisely what must not exist in a public repository.
 
 
-- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything, so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
+- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything (with the catcher's `EMAIL_*`), so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 
   Before this they were **not** merged — the worktree file replaced the primary outright, so a two-key override file started the server with no `DATABASE_URL` and no secrets, failing in a way that looked nothing like the edit that caused it.
 
@@ -789,7 +812,7 @@ What's already handled:
   port, it warns and quietly moves to another, so a session started onto a held port would report a
   `url` and pass a health check against a server it does not own.
 
-Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
+Fresh worktrees need a real `pnpm install` (`wt new` does it) and `git submodule update --init event-engine-common`. Never junction `node_modules`, a package's `node_modules` or `event-engine-common` into the primary checkout: `git worktree remove` deletes through a junction, with or without `--force`. If one exists, remove the link itself first with `cmd /c rmdir <link>`.
 
 ### Cache cannot be shared between worktrees
 

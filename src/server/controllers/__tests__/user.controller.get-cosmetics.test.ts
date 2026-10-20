@@ -83,4 +83,38 @@ describe('user.getCosmetics', () => {
       [2, false],
     ]);
   });
+
+  // Worn before withholding unequipped it: it shows to nobody, so the inventory must not say Equipped.
+  it('does not report a withheld cosmetic as equipped, though its row is still worn', async () => {
+    const worn = new Date('2026-10-02T00:00:00Z');
+    getUserCosmetics.mockResolvedValue({
+      cosmetics: [row(1, 'ProfileDecoration', worn), row(2, 'ProfileDecoration', worn)],
+    });
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([
+      {
+        cosmeticId: 1,
+        addedById: 5,
+        status: 'RequestedChanges',
+        rejectionReason: 'Visual quality',
+        meta: { displayApproved: false },
+        cosmetic: { createdById: 5 },
+      },
+      {
+        cosmeticId: 2,
+        addedById: 5,
+        status: 'Published',
+        rejectionReason: null,
+        meta: {},
+        cosmetic: { createdById: 5 },
+      },
+    ]);
+    const result = await getUserCosmeticsHandler({
+      ctx: { user: { id: VIEWER } } as unknown as Ctx,
+    });
+
+    expect(result.profileDecorations.map((c) => [c.id, c.withheld, c.equipped])).toEqual([
+      [1, true, false],
+      [2, false, true],
+    ]);
+  });
 });

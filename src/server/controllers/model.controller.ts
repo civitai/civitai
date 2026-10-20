@@ -27,6 +27,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
   stampWorkflowPublished,
@@ -154,6 +155,7 @@ import {
 import {
   amIBlockedByUser,
   bustUserDownloadsCache,
+  getCosmeticsAndProfilePicturesForUsers,
   getUserSettings,
 } from '~/server/services/user.service';
 import {
@@ -163,6 +165,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
@@ -234,7 +237,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+      throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: model.user.id });
@@ -549,13 +553,14 @@ export const getModelHandler = async ({
         })
       : null;
 
-    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
-      ctx.user,
-      model.user.id
-    );
+    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+      getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
+      getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+    ]);
 
     return {
       ...model,
+      user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
       ownerMetricPrivacyDefaults,
@@ -2035,34 +2040,14 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
-export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
-  const { hashes } = input;
-
-  if (hashes.length === 0) {
-    return [];
-  }
-
-  // `ModelFileHash.hash` is citext, so the ::citext[] cast is what makes this case-insensitive
-  // AND indexable on modelFileHash_hash_cs. Do not "simplify" it to a plain IN over text or a
-  // subquery: citext compared against an explicitly-typed text value degrades to a
-  // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
-  // returns nothing.
-  const modelsByHashes = await dbRead.$queryRaw<
-    { userId: number; modelId: number; hash: string }[]
-  >`
-    SELECT m."userId",
-           m."id",
-           mfh."hash"
-    FROM "ModelFileHash" mfh
-           JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
-           JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
-           JOIN "Model" m ON mv."modelId" = m.id
-    WHERE mfh."hash" = ANY(ARRAY[${Prisma.join(hashes.map((h) => h.toLowerCase()))}]::citext[])
-      AND m."deletedAt" IS NULL;
-  `;
-
-  return modelsByHashes;
-};
+/** Per matched hash, whether a model the caller does not own already has a file with it. */
+export const getModelByHashesHandler = ({
+  input,
+  ctx,
+}: {
+  input: ModelByHashesInput;
+  ctx: ProtectedContext;
+}) => findHashOwnership({ hashes: input.hashes, userId: ctx.user.id });
 
 export async function getSimpleModelsInfiniteHandler({
   input,

@@ -9,6 +9,7 @@
     selected,
     title,
     meta,
+    metaClass = 'text-dark-2',
     coverUrl,
     cover = true,
     verdict,
@@ -22,6 +23,8 @@
     title: string;
     /** Short text on the right of the title, e.g. how long it has waited. */
     meta: string;
+    /** Colour of the meta text, e.g. amber for someone waiting. */
+    metaClass?: string;
     coverUrl?: string | undefined;
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
@@ -44,7 +47,7 @@
     {onclick}
     aria-current={selected ? 'true' : undefined}
     class={cn(
-      'flex gap-3 border-l-2 px-3 py-2.5 transition-colors hover:bg-dark-5',
+      'flex gap-2.5 border-l-2 px-3 py-2.5 transition-colors hover:bg-dark-5',
       selected ? 'border-blue-500 bg-dark-5' : 'border-transparent',
       verdict && 'opacity-50'
     )}
@@ -59,7 +62,7 @@
     <div class="min-w-0 flex-1">
       <div class="flex items-baseline justify-between gap-2">
         <span class="truncate text-sm font-medium text-white">{title}</span>
-        <span class="shrink-0 text-xs text-dark-2 tabular-nums">{meta}</span>
+        <span class={cn('shrink-0 text-xs tabular-nums', metaClass)}>{meta}</span>
       </div>
       {#if error}
         <p class="m-0 mt-1 text-sm text-red-300">Failed: {error}</p>
@@ -67,7 +70,7 @@
       {#if verdict}
         <p class="m-0 mt-1 text-sm text-dark-0">{verdict}</p>
       {:else}
-        <div class="mt-1 flex flex-wrap items-center gap-1">
+        <div class="mt-1.5 flex flex-wrap items-center gap-1">
           {@render badges()}
         </div>
       {/if}

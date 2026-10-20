@@ -14,6 +14,11 @@ export const CosmeticFlag = {
   SfwPlacementsOnly: 1 << 0, // 1
   /** A sticker that may not be placed on, or shown on, a PG or PG-13 image. */
   NsfwPlacementsOnly: 1 << 1, // 2
+  /**
+   * A creator cosmetic whose own listing was deleted while withheld: the listing that said so is
+   * gone, so this keeps it withheld (`getWithheldCosmeticIds`). Ignored on any other cosmetic.
+   */
+  Withheld: 1 << 2, // 4
 } as const;
 
 export type CosmeticFlagValue = (typeof CosmeticFlag)[keyof typeof CosmeticFlag];

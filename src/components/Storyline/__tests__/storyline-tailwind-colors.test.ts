@@ -3,12 +3,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Only dark, gray, yellow, green, blue, red and orange carry Mantine-style 0-9 shades in the
- * Tailwind config; every other hue has Tailwind's 50-950. So `bg-violet-6` compiles to nothing and
- * the element silently loses its colour (the storyline chip once rendered with no fill). Use
- * Mantine's variable instead: `bg-[var(--mantine-color-violet-6)]`.
+ * Only dark, gray, yellow, green, blue, red, orange, lime and gold carry Mantine-style 0-9 shades
+ * in the Tailwind config; every other hue has Tailwind's 50-950. So `bg-violet-6` compiles to
+ * nothing and the element silently loses its colour (the storyline chip once rendered with no
+ * fill). Use Mantine's variable instead: `bg-[var(--mantine-color-violet-6)]`.
  */
-const MISSING_SCALES = ['violet', 'teal', 'indigo', 'purple', 'pink', 'cyan', 'lime', 'grape'];
+const MISSING_SCALES = ['violet', 'teal', 'indigo', 'purple', 'pink', 'cyan', 'grape'];
 const pattern = new RegExp(
   String.raw`(?:^|[\s"'\x60:])(?:bg|text|border|ring|from|to|via|fill|stroke)-(?:` +
     MISSING_SCALES.join('|') +
@@ -37,6 +37,7 @@ describe('storyline components use only Tailwind colour shades that exist', () =
       pattern.test('dark:text-teal-3'),
       pattern.test('bg-[var(--mantine-color-violet-6)]'),
       pattern.test('from-indigo-500'),
-    ]).toEqual([true, true, false, false]);
+      pattern.test('bg-lime-6'),
+    ]).toEqual([true, true, false, false, false]);
   });
 });

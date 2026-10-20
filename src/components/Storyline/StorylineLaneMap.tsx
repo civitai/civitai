@@ -8,6 +8,7 @@ import {
   buildCanonLane,
   buildStorylineLaneList,
   buildStorylineLaneMap,
+  laneColor,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import {
@@ -43,10 +44,6 @@ type LaneNode = {
   chapter: GraphChapter | CanonChapter;
 };
 
-const LANE_COLORS = ['blue', 'grape', 'teal', 'orange', 'pink', 'lime', 'cyan', 'yellow'];
-const laneColor = (lane: number) =>
-  `var(--mantine-color-${LANE_COLORS[lane % LANE_COLORS.length]}-6)`;
-
 /** Rows are fixed-height so branch lanes line up with the canon rows. */
 const SIZES = {
   compact: { canon: 84, branch: 52, laneWidth: 64, row: 121, band: 30, visibleLanes: 2 },
@@ -54,11 +51,6 @@ const SIZES = {
 };
 const RATIO = 5 / 4;
 
-/**
- * The storyline's chapters as lanes: the canon path down the left with big tiles and titles, the
- * other paths in coloured lanes to its right, and a labelled band where the story forks or a path
- * joins back. A story that never forks is the canon lane alone.
- */
 export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
   const compact = !!useIsMobile({ type: 'media' });
   const size = compact ? SIZES.compact : SIZES.wide;

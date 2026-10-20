@@ -6,12 +6,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * Placing a sticker or submitting a remix publishes content onto someone else's
  * image, so it is a posting channel aimed at a specific person — the thing a
- * mute exists to close. Both create procedures ran on `protectedProcedure` until
- * 2026-08-21, which refuses a ban and says nothing about a mute.
+ * mute exists to close. `protectedProcedure` refuses a ban and says nothing about a mute, so the
+ * create procedures are built from `guardedProcedure`.
  *
  * Asserted at the ROUTER rather than on the services, because the refusal is a
- * property of the procedure the mutation is built from — nothing inside either
- * service would change if the wrapper were swapped back.
+ * property of the procedure the mutation is built from: nothing inside the services would change if
+ * the wrapper were swapped back.
  */
 
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
@@ -25,8 +25,8 @@ const { createStickerPlacement, createRemixGallerySubmission, createStorylinePla
     createStorylinePlacement: vi.fn(async () => ({ id: 3 })),
   }));
 
-// Spread the real modules and override only the two writers: a hand-listed mock
-// would couple this test to every export the router happens to import today.
+// Spread the real modules and override only the writers: a hand-listed mock would couple this test
+// to every export the router happens to import today.
 vi.mock('~/server/services/sticker-placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StickerPlacementService>()),
   createStickerPlacement,
@@ -55,7 +55,7 @@ import {
  * The free tier is covered, but not by a second call here: the guard is
  * middleware, so it refuses before the payload is looked at and cannot behave
  * differently for an offer it never sees. A free twin would run the identical
- * path — both create services are replaced above, so `free: true` reaches a mock
+ * path: the create services are replaced above, so `free: true` reaches a mock
  * argument and `createFreePlacement` is never entered — and no mutation of the
  * guard distinguishes the two. What covers the free tier is that both offers go
  * through these procedures and nothing else, which `guards exactly the
@@ -116,8 +116,8 @@ describe('placement router — account state refuses a placement', () => {
    *
    * A list of names would have been silenced by pasting the new name into it,
    * and would have churned on every unrelated query added to the router. This
-   * fails on what matters — a third create mutation added without the guard, or
-   * either of these two quietly reverted.
+   * fails on what matters: a new create mutation added without the guard, or one of these quietly
+   * reverted.
    */
   it('guards exactly the placement-writing mutations', () => {
     expect(guardedMiddlewares.length).toBeGreaterThan(0);

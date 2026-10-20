@@ -36,6 +36,7 @@ export type AssistantTables = {
     tool_calls: Generated<TurnToolCall[]>;
     sources: Generated<TurnSource[]>;
     answer: string | null;
+    reasoning: string | null;
     unverified: Generated<string[]>;
     error: string | null;
     model: string;

@@ -50,7 +50,6 @@ export function StorylineSettingsForm({
   onPriceChange: (price: number | null) => void;
   /** The space read refuses this storyline for now: no slider, only a note. */
   priceUnavailable?: boolean;
-  /** Rendered as the first row of the card (the covers picker). */
   coverRow?: ReactNode;
   disabled?: boolean;
 }) {

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   APP_FEEDBACK_GENERIC_ERROR_MESSAGE,
@@ -132,7 +132,7 @@ describe('every chrome mount names its host surface', () => {
   const mounts = walk(SRC).flatMap((file) => {
     const code = readFileSync(file, 'utf8');
     return [...code.matchAll(/<AppBlockChrome\b[\s\S]*?\/>/g)].map((m) => ({
-      file: relative(SRC, file),
+      file: relative(SRC, file).split(sep).join('/'),
       hostSurface: /hostSurface=(\{surface\}|"[a-z-]+")/.exec(m[0])?.[1] ?? null,
     }));
   });

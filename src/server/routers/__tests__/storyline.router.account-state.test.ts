@@ -7,9 +7,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * A muted or banned account cannot write to a storyline: start one, edit it, add a chapter, pick
  * the canon branch, join two branches, or add or remove a collaborator.
  *
- * Every one of those changes what other people read or who can post into the story. setCanon and
- * the collaborator pair ran on `protectedProcedure`, which refuses a ban and says nothing about a
- * mute, so a muted owner could still steer a public story and hand posting rights around.
+ * Every one of those changes what other people read or who can post into the story, so a muted
+ * owner must not be able to steer a public story or hand posting rights around.
  *
  * Asserted at the ROUTER, because the refusal is a property of the procedure the mutation is built
  * from — nothing inside the services would change if the wrapper were swapped back.

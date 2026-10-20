@@ -70,6 +70,7 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
+import { getVersionByIdWithGenerationChildren } from '~/server/services/model-version-generation-children.service';
 import {
   getModel,
   queueModelEarlyAccessReindex,
@@ -87,6 +88,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -98,9 +100,11 @@ import {
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
+import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
@@ -140,7 +144,7 @@ const loadModelVersion = async ({
   const { id, withFiles } = input;
 
   try {
-    const version = await getVersionById({
+    const version = await getVersionByIdWithGenerationChildren({
       id,
       forceWriteDb,
       select: {
@@ -183,27 +187,15 @@ const loadModelVersion = async ({
             uploadType: true,
             user: { select: { id: true } },
             availability: true,
+            meta: true,
           },
         },
         files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
-        recommendedResources: {
-          select: {
-            id: true,
-            resource: {
-              select: {
-                id: true,
-                // name: true,
-                // trainedWords: true,
-                // baseModel: true,
-                // model: { select: { id: true, name: true, type: true } },
-              },
-            },
-            settings: true,
-          },
-        },
+        // `recommendedResources` and `generationCoverage` come from
+        // getVersionByIdWithGenerationChildren's single raw statement, not nested selects.
         monetization: {
           select: {
             id: true,
@@ -220,9 +212,10 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
+    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+      throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
@@ -350,9 +343,16 @@ const loadModelVersion = async ({
       version.model.user.id
     );
 
+    // The version editor shows what the model's hide/show settings make each metric. Only those
+    // settings leave here, and only to the owner or a moderator: the rest of the meta is internal.
+    const { meta: modelMeta, ...model } = version.model;
+    const editorModelMeta: ModelMeta | null = isOwnerOrMod
+      ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
+      : null;
+
     return {
       ...version,
-      model: { ...version.model, ownerMetricPrivacyDefaults },
+      model: { ...model, meta: editorModelMeta, ownerMetricPrivacyDefaults },
       licensingFee,
       canGenerate,
       wildcardSetId,
@@ -409,6 +409,26 @@ export const toggleNotifyEarlyAccessHandler = async ({
 
 const asUserTier = (tier: string | null): SessionUser['tier'] =>
   (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
+
+/** Throws unless every file is the entry author's own upload. Null when there is nothing to copy. */
+async function getAwardedEntryFiles({ bountyId, userId }: { bountyId: number; userId: number }) {
+  const entry = await dbRead.bountyEntry.findFirst({
+    where: { bountyId, benefactors: { some: { userId } } },
+    select: { id: true, userId: true, bounty: true },
+  });
+  if (!entry || !constants.bounties.supportedBountyToModels.some((t) => t === entry.bounty.type))
+    return null;
+
+  const files = await getFilesByEntity({ id: entry.id, type: 'BountyEntry' });
+  for (const file of files)
+    assertBountyEntryFileUrlAllowed({
+      url: file.url,
+      authorId: entry.userId,
+      userId,
+      bountyEntryId: entry.id,
+    });
+  return { entry, files };
+}
 
 export const upsertModelVersionHandler = async ({
   input: { bountyId, ...input },
@@ -712,6 +732,10 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
+    // Before the write: a refused file must not leave a half-built version behind.
+    const bountyCopy =
+      !input.id && bountyId ? await getAwardedEntryFiles({ bountyId, userId }) : null;
+
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
@@ -753,44 +777,28 @@ export const upsertModelVersionHandler = async ({
         // });
       }
 
-      if (bountyId) {
-        // Create model version files from the bounty.
-        const awardedEntry = await dbRead.bountyEntry.findFirst({
-          where: { bountyId, benefactors: { some: { userId } } },
-          select: { id: true, bounty: true },
-        });
-
-        if (
-          awardedEntry &&
-          constants.bounties.supportedBountyToModels.some((t) => t === awardedEntry?.bounty.type)
-        ) {
-          const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
-
-          if (files.length) {
-            await Promise.all(
-              // The url is the awarded entry's file as its author submitted it; it is not checked
-              // against the caller (assertClientFileUrlAllowed).
-              files.map((f) =>
-                createFile({
-                  modelVersionId: version.id,
-                  sizeKB: f.sizeKB,
-                  url: f.url,
-                  type: 'Model',
-                  metadata: {
-                    ...f.metadata,
-                    bountyId: awardedEntry.bounty.id,
-                    bountyEntryId: awardedEntry.id,
-                  },
-                  userId: ctx.user.id,
-                  name: f.name,
-                  select: {
-                    id: true,
-                  },
-                })
-              )
-            );
-          }
-        }
+      if (bountyCopy?.files.length) {
+        const { entry, files } = bountyCopy;
+        await Promise.all(
+          files.map((f) =>
+            createFile({
+              modelVersionId: version.id,
+              sizeKB: f.sizeKB,
+              url: f.url,
+              type: 'Model',
+              metadata: {
+                ...f.metadata,
+                bountyId: entry.bounty.id,
+                bountyEntryId: entry.id,
+              },
+              userId: ctx.user.id,
+              name: f.name,
+              select: {
+                id: true,
+              },
+            })
+          )
+        );
       }
     }
 
@@ -1081,8 +1089,11 @@ export const unpublishModelVersionHandler = async ({
 
 export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
+    // The primary, not a replica: this row is written back whole, so a lagging read would
+    // overwrite a fresh edit with stale values.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,
@@ -1123,8 +1134,10 @@ export const declineReviewHandler = async ({
   try {
     if (!ctx.user.isModerator) throw throwAuthorizationError();
 
+    // The primary, for the reason in requestReviewHandler.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,

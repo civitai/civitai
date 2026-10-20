@@ -44,7 +44,7 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
 
@@ -74,13 +74,7 @@
   });
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
-  const rollupFor = (item: NavLink) =>
-    item.children
-      ? item.children.reduce(
-          (sum, c) => sum + (c.informational ? 0 : (countFor(c.countKey) ?? 0)),
-          0
-        ) || null
-      : null;
+  const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
 
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
@@ -164,7 +158,7 @@
                       <CollapsibleContent>
                         <SidebarMenuSub>
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = countFor(childLink.countKey)}
+                            {@const cnt = navCount(childLink, countFor)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -173,7 +167,7 @@
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : childLink.path}
+                                      : navHref(childLink)}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     data-sveltekit-preload-data={childLink.noPreload ? 'off' : undefined}
@@ -245,7 +239,13 @@
   <!-- min-w-0: a flex item's automatic minimum is its content's width, so one wide table would widen
        the whole content column past the viewport instead of scrolling inside its own container. -->
   <SidebarInset class="min-w-0">
-    <header class="flex h-12 shrink-0 items-center gap-2 px-4">
+    <!-- headerInline: the page's own header starts at the top and leaves room for the trigger, which
+         floats over it instead of reserving a row. -->
+    <header
+      class={page.data.headerInline
+        ? 'absolute top-0 left-0 z-10 flex h-12 items-center px-4'
+        : 'flex h-12 shrink-0 items-center gap-2 px-4'}
+    >
       <SidebarTrigger />
     </header>
     <!-- fullBleed: edge-to-edge, self-managed height (scanner focused review). wide: full content width

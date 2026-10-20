@@ -6,7 +6,10 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
 import { useStorylineForPost } from '~/components/Storyline/storyline.utils';
 
-/** Owner-only: published posts that are not already a chapter can start a storyline. */
+/**
+ * The caller gates it to the owner of a published post; a post that is already a chapter opens its
+ * storyline instead.
+ */
 export function StartStorylineMenuItem({ post }: { post: StorylineSourcePost }) {
   const router = useRouter();
   const { storyline, isLoading } = useStorylineForPost(post.id);

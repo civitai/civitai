@@ -83,7 +83,11 @@ import {
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
-import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import {
+  hasPendingPromptMint,
+  remixProvenanceStore,
+  waitForPromptMint,
+} from '~/store/remix-provenance.store';
 import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
@@ -370,13 +374,20 @@ function BaseModelWarnings() {
 // Submit button
 // =============================================================================
 
+const PREPARING_REMIX_LABEL = 'Preparing remix…';
+const REMIX_LINK_TIMEOUT_MESSAGE =
+  "Couldn't prepare the remix link in time; this generation won't count toward a free remix-gallery spot.";
+
 export function SubmitButton({
   store,
   isLoading: isSubmitting,
+  preparing,
   onSubmit,
 }: {
   store: GenerationStore;
   isLoading?: boolean;
+  /** Waiting on the reuse-prompt remix link before submitting. */
+  preparing?: boolean;
   onSubmit?: () => void;
 }) {
   const { running, helpers, setBlockedTarget } = useTourContext();
@@ -420,9 +431,11 @@ export function SubmitButton({
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={submitBlocked}
+      disabled={submitBlocked || preparing}
       onClick={handleClick}
-    />
+    >
+      {preparing ? PREPARING_REMIX_LABEL : undefined}
+    </GenerateButton>
   );
 }
 
@@ -795,7 +808,12 @@ export function FormFooter({
 
   const clearWarning = () => setPromptWarning(null);
 
+  const [preparingRemix, setPreparingRemix] = useState(false);
+  // A second click while the remix link is being prepared must not submit twice.
+  const preparingRemixRef = useRef(false);
+
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    if (preparingRemixRef.current) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
@@ -853,6 +871,20 @@ export function FormFooter({
             : 'Request queued. Your generation request will begin shortly.',
       });
       return;
+    }
+
+    // A reuse-prompt remix's token arrives when its mint answers, which can be well after the
+    // click; submitting before then would lose the free remix-gallery placement it is for.
+    if (hasPendingPromptMint(remixOfId)) {
+      preparingRemixRef.current = true;
+      setPreparingRemix(true);
+      try {
+        const { timedOut } = await waitForPromptMint(remixOfId);
+        if (timedOut) showWarningNotification({ message: REMIX_LINK_TIMEOUT_MESSAGE });
+      } finally {
+        preparingRemixRef.current = false;
+        setPreparingRemix(false);
+      }
     }
 
     let externalId: string | undefined;
@@ -1077,6 +1109,7 @@ export function FormFooter({
             <SubmitButton
               store={store}
               isLoading={generateMutation.isPending || isMinLoading}
+              preparing={preparingRemix}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector store={store} />}

@@ -33,13 +33,21 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
 );
 dbMock.dbWrite.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
   cb({
-    cosmetic: { create: mocks.cosmeticCreate },
-    cosmeticShopItem: { create: mocks.shopItemCreate },
+    $queryRaw: dbMock.dbWrite.$queryRaw,
+    cosmetic: { create: mocks.cosmeticCreate, update: dbMock.dbWrite.cosmetic.update },
+    cosmeticShopItem: {
+      create: mocks.shopItemCreate,
+      findUnique: dbMock.dbWrite.cosmeticShopItem.findUnique,
+      update: dbMock.dbWrite.cosmeticShopItem.update,
+    },
   })
 );
 

@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import * as c from '~/shared/constants/birthday2026.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
 
 const { load } = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock('~/server/events/load-events', () => ({ loadEvents: () => load() }));
@@ -12,11 +13,12 @@ vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
 
-const { getUserCreator, equipCosmetic } = await import('~/server/services/user.service');
+const { getUserCreator, equipCosmetic, getCosmeticsAndProfilePicturesForUsers } = await import(
+  '~/server/services/user.service'
+);
 const { getLeaderboardHandler } = await import('~/server/controllers/user.controller');
 const { getUserWithProfile } = await import('~/server/services/user-profile.service');
 const { getUserProfileHandler } = await import('~/server/controllers/user-profile.controller');
-const { modelWithDetailsSelect } = await import('~/server/selectors/model.selector');
 
 /**
  * Event hats are content decorations: a user holds them and places them on images, models and
@@ -130,9 +132,17 @@ describe('user-level cosmetic reads carry no event hats', () => {
     expect(user.cosmetics.map((x) => x.cosmetic.id)).toEqual([1]);
   });
 
-  it("a model's owner carries what the owner wears", () => {
-    const owner = modelWithDetailsSelect.user.select;
-    expect(cosmeticsFor(owner).map((x) => x.cosmetic.id)).toEqual([1]);
+  // Invariant guard, not regression coverage: the cache lookup always excluded placed hats. It
+  // replaces the check on the model page's old nested select, which the owner no longer goes through.
+  it("a model's owner, filled from the user cosmetic cache, carries what the owner wears", async () => {
+    installUserCosmeticCacheFake({
+      userCosmetics: rows.map((row) => ({ ...row, userId: OWNER, cosmeticId: row.cosmetic.id })),
+      cosmetics: rows.map((row) => ({ ...row.cosmetic, flags: 0 })),
+      profilePictures: [],
+    });
+
+    const owner = (await getCosmeticsAndProfilePicturesForUsers([OWNER]))(OWNER);
+    expect(owner.cosmetics.map((x) => x.cosmetic.id)).toEqual([1]);
   });
 
   it('refuses to equip an event hat on the user', async () => {

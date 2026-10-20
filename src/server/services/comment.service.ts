@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
+import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -33,17 +34,35 @@ import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 type ModelCommentsFilterInput = Pick<GetAllCommentsSchema, 'modelId' | 'userId' | 'hidden'>;
 
-/** Where-clause shared by the comment list, the pinned list and the visible count so they can't drift. */
-async function getTopLevelCommentsWhere(
-  { modelId, userId, hidden = false }: ModelCommentsFilterInput,
-  user: SessionUser | undefined,
-  { ownerSeesBlockers }: { ownerSeesBlockers: boolean }
-): Promise<Prisma.CommentWhereInput> {
-  const isMod = user?.isModerator ?? false;
+type ViewerExclusionLists = {
+  hiddenUsers: number[];
+  blockedByUsers: number[];
+  blockedUsers: number[];
+};
 
+async function getViewerExclusionLists(
+  user: SessionUser | undefined
+): Promise<ViewerExclusionLists> {
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  return { hiddenUsers, blockedByUsers, blockedUsers };
+}
+
+/**
+ * Where-clause shared by the comment list, the pinned list and the visible count so they can't drift.
+ * Pass `lists` when building more than one where for the same viewer, so the lists are read once.
+ */
+async function getTopLevelCommentsWhere(
+  { modelId, userId, hidden = false }: ModelCommentsFilterInput,
+  user: SessionUser | undefined,
+  { ownerSeesBlockers }: { ownerSeesBlockers: boolean },
+  lists?: ViewerExclusionLists
+): Promise<Prisma.CommentWhereInput> {
+  const isMod = user?.isModerator ?? false;
+
+  const { hiddenUsers, blockedByUsers, blockedUsers } =
+    lists ?? (await getViewerExclusionLists(user));
   // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
   // still see + report engagement on their own content) — drop blockedByUsers only then; keep
   // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
@@ -136,10 +155,18 @@ export const getVisibleCommentCount = async ({
   user?: SessionUser;
 }) => {
   const db = await getDbWithoutLag('commentModel', input.modelId);
+  const lists = await getViewerExclusionLists(user);
   const [unpinnedWhere, pinnedWhere] = await Promise.all([
-    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: true }),
-    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: false }),
+    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: true }, lists),
+    getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: false }, lists),
   ]);
+  // The two wheres differ only when the viewer owns the model AND has a blocked-by list (the
+  // unpinned list then lets the owner see blockers' comments; the pinned list does not). In
+  // every other case they are identical, and `pinnedAt IS NULL` / `IS NOT NULL` partition the
+  // rows, so one COUNT over the shared where equals the sum of the two. Don't fold the
+  // differing case into a single OR: it would bind both `notIn` lists in one statement, and
+  // each is capped just under the bind-parameter limit on its own (boundExcludedUserIds).
+  if (isEqual(unpinnedWhere, pinnedWhere)) return db.comment.count({ where: unpinnedWhere });
   const [unpinned, pinned] = await Promise.all([
     db.comment.count({ where: { ...unpinnedWhere, pinnedAt: null } }),
     db.comment.count({ where: { ...pinnedWhere, pinnedAt: { not: null } } }),
@@ -399,7 +426,7 @@ export async function bulkSetCommentTosViolation({
       .then(() => {
         notified += 1;
       })
-      .catch(() => {});
+      .catch(() => undefined); // best-effort notification; a failure must not fail the action
   }
 
   return { count, notified, rewardedReports };

@@ -7,6 +7,7 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
 import type { MediaUploadOnCompleteProps, UseMediaUploadProps } from '~/hooks/useMediaUpload';
+import { formatDate } from '~/utils/date-helpers';
 
 const POST_COUNT = 12;
 
@@ -17,7 +18,12 @@ const mocks = vi.hoisted(() => ({
     dailyLimit: 100,
     perDay: [] as { day: string; existing: number; incoming: number }[],
   },
-  scheduleCalls: [] as { idempotencyKey?: string; posts: { publishedAt: Date }[] }[],
+  scheduleCalls: [] as { posts: { clientKey?: string; publishedAt: Date }[] }[],
+  /** Throws on these call numbers (1-based), as a call the client stopped waiting for would. */
+  throwOnCalls: [] as number[],
+  throwMessage: '',
+  /** Answer every post as made by an earlier attempt, at this time. */
+  alreadyCreatedAt: null as Date | null,
   drafts: new Map<string, unknown>(),
 }));
 
@@ -93,12 +99,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'post.scheduleBatch': {
       useMutation: () => ({
         isPending: false,
-        mutateAsync: async (input: { idempotencyKey?: string; posts: { publishedAt: Date }[] }) => {
+        mutateAsync: async (input: { posts: { clientKey?: string; publishedAt: Date }[] }) => {
           mocks.scheduleCalls.push(input);
+          if (mocks.throwOnCalls.includes(mocks.scheduleCalls.length))
+            throw new Error(
+              mocks.throwMessage || `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`
+            );
+          const earlier = mocks.alreadyCreatedAt;
           return {
             created: input.posts.map((post, index) => ({
               postId: index + 1,
-              publishedAt: post.publishedAt.toISOString(),
+              publishedAt: (earlier ?? post.publishedAt).toISOString(),
+              ...(earlier ? { alreadyCreated: true as const } : {}),
             })),
           };
         },
@@ -142,6 +154,9 @@ describe('BatchComposer', () => {
   beforeEach(() => {
     mocks.validateResult = { ok: true, issues: [], dailyLimit: 100, perDay: [] };
     mocks.scheduleCalls = [];
+    mocks.throwOnCalls = [];
+    mocks.throwMessage = '';
+    mocks.alreadyCreatedAt = null;
     mocks.drafts.clear();
   });
 
@@ -247,7 +262,7 @@ describe('BatchComposer', () => {
     await expect.element(page.getByTestId('batch-review-button')).toBeInTheDocument();
   });
 
-  test('submits each chunk once under StrictMode, with its own idempotency key', async () => {
+  test('submits each chunk once under StrictMode, with a key per post', async () => {
     await uploadPosts(POST_COUNT, { strict: true });
     await userEvent.click(page.getByTestId('batch-review-button'));
     const schedule = page.getByTestId('batch-schedule-button');
@@ -258,8 +273,51 @@ describe('BatchComposer', () => {
       .element(page.getByTestId('batch-success-summary'))
       .toHaveTextContent(`${POST_COUNT} posts scheduled`);
     expect(mocks.scheduleCalls.map((call) => call.posts.length)).toEqual([2, 2, 2, 2, 2, 2]);
-    const keys = mocks.scheduleCalls.map((call) => call.idempotencyKey);
-    expect(new Set(keys).size).toBe(6);
+    const keys = mocks.scheduleCalls.flatMap((call) => call.posts.map((post) => post.clientKey));
+    expect(new Set(keys).size).toBe(POST_COUNT);
     expect(keys.every((key) => typeof key === 'string' && key.length > 0)).toBe(true);
+  });
+
+  test('an earlier attempt still holding the schedule reads as "still working", not a failure', async () => {
+    mocks.throwOnCalls = [1];
+    mocks.throwMessage = 'Another scheduling request is still running. Try again in a moment.';
+    await uploadPosts(POST_COUNT);
+    await userEvent.click(page.getByTestId('batch-review-button'));
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+
+    const modal = page.getByTestId('batch-progress-modal');
+    await expect.element(modal).toHaveTextContent('Still finishing an earlier attempt');
+    await expect.element(modal).not.toHaveTextContent('failed');
+
+    await userEvent.click(page.getByRole('button', { name: 'Try again' }));
+    await expect
+      .element(page.getByTestId('batch-success-summary'))
+      .toHaveTextContent(`${POST_COUNT} posts scheduled`);
+  });
+
+  test('a retry resends the same post keys and shows the time an earlier attempt set', async () => {
+    mocks.throwOnCalls = [2];
+    await uploadPosts(POST_COUNT);
+    await userEvent.click(page.getByTestId('batch-review-button'));
+    const schedule = page.getByTestId('batch-schedule-button');
+    await expect.element(schedule).toBeEnabled();
+    await userEvent.click(schedule);
+
+    const modal = page.getByTestId('batch-progress-modal');
+    await expect.element(modal).toHaveTextContent('2 scheduled, 10 failed');
+    await expect.element(modal).not.toHaveTextContent('Nothing was created');
+
+    // The server finished the call the client gave up on; it answers the retry with those posts.
+    const original = new Date('2030-01-02T03:04:00.000Z');
+    mocks.alreadyCreatedAt = original;
+    await userEvent.click(page.getByRole('button', { name: 'Retry 10' }));
+
+    const keysOf = (call: number) => mocks.scheduleCalls[call].posts.map((post) => post.clientKey);
+    expect(keysOf(2)).toEqual(keysOf(1));
+    await expect
+      .element(page.getByTestId('batch-recognised'))
+      .toHaveTextContent(formatDate(original, 'MMM D, h:mm A'));
   });
 });

@@ -9,6 +9,10 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { loadEnvChain, appEnvChain, APP_REGISTRY, primaryCheckout, AppSession } from './daemon.mjs';
+import { LOCAL_MAIL_ENV } from './local-mail.mjs';
+import { DB_KEYS } from './dev-db.mjs';
+import { BLANKED_KEY } from './blank-keys.mjs';
+import { redactedMismatch } from './selftest-redact.mjs';
 
 const dir = mkdtempSync(resolve(tmpdir(), 'env-chain-'));
 const base = resolve(dir, 'base.env');
@@ -18,9 +22,13 @@ let checks = 0;
 
 function check(name, actual, expected) {
   checks++;
-  if (actual !== expected) {
-    failures.push(`${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-  }
+  if (actual !== expected) failures.push(`${name}: ${redactedMismatch(actual, expected)}`);
+}
+
+// Key names are safe to print; their values are not.
+function checkNoKeys(name, keys) {
+  checks++;
+  if (keys.length) failures.push(`${name}: got ${keys.join(', ')}`);
 }
 
 try {
@@ -68,17 +76,25 @@ try {
   // fixed for was not a parsing bug — it was reading the CHAIN when the child is handed
   // `{ ...process.env, ...chain }`. Reverting to loadEnvChain(this.envPaths) passes every check in
   // db-host.selftest.mjs, because all of those call the parser directly. This is the one that sees it.
-  const probe = new AppSession('moderator', worktree, 5174, [base]);
+  // Every AppSession here gets an empty root chain: the default reads the real primary's root .env,
+  // and the worktree DB keys are dev-db.selftest.mjs's to check.
+  const probe = new AppSession('moderator', worktree, 5174, [base], []);
   const env = probe.spawnEnv();
   check('spawnEnv layers the chain over process.env', env.SHARED, 'from-base');
   check('spawnEnv keeps a key only process.env has', env.PATH, process.env.PATH);
   check('spawnEnv is stable within one start', probe.spawnEnv(), env);
 
   // An empty chain means "this daemon does not supply this process's env" — the auth hub, which lets
-  // Vite load its own .env. spawnEnv must then be process.env itself, and the warning must stay
-  // quiet rather than naming an inherited candidate the process may not even use.
-  const hubLike = new AppSession('moderator', worktree, 5174, []);
-  check('an empty chain is process.env itself', hubLike.spawnEnv(), process.env);
+  // Vite load its own .env. spawnEnv must then be process.env plus only the local mail keys (and, in
+  // a worktree, the DB and blanked keys), and the warning must stay quiet rather than naming an
+  // inherited candidate the process may not even use.
+  const forced = (k) => k in LOCAL_MAIL_ENV || DB_KEYS.includes(k) || BLANKED_KEY.test(k);
+  const hubLike = new AppSession('moderator', worktree, 5174, [], []).spawnEnv();
+  const added = Object.keys(hubLike).filter((k) => !(k in process.env) && !forced(k));
+  const changed = Object.keys(process.env).filter((k) => !forced(k) && hubLike[k] !== process.env[k]);
+  checkNoKeys('an empty chain adds no key beyond the forced ones', added);
+  checkNoKeys('an empty chain keeps every process.env value but the forced ones', changed);
+  check('an empty chain routes mail to the catcher', hubLike.EMAIL_HOST, LOCAL_MAIL_ENV.EMAIL_HOST);
 
   // Stability is the benign half; STALENESS is the half with teeth. Without the per-start
   // invalidation, editing an .env to point away from production and restarting spawns with the old
@@ -95,7 +111,7 @@ try {
   // DATABASE_URL, and dbHost reads the same cached object — so the warning line confirms the host
   // you just changed away from.
   writeFileSync(base, 'SHARED=edited-again\n');
-  const wired = new AppSession('moderator', resolve(dir, 'no-such-worktree'), 5174, [base]);
+  const wired = new AppSession('moderator', resolve(dir, 'no-such-worktree'), 5174, [base], []);
   wired.spawnEnvCache = { SHARED: 'stale-from-a-previous-start' };
   const result = await wired.start();
   check('a start on a missing path errors without spawning', result.status, 'error');

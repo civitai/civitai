@@ -17,6 +17,7 @@ import * as label from '$lib/autolabel-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
+import { parseServiceStatus } from '$lib/service-status-core';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
  *  attribute — it carries a credential provider). */
@@ -25,6 +26,9 @@ export interface StudioElementHost {
   getOrchestratorToken(): Promise<string>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
+  /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
+   *  and the element shows no status banner and leaves Start enabled. */
+  getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
   config: {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
@@ -187,5 +191,10 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
+
+    getServiceStatus: async () => {
+      const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
+      return raw ? parseServiceStatus(raw) : null;
+    },
   };
 }

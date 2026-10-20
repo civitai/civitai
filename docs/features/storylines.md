@@ -15,7 +15,8 @@ section).
   in image detail. Opening it enters storyline mode.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
   move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
-  and chapter you are in; its x leaves, returning you to where you were in the feed.
+  and chapter you are in and opens the map; Leave the storyline at the bottom of the map returns you
+  to browsing that post's images.
 - **Where am I.** The chip opens a map of the storyline, a sheet that drops from the chip (a bottom
   sheet on a phone) while the image stays visible: the main path as a timeline, the forks off it, and
   how readers have split at each fork, from the first recorded choice. Any chapter on the map can be
@@ -69,12 +70,16 @@ section).
   in the moderator app: granting brings the storyline back and stops a recheck of the same title from
   taking it down again; denying leaves it down, and the creator can ask again. A grant is refused if
   the title was edited after the moderator saw it. A storyline a moderator took down cannot be
-  appealed this way.
+  appealed this way. A moderator who lifts the takedown directly, without a review, also approves
+  an open appeal of it, recorded as a direct lift and not a reviewed appeal; if a moderator's own
+  takedown still holds the storyline down, the appeal stays open.
 - **Rejoining branches.** The creator can bring two branches back together at the end of a
   chapter: "Add the next chapter", then "Join an existing chapter", offers a chapter already in the
   story as a way on. Nothing is copied. A link that would loop, skip chapters on a
   route, or lead into the first chapter is refused, and a chapter can be joined from at most 8
-  chapters.
+  chapters. The picker offers the 100 chapters nearest the chapter being continued, and only ones the
+  storyline's owner is shown. Before rolling back the rejoin code, remove the second and later
+  parent links of any chapter that has more than one parent, keeping each chapter's oldest.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 

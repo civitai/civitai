@@ -16,6 +16,15 @@ describe('buildRumExperimentAttributes', () => {
     );
   });
 
+  it('carries the model-page deferral cohort under its exact Loki field name', () => {
+    // A wire string: RUM queries match `session_attr_exp_model_page_defer_below_fold`.
+    expect(
+      buildRumExperimentAttributes({ modelPageDeferBelowFold: true })
+        .exp_model_page_defer_below_fold
+    ).toBe('true');
+    expect(buildRumExperimentAttributes({}).exp_model_page_defer_below_fold).toBe('false');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');

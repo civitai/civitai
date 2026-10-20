@@ -1,5 +1,10 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
+import type { RemovedUserCosmetic } from '~/server/redis/caches';
+import {
+  refreshUserCosmeticCache,
+  refreshUserCosmeticCacheForRemoved,
+} from '~/server/redis/caches';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 export const deliverLeaderboardCosmetics = createJob(
@@ -41,7 +46,7 @@ async function deliverSeasonCosmetics() {
 
   // equip next best
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const equipped = await dbWrite.$queryRaw<{ userId: number }[]>`
     -- Equip next best leaderboard cosmetic
     WITH equipped AS (
       SELECT
@@ -69,12 +74,13 @@ async function deliverSeasonCosmetics() {
     )
     UPDATE "UserCosmetic" uc SET "equippedAt" = now()
     FROM next_best nb
-    WHERE nb.rn = 1 AND nb."userId" = uc."userId" AND nb."cosmeticId" = uc."cosmeticId";
+    WHERE nb.rn = 1 AND nb."userId" = uc."userId" AND nb."cosmeticId" = uc."cosmeticId"
+    RETURNING uc."userId";
   `;
 
   // revoke
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const revoked = await dbWrite.$queryRaw<RemovedUserCosmetic[]>`
     -- Revoke leaderboard cosmetics
     DELETE FROM "UserCosmetic" uc
     USING "Cosmetic" c
@@ -87,8 +93,12 @@ async function deliverSeasonCosmetics() {
         AND lr."userId" = uc."userId"
         AND lr.position <= c."leaderboardPosition"
         AND lr.date = current_date
-    );
+    )
+    RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
+
+  await refreshUserCosmeticCache(equipped.map((x) => x.userId));
+  await refreshUserCosmeticCacheForRemoved(revoked);
 }
 
 const LEGEND_COSMETIC_CUTOFF = 10;
@@ -126,7 +136,7 @@ async function deliverLegendCosmetics() {
 
   // revoke
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  const revoked = await dbWrite.$queryRaw<RemovedUserCosmetic[]>`
     -- Revoke leaderboard legend cosmetics
     WITH legends AS (
       SELECT DISTINCT "userId" FROM "LegendsBoardResult"
@@ -140,6 +150,8 @@ async function deliverLegendCosmetics() {
     )
     DELETE FROM "UserCosmetic" uc
     USING cosmetic c
-    WHERE uc."cosmeticId" = c.id AND uc."userId" NOT IN (SELECT "userId" FROM legends);
+    WHERE uc."cosmeticId" = c.id AND uc."userId" NOT IN (SELECT "userId" FROM legends)
+    RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
+  await refreshUserCosmeticCacheForRemoved(revoked);
 }

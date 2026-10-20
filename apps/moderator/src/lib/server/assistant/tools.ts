@@ -14,7 +14,7 @@ import {
   maskLinkedAddresses,
   type LinkedAccounts,
 } from '../ip-links.service';
-import { getInflationActors, getSharedIps } from '../reactor-lookup.service';
+import { getInflationActors, getSharedIps, type SharedIpAccount } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import {
   getReportsOnUser,
@@ -26,7 +26,13 @@ import { getAbuseFindingsForUser } from '../abuse-detection.service';
 import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
-import { getAccounts, getOpenUserReports, MAX_ACCOUNTS, searchAccounts } from './reads';
+import {
+  getAccounts,
+  getOpenUserReports,
+  HUMAN_REPORT_REASONS,
+  MAX_ACCOUNTS,
+  searchAccounts,
+} from './reads';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
 
 // The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
@@ -175,6 +181,82 @@ function reportRow(r: UserReportRow) {
   };
 }
 
+/**
+ * Reactors linked to EACH OTHER by shared addresses, grouped (connected components), biggest first. A
+ * ring that boosts a creator need not share an address with the creator itself, and a flat per-account
+ * list left the model to assemble the groups, which it did not do.
+ *
+ * Linked only through addresses both accounts list, with a measured breadth, so every link is one the
+ * answer can cite. `peers` is not used: it spans every shared address, and one public VPN exit would
+ * chain strangers into a "ring". `widestLink` is the site-wide account count of the broadest address
+ * holding the group together (merged narrowest first), so a group that rests on a crowded address says so.
+ *
+ * `addresses` is capped per account, so a link can sit past the cap. A group with a member whose list
+ * was cut is not `complete` (a narrower link may be hidden), and two accounts `peers` links that no
+ * listed address does come back as `unmeasuredLinks` rather than vanishing.
+ */
+export function reactorClusters(
+  shared: Pick<
+    SharedIpAccount,
+    'userId' | 'username' | 'withTarget' | 'addresses' | 'addressCount' | 'peers'
+  >[]
+): {
+  clusters: {
+    size: number;
+    linkedToCreator: boolean;
+    widestLink: number;
+    complete: boolean;
+    members: { userId: number; username: string | null }[];
+  }[];
+  unmeasuredLinks: [number, number][];
+} {
+  const parent = new Map(shared.map((s) => [s.userId, s.userId]));
+  const widest = new Map<number, number>();
+  const root = (id: number): number => {
+    let r = id;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(id, r);
+    return r;
+  };
+
+  const byAddress = new Map<string, { breadth: number; userIds: number[] }>();
+  for (const s of shared)
+    for (const a of s.addresses) {
+      if (a.totalAccounts === null) continue;
+      const entry = byAddress.get(a.cluster) ?? { breadth: a.totalAccounts, userIds: [] };
+      entry.userIds.push(s.userId);
+      byAddress.set(a.cluster, entry);
+    }
+  for (const { breadth, userIds } of [...byAddress.values()].sort((a, b) => a.breadth - b.breadth))
+    for (const id of userIds.slice(1)) {
+      const [a, b] = [root(userIds[0]), root(id)];
+      if (a === b) continue;
+      parent.set(a, b);
+      // Narrowest first, so the latest merge into a group is its widest link.
+      widest.set(b, breadth);
+    }
+
+  const groups = new Map<number, typeof shared>();
+  for (const s of shared) groups.set(root(s.userId), [...(groups.get(root(s.userId)) ?? []), s]);
+  const clusters = [...groups.entries()]
+    .filter(([, g]) => g.length > 1)
+    .map(([r, g]) => ({
+      size: g.length,
+      linkedToCreator: g.some((s) => s.withTarget),
+      widestLink: widest.get(r) ?? 0,
+      complete: g.every((s) => s.addressCount <= s.addresses.length),
+      members: g.map((s) => ({ userId: s.userId, username: s.username })),
+    }))
+    .sort((a, b) => b.size - a.size || a.widestLink - b.widestLink);
+
+  const unmeasuredLinks: [number, number][] = [];
+  for (const s of shared)
+    for (const p of s.peers)
+      if (p.userId > s.userId && parent.has(p.userId) && root(p.userId) !== root(s.userId))
+        unmeasuredLinks.push([s.userId, p.userId]);
+  return { clusters, unmeasuredLinks };
+}
+
 export const TOOLS = [
   tool({
     name: 'find_user',
@@ -318,7 +400,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` has a member with more shared addresses than were checked, so a narrower link may exist; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -335,6 +417,7 @@ export const TOOLS = [
       const label = shownAddress(ctx);
       return {
         data: {
+          ...reactorClusters(shared),
           breadth,
           overFloor: report.total,
           belowFloor: report.belowFloor,
@@ -439,14 +522,26 @@ export const TOOLS = [
   tool({
     name: 'open_user_reports',
     description:
-      "The open user-report queue, oldest first, human-filed only: report id, reported account, reporter, reason and the reporter's comment (quoted user text). Page with afterReportId.",
+      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor, passing the same order and filters.",
     input: z.object({
       limit: z.number().int().min(1).max(100).default(50),
-      afterReportId: z.number().int().positive().optional(),
+      order: z.enum(['newest', 'oldest']).default('newest'),
+      cursor: z.number().int().positive().max(MAX_INT4).optional(),
+      statuses: z
+        .array(z.enum(['Pending', 'Processing']))
+        .min(1)
+        .max(2)
+        .optional(),
+      reasons: z
+        .array(z.enum(HUMAN_REPORT_REASONS as [string, ...string[]]))
+        .min(1)
+        .max(HUMAN_REPORT_REASONS.length)
+        .optional(),
     }),
     requires: [USER_REPORTS],
-    run: async ({ limit, afterReportId }) => {
-      const rows = await getOpenUserReports(limit, afterReportId);
+    run: async (query) => {
+      const { limit } = query;
+      const rows = await getOpenUserReports(query);
       return {
         data: {
           reports: rows.map((r) => ({
@@ -454,6 +549,7 @@ export const TOOLS = [
             createdAt: day(r.createdAt),
             comment: quoted(r.comment),
           })),
+          nextCursor: rows.length >= limit ? rows.at(-1)!.reportId : null,
         },
         rows: rows.length,
         truncated: rows.length >= limit,
@@ -618,6 +714,29 @@ export type ToolName = (typeof TOOLS)[number]['name'];
 
 export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
   TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
+
+/**
+ * Every tool a playbook may name, with its inputs and the pages that unlock it, for the playbook editor.
+ * Not filtered to the author: a playbook runs for every moderator, and each gets only the tools `toolsFor`
+ * allows them.
+ */
+export function toolCatalog(): {
+  name: string;
+  description: string;
+  inputs: string[];
+  /** Any one of these pages unlocks it; `null` is every moderator. */
+  needs: string[] | null;
+}[] {
+  return TOOLS.map((t) => {
+    const parameters = toolSpec(t).function.parameters as { properties?: Record<string, unknown> };
+    return {
+      name: t.name,
+      description: t.description,
+      inputs: Object.keys(parameters.properties ?? {}),
+      needs: t.requires,
+    };
+  });
+}
 
 export function toolSpec(t: (typeof TOOLS)[number]) {
   const { $schema: _schema, ...parameters } = z.toJSONSchema(t.input, { io: 'input' }) as Record<

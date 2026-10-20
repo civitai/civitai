@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -95,7 +96,7 @@ let db: PGlite;
 
 beforeEach(async () => {
   vi.resetAllMocks();
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   for (const [id, username, meta, muted, bannedAt, deletedAt] of USERS)
     await db.query(

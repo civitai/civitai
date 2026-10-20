@@ -97,6 +97,12 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 
 // The post-commit history write is a seam: these suites pin what each go-live HANDS it;

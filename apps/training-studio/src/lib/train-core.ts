@@ -40,6 +40,7 @@ import {
   EXTRA_PARAM_FIELDS,
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
+  isRetiredBaseAir,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
 
@@ -342,6 +343,9 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   // trains on the official base.
   if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
     fail(`${field}.customModel`, 'is not supported for this model.');
+  // A restored selection or sweep row can still name a retired card's base.
+  if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
+    fail(`${field}.model`, 'is no longer offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -489,6 +493,9 @@ async function buildContinuation(
   const continuedInput = {
     engine: 'ai-toolkit',
     ecosystem: input.ecosystem,
+    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+    // on the ecosystem's default base and publishes as that base.
+    ...(input.model ? { model: input.model } : {}),
     ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
     ...(input.version ? { version: input.version } : {}),
     ...(steps ? { steps } : {}),

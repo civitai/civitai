@@ -38,6 +38,7 @@ import {
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { MAX_SOURCE_IMAGES, signProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   createTrainingWhatIfWorkflow,
@@ -256,7 +257,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await updateWorkflow({ ...input, token: ctx.token });
+      const result = await updateWorkflow({
+        ...input,
+        token: ctx.token,
+        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+      });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
@@ -669,20 +674,23 @@ export const orchestratorRouter = router({
    * is the whole security property, and a client-chosen one would let the caller
    * ask for the stronger `mint` audience from the weaker click.
    *
-   * `getImage` is the gate here for the same reason it is there — it applies the
-   * needs-review, published-or-owner and Blocked checks, so a token cannot be
-   * minted for an image the caller could not open.
+   * The gate is `image.get`'s visibility (needs-review, published-or-owner, Blocked) plus its
+   * owner block check, so a token cannot be minted for an image the caller could not open. Only
+   * that: the full `getImage` payload and the orchestrator middlewares (a token mint, a client
+   * version header, a response URL rewrite) cost the click seconds and refuse nothing here, and
+   * the token lands in the form only once this returns.
    */
-  mintPromptProvenance: orchestratorProcedure
+  mintPromptProvenance: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const image = await getImage({
+      const image = await assertImageVisibleToViewer({
         id: input.imageId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        // The mint is a write: a cache "not blocked" is confirmed on the primary.
+        confirmBlockOnPrimary: true,
       });
-      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
 
       return {
         provenance: signProvenance({

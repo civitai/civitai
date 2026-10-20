@@ -157,6 +157,7 @@ describe('upsertCommentHandler — block enforcement', () => {
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
       targetUserId: REQUEST_MODEL_OWNER,
+      confirmOnPrimary: true,
     });
     expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
   });
@@ -168,6 +169,7 @@ describe('upsertCommentHandler — block enforcement', () => {
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
       targetUserId: REQUEST_MODEL_OWNER,
+      confirmOnPrimary: true,
     });
     expect(mockCreateOrUpdateComment).toHaveBeenCalledTimes(1);
   });
@@ -183,6 +185,7 @@ describe('upsertCommentHandler — block enforcement', () => {
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
       targetUserId: STORED_MODEL_OWNER,
+      confirmOnPrimary: true,
     });
     expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
   });
@@ -203,6 +206,7 @@ describe('upsertCommentHandler — block enforcement', () => {
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
       targetUserId: PARENT_AUTHOR,
+      confirmOnPrimary: true,
     });
     expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
   });

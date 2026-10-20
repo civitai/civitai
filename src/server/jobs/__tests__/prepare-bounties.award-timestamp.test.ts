@@ -164,9 +164,10 @@ describe('prepare-bounties auto-award', () => {
         'AND NOT EXISTS ( SELECT 1 FROM "BountyBenefactor" own ' +
         'WHERE own."bountyId" = ? AND own."userId" = be."userId" ' +
         'AND own.currency = ?::"Currency" AND own."awardedToId" IS NULL ) ' +
-        'AND be."userId" IS DISTINCT FROM ? GROUP BY'
+        'AND be."userId" IS DISTINCT FROM ? ' +
+        'AND NOT (be.id = ANY(?::int[])) GROUP BY'
     );
-    expect(values).toEqual(['BUZZ', BOUNTY_ID, BOUNTY_ID, 'BUZZ', OWNER_ID]);
+    expect(values).toEqual(['BUZZ', BOUNTY_ID, BOUNTY_ID, 'BUZZ', OWNER_ID, []]);
   });
 
   it('refunds supporters when the winner query returns no entry', async () => {

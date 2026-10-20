@@ -1,0 +1,229 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as FileCheck from '~/server/services/bounty-entry-file-check.service';
+
+const { mockFindHashOwnership, mockCheckOn } = vi.hoisted(() => ({
+  mockFindHashOwnership: vi.fn(),
+  mockCheckOn: vi.fn(async () => true),
+}));
+
+vi.mock('~/server/services/model-file-hash-owner.service', () => ({
+  findHashOwnership: mockFindHashOwnership,
+}));
+vi.mock('~/server/services/bounty-entry-file-check.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FileCheck>()),
+  isBountyEntryFileCheckOn: mockCheckOn,
+}));
+
+import { checkPendingBountyEntryFiles } from '~/server/services/bounty-entry-file-check.service';
+import {
+  awardBountyEntry,
+  getBountyEntryFilteredFiles,
+} from '~/server/services/bountyEntry.service';
+
+/**
+ * Bounty entry files of model bounties are hashed by a job and refused at award, and withheld
+ * from download, when they are another user's model.
+ */
+
+const AUTHOR = 2;
+const SUPPORTER = 3;
+const ENTRY_ID = 20;
+const BOUNTY_ID = 10;
+const SHA = 'F'.repeat(64);
+
+const CLEAN = { hashCheckedAt: '2026-10-20T00:00:00Z', sha256Server: SHA };
+const BLOCKED = { ...CLEAN, blockedReason: 'other-users-model' };
+const UNCHECKED = {};
+
+loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockCheckOn.mockResolvedValue(true);
+});
+
+describe('checkPendingBountyEntryFiles', () => {
+  const pending = (...files: { id: number; sizeKB?: number; authorId?: number | null }[]) =>
+    dbMock.dbRead.$queryRaw.mockResolvedValue(
+      files.map((f) => ({
+        name: `file-${f.id}.safetensors`,
+        url: `https://storage.example.com/u/${f.id}`,
+        sizeKB: 1024,
+        authorId: AUTHOR,
+        ...f,
+      }))
+    );
+
+  /** The metadata patch written for each file, keyed by file id. */
+  function writes() {
+    return new Map(
+      dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => {
+        const values = call.slice(1);
+        const patch = JSON.parse(
+          values.find((v) => typeof v === 'string' && v.startsWith('{')) as string
+        );
+        return [values.find((v) => typeof v === 'number') as number, patch];
+      })
+    );
+  }
+
+  it("blocks a file that is on another user's model, judged against the entry's author", async () => {
+    pending({ id: 1 });
+    mockFindHashOwnership.mockResolvedValue([{ hash: SHA, ownedByOther: true }]);
+
+    const result = await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
+
+    expect(mockFindHashOwnership).toHaveBeenCalledWith({ hashes: [SHA], userId: AUTHOR });
+    expect(writes().get(1)).toMatchObject({
+      sha256Server: SHA,
+      hashCheckedAt: expect.any(String),
+      blockedReason: 'other-users-model',
+    });
+    expect(result).toMatchObject({ checked: 1, blocked: 1, failed: 0 });
+  });
+
+  it("clears a file only on the author's own models, or on no model", async () => {
+    pending({ id: 1 }, { id: 2 });
+    mockFindHashOwnership
+      .mockResolvedValueOnce([{ hash: SHA, ownedByOther: false }])
+      .mockResolvedValueOnce([]);
+
+    await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
+
+    for (const id of [1, 2]) {
+      expect(writes().get(id)).toMatchObject({ hashCheckedAt: expect.any(String) });
+      expect(writes().get(id)).not.toHaveProperty('blockedReason');
+    }
+  });
+
+  it('leaves a file it could not hash unchecked, so award keeps refusing it', async () => {
+    pending({ id: 1 });
+
+    const result = await checkPendingBountyEntryFiles({
+      hashFile: async () => {
+        throw new Error('download failed: 503');
+      },
+    });
+
+    expect(writes().get(1)).toEqual({ hashAttemptedAt: expect.any(String) });
+    expect(mockFindHashOwnership).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ checked: 0, failed: 1 });
+  });
+
+  it('an entry with no author blocks any match', async () => {
+    pending({ id: 1, authorId: null });
+    mockFindHashOwnership.mockResolvedValue([]);
+
+    await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
+
+    expect(mockFindHashOwnership).toHaveBeenCalledWith({ hashes: [SHA], userId: -1 });
+  });
+
+  it('stops at the byte budget, but always takes the first file', async () => {
+    pending({ id: 1, sizeKB: 5 * 1024 }, { id: 2, sizeKB: 1 });
+    mockFindHashOwnership.mockResolvedValue([]);
+    const hashFile = vi.fn(async () => SHA);
+
+    await checkPendingBountyEntryFiles({ hashFile, maxBytes: 1024 });
+
+    expect(hashFile).toHaveBeenCalledTimes(1);
+    expect([...writes().keys()]).toEqual([1]);
+  });
+});
+
+describe('awardBountyEntry', () => {
+  function entryWithFiles(type: string, ...metadata: object[]) {
+    dbMock.dbWrite.bountyEntry.findUniqueOrThrow.mockResolvedValue({
+      id: ENTRY_ID,
+      bountyId: BOUNTY_ID,
+      userId: AUTHOR,
+    });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { userId: 1, complete: false, refunded: false, poi: false, availability: 'Public', meta: {} },
+    ] as never);
+    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({ type });
+    dbMock.dbWrite.file.findMany.mockResolvedValue(metadata.map((m) => ({ metadata: m })));
+    // Past the gate, the award stops at the next check.
+    dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow.mockResolvedValue({ awardedToId: 999 });
+  }
+  const award = () => awardBountyEntry({ id: ENTRY_ID, userId: SUPPORTER });
+  const PAST_THE_GATE = 'Supporters have already awarded an entry.';
+
+  it("refuses an entry whose file is another user's model", async () => {
+    entryWithFiles('LoraCreation', CLEAN, BLOCKED);
+    await expect(award()).rejects.toThrow(
+      "This entry's files match a model that belongs to another user and can't be awarded."
+    );
+    expect(dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses an entry with a file not checked yet', async () => {
+    entryWithFiles('ModelCreation', CLEAN, UNCHECKED);
+    await expect(award()).rejects.toThrow(
+      "This entry's files are still being checked. Try again in a few minutes."
+    );
+  });
+
+  it('control: an entry whose files are all checked and clean goes on to the award', async () => {
+    entryWithFiles('EmbedCreation', CLEAN, CLEAN);
+    await expect(award()).rejects.toThrow(PAST_THE_GATE);
+  });
+
+  it('does nothing while the check is off', async () => {
+    mockCheckOn.mockResolvedValue(false);
+    entryWithFiles('LoraCreation', BLOCKED);
+    await expect(award()).rejects.toThrow(PAST_THE_GATE);
+  });
+
+  it('does not apply to bounties that are not for models', async () => {
+    entryWithFiles('ImageCreation', BLOCKED, UNCHECKED);
+    await expect(award()).rejects.toThrow(PAST_THE_GATE);
+  });
+});
+
+describe('getBountyEntryFilteredFiles', () => {
+  function entryFiles() {
+    dbMock.dbRead.bountyEntry.findUniqueOrThrow.mockResolvedValue({
+      id: ENTRY_ID,
+      userId: AUTHOR,
+      bountyId: BOUNTY_ID,
+    });
+    dbMock.dbRead.file.findMany.mockResolvedValue([
+      { id: 1, name: 'a', url: 'https://storage.example.com/u/1', sizeKB: 1, metadata: BLOCKED },
+      { id: 2, name: 'b', url: 'https://storage.example.com/u/2', sizeKB: 1, metadata: CLEAN },
+      { id: 3, name: 'c', url: 'https://storage.example.com/u/3', sizeKB: 1, metadata: UNCHECKED },
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: ENTRY_ID, awardedUnitAmount: 0 }]);
+  }
+  const urls = async (viewer: { userId?: number; isModerator?: boolean }) =>
+    (await getBountyEntryFilteredFiles({ id: ENTRY_ID, ...viewer })).map((f) => f.url);
+
+  it.each([
+    ['the author', { userId: AUTHOR }],
+    ['another user', { userId: SUPPORTER }],
+  ])('withholds a blocked file from %s, and serves the rest', async (_, viewer) => {
+    entryFiles();
+    expect(await urls(viewer)).toEqual([
+      null,
+      'https://storage.example.com/u/2',
+      'https://storage.example.com/u/3',
+    ]);
+  });
+
+  it('moderators can still fetch a blocked file', async () => {
+    entryFiles();
+    expect(await urls({ userId: 1, isModerator: true })).toEqual([
+      'https://storage.example.com/u/1',
+      'https://storage.example.com/u/2',
+      'https://storage.example.com/u/3',
+    ]);
+  });
+
+  it('serves a blocked file while the check is off', async () => {
+    mockCheckOn.mockResolvedValue(false);
+    entryFiles();
+    expect((await urls({ userId: AUTHOR }))[0]).toBe('https://storage.example.com/u/1');
+  });
+});

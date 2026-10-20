@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
   preventReplicationLag,
@@ -31,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
@@ -306,6 +308,13 @@ export const getPostsInfinite = async ({
   }
 
   if (modelVersionId) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { model: { select: { poi: true, userId: true } } },
+    });
+    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+      return { items: [] };
+
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
     cacheTags.push(`posts-modelVersion:${modelVersionId}`);
   }
@@ -963,12 +972,9 @@ export const updatePost = async ({
       where: { id, userId: !user.isModerator ? user.id : undefined },
       data: {
         ...restData,
-        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
-        detail: !!restData.detail
-          ? restData.detail.length > 0
-            ? restData.detail
-            : null
-          : undefined,
+        // An empty string clears the field; only an omitted one leaves it alone.
+        title: restData.title === undefined ? undefined : restData.title || null,
+        detail: restData.detail === undefined ? undefined : restData.detail || null,
       },
     });
     if (publishedAt !== undefined) {
@@ -1223,6 +1229,7 @@ export const getPostTags = async ({
 
 export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
+  await throwOnBlockedUserContent(await newTagNames([name]), { surface: 'post' });
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
       where: { name },

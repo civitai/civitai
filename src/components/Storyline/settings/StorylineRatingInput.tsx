@@ -11,7 +11,7 @@ export function StorylineRatingInput({
   value: number;
   onChange: (level: number) => void;
   disabled?: boolean;
-  /** Ratings that may not be chosen, e.g. below a chapter already in the storyline. */
+  /** Whether a rating may be chosen; one below a chapter already in the storyline may not be. */
   isAllowed?: (level: number) => boolean;
 }) {
   return (

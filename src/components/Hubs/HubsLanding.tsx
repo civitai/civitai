@@ -133,6 +133,39 @@ export function HubsLanding() {
 
   const atHubLimit = hubs.length >= hubLimits.hubsPerUser;
 
+  // Someone who already has hubs came to open one, so theirs lead and the starting points follow.
+  // Held while the list loads too, so a returning viewer does not watch their hubs jump up the page;
+  // a new viewer's page reorders once, when the empty answer arrives.
+  const hubsFirst = !!currentUser && (isLoading || hubs.length > 0);
+
+  const myHubsSection = currentUser && (
+    <section className="flex flex-col gap-4">
+      <SectionHeading
+        title="My hubs"
+        aside={
+          !!hubs.length && (
+            <Text size="sm" c="dimmed">
+              {hubs.length} of {hubLimits.hubsPerUser}
+            </Text>
+          )
+        }
+      />
+      {isLoading ? (
+        <Loader size="sm" />
+      ) : hubs.length ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {hubs.map((hub) => (
+            <HubCard key={hub.id} hub={hub} />
+          ))}
+        </div>
+      ) : (
+        <Text size="sm" c="dimmed">
+          You have not made a hub yet. Pick a starting point above, or make an empty one.
+        </Text>
+      )}
+    </section>
+  );
+
   return (
     <div className="flex flex-col gap-12">
       <section className="flex flex-wrap items-end justify-between gap-4">
@@ -162,9 +195,11 @@ export function HubsLanding() {
         </div>
       </section>
 
+      {hubsFirst && myHubsSection}
+
       <section className="flex flex-col gap-4">
         <SectionHeading
-          title="Start with one of these"
+          title={hubs.length ? 'Start another hub' : 'Start with one of these'}
           aside={
             <Text size="sm" c="dimmed">
               We fill the list — nothing is saved until you have looked at it.
@@ -222,33 +257,7 @@ export function HubsLanding() {
         )}
       </section>
 
-      {currentUser && (
-        <section className="flex flex-col gap-4">
-          <SectionHeading
-            title="My hubs"
-            aside={
-              !!hubs.length && (
-                <Text size="sm" c="dimmed">
-                  {hubs.length} of {hubLimits.hubsPerUser}
-                </Text>
-              )
-            }
-          />
-          {isLoading ? (
-            <Loader size="sm" />
-          ) : hubs.length ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {hubs.map((hub) => (
-                <HubCard key={hub.id} hub={hub} />
-              ))}
-            </div>
-          ) : (
-            <Text size="sm" c="dimmed">
-              You have not made a hub yet. Pick a starting point above, or make an empty one.
-            </Text>
-          )}
-        </section>
-      )}
+      {!hubsFirst && myHubsSection}
     </div>
   );
 }

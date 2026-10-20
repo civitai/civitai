@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely, type KyselyPlugin } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.harness';
@@ -69,8 +70,8 @@ let main: PGlite;
 let history: PGlite;
 
 beforeEach(async () => {
-  main = await PGlite.create();
-  history = await PGlite.create();
+  main = await freshPglite();
+  history = await freshPglite();
   await main.exec(APP_PAGE_ACCESS_DDL);
   await main.exec(`CREATE TABLE "Role" (id text PRIMARY KEY);
     INSERT INTO "Role" VALUES ('moderator:admin'), ('${HIGH}'), ('${CM}');

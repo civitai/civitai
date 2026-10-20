@@ -67,6 +67,10 @@ function setsEqual(a: ReadonlySet<EngagedModelType> | undefined, b: ReadonlySet<
  */
 const locallyMutated = new Set<number>();
 
+/** Bumped by every `reset()`, so an answer requested before a sign-out can tell it is stale. */
+let generation = 0;
+export const getEngagedStoreGeneration = () => generation;
+
 export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
   membership: {},
   queried: new Set<number>(),
@@ -115,7 +119,10 @@ export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
         byId.set(id, new Set());
       }
 
-      for (const [type, ids] of Object.entries(record) as [EngagedModelType, number[] | undefined][]) {
+      for (const [type, ids] of Object.entries(record) as [
+        EngagedModelType,
+        number[] | undefined
+      ][]) {
         if (!ids) continue;
         for (const id of ids) {
           if (locallyMutated.has(id)) continue; // stale — preserve the local mutation
@@ -139,6 +146,7 @@ export const useEngagedModelsStore = create<EngagedModelsState>((set) => ({
     }),
 
   reset: () => {
+    generation++;
     locallyMutated.clear();
     set({ membership: {}, queried: new Set<number>() });
   },
