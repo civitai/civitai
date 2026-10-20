@@ -9,6 +9,7 @@ import {
   getStorylineStep,
   getStorylineWalk,
   hideHiddenUsersChapters,
+  storylinePositionLabel,
   orderPathImages,
   parseIdListParam,
   parseIdParam,
@@ -428,5 +429,39 @@ describe('storylineReadHref', () => {
     expect(storylineReadHref({ imageId: 900, chapterId: 3 })).toBe(
       `/images/900?${STORYLINE_CHAPTER_PARAM}=3`
     );
+  });
+});
+
+describe('storylinePositionLabel', () => {
+  it('says the canon path while the reader is on the main route', () => {
+    expect(
+      storylinePositionLabel({ number: 2, length: 4, path: [{ onMain: true }, { onMain: true }] })
+    ).toBe('Chapter 2 of 4 on the canon path');
+  });
+
+  it('says this path once any chapter of the reader path is off the main route', () => {
+    expect(
+      storylinePositionLabel({
+        number: 5,
+        length: 5,
+        path: [{ onMain: true }, { onMain: true }, { onMain: false }, { onMain: false }],
+      })
+    ).toBe('Chapter 5 of 5 on this path');
+    // The count is the line's, whatever it is called.
+    expect(storylinePositionLabel({ number: 7, length: 11, path: [{ onMain: false }] })).toBe(
+      'Chapter 7 of 11 on this path'
+    );
+  });
+
+  it('treats a chapter that does not say as on the main route', () => {
+    expect(storylinePositionLabel({ number: 1, length: 3, path: [{}, {}] })).toBe(
+      'Chapter 1 of 3 on the canon path'
+    );
+  });
+
+  it('gives only the number while the length is not known', () => {
+    expect(
+      storylinePositionLabel({ number: 2, length: undefined, path: [{ onMain: false }] })
+    ).toBe('Chapter 2');
   });
 });
