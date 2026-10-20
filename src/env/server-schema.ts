@@ -1111,6 +1111,20 @@ export const serverSchema = z
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
     APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
+    // App Assistant's server runner (apps/assistant-runner). The ES256 private key (PKCS8 PEM) civitai
+    // signs the runner's viewer tokens and run grants with; the runner holds only its public half.
+    // Unset, the runner endpoints answer 503.
+    ASSISTANT_RUNNER_SIGNING_KEY: z.string().optional(),
+    // The secret the runner presents when it trades a run grant for a short-lived token. Unset or
+    // blank, that endpoint answers 503.
+    ASSISTANT_RUNNER_SECRET: z.string().optional(),
+    // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.
+    ASSISTANT_RUNNER_GRANT_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(24 * 60 * 60)
+      .default(7800),
     // How long the review-build callback waits for a freshly-deployed review
     // preview's PUBLIC host to become reachable before giving up and marking the
     // preview failed. The dominant lag is the per-host DNS record's creation +

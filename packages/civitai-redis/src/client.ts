@@ -2197,6 +2197,11 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  APP_ASSISTANT: {
+    // Fixed-window count of the tokens the assistant runner minted with one run grant —
+    // `system:app-assistant:runner-mint-rate-limit:${grantId}`.
+    RUNNER_MINT_RATE_LIMIT: 'system:app-assistant:runner-mint-rate-limit',
+  },
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
     FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',

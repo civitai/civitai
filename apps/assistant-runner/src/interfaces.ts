@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
-import type { RunPageState } from '@civitai/components-chat/runner-protocol';
+import type { RunPageState, RunSettings } from '@civitai/components-chat/runner-protocol';
 import type { LanguageModel, ToolSet } from 'ai';
 
 /**
@@ -23,8 +23,11 @@ export interface Authenticator {
 export interface ModelContext {
   userId: string;
   runId: string;
+  conversationId: string;
   /** The model the start asked for, unvalidated: the provider decides whether the viewer may use it. */
   model: string;
+  /** How the viewer pays for replies: free while it lasts then Buzz (`auto`), `free` only, or `paid`. */
+  tier: RunSettings['tier'];
 }
 
 /** The model a reply asks with. Called once per pass of a reply; a real one mints its token per request. */
@@ -67,6 +70,26 @@ export interface ConversationStore {
     conversationId: string,
     change: (head: StoredConversationMetadata | null) => StoredConversationMetadata | null
   ): Promise<StoredConversationMetadata | null>;
+}
+
+/** A run grant as the runner keeps it for one run (see `grants.ts`). */
+export interface StoredGrant {
+  token: string;
+  userId: string;
+  conversationId: string;
+  expiresAt: Date;
+}
+
+/**
+ * Where a run's grant lives while the run does: a runner-owned table keyed by run id, never a DBOS
+ * workflow argument, step output or journal value, so a run a restarted process recovers can still
+ * mint, and the grant goes when the run does.
+ */
+export interface GrantStore {
+  save(runId: string, grant: StoredGrant): Promise<void>;
+  delete(runId: string): Promise<void>;
+  /** Deletes grants that expired, and those of runs that ended a while ago. Returns how many. */
+  sweep(): Promise<number>;
 }
 
 export interface Logger {

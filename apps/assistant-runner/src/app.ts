@@ -15,12 +15,17 @@ import { z } from 'zod';
 
 import type { Authenticator } from './interfaces';
 import type { RunService } from './service';
-import { refuseAll } from './unconfigured';
+import { GRANT_HEADER, grantHeader, type TokenVerifier, type VerifiedGrant } from './tokens';
+import { refuseAll, refuseGrants } from './unconfigured';
 
 export interface AppOptions {
   service: RunService;
   /** Who a request acts for. Without one every run-API request is refused. */
   authenticator?: Authenticator;
+  /** Checks the run grant a start (or a patch) carries. Without one every start is refused. */
+  grants?: Pick<TokenVerifier, 'grant'>;
+  /** The path the run API is served under (`RUNNER_BASE_PATH`); `''` for the root. */
+  basePath?: string;
   logger?: FastifyServerOptions['logger'];
   /** How often an open event stream gets a comment, so the client can tell a quiet run from a dead connection. */
   keepaliveMs?: number;
@@ -133,6 +138,7 @@ export function lastEventId(header: string | string[] | undefined): number | und
 export function buildApp(options: AppOptions): FastifyInstance {
   const { service } = options;
   const authenticator = options.authenticator ?? refuseAll;
+  const grants = options.grants ?? refuseGrants;
   const keepaliveMs = options.keepaliveMs ?? Math.floor((RUN_KEEPALIVE_MS * 2) / 3);
   const app = Fastify({ logger: options.logger ?? false });
   const streams = new Set<AbortController>();
@@ -170,95 +176,138 @@ export function buildApp(options: AppOptions): FastifyInstance {
     request.userId = result.userId;
   };
 
-  app.post('/runs', { preHandler: authed }, async (request, reply) => {
-    const body = startBody.safeParse(request.body);
-    if (!body.success)
-      return refuse(reply, 'bad-request', 'The start request is not one this runner reads.');
-    const outcome = await service.start(request.userId, body.data);
-    if (!outcome.ok) return refuse(reply, outcome.error, outcome.message, outcome.runId);
-    return reply.code(201).send(outcome.response);
-  });
+  /**
+   * The run grant the request carries, verified and bound to this viewer and conversation (and, for
+   * a start, its idempotency key); `null` when there is none or it is not one of those.
+   */
+  const grantFor = async (
+    request: FastifyRequest,
+    conversationId: string,
+    idempotencyKey?: string
+  ): Promise<VerifiedGrant | null> => {
+    const token = grantHeader(request.headers);
+    const grant = token ? await grants.grant(token) : null;
+    if (
+      !grant ||
+      grant.userId !== request.userId ||
+      grant.conversationId !== conversationId ||
+      (idempotencyKey !== undefined && grant.idempotencyKey !== idempotencyKey)
+    )
+      return null;
+    return grant;
+  };
 
-  app.get('/runs', { preHandler: authed }, async (request, reply) => {
-    const conversationId = (request.query as Record<string, unknown>).conversationId;
-    if (typeof conversationId !== 'string' || !conversationId)
-      return refuse(reply, 'bad-request', 'conversationId is required.');
-    return { v: 1, run: await service.lookup(request.userId, conversationId) };
-  });
-
-  app.post('/runs/stop', { preHandler: authed }, async (request, reply) => {
-    const body = stopByKeyBody.safeParse(request.body);
-    if (!body.success)
-      return refuse(reply, 'bad-request', 'The stop request is not one this runner reads.');
-    await service.stopByKey(request.userId, body.data.idempotencyKey);
-    return reply.code(202).send();
-  });
-
-  app.post<{ Params: { runId: string } }>(
-    '/runs/:runId/stop',
-    { preHandler: authed },
-    async (request, reply) => {
-      if (!stopBody.safeParse(request.body ?? { v: 1 }).success)
-        return refuse(reply, 'bad-request', 'The stop request is not one this runner reads.');
-      if (!(await service.stop(request.userId, request.params.runId)))
-        return refuse(reply, 'not-found', 'No such run.');
-      return reply.code(202).send();
-    }
-  );
-
-  app.post<{ Params: { id: string } }>(
-    '/conversations/:id/patch',
-    { preHandler: authed },
-    async (request, reply) => {
-      const body = patchBody.safeParse(request.body);
+  /** The run API, served under the base path. */
+  const routes = (app: FastifyInstance) => {
+    app.post('/runs', { preHandler: authed }, async (request, reply) => {
+      const body = startBody.safeParse(request.body);
       if (!body.success)
-        return refuse(reply, 'bad-request', 'The patch is not one this runner reads.');
-      if (!(await service.patch(request.userId, request.params.id, body.data)))
-        return refuse(reply, 'not-found', 'No such chat.');
-      return reply.code(204).send();
-    }
-  );
+        return refuse(reply, 'bad-request', 'The start request is not one this runner reads.');
+      const grant = await grantFor(request, body.data.conversationId, body.data.idempotencyKey);
+      if (!grant)
+        return refuse(
+          reply,
+          'refused',
+          `This start needs a current run grant for this chat in ${GRANT_HEADER}.`
+        );
+      const outcome = await service.start(request.userId, body.data, grant);
+      if (!outcome.ok) return refuse(reply, outcome.error, outcome.message, outcome.runId);
+      return reply.code(201).send(outcome.response);
+    });
 
-  app.get<{ Params: { runId: string } }>(
-    '/runs/:runId/events',
-    { preHandler: authed },
-    async (request, reply) => {
-      const { runId } = request.params;
-      if (!(await service.owns(request.userId, runId)))
-        return refuse(reply, 'not-found', 'No such run.');
-      const after = lastEventId(request.headers['last-event-id']);
+    app.get('/runs', { preHandler: authed }, async (request, reply) => {
+      const conversationId = (request.query as Record<string, unknown>).conversationId;
+      if (typeof conversationId !== 'string' || !conversationId)
+        return refuse(reply, 'bad-request', 'conversationId is required.');
+      return { v: 1, run: await service.lookup(request.userId, conversationId) };
+    });
 
-      reply.hijack();
-      const res = reply.raw;
-      res.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache, no-transform',
-        connection: 'keep-alive',
-        'x-accel-buffering': 'no',
-      });
-      res.write(': connected\n\n');
+    app.post('/runs/stop', { preHandler: authed }, async (request, reply) => {
+      const body = stopByKeyBody.safeParse(request.body);
+      if (!body.success)
+        return refuse(reply, 'bad-request', 'The stop request is not one this runner reads.');
+      await service.stopByKey(request.userId, body.data.idempotencyKey);
+      return reply.code(202).send();
+    });
 
-      const stream = new AbortController();
-      streams.add(stream);
-      stream.signal.addEventListener('abort', () => res.end(), { once: true });
-      res.on('close', () => stream.abort());
-      const keepalive = setInterval(() => res.write(': keepalive\n\n'), keepaliveMs);
-      try {
-        for await (const { id: eventId, event } of service.events(runId, after, stream.signal)) {
-          if (stream.signal.aborted) break;
-          res.write(encodeRunEvent(eventId, event));
-        }
-      } catch (error) {
-        // The client reconnects with the last id it read, so a cut stream loses nothing.
-        request.log.warn({ err: error, runId }, 'event stream ended early');
-      } finally {
-        clearInterval(keepalive);
-        streams.delete(stream);
-        stream.abort();
+    app.post<{ Params: { runId: string } }>(
+      '/runs/:runId/stop',
+      { preHandler: authed },
+      async (request, reply) => {
+        if (!stopBody.safeParse(request.body ?? { v: 1 }).success)
+          return refuse(reply, 'bad-request', 'The stop request is not one this runner reads.');
+        if (!(await service.stop(request.userId, request.params.runId)))
+          return refuse(reply, 'not-found', 'No such run.');
+        return reply.code(202).send();
       }
-    }
-  );
+    );
 
+    app.post<{ Params: { id: string } }>(
+      '/conversations/:id/patch',
+      { preHandler: authed },
+      async (request, reply) => {
+        const body = patchBody.safeParse(request.body);
+        if (!body.success)
+          return refuse(reply, 'bad-request', 'The patch is not one this runner reads.');
+        // Optional here: without one the store acts with a live run's grant for this chat.
+        let grant: VerifiedGrant | undefined;
+        if (grantHeader(request.headers)) {
+          grant = (await grantFor(request, request.params.id)) ?? undefined;
+          if (!grant)
+            return refuse(
+              reply,
+              'refused',
+              `The run grant in ${GRANT_HEADER} is not for this chat.`
+            );
+        }
+        if (!(await service.patch(request.userId, request.params.id, body.data, grant)))
+          return refuse(reply, 'not-found', 'No such chat.');
+        return reply.code(204).send();
+      }
+    );
+
+    app.get<{ Params: { runId: string } }>(
+      '/runs/:runId/events',
+      { preHandler: authed },
+      async (request, reply) => {
+        const { runId } = request.params;
+        if (!(await service.owns(request.userId, runId)))
+          return refuse(reply, 'not-found', 'No such run.');
+        const after = lastEventId(request.headers['last-event-id']);
+
+        reply.hijack();
+        const res = reply.raw;
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        });
+        res.write(': connected\n\n');
+
+        const stream = new AbortController();
+        streams.add(stream);
+        stream.signal.addEventListener('abort', () => res.end(), { once: true });
+        res.on('close', () => stream.abort());
+        const keepalive = setInterval(() => res.write(': keepalive\n\n'), keepaliveMs);
+        try {
+          for await (const { id: eventId, event } of service.events(runId, after, stream.signal)) {
+            if (stream.signal.aborted) break;
+            res.write(encodeRunEvent(eventId, event));
+          }
+        } catch (error) {
+          // The client reconnects with the last id it read, so a cut stream loses nothing.
+          request.log.warn({ err: error, runId }, 'event stream ended early');
+        } finally {
+          clearInterval(keepalive);
+          streams.delete(stream);
+          stream.abort();
+        }
+      }
+    );
+  };
+
+  app.register(async (api) => routes(api), { prefix: options.basePath ?? '' });
   return app;
 }
 

@@ -140,16 +140,29 @@ export async function mintAppAssistantToken(
   userId: number,
   purpose: AppAssistantTokenPurpose
 ): Promise<AppAssistantToken | null> {
-  const clientId = appAssistantClientId(userId);
+  if (!(await hasAppAssistantConsent(userId, purpose))) return null;
+  const minted = await mintAppToken({
+    userId,
+    clientId: appAssistantClientId(userId),
+    scope: scopeFor(purpose),
+  });
+  return { token: minted.accessToken, expiresAt: minted.expiresAt };
+}
+
+/**
+ * Whether the user's App Assistant consent covers `purpose`'s scopes: written by
+ * `enableAppAssistant`, gone once the user revokes it under connected apps.
+ */
+export async function hasAppAssistantConsent(
+  userId: number,
+  purpose: AppAssistantTokenPurpose = 'chat'
+): Promise<boolean> {
   const scope = scopeFor(purpose);
   const consent = await dbWrite.oauthConsent.findUnique({
-    where: { userId_clientId: { userId, clientId } },
+    where: { userId_clientId: { userId, clientId: appAssistantClientId(userId) } },
     select: { scope: true },
   });
-  if (!consent || (consent.scope & scope) !== scope) return null;
-
-  const minted = await mintAppToken({ userId, clientId, scope });
-  return { token: minted.accessToken, expiresAt: minted.expiresAt };
+  return !!consent && (consent.scope & scope) === scope;
 }
 
 export type AppAssistantPreview =

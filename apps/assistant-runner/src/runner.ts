@@ -28,7 +28,7 @@ import {
 } from '@civitai/components-chat/runner-protocol';
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from '@dbos-inc/dbos-sdk';
 import type { ModelMessage, ToolSet } from 'ai';
-import pg from 'pg';
+import type pg from 'pg';
 
 import { RunEmitter } from './emitter';
 import {
@@ -45,16 +45,20 @@ import {
   withPatch,
   type EndedReply,
 } from './head';
+import { withRequestGrant } from './grants';
 import type {
   ConversationStore,
+  GrantStore,
   Logger,
   ModelProvider,
   OpenTools,
   ToolProvider,
 } from './interfaces';
+import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
+import type { VerifiedGrant } from './tokens';
 
 export const REPLY_WORKFLOW = 'reply';
 export const STOP_MARKER_WORKFLOW = 'reply-stop-marker';
@@ -126,6 +130,8 @@ export interface RunnerDeps {
   models: ModelProvider;
   tools: ToolProvider;
   store: ConversationStore;
+  /** Where each run's grant is kept while it runs: never in DBOS. */
+  grants: GrantStore;
   log: Logger;
   wallClockMs: number;
   stopGraceMs: number;
@@ -180,7 +186,7 @@ export class Runner implements RunService {
     });
     await DBOS.launch();
     await DBOS.registerQueue(REPLIES_QUEUE, { workerConcurrency: options.workerConcurrency });
-    this.#pool = new pg.Pool({ connectionString: options.databaseUrl, max: 4 });
+    this.#pool = createPool({ connectionString: options.databaseUrl, max: 4 }, 'runner');
     this.#executorId = options.executorId;
     this.#ready = true;
     this.#scheduleCancelCheck();
@@ -220,7 +226,10 @@ export class Runner implements RunService {
     const run = async (cleanup: boolean) => {
       try {
         await this.sweepStranded();
-        if (cleanup) await this.cleanup(options.retentionMs);
+        if (cleanup) {
+          await this.cleanup(options.retentionMs);
+          await this.#deps.grants.sweep();
+        }
       } catch (error) {
         this.#deps.log.error({ err: error }, 'runner maintenance failed');
       }
@@ -295,20 +304,53 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  async start(userId: string, request: StartRunRequest): Promise<StartOutcome> {
+  async start(
+    userId: string,
+    request: StartRunRequest,
+    grant: VerifiedGrant
+  ): Promise<StartOutcome> {
     const runId = runIdFor(userId, request.idempotencyKey);
+    const { grants } = this.#deps;
+    // Kept in the runner's own table, never in the workflow's input: DBOS persists that.
+    const saveGrant = () =>
+      grants.save(runId, {
+        token: grant.token,
+        userId,
+        conversationId: request.conversationId,
+        expiresAt: grant.expiresAt,
+      });
     const existing = await this.#existingStart(userId, runId);
-    if (existing) return existing;
+    if (existing) {
+      // A retried start: its grant is as good as the first one's, and may outlive it.
+      await saveGrant();
+      return existing;
+    }
     const live = await this.#liveRun(userId);
     if (live) return runActive(live.workflowID);
 
-    const head = await this.#deps.store.load(userId, request.conversationId);
+    // Before anything is read: the store reads the head with this grant.
+    await saveGrant();
+    // A start that runs nothing takes its grant back, unless the same start racing it made the run.
+    const forget = async () => {
+      if (!(await DBOS.getWorkflowStatus(runId))) await grants.delete(runId);
+    };
+    const refused = async (outcome: StartOutcome) => {
+      await forget();
+      return outcome;
+    };
+    let head: StoredConversationMetadata | null;
+    try {
+      head = await this.#deps.store.load(userId, request.conversationId);
+    } catch (error) {
+      await forget().catch(() => undefined);
+      throw error;
+    }
     if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
-      return {
+      return refused({
         ok: false,
         error: 'stale-turn',
         message: 'This chat has changed since; open it again.',
-      };
+      });
     }
     const input: ReplyInput = {
       runId,
@@ -337,13 +379,16 @@ export class Runner implements RunService {
         })(input);
         break;
       } catch (error) {
-        if (!(error instanceof DBOSErrors.DBOSQueueDuplicatedError)) throw error;
+        if (!(error instanceof DBOSErrors.DBOSQueueDuplicatedError)) {
+          await forget().catch(() => undefined);
+          throw error;
+        }
         // The same start racing itself landed first.
         const same = await this.#existingStart(userId, runId);
         if (same) return same;
         // The user's previous run journaled its end and is finishing; its slot frees in a moment.
         const live = await this.#liveRun(userId);
-        if (live || attempt >= ENQUEUE_ATTEMPTS) return runActive(live?.workflowID);
+        if (live || attempt >= ENQUEUE_ATTEMPTS) return refused(runActive(live?.workflowID));
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
@@ -433,10 +478,15 @@ export class Runner implements RunService {
   async patch(
     userId: string,
     conversationId: string,
-    patch: ConversationPatchRequest
+    patch: ConversationPatchRequest,
+    grant?: VerifiedGrant
   ): Promise<boolean> {
-    const head = await this.#deps.store.update(userId, conversationId, (current) =>
-      current ? withPatch(current, patch, new Date()) : null
+    const head = await withRequestGrant(
+      grant ? { userId, conversationId, token: grant.token } : undefined,
+      () =>
+        this.#deps.store.update(userId, conversationId, (current) =>
+          current ? withPatch(current, patch, new Date()) : null
+        )
     );
     return head !== null;
   }
@@ -458,13 +508,22 @@ export class Runner implements RunService {
       },
       () => undefined
     );
+    let output: ReplyOutput;
     try {
-      return await pass;
+      output = await pass;
     } finally {
       // Wakes the wait above when no Stop came, so the workflow does not sit until its deadline.
       await DBOS.send(input.runId, DONE, CONTROL);
       await control.catch(() => null);
     }
+    // The reply saved its own end: nothing of this run needs to act for the viewer any more. A run
+    // that ends any other way keeps its grant until the sweep, so whoever writes its end can.
+    await this.#deps.grants
+      .delete(input.runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId: input.runId }, 'forgetting a run grant failed')
+      );
+    return output;
   }
 
   async #begin(input: ReplyInput): Promise<Begun> {
@@ -710,7 +769,9 @@ export class Runner implements RunService {
       model: this.#deps.models.languageModel({
         userId: input.userId,
         runId: input.runId,
+        conversationId: input.conversationId,
         model: input.model,
+        tier: settings.tier,
       }),
       // TODO: the App Assistant's own rules and gate, ported from the page.
       system: buildSystemPrompt({
@@ -797,6 +858,8 @@ export class Runner implements RunService {
   async #endFromHead(runId: string): Promise<RunEvent> {
     const status = await DBOS.getWorkflowStatus(runId);
     if (!status) return { type: 'run-ended', status: 'error', messages: [], steps: 0 };
+    // A head that cannot be written (the run's grant expired, or the user turned the assistant off)
+    // still gets the stream its end, from the workflow's status alone, so the client stops waiting.
     const turn = await this.#endTurnOnce(status, (running) => {
       const messages = shownMessages(running);
       if (
@@ -807,6 +870,9 @@ export class Runner implements RunService {
         return { messages, status: 'done', ranOut: true };
       if (status.status === 'CANCELLED') return { messages, status: 'aborted' };
       return { messages, status: 'error', error: 'The reply stopped unexpectedly.' };
+    }).catch((error: unknown) => {
+      this.#deps.log.warn({ err: error, runId }, 'writing the end of a run to the head failed');
+      return undefined;
     });
     if (turn && hasEnded(turn)) return endedEvent(turn);
     return {
