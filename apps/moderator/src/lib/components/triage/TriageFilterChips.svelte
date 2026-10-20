@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
@@ -25,11 +26,14 @@
     groups,
     sort,
     selectionParam,
+    trailing,
   }: {
     groups: ChipGroup[];
     sort?: ChipGroup;
     /** The URL param holding the open item; it indexes the old result set, so a filter drops it. */
     selectionParam: string;
+    /** Extra controls after the chips and before the sort, e.g. a menu of the chips folded away. */
+    trailing?: Snippet;
   } = $props();
 
   const hrefFor = (group: ChipGroup, value: string) =>
@@ -63,6 +67,7 @@
       {/if}
     </a>
   {/each}
+  {@render trailing?.()}
   {#if sort}
     <!-- A function binding: the URL owns the sort, so a one-way value prop could latch. -->
     <Select.Root

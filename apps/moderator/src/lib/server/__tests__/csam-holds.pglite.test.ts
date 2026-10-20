@@ -87,6 +87,12 @@ beforeEach(async () => {
   await db.exec(MIGRATION);
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
   await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
+  await db.exec(`
+    CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP);
+    CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL);
+    INSERT INTO "Post" VALUES (10, 'A post title', '2026-10-01'), (60, NULL, NULL);
+    INSERT INTO "Model" VALUES (70, 'A model name', 'Published');
+  `);
   await seed([
     { id: 1, createdAt: '2026-10-03' },
     { id: 2, createdAt: '2026-10-01', entityType: 'ChatMessage', meta: { chatId: 77 } },
@@ -121,6 +127,27 @@ afterEach(async () => {
 });
 
 describe('listCsamHolds', () => {
+  it('titles a held post or model with the content it points at, and leaves other types untitled', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    const byId = new Map(items.map((h) => [h.id, h]));
+    expect(byId.get(1)?.title).toBe('A post title');
+    expect(byId.get(7)?.title).toBe('A model name');
+    // No row behind the id, an untitled post, and a chat message all fall back to null.
+    expect(byId.get(3)?.title).toBeNull();
+    expect(byId.get(6)?.title).toBeNull();
+    expect(byId.get(2)?.title).toBeNull();
+  });
+
+  it('says whether the held content is still live: true, false, or unknown for types without a state', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    const byId = new Map(items.map((h) => [h.id, h]));
+    expect(byId.get(1)?.live).toBe(true); // published post
+    expect(byId.get(7)?.live).toBe(true); // published model
+    expect(byId.get(6)?.live).toBe(false); // unpublished post
+    expect(byId.get(3)?.live).toBe(false); // post that no longer exists
+    expect(byId.get(2)?.live).toBeNull(); // chat message
+  });
+
   it('lists only pending csam holds, oldest first', async () => {
     const { items, hasMore } = await listCsamHolds(OLDEST_PENDING);
     expect(items.map((h) => h.id)).toEqual([2, 3, 1, 6]);

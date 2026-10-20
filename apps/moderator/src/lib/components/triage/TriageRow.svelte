@@ -12,6 +12,7 @@
     metaClass = 'text-dark-2',
     coverUrl,
     cover = true,
+    coverIcon,
     verdict,
     error,
     onselect,
@@ -28,6 +29,8 @@
     coverUrl?: string | undefined;
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
+    /** Shown in the thumbnail slot when there is no image: a neutral placeholder icon. */
+    coverIcon?: Snippet;
     verdict: string | undefined;
     error: string | undefined;
     onselect: () => void;
@@ -56,6 +59,10 @@
       <div class="size-11 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7">
         {#if coverUrl}
           <EdgeMedia src={coverUrl} type="image" width={96} class="size-full object-cover" />
+        {:else if coverIcon}
+          <div class="grid size-full place-items-center text-dark-2 [&_svg]:size-[18px]">
+            {@render coverIcon()}
+          </div>
         {/if}
       </div>
     {/if}

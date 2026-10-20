@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listCsamHolds, countCsamHoldsByType, decideCsamHold } = vi.hoisted(() => ({
-  listCsamHolds: vi.fn(),
-  countCsamHoldsByType: vi.fn(),
-  decideCsamHold: vi.fn(),
-}));
+const { listCsamHolds, countCsamHoldsByType, countPendingCsamHolds, decideCsamHold } = vi.hoisted(
+  () => ({
+    listCsamHolds: vi.fn(),
+    countCsamHoldsByType: vi.fn(),
+    countPendingCsamHolds: vi.fn(),
+    decideCsamHold: vi.fn(),
+  })
+);
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/csam-holds.service', async () => ({
@@ -16,11 +19,13 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   ).csamHoldSearch,
   listCsamHolds,
   countCsamHoldsByType,
+  countPendingCsamHolds,
   decideCsamHold,
 }));
 
 const { actions, load } = await import('../+page.server');
-const { holdPreview, canRemoveHeld } = await import('../hold-entity');
+const { canRemoveHeld, holdDecisionEnabled, holdMeta, holdTitle, quotedPhrases, splitEmptyTypes } =
+  await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -48,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listCsamHolds.mockResolvedValue({ items: [{ id: 1 }], hasMore: true });
   countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
+  countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
 });
 
@@ -118,6 +124,18 @@ describe('csam text holds load', () => {
     await expect(loadAt('', {})).rejects.toMatchObject({ status: 403 });
     expect(listCsamHolds).not.toHaveBeenCalled();
     expect(countCsamHoldsByType).not.toHaveBeenCalled();
+  });
+
+  it('reports the pending total whatever status and search the list is narrowed to', async () => {
+    const data = await loadAt('?status=removed&q=42');
+    expect(countPendingCsamHolds).toHaveBeenCalledWith();
+    expect(data.pendingCount).toBe(9);
+  });
+
+  it('still lists the queue when the pending total fails', async () => {
+    countPendingCsamHolds.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data).toMatchObject({ items: [{ id: 1 }], pendingCount: null });
   });
 
   it('still lists the queue when the counts fail', async () => {
@@ -210,13 +228,126 @@ describe('csam hold removal', () => {
   });
 });
 
-describe('csam hold row preview', () => {
-  it('collapses the held text onto one line', () => {
-    expect(holdPreview('  first line\n\n\tsecond   line  ')).toBe('first line second line');
+const pendingHold = { entityType: 'Post', status: 'Pending', userId: 7 };
+const everyone = { canDecide: true, canStrike: true, canBan: true };
+
+describe('csam hold decision keys', () => {
+  it('offers the five decisions in key order to a moderator holding every grant', () => {
+    expect(holdDecisionEnabled(pendingHold, everyone)).toEqual([true, true, true, true, true]);
   });
 
-  it('cuts long text with an ellipsis, never through a surrogate pair', () => {
-    const preview = holdPreview(`${'a'.repeat(89)}😀 and more after the cut`);
-    expect(preview).toBe(`${'a'.repeat(89)}😀…`);
+  it('leaves strike and the two ban keys off without their grants', () => {
+    expect(holdDecisionEnabled(pendingHold, { ...everyone, canStrike: false })).toEqual([
+      true,
+      true,
+      false,
+      true,
+      true,
+    ]);
+    expect(holdDecisionEnabled(pendingHold, { ...everyone, canBan: false })).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it('leaves the author keys off when the author is unknown', () => {
+    expect(holdDecisionEnabled({ ...pendingHold, userId: null }, everyone)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('only dismisses a type the main app cannot remove', () => {
+    expect(holdDecisionEnabled({ ...pendingHold, entityType: 'Image' }, everyone)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('offers nothing on a decided hold or to a moderator who cannot decide', () => {
+    expect(holdDecisionEnabled({ ...pendingHold, status: 'Dismissed' }, everyone)).toEqual([]);
+    expect(holdDecisionEnabled(pendingHold, { ...everyone, canDecide: false })).toEqual([]);
+  });
+});
+
+describe('quotedPhrases', () => {
+  it('reads phrases quoted in single, double or curly quotes', () => {
+    expect(
+      quotedPhrases(
+        `Mentions 'first phrase' and "second phrase", then “third phrase” and ‘fourth one’.`
+      )
+    ).toEqual(['first phrase', 'second phrase', 'third phrase', 'fourth one']);
+  });
+
+  it('does not take an apostrophe inside a word for a quote', () => {
+    expect(
+      quotedPhrases(`The author's text isn't what the 'quoted bit' says, nor the others' words`)
+    ).toEqual(['quoted bit']);
+  });
+
+  it('finds nothing in a reason that quotes nothing, and drops empty or one-character quotes', () => {
+    expect(quotedPhrases('Plain reason with no quotes')).toEqual([]);
+    expect(quotedPhrases(`Odd '' and 'x' quotes`)).toEqual([]);
+  });
+
+  it('lists a repeated phrase once', () => {
+    expect(quotedPhrases(`'same one' then "same one"`)).toEqual(['same one']);
+  });
+});
+
+describe('csam hold row text', () => {
+  const base = { entityId: 5, title: null, username: null, userId: null };
+
+  it('titles a post or model by its title and falls back to the type and id', () => {
+    expect(holdTitle({ ...base, entityType: 'Post', title: 'Some title' })).toBe('Some title');
+    expect(holdTitle({ ...base, entityType: 'Model' })).toBe('Model #5');
+  });
+
+  it('titles chat, comments and profiles by what they are', () => {
+    expect(holdTitle({ ...base, entityType: 'ChatMessage' })).toBe('Chat');
+    expect(holdTitle({ ...base, entityType: 'CommentV2' })).toBe('Comment');
+    expect(holdTitle({ ...base, entityType: 'Comment' })).toBe('Comment');
+    expect(holdTitle({ ...base, entityType: 'UserProfile', username: 'someone' })).toBe('someone');
+    expect(holdTitle({ ...base, entityType: 'UserProfile', userId: 3 })).toBe('user #3');
+  });
+
+  it('says how long ago a pending hold was held, and a decided one was decided', () => {
+    const now = Date.parse('2026-10-20T12:00:00Z');
+    const createdAt = new Date('2026-10-20T07:00:00Z');
+    expect(holdMeta({ status: 'Pending', createdAt, decidedAt: null }, now)).toBe('held 5h');
+    expect(
+      holdMeta({ status: 'Confirmed', createdAt, decidedAt: new Date('2026-10-20T10:00:00Z') }, now)
+    ).toBe('decided 2h');
+  });
+});
+
+describe('splitEmptyTypes', () => {
+  it('keeps types with holds as chips and folds the rest, in type order', () => {
+    expect(
+      splitEmptyTypes(['Model', 'Post', 'ChatMessage'], { Post: 2, ChatMessage: 1 }, null)
+    ).toEqual({ shown: ['Post', 'ChatMessage'], empty: ['Model'] });
+  });
+
+  it('keeps the selected type as a chip although it is empty', () => {
+    expect(splitEmptyTypes(['Model', 'Post'], { Post: 2 }, 'Model')).toEqual({
+      shown: ['Model', 'Post'],
+      empty: [],
+    });
+  });
+
+  it('shows every type when the counts could not be read', () => {
+    expect(splitEmptyTypes(['Model', 'Post'], null, null)).toEqual({
+      shown: ['Model', 'Post'],
+      empty: [],
+    });
   });
 });

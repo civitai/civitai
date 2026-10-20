@@ -9,6 +9,7 @@ import {
 } from '$lib/csam-holds/hold-filters';
 import {
   countCsamHoldsByType,
+  countPendingCsamHolds,
   csamHoldSearch,
   decideCsamHold,
   listCsamHolds,
@@ -38,11 +39,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const offset = (page - 1) * limit;
   const search = csamHoldSearch(q);
   const holdFilters: CsamHoldFilters = { status, sort };
-  const [queue, byType] = await Promise.all([
+  const [queue, byType, pendingCount] = await Promise.all([
     listCsamHolds({ limit, offset, entityType, status, sort, search }),
     // The chip counts and the footer's "of N" are decoration; a failure here must not take the list down with it.
     countCsamHoldsByType({ status, search }).catch((err) => {
       console.error('CSAM hold counts failed', err);
+      return null;
+    }),
+    // The status control's badge: every pending hold, whatever the list is narrowed to.
+    countPendingCsamHolds().catch((err) => {
+      console.error('CSAM pending count failed', err);
       return null;
     }),
   ]);
@@ -59,9 +65,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     entityType: entityType ?? null,
     holdFilters,
     typeCounts,
+    pendingCount,
     total,
     ...queue,
     fullBleed: true,
+    // The page's own header shares the sidebar trigger's row.
+    headerInline: true,
   };
 };
 

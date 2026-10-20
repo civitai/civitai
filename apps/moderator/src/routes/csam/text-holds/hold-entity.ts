@@ -1,3 +1,4 @@
+import { shortAge } from '$lib/format';
 import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
@@ -79,15 +80,126 @@ const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
 export const entityLabel = (entityType: string) =>
   isCsamHoldEntityType(entityType) ? CSAM_HOLD_ENTITY_LABELS[entityType] : entityType;
 
-const PREVIEW_LENGTH = 90;
+/** What the five decision keys do, in key order: digit `n + 1` picks index `n`. */
+export const CSAM_HOLD_KEY_ORDER = [
+  'dismiss',
+  'remove',
+  'remove_strike',
+  'remove_ban',
+  'remove_ban_report',
+] as const satisfies readonly CsamHoldDecision[];
 
-/** One line of the held text, so holds by one author are told apart in the list. */
-export function holdPreview(text: string): string {
-  // By code point, so the cut never splits a surrogate pair.
-  const chars = Array.from(text.replace(/\s+/g, ' ').trim());
-  return chars.length > PREVIEW_LENGTH
-    ? `${chars.slice(0, PREVIEW_LENGTH).join('').trimEnd()}…`
-    : chars.join('');
+/** One entry per key in `CSAM_HOLD_KEY_ORDER`; empty when nothing can be decided. A key is on only
+ *  when the grants it needs are held, the content can be removed and, for the author ones, the author is known. */
+export function holdDecisionEnabled(
+  hold: { entityType: string; status: string; userId: number | null },
+  grants: { canDecide: boolean; canStrike: boolean; canBan: boolean }
+): boolean[] {
+  if (!grants.canDecide || hold.status !== 'Pending') return [];
+  const removable = canRemoveHeld(hold.entityType);
+  const hasAuthor = hold.userId !== null;
+  const gate = (needsGrant: boolean) => removable && hasAuthor && needsGrant;
+  return CSAM_HOLD_KEY_ORDER.map((decision) => {
+    switch (decision) {
+      case 'dismiss':
+        return true;
+      case 'remove':
+        return removable;
+      case 'remove_strike':
+        return gate(grants.canStrike);
+      case 'remove_ban':
+      case 'remove_ban_report':
+        return gate(grants.canBan);
+    }
+  });
+}
+
+/** What each confirmed decision asks before it runs. */
+export const CSAM_HOLD_CONFIRMS: Partial<
+  Record<CsamHoldDecision, { label: string; title: string; description: string }>
+> = {
+  remove_strike: {
+    label: 'Remove content + strike',
+    title: 'Remove the content and strike the author?',
+    description: 'The content is taken down and the author receives a strike and a notification.',
+  },
+  remove_ban: {
+    label: 'Remove content + ban',
+    title: 'Remove the content and ban the author?',
+    description:
+      'The content is taken down and the account is banned, which also removes its other content.',
+  },
+  remove_ban_report: {
+    label: 'Remove content + ban + NCMEC report',
+    title: 'Remove, ban and file an NCMEC report?',
+    description:
+      'The content is taken down and the account is banned. The CSAM report form then opens for the author so you can file the report.',
+  },
+};
+
+const MIN_PHRASE = 2;
+const WORD = '\\p{L}\\p{N}';
+// A quote opens after a non-word character and closes before one, so an apostrophe inside a word
+// ("author's", "isn't") is not one.
+const QUOTED = [
+  `(?<![${WORD}])'([^'\\n]+?)'(?![${WORD}])`,
+  `"([^"\\n]+?)"`,
+  `“([^”\\n]+?)”`,
+  `(?<![${WORD}])‘([^’\\n]+?)’(?![${WORD}])`,
+];
+
+/** The phrases a hold's reason quotes from the text, to highlight in it. */
+export function quotedPhrases(reason: string): string[] {
+  const found = new Set<string>();
+  for (const source of QUOTED)
+    for (const match of reason.matchAll(new RegExp(source, 'gu'))) {
+      const phrase = match[1].trim();
+      if (phrase.length >= MIN_PHRASE) found.add(phrase);
+    }
+  return [...found];
+}
+
+/** The list and detail title: the content's own title when the query could cheaply find it. */
+export function holdTitle(hold: {
+  entityType: string;
+  entityId: number;
+  title: string | null;
+  username: string | null;
+  userId: number | null;
+}): string {
+  switch (hold.entityType) {
+    case 'ChatMessage':
+      return 'Chat';
+    case 'Comment':
+    case 'CommentV2':
+      return 'Comment';
+    case 'UserProfile':
+      return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
+    default:
+      return hold.title?.trim() || `${entityLabel(hold.entityType)} #${hold.entityId}`;
+  }
+}
+
+/** The right-hand text of a list row. */
+export function holdMeta(
+  hold: { status: string; createdAt: Date; decidedAt: Date | null },
+  now = Date.now()
+): string {
+  return hold.status === 'Pending' || !hold.decidedAt
+    ? `held ${shortAge(hold.createdAt, now)}`
+    : `decided ${shortAge(hold.decidedAt, now)}`;
+}
+
+/** Splits the type chips into those with holds and the empty ones that fold into a menu. The open
+ *  type stays a chip whatever its count, and unreadable counts hide nothing. */
+export function splitEmptyTypes<T extends string>(
+  types: readonly T[],
+  counts: Record<string, number> | null,
+  selected: string | null
+): { shown: T[]; empty: T[] } {
+  if (!counts) return { shown: [...types], empty: [] };
+  const shown = types.filter((t) => (counts[t] ?? 0) > 0 || t === selected);
+  return { shown, empty: types.filter((t) => !shown.includes(t)) };
 }
 
 type HoldRef = {

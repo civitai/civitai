@@ -1,14 +1,28 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import {
+    IconEyeOff,
+    IconMessage,
+    IconMessageCircle,
+    IconUser,
+  } from '@tabler/icons-svelte';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
-  import { LINK_CLASS, shortAge } from '$lib/format';
+  import { LINK_CLASS } from '$lib/format';
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
+  import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
-  import { decisionLabel, entityLabel, holdPreview } from './hold-entity';
+  import CsamHoldFilters from './CsamHoldFilters.svelte';
+  import {
+    decisionLabel,
+    entityLabel,
+    holdDecisionEnabled,
+    holdMeta,
+    holdTitle,
+  } from './hold-entity';
   import type { ActionData, PageData } from './$types';
 
   let {
@@ -44,6 +58,10 @@
       data.q !== '' ||
       Object.keys(csamHoldFilterParams(data.holdFilters)).length > 0
   );
+  const grants = $derived({ canDecide, canStrike, canBan });
+  // A decision key presses its button, which asks first where the decision needs it.
+  const ondecision = (_row: unknown, index: number) => pressDecisionKey(index);
+
   const statusLabel = $derived(
     data.holdFilters.status === 'all'
       ? ''
@@ -63,19 +81,31 @@
   </div>
 {/snippet}
 
+{#snippet listHeader()}
+  <CsamHoldFilters
+    filters={data.holdFilters}
+    entityType={data.entityType}
+    typeCounts={data.typeCounts}
+    pendingCount={data.pendingCount}
+  />
+{/snippet}
+
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row) => row.id}
   {parseKey}
   selectionParam="hold"
   queueLabel="CSAM text holds queue"
   itemLabel="Hold"
-  decisionEnabled={() => []}
+  decisionEnabled={(row) => holdDecisionEnabled(row, grants)}
+  {ondecision}
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}
   total={data.total}
   {form}
+  {listHeader}
   {empty}
 >
   {#snippet listRow(row, state)}
@@ -83,20 +113,29 @@
       id={state.id}
       href={state.href}
       selected={state.selected}
-      title={row.username ?? (row.userId ? `user #${row.userId}` : 'unknown author')}
-      meta={`held ${shortAge(row.createdAt)} ago`}
-      cover={false}
+      title={holdTitle(row)}
+      meta={holdMeta(row)}
       verdict={state.verdict}
       error={state.error}
       onselect={state.select}
     >
-      {#snippet badges()}
-        <Badge variant="secondary">{entityLabel(row.entityType)}</Badge>
-        {#if row.status !== 'Pending'}
-          <Badge variant="outline">{decisionLabel(row)}</Badge>
+      {#snippet coverIcon()}
+        {#if row.entityType === 'ChatMessage'}
+          <IconMessage aria-hidden="true" />
+        {:else if row.entityType === 'Comment' || row.entityType === 'CommentV2'}
+          <IconMessageCircle aria-hidden="true" />
+        {:else if row.entityType === 'UserProfile'}
+          <IconUser aria-hidden="true" />
+        {:else}
+          <IconEyeOff aria-hidden="true" />
         {/if}
-        <code class="text-xs text-dark-2">#{row.entityId}</code>
-        <span class="block w-full truncate text-xs text-dark-2">{holdPreview(row.text)}</span>
+      {/snippet}
+      {#snippet badges()}
+        <span class="block w-full truncate text-xs text-dark-0">{row.reason}</span>
+        <MetaChip>{entityLabel(row.entityType)}</MetaChip>
+        {#if row.status !== 'Pending'}
+          <MetaChip tone={row.status === 'Dismissed' ? 'neutral' : 'red'}>{decisionLabel(row)}</MetaChip>
+        {/if}
       {/snippet}
     </TriageRow>
   {/snippet}

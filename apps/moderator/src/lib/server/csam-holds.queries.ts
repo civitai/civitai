@@ -19,6 +19,10 @@ export type CsamHoldRow = {
   contentAt: Date | null;
   createdAt: Date;
   chatId: number | null;
+  /** The post's title or the model's name; null for other types, or when the content is gone or untitled. */
+  title: string | null;
+  /** Whether the held post or model is still published; null for types with no such state. */
+  live: boolean | null;
   status: string;
   decidedAt: Date | null;
   decidedByUsername: string | null;
@@ -80,6 +84,13 @@ export async function listCsamHolds({
 }: CsamHoldQuery): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
   let query = csamHolds({ status, search })
     .leftJoin('User as d', 'd.id', 'h.decidedById')
+    // Titles and liveness come from the same page of rows, joined by type, so the list costs no extra queries.
+    .leftJoin('Post as p', (join) =>
+      join.onRef('p.id', '=', 'h.entityId').on('h.entityType', '=', 'Post')
+    )
+    .leftJoin('Model as m', (join) =>
+      join.onRef('m.id', '=', 'h.entityId').on('h.entityType', '=', 'Model')
+    )
     .select([
       'h.id',
       'h.entityType',
@@ -97,6 +108,12 @@ export async function listCsamHolds({
       'h.decidedAt',
       'd.username as decidedByUsername',
       'h.decisionNote',
+      sql<string | null>`coalesce(p.title, m.name)`.as('title'),
+      sql<
+        boolean | null
+      >`case h."entityType" when 'Post' then p."publishedAt" is not null when 'Model' then m.status::text = 'Published' end`.as(
+        'live'
+      ),
     ]);
   if (entityType) query = query.where('h.entityType', '=', entityType);
   const rows = await query
@@ -112,6 +129,8 @@ export async function listCsamHolds({
       ...row,
       username: row.username ?? null,
       decidedByUsername: row.decidedByUsername ?? null,
+      title: row.title ?? null,
+      live: row.live ?? null,
       chatId: typeof chatId === 'number' ? chatId : null,
       decision: typeof decision === 'string' ? decision : null,
     };

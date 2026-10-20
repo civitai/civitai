@@ -5,11 +5,14 @@
   let {
     title,
     dense = false,
+    accent,
     children,
   }: {
     title: string;
     /** The compact card of a flush triage page: small muted title, 13px body, tighter padding. */
     dense?: boolean;
+    /** A coloured left edge that marks the card as the item's outcome. */
+    accent?: 'red' | 'neutral';
     children: Snippet;
   } = $props();
 </script>
@@ -17,6 +20,9 @@
 <section
   class={cn(
     'border border-dark-4 bg-dark-7',
+    accent && 'border-l-[3px]',
+    accent === 'red' && 'border-l-red-500',
+    accent === 'neutral' && 'border-l-dark-1',
     dense ? 'rounded-lg p-3.5 text-[13px]' : 'rounded-xl p-5'
   )}
 >
