@@ -1,20 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `GET /api/v1/model-versions/mini/[id]` for a version of a model flagged `poi`: served to its
  * owner and to moderators, and to everyone else answered exactly as an unknown id is.
  */
 
-const { mockQueryRaw, currentUser } = vi.hoisted(() => ({
-  mockQueryRaw: vi.fn(),
+const { currentUser } = vi.hoisted(() => ({
   currentUser: { value: undefined as undefined | Record<string, unknown> },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $queryRaw: mockQueryRaw },
-  dbRead: { $queryRaw: mockQueryRaw },
-}));
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
@@ -81,6 +77,7 @@ const FILE = {
 };
 
 async function request(rows: object[]) {
+  const mockQueryRaw = dbMock.dbWrite.$queryRaw;
   mockQueryRaw.mockReset();
   mockQueryRaw.mockResolvedValueOnce(rows).mockResolvedValueOnce([structuredClone(FILE)]);
   const json = vi.fn().mockReturnThis();
@@ -104,7 +101,7 @@ async function request(rows: object[]) {
 }
 
 beforeEach(() => {
-  mockQueryRaw.mockReset();
+  dbMock.dbWrite.$queryRaw.mockReset();
   currentUser.value = undefined;
 });
 
