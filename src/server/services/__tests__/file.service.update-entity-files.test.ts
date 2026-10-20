@@ -8,8 +8,10 @@ const ENTRY = 55;
 const OWN_FILE = 1;
 const OTHER_ITEMS_FILE = 2;
 
-// Rows the scoped update can land on: only this entry's own file.
-const rows = [{ id: OWN_FILE, entityId: ENTRY, entityType: 'BountyEntry' }];
+const rows = [
+  { id: OWN_FILE, entityId: ENTRY, entityType: 'BountyEntry' },
+  { id: OTHER_ITEMS_FILE, entityId: 99, entityType: 'BountyEntry' },
+];
 const tx = {
   file: {
     updateMany: vi.fn(
