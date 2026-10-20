@@ -265,6 +265,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(ended(await events(first.body!.runId as string, user)).status).toBe('stopped');
   });
 
+  // An invariant guard: run ids already hash in the viewer, so this has never failed. It fails if
+  // they stop doing so.
   it('keeps one user’s idempotency key from naming another user’s run', async () => {
     const key = randomUUID();
     const first = await post(
@@ -312,6 +314,40 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const runId = winner.body!.runId as string;
     await post(`/runs/${runId}/stop`, as(user), { v: 1 });
     expect(ended(await events(runId, user)).status).toBe('stopped');
+  });
+
+  it('runs a tool call only once the head save recording its start has landed', async () => {
+    const user = 'u-gated';
+    const recordsBefore = calls.record;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const real = deps.store;
+    deps.store = {
+      load: (userId, conversationId) => real.load(userId, conversationId),
+      update: async (userId, conversationId, change) => {
+        // Holds back the first save that records the `record` call, as a slow store would.
+        const next = change(await real.load(userId, conversationId));
+        if (userId === user && JSON.stringify(next).includes('"toolName":"record"')) await held;
+        return real.update(userId, conversationId, change);
+      },
+    };
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-gated', model: 'tools' })
+      );
+      const runId = start.body!.runId as string;
+      await events(runId, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(calls.record).toBe(recordsBefore);
+      release();
+      expect(ended(await events(runId, user)).status).toBe('done');
+      expect(calls.record).toBe(recordsBefore + 1);
+    } finally {
+      release();
+      deps.store = real;
+    }
   });
 
   it('refuses a turn that is not the next one', async () => {
@@ -452,7 +488,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       (await fetch(`${base}/runs/${runId}/events`, { headers: as('u-lookup-other') })).status
     ).toBe(404);
 
-    // Nor can it stop the run.
+    // Nor can it stop the run (an invariant guard: stop has checked the owner from the start).
     expect((await post(`/runs/${runId}/stop`, as('u-lookup-other'), { v: 1 })).status).toBe(404);
     expect(await runner.lookup(user, 'c-lookup')).not.toBeNull();
 

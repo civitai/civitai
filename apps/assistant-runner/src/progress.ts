@@ -101,14 +101,38 @@ export function runAfterSaved(
     guarded[name] = execute
       ? ({
           ...tool,
-          execute: async (input: unknown, options: { toolCallId: string }) => {
-            await saved(options.toolCallId);
+          execute: async (
+            input: unknown,
+            options: { toolCallId: string; abortSignal?: AbortSignal }
+          ) => {
+            await untilAborted(saved(options.toolCallId), options.abortSignal);
             return execute(input as never, options as never);
           },
         } as typeof tool)
       : tool;
   }
   return guarded;
+}
+
+/** `promise`, or a rejection as soon as `signal` aborts (a Stop does not wait for a save). */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted)
+    return Promise.reject(new Error('The reply was stopped before this call ran.'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('The reply was stopped before this call ran.'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
 }
 
 function callIds(messages: ModelMessage[]): string[] {

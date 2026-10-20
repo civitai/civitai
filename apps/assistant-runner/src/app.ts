@@ -142,9 +142,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    const status = (error as { statusCode?: number }).statusCode;
     // Fastify's own refusals (a body that is not JSON, or too large): asking again would not help.
-    if (status !== undefined && status >= 400 && status < 500)
+    // Anything else, whatever status it carries, is the runner's failure.
+    if ((error as { code?: string }).code?.startsWith('FST_'))
       return refuse(reply, 'bad-request', 'The request is not one this runner reads.');
     request.log.error({ err: error }, 'request failed');
     const body: RunErrorResponse = {

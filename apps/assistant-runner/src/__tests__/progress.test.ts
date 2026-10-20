@@ -61,8 +61,8 @@ function guardedTool(writer: ProgressWriter, body: () => Promise<string>) {
     },
     (toolCallId) => writer.callSaved(toolCallId, 200)
   );
-  return (toolCallId: string) =>
-    tools.run!.execute!({}, { toolCallId, messages: [] } as never) as Promise<string>;
+  return (toolCallId: string, abortSignal?: AbortSignal) =>
+    tools.run!.execute!({}, { toolCallId, messages: [], abortSignal } as never) as Promise<string>;
 }
 
 describe('a tool call runs only once its start is saved', () => {
@@ -80,6 +80,28 @@ describe('a tool call runs only once its start is saved', () => {
     release();
     await expect(result).resolves.toBe('ran');
     expect(body).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not released by a save that names only another call', async () => {
+    const writer = new ProgressWriter(await seeded(), 'u1', 'c1', 1, log);
+    const body = vi.fn(async () => 'ran');
+    const run = guardedTool(writer, body);
+    writer.save(callStarted('another-call'));
+    await expect(run('call-4')).rejects.toThrow('was not run');
+    expect(body).not.toHaveBeenCalled();
+  });
+
+  it('gives up waiting at once when the reply is stopped', async () => {
+    const { store } = gated(await seeded());
+    const writer = new ProgressWriter(store, 'u1', 'c1', 1, log);
+    const body = vi.fn(async () => 'ran');
+    const run = guardedTool(writer, body);
+    const stop = new AbortController();
+    writer.save(callStarted('call-5'));
+    const result = run('call-5', stop.signal);
+    stop.abort();
+    await expect(result).rejects.toThrow('stopped');
+    expect(body).not.toHaveBeenCalled();
   });
 
   it('fails the call without running it when its start cannot be saved', async () => {
