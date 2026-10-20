@@ -189,6 +189,25 @@ describe('krea3.handler', () => {
     });
     expect(firstInput(create)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
   });
+
+  it('sends Ultra only when krea3Ultra is on', async () => {
+    const on = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(on)).toMatchObject({ thinkingMode: 'ultra' });
+
+    const off = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      thinkingMode: 'ultra',
+    });
+    expect(firstInput(off)).toMatchObject({ thinkingMode: 'instant' });
+  });
 });
 
 describe('ideogram.handler', () => {
