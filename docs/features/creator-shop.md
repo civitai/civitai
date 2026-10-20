@@ -170,8 +170,9 @@ Every writer appends inside the `cosmeticShopItem.update` it was already making 
 
 Approval grants the creator their own copy, but owning a creator cosmetic is not enough to wear it. A creator-made cosmetic is **withheld** (`getWithheldCosmeticIds`, `creator-shop-withheld.ts`) unless its creator's own listing is displayable (`isListingDisplayable`, `creator-shop.data.ts`): `Published`, or the last moderator verdict approved it and no edit since changed what holders see (name, description, artwork, fit offsets, slug). Relisting, restoring and a large price edit send an approved item back to review without withholding it. The verdict is kept on `meta.displayApproved`, set by every review and cleared by a creator's displayed-field edit; listings without it fall back to the history. Other creators' cross-listings never count, and cosmetics with no creator are never withheld.
 
-- `equipCosmetic` and `equipCosmeticToEntity` refuse a withheld cosmetic.
+- `equipCosmetic` and `equipCosmeticToEntity` refuse a withheld cosmetic, and re-check after their write (`refuseIfWithheldAfterEquip`), so a verdict landing mid-equip still takes it off.
 - A non-approve verdict, or an edit that withholds the item, unequips every holder's copy, worn or placed on content (`unequipWithheldCosmetic`), and refreshes the caches that show it. Re-approval does not re-equip.
+- A creator edit reads the listing from the primary and writes it under a row lock, refusing with a conflict if a verdict (or anything but a sale) changed it since the read, so it cannot overwrite a verdict or `displayApproved`.
 - `userCosmeticCache` also drops withheld cosmetics on read, for rows worn before unequipping existed.
 - `user.getCosmetics` returns `withheld` per item, and the inventory shows "In review, not equipable" instead of Equip.
 
