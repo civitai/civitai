@@ -648,7 +648,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(await DBOS.getWorkflowStatus(doneId)).toBeNull();
     expect(await runner.journalLength(doneId)).toBe(0);
     expect(
-      await sql(`select 1 from dbos.workflow_status where workflow_name = 'reply-stop-marker'`)
+      await sql(`select 1 from dbos.workflow_status where name = 'reply-stop-marker'`)
     ).toEqual([]);
     expect(await DBOS.getWorkflowStatus(liveId)).toMatchObject({ status: 'PENDING' });
     expect(await runner.journalLength(liveId)).toBeGreaterThan(0);

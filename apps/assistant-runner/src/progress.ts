@@ -103,7 +103,7 @@ export function runAfterSaved(
           ...tool,
           execute: (input: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) => {
             const run = (async () => {
-              await untilAborted(saved(options.toolCallId), options.abortSignal);
+              await untilAborted(() => saved(options.toolCallId), options.abortSignal);
               return execute(input as never, options as never);
             })();
             // A call the SDK lets go of after an abort must not surface as an unhandled rejection;
@@ -117,11 +117,13 @@ export function runAfterSaved(
   return guarded;
 }
 
-/** `promise`, or a rejection as soon as `signal` aborts (a Stop does not wait for a save). */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted)
+/** `start()`'s promise, or a rejection as soon as `signal` aborts (a Stop does not wait for a save). */
+function untilAborted<T>(start: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  // Already stopped: the wait is never started, so no timer of it can reject unobserved.
+  if (signal?.aborted)
     return Promise.reject(new Error('The reply was stopped before this call ran.'));
+  const promise = start();
+  if (!signal) return promise;
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new Error('The reply was stopped before this call ran.'));
     signal.addEventListener('abort', onAbort, { once: true });

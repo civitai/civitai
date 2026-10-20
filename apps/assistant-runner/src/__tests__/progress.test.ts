@@ -104,6 +104,27 @@ describe('a tool call runs only once its start is saved', () => {
     expect(body).not.toHaveBeenCalled();
   });
 
+  it('a call that starts after Stop waits for nothing, and leaves no wait to fail later', async () => {
+    const unhandled: unknown[] = [];
+    const note = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', note);
+    try {
+      const { store } = gated(await seeded());
+      const writer = new ProgressWriter(store, 'u1', 'c1', 1, log);
+      const body = vi.fn(async () => 'ran');
+      const run = guardedTool(writer, body);
+      const stop = new AbortController();
+      stop.abort();
+      await expect(run('call-6', stop.signal)).rejects.toThrow('stopped');
+      // Past the 200 ms save timeout: a wait that was started anyway would reject unobserved here.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(unhandled).toEqual([]);
+      expect(body).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', note);
+    }
+  });
+
   it('fails the call without running it when its start cannot be saved', async () => {
     const { store, state, release } = gated(await seeded());
     state.fail = true;
