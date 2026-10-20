@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
+import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -140,6 +141,13 @@ export const getVisibleCommentCount = async ({
     getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: true }),
     getTopLevelCommentsWhere(input, user, { ownerSeesBlockers: false }),
   ]);
+  // The two wheres differ only when the viewer owns the model AND has a blocked-by list (the
+  // unpinned list then lets the owner see blockers' comments; the pinned list does not). In
+  // every other case they are identical, and `pinnedAt IS NULL` / `IS NOT NULL` partition the
+  // rows, so one COUNT over the shared where equals the sum of the two. Don't fold the
+  // differing case into a single OR: it would bind both `notIn` lists in one statement, and
+  // each is capped just under the bind-parameter limit on its own (boundExcludedUserIds).
+  if (isEqual(unpinnedWhere, pinnedWhere)) return db.comment.count({ where: unpinnedWhere });
   const [unpinned, pinned] = await Promise.all([
     db.comment.count({ where: { ...unpinnedWhere, pinnedAt: null } }),
     db.comment.count({ where: { ...pinnedWhere, pinnedAt: { not: null } } }),
@@ -399,7 +407,7 @@ export async function bulkSetCommentTosViolation({
       .then(() => {
         notified += 1;
       })
-      .catch(() => {});
+      .catch(() => undefined); // best-effort notification; a failure must not fail the action
   }
 
   return { count, notified, rewardedReports };
