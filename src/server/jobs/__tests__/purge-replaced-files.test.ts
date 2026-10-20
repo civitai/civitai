@@ -38,7 +38,7 @@ describe('processReplacedFiles', () => {
   beforeEach(() => mockDeleteObj.mockResolvedValue(DELETED));
 
   it('purges S3 (refcount-guarded) then marks dataPurged for each row', async () => {
-    const res = await processReplacedFiles([{ id: 1, url: 'https://bucket/a' }]);
+    const res = await processReplacedFiles([{ id: 1, url: 'https://bucket/a', held: false }]);
     expect(mockDeleteObj).toHaveBeenCalledWith('https://bucket/a', 1);
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
       where: { id: 1 },
@@ -50,8 +50,8 @@ describe('processReplacedFiles', () => {
   it('counts a failure and continues to the next row', async () => {
     mockDeleteObj.mockRejectedValueOnce(new Error('boom'));
     const res = await processReplacedFiles([
-      { id: 1, url: 'u1' },
-      { id: 2, url: 'u2' },
+      { id: 1, url: 'u1', held: false },
+      { id: 2, url: 'u2', held: false },
     ]);
     expect(res).toEqual({ purged: 1, failed: 1, skipped: 0 });
     expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(1);
@@ -64,7 +64,7 @@ describe('processReplacedFiles', () => {
     // than the thrown error it replaces, which at least leaves the row to be retried.
     mockDeleteObj.mockResolvedValueOnce({ deleted: false, reason: 'still-referenced' });
 
-    const res = await processReplacedFiles([{ id: 7, url: 'u7' }]);
+    const res = await processReplacedFiles([{ id: 7, url: 'u7', held: false }]);
 
     expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
     // A skip is not a failure either — the refcount guard declining is it working as designed.
@@ -77,8 +77,8 @@ describe('processReplacedFiles', () => {
       .mockResolvedValueOnce(DELETED);
 
     const res = await processReplacedFiles([
-      { id: 1, url: 'u1' },
-      { id: 2, url: 'u2' },
+      { id: 1, url: 'u1', held: false },
+      { id: 2, url: 'u2', held: false },
     ]);
 
     expect(res).toEqual({ purged: 1, failed: 0, skipped: 1 });

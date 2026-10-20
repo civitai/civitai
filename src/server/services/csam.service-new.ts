@@ -105,6 +105,8 @@ type CsamReportDetails = CsamReportFormOutput & {
   trainingData?: CsamReportTrainingData[];
   userActivity?: CsamReportUserActivity[];
   generatedImages?: CsamReportGeneratedImages[];
+  /** Why the archive stored less than the report's evidence. */
+  archiveSkipped?: string;
 };
 
 export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
@@ -226,7 +228,9 @@ export async function getCsamsToArchive() {
     // the process. That has not been built.
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
-  return data as unknown as CsamReportProps[];
+  // A skipped archive is not retried, and it keeps `archivedAt` null rather than being stamped:
+  // the image retention holds release a user's images once all their reports are archived.
+  return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
 }
 
 export async function getCsamsToRemoveContent() {
@@ -1632,13 +1636,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   } catch (e) {
     console.log(e);
     if (e instanceof Error) {
-      const shouldUpdate = e.message === 'training data not found';
-      if (shouldUpdate) {
+      if (e.message === 'training data not found') {
         await dbWrite.csamReport.update({
           where: { id: report.id },
-          data: {
-            archivedAt: new Date(),
-          },
+          data: { details: { ...report.details, archiveSkipped: e.message } },
         });
       }
     }
@@ -1649,12 +1650,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     //     — the base bundle, an image count — still records it. `{path="stream",
     //     outcome="error"}` does NOT establish that the streaming upload broke; use the
     //     log line's report id to find where it actually died.
-    // (b) `error` means THIS CALL THREW, not that the report is unarchived: the
-    //     `training data not found` branch above stamps `archivedAt` and then rethrows,
-    //     so that benign case lands here while the row reads archived. Left as one
-    //     outcome rather than three — it is confined to a type the flag does not govern,
-    //     the `type` label makes it self-explanatory, and a third value would widen every
-    //     series in the counter to describe one known-benign branch.
+    // (b) `error` includes the `training data not found` branch above, which records
+    //     `archiveSkipped` and then rethrows. Left as one outcome rather than three — it is
+    //     confined to a type the flag does not govern, and a third value would widen every
+    //     series in the counter to describe one branch.
     recordCsamArchive(archivePath, report.type, 'error');
 
     for (const dir of Object.values(reportDirs)) removeDir(dir);
