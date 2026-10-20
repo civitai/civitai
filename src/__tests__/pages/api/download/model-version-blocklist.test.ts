@@ -51,6 +51,8 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn().mockResolvedValue(undefined),
+  // The route counts a download through a sysRedis read whose fail-open logs with this.
+  safeError: (e: Error) => ({ message: e.message }),
 }));
 
 vi.mock('~/server/redis/client', () => {
