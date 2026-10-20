@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as IpLinks from '../../ip-links.service';
+import type * as ReactorLookup from '../../reactor-lookup.service';
 
 /**
  * What a moderator can reach through the assistant is bounded by what their pages already open: the
@@ -33,6 +34,15 @@ const linked = {
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
   getLinkedAccounts: vi.fn(async () => linked),
+  getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
+}));
+
+const getInflationActors = vi.fn();
+const getSharedIpCoverage = vi.fn();
+vi.mock('$lib/server/reactor-lookup.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactorLookup>()),
+  getInflationActors,
+  getSharedIpCoverage,
 }));
 vi.mock('$lib/server/dossier.service', () => ({
   getDossier: vi.fn(async (userId: number) => ({
@@ -333,6 +343,121 @@ describe('toolCatalog', () => {
       'userId',
       'days',
       'minCount',
+      'groupIpv4',
     ]);
+  });
+});
+
+describe('reactors_of', () => {
+  const CREATOR = 1;
+  // Ranked as the tool ranks them: user 1000 + rank, concentration falling with rank.
+  const actors = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      userId: 1001 + i,
+      username: `r${i + 1}`,
+      count: 10,
+      entities: 5,
+      totalGiven: 20,
+      owners: 3,
+      concentration: 1 - i / 1000,
+      status: 'active',
+      strikes: 0,
+      createdAt: null,
+      instantVerify: null,
+    }));
+  const sharer = (userId: number, peer: number) => ({
+    userId,
+    username: null,
+    withTarget: false,
+    addressCount: 1,
+    addresses: [{ cluster: '198.51.100.7', totalAccounts: 2 }],
+    peers: [{ userId: peer, username: null, isTarget: false }],
+  });
+  // A pair deep in the ranking shares an address. The fake answers only about the ids it is asked,
+  // as the real query does, so checking too few reactors finds nothing.
+  const PAIR = [1150, 1151];
+  const coverage = async (ids: number[]) => ({
+    accounts: PAIR.every((p) => ids.includes(p))
+      ? [sharer(PAIR[0], PAIR[1]), sharer(PAIR[1], PAIR[0])]
+      : [],
+    scanCapped: false,
+  });
+  type Out = {
+    addressesChecked: {
+      reactors: number;
+      overFloor: number;
+      scanCapped: boolean;
+      timedOut: boolean;
+    };
+    clusters: { complete: boolean; members: { userId: number; rank: number | null }[] }[];
+    actors: unknown[];
+  };
+  const reactors = async () =>
+    (await run('reactors_of', { userId: CREATOR }, [
+      '/retool/reactor-lookup',
+      '/retool/user-lookup',
+    ])) as unknown as {
+      data: Out;
+      truncated: boolean;
+    };
+
+  beforeEach(() => {
+    getInflationActors
+      .mockReset()
+      .mockResolvedValue({ actors: actors(300), total: 1090, belowFloor: 0, capped: false });
+    getSharedIpCoverage.mockReset().mockImplementation(coverage);
+  });
+
+  it('finds a cluster far below the top reactors, with the rank of each member', async () => {
+    const { data } = await reactors();
+    expect(data.clusters).toHaveLength(1);
+    expect(data.clusters[0].members.map((m) => [m.userId, m.rank])).toEqual([
+      [1150, 150],
+      [1151, 151],
+    ]);
+    expect(data.actors).toHaveLength(20);
+  });
+
+  it('says how many reactors it checked out of how many', async () => {
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toEqual({
+      reactors: 300,
+      overFloor: 1090,
+      scanCapped: false,
+      timedOut: false,
+    });
+    expect(truncated).toBe(true);
+    // Bounded in time, so a slow scan comes back as unfinished instead of holding the turn.
+    expect(getSharedIpCoverage).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ targetId: CREATOR, timeoutSeconds: expect.any(Number) })
+    );
+  });
+
+  it('marks every cluster incomplete when the address scan hit its budget', async () => {
+    getSharedIpCoverage.mockImplementation(async (ids: number[]) => ({
+      ...(await coverage(ids)),
+      scanCapped: true,
+    }));
+    const { data } = await reactors();
+    expect(data.addressesChecked.scanCapped).toBe(true);
+    expect(data.clusters[0].complete).toBe(false);
+  });
+
+  it('reads a timed-out address check as unfinished, not as no clusters', async () => {
+    getSharedIpCoverage.mockRejectedValue(
+      new Error(
+        'ClickHouse query failed: Timeout exceeded: elapsed 15.2 seconds (TIMEOUT_EXCEEDED)'
+      )
+    );
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toMatchObject({ reactors: 0, timedOut: true });
+    expect(data.clusters).toEqual([]);
+    expect(truncated).toBe(true);
+  });
+
+  it('lets any other failure of the address check fail the call', async () => {
+    getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
+    await expect(reactors()).rejects.toThrow(/connection refused/);
   });
 });
