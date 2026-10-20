@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
 import { bustCachedObject } from './cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
 import { getMediaProbeStorage } from './storage';
@@ -349,6 +350,7 @@ export async function resolveIngestionError({
   if (Number(result?.numUpdatedRows ?? 0) === 0)
     throw new Error('Image is no longer in an ingestion error state; reload the queue.');
   await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   // Cast to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which won't match the
   // function's int[] signature.

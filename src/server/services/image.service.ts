@@ -1203,7 +1203,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await refreshThumbnailCache(ids);
+  await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.

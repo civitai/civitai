@@ -7,6 +7,7 @@ import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 import { bustImageTagCaches } from './cache';
 import { invalidateThumbnails } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 
 // Unset fields stay NULL; upsert_tag_on_image preserves the existing value on conflict — so a flip can pass
 // just { imageId, tagId, disabled, needsReview } without clobbering source/confidence.
@@ -98,6 +99,7 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
   } finally {
     await bustImageTagCaches(imageIds);
     await invalidateThumbnails(imageIds);
+    await bustProfilePictures({ imageIds });
   }
   await queueBlockedTagReviews(items);
   void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });

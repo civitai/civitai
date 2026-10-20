@@ -41,6 +41,7 @@ const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
+  await bustProfilePictures({ imageIds: [imageId] });
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
