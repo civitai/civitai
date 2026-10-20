@@ -217,7 +217,7 @@ describe('keep-training base model pin', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 1400 } } });
     await continueTrainingWhatIf(client, opts);
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-    await continueTraining(client, opts);
+    await continueTraining(client, opts, { checkText });
     const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
     expect(quoted![0].body.steps[0].input.model).toBe(illustrious);
     expect(submitted![0].body.steps[0].input.model).toBe(illustrious);
@@ -226,7 +226,7 @@ describe('keep-training base model pin', () => {
   it('sends no model when the source run had no pin', async () => {
     getWorkflow.mockResolvedValue(source({}));
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-    await continueTraining(client, opts);
+    await continueTraining(client, opts, { checkText });
     expect('model' in submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input).toBe(false);
   });
 });
@@ -237,7 +237,7 @@ describe('custom base model', () => {
   it('trains an SDXL run on the pasted base', async () => {
     getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
-    await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }]);
+    await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(custom);
   });
 
@@ -245,10 +245,14 @@ describe('custom base model', () => {
     const calls = submitWorkflow.mock.calls.length;
     getResource.mockClear();
     await expect(
-      submitTrainingBatch(client, [
-        baseRun(),
-        { ...baseRun(), ecosystem: 'mossImage', modelVariant: 'base', customModel: custom },
-      ])
+      submitTrainingBatch(
+        client,
+        [
+          baseRun(),
+          { ...baseRun(), ecosystem: 'mossImage', modelVariant: 'base', customModel: custom },
+        ],
+        { checkText }
+      )
     ).rejects.toThrow(/runs\[1\]\.customModel/);
     expect(getResource).not.toHaveBeenCalled();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
@@ -267,7 +271,7 @@ describe('retired base', () => {
 
   it('refuses a run on the Hunyuan base, which the orchestrator trains as Wan 2.1', async () => {
     const calls = submitWorkflow.mock.calls.length;
-    await expect(submitTrainingBatch(client, [wanRun(hunyuan.air)])).rejects.toThrow(
+    await expect(submitTrainingBatch(client, [wanRun(hunyuan.air)], { checkText })).rejects.toThrow(
       /runs\[0\]\.model/
     );
     expect(submitWorkflow.mock.calls.length).toBe(calls);
@@ -275,7 +279,7 @@ describe('retired base', () => {
 
   it('still submits a Wan 2.1 run', async () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
-    await submitTrainingBatch(client, [wanRun(wan21.air)]);
+    await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
   });
 });
