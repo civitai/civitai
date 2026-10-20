@@ -28,7 +28,9 @@ import { rescanArticle, rescanArticleImage } from '~/server/services/article.ser
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
 const SOMEONE_ELSE = 8;
+const MODERATOR = 99;
 
+type Img = ReturnType<typeof image>;
 const image = (id: number, over: Record<string, unknown> = {}) => ({
   id,
   url: `00000000-0000-0000-0000-0000000000${id}`,
@@ -37,33 +39,63 @@ const image = (id: number, over: Record<string, unknown> = {}) => ({
   ingestion: 'Scanned',
   nsfwLevel: 1,
   nsfwLevelLocked: false,
-  blockedFor: null,
+  blockedFor: null as string | null,
   ...over,
 });
 
 const CLEAN = image(10);
-const BLOCKED = image(11, { ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated' });
-// A rescan request or a scan error moves `ingestion` off Blocked and leaves the other markers.
+// One block marker per image: a scan error or a rescan request can leave either of the last two.
+const BLOCKED = image(11, { ingestion: 'Blocked' });
 const BLOCKED_LEVEL_ONLY = image(12, { ingestion: 'Rescan', nsfwLevel: 32 });
 const BLOCK_REASON_ONLY = image(13, { ingestion: 'Error', blockedFor: 'tos' });
 const FOREIGN = image(14, { userId: SOMEONE_ELSE });
+const PENDING = image(15, { ingestion: 'Pending' });
+const LOCKED = image(16, { nsfwLevelLocked: true });
 
-const ALL = [CLEAN, BLOCKED, BLOCKED_LEVEL_ONLY, BLOCK_REASON_ONLY, FOREIGN];
+const SKIPPED: [string, Img][] = [
+  ['a blocked image', BLOCKED],
+  ['an image that keeps only its Blocked level', BLOCKED_LEVEL_ONLY],
+  ['an image that keeps only its block reason', BLOCK_REASON_ONLY],
+  ["another owner's image", FOREIGN],
+  ['an image still in flight', PENDING],
+  ['an image whose rating a moderator locked', LOCKED],
+];
 
-beforeEach(() => {
-  vi.clearAllMocks();
+/** The columns a Prisma `select` asked for, so a column the code stops selecting reads undefined. */
+const pick = (row: Img, select: Record<string, boolean>) =>
+  Object.fromEntries(Object.keys(select).map((key) => [key, row[key as keyof Img]]));
+
+const storeArticle = (coverId: number | null) => {
   const article = {
     id: ARTICLE_ID,
     userId: AUTHOR,
     content: '',
     title: 'A title',
-    coverId: null,
+    coverId,
     status: 'Draft',
     scheduledAt: null,
   };
   dbMock.dbRead.article.findUnique.mockResolvedValue(article as never);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(article as never);
+};
+
+const storeImages = ({ connected = [], byId = [] }: { connected?: Img[]; byId?: Img[] }) => {
+  dbMock.dbWrite.imageConnection.findMany.mockImplementation((async ({ include }: any) =>
+    connected.map((img) => ({
+      imageId: img.id,
+      image: pick(img, include.image.select),
+    }))) as never);
+  dbMock.dbWrite.image.findUnique.mockImplementation((async ({ where, select }: any) => {
+    const img = byId.find((x) => x.id === where.id);
+    return img ? pick(img, select) : null;
+  }) as never);
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  storeArticle(null);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  dbMock.dbRead.imageConnection.findFirst.mockResolvedValue({ imageId: 1 } as never);
 });
 
 /** Ids the rescan flipped to Rescan and the ids it sent to scan; both must agree. */
@@ -80,10 +112,17 @@ const requeued = () => {
 };
 
 describe('rescanArticle', () => {
-  it("re-queues only the author's unblocked images", async () => {
-    dbMock.dbRead.imageConnection.findMany.mockResolvedValue(
-      ALL.map((img) => ({ imageId: img.id, image: img })) as never
-    );
+  it("re-queues only the author's settled, unblocked images", async () => {
+    storeImages({ connected: [CLEAN, ...SKIPPED.map(([, img]) => img)] });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(requeued()).toEqual([CLEAN.id]);
+  });
+
+  it('leaves a blocked cover alone', async () => {
+    storeArticle(BLOCKED.id);
+    storeImages({ connected: [CLEAN], byId: [BLOCKED] });
 
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
@@ -92,38 +131,42 @@ describe('rescanArticle', () => {
 });
 
 describe('rescanArticleImage', () => {
-  beforeEach(() => {
-    dbMock.dbRead.imageConnection.findFirst.mockResolvedValue({ imageId: 1 } as never);
-  });
+  const rescan = (img: Img, userId = AUTHOR) =>
+    rescanArticleImage({ articleId: ARTICLE_ID, imageId: img.id, userId, isModerator: true });
 
-  it.each([
-    ['a blocked image', BLOCKED],
-    ['an image that keeps only its Blocked level', BLOCKED_LEVEL_ONLY],
-    ['an image that keeps only its block reason', BLOCK_REASON_ONLY],
-    ["another owner's image", FOREIGN],
-  ])('leaves %s alone', async (_, img) => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue(img as never);
+  it.each(SKIPPED.filter(([, img]) => img !== PENDING))(
+    'refuses %s, so the caller is not told it was sent',
+    async (_, img) => {
+      storeImages({ byId: [img] });
 
-    await rescanArticleImage({
-      articleId: ARTICLE_ID,
-      imageId: img.id,
-      userId: AUTHOR,
-      isModerator: true,
-    });
+      await expect(rescan(img)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+      expect(requeued()).toEqual([]);
+    }
+  );
+
+  it('does nothing for an image still in flight', async () => {
+    storeImages({ byId: [PENDING] });
+
+    await rescan(PENDING);
 
     expect(requeued()).toEqual([]);
   });
 
   it("re-queues the author's own unblocked image", async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue(CLEAN as never);
+    storeImages({ byId: [CLEAN] });
 
-    await rescanArticleImage({
-      articleId: ARTICLE_ID,
-      imageId: CLEAN.id,
-      userId: AUTHOR,
-      isModerator: true,
-    });
+    await rescan(CLEAN);
 
     expect(requeued()).toEqual([CLEAN.id]);
+  });
+
+  it("re-queues it for a moderator rescanning someone else's article, under the author", async () => {
+    storeImages({ byId: [CLEAN] });
+
+    await rescan(CLEAN, MODERATOR);
+
+    expect(requeued()).toEqual([CLEAN.id]);
+    expect(enqueueImageIngestion).toHaveBeenCalledWith(expect.objectContaining({ userId: AUTHOR }));
   });
 });

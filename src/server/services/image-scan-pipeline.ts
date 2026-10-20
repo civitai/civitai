@@ -52,6 +52,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -617,11 +618,7 @@ export async function resolveScanOutcome({
   if ((await getPendingAppealImageIds([image.id])).size) {
     toUpdate.needsReview = 'appeal';
     reviewKey = 'appeal';
-    const wasBlocked =
-      image.ingestion === ImageIngestionStatus.Blocked ||
-      image.nsfwLevel === NsfwLevel.Blocked ||
-      image.blockedFor != null;
-    if (wasBlocked && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    if (hasBlockMarker(image) && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -637,8 +634,6 @@ export async function resolveScanOutcome({
 
   // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
   // never lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
-  // Judged on every block marker, as the appeal branch is: a scan error or a rescan request moves
-  // `ingestion` off Blocked but leaves the reason and the Blocked level.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
       {
@@ -653,12 +648,7 @@ export async function resolveScanOutcome({
       JOIN "User" u ON u.id = i."userId"
       WHERE i.id = ${image.id}
     `;
-    const blockedNow =
-      !!current &&
-      (current.ingestion === ImageIngestionStatus.Blocked ||
-        current.nsfwLevel === NsfwLevel.Blocked ||
-        current.blockedFor != null);
-    if (current?.ownerBanned && blockedNow) {
+    if (current?.ownerBanned && hasBlockMarker(current)) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;

@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -2498,15 +2499,11 @@ function canRescanArticleImage(
   },
   articleUserId: number
 ) {
-  const blocked =
-    image.ingestion === ImageIngestionStatus.Blocked ||
-    image.nsfwLevel === NsfwLevel.Blocked ||
-    image.blockedFor != null;
   return (
     image.userId === articleUserId &&
     image.ingestion !== ImageIngestionStatus.Pending &&
     !image.nsfwLevelLocked &&
-    !blocked
+    !hasBlockMarker(image)
   );
 }
 
@@ -2580,7 +2577,8 @@ export async function rescanArticle({
   }
 
   // --- Re-queue already-processed images for rescan ---
-  const connections = await dbRead.imageConnection.findMany({
+  // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
+  const connections = await dbWrite.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
     include: {
       image: {
@@ -2592,7 +2590,7 @@ export async function rescanArticle({
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
   // cover would never be re-queued without folding it in here.
   const cover = article.coverId
-    ? await dbRead.image.findUnique({
+    ? await dbWrite.image.findUnique({
         where: { id: article.coverId },
         select: rescanImageSelect,
       })
@@ -2732,27 +2730,34 @@ export async function rescanArticleImage({
     }
   }
 
-  const image = await dbRead.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id: imageId },
     select: rescanImageSelect,
   });
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  if (canRescanArticleImage(image, article.userId)) {
-    // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
-    // then reports the article as in-progress (allComplete=false), which resumes
-    // the 15s status poll so the eventual result loads without a manual refresh.
-    await dbWrite.image.update({
-      where: { id: image.id },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-    enqueueImageIngestion({
-      images: [image],
-      name: 'article-rescan-image',
-      userId: article.userId,
-      lowPriority: true,
-    });
+  // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
+  // no attempt.
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw throwBadRequestError(
+      'This image cannot be rescanned. Remove it from the article, or ask a moderator to review it.'
+    );
   }
+
+  // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
+  // then reports the article as in-progress (allComplete=false), which resumes
+  // the 15s status poll so the eventual result loads without a manual refresh.
+  await dbWrite.image.update({
+    where: { id: image.id },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+  });
+  enqueueImageIngestion({
+    images: [image],
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
   attempts.push(Date.now());
