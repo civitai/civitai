@@ -46,7 +46,9 @@ const storedMeta = () => stored.meta as CosmeticShopItemMeta;
 
 beforeEach(() => {
   refund.refundWithdrawnShopItem.mockReset().mockResolvedValue({ purchases: 0 });
+  // Owner checks read the primary, verdicts the replica: both see the same row here.
   dbMock.dbRead.cosmeticShopItem.findUnique.mockReset().mockImplementation(async () => stored);
+  dbMock.dbWrite.cosmeticShopItem.findUnique.mockReset().mockImplementation(async () => stored);
   dbMock.dbWrite.cosmeticShopItem.update
     .mockReset()
     .mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
