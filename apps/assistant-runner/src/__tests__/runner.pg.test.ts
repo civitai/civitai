@@ -16,6 +16,9 @@ import { buildApp } from '../app';
 import { RunCredentials } from '../credentials';
 import { RunGrants } from '../grants';
 import type { ModelProvider } from '../interfaces';
+import { TokenMinter } from '../minter';
+import { OrchestrationClient } from '../orchestration';
+import { OrchestrationModels } from '../orchestration-model';
 import { startTurn, withProgress } from '../head';
 import { MemoryConversationStore } from '../memory-store';
 import {
@@ -104,8 +107,49 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       },
     }
   );
+  /**
+   * The real model provider and minter against a civitai that refuses the user (as for a ban) and an
+   * orchestration that counts what reaches it.
+   */
+  const refusing = { mints: 0, completions: 0 };
+  const refusingModels = new OrchestrationModels({
+    baseUrl: 'https://orchestration.example',
+    orchestration: new OrchestrationClient('https://orchestration.example', async () => {
+      refusing.completions++;
+      return new Response('', { status: 500 });
+    }),
+    tokens: (runId) =>
+      new RunCredentials(
+        {
+          forRun: (id) => grants.forRun(id),
+          forConversation: (userId, conversationId) =>
+            grants.forConversation(userId, conversationId),
+        },
+        new TokenMinter({
+          civitaiUrl: 'https://civitai.example',
+          secret: 'test-only-runner-secret-0123456789abcdef',
+          log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+          fetch: async () => {
+            refusing.mints++;
+            return Response.json(
+              {
+                error: 'You cannot perform this action because your account has been banned',
+                code: 'refused',
+              },
+              { status: 403 }
+            );
+          },
+        })
+      ).forRun(runId),
+    fetch: async () => {
+      refusing.completions++;
+      return new Response('', { status: 500 });
+    },
+  });
   const models: ModelProvider = {
-    languageModel: ({ model, runId }) => {
+    languageModel: (context) => {
+      const { model, runId } = context;
+      if (model === 'refused-mint') return refusingModels.languageModel(context);
       if (model === 'mint') {
         // As a real provider does: the token is minted inside the request, from the run's grant.
         const scripted = scriptedModel(() => ({ text: 'Minted.' }));
@@ -184,6 +228,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     retry?: boolean;
     content?: string;
     key?: string;
+    tier?: 'auto' | 'free' | 'paid';
   }): StartRunRequest {
     return {
       v: 1,
@@ -197,7 +242,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       model: overrides.model,
       settings: {
         maxOutputTokens: 1024,
-        tier: 'auto',
+        tier: overrides.tier ?? 'auto',
         allowMature: false,
         autoRunLimit: 0,
         spokenReplies: false,
@@ -729,6 +774,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     await DBOS.cancelWorkflow(runId);
     const entries = await events(runId, user);
     expect(ended(entries).status).toBe('stopped');
+    // The end is in the head, so nothing of this run acts for the viewer any more.
+    expect(await grants.forRun(runId)).toBeNull();
     const head = await store.load(user, 'c-cancelled');
     expect(head!.v).toBe(2);
     expect(head!.turns[0]!.assistant).toMatchObject({ status: 'aborted' });
@@ -998,6 +1045,104 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       status: 'done',
       ranOut: true,
     });
+  });
+
+  it('ends a run whose mint civitai refuses (a ban) with that refusal, asking once and never retrying', async () => {
+    const user = 'u-refused-mint';
+    const before = { ...refusing };
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-refused-mint', model: 'refused-mint', tier: 'paid' })
+    );
+    const entries = await events(start.body!.runId as string, user);
+    expect(ended(entries).status).toBe('error');
+    const error = entries.find(({ event }) => event.type === 'error')!.event as Extract<
+      RunEvent,
+      { type: 'error' }
+    >;
+    // An auth refusal with civitai's reason, not an outage to retry.
+    expect(error.kind).toBe('auth');
+    expect(error.detail ?? error.message).toMatch(/banned/);
+    expect(refusing.mints - before.mints).toBe(1);
+    expect(refusing.completions - before.completions).toBe(0);
+  });
+
+  it('saves the reply’s end on a second attempt when the first fails, and then forgets the grant', async () => {
+    const user = 'u-end-retry';
+    const real = deps.store;
+    let failures = 0;
+    deps.store = {
+      load: (userId, conversationId) => real.load(userId, conversationId),
+      update: (userId, conversationId, change) =>
+        real.update(userId, conversationId, (current) => {
+          const next = change(current);
+          const reply = next?.turns.find((turn) => turn.seq === 1)?.assistant;
+          if (userId === user && reply && reply.status !== 'running' && failures === 0) {
+            failures++;
+            throw new Error('orchestration blipped');
+          }
+          return next;
+        }),
+    };
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-end-retry', model: 'tools' })
+      );
+      const runId = start.body!.runId as string;
+      expect(ended(await events(runId, user)).status).toBe('done');
+      await DBOS.getResult(runId);
+      expect(failures).toBe(1);
+      expect((await store.load(user, 'c-end-retry'))!.turns[0]!.assistant).toMatchObject({
+        status: 'done',
+      });
+      expect(await grants.forRun(runId)).toBeNull();
+    } finally {
+      deps.store = real;
+    }
+  });
+
+  it('keeps an end it could not save with the grant, and writes it later while the grant is live', async () => {
+    const user = 'u-end-pending';
+    const real = deps.store;
+    let refuseEnds = true;
+    deps.store = {
+      load: (userId, conversationId) => real.load(userId, conversationId),
+      update: (userId, conversationId, change) =>
+        real.update(userId, conversationId, (current) => {
+          const next = change(current);
+          const reply = next?.turns.find((turn) => turn.seq === 1)?.assistant;
+          if (userId === user && reply && reply.status !== 'running' && refuseEnds)
+            throw new Error('orchestration is down');
+          return next;
+        }),
+    };
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-end-pending', model: 'tools' })
+      );
+      const runId = start.body!.runId as string;
+      expect(ended(await events(runId, user, { timeoutMs: 45_000 })).status).toBe('done');
+      await DBOS.getResult(runId);
+      // The journal says done; the head could not take it, so the grant stays with the end.
+      expect((await store.load(user, 'c-end-pending'))!.turns[0]!.assistant?.status).toBe(
+        'running'
+      );
+      expect(await grants.forRun(runId)).not.toBeNull();
+
+      refuseEnds = false;
+      expect(await runner.repairPendingEnds()).toBeGreaterThanOrEqual(1);
+      expect((await store.load(user, 'c-end-pending'))!.turns[0]!.assistant).toMatchObject({
+        status: 'done',
+      });
+      expect(await grants.forRun(runId)).toBeNull();
+    } finally {
+      deps.store = real;
+    }
   });
 
   it('keeps no grant for a start it refuses', async () => {

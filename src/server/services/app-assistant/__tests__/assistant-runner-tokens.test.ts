@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { decodeProtectedHeader, jwtVerify, SignJWT } from 'jose';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   isAssistantRunnerConfigured,
   signRunGrant,
@@ -59,6 +60,24 @@ describe('the runner’s credentials, as the runner reads them', () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
     const { payload } = await jwtVerify((await signRunGrant(GRANT)).token, keys.publicKey);
     expect(payload.exp! - payload.iat!).toBe(600);
+  });
+});
+
+describe('an unusable signing key', () => {
+  it('reads as unconfigured, logged once per value without its contents, not parsed again per call', async () => {
+    const p384 = generateKeyPairSync('ec', { namedCurve: 'P-384' })
+      .privateKey.export({ type: 'pkcs8', format: 'pem' })
+      .toString();
+    setEnv({ ASSISTANT_RUNNER_SIGNING_KEY: p384 });
+    loggingMock.logToAxiom.mockClear();
+    expect(isAssistantRunnerConfigured()).toBe(false);
+    expect(isAssistantRunnerConfigured()).toBe(false);
+    await expect(signRunGrant(GRANT)).rejects.toThrow(/not configured/);
+    const logged = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { type?: string }).type === 'app-assistant.runner-signing-key.unusable'
+    );
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain('PRIVATE KEY');
   });
 });
 

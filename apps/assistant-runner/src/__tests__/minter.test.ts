@@ -51,14 +51,13 @@ describe('TokenMinter', () => {
     });
     now += 3 * 60_000;
     expect(await minter.token('grant-a', 'chat')).toBe('chat-token-1');
-    expect(await minter.token('grant-a', 'sandbox')).toBe('sandbox-token-2');
-    expect(await minter.token('grant-b', 'chat')).toBe('chat-token-3');
+    expect(await minter.token('grant-b', 'chat')).toBe('chat-token-2');
     // Within a minute of expiry: minted again.
     now += 90_000;
-    expect(await minter.token('grant-a', 'chat')).toBe('chat-token-4');
+    expect(await minter.token('grant-a', 'chat')).toBe('chat-token-3');
     // A fresh one on request (after a 401), whatever the cache holds.
-    expect(await minter.token('grant-a', 'chat', { fresh: true })).toBe('chat-token-5');
-    expect(civitai.calls).toHaveLength(5);
+    expect(await minter.token('grant-a', 'chat', { fresh: true })).toBe('chat-token-4');
+    expect(civitai.calls).toHaveLength(4);
   });
 
   it('shares one mint between concurrent callers', async () => {
@@ -107,7 +106,7 @@ describe('TokenMinter', () => {
       // No code: civitai refused the runner's secret, a deployment fault.
       [() => Response.json({ error: 'Unauthorized' }, { status: 401 }), 'unavailable'],
       [() => Response.json({ error: 'no' }, { status: 403 }), 'unavailable'],
-      [() => Response.json({ code: 'rate_limited' }, { status: 429 }), 'rate_limited'],
+      [() => Response.json({ code: 'refused', error: 'banned' }, { status: 403 }), 'refused'],
       [() => Response.json({ error: 'no' }, { status: 503 }), 'unavailable'],
       [() => new Response('<html>', { status: 500 }), 'unavailable'],
     ] as const) {
@@ -120,6 +119,62 @@ describe('TokenMinter', () => {
       });
       await expect(minter.token('g', 'chat'), code).rejects.toMatchObject({ code });
     }
+  });
+});
+
+describe('TokenMinter refusals and stops', () => {
+  it('reads a gate refusal as refused, with civitai’s reason, and never as the runner’s secret', async () => {
+    const errors: string[] = [];
+    const civitai = fakeCivitai(() =>
+      Response.json(
+        {
+          error: 'You cannot perform this action because your account has been banned',
+          code: 'refused',
+        },
+        { status: 403 }
+      )
+    );
+    const minter = new TokenMinter({
+      civitaiUrl: 'https://civitai.example',
+      secret: SECRET,
+      log: { ...quiet, error: (_o, message) => errors.push(String(message)) },
+      fetch: civitai.doFetch,
+    });
+    await expect(minter.token('g', 'chat')).rejects.toMatchObject({
+      code: 'refused',
+      status: 403,
+      message: expect.stringMatching(/banned/),
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it('stops waiting for a mint as soon as the run stops, without waiting out the mint', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const civitai = fakeCivitai(() => new Response('', { status: 500 }));
+    const slow: typeof fetch = (input, init) =>
+      new Promise((resolve) => {
+        answer = resolve;
+        void civitai.doFetch(input, init);
+      });
+    const minter = new TokenMinter({
+      civitaiUrl: 'https://civitai.example',
+      secret: SECRET,
+      log: quiet,
+      fetch: slow,
+    });
+    const stop = new AbortController();
+    const waiting = minter.token('g', 'chat', { signal: stop.signal });
+    stop.abort(new Error('stopped'));
+    // Bounded: a minter that ignores the stop reads as still waiting after 2 s, not as a hang.
+    const outcome = await Promise.race([
+      waiting.then(
+        () => 'minted',
+        (error: Error) => error.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 2000)),
+    ]);
+    expect(outcome).toBe('stopped');
+    answer(minted('late', 300_000, Date.now()));
   });
 });
 

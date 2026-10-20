@@ -177,11 +177,23 @@ describe('configuration', () => {
     );
   });
 
+  it('refuses a runner secret shorter than 32 characters', () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        RUNNER_TOKEN_PUBLIC_KEY: keys.publicPem,
+        RUNNER_SECRET: 'too-short',
+        CIVITAI_URL: 'https://civitai.example',
+        ORCHESTRATION_URL: 'https://orchestration.example',
+      })
+    ).toThrow(/at least 32/);
+  });
+
   it('reads a one-line PEM and the base path', () => {
     const config = loadConfig({
       ...base,
       RUNNER_TOKEN_PUBLIC_KEY: keys.publicPem.replace(/\n/g, '\\n'),
-      RUNNER_SECRET: 'test-only-runner-secret',
+      RUNNER_SECRET: 'test-only-runner-secret-0123456789abcdef',
       CIVITAI_URL: 'https://civitai.example',
       ORCHESTRATION_URL: 'https://orchestration.example',
       RUNNER_BASE_PATH: '/api/assistant-runner',

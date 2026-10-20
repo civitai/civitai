@@ -2,13 +2,13 @@ import { generateKeyPairSync } from 'node:crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 
-const { mintMock, consentMock, refusalMock } = vi.hoisted(() => ({
+const { mintMock, consentMock, refusalMock, userRefusalMock } = vi.hoisted(() => ({
   mintMock: vi.fn(),
   consentMock: vi.fn(),
   refusalMock: vi.fn(),
+  userRefusalMock: vi.fn(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -17,6 +17,7 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOr
   mintAppAssistantToken: mintMock,
   hasAppAssistantConsent: consentMock,
   getAppAssistantRefusal: refusalMock,
+  getAppAssistantRefusalForUserId: userRefusalMock,
 }));
 // The session gates are covered route by route in credential-minting-routes-session-scope.test.ts;
 // here the signed-in user is given, and the test is about what the routes do for them.
@@ -95,18 +96,19 @@ beforeEach(() => {
   mintMock.mockResolvedValue({ token: 'minted-chat-token', expiresAt: '2099-01-01T00:00:00Z' });
   consentMock.mockResolvedValue(true);
   refusalMock.mockResolvedValue(null);
-  redisMock.sysRedis.incr.mockResolvedValue(1);
+  userRefusalMock.mockResolvedValue(null);
 });
 
 describe('POST /api/internal/app-assistant/runner-token', () => {
-  it('trades a current grant for a token of the purpose asked, for the grant’s user', async () => {
+  it('trades a current grant for a chat token, for the grant’s user', async () => {
     const { status, json, headers } = await call(mintRoute, {
       headers: asRunner,
-      body: { grant: await grantFor(), purpose: 'sandbox' },
+      body: { grant: await grantFor(), purpose: 'chat' },
     });
     expect(status).toBe(200);
     expect(json).toEqual({ token: 'minted-chat-token', expiresAt: '2099-01-01T00:00:00Z' });
-    expect(mintMock).toHaveBeenCalledWith(42, 'sandbox');
+    expect(mintMock).toHaveBeenCalledWith(42, 'chat');
+    expect(userRefusalMock).toHaveBeenCalledWith(42);
     expect(headers.get('cache-control')).toBe('no-store');
   });
 
@@ -167,6 +169,46 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(mintMock).not.toHaveBeenCalled();
   });
 
+  it('refuses with the terminal code refused when a gate refuses the user now (a ban), minting nothing', async () => {
+    userRefusalMock.mockResolvedValue({
+      status: 403,
+      error: 'You cannot perform this action because your account has been banned',
+    });
+    const { status, json } = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(status).toBe(403);
+    expect(json).toEqual({
+      error: 'You cannot perform this action because your account has been banned',
+      code: 'refused',
+    });
+    expect(mintMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses with refused when the App Assistant flag is off for the user', async () => {
+    userRefusalMock.mockResolvedValue({
+      status: 403,
+      error: 'App Assistant is not available on this account',
+    });
+    const { status, json } = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(status).toBe(403);
+    expect(json).toMatchObject({ code: 'refused' });
+    expect(mintMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses the sandbox purpose, which B1 does not mint', async () => {
+    const { status } = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'sandbox' },
+    });
+    expect(status).toBe(400);
+    expect(mintMock).not.toHaveBeenCalled();
+  });
+
   it('answers 403 consent_required once the user turned App Assistant off', async () => {
     mintMock.mockResolvedValue(null);
     const { status, json } = await call(mintRoute, {
@@ -177,54 +219,10 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(json).toMatchObject({ code: 'consent_required' });
   });
 
-  it('stops a grant that mints far more than a run would', async () => {
-    redisMock.sysRedis.incr.mockResolvedValue(61);
-    redisMock.sysRedis.ttl.mockResolvedValue(120);
-    const { status, headers } = await call(mintRoute, {
-      headers: asRunner,
-      body: { grant: await grantFor(), purpose: 'chat' },
-    });
-    expect(status).toBe(429);
-    expect(headers.get('retry-after')).toBe('120');
-    expect(mintMock).not.toHaveBeenCalled();
-  });
-
-  it('lets the 60th mint of a window through and stops the 61st', async () => {
-    redisMock.sysRedis.ttl.mockResolvedValue(300);
-    redisMock.sysRedis.incr.mockResolvedValue(60);
-    const body = { grant: await grantFor(), purpose: 'chat' };
-    expect((await call(mintRoute, { headers: asRunner, body })).status).toBe(200);
-    redisMock.sysRedis.incr.mockResolvedValue(61);
-    expect((await call(mintRoute, { headers: asRunner, body })).status).toBe(429);
-  });
-
-  it('gives a counter that lost its expiry one again, so a long run is not locked out', async () => {
-    redisMock.sysRedis.incr.mockResolvedValue(2);
-    redisMock.sysRedis.ttl.mockResolvedValue(-1);
-    redisMock.sysRedis.expire.mockClear();
-    await call(mintRoute, {
-      headers: asRunner,
-      body: { grant: await grantFor(), purpose: 'chat' },
-    });
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
-      expect.stringContaining('runner-mint-rate-limit:'),
-      600
-    );
-  });
-
   it('accepts the secret with a trailing newline on either side', async () => {
     setEnv({ ASSISTANT_RUNNER_SECRET: `${SECRET}\n` });
     const { status } = await call(mintRoute, {
       headers: { authorization: `bearer ${SECRET} ` },
-      body: { grant: await grantFor(), purpose: 'chat' },
-    });
-    expect(status).toBe(200);
-  });
-
-  it('mints on when the rate limiter’s Redis is down', async () => {
-    redisMock.sysRedis.incr.mockRejectedValue(new Error('redis down'));
-    const { status } = await call(mintRoute, {
-      headers: asRunner,
       body: { grant: await grantFor(), purpose: 'chat' },
     });
     expect(status).toBe(200);

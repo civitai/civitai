@@ -168,7 +168,7 @@ describe('OrchestrationModels', () => {
     for (const [code, status] of [
       ['consent_required', 403],
       ['invalid_grant', 400],
-      ['rate_limited', 400],
+      ['refused', 403],
       ['unavailable', 503],
     ] as const) {
       const send = refusalsAsAnswers(async () => {

@@ -80,35 +80,37 @@ describePg('run grants and conversation locks in the runner’s database', () =>
     expect(await grants.forRun('run-retried')).toBeNull();
   });
 
-  it('sweeps expired grants, those of runs that ended a while ago, and orphans; never a live run’s', async () => {
+  it('sweeps expired grants only, never a live one whatever its run did', async () => {
     await grants.save('sweep-expired', grant('g1', hours(-1)));
     await grants.save('sweep-ended-long-ago', grant('g2', hours(2)));
-    await grants.save('sweep-ended-just-now', grant('g3', hours(2)));
-    await grants.save('sweep-live', grant('g4', hours(2)));
-    await grants.save('sweep-orphan', grant('g5', hours(2)));
-    // Saved by a start a moment ago, before its workflow exists: not an orphan yet.
-    await grants.save('sweep-just-saved', grant('g6', hours(2)));
-    const now = Date.now();
-    const status = (id: string, value: string, updatedAt: number) =>
-      pool.query(
-        `insert into dbos.workflow_status (workflow_uuid, status, name, created_at, updated_at) values ($1, $2, 'reply', $3, $3)`,
-        [id, value, updatedAt]
-      );
-    await status('sweep-ended-long-ago', 'SUCCESS', now - 60 * 60 * 1000);
-    await status('sweep-ended-just-now', 'CANCELLED', now - 1000);
-    await status('sweep-live', 'PENDING', now - 60 * 60 * 1000);
+    await grants.save('sweep-just-saved', grant('g3', hours(2)));
+    // A run that ended an hour ago, as DBOS records it: the runner deletes its grant on the end path
+    // itself, so the sweep has no reason to read DBOS's tables.
     await pool.query(
-      `update assistant_runner.run_grants set created_at = now() - interval '1 hour' where run_id in ('sweep-orphan', 'sweep-live')`
+      `insert into dbos.workflow_status (workflow_uuid, status, name, created_at, updated_at) values ('sweep-ended-long-ago', 'SUCCESS', 'reply', $1, $1)`,
+      [Date.now() - 60 * 60 * 1000]
     );
-
     await grants.sweep();
     const { rows } = await pool.query<{ run_id: string }>(
       `select run_id from assistant_runner.run_grants where run_id like 'sweep-%' order by run_id`
     );
-    expect(rows.map((row) => row.run_id)).toEqual([
-      'sweep-ended-just-now',
-      'sweep-just-saved',
-      'sweep-live',
+    expect(rows.map((row) => row.run_id)).toEqual(['sweep-ended-long-ago', 'sweep-just-saved']);
+  });
+
+  it('keeps a grant with an end still to save, and lists that end while the grant is live', async () => {
+    const reply = { messages: [], status: 'done' as const };
+    await grants.save('pending-live', grant('gp1', hours(2), 'u-pending', 'c-pending'));
+    await grants.save('pending-expired', grant('gp2', hours(-1), 'u-pending', 'c-pending'));
+    await grants.save('not-pending', grant('gp3', hours(2), 'u-pending', 'c-pending'));
+    await grants.markEndPending('pending-live', 3, reply);
+    await grants.markEndPending('pending-expired', 4, reply);
+
+    await grants.forgetUnlessEndPending('pending-live');
+    await grants.forgetUnlessEndPending('not-pending');
+    expect(await grants.forRun('pending-live')).toBe('gp1');
+    expect(await grants.forRun('not-pending')).toBeNull();
+    expect(await grants.pendingEnds()).toEqual([
+      { runId: 'pending-live', userId: 'u-pending', conversationId: 'c-pending', seq: 3, reply },
     ]);
   });
 
