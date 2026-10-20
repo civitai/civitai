@@ -330,9 +330,11 @@ export const getServerSideProps = createServerSideProps({
           // rank, links, badges — instead of rendering the zeroed fallback and
           // growing once the client fetch lands. Simple key, no middleware to
           // mismatch; fail-soft on miss.
-          // Under `modelPageDeferBelowFold` the creator card renders client-side only (see
-          // ModelVersionDetails), so the server render never reads this and it is skipped.
-          model?.user?.id && !features?.modelPageDeferBelowFold
+          // Kept under `modelPageDeferBelowFold` too: there the card renders client-side only
+          // (see ModelVersionDetails), and this prefetch lets it mount from the dehydrated
+          // cache with the real creator, so the page shifts once (placeholder → card) rather
+          // than twice (placeholder → zeroed fallback → card).
+          model?.user?.id
             ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
             : null,
           session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,

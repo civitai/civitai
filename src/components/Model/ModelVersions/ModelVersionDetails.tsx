@@ -1770,85 +1770,80 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           </Accordion>
 
           {/* Resource Review - shown after model details for users who downloaded */}
-          {/* One child slot for both branches, so the flag doesn't shift later siblings' useId. */}
-          {!model.locked &&
-            alreadyDownloaded &&
-            (deferBelowFold ? (
-              <div data-deferred-section="user-review" className={classes.deferredUserReview} />
-            ) : (
-              <UserResourceReviewComposite
-                modelId={model.id}
-                modelVersionId={version.id}
-                modelName={model.name}
-              >
-                {({ modelId, modelVersionId, userReview, loading }) => (
-                  <Card p={8} withBorder>
-                    <Stack gap={8}>
-                      <Group gap={8} justify="space-between" wrap="nowrap">
-                        <Group gap={8} wrap="nowrap">
-                          {loading ? (
-                            <Loader size="xs" />
-                          ) : userReview ? (
-                            <>
-                              {userReview.recommended ? (
-                                <ThumbsUpIcon size={18} />
-                              ) : (
-                                <ThumbsDownIcon size={18} />
-                              )}
-                            </>
-                          ) : (
-                            <IconHeart size={18} />
-                          )}
-                          {userReview ? (
-                            <Text size="sm">
-                              You reviewed this on {formatDateMin(userReview.createdAt, false)}
-                            </Text>
-                          ) : (
-                            <Text size="sm">What did you think of this resource?</Text>
-                          )}
-                        </Group>
-                        {!userReview || !userReview.details ? (
-                          <ResourceReviewThumbActions
-                            modelId={modelId}
-                            modelVersionId={modelVersionId}
-                            userReview={userReview}
-                            size="xs"
-                          />
+          {!model.locked && alreadyDownloaded && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, userReview, loading }) => (
+                <Card p={8} withBorder>
+                  <Stack gap={8}>
+                    <Group gap={8} justify="space-between" wrap="nowrap">
+                      <Group gap={8} wrap="nowrap">
+                        {loading ? (
+                          <Loader size="xs" />
+                        ) : userReview ? (
+                          <>
+                            {userReview.recommended ? (
+                              <ThumbsUpIcon size={18} />
+                            ) : (
+                              <ThumbsDownIcon size={18} />
+                            )}
+                          </>
                         ) : (
-                          <Group wrap="nowrap" gap={4}>
-                            <Button
-                              size="xs"
-                              color="gray"
-                              onClick={() => openResourceReviewEditModal(userReview)}
-                            >
-                              See Review
-                            </Button>
-                            <Button
-                              size="xs"
-                              color="gray"
-                              component={Link}
-                              px={7}
-                              href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
-                            >
-                              <IconPhotoPlus size={16} />
-                            </Button>
-                          </Group>
+                          <IconHeart size={18} />
+                        )}
+                        {userReview ? (
+                          <Text size="sm">
+                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
+                          </Text>
+                        ) : (
+                          <Text size="sm">What did you think of this resource?</Text>
                         )}
                       </Group>
-                    </Stack>
-                    {userReview && !userReview.details && (
-                      <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                        <EditUserResourceReviewLight
+                      {!userReview || !userReview.details ? (
+                        <ResourceReviewThumbActions
                           modelId={modelId}
                           modelVersionId={modelVersionId}
                           userReview={userReview}
+                          size="xs"
                         />
-                      </Card.Section>
-                    )}
-                  </Card>
-                )}
-              </UserResourceReviewComposite>
-            ))}
+                      ) : (
+                        <Group wrap="nowrap" gap={4}>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            onClick={() => openResourceReviewEditModal(userReview)}
+                          >
+                            See Review
+                          </Button>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            component={Link}
+                            px={7}
+                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
+                          >
+                            <IconPhotoPlus size={16} />
+                          </Button>
+                        </Group>
+                      )}
+                    </Group>
+                  </Stack>
+                  {userReview && !userReview.details && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewLight
+                        modelId={modelId}
+                        modelVersionId={modelVersionId}
+                        userReview={userReview}
+                      />
+                    </Card.Section>
+                  )}
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
 
           <ModelVersionDonationGoal modelVersionId={version.id} />
 

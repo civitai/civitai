@@ -107,17 +107,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     useQuery: () => pending,
     useInfiniteQuery: () => ({ ...pending, hasNextPage: false, fetchNextPage: () => undefined }),
   };
-  // Exactly what the page's getServerSideProps prefetches — `user.getCreator` only with the flag
-  // off, as in `model-page-defer-prefetch.test.ts`, so a server-rendered reader of it that the
-  // deferral missed would render its pending state here exactly as it would in production.
+  // Exactly what the page's getServerSideProps prefetches — including `user.getCreator` in both
+  // flag states, as `model-page-defer-prefetch.test.ts` pins — so a server-rendered reader of any
+  // of them sees the data it would see in production.
   const prefetched: Record<string, unknown> = {
     'model.getById': q(() => F.MODEL),
-    'user.getCreator': {
-      useQuery: () =>
-        m.flags.modelPageDeferBelowFold
-          ? pending
-          : { data: F.CREATOR, isLoading: false, isSuccess: true },
-    },
+    'user.getCreator': q(() => F.CREATOR),
     'model.getCollectionShowcase': q(() => F.SHOWCASE_COLLECTION),
     'common.getEntityAccess': q(() => [
       { entityId: F.VERSION_IDS[0], entityType: 'ModelVersion', hasAccess: true },
@@ -218,8 +213,14 @@ function showcasePanel(html: string) {
   return html.slice(start, html.indexOf('mantine-Accordion-item', start));
 }
 
-// Markers that only the deferred sections emit. Each is checked present with the flag off, so an
-// absence with the flag on cannot be a marker that never matched.
+// Markers that only the deferred sections emit (plus the downloader review card's prompt, which is
+// NOT deferred). Each is checked present with the flag off, so an absence with the flag on cannot
+// be a marker that never matched.
+// The creator card's root marker: `CreatorCardSimple` (what `SmartCreatorCard` renders under the
+// public `cosmeticShop` flag) draws this background image unconditionally — with the creator's
+// data and with its zeroed no-data fallback alike — so it appears whenever the card renders at
+// all, whatever the `user.getCreator` query returned.
+const CREATOR_CARD_ROOT = 'alt="default creator card background decoration"';
 const CREATOR_CARD_LINK = 'href="https://example.com/lanternsmith"';
 const LICENSE_TEXT = 'License<!-- -->:';
 const PERMISSION_ICON = 'tabler-icon-businessplan';
@@ -245,6 +246,7 @@ describe('model page server render — modelPageDeferBelowFold OFF', () => {
   it('renders the creator card, license, permissions and collection-showcase body', () => {
     const { html } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: false });
 
+    expect(count(html, CREATOR_CARD_ROOT)).toBe(1);
     expect(count(html, CREATOR_CARD_LINK)).toBe(1);
     expect(count(html, LICENSE_TEXT)).toBe(1);
     expect(count(html, PERMISSION_ICON)).toBe(1);
@@ -291,6 +293,7 @@ describe('model page server render — modelPageDeferBelowFold ON', () => {
   it('replaces the creator card, license and permissions with placeholders and empties the showcase body', () => {
     const { html } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: true });
 
+    expect(count(html, CREATOR_CARD_ROOT)).toBe(0);
     expect(count(html, CREATOR_CARD_LINK)).toBe(0);
     expect(count(html, LICENSE_TEXT)).toBe(0);
     expect(count(html, PERMISSION_ICON)).toBe(0);
@@ -301,12 +304,12 @@ describe('model page server render — modelPageDeferBelowFold ON', () => {
     expect(html).toContain(F.SHOWCASE_COLLECTION_NAME);
   });
 
-  it("replaces a downloader's own review card with a placeholder", () => {
+  it("still server-renders a downloader's own review card (it is not deferred)", () => {
     m.user = VIEWER;
     m.downloaded = [F.VERSION_IDS[0]];
     const { html } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: true });
 
-    expect(count(html, USER_REVIEW_PROMPT)).toBe(0);
-    expect(count(html, 'data-deferred-section="user-review"')).toBe(1);
+    expect(count(html, USER_REVIEW_PROMPT)).toBe(1);
+    expect(count(html, 'data-deferred-section="user-review"')).toBe(0);
   });
 });

@@ -10,8 +10,9 @@ import * as F from './model-page-fixture';
  * driven with a recording `ssg` helper — so the assertions are over exactly the prefetches the
  * resolver issues, with their inputs, for one request.
  *
- * Flag ON must skip `user.getCreator` (only the deferred creator card reads it) and issue every
- * other prefetch exactly as flag OFF does.
+ * The flag must not change the prefetch set: `user.getCreator` is prefetched in BOTH states. Under
+ * the flag the creator card renders client-side only, and the prefetch is what lets it mount from
+ * the dehydrated cache with the real creator (one layout shift, not two).
  */
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -83,20 +84,22 @@ async function prefetchesFor(features: Record<string, boolean>) {
 }
 
 describe('model page getServerSideProps — modelPageDeferBelowFold', () => {
-  it('OFF: prefetches the creator card query for the model owner', async () => {
-    const calls = await prefetchesFor({ modelPageDeferBelowFold: false });
+  it.each([false, true])(
+    'flag %s: prefetches the creator card query for the model owner',
+    async (flag) => {
+      const calls = await prefetchesFor({ modelPageDeferBelowFold: flag });
 
-    expect(calls.filter((c) => c.proc === 'user.getCreator')).toEqual([
-      { proc: 'user.getCreator', method: 'prefetch', input: { id: F.CREATOR_ID } },
-    ]);
-  });
+      expect(calls.filter((c) => c.proc === 'user.getCreator')).toEqual([
+        { proc: 'user.getCreator', method: 'prefetch', input: { id: F.CREATOR_ID } },
+      ]);
+    }
+  );
 
-  it('ON: skips the creator card query and issues every other prefetch unchanged', async () => {
+  it('ON: issues exactly the prefetches OFF does', async () => {
     const off = await prefetchesFor({ modelPageDeferBelowFold: false });
     const on = await prefetchesFor({ modelPageDeferBelowFold: true });
 
-    expect(on.filter((c) => c.proc === 'user.getCreator')).toEqual([]);
-    expect(on).toEqual(off.filter((c) => c.proc !== 'user.getCreator'));
+    expect(on).toEqual(off);
     // The prefetch set the comparison above runs over — so it cannot pass on two empty lists.
     expect(on.map((c) => c.proc)).toEqual([
       'blocks.listForModel',
@@ -106,6 +109,7 @@ describe('model page getServerSideProps — modelPageDeferBelowFold', () => {
       'model.getById',
       'model.getCollectionShowcase',
       'resourceReview.getUserResourceReview',
+      'user.getCreator',
       'user.getEngagedModelVersions',
     ]);
   });

@@ -16,8 +16,8 @@ import * as F from '~/tests/pages/models/model-page-fixture';
  * The server render uses the real `IsClientProvider`, so it emits the placeholders exactly as the
  * server does; the hydrating render must produce the same markup (no recoverable hydration error,
  * no hydration console error), and only the render AFTER mount may swap in the deferred sections —
- * at which point the creator card issues its own `user.getCreator` query, because the server no
- * longer prefetches it.
+ * at which point the creator card first reads `user.getCreator` (in production served from the
+ * query the server still prefetches and dehydrates).
  *
  * DETECTORS, two independent ones (React's warning text can change without disarming both):
  * `hydrateRoot`'s `onRecoverableError`, and a console.error match. The INSTRUMENT CHECK proves the
@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
   getCreator: vi.fn(),
   user: null as null | Record<string, unknown>,
-  downloaded: [] as number[],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -76,7 +75,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       'model.getCollectionShowcase': q(F.SHOWCASE_COLLECTION),
       'user.getEngagedModelVersions': {
         useQuery: () => ({
-          data: { Notify: [], Downloaded: mocks.downloaded },
+          data: { Notify: [], Downloaded: [] },
           isLoading: false,
           isSuccess: true,
         }),
@@ -161,7 +160,6 @@ const details = () => (
     <HydratedMarker />
   </Tree>
 );
-const USER_REVIEW_PROMPT = 'What did you think of this resource?';
 
 const HYDRATION_RE =
   /(Hydration failed|An error occurred during hydration|The server HTML was replaced|Expected server HTML|did not match|Text content does not match)/i;
@@ -177,7 +175,6 @@ beforeEach(() => {
   recoverable = [];
   mocks.getCreator.mockReset();
   mocks.user = null;
-  mocks.downloaded = [];
   const original = console.error;
   console.error = ((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
@@ -267,22 +264,5 @@ describe('ModelVersionDetails — modelPageDeferBelowFold hydration', () => {
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(container.querySelector(CREATOR_CARD_LINK)).not.toBeNull();
-  });
-
-  test("ON, downloader: the viewer's review card hydrates as a placeholder and arrives after mount", async () => {
-    mocks.flags = { modelPageDeferBelowFold: true, cosmeticShop: true };
-    mocks.user = { id: 5, username: 'lantern-viewer', isModerator: false, filePreferences: {} };
-    mocks.downloaded = [F.VERSION_IDS[0]];
-    const html = renderToString(details());
-
-    expect(html).toContain('data-deferred-section="user-review"');
-    expect(html).not.toContain(USER_REVIEW_PROMPT);
-
-    const container = await hydrateInto(html, details());
-
-    expect(recoverable).toEqual([]);
-    expect(hydrationConsoleErrors()).toEqual([]);
-    await expect.poll(() => container.textContent).toContain(USER_REVIEW_PROMPT);
-    expect(container.querySelector('[data-deferred-section]')).toBeNull();
   });
 });
