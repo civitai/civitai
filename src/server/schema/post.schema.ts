@@ -405,6 +405,8 @@ export const scheduleBatchImageSchema = addPostImageSchema
   .extend({ url: z.string().uuid() });
 
 export const scheduleBatchPostSchema = z.object({
+  /** Stable for one post across every attempt to create it, so a retry is recognised. */
+  clientKey: z.string().uuid().optional(),
   title: z.string().trim().max(255).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
@@ -412,7 +414,8 @@ export const scheduleBatchPostSchema = z.object({
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
 export const scheduleBatchSchema = z.object({
-  /** One per chunk per attempt; the server refuses a repeat so a re-sent request cannot double-post. */
+  /** One per chunk per attempt; the server refuses a repeat. Superseded by `posts[].clientKey`,
+   *  kept for bundles that predate it. */
   idempotencyKey: z.string().uuid().optional(),
   modelVersionId: z.number().int().positive().nullish(),
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
