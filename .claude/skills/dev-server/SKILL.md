@@ -529,8 +529,12 @@ gitignored, so a fresh worktree has neither — the base is what makes it start 
 the primary's app `.env`, which may name a database other than dev: they come from the worktree's own
 app `.env` if it sets them, else from the root `.env` chain (primary root, then the worktree's root).
 A key neither sets is removed from the spawn env, so the app refuses to start rather than inherit
-one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand.
-Every `CSAM_*` key in a worktree app's spawn env is set empty, wherever it came from.
+one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand;
+a replica it does not set then follows that database. Every `CSAM_*` key in the spawn env of a
+worktree app, or of the main app in a worktree, is set empty, wherever it came from, including keys
+only named in the files `vite dev` / `next dev` read themselves (`.env`, `.env.local`,
+`.env.development`, `.env.development.local` in the app's or tree's directory): both loaders let a
+key already in the environment win, an empty one included.
 The app prints the `DATABASE_URL` **host** (never the credential) on startup and carries it as
 `dbHost` in `app` / `status` output — read it before you click anything that writes.
 
@@ -735,8 +739,9 @@ What's already handled:
   re-copies every one the primary edited more recently, over the tree's version. Without
   `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
   `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
-  copied before either existed. A hand edit to a tree's app database
-  therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
+  copied before either existed. Env files only the tree has (a hand-made `.env.local`) get their
+  `CSAM_*` keys emptied too; their database lines stay as written. A hand edit to a tree's app
+  database therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
   while a file to copy has one, `wt new` and `wt env` exit 1 and write none of them.
 
   It reports three states, because two were misleading. `set` is a skill with its own file.

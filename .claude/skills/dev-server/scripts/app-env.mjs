@@ -70,7 +70,8 @@ export function findAppEnvFiles(primary) {
  * copy was modified more recently — including over the tree's own edit, if that is older.
  * A file whose directory does not exist in the target (an app the branch predates) is skipped.
  * Files left in place still have their DB lines routed (`dbRouted`) and their blanked keys emptied
- * (`blanked`), which is how `wt env` repairs a tree copied before either existed.
+ * (`blanked`), which is how `wt env` repairs a tree copied before either existed. Env files only the
+ * tree has get their blanked keys emptied too.
  *
  * Throws DevDbMissingError, writing nothing, when a file has an active DB line and the primary
  * root `.env` has no DATABASE_URL to give it.
@@ -112,6 +113,22 @@ export function syncAppEnv(primary, target, { refresh = false } = {}) {
       if (blanked.changed) result.blanked.push(rel);
     }
     result.kept.push(rel);
+  }
+  // A file only the tree has (a hand-made `.env.local`, say) is the tree's own edit: its database
+  // stays as written, but its blanked keys are emptied like every other.
+  const fromPrimary = new Set([
+    ...result.copied,
+    ...result.refreshed,
+    ...result.kept,
+    ...result.noDir,
+  ]);
+  const own = existsSync(join(target, '.git')) ? findAppEnvFiles(target) : [];
+  for (const rel of own.filter((r) => !fromPrimary.has(r))) {
+    const to = join(target, rel);
+    const blanked = blankEnvText(readFileSync(to, 'utf8'));
+    if (!blanked.changed) continue;
+    writes.push({ to, text: blanked.text, stat: statSync(to) });
+    result.blanked.push(rel);
   }
   if (missing.length) throw new DevDbMissingError(missing);
   for (const { to, text, stat } of writes) {

@@ -82,6 +82,22 @@ check(
   appDatabaseEnv({}, {}).DATABASE_URL,
   undefined
 );
+check(
+  "a worktree's own DATABASE_URL with no replica of its own is its replica too, not the root's",
+  appDatabaseEnv({ DATABASE_URL: 'own' }, devDb).DATABASE_REPLICA_URL,
+  'own'
+);
+check(
+  "... while the worktree's own replica, if set, wins",
+  appDatabaseEnv({ DATABASE_URL: 'own', DATABASE_REPLICA_URL: 'own-replica' }, devDb)
+    .DATABASE_REPLICA_URL,
+  'own-replica'
+);
+check(
+  'with no DB key of its own the worktree takes the root replica',
+  appDatabaseEnv({}, devDb).DATABASE_REPLICA_URL,
+  DEV_REPLICA
+);
 
 // --- the daemon: an app spawned in a worktree ---
 const root = mkdtempSync(join(tmpdir(), 'dev-db-'));
@@ -123,6 +139,11 @@ try {
   check(
     "a worktree app's own DATABASE_URL is the opt-in and wins",
     spawn(tree).DATABASE_URL,
+    PLANTED
+  );
+  check(
+    '... and its replica follows it, not the root replica',
+    spawn(tree).DATABASE_REPLICA_URL,
     PLANTED
   );
 

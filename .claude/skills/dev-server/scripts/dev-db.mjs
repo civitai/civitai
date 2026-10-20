@@ -88,11 +88,17 @@ export function routeEnvTextToDevDb(text, devDb) {
  * The DB keys for an app spawned in a worktree, key by key: the worktree's own app `.env` if it sets
  * the key, else the worktree's root chain. A key neither sets is `undefined`, which `spawnEnvFor`
  * deletes — so the primary app `.env` and the daemon's own environment never fill the gap.
+ *
+ * A replica the worktree's app `.env` does not set follows the DATABASE_URL that was picked: an app
+ * pointed at its own database by hand gets that database as its replica too, not the root's.
  */
 export function appDatabaseEnv(ownAppVars, rootVars) {
-  const pick = (key) => (key in ownAppVars ? ownAppVars[key] : rootVars[key]);
-  return {
-    DATABASE_URL: pick('DATABASE_URL'),
-    DATABASE_REPLICA_URL: pick('DATABASE_REPLICA_URL') || rootVars.DATABASE_URL,
-  };
+  const url = 'DATABASE_URL' in ownAppVars ? ownAppVars.DATABASE_URL : rootVars.DATABASE_URL;
+  const replica =
+    'DATABASE_REPLICA_URL' in ownAppVars
+      ? ownAppVars.DATABASE_REPLICA_URL
+      : 'DATABASE_URL' in ownAppVars
+      ? ownAppVars.DATABASE_URL
+      : rootVars.DATABASE_REPLICA_URL;
+  return { DATABASE_URL: url, DATABASE_REPLICA_URL: replica || url };
 }
