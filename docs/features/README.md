@@ -30,3 +30,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
+| Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
