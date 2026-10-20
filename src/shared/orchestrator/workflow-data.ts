@@ -47,6 +47,9 @@ export interface WorkflowDataOptions {
 
 export const PENDING_RATING = 'pendingRating';
 export const NSFW_CAPPED = 'nsfwCapped';
+/** Paying the yellow unlock never lifts the workflow's cap, so a capped output offers no unlock. */
+export const NSFW_CAPPED_MESSAGE =
+  "This generation is limited to a lower rating, so its mature result can't be shown.";
 
 /**
  * Video engines the orchestrator never rates (the provider moderates its own output), so a hold

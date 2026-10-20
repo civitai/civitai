@@ -1,6 +1,6 @@
 import { Button, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
+import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 /**
  * The CTA on a single-image panel in `RequireUnlock`. A capped output gets none: the yellow unlock
@@ -22,7 +22,7 @@ export function PanelUnlockActions({
   if (blockedReason === NSFW_CAPPED)
     return (
       <Text size="xs" c="dimmed" ta="center" px="xs">
-        This generation is limited to a lower rating, so its mature result can&apos;t be shown.
+        {NSFW_CAPPED_MESSAGE}
       </Text>
     );
 

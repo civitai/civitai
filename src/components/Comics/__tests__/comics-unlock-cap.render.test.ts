@@ -67,6 +67,11 @@ describe('comics candidate picker', () => {
     renderPicker([capped, clean], 'green');
     expect(buttonLabels()).not.toContain('Open on civitai.red');
   });
+
+  it('sends a locked result within the cap from green to red', () => {
+    renderPicker([upgradable, clean], 'green');
+    expect(buttonLabels()).toContain('Open on civitai.red');
+  });
 });
 
 describe('single-image panel unlock', () => {
@@ -90,6 +95,13 @@ describe('single-image panel unlock', () => {
     renderActions(NSFW_CAPPED, isGreen);
     expect(buttonLabels()).toEqual([]);
     expect(document.body.textContent).toContain('limited to a lower rating');
+  });
+
+  it('sends an output within the cap from green to red', () => {
+    renderActions('siteRestricted', true);
+    const link = document.body.querySelector('a');
+    expect(link?.textContent?.trim()).toBe('Unlock on civitai.red');
+    expect(link?.getAttribute('href')).toBe('https://civitai.red/comics/project/1/chapter/1');
   });
 
   it('unlocks an output within the cap on red', () => {

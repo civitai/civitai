@@ -30,7 +30,7 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
+import { CandidateImageModal, isUnlockableSlot } from '~/components/Comics/CandidateImageModal';
 import { PanelUnlockActions } from '~/components/Comics/PanelUnlockActions';
 import { IconEyeOff } from '@tabler/icons-react';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
@@ -198,6 +198,7 @@ export function PanelCard({
   );
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
   const hasLockedCandidate = !!candidateSlots?.some((s) => s.requiresUnlock);
+  const hasUnlockableCandidate = !!candidateSlots?.some(isUnlockableSlot);
 
   // Polling continues for `RequireUnlock` (single-image blocked) AND for
   // `AwaitingSelection` panels that still have at least one locked candidate
@@ -715,7 +716,7 @@ export function PanelCard({
                   {candidateSlots.length} images ready
                 </Text>
                 <Text size="xs" c="dimmed" ta="center">
-                  {hasLockedCandidate ? 'Some need unlock — click to view' : 'Click to choose'}
+                  {hasUnlockableCandidate ? 'Some need unlock — click to view' : 'Click to choose'}
                 </Text>
               </div>
               <div className="absolute top-2 left-2">
@@ -875,7 +876,7 @@ export function PanelCard({
           // forwarded for clean-but-mature tiles on green so the per-tile
           // redirect button can render even when no slot is `requiresUnlock`.
           onUnlock={
-            hasLockedCandidate && !features.isGreen
+            hasUnlockableCandidate && !features.isGreen
               ? () => unlockMutation.mutate({ panelId: panel.id })
               : undefined
           }
