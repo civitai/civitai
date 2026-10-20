@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { AssistantTables } from './tables';
+import type { TokenRow } from '$lib/assistant/models';
 import type {
   PlaybookStatus,
   ToolRequestStatus,
@@ -269,19 +270,38 @@ export async function hasRunningTurn(moderatorId: number, staleAfterMs: number):
 }
 
 /** Tokens this moderator's finished turns have spent since midnight UTC. A running turn counts 0 until
- *  it finishes, which is why only one may run at a time (`assistant_turn_one_running_idx`). */
+ *  it finishes, which is why only one may run at a time (`assistant_turn_one_running_idx`). Summed
+ *  from the per-model split, so the cap that refuses a turn and the count the page shows are one sum. */
 export async function tokensToday(moderatorId: number): Promise<number> {
-  const row = await db()
+  return sumTokens(await tokensTodayByModel(moderatorId));
+}
+
+export const sumTokens = (rows: TokenRow[]) =>
+  rows.reduce((sum, r) => sum + r.promptTokens + r.completionTokens, 0);
+
+/** The same day's tokens split by model and direction, which is what a price applies to. */
+export async function tokensTodayByModel(moderatorId: number): Promise<TokenRow[]> {
+  const rows = await db()
     .selectFrom('assistant_turn')
-    .select(sql<string>`coalesce(sum(total_tokens), 0)`.as('total'))
+    .select([
+      'model',
+      sql<string>`coalesce(sum(prompt_tokens), 0)`.as('prompt'),
+      sql<string>`coalesce(sum(completion_tokens), 0)`.as('completion'),
+    ])
     .where('moderator_id', '=', moderatorId)
     .where(
       'created_at',
       '>=',
       sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`
     )
-    .executeTakeFirst();
-  return Number(row?.total ?? 0);
+    .groupBy('model')
+    .orderBy('model')
+    .execute();
+  return rows.map((r) => ({
+    model: r.model,
+    promptTokens: Number(r.prompt),
+    completionTokens: Number(r.completion),
+  }));
 }
 
 export type AuditRow = Omit<Turn, 'sources'> & { chatTitle: string };
