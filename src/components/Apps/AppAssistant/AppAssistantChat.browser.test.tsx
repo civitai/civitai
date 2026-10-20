@@ -151,18 +151,12 @@ describe('AppAssistantChat', () => {
 
   test('with subagents, gives them and the rules for them to the chat before it starts', async () => {
     const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };
-    const { rerender } = await renderWithProviders(
-      <AppAssistantChat {...props} subagents={APP_ASSISTANT_SUBAGENTS} />
-    );
+    await renderWithProviders(<AppAssistantChat {...props} subagents={APP_ASSISTANT_SUBAGENTS} />);
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
     expect(chatEl().atStart?.subagents).toBe(APP_ASSISTANT_SUBAGENTS);
     expect(chatEl().atStart?.systemPrompt).toBe(buildAssistantSystemPromptWithSubagents);
     expect(chatEl().systemPrompt!('BUILT-IN')).toContain('dispatch_agent');
-
-    // Turned off later: the chat stops offering them, and the prompt stops naming them.
-    await rerender(<AppAssistantChat {...props} />);
-    await vi.waitFor(() => expect(chatEl().subagents).toBeUndefined());
-    expect(chatEl().systemPrompt).toBe(buildAssistantSystemPrompt);
+    expect(chatEl().subagentsAssigned).toEqual([APP_ASSISTANT_SUBAGENTS]);
   });
 
   test('offers app-building examples and hint in place of the chat’s media ones', async () => {

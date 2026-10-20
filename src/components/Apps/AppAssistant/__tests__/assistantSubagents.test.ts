@@ -9,10 +9,9 @@ const ctx = { conversationId: 'conv-1', reply: 1 };
 const toolCtx = { signal: new AbortController().signal, conversationId: 'conv-1', files: [] };
 
 describe('the tools a subagent gets', () => {
-  // A tool added here can let a subagent change the app, or what report_ready counts as checked.
+  // A tool added here can let a subagent change the app, what report_ready counts as checked, or spend Buzz.
   it('are exactly these read-only tools', () => {
     expect([...APP_ASSISTANT_SUBAGENT_TOOLS].sort()).toEqual([
-      'fetch_page',
       'get_guide',
       'sandbox__dev_server_logs',
       'sandbox__dev_server_status',
@@ -31,7 +30,7 @@ describe('the tools a subagent gets', () => {
       [
         'You are helping App Assistant, which builds a Civitai App Block for the user inside their own hosted sandbox.',
         '- Files live under /workspace; each app is a project in its <blockId> directory there. Give paths relative to /workspace.',
-        '- You can only read files, list directories, read the dev server’s status and logs, and fetch pages and guides. You cannot change files or run commands.',
+        '- You can only read files, list directories, read the dev server’s status and logs, and read the guide. You cannot change files, run commands or fetch web pages.',
         '- Files under <blockId>/scratch/ are throwaway probes, not part of the app.',
         '- If you say how to check the app, give the tests and the typecheck as cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit, each on its own and unpiped.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
