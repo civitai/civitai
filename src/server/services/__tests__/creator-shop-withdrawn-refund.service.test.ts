@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   revokeCosmeticsFromUsers: vi.fn(),
   createNotification: vi.fn(),
 }));
-const locks = vi.hoisted(() => ({ held: new Set<string>() }));
+const locks = vi.hoisted(() => ({ held: new Set<string>(), calls: [] as unknown[] }));
 
 vi.mock('~/server/services/buzz.service', () => ({
   getMultiAccountTransactionsByPrefix: async (prefix: string) => ledger.rows.get(prefix) ?? [],
@@ -45,6 +45,7 @@ vi.mock('~/server/services/notification.service', () => ({
 // A real mutex: a pass-through would let two runs refund side by side and hide a double refund.
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: async (options: { key: string }, operation: () => Promise<unknown>) => {
+    locks.calls.push(options);
     if (locks.held.has(options.key)) return null;
     locks.held.add(options.key);
     try {
@@ -123,6 +124,7 @@ beforeEach(() => {
   ledger.refunded.clear();
   ledger.failNext.clear();
   locks.held.clear();
+  locks.calls = [];
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.refundTransaction.mockImplementation(async (transactionId: string) => {
     // Yield, so concurrent runs interleave here rather than one finishing first.
@@ -258,6 +260,15 @@ describe('refundWithdrawnShopItem after a rejection', () => {
       ],
     ]);
     expect(result).toEqual({ purchases: 2, refunded: 2, failures: 0 });
+  });
+
+  // The key a takedown and a moderator's refund of the item also hold; the job never waits on it.
+  it('runs under the item refund lock without waiting for it', async () => {
+    await refundWithdrawnShopItem(ITEM);
+
+    expect(locks.calls).toEqual([
+      { key: `creator-shop-withdrawn-refund:${ITEM}`, ttl: 60, autoRenew: true, maxRetries: 0 },
+    ]);
   });
 
   it('takes the cosmetic back before marking the purchase, so a run that dies between is retried', async () => {

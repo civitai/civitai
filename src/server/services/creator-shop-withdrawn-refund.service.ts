@@ -278,8 +278,8 @@ export async function refundWithdrawnShopItem(
 
 /**
  * The one lock every run that refunds an item's purchases holds: the withdrawn refund, a
- * moderator's refund and a takedown. Null when it is held elsewhere; `wait` keeps trying for up to
- * two minutes, for a caller that cannot leave the work to the job.
+ * moderator's refund and a takedown. Null when it is held elsewhere; `wait` keeps trying for about
+ * thirty seconds, for a caller that cannot leave the work to the job.
  */
 export function withShopItemRefundLock<T>(
   shopItemId: number,
@@ -291,7 +291,7 @@ export function withShopItemRefundLock<T>(
       key: `creator-shop-withdrawn-refund:${shopItemId}`,
       ttl: 60,
       autoRenew: true,
-      ...(wait ? { retryDelay: 500, maxRetries: 240 } : { maxRetries: 0 }),
+      ...(wait ? { retryDelay: 500, maxRetries: 60 } : { maxRetries: 0 }),
     },
     operation
   );
@@ -682,8 +682,9 @@ async function refundItemPurchases(
       continue;
     }
     try {
-      // Read per purchase: a takedown does not take this lock, and owns every purchase not yet
-      // stamped once it lands.
+      // A takedown archives and refunds under this lock, so it cannot land during this call. The
+      // item is still read per purchase, and checked around the stamp below, in case the lock is
+      // lost (a renewal that fails): a takedown owns every purchase not yet stamped.
       const item = await loadItem(shopItemId);
       const refused = refusal(purchase, item, clawback);
       if (refused || item?.cosmeticId == null) {
@@ -703,14 +704,13 @@ async function refundItemPurchases(
             continue;
           }
         }
-        // Again, since a takedown can land during the ledger read and owns what isn't stamped.
         if (await takenDown(shopItemId)) {
           results.set(id, { ...base, status: 'failed', error: TAKEN_DOWN });
           continue;
         }
         await stampTerms(purchase, terms);
       }
-      // A takedown landing after the stamp leaves the purchase here: finish it as the job would.
+      // A takedown that lands after the stamp leaves the purchase here: finish it as the job would.
       const finishOn: RefundTerms = (await takenDown(shopItemId))
         ? { ...(started ?? terms), trigger: 'reject', clawback: true }
         : started ?? terms;

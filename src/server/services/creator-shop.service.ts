@@ -2363,39 +2363,43 @@ export const takedownCosmeticShopItem = async ({
   const now = new Date();
 
   // Stop sales first so nothing can be bought while the refunds run.
-  const updated = await dbWrite.cosmeticShopItem.update({
-    where: { id },
-    data: {
-      status: CosmeticShopItemStatus.Archived,
-      listed: false,
-      archivedAt: now,
-      meta: appendItemHistory(
-        { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
-        {
-          at: now.toISOString(),
-          userId: moderatorId,
-          kind: 'takedown',
-          status: CosmeticShopItemStatus.Archived,
-          note: reason,
-        }
-      ) as Prisma.InputJsonValue,
-    },
-    select: creatorShopItemSelect,
-  });
-  // Official-shop placements are curated rows, not a status filter — drop them
-  // or the item keeps rendering in its section.
-  await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
-  await endResaleListings({ shopItemId: id, title: item.title });
+  const archive = async () => {
+    const updated = await dbWrite.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        status: CosmeticShopItemStatus.Archived,
+        listed: false,
+        archivedAt: now,
+        meta: appendItemHistory(
+          { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
+          {
+            at: now.toISOString(),
+            userId: moderatorId,
+            kind: 'takedown',
+            status: CosmeticShopItemStatus.Archived,
+            note: reason,
+          }
+        ) as Prisma.InputJsonValue,
+      },
+      select: creatorShopItemSelect,
+    });
+    // Official-shop placements are curated rows, not a status filter — drop them
+    // or the item keeps rendering in its section.
+    await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+    await endResaleListings({ shopItemId: id, title: item.title });
 
-  if (item.addedById) {
-    const settings = await getCreatorShopSettings({ userId: item.addedById });
-    const featuredItemIds = settings.featuredItemIds ?? [];
-    if (featuredItemIds.includes(id))
-      await updateCreatorShopSettings({
-        userId: item.addedById,
-        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
-      });
-  }
+    if (item.addedById) {
+      const settings = await getCreatorShopSettings({ userId: item.addedById });
+      const featuredItemIds = settings.featuredItemIds ?? [];
+      if (featuredItemIds.includes(id))
+        await updateCreatorShopSettings({
+          userId: item.addedById,
+          featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+        });
+    }
+    return updated;
+  };
+  let updated: Awaited<ReturnType<typeof archive>> | undefined;
 
   let purchases: {
     userId: number;
@@ -2431,13 +2435,14 @@ export const takedownCosmeticShopItem = async ({
   const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
-  // Held from the purchase read through the buyer refunds. A moderator's or a withdrawn-item
-  // refund stamps purchases under this lock, and one stamping between this read and these refunds
-  // would refund the same purchase alongside the takedown. Waited for, not skipped: nothing
-  // retries a takedown.
-  const locked = await withShopItemRefundLock(
+  // Held from the archive through the buyer refunds. A moderator's or a withdrawn-item refund
+  // stamps purchases under this lock, and one stamping between the purchase read and these refunds
+  // would refund the same purchase alongside the takedown. Taken before anything changes, so a
+  // takedown that cannot get it leaves the item as it was, to be taken down again.
+  await withShopItemRefundLock(
     id,
     async () => {
+      updated = await archive();
       // Primary, not the replica: a sale made seconds ago may not have replicated
       // yet, and missing it would strip that buyer's cosmetic without refunding it.
       purchases = await dbWrite.userCosmeticShopPurchases.findMany({
@@ -2451,13 +2456,13 @@ export const takedownCosmeticShopItem = async ({
         purchases: purchases.length,
       });
       await refundTakedownPurchases();
-      return true;
     },
     { wait: true }
   );
-  if (!locked)
+  // Unset only when the lock was never had: nothing ran.
+  if (!updated)
     throw throwConflictError(
-      'A refund of this item is still running. The item is archived; run the takedown again to refund its buyers.'
+      'A refund of this item is running. Nothing was changed; try the takedown again in a minute.'
     );
 
   async function refundTakedownPurchases() {

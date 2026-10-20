@@ -28,18 +28,22 @@ const { mocks } = vi.hoisted(() => ({
 }));
 
 // A real mutex that honours `maxRetries`: 0 gives up at once, anything else waits its turn.
-// `onWait` lets a test see that a caller is queued behind the holder.
+// `onWait` lets a test see that a caller is queued behind the holder; `calls` records the options
+// each caller asked for.
 const lockState = vi.hoisted(() => ({
   held: new Map<string, Promise<void>>(),
   onWait: undefined as undefined | ((key: string) => void),
   // A waiting caller gives up as the real lock does once its retries run out.
   exhausted: false,
+  calls: [] as Record<string, unknown>[],
 }));
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: async (
-    { key, maxRetries }: { key: string; maxRetries?: number },
+    options: { key: string; maxRetries?: number },
     operation: () => Promise<unknown>
   ) => {
+    const { key, maxRetries } = options;
+    lockState.calls.push(options);
     while (lockState.held.has(key)) {
       if (maxRetries === 0 || lockState.exhausted) return null;
       lockState.onWait?.(key);
@@ -755,6 +759,7 @@ describe('takedownCosmeticShopItem against a moderator refund of the same item',
     lockState.held.clear();
     lockState.onWait = undefined;
     lockState.exhausted = false;
+    lockState.calls = [];
     reversed.clear();
     itemMeta = { purchases: 1 };
     rows = [
@@ -860,9 +865,10 @@ describe('takedownCosmeticShopItem against a moderator refund of the same item',
     });
   });
 
-  // The takedown lands as the moderator call stamps the purchase: before the stamp commits, the
-  // takedown either reaches its own read of the purchases or is queued behind the refund lock.
-  it('leaves the purchase to the refund that holds the lock, payouts reversed once', async () => {
+  // The takedown lands as the moderator call stamps the purchase. Before the stamp commits, the
+  // takedown either reaches its own read of the purchases (no lock: the race) or is queued behind
+  // the refund lock; `landed` fires on whichever comes first.
+  it('waits for the refund that holds the lock, so one run refunds the purchase', async () => {
     let takedown: ReturnType<typeof takedownCosmeticShopItem> | undefined;
     const stamp = mocks.purchaseUpdate.getMockImplementation()!;
     mocks.purchaseUpdate.mockImplementation(async (args) => {
@@ -892,27 +898,39 @@ describe('takedownCosmeticShopItem against a moderator refund of the same item',
     });
     const takenDown = await takedown!;
 
-    // One run refunded the purchase, and it reversed the creator's payout too.
-    expect(manual.results[0]).toMatchObject({ status: 'refunded', clawedBack: 700 });
+    // The moderator's refund finished on its own terms before the takedown began; the takedown
+    // then found nothing left to refund.
+    expect(manual.results[0]).toMatchObject({ status: 'refunded', clawedBack: 0 });
     expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(mocks.refundTransaction.mock.calls.map(([id]) => id).sort()).toEqual([
-      'purchase-1-debit',
-      'purchase-1-payout',
-    ]);
+    expect(mocks.refundTransaction.mock.calls.map(([id]) => id)).toEqual(['purchase-1-debit']);
     expect(takenDown.purchases).toBe(0);
     expect(mocks.logToAxiom.mock.calls.map(([entry]) => entry.message)).not.toContain(
       'Buyer refund failed'
     );
+    // One lock for both, which the moderator call never waits on and the takedown does.
+    expect(lockState.calls).toEqual([
+      { key: 'creator-shop-withdrawn-refund:42', ttl: 60, autoRenew: true, maxRetries: 0 },
+      {
+        key: 'creator-shop-withdrawn-refund:42',
+        ttl: 60,
+        autoRenew: true,
+        retryDelay: 500,
+        maxRetries: 60,
+      },
+    ]);
   });
 
-  it('refuses, having refunded nothing, when the refund lock never frees', async () => {
+  it('changes nothing when the refund lock never frees, so it can be taken down again', async () => {
     lockState.held.set('creator-shop-withdrawn-refund:42', new Promise(() => undefined));
     lockState.exhausted = true;
 
     await expect(
       takedownCosmeticShopItem({ id: 42, reason: 'tos', moderatorId: 999 })
-    ).rejects.toThrow(/run the takedown again/);
+    ).rejects.toThrow(/Nothing was changed/);
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+    expect(itemMeta.takedown).toBeUndefined();
     expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mocks.revokeCosmeticsFromUsers).not.toHaveBeenCalled();
     expect(rows[0].refunded).toBe(false);
   });
 });
