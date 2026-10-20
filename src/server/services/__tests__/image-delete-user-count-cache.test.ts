@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
@@ -73,6 +73,10 @@ const mockDbWrite = dbMock.dbWrite;
 let bustSpy: ReturnType<typeof vi.spyOn>;
 let thumbnailRefreshSpy: ReturnType<typeof vi.spyOn>;
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockResolvedValue(undefined as never);
@@ -133,9 +137,6 @@ describe('deleteImageById', () => {
       'false',
       expect.anything()
     );
-    postBust.mockRestore();
-    metaRefresh.mockRestore();
-    metadataRefresh.mockRestore();
   });
 
   // Already gone: no kept record, so it leaves search and nothing else runs for it.

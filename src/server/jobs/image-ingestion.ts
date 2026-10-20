@@ -588,6 +588,18 @@ export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
+    // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
+    // its own. A failure costs only the sweep. Gated like the deletes below.
+    if (env.DATABASE_IS_PROD)
+      await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
+        logToAxiom({
+          type: 'error',
+          name: 'remove-blocked-images',
+          message: 'evidence hold sweep failed',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+
     // dbWrite because a report created within replica lag would otherwise be invisible here
     // and its evidence purged in this same run.
     const heldUsers = await dbWrite.$queryRaw<{ userId: number; oldestReport: Date }[]>`

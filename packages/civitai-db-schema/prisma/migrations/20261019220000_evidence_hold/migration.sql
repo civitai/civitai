@@ -36,7 +36,6 @@ CREATE UNIQUE INDEX "EvidenceHold_csamReportId_userId_key"
   ON "EvidenceHold" ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL;
 CREATE INDEX "EvidenceHold_userId_idx" ON "EvidenceHold" ("userId");
 
--- The one definition of "held". Every reader goes through this view.
 -- An image the delete trigger below kept, and the post it was in when it was kept: the trigger takes
 -- it out of that post, and this row is the only record of where it was.
 CREATE TABLE "EvidenceHoldImage" (
@@ -46,6 +45,22 @@ CREATE TABLE "EvidenceHoldImage" (
   "keptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- A held owner's post, copied as it was when it was deleted. The post itself is deleted as usual, so
+-- nothing is left that could be published again; this row is what stands in for it.
+CREATE TABLE "EvidenceHoldPost" (
+  "postId" INTEGER PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "title" TEXT,
+  "detail" TEXT,
+  "createdAt" TIMESTAMP(3),
+  "publishedAt" TIMESTAMP(3),
+  "modelVersionId" INTEGER,
+  "collectionId" INTEGER,
+  "metadata" JSONB,
+  "keptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- The one definition of "held". Every reader goes through this view.
 CREATE VIEW "EvidenceHeldUser" AS
 SELECT
   "userId",
@@ -153,6 +168,51 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "EvidenceHold_guard_end"
 BEFORE UPDATE OR DELETE ON "EvidenceHold"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_guard_end();
+
+-- Every deletion path of a held owner's post, the owner's own included, copies it first. The delete
+-- itself goes ahead.
+CREATE OR REPLACE FUNCTION evidence_hold_keep_post() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN
+    INSERT INTO "EvidenceHoldPost" (
+      "postId", "userId", "title", "detail", "createdAt", "publishedAt", "modelVersionId",
+      "collectionId", "metadata"
+    )
+    VALUES (
+      OLD."id", OLD."userId", OLD."title", OLD."detail", OLD."createdAt", OLD."publishedAt",
+      OLD."modelVersionId", OLD."collectionId", OLD."metadata"
+    )
+    ON CONFLICT ("postId") DO NOTHING;
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "Post_evidence_hold"
+BEFORE DELETE ON "Post"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_post();
+
+-- What a hold kept is kept only while the hold lasts. A release purges its owner's rows at once; a
+-- hold that ends by its date is swept by remove-blocked-images, which calls this with no owner.
+CREATE OR REPLACE FUNCTION evidence_hold_purge_unheld(target_user INTEGER DEFAULT NULL) RETURNS void AS $$
+  DELETE FROM "EvidenceHoldPost" p
+  WHERE (target_user IS NULL OR p."userId" = target_user)
+    AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = p."userId");
+  DELETE FROM "EvidenceHoldImage" i
+  WHERE (target_user IS NULL OR i."userId" = target_user)
+    AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = i."userId");
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION evidence_hold_purge_on_release() RETURNS trigger AS $$
+BEGIN
+  PERFORM evidence_hold_purge_unheld(OLD."userId");
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "EvidenceHold_purge_on_release"
+AFTER UPDATE OR DELETE ON "EvidenceHold"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_purge_on_release();
 
 -- Existing sent reports. One whose year has already passed is recorded as released by the system
 -- user, never put back on hold; that set is the rows with this "releaseReason".

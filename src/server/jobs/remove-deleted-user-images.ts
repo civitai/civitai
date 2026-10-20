@@ -164,17 +164,6 @@ async function drainUser(
     `;
     if (!state.stillDeleted || state.hasImages)
       return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
-    // Done once only kept images are left: a held owner keeps their posts, and the post delete
-    // below refuses them anyway.
-    if (state.held)
-      return {
-        deletedImages,
-        blockedImages: 0,
-        budgetUsed,
-        drained: true,
-        held: true,
-        canceled: false,
-      };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Post" WHERE "userId" = ${userId}
@@ -205,16 +194,18 @@ async function drainUser(
             SELECT 1 FROM "Image" f
             WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
           )
-          AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
       `;
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
+    // A held owner's posts are deleted too (the hold's delete trigger copies each one first), and
+    // what is left of the account is the images the hold kept.
     return {
       deletedImages,
       blockedImages: 0,
       budgetUsed,
       drained: deletedPosts === posts.length,
+      held: state.held,
       canceled: false,
     };
   } catch (error) {
@@ -521,7 +512,6 @@ export const removeDeletedUserImages = createJob(
           )
           OR (
             m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-            AND NOT h.held
           )
         )
       ORDER BY u."deletedAt" ASC
@@ -579,7 +569,6 @@ export const removeDeletedUserImages = createJob(
             )
             OR (
               m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-              AND NOT h.held
             )
           )
         ORDER BY u."deletedAt" DESC

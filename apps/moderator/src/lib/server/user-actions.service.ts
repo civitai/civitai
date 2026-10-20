@@ -1479,11 +1479,17 @@ export async function purgeAllContent(input: {
 }
 
 function keptUnderHoldWarning(body: unknown): string | undefined {
-  const kept = (body as { keptUnderHold?: unknown } | null)?.keptUnderHold;
-  if (typeof kept !== 'number' || kept <= 0) return undefined;
-  return `${kept} ${
-    kept === 1 ? 'image was' : 'images were'
-  } kept under a hold and not deleted. The rest of the content was removed.`;
+  const counted = (value: unknown) => (typeof value === 'number' && value > 0 ? value : 0);
+  const kept = body as { keptUnderHold?: unknown; keptPostsUnderHold?: unknown } | null;
+  const images = counted(kept?.keptUnderHold);
+  const posts = counted(kept?.keptPostsUnderHold);
+  const parts = [
+    ...(images ? [`${images} ${images === 1 ? 'image' : 'images'}`] : []),
+    ...(posts ? [`${posts} ${posts === 1 ? 'post' : 'posts'}`] : []),
+  ];
+  if (!parts.length) return undefined;
+  const verb = images + posts === 1 ? 'was' : 'were';
+  return `Under a hold: ${parts.join(' and ')} ${verb} preserved as evidence, not shown.`;
 }
 
 /** One sentence for every way this call can fail without proving the deletion did not happen. The

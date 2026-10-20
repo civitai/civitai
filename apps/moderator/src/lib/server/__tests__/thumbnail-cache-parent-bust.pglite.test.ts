@@ -237,6 +237,11 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
     vi.mocked(bustPostGalleryCaches).mockClear();
     sysSet.mockClear();
     await db.exec(`
+      CREATE TABLE "Post" (
+        "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT, "detail" TEXT,
+        "createdAt" TIMESTAMP(3), "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER,
+        "collectionId" INTEGER, "metadata" JSONB
+      );
       CREATE TABLE "CsamReport" (
         "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
         "details" JSONB NOT NULL DEFAULT '{}'

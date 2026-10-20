@@ -2988,6 +2988,18 @@ export type EvidenceHoldImage = {
   postId: number | null;
   keptAt: Generated<Timestamp>;
 };
+export type EvidenceHoldPost = {
+  postId: number;
+  userId: number;
+  title: string | null;
+  detail: string | null;
+  createdAt: Timestamp | null;
+  publishedAt: Timestamp | null;
+  modelVersionId: number | null;
+  collectionId: number | null;
+  metadata: unknown | null;
+  keptAt: Generated<Timestamp>;
+};
 export type FeaturedModelVersion = {
   id: Generated<number>;
   modelVersionId: number;
@@ -6044,6 +6056,7 @@ export type DB = {
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
   EvidenceHoldImage: EvidenceHoldImage;
+  EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;

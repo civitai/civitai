@@ -1468,20 +1468,9 @@ export const removeAllContent = async ({
   } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
-  // A held owner's posts are kept, unpublished the way taking a model down unpublishes its posts.
-  let keptPostsUnderHold = 0;
-  if (hold?.held)
-    keptPostsUnderHold = await dbWrite.$executeRaw`
-      UPDATE "Post"
-      SET "metadata" = COALESCE("metadata", '{}') || jsonb_build_object(
-            'unpublishedAt', ${new Date().toISOString()}::text,
-            'unpublishedBy', ${actorUserId ?? -1}::int,
-            'prevPublishedAt', "publishedAt"
-          ),
-          "publishedAt" = NULL
-      WHERE "userId" = ${id} AND "publishedAt" IS NOT NULL
-    `;
-  else await dbWrite.post.deleteMany({ where: { userId: id } });
+  // A held owner's posts are deleted too: the hold's delete trigger copies each one first.
+  const { count: deletedPosts } = await dbWrite.post.deleteMany({ where: { userId: id } });
+  const keptPostsUnderHold = hold?.held ? deletedPosts : 0;
   if (hold?.held)
     logToAxiom({
       name: 'remove-all-content',
@@ -1489,7 +1478,7 @@ export const removeAllContent = async ({
       message: 'Kept content under a hold',
       userId: id,
       images: keptUnderHold,
-      unpublishedPosts: keptPostsUnderHold,
+      posts: keptPostsUnderHold,
     }).catch(() => undefined);
 
   await dbWrite.model.deleteMany({ where: { userId: id } });

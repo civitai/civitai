@@ -178,8 +178,23 @@ describe('purgeAllContent — images kept under a hold', () => {
 
     expect(result).toEqual({
       ok: true,
-      warning:
-        '3 images were kept under a hold and not deleted. The rest of the content was removed.',
+      warning: 'Under a hold: 3 images were preserved as evidence, not shown.',
+    });
+  });
+
+  it('warns about kept posts too, also when no image was kept', async () => {
+    respond = () =>
+      new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 0, keptPostsUnderHold: 1 }));
+    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({
+      ok: true,
+      warning: 'Under a hold: 1 post was preserved as evidence, not shown.',
+    });
+
+    respond = () =>
+      new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 1, keptPostsUnderHold: 2 }));
+    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({
+      ok: true,
+      warning: 'Under a hold: 1 image and 2 posts were preserved as evidence, not shown.',
     });
   });
 

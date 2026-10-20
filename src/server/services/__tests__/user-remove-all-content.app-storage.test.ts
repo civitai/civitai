@@ -213,6 +213,8 @@ const MOD = 9;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The post delete reports a count, as Prisma's deleteMany does.
+  vi.mocked(dbMock.dbWrite.post.deleteMany).mockResolvedValue({ count: 0 } as never);
   fake.reset();
   fake.kv.push(
     { user_id: TARGET, key: 'gone-a', size_bytes: 101 },

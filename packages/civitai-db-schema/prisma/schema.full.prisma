@@ -6432,12 +6432,27 @@ model EvidenceHold {
 }
 
 /// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it.
+/// is the post it was in, and nothing else records it. Purged once no hold covers the owner.
 model EvidenceHoldImage {
   imageId Int      @id
   userId  Int
   postId  Int?
   keptAt  DateTime @default(now())
+}
+
+/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
+/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
+model EvidenceHoldPost {
+  postId         Int       @id
+  userId         Int
+  title          String?
+  detail         String?
+  createdAt      DateTime?
+  publishedAt    DateTime?
+  modelVersionId Int?
+  collectionId   Int?
+  metadata       Json?
+  keptAt         DateTime  @default(now())
 }
 
 /// @view

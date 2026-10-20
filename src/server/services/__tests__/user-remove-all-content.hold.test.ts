@@ -1,13 +1,13 @@
-import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `removeAllContent` on an owner under a hold marker. The image deletes still run: the hold's
  * delete trigger keeps each row (blocked, out of its post) instead, so the wipe takes the images off
  * the site either way. It must run them before the posts go, or the trigger can no longer record
- * which post an image was in, must never delete a kept image's stored file, keeps the owner's posts
- * (unpublished), and must tell its caller what it kept, or a partial wipe reads as complete.
+ * which post an image was in, must never delete a kept image's stored file, and must tell its caller
+ * what the hold kept (the posts are copied by their own delete trigger), or a partial wipe reads as
+ * complete.
  */
 
 const { deleteImageById, actual, storage } = vi.hoisted(() => ({
@@ -83,6 +83,8 @@ import { removeAllContent } from '~/server/services/user.service';
 const TARGET = 4_242;
 /** Held, and not the account being wiped: a lookup keyed on the wrong user would find this one. */
 const OTHER_HELD = 4_277;
+/** The target's posts, as the post delete reports them. */
+const POSTS = 3;
 const IMAGES = [
   { id: 1, url: 'a' },
   { id: 2, url: 'b' },
@@ -90,29 +92,6 @@ const IMAGES = [
 ];
 
 let held: number[] = [];
-
-/** The owner's posts, in a Postgres stand-in that runs the wipe's own post statements. */
-let pg: PGlite;
-const BYSTANDER = 4_300;
-const PUBLISHED_AT = '2026-01-02T03:04:05.000Z';
-
-beforeAll(async () => {
-  pg = new PGlite();
-  await pg.exec(`
-    CREATE TABLE "Post" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp(3), metadata jsonb
-    );
-  `);
-});
-
-const posts = async () =>
-  (
-    await pg.query<{
-      id: number;
-      publishedAt: Date | null;
-      metadata: Record<string, unknown> | null;
-    }>(`SELECT id, "publishedAt", metadata FROM "Post" ORDER BY id`)
-  ).rows;
 
 /** Answers the hold lookup from the user it binds; every other raw query gets an empty result. */
 function heldUsers(...userIds: number[]) {
@@ -147,32 +126,14 @@ function deleteAsTheTriggerDoes() {
   }) as never);
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks();
   storage.deletedKeys = [];
-  await pg.exec(`
-    TRUNCATE "Post";
-    INSERT INTO "Post" (id, "userId", "publishedAt", metadata) VALUES
-      (1, ${TARGET}, '${PUBLISHED_AT}', '{"kept": true}'),
-      (2, ${TARGET}, '${PUBLISHED_AT}', NULL),
-      (3, ${TARGET}, NULL, NULL),
-      (4, ${BYSTANDER}, '${PUBLISHED_AT}', NULL);
-  `);
-  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) => {
-    const flat = Prisma.sql(strings, ...(values as never[]));
-    if (!flat.text.includes('UPDATE "Post"')) return 0;
-    return (await pg.query(flat.text, flat.values as unknown[])).affectedRows;
-  }) as never);
   vi.mocked(dbMock.dbWrite.post.deleteMany).mockImplementation((async ({
     where,
   }: {
     where: { userId: number };
-  }) => ({
-    count: (await pg.query(`DELETE FROM "Post" WHERE "userId" = $1`, [where.userId])).affectedRows,
-  })) as never);
+  }) => ({ count: where.userId === TARGET ? POSTS : 0 })) as never);
   for (const model of Object.values(dbMock.dbRead) as { findMany?: ReturnType<typeof vi.fn> }[]) {
     if (model && typeof model === 'object' && 'findMany' in model)
       model.findMany?.mockResolvedValue([]);
@@ -188,61 +149,24 @@ const imageDeletesForTarget = () =>
     );
 
 describe('removeAllContent on an owner under a hold marker', () => {
-  it('runs every image delete, before the posts go, and reports how many it kept', async () => {
+  it('runs every image delete before the posts go, and reports what the hold kept', async () => {
     heldUsers(TARGET);
 
     // No actor, as the webhook caller passes: the lookup must be keyed on the account, not on it.
     const result = await removeAllContent({ id: TARGET });
 
-    expect(result).toEqual({ keptUnderHold: IMAGES.length, keptPostsUnderHold: 2 });
+    expect(result).toEqual({ keptUnderHold: IMAGES.length, keptPostsUnderHold: POSTS });
     expect(deleteImageById.mock.calls.map(([args]) => args.id)).toEqual([1, 2, 3]);
     expect(imageDeletesForTarget()).toHaveLength(1);
-    const postStatement = vi
-      .mocked(dbMock.dbWrite.$executeRaw)
-      .mock.calls.findIndex(([strings]) =>
-        (strings as unknown as string[]).join('?').includes('UPDATE "Post"')
-      );
-    const postWrite = vi.mocked(dbMock.dbWrite.$executeRaw).mock.invocationCallOrder[postStatement];
-    expect(postWrite).toBeGreaterThan(Math.max(...deleteImageById.mock.invocationCallOrder));
-    expect(postWrite).toBeGreaterThan(
+    const postDelete = vi.mocked(dbMock.dbWrite.post.deleteMany).mock.invocationCallOrder[0];
+    expect(postDelete).toBeGreaterThan(Math.max(...deleteImageById.mock.invocationCallOrder));
+    expect(postDelete).toBeGreaterThan(
       vi.mocked(dbMock.dbWrite.image.deleteMany).mock.invocationCallOrder[0]
     );
   });
 
-  it('keeps the posts, unpublished with the stamp a model take-down leaves', async () => {
-    heldUsers(TARGET);
-
-    await removeAllContent({ id: TARGET, actorUserId: 9 });
-
-    expect(await posts()).toEqual([
-      {
-        id: 1,
-        publishedAt: null,
-        metadata: {
-          kept: true,
-          unpublishedAt: expect.any(String),
-          unpublishedBy: 9,
-          prevPublishedAt: expect.stringMatching(/^2026-01-02T03:04:05/),
-        },
-      },
-      {
-        id: 2,
-        publishedAt: null,
-        metadata: {
-          unpublishedAt: expect.any(String),
-          unpublishedBy: 9,
-          prevPublishedAt: expect.stringMatching(/^2026-01-02T03:04:05/),
-        },
-      },
-      // A draft stays as it was.
-      { id: 3, publishedAt: null, metadata: null },
-      // Another owner's post is untouched.
-      { id: 4, publishedAt: expect.any(Date), metadata: null },
-    ]);
-  });
-
   // The control: the same wipe of an owner with no hold, while someone else is held.
-  it('deletes the posts of an owner with no hold, and reports nothing kept', async () => {
+  it('reports nothing kept for an owner with no hold', async () => {
     heldUsers(OTHER_HELD);
 
     const result = await removeAllContent({ id: TARGET, actorUserId: 9 });
@@ -250,7 +174,6 @@ describe('removeAllContent on an owner under a hold marker', () => {
     expect(result).toEqual({ keptUnderHold: 0, keptPostsUnderHold: 0 });
     expect(deleteImageById.mock.calls.map(([args]) => args.id)).toEqual([1, 2, 3]);
     expect(imageDeletesForTarget()).toHaveLength(1);
-    expect((await posts()).map((p) => p.id)).toEqual([4]);
   });
 
   describe('stored files', () => {

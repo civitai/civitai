@@ -111,6 +111,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The post delete reports a count, as Prisma's deleteMany does.
+  vi.mocked(dbMock.dbWrite.post.deleteMany).mockResolvedValue({ count: 0 } as never);
   recorded.length = 0;
   holder.maintenance = createDocStoreMaintenance({ db: h.db });
   for (const model of Object.values(dbMock.dbRead) as any[]) {

@@ -238,8 +238,6 @@ const HOLD_KEEPS_BLOCKED =
 const HOLD_SELECTED = /EXISTS \(SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = \?\) AS held/;
 /** The worklist leaves a held owner's `AiNotVerified` rows alone too. */
 const HOLD_KEEPS_AI_NOT_VERIFIED = /"blockedFor" = \? AND NOT h\.held\)/;
-/** The worklist leaves a held owner's posts alone. */
-const HOLD_KEEPS_POSTS = /FROM "Post" p WHERE p\."userId" = u\.id\)\s+AND NOT h\.held/;
 const notKeptByHold = (
   sql: string,
   fixture: Fixture,
@@ -442,10 +440,7 @@ function seed(next: Record<number, Fixture>) {
               : pendingImages(sql, values, fixture).filter(
                   (id) => !keptAi || ingestionOf(fixture, id) !== 'Blocked'
                 );
-          const posts =
-            (skipsGracePosts && !immediate) || (fixture.held && HOLD_KEEPS_POSTS.test(sql))
-              ? []
-              : fixture.posts ?? [];
+          const posts = skipsGracePosts && !immediate ? [] : fixture.posts ?? [];
           return (
             (selectsImageOwners && images.length > 0) || (selectsPostOwners && posts.length > 0)
           );
@@ -1468,10 +1463,10 @@ describe('an image carrying the moderator-only review flag', () => {
   });
 });
 
-// The delete still runs for a held owner, so the hold's trigger takes the images off the site; the
-// rows it keeps, and the owner's posts, stay.
+// The delete still runs for a held owner, so the hold's trigger takes the images off the site and
+// keeps the rows; the posts are deleted too (their own trigger copies them).
 describe('an account under a hold marker', () => {
-  it('attempts the delete of every live image, keeps the posts, and finishes the account', async () => {
+  it('attempts the delete of every live image, deletes the posts, and finishes the account', async () => {
     cursorStore[FRESH_KEY] = NEWER;
     seed({
       7: { deletedAt: RECENT, images: ids(10), posts: [900], held: true },
@@ -1484,8 +1479,8 @@ describe('an account under a hold marker', () => {
       [...ids(10), ...ids(10, 100)].sort()
     );
     expect(result.deletedImages).toBe(0);
-    expect(deletedPostIds).toEqual([]);
-    // Logged apart: nothing of these accounts was deleted.
+    expect(deletedPostIds.sort()).toEqual([900, 901]);
+    // Logged apart: the hold kept what is left of these accounts.
     expect(result.deletedUsers).toBe(0);
     expect(result.heldKeptUsers).toBe(2);
     expect(mockLogToAxiom).toHaveBeenCalledWith(
@@ -1498,7 +1493,6 @@ describe('an account under a hold marker', () => {
       7: {
         deletedAt: NEWER,
         images: ids(3),
-        posts: [900],
         held: true,
         ingestion: { 1: 'Blocked', 2: 'Blocked', 3: 'Blocked' },
         blockedFor: { 3: AI_NOT_VERIFIED },
@@ -1537,12 +1531,12 @@ describe('an account under a hold marker', () => {
     await run();
     expect(mockDeleteImages.mock.calls.flatMap(([batch]) => batch as number[])).toEqual([3, 4]);
 
-    mockDeleteImages.mockClear();
+    mockLogToAxiom.mockClear();
     await run();
-    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
   });
 
-  it("leaves a held grace account's AiNotVerified images as they are", async () => {
+  it('does not select a held grace account for its AiNotVerified images alone', async () => {
     const seedGrace = (held: boolean) =>
       seed({
         7: {
@@ -1563,12 +1557,32 @@ describe('an account under a hold marker', () => {
     expect((await run()).blockedImages).toBe(1);
   });
 
-  it('keeps the posts for a hold placed after the worklist read', async () => {
+  // Once a live image brings the account in, its AiNotVerified rows are repointed with the rest.
+  // That costs nothing while the hold lasts (the purge refuses a held owner's images) and is what
+  // the deletion asked for once it ends.
+  it('repoints AiNotVerified images of a held grace account its live images bring in', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(2),
+        meta: { imageRemoval: 'grace' },
+        held: true,
+        ingestion: { 2: 'Blocked' },
+        blockedFor: { 2: AI_NOT_VERIFIED },
+      },
+    });
+
+    expect((await run()).blockedImages).toBe(2);
+  });
+
+  it('deletes the posts of a held account with no images left, and tallies it as held', async () => {
     seed({ 7: { deletedAt: NEWER, images: [], posts: [900], primaryHeld: true } });
 
-    await run();
+    const result = await run();
 
-    expect(deletedPostIds).toEqual([]);
+    expect(deletedPostIds).toEqual([900]);
+    expect(result.heldKeptUsers).toBe(1);
+    expect(result.deletedUsers).toBe(0);
   });
 
   it('does not hold an account with no marker', async () => {

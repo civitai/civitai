@@ -3975,6 +3975,19 @@ export interface EvidenceHoldImage {
   keptAt: Date;
 }
 
+export interface EvidenceHoldPost {
+  postId: number;
+  userId: number;
+  title: string | null;
+  detail: string | null;
+  createdAt: Date | null;
+  publishedAt: Date | null;
+  modelVersionId: number | null;
+  collectionId: number | null;
+  metadata: JsonValue | null;
+  keptAt: Date;
+}
+
 export interface EvidenceHeldUser {
   userId: number;
   heldUntil: Date | null;

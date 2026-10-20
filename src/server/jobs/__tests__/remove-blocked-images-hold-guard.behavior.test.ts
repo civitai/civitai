@@ -128,6 +128,17 @@ beforeAll(async () => {
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
+    CREATE TABLE "Post" (
+      id int PRIMARY KEY,
+      "userId" int NOT NULL,
+      title text,
+      detail text,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      "publishedAt" timestamp(3),
+      "modelVersionId" int,
+      "collectionId" int,
+      metadata jsonb
+    );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -187,7 +198,8 @@ beforeEach(async () => {
   }) as never);
 
   await holder.db.exec(`
-    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage";
+    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage",
+      "Post", "EvidenceHoldPost";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${PLAIN}, ${PLAIN_USER}, 'Blocked', NULL),
       (${APPEALED}, ${PLAIN_USER}, 'Blocked', 'appeal'),
@@ -568,6 +580,87 @@ describe('purgeHoldGuard on the delete', () => {
         )
       ).rows[0];
       expect(row.ok).toBe(true);
+    });
+  });
+
+  describe('what a hold keeps of a deleted post, and for how long', () => {
+    beforeEach(async () => {
+      await insertMarkedOwners();
+      await holder.db.exec(`
+        TRUNCATE "Post", "EvidenceHoldPost";
+        INSERT INTO "Post" (id, "userId", title, detail, "publishedAt", "modelVersionId", "collectionId", metadata) VALUES
+          (1, ${MANUAL_USER}, 't1', 'd1', now(), 70, 80, '{"k": 1}'),
+          (2, ${SECONDARY_USER}, 't2', NULL, NULL, NULL, NULL, NULL),
+          (3, ${PLAIN_USER}, 't3', 'd3', now(), NULL, NULL, NULL);
+      `);
+    });
+
+    const snapshots = async () =>
+      (
+        await holder.db.query<Record<string, unknown>>(
+          `SELECT "postId", "userId", title, detail, "createdAt" IS NOT NULL AS dated,
+             "publishedAt" IS NOT NULL AS published, "modelVersionId", "collectionId", metadata
+           FROM "EvidenceHoldPost" ORDER BY "postId"`
+        )
+      ).rows;
+
+    // Any delete, the owner's own included; a manual hold and a report's secondary user alike.
+    it("copies a held owner's post as it deletes it, and only a held owner's", async () => {
+      await holder.db.exec(`DELETE FROM "Post"`);
+
+      expect((await holder.db.query(`SELECT id FROM "Post"`)).rows).toEqual([]);
+      expect(await snapshots()).toEqual([
+        {
+          postId: 1,
+          userId: MANUAL_USER,
+          title: 't1',
+          detail: 'd1',
+          dated: true,
+          published: true,
+          modelVersionId: 70,
+          collectionId: 80,
+          metadata: { k: 1 },
+        },
+        {
+          postId: 2,
+          userId: SECONDARY_USER,
+          title: 't2',
+          detail: null,
+          dated: true,
+          published: false,
+          modelVersionId: null,
+          collectionId: null,
+          metadata: null,
+        },
+      ]);
+    });
+
+    it("purges an owner's kept posts and images when their hold is released", async () => {
+      await holder.db.exec(`
+        DELETE FROM "Post";
+        INSERT INTO "EvidenceHoldImage" ("imageId", "userId", "postId") VALUES
+          (${MANUAL}, ${MANUAL_USER}, 1), (${SECONDARY}, ${SECONDARY_USER}, 2);
+        UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
+        WHERE "userId" = ${MANUAL_USER} AND "releasedAt" IS NULL;
+      `);
+
+      // The control: the still-held owner's rows stay.
+      expect((await snapshots()).map((r) => r.postId)).toEqual([2]);
+      expect((await holder.db.query(`SELECT "imageId" FROM "EvidenceHoldImage"`)).rows).toEqual([
+        { imageId: SECONDARY },
+      ]);
+    });
+
+    it('sweeps the rows of an owner whose hold ended by its date', async () => {
+      await holder.db.exec(`
+        DELETE FROM "Post";
+        INSERT INTO "EvidenceHoldPost" ("postId", "userId") VALUES (9, ${LAPSED_USER});
+        INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${LAPSED}, ${LAPSED_USER});
+        SELECT evidence_hold_purge_unheld();
+      `);
+
+      expect((await snapshots()).map((r) => r.postId)).toEqual([1, 2]);
+      expect((await holder.db.query(`SELECT "imageId" FROM "EvidenceHoldImage"`)).rows).toEqual([]);
     });
   });
 
