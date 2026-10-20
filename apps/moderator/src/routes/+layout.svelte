@@ -157,7 +157,9 @@
                         {/snippet}
                       </CollapsibleTrigger>
                       <CollapsibleContent>
-                        <SidebarMenuSub>
+                        <!-- mr-0 pr-0: the sub-list's default right inset would leave its items narrower than the
+                             top-level ones; only the left indent and rule stay as the hierarchy cue. -->
+                        <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
                             {@const cnt = navCount(childLink, countFor)}
                             <SidebarMenuSubItem>
