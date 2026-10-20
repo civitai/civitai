@@ -26,6 +26,7 @@ import {
   Availability,
   BountyType,
   CheckpointType,
+  CrucibleStatus,
   ImageGenerationProcess,
   MediaType,
   MetricTimeframe,
@@ -35,6 +36,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -153,6 +155,8 @@ const bountyFilterSchema = z.object({
 type CrucibleFilterSchema = z.infer<typeof crucibleFilterSchema>;
 const crucibleFilterSchema = z.object({
   sort: z.enum(CrucibleSort).default(CrucibleSort.PrizePool),
+  status: z.enum(CrucibleStatus).array().optional(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
 });
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
