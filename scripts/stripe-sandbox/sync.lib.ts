@@ -1,7 +1,8 @@
 import Stripe from 'stripe';
+import { LIVE_ID_KEY } from '../../src/server/utils/stripe-key-mode';
 
 export const STRIPE_API_VERSION = '2022-11-15' as const;
-export const LIVE_ID_KEY = 'live_id';
+export { LIVE_ID_KEY };
 
 export function assertSandboxKey(key: string | undefined): asserts key is string {
   if (!key || !/^(sk|rk)_test_/.test(key)) {
