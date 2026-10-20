@@ -52,9 +52,9 @@ const TARGET_TYPE = 'post' as const;
 /**
  * Advisory-lock class for the per-placer pending cap on this surface.
  *
- * The only lock this module takes, and the only one inside its transaction, so
- * there is no ordering to get wrong. Distinct from the free path's classes,
- * which serialise different questions.
+ * The only advisory lock this module takes, and the only lock inside
+ * `createStorylinePlacement`'s transaction, so there is no ordering to get wrong. Distinct from
+ * the free path's classes, which serialise different questions.
  */
 const PLACER_LOCK_CLASS = 0x74ee0003;
 
@@ -68,11 +68,8 @@ export type CreateStorylinePlacement = {
   /** The placer's own post, offered as the next chapter. */
   postId: number;
   /**
-   * What the placer was shown. Refused if the owner has moved it since.
-   *
-   * Required, unlike the remix gallery's: a storyline is free by default, so a
-   * caller that omitted it would let an owner who starts charging mid-decision
-   * turn a submission the placer saw as free into a paid one.
+   * What the placer was shown. Refused if the owner has moved it since. Required: see
+   * `submitStorylineContinuationSchema`.
    */
   expectedPrice: number;
   /**
@@ -140,45 +137,18 @@ export function continuationReadiness(
 /**
  * Submits a continuation to a storyline, priced or not.
  *
- * **A zero-priced continuation is an ordinary placement of amount 0, not a free
- * one.** It is written with `free: false`, so it is invisible to both free-tier
- * counts (the placer's daily allowance and the space's reserved slots, which
- * select on `free: true`), and it never calls the escrow, because there is
- * nothing to hold. Settlement handles it with no special case: the payout is
- * computed from receipted holds, a zero-priced row has none, and every leg comes
- * out at zero and is dropped before it is written. The schema comment on
- * `Placement.free` anticipates exactly this row.
+ * A zero-priced continuation is an ordinary placement of amount 0, not a free one: it is written
+ * with `free: false` and never calls the escrow (see `placementSurfaceAllowsZeroPrice`).
  *
- * Every rule about who may place on whom is the same at any price: the mode,
- * self-placement, suspension and blocks, and the per-owner pending cap.
+ * The pending cap is counted under a per-placer lock at every price. The other surfaces' paid
+ * paths count it without one because a race there costs the racer Buzz; here it costs nothing and
+ * the cap is what bounds an owner's review queue, so count-then-insert has to be atomic.
  *
- * **The pending cap is counted under a lock, on both branches.** The other
- * surfaces' paid paths count it without one, and a race there costs the racer
- * real Buzz per extra row. Here a race is free, and the cap is what stands
- * between an owner and an unbounded review queue, so count-then-insert has to be
- * atomic. The lock is per placer: the cap is per (placer, owner) and one placer
- * racing themselves is the whole threat.
- *
- * The target must be a storyline chapter: resolving the space refuses any
- * other post, which is what keeps a surface that opens at zero by default from
- * opening every post on the site.
- *
- * Resolving the space already refuses a taken-down storyline and reads a
- * Complete one as closed. `assertCanContinueStoryline` refuses a block between
- * the placer and the storyline's creator or the chapter's author, and a
- * stranger on a collaborators-only storyline.
- *
- * **An endorsed collaborator's continuation is approved on the spot**, through
- * the same settlement an owner's approval uses, so it writes its chapter edge
- * and stamps `resolvedAt`. If that approval is refused (the edge re-checks the
- * post), the row stays pending for the owner rather than failing the submit.
- *
- * **A post that is not finished yet is accepted and waits.** Unpublished,
- * scheduled, or with an image still scanning: the row carries
- * `awaitingReadiness`, the owner's queue hides it, and
- * `startReadyStorylineContinuations` admits it (or refunds it) once the post
- * is done. Only states that resolve on their own are deferred; a moderation
- * verdict on the post or any of its images refuses here.
+ * An endorsed collaborator's continuation is approved on the spot, through the same settlement an
+ * owner's approval uses; if that is refused the row stays pending for the owner rather than
+ * failing the submit. A post that is not finished yet is accepted with `awaitingReadiness` and
+ * admitted (or refunded) later by `startReadyStorylineContinuations`; a moderation verdict on the
+ * post refuses here.
  */
 export async function createStorylinePlacement({
   placerId,
@@ -218,10 +188,7 @@ export async function createStorylinePlacement({
   if (space.price == null)
     throw throwBadRequestError('storyline: this creator has not set a price yet');
 
-  // Refused rather than charged: a price the placer never saw is a spend without
-  // consent. Matters at zero too — an owner who starts charging while someone is
-  // deciding must not have the free submission they were shown turn into a
-  // paid one.
+  // Refused rather than charged: a price the placer never saw is a spend without consent.
   if (expectedPrice !== space.price)
     throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${space.price} Buzz`);
 
@@ -294,8 +261,8 @@ export async function createStorylinePlacement({
         ownerId: space.ownerId,
         placerId,
         sellerId: null,
-        // Never `true`, at any price. See the docblock: `free` is what spends
-        // the daily allowance and a slot, and a storyline has neither.
+        // Never `true`, at any price: `free` spends a free slot and the daily allowance
+        // (`placementSurfaceAllowsZeroPrice`).
         free: false,
         amount,
         spendType,
@@ -364,19 +331,11 @@ async function holdOrUnwind({
 }
 
 /**
- * Opens or closes a storyline to continuations, inside the caller's
- * transaction.
+ * Opens or closes a storyline to continuations, inside the caller's transaction. Ownership is the
+ * caller's to have checked. Postgres only, through `tx` (`no-io-in-transaction`).
  *
- * For the storyline service, which marks a storyline Complete and closes it in
- * one transaction: the status and the space cannot disagree after a crash.
- * Ownership is the caller's to have checked. Postgres only, through `tx`, so it
- * is safe inside a transaction (`no-io-in-transaction`).
- *
- * Writes the mode alone. A storyline's price stays where its creator left it, so
- * reopening a completed storyline does not reset what it charges.
- *
- * Keyed on the storyline itself (`entityType 'storyline'`): the per-storyline
- * level of the space, above the creator's account default.
+ * Writes the mode alone, on the storyline's own level of the space (`entityType 'storyline'`), so
+ * a price its creator set stays put.
  */
 export async function setStorylineSpaceMode(
   { storylineId, mode }: { storylineId: number; mode: StorylineSpaceMode },
@@ -451,9 +410,7 @@ const continuationPostId = (data: Prisma.JsonValue): number | null => {
  * idempotent on the placement id as well.
  *
  * A decline writes no edge. Expiry never comes through here: the generic sweep
- * (`expirePlacements`) settles it with no hook, so it writes none either. Money
- * is the escrow's: a zero-priced continuation holds nothing and every leg is
- * zero; a priced one is settled by the surface's rules like any other.
+ * (`expirePlacements`) settles it with no hook, so it writes none either.
  */
 export async function settleStorylineContinuation({
   placementId,
@@ -492,11 +449,6 @@ export async function settleStorylineContinuation({
       const postId = continuationPostId(pending.data);
       const parentPostId = pending.targetType === 'post' ? pending.targetId : null;
 
-      // Who answers and who is paid (the owner's share, or the decline fee) is
-      // `ownerId`; the story is the parent chapter's storyline. They must be the
-      // same person, or a chapter's author could accept continuations into, or
-      // collect fees from, somebody else's story. Checked in this transaction,
-      // whatever the submission path resolved.
       // Locked first, so an answer and the parent's removal take turns: the
       // removal's write waits for this lock, and this read waits for the
       // removal's commit and then sees it.
@@ -511,22 +463,23 @@ export async function settleStorylineContinuation({
             },
           })
         : null;
+      // Who answers and who is paid (the owner's share, or the decline fee) is `ownerId`; the
+      // story is the parent chapter's storyline. They must be the same person, or a chapter's
+      // author could accept continuations into, or collect fees from, somebody else's story.
       if (parent && parent.storyline.userId !== pending.ownerId)
         throw new Error(
           `storyline: placement ${placementId} is not owned by its storyline's owner`
         );
-      // A parent that is no longer a live chapter (removed, its post deleted,
-      // never found, or in a taken-down storyline) can never take the
-      // continuation, so declining it would pay the owner a fee for something
-      // they could not accept. Refused for both answers; it is refunded in full
-      // instead, by `settleOrphanedContinuations` or at its deadline.
       // A malformed row is a bug, not a refusal: said as such before anything else.
       if (action === 'approve' && (!parentPostId || !postId))
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
+      // A parent that is no longer a live chapter (removed, its post deleted, never found, or in
+      // a taken-down storyline) can never take the continuation, so declining it would pay the
+      // owner a fee for something they could not accept. Refused for both answers; it is
+      // refunded in full instead, by `settleOrphanedContinuations` or at its deadline.
       if (!parentPostId || !parent || parent.removedAt || parent.storyline.tosViolation)
         throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
-      // A decline writes no chapter.
       if (action === 'decline') return;
       if (!postId)
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
@@ -690,9 +643,8 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
   };
 
   for (const row of rows) {
-    // A priced row whose holds are still landing is neither admitted nor
-    // refunded: a refund now is planned from the part paid so far, and the hold
-    // that lands after it is never returned. Next tick.
+    // Neither admitted nor refunded while its holds are still landing (see
+    // `settleStorylineContinuation`). Next tick.
     if (
       row.amount > 0 &&
       !(await isPlacementEscrowFunded({ placementId: row.id, amount: row.amount }))
@@ -706,7 +658,7 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
       continue;
     }
 
-    // Decided again here rather than trusting the SQL, which no unit test runs.
+    // Decided again here rather than trusting the SQL alone.
     const readiness = continuationReadiness(post);
     if (readiness === 'doomed') {
       await refund(row.id);
@@ -768,20 +720,14 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
   return { considered: candidates.length, started, refunded };
 }
 
-// ---------------------------------------------------------------------------
-// Reads and the placer's own actions, for the router
-// ---------------------------------------------------------------------------
-
 const toSetting = (
   row: { mode: string; price: number | null } | undefined
 ): PlacementSpaceSetting | undefined =>
   row ? { mode: row.mode as PlacementSpaceMode, price: row.price } : undefined;
 
 /**
- * A storyline's continuation settings, for its creator.
- *
- * Resolved from the storyline's own row and the creator's account, the cascade
- * a continuation is priced by, without needing a chapter to resolve through.
+ * A storyline's continuation settings, for its creator. Resolved from the storyline's own row and
+ * the creator's account rather than through a chapter, so it works before any chapter exists.
  * Complete reads as closed, as it does for a contributor.
  */
 export async function getStorylineSpace({
@@ -850,13 +796,10 @@ export async function setStorylineSpace({
 }
 
 /**
- * Whether THIS viewer may continue a chapter, and at what price.
- *
- * The submission's own checks, so the UI offers only what the server takes. A
- * signed-out viewer is answered as a stranger. A post that is not a chapter of
- * a live storyline is refused outright, as the submission refuses it. The
- * storyline's creator is told `closed`: they add chapters directly, never
- * through a continuation.
+ * Whether THIS viewer may continue a chapter, and at what price. Runs the submission's own
+ * checks so the UI offers only what the server takes; a signed-out viewer is judged as a
+ * stranger. The storyline's creator is told `closed`: they add chapters directly, never through a
+ * continuation.
  */
 export async function getStorylineContinuePrice({
   parentPostId,
@@ -944,12 +887,9 @@ const toPostSummary = (
 };
 
 /**
- * The storyline creator's review queue: pending continuations, oldest first.
- *
- * A row still waiting on its post's readiness is left out until the readiness
- * pass admits it, as is one whose post has gone, and one whose parent is no
- * longer a live chapter (it can no longer be answered, only refunded). Paged in
- * SQL so a page is full of rows the queue can render.
+ * The storyline creator's review queue: pending continuations, oldest first. Rows the owner cannot
+ * act on (still awaiting readiness, post gone, parent no longer a live chapter) are filtered in
+ * SQL before paging, so a page is full of rows the queue can render.
  */
 export async function getPendingStorylineContinuations({
   ownerId,
@@ -1051,7 +991,6 @@ export async function getPendingStorylineContinuations({
   return { items, nextCursor };
 }
 
-/** The placer's own continuations, newest first. */
 export async function getMyStorylineContinuations({
   placerId,
   cursor,
@@ -1152,18 +1091,12 @@ export async function retractStorylineContinuation({
 export const STALE_UNFUNDED_MINUTES = 15;
 
 /**
- * Settles priced continuations whose escrow never filled, as an expiry, so
- * whatever was taken is returned in full and the row leaves the owner's queue
- * and the placer's pending cap.
+ * Settles priced continuations whose escrow never filled, as an expiry, so whatever was taken is
+ * returned in full and the row leaves the owner's queue and the placer's pending cap. Until then
+ * it cannot be answered (answering waits for the holds).
  *
- * Until settled such a row cannot be answered (approving or declining it waits
- * for the holds) and would otherwise sit there for its whole seven days.
- *
- * A hold attempted within the escrow's retry window may still be in flight, so
- * a row with one is left for a later tick: settling it now would plan the
- * refund from the part receipted so far, and a hold landing afterwards would
- * never be returned. Funding is checked again per row before settling, and the
- * settlement itself only claims a row that is still pending.
+ * A row with a hold attempted inside the escrow's retry window is left for a later tick: that
+ * hold may still be in flight, and a refund planned now would never return it.
  */
 export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?: number } = {}) {
   const stale = await dbWrite.$queryRaw<{ id: number; amount: number }[]>`
@@ -1210,25 +1143,18 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
 }
 
 /**
- * Settles pending continuations whose parent is no longer a live chapter, as
- * an expiry: the placer did nothing wrong, so whatever was taken is returned in
- * full, and the owner, who can no longer accept them, earns no fee.
+ * Settles pending continuations whose parent is no longer a live chapter, as an expiry: the
+ * placer did nothing wrong, so whatever was taken is returned in full, and the owner, who can no
+ * longer accept them, earns no fee.
  *
- * A parent stops being a live chapter when it is removed, or when its post is
- * deleted, which empties the chapter's `postId`. Either way nothing can find
- * it from the continuation again, so both are matched the same way: no live
- * chapter holds the continuation's target post.
+ * A parent stops being live when it is removed or its post is deleted (which empties the
+ * chapter's `postId`); both match as "no live chapter holds the continuation's target post".
  *
- * Run right after a takedown with the ids it took down, and by a job for all
- * of them, which also finishes what a failed or interrupted run left. Neither
- * is what keeps the owner from being paid: from the removal's commit the
- * owner's queue hides these rows and an approval or a decline is refused.
+ * Run right after a takedown with the ids it took down, and by a job for the rest, which finishes
+ * what a failed run left. Neither is what keeps the owner from being paid: from the removal's
+ * commit the queue hides these rows and answering is refused.
  *
- * A priced row whose holds are not all receipted is left out: settling it
- * would plan the refund from the part paid so far, and selecting it would let
- * a backlog of them fill the batch. The unfunded sweep settles it once it is
- * stale. Settling only claims a row that is still pending, so a second run
- * moves no money twice.
+ * A priced row whose holds are not all receipted is left out until the unfunded sweep settles it.
  */
 export async function settleOrphanedContinuations({
   removedPlacementIds,

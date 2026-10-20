@@ -17,7 +17,6 @@ const columns = [
   'tosViolationByModerator',
 ] as const;
 
-/** What each reported storyline looks like now, for the report sheet. */
 export async function getReportedStorylines(ids: number[]): Promise<ReportedStoryline[]> {
   if (!ids.length) return [];
   return dbRead.selectFrom('Storyline').select(columns).where('id', 'in', ids).execute();
@@ -34,12 +33,8 @@ export async function getReportStorylineId(reportId: number): Promise<number | n
 }
 
 /**
- * The main app's `setStorylineTakedown`, for the report queue. A moderator's takedown is held
- * apart from the title scan's (`tosViolationByModerator` and `tosViolationByScan`), and the
- * storyline is down while either holds one: a clean rescan cannot lift the moderator's, and a
- * restore cannot lift the scan's. Activity is recorded only when the moderator's flag changed.
- *
- * Null when the storyline no longer exists.
+ * Mirrors the main app's `setStorylineTakedown`; keep the two in step. Activity is recorded only
+ * when the moderator's flag changed. Null when the storyline no longer exists.
  */
 export async function setStorylineTakedown({
   storylineId,

@@ -18,8 +18,8 @@ export default defineConfig({
   testDir: './tests',
   // preview-* run only under playwright.preview.config.ts (need PREVIEW_URL); the
   // default `setup` project's *.setup.ts glob would otherwise pick them up.
-  // storylines-smoke needs a seeded dev database; collected only when its env is set, so a
-  // default run cannot report it as skipped-and-green.
+  // storylines-smoke needs a seeded dev database and throws at load without its env, so it is
+  // collected only when STORYLINE_SMOKE_TOKEN is set.
   testIgnore: [
     'example.spec.ts',
     '**/preview-*.ts',
