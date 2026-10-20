@@ -41,7 +41,14 @@ import { creatorsProgramSettleCash } from '~/server/jobs/creators-program-jobs';
 
 const ledgerRows = () =>
   mocks.createBuzzTransactionMany.mock.calls.flatMap(
-    ([txs]) => txs as { fromAccountId: number; toAccountId: number; amount: number }[]
+    ([txs]) =>
+      txs as {
+        fromAccountId: number;
+        toAccountId: number;
+        amount: number;
+        externalTransactionId: string;
+        description: string;
+      }[]
   );
 
 const settledUserIds = () =>
@@ -81,12 +88,21 @@ describe('creators-program-settlement with held payouts', () => {
     await creatorsProgramSettleCash.run({}).result;
 
     expect(settledUserIds()).toEqual([1, 3]);
-    // Neither leg touches the held creator, and the others keep their full amounts.
-    expect(ledgerRows().map((t) => [t.fromAccountId, t.toAccountId, t.amount])).toEqual([
-      [1, 0, 1_000],
-      [0, 1, 1_000],
-      [3, 0, 3_000],
-      [0, 3, 3_000],
+    // Keys use the settlement month (November), not the reviewed period (October): a key
+    // shared with an earlier settlement would be a different payment deduplicated away.
+    expect(
+      ledgerRows().map((t) => [
+        t.fromAccountId,
+        t.toAccountId,
+        t.amount,
+        t.externalTransactionId,
+        t.description,
+      ])
+    ).toEqual([
+      [1, 0, 1_000, 'settlement-bank-v2-2026-11-1', 'Move from pending 2026-11'],
+      [0, 1, 1_000, 'settlement-v2-2026-11-1', 'Cash settlement for 2026-11'],
+      [3, 0, 3_000, 'settlement-bank-v2-2026-11-3', 'Move from pending 2026-11'],
+      [0, 3, 3_000, 'settlement-v2-2026-11-3', 'Cash settlement for 2026-11'],
     ]);
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userIds: [1, 3] })
@@ -121,6 +137,33 @@ describe('creators-program-settlement with held payouts', () => {
       accountTypes: ['cashPending'],
     });
     expect(settledUserIds()).toEqual([1, 3, 7]);
+  });
+
+  it('leaves withheld cash pending into the next cycle, untouched, until re-decided', async () => {
+    // October was withheld and November has no decision yet: the December 15th run.
+    vi.setSystemTime(new Date('2026-12-15T00:00:05Z'));
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+      { userId: 2, status: 'withheld', hold: true, period: '2026-10' },
+    ]);
+
+    await creatorsProgramSettleCash.run({}).result;
+
+    expect(settledUserIds()).toEqual([1, 3]);
+    // No ledger row moves or zeroes the withheld creator's pending cash.
+    expect(ledgerRows().some((t) => t.fromAccountId === 2 || t.toAccountId === 2)).toBe(false);
+  });
+
+  it('skips a creator with nothing pending', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([]);
+    mocks.getAccountsBalances.mockResolvedValue([
+      { accountId: 1, balance: 1_000 },
+      { accountId: 2, balance: 0 },
+      { accountId: 3, balance: -5 },
+    ]);
+
+    await creatorsProgramSettleCash.run({}).result;
+
+    expect(settledUserIds()).toEqual([1]);
   });
 
   it('settles everyone when nobody is held', async () => {

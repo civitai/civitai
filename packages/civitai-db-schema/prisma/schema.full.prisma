@@ -10612,8 +10612,7 @@ model Prize {
 }
 
 // A Creator Program creator whose pending payout for a period is held for review before settlement.
-// `status`: open | escalated | cleared | withheld. Settlement skips a creator while any row of theirs
-// is held and not cleared.
+// `status`: open | escalated | cleared | withheld.
 model CreatorProgramPayoutReview {
   id                Int       @id @default(autoincrement())
   period            String // 'YYYY-MM', the banking month
@@ -10630,6 +10629,10 @@ model CreatorProgramPayoutReview {
   decidedBy         String?
   decisionNote      String?
   askRef            String?
+  // Bumped by every write, decisions and re-runs alike; a decision must name the version it read.
+  version           Int       @default(1)
+  // Append-only: one entry per decision or reopen.
+  decisions         Json      @default("[]")
 
   @@unique([period, userId])
   @@index([userId])

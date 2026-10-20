@@ -11,12 +11,19 @@ const review = (over: Record<string, unknown> = {}) => ({
   period: '2026-10',
   status: 'open',
   askRef: null,
-  evaluations: 3,
+  version: 3,
+  decisions: [{ action: 'escalate', by: 'user:1' }],
   ...over,
 });
 
-const decide = (action: 'escalate' | 'clear' | 'withhold') =>
-  decidePayoutReview({ id: 41, action, evaluations: 3, decidedBy: 'ag_test', askRef: 'card-1' });
+const decide = (
+  action: 'escalate' | 'clear' | 'withhold',
+  over: Partial<{ userId: number; period: string; version: number; note: string }> = {}
+) =>
+  decidePayoutReview(
+    { id: 41, userId: 9, period: '2026-10', action, version: 3, askRef: 'card-1', ...over },
+    'user:5'
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,35 +57,83 @@ describe('getSettlementHolds', () => {
   });
 });
 
+describe('getSettlementHolds: a withhold covers its own cycle', () => {
+  it('holds on the latest withhold, and pays once a later review clears the creator', async () => {
+    reviews.findMany.mockResolvedValue([
+      // Withheld for October, no later review yet: held.
+      { userId: 7, status: 'withheld', hold: true, period: '2026-10' },
+      // Withheld for September, cleared for October: paid.
+      { userId: 8, status: 'withheld', hold: true, period: '2026-09' },
+      { userId: 8, status: 'cleared', hold: false, period: '2026-10' },
+      // Cleared for September, withheld for October: held.
+      { userId: 9, status: 'cleared', hold: false, period: '2026-09' },
+      { userId: 9, status: 'withheld', hold: true, period: '2026-10' },
+    ]);
+    dbMock.dbWrite.user.findMany.mockResolvedValue([{ id: 8, onboarding: 0 }]);
+
+    const holds = await getSettlementHolds('2026-10');
+
+    expect(holds.heldUserIds).toEqual(new Set([7, 9]));
+    expect(holds.clearedUserIds).toEqual([8]);
+  });
+});
+
 describe('decidePayoutReview', () => {
-  it('clearing lifts the hold, conditional on the status it read', async () => {
+  it('clearing lifts the hold, conditional on the row and version it read', async () => {
     reviews.findUnique.mockResolvedValue(review());
 
-    expect(await decide('clear')).toEqual({ id: 41, status: 'cleared' });
+    expect(await decide('clear', { note: 'looked fine' })).toEqual({
+      id: 41,
+      status: 'cleared',
+      version: 4,
+    });
     expect(reviews.updateMany).toHaveBeenCalledWith({
-      where: { id: 41, status: 'open', evaluations: 3 },
-      data: expect.objectContaining({ status: 'cleared', hold: false, decidedBy: 'ag_test' }),
+      where: { id: 41, userId: 9, period: '2026-10', version: 3 },
+      data: expect.objectContaining({
+        status: 'cleared',
+        hold: false,
+        decidedBy: 'user:5',
+        decisionNote: 'looked fine',
+        version: { increment: 1 },
+      }),
     });
   });
 
-  it('a withhold made in error can be cleared', async () => {
-    reviews.findUnique.mockResolvedValue(review({ status: 'withheld' }));
-
-    expect(await decide('clear')).toEqual({ id: 41, status: 'cleared' });
-  });
-
-  it.each(['escalate', 'withhold'] as const)('%s keeps the hold', async (action) => {
+  it('appends to the decision history rather than replacing it', async () => {
     reviews.findUnique.mockResolvedValue(review());
 
-    await decide(action);
-    expect(reviews.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ hold: true }) })
-    );
+    await decide('withhold');
+
+    const [{ data }] = reviews.updateMany.mock.calls[0];
+    expect(data.decisions).toEqual([
+      { action: 'escalate', by: 'user:1' },
+      expect.objectContaining({
+        by: 'user:5',
+        action: 'withhold',
+        from: 'open',
+        to: 'withheld',
+        version: 3,
+        note: null,
+        askRef: 'card-1',
+      }),
+    ]);
+    // An omitted note does not leave the previous decider's note under the new decider.
+    expect(data.decisionNote).toBeNull();
   });
 
   it.each([
-    ['withhold', 'cleared'],
+    ['withheld', 'clear', 'cleared'],
+    ['cleared', 'withhold', 'withheld'],
+    ['cleared', 'escalate', 'escalated'],
+  ] as const)('a %s review can be moved with %s', async (status, action, to) => {
+    reviews.findUnique.mockResolvedValue(review({ status }));
+
+    expect(await decide(action)).toMatchObject({ status: to });
+  });
+
+  it.each([
     ['escalate', 'withheld'],
+    ['clear', 'cleared'],
   ] as const)('refuses to %s a %s review', async (action, status) => {
     reviews.findUnique.mockResolvedValue(review({ status }));
 
@@ -86,11 +141,21 @@ describe('decidePayoutReview', () => {
     expect(reviews.updateMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a decision made on evidence a later run has added to', async () => {
-    // The decider read evaluation 3; the 06:00 run has since re-evaluated it with a new signal.
-    reviews.findUnique.mockResolvedValue(review({ evaluations: 4 }));
+  it('refuses a stale decision, e.g. a replayed clear after a later withhold', async () => {
+    // The clear was prepared at version 3; a withhold has since moved the row to version 4.
+    reviews.findUnique.mockResolvedValue(review({ status: 'withheld', version: 4 }));
 
     await expect(decide('clear')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(reviews.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another creator', { userId: 10 }],
+    ['another period', { period: '2026-09' }],
+  ])('refuses a decision naming %s', async (_, over) => {
+    reviews.findUnique.mockResolvedValue(review());
+
+    await expect(decide('clear', over)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(reviews.updateMany).not.toHaveBeenCalled();
   });
 

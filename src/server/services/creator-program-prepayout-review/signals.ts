@@ -9,6 +9,10 @@ export const prepayoutLimitsSchema = z.object({
   payoutJump: positive,
   batchPayer: positive,
   youngPayerDays: positive,
+  /** Only payouts at or above this percentile of the batch can count as a jump. */
+  payoutJumpPercentile: positive.max(1),
+  /** How many earlier payouts the jump compares against. */
+  historyPeriods: z.number().int().min(1).max(12),
 });
 export type PrepayoutLimits = z.infer<typeof prepayoutLimitsSchema>;
 
@@ -29,6 +33,7 @@ export const PREPAYOUT_SIGNALS = [
   'single-payer',
   'payout-jump',
   'batch-payer',
+  'withheld-carried',
 ] as const;
 export type PrepayoutSignal = (typeof PREPAYOUT_SIGNALS)[number];
 
@@ -39,6 +44,7 @@ export const SIGNAL_LABELS: Record<PrepayoutSignal, string> = {
   'single-payer': 'one payer funded most of the earnings',
   'payout-jump': 'payout far above their usual',
   'batch-payer': 'funded by other creators in the same payout',
+  'withheld-carried': 'withheld last cycle and up for a new decision',
 };
 
 export type Counterparty = { userId: number; received: number; sent: number };
@@ -59,10 +65,9 @@ export type CreatorMetrics = {
 
 export type BatchContext = {
   limits: PrepayoutLimits;
-  /** The #6181 counterparty review minimum, or null while unset. */
+  /** The counterparty review's minimum (#6181), or null while unset. */
   counterpartyMinimum: number | null;
-  /** The smallest payout in the batch's top decile. */
-  topDecileCents: number;
+  payoutCutoffCents: number;
   batchCreatorIds: ReadonlySet<number>;
 };
 
@@ -77,11 +82,10 @@ export function median(values: number[]) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** The smallest payout in the top tenth of the batch. */
-export function topDecileCents(payoutsCents: number[]) {
+export function payoutCutoffCents(payoutsCents: number[], percentile: number) {
   if (!payoutsCents.length) return Infinity;
   const sorted = [...payoutsCents].sort((a, b) => a - b);
-  return sorted[Math.floor(0.9 * (sorted.length - 1))];
+  return sorted[Math.floor(percentile * (sorted.length - 1))];
 }
 
 export function evaluateCreator(metrics: CreatorMetrics, ctx: BatchContext) {
@@ -119,7 +123,7 @@ export function evaluateCreator(metrics: CreatorMetrics, ctx: BatchContext) {
   }
 
   const usual = median(metrics.priorPayoutsCents);
-  if (usual && metrics.payoutCents >= ctx.topDecileCents) {
+  if (usual && metrics.payoutCents >= ctx.payoutCutoffCents) {
     const ratio = metrics.payoutCents / usual;
     if (ratio >= limits.payoutJump)
       fired.set('payout-jump', { value: ratio, limit: limits.payoutJump });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaluateCreator,
   parseLimits,
-  topDecileCents,
+  payoutCutoffCents,
   type BatchContext,
   type CreatorMetrics,
   type PrepayoutLimits,
@@ -16,12 +16,14 @@ const limits: PrepayoutLimits = {
   payoutJump: 4,
   batchPayer: 700,
   youngPayerDays: 10,
+  payoutJumpPercentile: 0.75,
+  historyPeriods: 3,
 };
 
 const ctx = (over: Partial<BatchContext> = {}): BatchContext => ({
   limits,
   counterpartyMinimum: 400,
-  topDecileCents: 10_000,
+  payoutCutoffCents: 10_000,
   batchCreatorIds: new Set([1, 50]),
   ...over,
 });
@@ -64,7 +66,7 @@ describe('evaluateCreator', () => {
 
   it('counterparty measures the smaller direction, so a one-way payer never fires', () => {
     const metrics = clean({
-      counterparties: [{ userId: 7, received: 50_000, sent: 999 }],
+      counterparties: [{ userId: 7, received: 40_000, sent: 999 }],
       bankable: 1_000_000,
     });
     expect(fired(metrics)).toEqual([]);
@@ -111,10 +113,10 @@ describe('evaluateCreator', () => {
   it.each([
     [7_999, 7_000, []], // ratio under 4
     [8_000, 8_000, ['payout-jump']],
-    [8_000, 8_001, []], // ratio met but below the top decile
+    [8_000, 8_001, []], // below the batch cutoff
   ])('payout-jump: %i cents, top decile from %i', (payoutCents, topDecile, expected) => {
     const metrics = clean({ payoutCents, priorPayoutsCents: [2_000, 1_000, 3_000] });
-    expect(fired(metrics, ctx({ topDecileCents: topDecile }))).toEqual(expected);
+    expect(fired(metrics, ctx({ payoutCutoffCents: topDecile }))).toEqual(expected);
   });
 
   it('payout-jump needs a history: a first payout never fires it', () => {
@@ -148,7 +150,7 @@ describe('evaluateCreator boundaries and detail', () => {
   it('payout-jump compares against the median of an even history', () => {
     // Median of [1_000, 3_000] is 2_000, so 8_000 is exactly 4x.
     const metrics = clean({ payoutCents: 8_000, priorPayoutsCents: [1_000, 3_000] });
-    expect(fired(metrics, ctx({ topDecileCents: 8_000 }))).toEqual(['payout-jump']);
+    expect(fired(metrics, ctx({ payoutCutoffCents: 8_000 }))).toEqual(['payout-jump']);
   });
 
   it('batch-payer adds up every payer from the batch', () => {
@@ -177,16 +179,17 @@ describe('evaluateCreator boundaries and detail', () => {
   });
 });
 
-describe('topDecileCents', () => {
+describe('payoutCutoffCents', () => {
   it.each([
-    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 10],
-    [[10, 20, 30, 40, 50, 60, 70, 80, 90, 100], 90],
-  ])('is the payout at the 90th percentile position of %j', (payouts, expected) => {
-    expect(topDecileCents(payouts)).toBe(expected);
+    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 0.75, 8],
+    [[10, 20, 30, 40, 50, 60, 70, 80, 90, 100], 0.75, 70],
+    [[10, 20, 30, 40, 50, 60, 70, 80, 90, 100], 0.5, 50],
+  ])('is the payout at the configured percentile position of %j (%s)', (payouts, pct, expected) => {
+    expect(payoutCutoffCents(payouts, pct)).toBe(expected);
   });
 
   it('lets nothing through for an empty batch', () => {
-    expect(topDecileCents([])).toBe(Infinity);
+    expect(payoutCutoffCents([], 0.75)).toBe(Infinity);
   });
 });
 

@@ -56,10 +56,9 @@ async function loadAccounts(userIds: number[]) {
   return accounts;
 }
 
-/**
- * Daily from the 1st to the 14th, so last month's pending payouts are reviewed before the 15th's
- * settlement and re-reviewed as new evidence lands.
- */
+const store = createPayoutReviewStore(dbWrite);
+
+/** Runs through the 14th so every batch is reviewed before the 15th's settlement. */
 export const creatorProgramPrepayoutReview = createJob(
   'creator-program-prepayout-review',
   '0 6 1-14 * *',
@@ -70,7 +69,8 @@ export const creatorProgramPrepayoutReview = createJob(
       readCounterpartyMinimum: readMinimum,
       getWarnedAt,
       loadAccounts,
-      store: createPayoutReviewStore(dbWrite),
+      getCarriedUserIds: (period) => store.getCarriedUserIds(period),
+      store,
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
       log: (name, data) =>

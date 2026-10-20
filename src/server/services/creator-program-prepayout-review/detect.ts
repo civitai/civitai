@@ -9,13 +9,14 @@ import type { Counterparty } from './signals';
 
 export type ReviewClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
-/** The months the review reads payouts for: this period and the three before it. */
-export function periodWindow(period: string) {
+export function periodWindow(period: string, historyPeriods = 0) {
   const start = dayjs.utc(`${period}-01`);
   return {
     start: start.toDate(),
     end: start.add(1, 'month').toDate(),
-    priorPeriods: [1, 2, 3].map((n) => start.subtract(n, 'month').format('YYYY-MM')),
+    priorPeriods: Array.from({ length: historyPeriods }, (_, i) =>
+      start.subtract(i + 1, 'month').format('YYYY-MM')
+    ),
   };
 }
 
@@ -25,7 +26,7 @@ const assertPeriod = (period: string) => {
   if (!/^\d{4}-\d{2}$/.test(period)) throw new Error(`Invalid period ${period}`);
 };
 
-/** What the distribute job actually credited to each creator's pending cash for the period. */
+/** The distribute job's credits as booked, not a recomputation of the pool. */
 export async function loadBatch(ch: ReviewClickhouse, period: string) {
   assertPeriod(period);
   const { start } = periodWindow(period);
@@ -39,16 +40,23 @@ export async function loadBatch(ch: ReviewClickhouse, period: string) {
   return rows.map((r) => ({ userId: Number(r.userId), payoutCents: Number(r.payoutCents) }));
 }
 
-export async function loadPriorPayouts(ch: ReviewClickhouse, userIds: number[], period: string) {
-  const { priorPeriods } = periodWindow(period);
+export async function loadPriorPayouts(
+  ch: ReviewClickhouse,
+  userIds: number[],
+  period: string,
+  historyPeriods: number
+) {
+  const { priorPeriods } = periodWindow(period, historyPeriods);
   const byUser = new Map<number, number[]>();
-  if (!userIds.length) return byUser;
+  if (!userIds.length || !priorPeriods.length) return byUser;
   const rows = await ch.$query<{ userId: string | number; period: string; payoutCents: string }>(`
-    SELECT toAccountId AS userId, substring(externalTransactionId, 19, 7) AS period,
+    SELECT toAccountId AS userId, substring(externalTransactionId, ${
+      poolCreditPrefix('').length + 1
+    }, 7) AS period,
       sum(amount) AS payoutCents
     FROM buzzTransactions
     WHERE toAccountType = 'cashPending' AND toAccountId IN (${userIds.join(',')})
-      AND date >= ${chDate(dayjs.utc(`${priorPeriods[2]}-01`).toDate())}
+      AND date >= ${chDate(dayjs.utc(`${priorPeriods[priorPeriods.length - 1]}-01`).toDate())}
       AND (${priorPeriods
         .map((p) => `startsWith(externalTransactionId, '${poolCreditPrefix(p)}')`)
         .join(' OR ')})
@@ -67,7 +75,6 @@ export async function loadPriorPayouts(ch: ReviewClickhouse, userIds: number[], 
   return byUser;
 }
 
-/** Bankable Buzz each creator received in the period, and who paid it. */
 export async function loadEarnings(ch: ReviewClickhouse, userIds: number[], period: string) {
   const { start, end } = periodWindow(period);
   const bankable = new Map<number, number>();

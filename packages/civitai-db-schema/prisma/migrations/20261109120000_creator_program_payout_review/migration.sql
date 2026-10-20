@@ -1,9 +1,7 @@
--- Creator Program pre-payout review: creators whose pending payout is held until reviewed, and the
--- record of each review run.
+-- Creator Program pre-payout review: held payouts and the record of each review run.
 --
--- Additive only: two new tables, no existing rows touched, no locks on existing tables. Apply it
--- BEFORE the deploy that ships the review: the settlement job reads "CreatorProgramPayoutReview" on
--- the 15th, and the review job writes both tables from the 1st.
+-- Apply BEFORE the deploy that ships the review: settlement reads the review table on the 15th
+-- and the review job writes both tables from the 1st.
 --
 -- HOW TO APPLY: `psql -v ON_ERROR_STOP=1 -f migration.sql`. Safe to run again.
 
@@ -23,6 +21,8 @@ CREATE TABLE IF NOT EXISTS "CreatorProgramPayoutReview" (
   "decidedBy"         TEXT,
   "decisionNote"      TEXT,
   "askRef"            TEXT,
+  "version"           INTEGER NOT NULL DEFAULT 1,
+  "decisions"         JSONB NOT NULL DEFAULT '[]'::jsonb,
   CONSTRAINT "CreatorProgramPayoutReview_status_check"
     CHECK ("status" IN ('open', 'escalated', 'cleared', 'withheld'))
 );

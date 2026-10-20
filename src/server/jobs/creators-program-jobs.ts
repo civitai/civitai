@@ -202,7 +202,7 @@ export const creatorsProgramSettleCash = createJob(
       accountTypes: ['cashPending'],
     });
 
-    // A missing review alerts but does not stop the batch: only flagged creators are held.
+    // Fail open: an unreviewed batch alerts but still pays.
     if (!reviewed)
       await logToAxiom({
         name: 'creator-program-prepayout-review-missing',
@@ -217,7 +217,6 @@ export const creatorsProgramSettleCash = createJob(
       await logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
     const participantIds = new Set(participants.map((p) => p.userId));
     const lateCleared = positiveBalances.filter((b) => !participantIds.has(b.accountId));
-    // Their pending cash predates this period, so this period's review says nothing about it.
     if (lateCleared.length)
       await logToAxiom({
         name: 'creator-program-settle-cleared',

@@ -10,7 +10,7 @@ import {
 import {
   evaluateCreator,
   SIGNAL_LABELS,
-  topDecileCents,
+  payoutCutoffCents,
   type Counterparty,
   type PrepayoutLimits,
   type PrepayoutSignal,
@@ -47,13 +47,13 @@ export type PrepayoutReviewDeps = {
   ch: ReviewClickhouse | null;
   readLimits: () => Promise<PrepayoutLimits | null>;
   readCounterpartyMinimum: () => Promise<number | null>;
-  /** When the counterparty review warned each creator, for those it has. */
   getWarnedAt: (userIds: number[]) => Promise<Map<number, string>>;
   loadAccounts: (userIds: number[]) => Promise<Map<number, AccountState>>;
+  /** Creators whose latest review before `period` was withheld: each comes up for a new decision. */
+  getCarriedUserIds: (period: string) => Promise<number[]>;
   store: {
     startRun: (period: string, startedAt: Date) => Promise<number>;
     finishRun: (runId: number, outcome: RunOutcome & { finishedAt: Date }) => Promise<void>;
-    /** Upserts the period's row; `reopened` when new signals put a cleared row back on hold. */
     saveFlag: (flag: PayoutReviewFlag) => Promise<{ created: boolean; reopened: boolean }>;
   };
   sendReport: (report: AbuseReportInput) => Promise<unknown>;
@@ -114,15 +114,11 @@ function buildEvidence(
   };
 }
 
-/**
- * Reviews every creator in last month's pending payout batch and holds the payout of each one a
- * signal fires for. Settlement on the 15th skips held creators until someone clears them.
- */
 export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<RunOutcome> {
   const startedAt = deps.now();
   const period = reviewPeriod(startedAt);
-  // After the 15th the period's batch has settled; a hold filed then would block the creator's
-  // next payout over money already paid.
+  // From the 15th the period's batch settles; a hold filed then would block the creator's next
+  // payout over money already paid.
   if (startedAt.getUTCDate() > 14) {
     deps.log?.('creator-program-prepayout-review-skipped', { period, reason: 'after the 14th' });
     return { creditedCount: 0, evaluatedCount: 0, flaggedCount: 0, error: 'after the 14th' };
@@ -151,16 +147,24 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
       return await finish();
     }
 
-    const batch = await loadBatch(deps.ch, period);
-    outcome.creditedCount = batch.length;
-    if (!batch.length) {
+    const credited = await loadBatch(deps.ch, period);
+    outcome.creditedCount = credited.length;
+    if (!credited.length) {
       outcome.error = 'no pending payouts found for the period';
       return await finish();
     }
 
+    // A withheld creator is re-decided every cycle, whether or not they were credited again.
+    const carried = new Set(await deps.getCarriedUserIds(period));
+    const batch = [
+      ...credited,
+      ...[...carried]
+        .filter((userId) => !credited.some((c) => c.userId === userId))
+        .map((userId) => ({ userId, payoutCents: 0 })),
+    ];
     const userIds = batch.map((b) => b.userId);
     const [prior, earnings, counterpartyMinimum, warnedAt] = await Promise.all([
-      loadPriorPayouts(deps.ch, userIds, period),
+      loadPriorPayouts(deps.ch, userIds, period, limits.historyPeriods),
       loadEarnings(deps.ch, userIds, period),
       deps.readCounterpartyMinimum(),
       deps.getWarnedAt(userIds),
@@ -171,7 +175,10 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
     const ctx = {
       limits,
       counterpartyMinimum,
-      topDecileCents: topDecileCents(batch.map((b) => b.payoutCents)),
+      payoutCutoffCents: payoutCutoffCents(
+        credited.map((b) => b.payoutCents),
+        limits.payoutJumpPercentile
+      ),
       batchCreatorIds: new Set(userIds),
     };
     const youngSince = dayjs
@@ -198,6 +205,7 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
       outcome.evaluatedCount++;
 
       const fired = evaluateCreator(metrics, ctx);
+      if (carried.has(userId)) fired.set('withheld-carried', { value: 1, limit: 1 });
       if (!fired.size) continue;
       outcome.flaggedCount++;
 
@@ -231,8 +239,7 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
 
     await finish();
 
-    // The board is a view for moderators; the review table is the record, so a failed report
-    // does not fail the run.
+    // The review table is the record; a failed board report must not fail the run.
     await deps
       .sendReport({
         detector: PREPAYOUT_REVIEW_DETECTOR,

@@ -6,41 +6,45 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
 
-/** Statuses under which a held row keeps the creator out of settlement. */
 const HOLDING_STATUSES = ['open', 'escalated', 'withheld'];
 
 const isMissingTable = (e: unknown) =>
   e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2021';
 
 /**
- * Who settlement must skip, who it must add, and whether the review finished a clean run over the
- * period.
- *
- * Cleared creators are added because settlement otherwise pays only last month's participants: a
- * creator cleared after the 15th would never be paid if they did not bank again. Banned creators
- * are left out, as `getPoolParticipantsV2` leaves them out.
- *
- * Tables that do not exist yet (deployed before the migration) hold nobody and count as not
- * reviewed, so the batch still pays and settlement alerts.
+ * Cleared creators are added because settlement otherwise pays only last month's participants, so
+ * one cleared after the 15th would never be paid. Banned creators are left out, as
+ * `getPoolParticipantsV2` leaves them out. A missing table (deployed before the migration) holds
+ * nobody.
  */
 export async function getSettlementHolds(period: string) {
   try {
     const [rows, run] = await Promise.all([
       dbWrite.creatorProgramPayoutReview.findMany({
         where: { status: { in: [...HOLDING_STATUSES, 'cleared'] } },
-        select: { userId: true, status: true, hold: true },
+        select: { userId: true, status: true, hold: true, period: true },
       }),
       dbWrite.creatorProgramPayoutReviewRun.findFirst({
         where: { period, finishedAt: { not: null }, error: null },
         select: { id: true },
       }),
     ]);
-    const heldUserIds = new Set(
-      rows.filter((r) => r.hold && HOLDING_STATUSES.includes(r.status)).map((r) => r.userId)
-    );
-    const clearedIds = [
-      ...new Set(rows.filter((r) => r.status === 'cleared').map((r) => r.userId)),
-    ].filter((id) => !heldUserIds.has(id));
+    // An undecided review holds in any period. A withhold applies to its own cycle and stands
+    // until a later period's review decides the creator again, so only the latest one counts.
+    const latest = new Map<number, (typeof rows)[number]>();
+    for (const r of rows) {
+      const seen = latest.get(r.userId);
+      if (!seen || r.period > seen.period) latest.set(r.userId, r);
+    }
+    const heldUserIds = new Set([
+      ...rows
+        .filter((r) => r.hold && (r.status === 'open' || r.status === 'escalated'))
+        .map((r) => r.userId),
+      ...[...latest.values()].filter((r) => r.status === 'withheld').map((r) => r.userId),
+    ]);
+    const clearedIds = [...latest.values()]
+      .filter((r) => r.status === 'cleared' && !heldUserIds.has(r.userId))
+      .map((r) => r.userId);
     const payable = clearedIds.length
       ? await dbWrite.user.findMany({
           where: { id: { in: clearedIds }, bannedAt: null },
@@ -76,48 +80,84 @@ export function splitHeldBalances<T extends { accountId: number; balance: number
 
 export const payoutReviewDecisionSchema = z.object({
   id: z.number().int().positive(),
+  userId: z.number().int().positive(),
+  period: z.string().regex(/^\d{4}-\d{2}$/),
   action: z.enum(['escalate', 'clear', 'withhold']),
-  /** The row's `evaluations` when the decider read its evidence. */
-  evaluations: z.number().int().positive(),
-  decidedBy: z.string().min(1),
+  /** The row's `version` when the decider read it; every write to the row bumps it. */
+  version: z.number().int().positive(),
   note: z.string().optional(),
   askRef: z.string().optional(),
 });
 export type PayoutReviewDecision = z.infer<typeof payoutReviewDecisionSchema>;
 
+/** One entry in a review's append-only `decisions` history. */
+export type PayoutReviewDecisionEntry = {
+  at: string;
+  by: string;
+  action: PayoutReviewDecision['action'] | 'reopened';
+  from: string;
+  to: string;
+  version: number;
+  note: string | null;
+  askRef: string | null;
+};
+
 const TRANSITIONS: Record<PayoutReviewDecision['action'], string[]> = {
-  escalate: ['open'],
-  // From `withheld` too, so a withhold made in error can be undone.
+  // From `cleared` too, so a mistaken clear can be put back on hold before settlement pays it.
+  escalate: ['open', 'cleared'],
+  withhold: ['open', 'escalated', 'cleared'],
   clear: ['open', 'escalated', 'withheld'],
-  withhold: ['open', 'escalated'],
 };
 
 const conflict = (message: string) => new TRPCError({ code: 'CONFLICT', message });
 
-/** A cleared creator is paid by the next settlement run on the 15th; nothing here moves money. */
-export async function decidePayoutReview(input: PayoutReviewDecision, now = new Date()) {
-  const review = await dbWrite.creatorProgramPayoutReview.findUnique({ where: { id: input.id } });
-  if (!review) throw new TRPCError({ code: 'NOT_FOUND', message: `No review ${input.id}` });
+export const decisionHistory = (value: Prisma.JsonValue) =>
+  (Array.isArray(value) ? value : []) as unknown as PayoutReviewDecisionEntry[];
 
-  if (review.evaluations !== input.evaluations)
-    throw conflict(
-      `Review ${review.id} has newer evidence (evaluation ${review.evaluations}); read it again`
-    );
+/**
+ * `decidedBy` is the authenticated caller, never a value from the request. Nothing here moves
+ * money: a cleared creator is paid by settlement.
+ */
+export async function decidePayoutReview(
+  input: PayoutReviewDecision,
+  decidedBy: string,
+  now = new Date()
+) {
+  const review = await dbWrite.creatorProgramPayoutReview.findUnique({ where: { id: input.id } });
+  if (!review || review.userId !== input.userId || review.period !== input.period)
+    throw new TRPCError({
+      code: 'NOT_FOUND',
+      message: `No review ${input.id} for user ${input.userId} in ${input.period}`,
+    });
+
+  if (review.version !== input.version)
+    throw conflict(`Review ${review.id} changed since version ${input.version}; read it again`);
   if (!TRANSITIONS[input.action].includes(review.status))
     throw conflict(`Cannot ${input.action} a review that is ${review.status}`);
 
   const status = { escalate: 'escalated', clear: 'cleared', withhold: 'withheld' }[input.action];
-  // Conditional on what was read, so neither a racing decision nor a re-run adding evidence the
-  // decider never saw can slip in between.
+  const entry: PayoutReviewDecisionEntry = {
+    at: now.toISOString(),
+    by: decidedBy,
+    action: input.action,
+    from: review.status,
+    to: status,
+    version: review.version,
+    note: input.note ?? null,
+    askRef: input.askRef ?? null,
+  };
+  // Conditional on the version read, so no other decision or re-run can land in between.
   const { count } = await dbWrite.creatorProgramPayoutReview.updateMany({
-    where: { id: review.id, status: review.status, evaluations: input.evaluations },
+    where: { id: review.id, userId: input.userId, period: input.period, version: input.version },
     data: {
       status,
       hold: input.action !== 'clear',
       decidedAt: now,
-      decidedBy: input.decidedBy,
-      decisionNote: input.note,
+      decidedBy,
+      decisionNote: input.note ?? null,
       askRef: input.askRef ?? review.askRef,
+      version: { increment: 1 },
+      decisions: [...decisionHistory(review.decisions), entry] as Prisma.InputJsonValue,
     },
   });
   if (!count) throw conflict(`Review ${review.id} changed while deciding it`);
@@ -126,11 +166,7 @@ export async function decidePayoutReview(input: PayoutReviewDecision, now = new 
     name: 'creator-program-payout-review-decision',
     type: 'info',
     reviewId: review.id,
-    userId: review.userId,
-    period: review.period,
-    action: input.action,
-    decidedBy: input.decidedBy,
-    askRef: input.askRef,
+    ...entry,
   });
-  return { id: review.id, status };
+  return { id: review.id, status, version: review.version + 1 };
 }

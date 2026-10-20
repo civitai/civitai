@@ -2618,8 +2618,8 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
-    // JSON `PrepayoutLimits`. Ops-owned with no default in code: until it is set the pre-payout
-    // review records a failed run each day and settlement alerts that the batch was not reviewed.
+    // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code. Unset, the review records
+    // a failed run and settlement alerts.
     PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },
   NEW_ORDER: {

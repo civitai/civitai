@@ -2,13 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPrepayoutReview, type AccountState, type PrepayoutReviewDeps } from '../run';
 import type { PrepayoutLimits } from '../signals';
 
+// Test values only; the real limits live in sysRedis.
 const limits: PrepayoutLimits = {
   counterparty: 1_000,
   singlePayerShare: 0.9,
-  singlePayerAmount: 100_000,
+  singlePayerAmount: 9_999_999,
   payoutJump: 50,
-  batchPayer: 100_000,
+  batchPayer: 9_999_999,
   youngPayerDays: 10,
+  payoutJumpPercentile: 0.5,
+  historyPeriods: 2,
 };
 
 type Rows = {
@@ -56,6 +59,7 @@ function makeDeps(rows: Rows, over: Partial<PrepayoutReviewDeps> = {}) {
     readLimits: async () => limits,
     readCounterpartyMinimum: async () => null,
     getWarnedAt: async () => new Map(),
+    getCarriedUserIds: async () => [],
     loadAccounts: async (ids) =>
       new Map(ids.map((id) => [id, account({ username: `u${id}`, muted: id === 3 })])),
     store,
@@ -166,6 +170,20 @@ describe('runPrepayoutReview', () => {
     expect((await runPrepayoutReview(deps)).error).toBe('after the 14th');
     expect(store.startRun).not.toHaveBeenCalled();
     expect(queries).toEqual([]);
+  });
+
+  it('re-decides a creator withheld last cycle, credited again or not', async () => {
+    const { deps, store } = makeDeps(batchRows, {
+      getCarriedUserIds: async () => [1, 77],
+      loadAccounts: async (ids) => new Map(ids.map((id) => [id, account()])),
+    });
+
+    const outcome = await runPrepayoutReview(deps);
+
+    expect(outcome).toMatchObject({ creditedCount: 3, evaluatedCount: 4 });
+    const flagged = store.saveFlag.mock.calls.map(([f]) => [f.userId, f.signals, f.payoutCents]);
+    expect(flagged).toContainEqual([1, ['withheld-carried'], 5_000]);
+    expect(flagged).toContainEqual([77, ['withheld-carried'], 0]);
   });
 
   it('records a failed run when ClickHouse is unavailable', async () => {

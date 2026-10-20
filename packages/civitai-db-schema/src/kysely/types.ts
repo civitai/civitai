@@ -2717,6 +2717,8 @@ export type CreatorProgramPayoutReview = {
   decidedBy: string | null;
   decisionNote: string | null;
   askRef: string | null;
+  version: Generated<number>;
+  decisions: Generated<unknown>;
 };
 export type CreatorProgramPayoutReviewRun = {
   id: Generated<number>;
