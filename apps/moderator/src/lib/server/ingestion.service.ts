@@ -5,6 +5,7 @@ import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
 import { bustCachedObject } from './cache';
+import { bustAfterWrite } from './bust-after-write';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustProfilePictures } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
@@ -361,8 +362,10 @@ export async function resolveIngestionError({
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  await Promise.all([
-    bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
-    bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
-  ]);
+  await bustAfterWrite('ingestion-error-cache-bust', () =>
+    Promise.all([
+      bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+      bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
+    ])
+  );
 }

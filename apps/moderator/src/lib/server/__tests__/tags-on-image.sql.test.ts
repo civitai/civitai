@@ -15,6 +15,7 @@ vi.mock('../db', async () => {
 vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
 vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn() }));
+vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
 vi.mock('../thumbnail-cache', () => ({
   invalidateThumbnails: vi.fn(async () => {
     h.invalidatedAfter.push(h.sql.length);
@@ -27,6 +28,8 @@ vi.mock('../profile-picture-cache', () => ({
 }));
 
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
+const { bustImageTagCaches } = await import('../cache');
+const { logAxiomError } = await import('../axiom');
 
 const flat = (i: number) => h.sql[i].replace(/\s+/g, ' ').trim();
 
@@ -73,5 +76,18 @@ describe('upsertTagsOnImageNew', () => {
     ]);
 
     expect(h.bustedPictures).toEqual([{ imageIds: [31, 32], after: 2 }]);
+  });
+
+  // The tag rows and the level are committed by then: a Redis failure on the tag caches must neither
+  // fail the write nor skip the thumbnail and avatar refreshes after it.
+  it('completes, and still refreshes thumbnails and avatars, when the tag-cache bust fails', async () => {
+    vi.mocked(logAxiomError).mockClear();
+    vi.mocked(bustImageTagCaches).mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(upsertTagsOnImageNew([{ imageId: 31, tagId: 2 }])).resolves.toBeUndefined();
+
+    expect(h.invalidatedAfter).toEqual([2]);
+    expect(h.bustedPictures).toEqual([{ imageIds: [31], after: 2 }]);
+    expect(logAxiomError).toHaveBeenCalledTimes(1);
   });
 });

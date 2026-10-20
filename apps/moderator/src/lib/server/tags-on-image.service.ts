@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 import { bustImageTagCaches } from './cache';
+import { bustAfterWrite } from './bust-after-write';
 import { invalidateThumbnails } from './thumbnail-cache';
 import { bustProfilePictures } from './profile-picture-cache';
 
@@ -97,7 +98,8 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
       imageIds.map((id) => sql`${id}::int`)
     )}])`.execute(dbWrite);
   } finally {
-    await bustImageTagCaches(imageIds);
+    // Non-throwing, or a Redis failure here would skip the thumbnail and avatar refreshes below.
+    await bustAfterWrite('tag-write-cache-bust', () => bustImageTagCaches(imageIds));
     await invalidateThumbnails(imageIds);
     await bustProfilePictures({ imageIds });
   }
