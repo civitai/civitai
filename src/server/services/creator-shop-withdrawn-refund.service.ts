@@ -278,20 +278,20 @@ export async function refundWithdrawnShopItem(
 
 /**
  * The one lock every run that refunds an item's purchases holds: the withdrawn refund, a
- * moderator's refund and a takedown. Null when it is held elsewhere; `wait` keeps trying for about
+ * moderator's refund and a takedown. Null when it is held elsewhere; `queue` keeps trying for about
  * thirty seconds, for a caller that cannot leave the work to the job.
  */
 export function withShopItemRefundLock<T>(
   shopItemId: number,
   operation: () => Promise<T>,
-  { wait = false }: { wait?: boolean } = {}
+  { queue = false }: { queue?: boolean } = {}
 ) {
   return withDistributedLock(
     {
       key: `creator-shop-withdrawn-refund:${shopItemId}`,
       ttl: 60,
       autoRenew: true,
-      ...(wait ? { retryDelay: 500, maxRetries: 60 } : { maxRetries: 0 }),
+      ...(queue ? { retryDelay: 500, maxRetries: 60 } : { maxRetries: 0 }),
     },
     operation
   );

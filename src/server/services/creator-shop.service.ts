@@ -2464,7 +2464,7 @@ export const takedownCosmeticShopItem = async ({
   // Held from the archive through the buyer refunds. A moderator's or a withdrawn-item refund
   // stamps purchases under this lock, and one stamping between the purchase read and these refunds
   // would refund the same purchase alongside the takedown.
-  const locked = await withShopItemRefundLock(id, archiveAndRefundBuyers, { wait: true });
+  const locked = await withShopItemRefundLock(id, archiveAndRefundBuyers, { queue: true });
   // Not had in time, or Redis is down. A takedown pulls content and must not wait on either, so it
   // runs without the lock, logged: a refund running now may refund a purchase alongside it.
   if (locked === null) {
