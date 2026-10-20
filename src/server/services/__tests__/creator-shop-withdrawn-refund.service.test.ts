@@ -960,7 +960,6 @@ describe('refundShopPurchases', () => {
   const TAKEN_DOWN = 'the item was taken down; the takedown refunds its purchases';
 
   beforeEach(() => {
-    // A live item: nothing owed by a verdict, only what the moderator names.
     itemMeta = { purchases: 0 };
   });
 
@@ -972,7 +971,6 @@ describe('refundShopPurchases', () => {
       sale(CREATOR, 'own'),
       { ...sale(104, 'free', 0), unitAmount: 0 },
     ];
-    // The ledger took less than the row says was paid.
     purchases[1].unitAmount = 1200;
 
     const result = await refund(['p-1', 'p-2', 'p-3', 'own', 'free'], {
@@ -1185,7 +1183,6 @@ describe('refundShopPurchases', () => {
       ['q-1', OTHER, 'failed'],
     ]);
     expect(refundedIds()).toEqual(['p-1-debit', 'p-1-payout']);
-    // History and notification go to the item the purchase belongs to.
     expect(dbMock.dbWrite.$executeRaw.mock.calls.map((call) => call.at(-1))).toEqual([ITEM]);
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({

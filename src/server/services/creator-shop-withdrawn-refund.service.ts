@@ -19,10 +19,11 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withRetries } from '~/server/utils/errorHandling';
 
 /**
- * Refunds the buyers of a Creator Shop item that was withdrawn after it sold: rejected by a
- * moderator, or archived while withheld. Either way the creator's payouts are reversed. The
- * trigger is `meta.withdrawnRefund`, written by the verdict or the archive; this reads it, so
- * the immediate call and the retry job do the same thing.
+ * Refunds the buyers of a Creator Shop item that was withdrawn after it sold (rejected by a
+ * moderator, or archived while withheld), and the purchases a moderator names through
+ * `refundShopPurchases`. A verdict or archive always reverses the creator's payouts; a manual
+ * refund only when `clawback`. The trigger is `meta.withdrawnRefund`; this reads it, so the
+ * immediate call and the retry job do the same thing.
  *
  * Each reversal is the Buzz service's own refund of one transaction, recorded as
  * `refund-<transactionId>`, so a transaction is refunded at most once however often this runs.
@@ -242,7 +243,6 @@ async function settlePurchase(
   return { ...outcome, marked: count > 0, revoked };
 }
 
-/** Appends one entry to the item's history, touching only `history`. */
 async function appendHistoryInPlace(shopItemId: number, entry: CosmeticShopItemHistoryEntry) {
   // One statement touching only `history`: writing back the whole meta read earlier would undo a
   // verdict that landed during the run, marker included.
@@ -496,7 +496,6 @@ const loadPurchases = (ids: string[]) =>
     },
   });
 
-/** Why this purchase can't be refunded here, or null when it can. */
 function refusal(purchase: RefundablePurchase, item: RefundableItem | null, clawback: boolean) {
   if (!item) return 'shop item not found';
   // A pack's members are granted on their own, so there is no single holding to take back.
@@ -536,12 +535,10 @@ async function planLegs(
 }
 
 /**
- * A moderator's refund of chosen shop purchases: the buyer's Buzz back, the payouts too when
- * `clawback`, the cosmetic taken back and the purchase marked refunded. It is the withdrawn-item
- * refund applied to named purchases: the terms are stamped first, so the withdrawn-refund job
- * finishes a purchase a run leaves part done, and a second call refunds nothing twice.
- *
- * `dryRun` moves nothing and reports, per purchase, the legs that would be reversed.
+ * A moderator's refund of named purchases, on the withdrawn-item path. Terms are stamped first, so
+ * the withdrawn-refund job finishes a purchase a run leaves part done (unless a takedown lands
+ * first, which finishes it as a takedown) and a second call refunds nothing twice. `dryRun` moves
+ * nothing.
  */
 export async function refundShopPurchases({
   buzzTransactionIds,

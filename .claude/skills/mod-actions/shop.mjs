@@ -5,9 +5,6 @@
  *
  * Commands:
  *   refund <buzzTransactionId...>     Refund purchases (creatorShop.refundPurchases)
- *
- * Without --writable the server runs a dry run: nothing moves, and each purchase lists the
- * ledger legs that would be reversed.
  */
 
 import { createCli, trpcCall } from './lib.mjs';
@@ -17,7 +14,7 @@ const { positional, flags, writable, fail, required } = cli;
 
 const help = `Usage: node shop.mjs refund <buzzTransactionId...> --reason <text> (--clawback | --no-clawback) [--writable] [--json]
 
-  --reason <text>    Required. Recorded on the item history and in Axiom.
+  --reason <text>    Required. Recorded in Axiom only; the creator can read the item history.
   --clawback         Also reverse the creator's payouts, so the creator pays.
   --no-clawback      Refund the buyer only; the platform pays.
   --writable         Move the money. Without it the server returns a dry run.

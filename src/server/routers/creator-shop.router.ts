@@ -359,7 +359,7 @@ export const creatorShopRouter = router({
   takedownItem: moderatorProcedure
     .input(takedownCosmeticShopItemSchema)
     .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
-  // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout. Dry run by default.
+  // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout.
   refundPurchases: moderatorProcedure
     .input(refundShopPurchasesSchema)
     .mutation(({ input, ctx }) => refundShopPurchases({ ...input, moderatorId: ctx.user.id })),

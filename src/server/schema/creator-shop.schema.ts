@@ -768,7 +768,6 @@ export const takedownCosmeticShopItemSchema = z.object({
 export type RefundShopPurchasesInput = z.infer<typeof refundShopPurchasesSchema>;
 export const refundShopPurchasesSchema = z.object({
   buzzTransactionIds: z.array(z.string().min(1)).min(1).max(50),
-  // Also reverse the payouts, so the creator pays for the refund.
   clawback: z.boolean(),
   reason: z.string().min(1).max(1000),
   dryRun: z.boolean().default(true),

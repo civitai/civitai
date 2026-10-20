@@ -1,11 +1,11 @@
 ---
 name: mod-actions
-description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting. All via Civitai tRPC API."
+description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds. All via Civitai tRPC API."
 ---
 
 # Moderator Actions
 
-Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting.
+Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds.
 
 All scripts use the Civitai tRPC API with Bearer token authentication, ensuring actions go through the proper service layer with full side effects.
 
@@ -317,16 +317,14 @@ node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason 
 |---------|-----|-------------|
 | `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
 
-Dry run unless `--writable`, and the dry run is the server's: it lists each purchase's ledger legs and
-which are already refunded. Re-running refunds nothing twice, so a call that times out is safe to
-repeat. Behaviour and refusals:
-`docs/features/creator-shop.md` → "Refunding a purchase by hand".
+Dry run unless `--writable` (the server's dry run lists each purchase's ledger legs). Re-running is safe.
+Refusals and behaviour: `docs/features/creator-shop.md` → "Refunding a purchase by hand".
 
 ---
 
 ## Global Options
 
-All scripts support:
+All scripts except `shop.mjs` (dry run by default; `--writable` writes) support:
 
 | Flag | Description |
 |------|-------------|
@@ -337,7 +335,7 @@ All scripts support:
 
 ## Safety Notes
 
-- **Always use `--dry-run` first** for destructive/write actions
+- **Always use `--dry-run` first** for destructive/write actions (`shop.mjs`: omit `--writable` first)
 - All actions are logged in the ModActivity table
 - Ban actions invalidate user sessions immediately
 - CSAM reports are submitted to NCMEC — use with extreme care

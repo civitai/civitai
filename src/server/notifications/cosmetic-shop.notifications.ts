@@ -92,7 +92,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: `/user/transactions`,
     }),
   },
-  // Event-driven (created in refundShopPurchases).
+  // Event-driven (created in refundItemPurchases).
   'cosmetic-shop-purchase-refunded': {
     displayName: 'Shop: A purchase was refunded',
     category: NotificationCategory.System,
