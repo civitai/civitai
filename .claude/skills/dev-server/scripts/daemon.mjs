@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -765,14 +766,14 @@ class DevSession {
       worktreeOptIn: skillConfig.worktreeDevFsCache,
     });
 
-    // Merge with current process env (for PATH, etc.)
-    const env = { ...process.env, ...envVars };
+    const env = spawnEnvFor(envVars);
 
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
     this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
+    this.addLog('info', LOCAL_MAIL_LOG);
     this.addLog('info', `Build dir: ${this.distDir}`);
     this.addLog(
       'info',
@@ -1570,9 +1571,7 @@ class AuthHub {
     // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
     // the thing described and the thing handed to the child have to be one object.
     if (!this.spawnEnvCache) {
-      this.spawnEnvCache = this.envPaths.length
-        ? { ...process.env, ...loadEnvChain(this.envPaths) }
-        : process.env;
+      this.spawnEnvCache = spawnEnvFor(this.envPaths.length ? loadEnvChain(this.envPaths) : {});
     }
     return this.spawnEnvCache;
   }
@@ -1665,6 +1664,7 @@ class AuthHub {
     this.readyAt = null;
     this.lastError = null;
     this.addLog('info', `Starting ${this.label} on port ${this.port}: ${this.path}`);
+    this.addLog('info', LOCAL_MAIL_LOG);
 
     // A fresh worktree inherits the primary checkout's apps/<name>/.env, and those point at the
     // production database. Nothing in the start output used to say so, and a moderator remove-click
@@ -1675,7 +1675,7 @@ class AuthHub {
     // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
     // nobody chose. Reporting null for it would read as "no database configured".
     // Only for a process whose env this daemon actually supplies. The auth hub passes an empty
-    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env verbatim —
+    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env plus the mail keys —
     // the line would name the daemon's inherited candidate, say nothing about the file the hub
     // really reads, and stay silent when THAT is the one pointing at production. Saying nothing is
     // the honest answer for the hub.
@@ -1910,6 +1910,12 @@ class AppSession extends AuthHub {
 // is several GB per checkout, so across many worktrees it fills the disk. Off for worktrees unless
 // the skill .env opts back in; a NEXT_DEV_FS_CACHE from the session's own .env chain wins either
 // way. The primary checkout keeps it.
+// Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
+// apps/auth/.env itself) is routed to the catcher only because the keys are set here.
+function spawnEnvFor(envVars) {
+  return { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
+}
+
 function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
   if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
     envVars.NEXT_DEV_FS_CACHE = 'false';
@@ -3256,6 +3262,7 @@ export {
   releaseIfOurs,
   describeDatabaseHost,
   applyDevFsCacheDefault,
+  spawnEnvFor,
   appReservedPorts,
   appSessions,
   checkPath,

@@ -1,10 +1,13 @@
 /**
  * App env files: copy the primary checkout's `.env` files into a worktree.
  *
- * Every worktree gets a full copy of each one — the root `.env` and every per-app `.env` —
+ * Every worktree gets a copy of each one — the root `.env` and every per-app `.env` —
  * so a tree works the same whether it is run through the daemon or through a bare
  * `pnpm` / `prisma` command that reads `.env` itself. Skill credentials
  * (`.claude/skills/*​/.env`) are `skill-env.mjs`'s and are left out here.
+ *
+ * EMAIL_* lines are rewritten to the local mail catcher's on the way in (`local-mail.mjs`), so a
+ * copy never carries real mail credentials.
  *
  * A copy is a snapshot: an edit to the primary's file later does not reach the tree.
  * `wt env <tree> --refresh` re-copies every file the primary holds a newer version of.
@@ -13,9 +16,10 @@
  */
 
 import { execFileSync } from 'child_process';
-import { copyFileSync, existsSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, posix } from 'path';
 import { samePath } from './paths.mjs';
+import { routeEnvTextToCatcher } from './local-mail.mjs';
 
 // `.env`, `.env.local`, `.env.development`, … — not examples or hand-made backups.
 const ENV_NAME = /^\.env(\.[\w.-]+)?$/;
@@ -54,6 +58,10 @@ export function findAppEnvFiles(primary) {
     .sort();
 }
 
+function copyEnvFile(from, to) {
+  writeFileSync(to, routeEnvTextToCatcher(readFileSync(from, 'utf8')));
+}
+
 /**
  * Copy the primary's app env files into `target`.
  *
@@ -75,12 +83,12 @@ export function syncAppEnv(primary, target, { refresh = false } = {}) {
     }
     if (existsSync(to)) {
       if (refresh && statSync(from).mtimeMs > statSync(to).mtimeMs) {
-        copyFileSync(from, to);
+        copyEnvFile(from, to);
         result.refreshed.push(rel);
       } else result.kept.push(rel);
       continue;
     }
-    copyFileSync(from, to);
+    copyEnvFile(from, to);
     result.copied.push(rel);
   }
   return result;

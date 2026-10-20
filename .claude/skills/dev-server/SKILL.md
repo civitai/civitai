@@ -240,7 +240,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 
 A session layers its `.env` files — the primary checkout's as the base, the worktree's own on top —
 and then applies a per-service **overlay** on that. The overlay only restates the keys for the
-services it names, so nothing else in the chain moves.
+services it names, so nothing else in the chain moves. Last, the daemon forces the local mail
+catcher's `EMAIL_*` into every env it spawns (main app, auth hub, sibling apps), so a `.env` value
+for those keys never wins.
 
 **No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
 so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
@@ -278,7 +280,7 @@ repoint the app at a hub that is not running). `mode: dev` therefore never means
 production".
 
 ⚠️ **Apps have no env modes.** `--prod`/`--dev` apply to the main app only; an app runs on its `.env`
-chain with no overlay. `start --app <name> --prod db` is refused rather than silently ignored.
+chain with no overlay (apart from the forced local-mail `EMAIL_*`). `start --app <name> --prod db` is refused rather than silently ignored.
 
 **Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
 service is unreliable:
@@ -596,7 +598,7 @@ The hub works behind the RGB proxy too. When you browse dev at `https://civitai-
 
 ### Logging in
 
-- **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
+- **Email magic-link** lands in the local Mailpit inbox (http://localhost:1080): the daemon forces every app's `EMAIL_*` to the catcher, so start it with `docker compose -f docker-compose.base.yml up -d mailpit`.
 - **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
 - Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
 
@@ -719,7 +721,8 @@ What's already handled:
   ```
 
 - **Every app `.env`, on `wt new`.** The root `.env` and each `apps/*/.env` (any untracked
-  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, so a tree also
+  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, except that
+  every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, so a tree also
   works for a bare `pnpm`/`prisma` command that reads `.env` itself. A copy is a snapshot: when the
   primary's file changes, `wt env <worktree> --refresh` re-copies every one the primary edited more
   recently, over the tree's version. Without `--refresh`, existing files are never touched.
@@ -739,7 +742,7 @@ What's already handled:
   is precisely what must not exist in a public repository.
 
 
-- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything, so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
+- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything (with the catcher's `EMAIL_*`), so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 
   Before this they were **not** merged — the worktree file replaced the primary outright, so a two-key override file started the server with no `DATABASE_URL` and no secrets, failing in a way that looked nothing like the edit that caused it.
 
