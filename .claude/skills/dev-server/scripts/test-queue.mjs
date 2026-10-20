@@ -211,7 +211,12 @@ export const DEFAULT_CONCURRENCY = 1;
 // ~4.7 GB. `null` is still the explicit uncap (`test config --max-workers none`).
 export const DEFAULT_MAX_WORKERS = 4;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
-const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+// 60, not 30 (Justin, 2026-10-20). A full unit suite on the shared desk under load does not fit in
+// 30 minutes: every queued unit run from 10-19 21:41Z through 10-20 14:14Z was killed at the cap,
+// each throwing away 2-3 core-hours for no result, and agents went around the queue. A run that
+// finishes late costs the same CPU as one killed at the cap, and only one of them returns an answer.
+// Tune with TEST_RUN_TIMEOUT_MIN or `test config --run-timeout <min>`.
+export const DEFAULT_RUN_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 30 * 1000;
 const MAX_LOG_LINES = 2000;
 const KEEP_FINISHED = 50;
@@ -375,6 +380,27 @@ export function workerCapArgv(maxWorkers, args, ceiling = null) {
  * exists to impose. `concurrency` already rejects the same input, because its normalizer refuses
  * null; only this flag was asymmetric.
  */
+/**
+ * A run timeout in milliseconds: a positive integer, or it throws. The queue checks it on every
+ * deadline sweep, so `0` or NaN would kill every running run on the next tick.
+ */
+export function normalizeRunTimeoutMs(value) {
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms < 1) {
+    throw new Error(`run timeout must be a positive whole number of milliseconds, got ${JSON.stringify(value)}`);
+  }
+  return ms;
+}
+
+/** `--run-timeout <minutes>` as typed, in milliseconds. Whole minutes only, at least 1. */
+export function parseRunTimeoutFlag(raw) {
+  const text = String(raw ?? '').trim();
+  if (!/^\d+$/.test(text) || Number(text) < 1) {
+    throw new Error(`--run-timeout takes whole minutes (>= 1), got ${JSON.stringify(raw ?? '')}`);
+  }
+  return Number(text) * 60 * 1000;
+}
+
 export function parseMaxWorkersFlag(raw) {
   // A MISSING operand is an error, not an uncap. `test config 4 --max-workers` is a truncated
   // command, and reading it as "remove the cap" is the same silent uncap this function exists to
@@ -627,7 +653,7 @@ export class TestQueue {
     this.startRun = startRun;
     this.now = now;
     this.abandonAfterMs = abandonAfterMs;
-    this.runTimeoutMs = runTimeoutMs;
+    this.runTimeoutMs = normalizeRunTimeoutMs(runTimeoutMs);
     this.killGraceMs = killGraceMs;
     this.waitCommand = waitCommand;
 
@@ -807,6 +833,16 @@ export class TestQueue {
   setMaxWorkers(value) {
     this.maxWorkers = normalizeMaxWorkers(value);
     return this.maxWorkers;
+  }
+
+  /**
+   * Unlike the worker cap, this reaches runs ALREADY running: the deadline is checked against the
+   * current value on every sweep. Raising it saves a run that would have been killed; lowering it
+   * below a run's age kills that run on the next sweep.
+   */
+  setRunTimeoutMs(value) {
+    this.runTimeoutMs = normalizeRunTimeoutMs(value);
+    return this.runTimeoutMs;
   }
 
   /**

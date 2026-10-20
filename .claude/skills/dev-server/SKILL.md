@@ -372,8 +372,11 @@ Things worth knowing before you rely on it:
   holding nothing. The slot frees when the child process exits.
 - **A queued run whose caller stopped polling is dropped** after 10 minutes, so a dead agent cannot
   hold the queue. `test wait` polls every 2s, so a live waiter never trips this.
-- **A run that overruns 30 minutes is killed** and reported as `timeout`. If the kill produces no
-  exit, the slot is released anyway after a grace period rather than held forever.
+- **A run that overruns 60 minutes is killed** and reported as `timeout`. If the kill produces no
+  exit, the slot is released anyway after a grace period rather than held forever. Tune it with
+  `TEST_RUN_TIMEOUT_MIN` in the skill's `.env` or live with `test config --run-timeout <min>`;
+  the live change reaches runs already running. (30 until 2026-10-20: a full unit suite on a busy
+  shared box overran it on every run, and each kill threw the run away.)
 - **A daemon restart drops the queue.** `test wait` treats an unknown run id as terminal and exits
   nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
   you.
