@@ -789,7 +789,7 @@ What's already handled:
   port, it warns and quietly moves to another, so a session started onto a held port would report a
   `url` and pass a health check against a server it does not own.
 
-Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
+Fresh worktrees need a real `pnpm install` (`wt new` does it) and `git submodule update --init event-engine-common`. Never junction `node_modules`, a package's `node_modules` or `event-engine-common` into the primary checkout: `git worktree remove` deletes through a junction, with or without `--force`. If one exists, remove the link itself first with `cmd /c rmdir <link>`.
 
 ### Cache cannot be shared between worktrees
 
