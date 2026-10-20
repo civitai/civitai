@@ -186,6 +186,7 @@ Approval grants the creator their own copy, but owning a creator cosmetic is not
 - A creator edit reads the listing from the primary and writes it under a row lock, refusing with a conflict if a verdict (or anything but a sale) changed it since the read, so it cannot overwrite a verdict or `displayApproved`.
 - A moderator deleting a withheld listing sets `CosmeticFlag.Withheld` on its cosmetic first, so it stays withheld with no listing left; deleting an approved listing leaves holders wearing it.
 - `userCosmeticCache` also drops withheld cosmetics on read, for rows worn before unequipping existed.
+- `cosmeticEntityCaches` does the same for content decorations, so one placed on content before unequipping existed stops showing.
 - `user.getCosmetics` returns `withheld` per item, and the inventory shows "In review, not equipable" instead of Equip.
 
 ## Changelog
