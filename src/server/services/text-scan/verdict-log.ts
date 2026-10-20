@@ -24,6 +24,7 @@ export type ScanVerdict = {
   poi?: boolean;
   minor?: boolean;
   scam?: boolean;
+  csam?: boolean;
   blocked?: boolean;
   /** The system's own labels: XGuard triggered labels, Clavata matches, text scan triggered labels. */
   tags?: string[];

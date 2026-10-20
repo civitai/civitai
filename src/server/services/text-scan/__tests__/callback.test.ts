@@ -9,6 +9,7 @@ vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
+  getTextScanCsamMode: vi.fn(async () => 'off'),
 }));
 vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
   ...(await importOriginal<typeof Adapters>()),
@@ -19,7 +20,8 @@ const { handleTextScanCallback } = await import('~/server/services/text-scan/cal
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { getWorkflow } = await import('@civitai/client');
-const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
+await import('~/server/services/text-scan/profiles/chat-message.profile');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 
 const load = vi.fn();
@@ -108,6 +110,7 @@ describe('handleTextScanCallback', () => {
         entityId: 7,
         workflowId: 'wf-1',
         outcome: expect.objectContaining({ nsfwLevel: 8 }),
+        promptIds: { base: 1, nsfw: 2 },
       })
     );
   });
@@ -876,5 +879,45 @@ describe('handleTextScanCallback with some segments unusable', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+});
+
+describe('a chat window verdict in csam review', () => {
+  it('reloads an older account’s window instead of dropping it as gone', async () => {
+    vi.mocked(getTextScanCsamMode).mockResolvedValue('review');
+    dbMock.dbWrite.chatMessage.findUnique.mockResolvedValue({
+      id: 30,
+      chatId: 4,
+      userId: 5,
+      createdAt: new Date('2026-10-01T00:00:00Z'),
+      editedAt: null,
+      contentType: 'Markdown',
+      deletedAt: null,
+    });
+    dbMock.dbWrite.chatMessage.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.chatMessage.findMany.mockResolvedValue([{ id: 30, content: 'neutral chat' }]);
+    dbMock.dbWrite.user.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
+    const chatMeta = {
+      ...metadata,
+      entityType: 'ChatMessage',
+      entityId: 30,
+      emEntityType: 'ChatMessage',
+      externalId: 'ts-ChatMessage-30-abc-0-0',
+      labels: ['csam'],
+      promptIds: { base: 1, csam: 7 },
+    };
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ csam: { detected: true, reason: 'test' } }, undefined, chatMeta) as any
+    );
+
+    await handleTextScanCallback({ workflowId: 'wf-9', status: 'succeeded' });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'entity gone before callback' })
+    );
+    expect(adapter.applyTextScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: 30, promptIds: { base: 1, csam: 7 } })
+    );
   });
 });

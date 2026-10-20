@@ -25,17 +25,23 @@ import {
  *
  * `image` is the image the block is held by (for a block of several, the most mature —
  * `mostMatureReviewImage`). `explain: false` blurs without the overlay, for a thumbnail too small
- * to carry it whose row opens the full-size review.
+ * to carry it whose row opens the full-size review. `toggle` is for a thumbnail too small to carry
+ * the overlay that has NO larger view to reveal it in (the sub-listing queue): it blurs without
+ * the overlay and puts the site's own compact show / hide control (`ImageGuard2.BlurToggle`) in
+ * the corner instead — outside the `inert` subtree, so it stays clickable while the image is
+ * hidden.
  */
 export function ReviewMediaReveal({
   image,
   children,
   explain = true,
+  toggle = false,
   testId,
 }: {
   image: { imageId: number; nsfwLevel: number } | null | undefined;
   children: ReactNode;
   explain?: boolean;
+  toggle?: boolean;
   testId?: string;
 }) {
   // Optional: a surface rendered outside the flags provider reads as civitai.com (blur), never
@@ -53,23 +59,32 @@ export function ReviewMediaReveal({
             agree, or it would show what this wrapper decided to blur. */}
         <ImageGuard2
           image={{ id: image.imageId, nsfwLevel: getHighestBrowsingLevelBit(image.nsfwLevel) }}
-          explain={explain}
+          explain={explain && !toggle}
         >
           {(shown) => (
-            // 🔴 `inert` WHILE HIDDEN, NOT JUST A BLUR. `filter` and `pointerEvents` stop the eye
-            // and the mouse, not the keyboard: a focusable child (a screenshot tile, a lightbox
-            // button) stayed reachable by Tab, and Enter opened its full-size viewer — a portal
-            // outside this blur — so the reveal could be bypassed without clicking Show. `inert`
-            // removes the subtree from focus, pointer targeting and the accessibility tree
-            // (which is why there is no `aria-hidden`). React 18 has no `inert` prop, so it is
-            // set as a plain attribute: '' = present.
-            <div
-              data-revealed={shown ? 'true' : 'false'}
-              {...(shown ? {} : { inert: '' })}
-              style={shown ? undefined : { filter: 'blur(24px)', pointerEvents: 'none' }}
-            >
-              {children}
-            </div>
+            <>
+              {toggle && (
+                <ImageGuard2.BlurToggle
+                  className="absolute left-1 top-1 z-10"
+                  size="sm"
+                  data-testid={testId ? `${testId}-toggle` : undefined}
+                />
+              )}
+              {/* 🔴 `inert` WHILE HIDDEN, NOT JUST A BLUR. `filter` and `pointerEvents` stop the
+                  eye and the mouse, not the keyboard: a focusable child (a screenshot tile, a
+                  lightbox button) stayed reachable by Tab, and Enter opened its full-size viewer
+                  — a portal outside this blur — so the reveal could be bypassed without clicking
+                  Show. `inert` removes the subtree from focus, pointer targeting and the
+                  accessibility tree (which is why there is no `aria-hidden`). React 18 has no
+                  `inert` prop, so it is set as a plain attribute: '' = present. */}
+              <div
+                data-revealed={shown ? 'true' : 'false'}
+                {...(shown ? {} : { inert: '' })}
+                style={shown ? undefined : { filter: 'blur(24px)', pointerEvents: 'none' }}
+              >
+                {children}
+              </div>
+            </>
           )}
         </ImageGuard2>
       </div>

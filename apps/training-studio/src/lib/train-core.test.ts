@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { cardByType } from '$lib/data/trainingModels';
 import {
   continueTraining,
   continueTrainingWhatIf,
@@ -145,5 +146,30 @@ describe('custom base model', () => {
     ).rejects.toThrow(/runs\[1\]\.customModel/);
     expect(getResource).not.toHaveBeenCalled();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('retired base', () => {
+  const wan21 = cardByType('wan')!.versions.find((v) => v.modelVariant === '2.1')!;
+  const hunyuan = cardByType('hunyuan')!.versions[0]!;
+  const wanRun = (model: string): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'wan',
+    modelVariant: '2.1',
+    model,
+  });
+
+  it('refuses a run on the Hunyuan base, which the orchestrator trains as Wan 2.1', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(submitTrainingBatch(client, [wanRun(hunyuan.air)])).rejects.toThrow(
+      /runs\[0\]\.model/
+    );
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('still submits a Wan 2.1 run', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
+    await submitTrainingBatch(client, [wanRun(wan21.air)]);
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
   });
 });

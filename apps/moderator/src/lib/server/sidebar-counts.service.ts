@@ -16,6 +16,7 @@ import { countSiteAppeals } from './site-appeals.service';
 import { siteAppealCountKey } from '$lib/site-appeals';
 import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingCsamHolds } from './csam-holds.queries';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getMinorFlagAppealGroups,
@@ -50,6 +51,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppealGroups,
     heldDetections,
     strikeReview,
+    csamTextHolds,
     siteAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -94,6 +96,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getRedetectedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
+    bounded(countPendingCsamHolds),
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
     // only these badges.
     bounded(countSiteAppeals),
@@ -118,6 +121,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
       : {}),
     ...(heldDetections != null ? { heldDetections } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
+    ...(csamTextHolds != null ? { csamTextHolds } : {}),
     ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

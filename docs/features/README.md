@@ -12,6 +12,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | NSFW Filtering | [docs/features/nsfw-filtering.md](nsfw-filtering.md) |
 | Image Rating and Visibility | [docs/features/image-rating.md](image-rating.md) |
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
+| CSAM text holds queue (moderator app) | [docs/features/text-scan-csam-holds.md](text-scan-csam-holds.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
@@ -27,6 +28,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Civitai Link | [docs/features/civitai-link.md](civitai-link.md) |
 | App Store sub-listings (items inside an app as store cards) | [docs/features/app-store-sub-listings.md](app-store-sub-listings.md) |
 | Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](generator-model-onboarding.md) |
+| Turbo LoRAs and the Turbo picker | [docs/features/recommended-generation-settings.md](recommended-generation-settings.md) |
 | Batch post scheduling and the post planner                   | [docs/features/batch-post-scheduling.md](batch-post-scheduling.md)           |
 | Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
 | Official articles (`isOfficial`, the Civitai Official tag)   | [docs/features/official-articles.md](official-articles.md)                   |

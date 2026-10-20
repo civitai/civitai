@@ -13,6 +13,7 @@ import { articleBody } from './article-body';
 import { cappedText } from './html-to-text';
 import { loadItemReports } from './report-queue-load';
 import { parseQueryKeys } from './query';
+import { usersByIds } from './users.service';
 import { z } from 'zod';
 import type { ModeratorReportRow } from './reports.service';
 import { ARTICLE_STATUS_NOTES } from '$lib/articles';
@@ -302,7 +303,11 @@ export async function collectionImages(id: number, page: number) {
     page = last;
     batch = await at(page);
   }
-  return { ...batch, page, perPage };
+  // A collection's images span posters, and a removal can strike every one of them: the page names
+  // them so the strike box can.
+  const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
+  const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
+  return { ...batch, owners, page, perPage };
 }
 
 async function collectionItem(id: number, imgPage: number) {

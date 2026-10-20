@@ -36,7 +36,8 @@ import {
  *   path, and record what WOULD have been blocked. Never rejects, never files a report, never emits
  *   an abuse alert, never counts toward a mute.
  * - `app-blocks-shared-data-moderation-enforce` (ENFORCE): scan inline before the write, and reject
- *   a hit with the same consequences as a `title`/`body` hit.
+ *   a hit — on the legacy surface with the same consequences as a `title`/`body` hit; the document
+ *   store refuses it and raises the block alert, filing no Report.
  *
  * 🔴 ENFORCE IMPLIES SCAN. With enforce on and shadow off, the scan still runs (inline) and still
  * records its hits and its denominator — otherwise turning shadow off after the enforce flip would
@@ -46,6 +47,12 @@ import {
  * shadow-mode scans. So the modes are
  * `off` (both off — no scan, no record, behaviour identical to before this existed), `shadow`
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
+ *
+ * Both shared-write surfaces follow the mode: the legacy shared-storage router
+ * (`apps-shared.router.ts`) and the document store's REST layer (`doc-store-api.ts`). Both run
+ * their shadow scans through `scheduleSharedDataShadow` and decide which enforce hit refuses a write
+ * through `enforcedBlockingHit`. What an enforce refusal then costs the writer (report, alert) is
+ * still decided by each surface.
  *
  * ## Evaluation — per APP, not per user
  *
@@ -320,7 +327,8 @@ export function blockingHit(
  * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
  * enforced until that flag flips. Otherwise enforcing a `data` scan would enforce the pattern list on
  * `data` while the same row's title is only recorded. The flag is read only when a pattern hit exists.
- * Shared by the legacy shared-storage router and the document store, so the two cannot diverge.
+ * Shared by the legacy shared-storage router and the document store, so the two cannot diverge on
+ * which hit refuses a write.
  */
 export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
   const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
