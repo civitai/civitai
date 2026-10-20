@@ -90,51 +90,68 @@ and flip order.
 ## Phase 1 — Schema (expand)
 
 - [x] `CREATE EXTENSION ltree` applied to prod (2026-10-19, in Phase 0)
-- [ ] ltree present on dev cnpg, the CI Postgres service (`lint.yml`) and local docker-compose
-      before the migration runs there
-- [ ] DDL from the plan doc: `CommentV3` (ltree `path`, generated `rootId`/`depth`, `replyToId`,
+- [ ] ltree on dev cnpg, the CI Postgres service (`lint.yml`) and local docker-compose: the
+      migration opens with `CREATE EXTENSION IF NOT EXISTS ltree` (a trusted extension, so the
+      application role can create it); confirm on the dev apply that the dev role may
+- [x] DDL from the plan doc: `CommentV3` (ltree `path`, generated `rootId`/`depth`, `replyToId`,
       `deletedAt`, FK to `CommentTopic`, `parentId ON DELETE RESTRICT`, CHECKs), `CommentTopic`
-      (partitioned, see the 2026-10-20 item below),
-      `CommentV3Reaction`, `CommentV3Report`; `CommentEntityType` includes `crucible` **(review)**
-- [ ] `CommentMute` (`@@id([userId, commentId])`, FK to `CommentV3` CASCADE, `@@index([commentId])`)
+      (partitioned, see the 2026-10-20 item below), `CommentV3Reaction`, `CommentV3Report`;
+      `CommentEntityType` includes `crucible` — migration `20261110120000_comment_v3_schema`
+      (2026-10-20) **(review)**
+- [x] `CommentMute` (`@@id([userId, commentId])`, FK to `CommentV3` CASCADE, `@@index([commentId])`)
       and `CommentTopicMute` (`@@id([userId, entityType, entityId])`) — two tables, because a
-      nullable PK column is illegal in Postgres
-- [ ] `commentv3_set_path` BEFORE INSERT trigger fills `path`; `rootId`/`depth` are
+      nullable PK column is illegal in Postgres (same migration)
+- [x] `commentv3_set_path` BEFORE INSERT trigger fills `path`; `rootId`/`depth` are
       `GENERATED ALWAYS … STORED NOT NULL` from it, as in Koen's draft (a 2026-10-16 move into the
       trigger was reverted 2026-10-19 — plan blocker 6) **(review)**
-- [ ] Index set from the plan doc (top ×3 — **Newest leads on `createdAt`, `id` is the tiebreak,
+- [x] Index set from the plan doc (top ×3 — **Newest leads on `createdAt`, `id` is the tiebreak,
       because v1 rows take new ids (review, 2026-10-19)** — entity, replies ×2 with `hidden` second
       and the newest one on `(createdAt, id)`, `(rootId, depth)`, GiST `path`, `(userId, id DESC)`,
       `legacyV1Id` unique partial,
       **`replyToId` partial — without it every hard-delete scans the table (review, benchmarked)**)
-- [ ] Shared sequence `comment_shared_id_seq`: seed past `max(CommentV2.id, Comment.id)`, re-point
-      `Comment` and `CommentV2` id defaults at it
-- [ ] Triggers: `CommentTopic.commentCount` (counted set = ALL rows incl. hidden/self, matching
-      today's `update_thread_comment_count`), reaction-count port of
-      `update_comment_reaction_count`
-- [ ] **(review, 2026-10-20)** `CommentTopic` is `PARTITION BY LIST ("entityType")`: one partition
+- [x] Shared sequence `comment_shared_id_seq`: seed past `max(CommentV2.id, Comment.id)`, re-point
+      `Comment` and `CommentV2` id defaults at it (same migration; the seed runs at apply time)
+- [x] Triggers: `CommentTopic.commentCount` (`commentv3_topic_comment_count`; counted set = ALL
+      rows incl. hidden/self, matching today's `update_thread_comment_count`; unlike it, the
+      decrement clamps at 0), reaction-count port `commentv3_reaction_count`
+- [x] **(review, 2026-10-20)** `CommentTopic` is `PARTITION BY LIST ("entityType")`: one partition
       per enum value, each with an `ON DELETE CASCADE` FK to its entity table (`ComicChapter (id)`,
       `app_listings (serial_id)`); the migration loops over the enum and fails on a missing
-      mapping. On the dev apply: re-run the reply-tree cascade from the entity side under
+      mapping (same migration)
+- [ ] On the dev apply: re-run the reply-tree cascade from the entity side under
       `parentId RESTRICT`; mirror a comment insert racing an entity delete (the old-side write
       must not fail, and entity delete → `Thread` → mirror delete must not collide with the
-      partition cascade in the same statement)
-- [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
+      partition cascade in the same statement); confirm `\d "Image"` lists the partition FK
+- [x] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
       `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
-      `CommentTopic` declared once (`@@id([entityId, entityType])`), not per partition;
-      `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
-      to `string` and `rootId`/`depth` to select-only **(review)**
-- [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`
-      (**deploy regenerated client first**, then apply enum migration — expand/contract rule) —
-      only if comments have not yet cut over to text-scan (`text-scan/clavata-cutover.ts`)
-- [ ] `entity-moderation.ts` consumes the `CommentV3` JobQueue entity type (same condition)
-- [ ] **(review)** text-scan: `CommentV3` profile + entity type in `text-scan/mode.ts`, `types.ts`,
-      `retention.ts`; verdict/retention ledgers alias old `Comment` ids via `legacyV1Id`
-- [ ] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
-      D8 this is the only thing that maintains `updatedAt` on them
-- [ ] `pnpm run db:generate` + `pnpm run db:check-generated` clean, and `db:moderator:pull`
-      tolerates the 13 `CommentTopic` partition children
-- [ ] Migration SQL written, committed, **applied manually** (never `prisma migrate deploy`)
+      `CommentTopic` declared once (`@@id([entityId, entityType])`), not per partition. prisma-kysely
+      2.3 drops Unsupported columns outright, so `src/server/db/kyselyDb.ts` exports
+      `kyselyV3Read`/`kyselyV3Write` (`withTables`) that add `path` as select-only `string` and
+      narrow `rootId`/`depth` to select-only; the shared clients keep the generated `DB` that the
+      `@civitai/db-queries` signatures are typed against **(review)**
+- [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`: migration
+      `20261111120000_comment_v3_moderation_trigger` is written (2026-10-20), kept separate because
+      the enum value is expand/contract (**deploy regenerated client first**, then apply). Open:
+      apply it with the Phase 2 consumer below, and only if comments have not yet cut over to
+      text-scan (`text-scan/clavata-cutover.ts`); record the cutover answer here
+- [ ] **(moved to Phase 2)** `entity-moderation.ts` consumes the `CommentV3` JobQueue entity type:
+      its flagged path files a `Report` through `ReportEntity`, so it needs the v3 report plumbing
+      and a Kysely-backed selector (no Prisma delegate, D8). The scam auto-mute cleanup for v3
+      comments and the CommentV3 cases in `csam-hold-decision.ts` and `scam.adapter.ts` wait for
+      the Phase 2 service too
+- [ ] **(moved to Phase 2)** text-scan: `CommentV3` profile + entity type in `text-scan/mode.ts`,
+      `types.ts`, `retention.ts`, a `clavata-cutover.ts` target, `SCAM_ENTITY_TYPES` with a v3
+      cleanup, and the `csam-hold-decision.ts` removal case. Ships with the v3 service: an entity
+      type with a profile but no adapter records a scam verdict as acted on and acts on nothing
+      (2026-10-20 review) **(review)**
+- [ ] verdict/retention ledgers alias old `Comment` ids via `legacyV1Id` (Phase 3, with the v1 copy)
+- [x] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
+      D8 this is the only thing that maintains `updatedAt` on them (generated)
+- [x] `pnpm run db:generate` clean (2026-10-20)
+- [ ] `pnpm run db:check-generated` clean on the PR, and `db:moderator:pull` tolerates the 13
+      `CommentTopic` partition children (dev apply)
+- [ ] Migration SQL written and committed (2026-10-20); **applied manually** to dev, then prod
+      (never `prisma migrate deploy`)
 
 **Gate:** new tables live and empty in prod; client deployed knowing all new types.
 
@@ -161,7 +178,8 @@ backfill to race.
       writes `Thread`/`CommentV2` directly), `scam-cleanup.service.ts` raw hides, ban
       `removeComments`, `block-hide-comments.service.ts`, `restore-from-tos.ts`, the DB cascades
       (model → v1 comments, v1 parent → replies, `Thread` → `CommentV2`, account deletion)
-- [ ] v3 service module on `kyselyRead`/`kyselyWrite` (`src/server/db/kyselyDb.ts`), `path`
+- [ ] v3 service module on `kyselyV3Read`/`kyselyV3Write` (`src/server/db/kyselyDb.ts`; the plain
+      `kyselyRead`/`kyselyWrite` have no `path` column), `path`
       operations as `sql` fragments, transactions through the Kysely client (D8); `test:lint-rules`
       run on every transaction change; Newest/Oldest keyset cursor is the `(createdAt, id)` pair
       compared as a row value, for top-level pages and reply pages alike
@@ -169,7 +187,9 @@ backfill to race.
 - [ ] `toggleThreadMute` → `CommentMute`, `toggleSectionMute` → `CommentTopicMute` (both v2 controls
       from PR #4524; the section control gains the ability to mute a comment-less entity)
 - [ ] Entity hard-delete paths (image, post, article, bounty, model, account deletion) seen to
-      cascade through the partition FK into `CommentTopic` and `CommentV3` on dev **(review)**
+      cascade through the partition FK into `CommentTopic` and `CommentV3` on dev; the account
+      path tombstones the user's parented comments before the row delete, or `parentId RESTRICT`
+      rejects it (D6) **(review)**
 - [ ] CDC provisioned **before** enabling: `public.CommentV3` in event-engine table subscriptions +
       `postgres.CommentV3` Kafka topic created (dedupe against old handlers during overlap)
 - [ ] Deployed to production; new comments/reactions/reports visibly landing in both sides, zero
@@ -183,7 +203,9 @@ CommentV3; the live edge is being maintained.
 Runs under live dual-write, so every copy job uses skip-existing semantics
 (`ON CONFLICT (id) DO NOTHING` for v2, `ON CONFLICT ("legacyV1Id") DO NOTHING` for v1 — v1 rows
 take new ids, so `id` never conflicts **(review)**; a v1 row the mirror already copied keeps the
-id the mirror gave it; a mirrored row is always at least as fresh as the copy):
+id the mirror gave it; a mirrored row is always at least as fresh as the copy). `CommentV3`
+carries 11 indexes, the GiST one the costliest to maintain: consider dropping `commentv3_path_gist`
+and `commentv3_root_depth` for the load and rebuilding them after it:
 
 - [ ] v2 comment copy job: `threadId → (entityType, entityId)` via root chain; `parentId` = thread's
       `commentId`; **inserted in depth order** so the path trigger finds each parent (`rootId`/

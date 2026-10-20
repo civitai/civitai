@@ -27,8 +27,10 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
    rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
 8. The v3 code is **Kysely, not the Prisma client** (added 2026-10-19, Briant): the v3 service,
    the backfill jobs and the app-level writes that accompany the trigger mirror run on the main
-   app's `kyselyRead`/`kyselyWrite` (`src/server/db/kyselyDb.ts`, already used by five services),
-   with `path` operations as `sql` fragments in the query builder. The tables are still declared
+   app's Kysely clients (`src/server/db/kyselyDb.ts`, already used by five services) —
+   `kyselyV3Read`/`kyselyV3Write` wherever `path`, `rootId` or `depth` is touched, since they add
+   the `path` type and make the generated columns select-only — with `path` operations as `sql`
+   fragments in the query builder. The tables are still declared
    in `schema.full.prisma`, because the Kysely `DB` types are generated from it; nothing calls the
    Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
 
@@ -149,8 +151,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
    `GENERATED ALWAYS … STORED` column that `20240119204734_muted_at_trigger` replaced the next day)
    and the fact that Prisma and Kysely type a generated column as writable. Reverted 2026-10-19:
    the `muted` precedent does not apply — it was reverted because the app writes `muted` directly,
-   and `rootId`/`depth` have no legitimate writer — and under decision 8 the Kysely type override
-   declares both columns select-only, which closes the type gap. A generated column is the only
+   and `rootId`/`depth` have no legitimate writer — and under decision 8 the
+   `kyselyV3Read`/`kyselyV3Write` handles type both columns select-only, which closes the type gap. A generated column is the only
    form Postgres itself refuses to let any writer desync from `path`, and it follows `path` under
    an UPDATE, which the INSERT-only trigger would not. Declare both `NOT NULL` explicitly (Postgres
    does not infer it for a generated column, and the drift tool compares nullability). `nlevel`,
@@ -380,7 +382,7 @@ resolution chain, no second table on the read path. The DDL is authoritative (lt
 `Unsupported(...)` in Prisma — see the notes below):
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS ltree;  -- installed on prod 2026-10-19; dev, CI and local still need it
+CREATE EXTENSION IF NOT EXISTS ltree;  -- installed on prod 2026-10-19; elsewhere the migration creates it (trusted extension)
 
 CREATE TYPE "CommentEntityType" AS ENUM (
   'model', 'image', 'post', 'article', 'review', 'bounty', 'bountyEntry',
@@ -529,10 +531,11 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   1.3 in `public`) and has to exist on every other database the migration runs against (dev, the
   CI Postgres service, local docker-compose). The schema declares the column as
   `Unsupported("ltree") @default(dbgenerated())` for type generation only (decision 8: no Prisma
-  delegate touches the table); the generated Kysely type for it is overridden to a string, and
-  path operations (`@>`, `<@`, `nlevel`, `subltree`) are `sql` fragments in the query builder.
-  The generated `rootId`/`depth` integers are ordinary typed columns (select-only in the same
-  override) and are what the hot queries use — a performance split, not a client workaround. The schema-drift tool skips
+  delegate touches the table); prisma-kysely omits the column, so the v3 Kysely handles add it as
+  a select-only string (_Phase 1_), and path operations (`@>`, `<@`, `nlevel`, `subltree`) are
+  `sql` fragments in the query builder. The generated `rootId`/`depth` integers are ordinary typed
+  columns (select-only on the same handles) and are what the hot queries use — a performance
+  split, not a client workaround. The schema-drift tool skips
   `Unsupported` fields silently (its type regex rejects them), so `path`'s nullability is not
   drift-checked. Debezium emits the column as a string.
 - **`clubPost` is NOT in the enum** (it was in Koen's draft) — clubs are dead code and their
@@ -566,10 +569,11 @@ model CommentV3Reaction {
   userId    Int
   user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   reaction  ReviewReactions
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  createdAt DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@unique([commentId, userId, reaction])
+  @@index([userId])
 }
 
 model CommentV3Report {
@@ -592,7 +596,7 @@ model CommentMute {          // one conversation: this comment and its whole sub
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   commentId Int
   comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  mutedAt   DateTime  @default(now())
+  mutedAt   DateTime  @default(now()) @db.Timestamptz(6)
 
   @@id([userId, commentId])
   @@index([commentId])
@@ -603,7 +607,7 @@ model CommentTopicMute {     // the whole section on one entity
   user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   entityType CommentEntityType
   entityId   Int
-  mutedAt    DateTime          @default(now())
+  mutedAt    DateTime          @default(now()) @db.Timestamptz(6)
 
   @@id([userId, entityType, entityId])
   @@index([entityType, entityId])
@@ -791,7 +795,11 @@ the child thread and quietly orphans them. Neither survives into the new model. 
   tombstone) rather than orphaning the reply.
 - Account deletion tombstones the user's parented comments and hard-deletes the rest — confirm
   against privacy/GDPR expectations that a tombstone (no content, no author) satisfies erasure;
-  retention of _other users'_ replies is unchanged from v2 either way.
+  retention of _other users'_ replies is unchanged from v2 either way. The order matters: `userId`
+  is `ON DELETE CASCADE`, so a raw `DELETE FROM "User"` that has not tombstoned first fails on
+  `parentId ON DELETE RESTRICT` as soon as one of the user's comments has a reply (verified
+  2026-10-20). It fails closed — nothing is lost — but the by-hand erasure path has to run the
+  tombstone pass before the row delete.
 
 ## Moderation, blocking, and comment-gating — preserve-behavior checklist
 
@@ -935,9 +943,12 @@ needed), then the DDL above: new tables
 `CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). The tables are
 declared in `schema.full.prisma` so the Kysely `DB` types are generated (decision 8): `path` as
 `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` as `Int @default(dbgenerated())`
-— confirm `db:check-generated` stays clean with that shape (the repo's enum, interface and kysely
-generators passed on the plain-int shape 2026-10-16; re-run with the generated columns), and in
-the Kysely types override `path` from `unknown` to `string` and `rootId`/`depth` to select-only. Two more DB-level items found in the sweep:
+(all four generators passed on it 2026-10-20). prisma-kysely drops `Unsupported` columns
+outright rather than typing them `unknown`, so `src/server/db/kyselyDb.ts` exports
+`kyselyV3Read`/`kyselyV3Write`, the shared clients with `withTables` adding `path` as a select-only
+`string` and narrowing `rootId`/`depth` to select-only; the shared clients keep the generated `DB`
+that the `@civitai/db-queries` signatures are typed against. Two more DB-level items found in the
+sweep:
 
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on
@@ -946,12 +957,18 @@ the Kysely types override `path` from `unknown` to `string` and `rootId`/`depth`
   Phase 1, CommentV3 needs no trigger — `queueScamScan` on the write path plus a text-scan profile
   cover it. If not, CommentV3 needs the equivalent trigger, which needs a `CommentV3` value in the
   `EntityType` pg enum — an additive enum change, so the expand/contract deploy-first rule applies
-  — and `entity-moderation.ts` must consume the new value. Either way the text-scan verdict and
+  — and `entity-moderation.ts` must consume the new value. Phase 1 (2026-10-20) wrote that trigger
+  as its own migration and left it unapplied: the consumer's flagged path files a `Report`, which
+  needs the v3 report plumbing, so consumer and trigger ship together in Phase 2, after the
+  backfill or with the trigger disabled while it runs; the text-scan profile and entity type move
+  with them, because a profile without an adapter logs a verdict as acted on and acts on nothing.
+  Either way the text-scan verdict and
   retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
   too.
-- **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is a hand-curated allowlist, not
-  generated: add the new tables or their `updatedAt` silently never updates. Under decision 8
-  every v3 writer is a Kysely writer, so this is the only thing that maintains `updatedAt`.
+- **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is generated from the
+  `@updatedAt` columns in `schema.full.prisma` (`pnpm run db:generate`): a table whose `updatedAt`
+  lacks `@updatedAt` silently never updates. Under decision 8 every v3 writer is a Kysely writer,
+  so this is the only thing that maintains `updatedAt`.
   Deploy the regenerated client _before_ applying the enum-bearing migration (expand/contract
   rule in CLAUDE.md). Migrations applied manually as always.
 
@@ -978,7 +995,7 @@ disagree; comic chapter is the one entity that needs a join there (see the keyin
 Phase 1). `toggleLockCommentsThread` still needs an app-level pair (set
 `Thread.locked` and `CommentTopic.locked` together), and `toggleThreadMute`/`toggleSectionMute`
 write `CommentMute`/`CommentTopicMute` directly. Those app-level writes, and everything in the v3
-service from Phase 4 on, are Kysely transactions on `kyselyWrite` (decision 8). Note the
+service from Phase 4 on, are Kysely transactions on `kyselyV3Write` (decision 8). Note the
 `no-io-in-transaction` guard — same-DB SQL inside a transaction is fine — and run
 `test:lint-rules` whenever a transaction is touched.
 
