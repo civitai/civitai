@@ -4512,12 +4512,19 @@ export const getAllModelsWithCategories = async ({
   userId,
   limit,
   page,
-}: GetModelsWithCategoriesSchema) => {
+  viewer,
+}: GetModelsWithCategoriesSchema & {
+  viewer?: { id?: number; isModerator?: boolean | null } | null;
+}) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
+    // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
+    ...(!viewer?.isModerator && {
+      OR: [{ poi: false }, ...(viewer?.id ? [{ userId: viewer.id }] : [])],
+    }),
   };
 
   const modelCategories = await getCategoryTags('model');

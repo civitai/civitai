@@ -163,6 +163,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
@@ -234,7 +235,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+      throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: model.user.id });

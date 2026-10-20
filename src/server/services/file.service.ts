@@ -22,6 +22,7 @@ import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model
 import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
 
@@ -229,7 +230,7 @@ export const getFileForModelVersion = async ({
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
+  if (!canViewPoiModel(modelVersion.model.poi, modelVersion.model.userId, user)) {
     return { status: 'not-found' };
   }
 
