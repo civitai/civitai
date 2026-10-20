@@ -5,7 +5,7 @@ rationale and detail; this one is the order of operations. Check items off as th
 ends with a **gate** that must be true before the next phase starts.
 
 Schema is the **merged design** (2026-08-25, Koen's counter-proposal + adjustments): ltree `path`
-set by a `BEFORE INSERT` trigger that also fills `rootId`/`depth`, `replyToId`, tombstone
+set by a `BEFORE INSERT` trigger with `rootId`/`depth` generated from it, `replyToId`, tombstone
 deletion (`deletedAt` + `parentId ON DELETE RESTRICT`), comments FK'd to `CommentTopic`. Deletion
 semantics are **decided** (D6): tombstone with replies, hard-delete childless. Per-thread
 notification mute is **in scope** (D7, added 2026-09-01 after PR #4524 shipped it for CommentsV2).
@@ -55,6 +55,10 @@ Decisions & prerequisites:
       later costs what the enum costs now
 - [x] **(review)** Orphaned-thread comments: not migrated, and V3 deletes a topic when its entity
       is hard-deleted (2026-10-16); inventory of referencing rows in the plan doc
+- [x] **(review, 2026-10-20)** `CommentTopic` partitioned by `entityType` with one
+      `ON DELETE CASCADE` entity FK per partition (Koen's 2026-10-19 proposal) replaces the
+      per-entity `AFTER DELETE` triggers; app listings key on `serial_id`, comic chapters on `id`;
+      build and verification in Phase 1 below
 - [x] **(review)** `parentId ON DELETE RESTRICT` survives a topic cascade deleting a whole reply
       tree in one statement — verified on Postgres 18.6
 - [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
@@ -111,14 +115,13 @@ and flip order.
 - [ ] **(review, 2026-10-20)** `CommentTopic` is `PARTITION BY LIST ("entityType")`: one partition
       per enum value, each with an `ON DELETE CASCADE` FK to its entity table (`ComicChapter (id)`,
       `app_listings (serial_id)`); the migration loops over the enum and fails on a missing
-      mapping; no DEFAULT partition; PK `("entityId", "entityType")`. Replaces the per-entity
-      `AFTER DELETE` triggers. On the dev apply: re-run the reply-tree cascade from the entity
-      side under `parentId RESTRICT`; mirror a comment insert racing an entity delete (the
-      old-side write must not fail, and entity delete → `Thread` → mirror delete must not collide
-      with the partition cascade in the same statement); confirm `db:generate`,
-      `db:check-generated` and the moderator introspection tolerate the partition children
+      mapping. On the dev apply: re-run the reply-tree cascade from the entity side under
+      `parentId RESTRICT`; mirror a comment insert racing an entity delete (the old-side write
+      must not fail, and entity delete → `Thread` → mirror delete must not collide with the
+      partition cascade in the same statement)
 - [ ] Schema declaration for type generation (D8: no Prisma delegate touches v3): `path` as
       `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` `Int @default(dbgenerated())`;
+      `CommentTopic` declared once (`@@id([entityId, entityType])`), not per partition;
       `db:check-generated` clean with it; in the Kysely `DB` types `path` overridden from `unknown`
       to `string` and `rootId`/`depth` to select-only **(review)**
 - [ ] Clavata trigger `trg_moderation_commentv3` + `EntityType` enum value `CommentV3`
@@ -129,7 +132,8 @@ and flip order.
       `retention.ts`; verdict/retention ledgers alias old `Comment` ids via `legacyV1Id`
 - [ ] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
       D8 this is the only thing that maintains `updatedAt` on them
-- [ ] `pnpm run db:generate` + `pnpm run db:check-generated` clean
+- [ ] `pnpm run db:generate` + `pnpm run db:check-generated` clean, and `db:moderator:pull`
+      tolerates the 13 `CommentTopic` partition children
 - [ ] Migration SQL written, committed, **applied manually** (never `prisma migrate deploy`)
 
 **Gate:** new tables live and empty in prod; client deployed knowing all new types.
@@ -187,10 +191,12 @@ id the mirror gave it; a mirrored row is always at least as fresh as the copy):
       depth-20 sibling with `replyToId` set **(review)**; ids + timestamps preserved; nullable
       `hidden`/`locked` → false; idempotent + batched + resumable
 - [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, new ids from the shared sequence
-      for pre-existing rows; `createdAt` verbatim (the Newest sort reads it, not `id`)
+      for pre-existing rows; `createdAt` verbatim (the Newest sort reads it, not `id`); model
+      topics upserted first (most have no `Thread`; a missing model is skipped and counted)
 - [ ] Topic copy: one `CommentTopic` per entity-bearing Thread whose entity exists (missing
       entity skipped and counted; `ON CONFLICT ("entityId", "entityType") DO NOTHING`; locked
-      carried, count recomputed from `CommentV2` rows, not copied from `Thread.commentCount`)
+      carried, count recomputed from `CommentV2` rows, not copied from `Thread.commentCount`);
+      `ANALYZE "CommentTopic"` afterwards, since autovacuum never analyzes the partitioned parent
 - [ ] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;
       `reactionCount` recomputed at end
 - [ ] Report copy: `CommentV2Report` as-is, `CommentReport` via `legacyV1Id`
@@ -332,8 +338,8 @@ continuous across the cutover.
 - [ ] Drop order: `ThreadMute` → `CommentReaction`/`CommentV2Reaction`/`CommentReport`/
       `CommentV2Report` → `Comment`/`CommentV2` → `Thread`
 - [ ] Drop triggers: `comment_count_update` (function `update_thread_comment_count`),
-      `trg_moderation_comment`, `trg_moderation_commentv2`, `comment_reaction_count_update`, and
-      the Phase 2 mirror triggers
+      `trg_moderation_comment`, `trg_moderation_commentv2`, `comment_reaction_count_update`, the
+      Phase 2 mirror triggers and their functions, and `commentv3_thread_entity`
 - [ ] Remove any remaining Thread entries from `schema-drift/drift-baseline.json` + update
       remediation plan and `production-plan.test.ts`
 - [ ] `DROP SCHEMA archive CASCADE` (the ten purge-archive tables) once the old tables are gone

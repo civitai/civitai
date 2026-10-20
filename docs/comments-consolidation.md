@@ -7,7 +7,7 @@ depth-limited by design.
 Execution tracking lives in the companion checklist:
 [comments-consolidation-checklist.md](comments-consolidation-checklist.md).
 
-Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-19** (Briant). What
+Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-20** (Briant). What
 changed after the 2026-08-25 merged design is listed under _Changes since 2026-08-25_ below.
 
 1. Questions & Answers comments are **not migrated** — dropped with the surface.
@@ -33,7 +33,7 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
    Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
-path as the single source of tree truth, with `rootId`/`depth` filled from it by the insert trigger — adopted with
+path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
 three adjustments: `clubPost` dropped from the enum (dead surface), `CommentTopic.commentCount`
 kept (hot list-page reads), and the ltree operational constraints documented.
 
@@ -165,10 +165,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
    entity FK was `ON DELETE SET NULL` and nothing deleted `Thread` rows, which is where its 288K
    orphans came from, until the FKs became `ON DELETE CASCADE` in prod on 2026-10-16 (migration
    `20261101120000_thread_entity_fk_cascade`, #6155) and the orphans were purged on 2026-10-19.
-   Resolved for `CommentTopic` by partitioning it on `entityType` so that each partition carries
-   a real `ON DELETE CASCADE` FK to its entity table (_Entity deletion_, decided 2026-10-16,
-   FK form 2026-10-20). "Entity cleanup = delete one row" then holds for every delete path,
-   including account deletion, with no service code or trigger to forget.
+   Resolved for `CommentTopic` by partitioning it on `entityType`, one entity FK per partition
+   (_Entity deletion_).
 
 ### Orphaned-thread comments — decided
 
@@ -416,7 +414,6 @@ DECLARE
   entity_col   text;
 BEGIN
   FOREACH t IN ARRAY enum_range(NULL::"CommentEntityType")::text[] LOOP
-    entity_table := NULL;  -- SELECT INTO leaves the variable untouched when no row matches
     SELECT v.tbl, v.col INTO entity_table, entity_col FROM (VALUES
       ('model',         'Model',          'id'),
       ('image',         'Image',          'id'),
@@ -645,10 +642,9 @@ for v2 and via `legacyV1Id` for v1. Report rows re-point the same way — the `R
 lock must exist before any comment does (today's `toggleLockCommentsThread` creates a locked empty
 thread), and `challenge.service.ts` + `getCommentCount` read an entity-level count. The service
 upserts it on first comment (replacing lazy Thread creation 1:1), and every comment FK-references
-it — so entity cleanup is "delete the topic row", with comments cascading. That's _more_ integrity
-than today from comment to topic. From topic to entity, a single FK cannot point at 13 tables,
-which is the gap that let `Thread` accumulate orphans before the 2026-10-16 FK cascade
-(blocker 8); the partitioned topic table closes it with one FK per partition.
+it — so an entity's own hard-delete cascades through the topic to its comments. That's _more_
+integrity than today from comment to topic. From topic to entity, the partition FKs
+(_Entity deletion_) close the gap that let `Thread` accumulate orphans (blocker 8).
 
 ### Entity deletion — decided 2026-10-16, FK form 2026-10-20
 
@@ -658,26 +654,27 @@ topic alone — the entity still exists.
 
 - Done by the database, not by service code: most entity deletes never pass through a service (a
   post delete cascades its images; account deletion cascades nearly everything), which is the
-  same bypass argument that moved Phase 2 to triggers. The 2026-10-16 draft was an
-  `AFTER DELETE` trigger on each of the 13 entity tables. Koen's 2026-10-19 counter-proposal,
+  same bypass argument that moved Phase 2 to triggers. Koen's 2026-10-19 counter-proposal,
   adopted 2026-10-20: `CommentTopic` is `PARTITION BY LIST ("entityType")`, one partition per
   enum value, and each partition has an ordinary `ON DELETE CASCADE` FK to its entity table (DDL
   under _Target data model_). The app still sees one table. Over the trigger it buys:
-  - the link is a constraint on the entity table itself (expected under "Referenced by" in `\d`;
-    confirm on dev);
+  - the link is a constraint on the entity table itself;
   - a topic for an entity that does not exist is rejected, which the trigger never checked;
   - a new entity type that gets its enum value but not its partition fails on the first insert
     (Postgres: "no partition of relation … found for row"), so forgetting it is loud.
 - Rules that come with it: always filter on `entityType` (the partition key; without it
-  Postgres searches all 13 partitions) and `entityId` (the index inside the partition) — every
-  v3 query in this plan already has both; a new entity type is enum value + partition + FK in
-  the same migration; no DEFAULT partition, because it would swallow a forgotten type; the
-  migration is raw SQL, since Prisma has no partition syntax, and `schema.full.prisma` is
-  expected to declare one `CommentTopic` model with `@@id([entityId, entityType])` matching the
-  DDL — unverified: confirm on the Phase 1 dev apply that `db:generate`, `db:check-generated`
-  and the moderator introspection tolerate the partition children. The PK is
-  `("entityId", "entityType")` so the cascade's lookup inside a partition is a plain
-  leading-column index probe, with no reliance on skip scan; reads always supply both columns.
+  Postgres searches all 13 partitions) and `entityId` (the index inside the partition) — the
+  rewrites of `resourceReview`, `collection.service.ts` and `challenge.service.ts` under
+  _Phase 5_ must supply both; a new entity type is enum value + partition + FK in the same
+  migration; no DEFAULT partition, because it would swallow a forgotten type; the migration is
+  raw SQL, since Prisma has no partition syntax, and `schema.full.prisma` declares one
+  `CommentTopic` model with `@@id([entityId, entityType])` matching the DDL and **no
+  `@relation` to any entity table** — the FKs live on the partitions, so a declared relation
+  would make the schema-drift gate report 13 missing constraints (the Phase 1 dev apply checks
+  that `db:generate`, `db:check-generated` and `db:moderator:pull` tolerate the 13 partition
+  children); never `UPDATE` a topic's `entityType` (a cross-partition update is a delete plus
+  insert, which the `CommentV3` FK rejects while comments exist); retiring a type is delete its
+  rows then `DROP TABLE` the partition, not `DETACH`, since `CommentV3` references the parent.
 - Keying: `ComicChapter` by its unique SERIAL `id` (its PK is composite); app listings by
   `app_listings.serial_id`, because the store `id` is a text ULID — the trigger draft compared
   `OLD.id` and would have failed on the first listing delete. `Thread.appListingId` already holds
@@ -685,9 +682,10 @@ topic alone — the entity still exists.
 - **Verified 2026-10-16 on Postgres 18.6** (prod is 18.3): a topic cascade deletes a whole reply
   tree in one statement under `parentId ON DELETE RESTRICT`, in any id order — RESTRICT and
   NO ACTION both see the children go within the same statement. A single-row delete of a parent
-  whose reply exists still fails, which is the D6 race guard. Koen tested the partition form
-  (insert, upsert, lookup, lock, cascade delete) on 18.6 on 2026-10-19; the Phase 1 dev apply
-  re-runs the reply-tree case from the entity side, one cascade level deeper.
+  whose reply exists still fails, which is the D6 race guard. Koen reported testing the partition
+  form (insert, upsert, lookup, lock, cascade delete) on 18.6 on 2026-10-19 (results not
+  recorded here); the Phase 1 dev apply re-runs the reply-tree case from the entity side, one
+  cascade level deeper.
 - `Report` rows whose comment is gone stay, with no target. D6 already accepts this for childless
   hard-deletes, so the moderator queue has to tolerate it either way.
 - The event-points hook only recounts a user's comments when the comment service deletes them; a
@@ -696,8 +694,9 @@ topic alone — the entity still exists.
   regression.
 - Volume: the ~6K comments a month that used to orphan are the measure — a few hundred
   entity-with-comments deletes a day. Nothing to batch.
-- **Cost of a big cascade — benchmarked 2026-10-16** (Postgres 18.6, the DDL and index set from
-  this doc, 326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
+- **Cost of a big cascade — benchmarked 2026-10-16** (Postgres 18.6, the DDL and index set of
+  that date, before the topic was partitioned — the Phase 1 dev apply re-runs it from the entity
+  side; 326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
   Articles are the only entity with threads over 200 comments (26 of them; the largest is 5,361
   comments, p90 of those 26 is 3,408), and articles are hard-deleted (`article.service.ts`
   `tx.article.delete`, plus `deleteMany` on account deletion).
@@ -924,10 +923,8 @@ usable `entityId`. One SQL function, `commentv3_thread_entity(thread)`, resolves
 to `(entityType, entityId)` for both the Phase 2 mirror triggers and the Phase 3 backfill; comic
 chapter is its one branch that joins (`ComicChapter` on `(projectId, position)`) instead of
 reading a column, and the join is consistent inside a re-pack transaction because the cascade
-updates `Thread` in the same statement. The `CommentTopic_comicChapter` partition references
-`ComicChapter (id)`. **App listings key on `app_listings.serial_id`** for the same reason: the
-store `id` is a text ULID, `Thread.appListingId` already holds the serial, and the
-`CommentTopic_appListing` partition references `app_listings (serial_id)`.
+updates `Thread` in the same statement. Comic chapters and app listings key on `ComicChapter.id`
+and `app_listings.serial_id` (_Entity deletion_, keying).
 
 **Phase 1 — schema.** `CREATE EXTENSION ltree` (on prod since 2026-10-19; dev, CI and local as
 needed), then the DDL above: new tables
@@ -955,8 +952,8 @@ the Kysely types override `path` from `unknown` to `string` and `rootId`/`depth`
 - **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is a hand-curated allowlist, not
   generated: add the new tables or their `updatedAt` silently never updates. Under decision 8
   every v3 writer is a Kysely writer, so this is the only thing that maintains `updatedAt`.
-  Deploy the regenerated client _before_ applying the enum-bearing migration writes anything
-  (expand/contract rule in CLAUDE.md). Migrations applied manually as always.
+  Deploy the regenerated client _before_ applying the enum-bearing migration (expand/contract
+  rule in CLAUDE.md). Migrations applied manually as always.
 
 **Phase 2 — dual-write, deployed to production first.** Mirror at the database, not in the
 services: `AFTER INSERT/UPDATE/DELETE` triggers on `Comment` and `CommentV2` (and on the reaction,
@@ -970,7 +967,12 @@ tombstone when the `CommentV3` row has children, hard-delete otherwise — mirro
 one-for-one would hit `parentId ON DELETE RESTRICT` and fail the user's delete. A reply whose
 parent has not been backfilled yet is the other trap (blocker 1): the insert trigger walks
 `Thread.commentId → CommentV2.threadId` to the root and copies any missing ancestors first, so the
-`parentId` FK always resolves. Both the mirror and the backfill resolve a `Thread` row to its
+`parentId` FK always resolves. Before the comment it upserts the `CommentTopic`
+(`ON CONFLICT DO NOTHING` on the full PK); if the entity row is already gone — a comment insert
+racing an entity hard-delete — the partition FK rejects the topic, the mirror skips the V3 write
+and the old-side write proceeds. The reverse race, entity delete → `Thread` cascade → mirror
+delete, must not collide with the partition cascade in the same statement (checked on the
+Phase 1 dev apply). Both the mirror and the backfill resolve a `Thread` row to its
 `(entityType, entityId)` through the same `commentv3_thread_entity` function, so the two cannot
 disagree; comic chapter is the one entity that needs a join there (see the keying note above
 Phase 1). `toggleLockCommentsThread` still needs an app-level pair (set
@@ -1006,7 +1008,9 @@ Idempotent, batched copy jobs:
 - v1 comments: direct copy with `entityType='model'`, `legacyV1Id` set, new ids from the shared
   sequence for pre-existing rows (rows the mirror already copied keep the id it gave them — the
   `legacyV1Id` conflict no-ops). `createdAt` is copied verbatim and is what the Newest sort reads,
-  so the order the backfill hands out ids in does not matter (_ID strategy_).
+  so the order the backfill hands out ids in does not matter (_ID strategy_). Most models with
+  v1 comments have no `Thread`, so this job upserts the model topics itself before the comments
+  (`ON CONFLICT DO NOTHING`); a model that no longer exists is skipped and counted.
 - Topics: one `CommentTopic` per entity-bearing Thread whose entity row exists (join to the
   entity table; a Thread whose entity is gone is skipped and counted, like orphaned threads —
   the partition FK would otherwise abort the batch), inserted with `ON CONFLICT DO NOTHING` on
@@ -1021,7 +1025,8 @@ Idempotent, batched copy jobs:
 - Orphaned-thread comments and their reactions/report links are **skipped** and the counts
   logged. Both existing classes were purged 2026-10-19. Entity-less root threads can no longer
   occur, so that skip is a guard; the dead-parent class (replies whose `Thread.commentId` was
-  nulled by a v2 hard-delete) still can until V3 lands, so that skip matters.
+  nulled by a v2 hard-delete) still can until V3 lands, so that skip matters. Comments under a
+  Thread the topic copy skipped (entity gone) are skipped with it and counted.
 - Parity checks: per-entity counts vs `Thread.commentCount` (recomputed from `CommentV2` first —
   comic threads were over-counted until the double increment was removed), reaction counts vs the
   two source tables, spot checksums, and an `updatedAt`/`deletedAt` comparison against the old rows.
@@ -1132,8 +1137,9 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   `entityType = 'review' AND entityId = r.id` (both columns, so the join prunes to one
   partition) + `COALESCE(0)`,
   a client-visible shape change), `src/server/services/collection.service.ts` (Thread-join
-  count), `src/server/services/challenge.service.ts` (four raw `Thread.commentCount` reads by
-  `challengeId`), `src/server/metrics/post.metrics-old.ts` (live sibling of `post.metrics.ts`
+  count → `CommentTopic` on both columns), `src/server/services/challenge.service.ts` (four raw
+  `Thread.commentCount` reads by `challengeId` → `entityType = 'challenge' AND entityId`),
+  `src/server/metrics/post.metrics-old.ts` (live sibling of `post.metrics.ts`
   — migrate or delete), `src/pages/api/mod/daily-challenge/re-review.ts`,
   `src/server/notifications/report.notifications.ts` (CASE over both report join tables), and the
   Q&A thread `_count` reads in `answer.controller.ts`/`question.controller.ts` (retire with the
@@ -1320,7 +1326,8 @@ after flips would leave mod tooling blind to new comments on flipped surfaces). 
 paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.
 
-**Phase 6 — contract.** Drop `Thread` (and its 16 entity relations' reverse relations), `Comment`,
+**Phase 6 — contract.** Drop `ThreadMute`, `Thread` (and its 16 entity relations' reverse
+relations), `Comment`,
 `CommentV2`, `CommentReaction`, `CommentV2Reaction`, `CommentReport`, `CommentV2Report`; drop the
 triggers `comment_count_update` (function `update_thread_comment_count`),
 `trg_moderation_comment`/`trg_moderation_commentv2`, `comment_reaction_count_update`, and the
