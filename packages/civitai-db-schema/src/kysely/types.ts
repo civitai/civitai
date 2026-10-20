@@ -59,6 +59,7 @@ import type {
   TagSource,
   PartnerPricingModel,
   ApiKeyType,
+  CommentEntityType,
   TagEngagementType,
   DomainColor,
   CosmeticType,
@@ -2542,6 +2543,11 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
 };
+export type CommentMute = {
+  userId: number;
+  commentId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type CommentReaction = {
   id: Generated<number>;
   commentId: number;
@@ -2553,6 +2559,18 @@ export type CommentReaction = {
 export type CommentReport = {
   commentId: number;
   reportId: number;
+};
+export type CommentTopic = {
+  entityType: CommentEntityType;
+  entityId: number;
+  locked: Generated<boolean>;
+  commentCount: Generated<number>;
+};
+export type CommentTopicMute = {
+  userId: number;
+  entityType: CommentEntityType;
+  entityId: number;
+  mutedAt: Generated<Timestamp>;
 };
 export type CommentV2 = {
   id: Generated<number>;
@@ -2578,6 +2596,38 @@ export type CommentV2Reaction = {
 };
 export type CommentV2Report = {
   commentV2Id: number;
+  reportId: number;
+};
+export type CommentV3 = {
+  id: Generated<number>;
+  entityType: CommentEntityType;
+  entityId: number;
+  parentId: number | null;
+  replyToId: number | null;
+  rootId: Generated<number>;
+  depth: Generated<number>;
+  userId: number;
+  content: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  tosViolation: Generated<boolean>;
+  hidden: Generated<boolean>;
+  locked: Generated<boolean>;
+  pinnedAt: Timestamp | null;
+  reactionCount: Generated<number>;
+  legacyV1Id: number | null;
+};
+export type CommentV3Reaction = {
+  id: Generated<number>;
+  commentId: number;
+  userId: number;
+  reaction: ReviewReactions;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type CommentV3Report = {
+  commentId: number;
   reportId: number;
 };
 export type Cosmetic = {
@@ -5998,11 +6048,17 @@ export type DB = {
   ComicReference: ComicReference;
   ComicReferenceImage: ComicReferenceImage;
   Comment: Comment;
+  CommentMute: CommentMute;
   CommentReaction: CommentReaction;
   CommentReport: CommentReport;
+  CommentTopic: CommentTopic;
+  CommentTopicMute: CommentTopicMute;
   CommentV2: CommentV2;
   CommentV2Reaction: CommentV2Reaction;
   CommentV2Report: CommentV2Report;
+  CommentV3: CommentV3;
+  CommentV3Reaction: CommentV3Reaction;
+  CommentV3Report: CommentV3Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
