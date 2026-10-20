@@ -3,8 +3,7 @@ import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 
 /**
  * getBuzzPackages serves the live Buzz row under every key mode. That is safe only while it stays
- * a database read and the charge goes through the client built from STRIPE_SECRET_KEY, so a
- * sandbox-key checkout charges the sandbox.
+ * a database read and the Stripe client is built from STRIPE_SECRET_KEY.
  */
 
 const { StripeCtor } = vi.hoisted(() => ({
@@ -31,8 +30,16 @@ describe('Buzz under a sandbox key', () => {
     expect(client.key).toBe(TEST_KEY);
   });
 
-  it('reads the packages without touching Stripe', async () => {
+  it('reads the live packages without touching Stripe', async () => {
     dbMock.dbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_sandbox_buzz',
+        name: 'Buzz',
+        description: null,
+        defaultPriceId: null,
+        metadata: { tier: 'buzz', live_id: 'prod_live_buzz' },
+        prices: [{ id: 'p0', description: null, unitAmount: 1000, currency: 'usd', metadata: {} }],
+      },
       {
         id: 'prod_live_buzz',
         name: 'Buzz',
@@ -43,7 +50,7 @@ describe('Buzz under a sandbox key', () => {
       },
     ]);
     const { getBuzzPackages } = await import('~/server/services/stripe.service');
-    expect(await getBuzzPackages()).toHaveLength(1);
+    expect((await getBuzzPackages()).map((p) => p.id)).toEqual(['p1']);
     expect(StripeCtor).not.toHaveBeenCalled();
   });
 });

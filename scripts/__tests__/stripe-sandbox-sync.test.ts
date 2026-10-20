@@ -2,11 +2,12 @@ import type Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyPlan,
-  devDatabaseUrl,
+  devDatabaseConfig,
   createSandboxWriter,
   LIVE_ID_KEY,
   planSync,
   upsertSandboxRows,
+  writeDevDb,
   type Catalogue,
 } from '../stripe-sandbox/sync.lib';
 
@@ -314,48 +315,140 @@ describe('planSync + applyPlan', () => {
   });
 });
 
-describe('devDatabaseUrl', () => {
-  const DEV = 'postgresql://u:p@devdb.local:5432/civitai';
+describe('devDatabaseConfig', () => {
+  const DEV = 'postgresql://u:p%40ss@devdb.local:5432/civitai?sslmode=no-verify&schema=public';
+  const LIST = 'devdb.local:5432';
 
   it.each([
     ['no allowlist', DEV, undefined],
     ['an empty allowlist', DEV, ' , '],
-    ['no database url', undefined, 'devdb.local:5432'],
-    ['a host not listed', 'postgresql://u:p@proddb.internal:5432/civitai', 'devdb.local:5432'],
-    [
-      'the listed host on another port',
-      'postgresql://u:p@devdb.local:6543/civitai',
-      'devdb.local:5432',
-    ],
-    ['an unparseable url', 'not a url', 'devdb.local:5432'],
+    ['no database url', undefined, LIST],
+    ['a host not listed', 'postgresql://u:p@proddb.internal:5432/civitai', LIST],
+    ['the listed host on another port', 'postgresql://u:p@devdb.local:6543/civitai', LIST],
+    ['a query-string host override', `${DEV}&host=proddb.internal`, LIST],
+    ['a query-string port override', `${DEV}&port=6543`, LIST],
+    ['a socket path', 'socket://u:p@devdb.local:5432/var/run/postgresql?db=civitai', LIST],
+    ['a url with no database', 'postgresql://u:p@devdb.local:5432/', LIST],
+    ['an unparseable url', 'not a url', LIST],
   ])('refuses %s', (_, url, allowlist) => {
-    expect(() => devDatabaseUrl(url, allowlist)).toThrow(/Refusing/);
+    expect(() => devDatabaseConfig(url, allowlist)).toThrow(/Refusing/);
   });
 
-  it('returns a listed database url', () => {
-    expect(devDatabaseUrl(DEV, 'other:1, devdb.local:5432')).toBe(DEV);
+  it('returns explicit settings for the checked host, so nothing in the URL can redirect pg', () => {
+    expect(devDatabaseConfig(DEV, `other:1, ${LIST}`)).toEqual({
+      host: 'devdb.local',
+      port: 5432,
+      database: 'civitai',
+      user: 'u',
+      password: 'p@ss',
+      ssl: { rejectUnauthorized: false },
+    });
+  });
+});
+
+describe('writeDevDb', () => {
+  const DEV = 'postgresql://u:p@devdb.local:5432/civitai';
+
+  it('never connects to a database that fails the check', async () => {
+    const connect = vi.fn();
+    await expect(
+      writeDevDb({
+        url: 'postgresql://u:p@proddb.internal:5432/civitai',
+        allowlist: 'devdb.local:5432',
+        catalogue: { products: [], prices: [] },
+        connect,
+      })
+    ).rejects.toThrow(/Refusing/);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('connects with the checked settings and closes the client', async () => {
+    const end = vi.fn(async () => undefined);
+    const connect = vi.fn(async () => ({ query: async () => ({ rowCount: 1 }), end }));
+    await writeDevDb({
+      url: DEV,
+      allowlist: 'devdb.local:5432',
+      catalogue: { products: [], prices: [] },
+      connect,
+    });
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'devdb.local', port: 5432, database: 'civitai' })
+    );
+    expect(end).toHaveBeenCalled();
   });
 });
 
 describe('upsertSandboxRows', () => {
-  it('writes only synced rows, products first, and never updates a row without live_id', async () => {
+  async function synced() {
     const sb = fakeSandbox();
-    sb.cat.products.push(product({ id: 'prod_handmade', name: 'Made in the sandbox UI' }));
+    const handmade = product({ id: 'prod_handmade', name: 'Made in the sandbox UI' });
+    sb.cat.products.push(handmade);
     const ids = await sync(liveCatalogue(), sb);
-    const calls: { sql: string; id: unknown }[] = [];
-    await upsertSandboxRows(async (sql, values) => {
-      calls.push({ sql, id: values[0] });
+    // A hand-made price, and a stamped price under the unstamped product: neither may be written.
+    sb.cat.prices.push(
+      price({ id: 'price_handmade', product: 'prod_handmade' }),
+      price({ id: 'price_orphan', product: 'prod_handmade', metadata: { [LIVE_ID_KEY]: 'x' } })
+    );
+    return { sb, ids };
+  }
+
+  it('writes only stamped rows, products first, mapped column by column', async () => {
+    const { sb, ids } = await synced();
+    const calls: { sql: string; values: unknown[] }[] = [];
+    const written = await upsertSandboxRows(async (sql, values) => {
+      calls.push({ sql, values });
+      return { rowCount: 1 };
     }, sb.cat);
 
-    expect(calls.map((c) => c.id)).toEqual([
+    expect(calls.map((c) => c.values[0])).toEqual([
       ids.products.prod_gold,
       ids.products.prod_bare,
       ids.prices.price_gold_m,
       ids.prices.price_gold_y,
     ]);
+    expect(written).toEqual({ products: 2, prices: 2, skipped: 0 });
+
+    // Column order as written in the INSERT, so a swapped value or placeholder shows here.
+    expect(calls[0].sql).toContain(
+      '"Product" (id, active, name, description, metadata, "defaultPriceId", provider)'
+    );
+    expect(calls[0].values).toEqual([
+      ids.products.prod_gold,
+      true,
+      'Gold',
+      'Gold membership',
+      JSON.stringify({ tier: 'gold', monthlyBuzz: '50000', [LIVE_ID_KEY]: 'prod_gold' }),
+      ids.prices.price_gold_m,
+    ]);
+    expect(calls[2].values).toEqual([
+      ids.prices.price_gold_m,
+      ids.products.prod_gold,
+      true,
+      'usd',
+      null,
+      'recurring',
+      5000,
+      'month',
+      1,
+      JSON.stringify({ [LIVE_ID_KEY]: 'price_gold_m' }),
+    ]);
+
+    // Text pin: the update side of each upsert must be limited to stamped rows.
     for (const { sql } of calls)
       expect(sql.replace(/\s+/g, ' ')).toMatch(
         /DO UPDATE SET .* WHERE "(Product|Price)"\.metadata \? 'live_id'$/
       );
+  });
+
+  it('counts a conflict with an unstamped row as skipped, and writes no prices under it', async () => {
+    const { sb, ids } = await synced();
+    const seen: unknown[] = [];
+    const written = await upsertSandboxRows(async (_sql, values) => {
+      seen.push(values[0]);
+      return { rowCount: values[0] === ids.products.prod_gold ? 0 : 1 };
+    }, sb.cat);
+
+    expect(written).toEqual({ products: 1, prices: 0, skipped: 1 });
+    expect(seen).not.toContain(ids.prices.price_gold_m);
   });
 });

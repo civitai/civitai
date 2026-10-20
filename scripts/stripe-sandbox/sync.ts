@@ -19,13 +19,14 @@ import pg from 'pg';
 import { runScriptAndExit } from '../lib/run-as-script';
 import {
   applyPlan,
-  devDatabaseUrl,
+  devDatabaseConfig,
   assertSandboxKey,
   createReader,
   createSandboxWriter,
   describePlan,
   planSync,
   upsertSandboxRows,
+  writeDevDb,
 } from './sync.lib';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -51,13 +52,11 @@ async function main() {
   const mapOut = mapOutIdx >= 0 ? args[mapOutIdx + 1] : undefined;
   const devDb = args.includes('--dev-db');
   const envFile = resolve(repoRoot, '.env');
-  // Resolved before anything is read or written, so a production URL stops the run outright.
-  const devDbUrl = devDb
-    ? devDatabaseUrl(
-        process.env.DATABASE_URL ?? readEnvVar(envFile, 'DATABASE_URL'),
-        process.env.STRIPE_SANDBOX_DB_HOSTS ?? readEnvVar(envFile, 'STRIPE_SANDBOX_DB_HOSTS')
-      )
-    : undefined;
+  const databaseUrl = process.env.DATABASE_URL ?? readEnvVar(envFile, 'DATABASE_URL');
+  const dbAllowlist =
+    process.env.STRIPE_SANDBOX_DB_HOSTS ?? readEnvVar(envFile, 'STRIPE_SANDBOX_DB_HOSTS');
+  // Fail fast, before Stripe is touched; writeDevDb checks again before it connects.
+  if (devDb) devDatabaseConfig(databaseUrl, dbAllowlist);
 
   const targetKey =
     process.env.STRIPE_SECRET_KEY ?? readEnvVar(resolve(repoRoot, '.env'), 'STRIPE_SECRET_KEY');
@@ -106,7 +105,8 @@ async function main() {
         sampled.push(values);
       }, sandboxCatalogue);
       console.log(
-        `dev db: would upsert ${counts.products} products, ${counts.prices} prices; e.g.`,
+        `dev db: would upsert ${counts.products} products, ${counts.prices} prices from the ` +
+          `sandbox as it is now (rows this sync would create are not counted); e.g.`,
         JSON.stringify(sampled.slice(0, 2))
       );
     }
@@ -120,16 +120,21 @@ async function main() {
     console.log(`wrote live->sandbox id map to ${mapOut}`);
   }
 
-  if (devDbUrl) {
-    const client = new pg.Client({ connectionString: devDbUrl });
-    await client.connect();
-    try {
-      const synced = { products: await sandbox.listProducts(), prices: await sandbox.listPrices() };
-      const counts = await upsertSandboxRows((sql, values) => client.query(sql, values), synced);
-      console.log(`dev db: upserted ${counts.products} products, ${counts.prices} prices`);
-    } finally {
-      await client.end();
-    }
+  if (devDb) {
+    const counts = await writeDevDb({
+      url: databaseUrl,
+      allowlist: dbAllowlist,
+      catalogue: { products: await sandbox.listProducts(), prices: await sandbox.listPrices() },
+      connect: async (config) => {
+        const client = new pg.Client(config);
+        await client.connect();
+        return { query: (sql, values) => client.query(sql, values), end: () => client.end() };
+      },
+    });
+    console.log(
+      `dev db: wrote ${counts.products} products, ${counts.prices} prices; ` +
+        `skipped ${counts.skipped} whose id belongs to a row without live_id`
+    );
   }
 }
 
