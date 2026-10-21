@@ -6,6 +6,7 @@ import { immer } from 'zustand/middleware/immer';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useWatchHeldOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
@@ -72,6 +73,7 @@ export function GeneratorMediaPicker({
       { tags: [workflowTag] },
       { enabled: !!currentUser, ignoreFilters: true }
     );
+  useWatchHeldOutputs(data);
 
   const generatedMedia = useMemo(
     () =>

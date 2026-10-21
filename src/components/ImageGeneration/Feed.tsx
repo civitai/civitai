@@ -6,6 +6,7 @@ import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/work
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useWatchHeldOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 
@@ -36,6 +37,8 @@ export function Feed() {
       ),
     [requests, markerTags]
   );
+
+  useWatchHeldOutputs(requests);
 
   if (isError)
     return (
