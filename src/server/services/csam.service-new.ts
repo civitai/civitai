@@ -574,6 +574,34 @@ async function getInitialReportData(report: CsamReportProps) {
   } satisfies Report;
 }
 
+/** A report unsent for this long after it was filed is reported as blocked, for alerting. */
+export const CSAM_SEND_BLOCKED_AFTER_HOURS = 6;
+
+/**
+ * An unsent report is retried every run. The id and age make one stuck retrying traceable, and
+ * the separate `send-blocked` line is what an alert keys on.
+ */
+function logSendFailure(report: CsamReportProps, e: unknown, subType: string) {
+  const hoursPending = Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
+  logToAxiom({
+    name: 'csam-report',
+    type: 'error',
+    subType,
+    message: (e as Error | undefined)?.message,
+    reportId: report.id,
+    hoursPending,
+  });
+  if (hoursPending >= CSAM_SEND_BLOCKED_AFTER_HOURS)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'send-blocked',
+      message: `report ${report.id} unsent after ${hoursPending} hours`,
+      reportId: report.id,
+      hoursPending,
+    });
+}
+
 async function reportImages(report: CsamReportProps) {
   const initialReport = await getInitialReportData(report);
   if (!initialReport) return;
@@ -674,16 +702,7 @@ async function reportImages(report: CsamReportProps) {
     await cybertipClient.finishReport({ id: reportId });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
-    // The report stays unsent and is retried next run; its id and age show one stuck retrying.
-    logToAxiom({
-      name: 'csam-report',
-      type: 'error',
-      subType: 'archive-data',
-      message: e.message,
-      reportId: report.id,
-      stage: 'send',
-      hoursSinceCreated: Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000),
-    });
+    logSendFailure(report, e, 'archive-data');
   }
 }
 
@@ -761,12 +780,7 @@ async function reportGenerationData(report: CsamReportProps) {
     await cybertipClient.finishReport({ id: reportId });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
-    logToAxiom({
-      name: 'csam-report',
-      type: 'error',
-      subType: 'archive-data',
-      message: e.message,
-    });
+    logSendFailure(report, e, 'archive-data');
   }
 }
 
@@ -840,12 +854,7 @@ async function reportTrainingData(report: CsamReportProps) {
     removeDir(dir);
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
-    logToAxiom({
-      name: 'csam-report',
-      type: 'error',
-      subType: 'archive-data',
-      message: e.message,
-    });
+    logSendFailure(report, e, 'archive-data');
   }
 }
 
@@ -1019,12 +1028,7 @@ async function reportExternalLink(report: CsamReportProps) {
     await cybertipClient.finishReport({ id: reportId });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
-    logToAxiom({
-      name: 'csam-report',
-      type: 'error',
-      subType: 'send-report',
-      message: e.message,
-    });
+    logSendFailure(report, e, 'send-report');
   }
 }
 

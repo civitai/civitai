@@ -56,7 +56,11 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import { processCsamReport } from '~/server/services/csam.service-new';
+import {
+  CSAM_SEND_BLOCKED_AFTER_HOURS,
+  processCsamReport,
+} from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -151,6 +155,47 @@ describe('NCMEC image upload', () => {
     expect(cancelReport).toHaveBeenCalledTimes(1);
     expect(finishReport).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+  });
+
+  describe('a send that keeps failing', () => {
+    const failingReport = (hoursAgo: number) =>
+      ({
+        ...report,
+        createdAt: new Date(Date.now() - hoursAgo * 3_600_000 - 60_000),
+      } as CsamReportProps);
+    const loggedLines = () =>
+      vi.mocked(logToAxiom).mock.calls.map(([payload]) => payload as Record<string, unknown>);
+
+    beforeEach(() => {
+      vi.mocked(logToAxiom).mockClear();
+      getObject.mockRejectedValue(
+        Object.assign(new Error('synthetic storage outage'), {
+          name: 'InternalError',
+          $metadata: { httpStatusCode: 500 },
+        })
+      );
+    });
+
+    it('names the report and how long it has been pending', async () => {
+      await processCsamReport(failingReport(2));
+
+      expect(loggedLines()).toEqual([
+        expect.objectContaining({ type: 'error', reportId: report.id, hoursPending: 2 }),
+      ]);
+    });
+
+    it('raises a distinct blocked line once it has been pending past the threshold', async () => {
+      await processCsamReport(failingReport(CSAM_SEND_BLOCKED_AFTER_HOURS - 1));
+      expect(loggedLines().some((line) => line.subType === 'send-blocked')).toBe(false);
+
+      await processCsamReport(failingReport(CSAM_SEND_BLOCKED_AFTER_HOURS));
+      expect(loggedLines().filter((line) => line.subType === 'send-blocked')).toEqual([
+        expect.objectContaining({
+          reportId: report.id,
+          hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS,
+        }),
+      ]);
+    });
   });
 
   it('records an image missing from storage and from the edge, rather than dropping it', async () => {
