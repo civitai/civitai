@@ -104,6 +104,7 @@ async function addObject(
     namedExpected = null as number | null,
     namedMissing = null as number | null,
     recordEtag = true,
+    quoteRecorded = true,
     storedEtag = undefined as string | undefined,
     uploadedAt = NOW,
     suffix = '',
@@ -124,7 +125,7 @@ async function addObject(
       reportId,
       kind,
       key,
-      recordEtag ? `"${etag}"` : null,
+      recordEtag ? (quoteRecorded ? `"${etag}"` : etag) : null,
       entries,
       namedExpected,
       namedMissing,
@@ -231,6 +232,28 @@ describe('TrainingData report', () => {
 
     expect(await verifiedAt(id)).toBeNull();
     expect(counts.entries_mismatch).toBe(1);
+  });
+
+  it('matches an ETag whether or not it was recorded with quotes', async () => {
+    const id = await addReport('TrainingData');
+    await addObject(id, 'base', { quoteRecorded: false });
+    await addObject(id, 'trainingData');
+
+    await run();
+
+    expect(await verifiedAt(id)).toBe(NOW.toISOString());
+  });
+
+  it('does not count a report whose mark was not written', async () => {
+    const id = await addReport('TrainingData');
+    await addObject(id, 'base');
+    await addObject(id, 'trainingData');
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValueOnce(0 as never);
+
+    const { verified, counts } = await run();
+
+    expect(verified).toBe(0);
+    expect(counts.check_error).toBe(1);
   });
 
   it('is not verified when the archive recorded no ETag to compare', async () => {
