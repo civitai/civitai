@@ -557,21 +557,25 @@ export const getImagesAsPostsInfiniteHandler = async ({
       userAgent: ctx.req.headers['user-agent'],
     });
 
+    // TODO handle/remove all these (headers, include, ids)
+    const pageFetchArgs = {
+      ...input,
+      followed: false,
+      domain: getRequestBoardDomainColor(ctx.req),
+      ids: fetchHidden ? versionHiddenImages : undefined,
+      user,
+      eventDecorationViewer: user,
+      headers: { src: 'getImagesAsPostsInfiniteHandler' },
+      include: [...input.include, 'tagIds', 'profilePictures'],
+      dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
+      actor,
+    };
+
     while (true) {
-      // TODO handle/remove all these (headers, include, ids)
       const { nextCursor, items } = await fetchFn({
-        ...input,
-        followed: false,
-        domain: getRequestBoardDomainColor(ctx.req),
+        ...pageFetchArgs,
         cursor,
-        ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
-        user,
-        eventDecorationViewer: user,
-        headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds', 'profilePictures'],
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        actor,
       });
 
       // Merge images by postId
@@ -594,6 +598,26 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // If there are enough posts, stop
       if (Object.keys(posts).length >= limit) break;
       remaining = limit - Object.keys(posts).length;
+    }
+
+    // Pages are cut by image, so an image-level sort leaves a post holding only the images that
+    // ranked onto this page. The lazy carousel loads the rest itself, so the two never both run.
+    if (!features.galleryLazyPostImages) {
+      const partialPostIds = Object.keys(posts)
+        .map(Number)
+        .filter((postId) => posts[postId].length < POST_IMAGE_LIMIT);
+      if (partialPostIds.length) {
+        const { items: wholePosts } = await fetchFn({
+          ...pageFetchArgs,
+          cursor: undefined,
+          postIds: partialPostIds,
+          limit: partialPostIds.length * POST_IMAGE_LIMIT,
+        });
+        for (const image of wholePosts) {
+          const post = image?.postId ? posts[image.postId] : undefined;
+          if (post && !post.some((x) => x.id === image.id)) post.push(image);
+        }
+      }
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
