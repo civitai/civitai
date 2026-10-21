@@ -233,6 +233,8 @@ export async function getCsamsToArchive() {
   return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
 }
 
+// Excludes reports whose archive was skipped: they never get archivedAt. Decide how to treat them
+// before scheduling content removal.
 export async function getCsamsToRemoveContent() {
   const data = await dbRead.csamReport.findMany({
     where: {
