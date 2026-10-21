@@ -1276,7 +1276,10 @@ async function reportGenerationData(claim: SendClaim) {
       files: (
         await Promise.all(
           job.blobs.map(async ({ url }) => {
-            const file = await fetchBlobAsFile(url);
+            // An error response is not the file, and a fetch that throws is one that failed.
+            const file = await fetchBlobAsFile(url, undefined, { requireOk: true }).catch(
+              () => null
+            );
             return file ? { url, file } : null;
           })
         )
@@ -1284,7 +1287,10 @@ async function reportGenerationData(claim: SendClaim) {
     },
   ]);
   if (jobs.some(({ files }) => files.length === 0))
-    return logSendFailure(report, new Error('missing images for report'), 'archive-data');
+    return logNoFiles(
+      claim,
+      `report ${report.id} has a generated job with no file that can be fetched`
+    );
 
   let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(claim, initialReport, {

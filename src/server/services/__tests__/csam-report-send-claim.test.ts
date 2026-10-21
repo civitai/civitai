@@ -671,6 +671,7 @@ describe('sending each type of report', () => {
       expect(lines('send-no-files')).toEqual([
         expect.objectContaining({ type: 'error', reportId: 1 }),
       ]);
+      expect(lines('send-decision-needed')).toEqual([]);
       expect(releases()).toHaveLength(1);
     }
   );
@@ -769,6 +770,28 @@ describe('sending each type of report', () => {
       expect(stamps()).toEqual([]);
     });
 
+    it('cancels only once an upload already in flight has finished', async () => {
+      await serveZip(['a.png', 'b.png']);
+      let inFlightDone = false;
+      uploadFile
+        .mockRejectedValueOnce(new Error('synthetic upload failure'))
+        .mockImplementationOnce(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          inFlightDone = true;
+          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
+        });
+      let doneAtCancel: boolean | undefined;
+      cancelReport.mockImplementation(async () => {
+        doneAtCancel = inFlightDone;
+        return answering(0);
+      });
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(doneAtCancel).toBe(true);
+    });
+
     it('opens no CyberTip when the training data cannot be downloaded', async () => {
       await serveZip(['a.png']);
       getFileForModelVersion.mockResolvedValue({ status: 'not-found' });
@@ -796,26 +819,42 @@ describe('sending each type of report', () => {
     });
   });
 
-  it('opens no CyberTip for a generated-image report a job of which has no file that can be fetched', async () => {
-    fetchBlobAsFile.mockImplementation(async (url: string) =>
-      url === 'blob-gone' ? null : new File(['generated'], 'generated.png')
-    );
-    primaryRow = {
-      ...report,
-      type: 'GeneratedImage',
-      details: {
-        generatedImages: [
-          { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
-          { jobId: 'job-2', blobs: [{ url: 'blob-gone' }] },
-        ],
+  it.each([
+    ['answers with an error', async () => null],
+    [
+      'throws',
+      async () => {
+        throw new Error('synthetic timeout');
       },
-    } as unknown as CsamReportProps;
+    ],
+  ])(
+    'opens no CyberTip for a generated-image report a job of which has no file: the fetch %s',
+    async (_, gone) => {
+      fetchBlobAsFile.mockImplementation(async (url: string) =>
+        url === 'blob-gone' ? gone() : new File(['generated'], 'generated.png')
+      );
+      primaryRow = {
+        ...report,
+        type: 'GeneratedImage',
+        details: {
+          generatedImages: [
+            { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
+            { jobId: 'job-2', blobs: [{ url: 'blob-gone' }] },
+          ],
+        },
+      } as unknown as CsamReportProps;
 
-    await processCsamReport(primaryRow);
+      await processCsamReport(primaryRow);
 
-    expect(submitReport).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-  });
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(lines('send-no-files')).toEqual([
+        expect.objectContaining({ type: 'error', reportId: 1 }),
+      ]);
+      // An error response must come back as no file, not as the file.
+      expect(fetchBlobAsFile).toHaveBeenCalledWith('blob-gone', undefined, { requireOk: true });
+    }
+  );
 
   it('sends an external-link report that names no evidence file', async () => {
     primaryRow = {
