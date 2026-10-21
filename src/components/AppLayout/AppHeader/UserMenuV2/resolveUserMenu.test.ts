@@ -19,7 +19,7 @@ const entry = (label: string, extra: Partial<UserMenuItem> = {}): UserMenuItem =
 const layout: UserMenuNode[] = [
   {
     kind: 'group',
-    id: 'stuff',
+    id: 'your-stuff',
     label: 'Stuff',
     icon: IconUser,
     children: [
@@ -27,7 +27,7 @@ const layout: UserMenuNode[] = [
       { kind: 'item', id: 'vault' },
       {
         kind: 'group',
-        id: 'deeper',
+        id: 'help',
         label: 'Deeper',
         icon: IconUser,
         children: [{ kind: 'item', id: 'downloads' }],
