@@ -146,7 +146,8 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]'
     );
   `);
   await pg.db.exec(readFileSync(BLOCKED_QUEUE_MIGRATION, 'utf8'));
@@ -247,6 +248,15 @@ const republish = async (postId: number) => {
           - 'unpublishedReason'
     WHERE id = ${postId}`;
 };
+
+/** A sent CSAM report with a verified evidence copy, naming `userId` and listing `imageIds`. */
+const verifiedReport = (imageIds: number[], userId = OWNER) =>
+  sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images)
+      VALUES (${userId}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'),
+              ${JSON.stringify(imageIds.map((id) => ({ id })))}::jsonb)`;
+const coverImages = (imageIds: number[]) =>
+  sql`UPDATE "CsamReport" SET "reportSentAt" = now(), details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'),
+      images = ${JSON.stringify(imageIds.map((id) => ({ id })))}::jsonb`;
 
 // ── observations ────────────────────────────────────────────────────────────────────────────────
 
@@ -418,10 +428,17 @@ describe('post takedowns', () => {
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
 
-    await sql`UPDATE "CsamReport" SET "reportSentAt" = now(),
-              details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await coverImages([1, 2]);
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+  });
+
+  it('a csam-hold removal is not released by an earlier report about other images', async () => {
+    await verifiedReport([900]);
+    await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a mature-underage violation unpublish is deny only until a verified report releases it', async () => {
@@ -434,10 +451,17 @@ describe('post takedowns', () => {
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
 
-    await sql`UPDATE "CsamReport"
-              SET details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await coverImages([1, 2]);
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+  });
+
+  it('a mature-underage violation unpublish is not released by an earlier report about other images', async () => {
+    await verifiedReport([900]);
+    await modelCascade(5, MOD, 'UnpublishedViolation', 'mature-underage');
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('an owner unpublishing their own model makes no call', async () => {
@@ -539,9 +563,8 @@ describe('evidence holds', () => {
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
 
-    // Verification is what releases it; the next reconcile upgrades.
-    await sql`UPDATE "CsamReport"
-              SET details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    // Verification of a report covering the image is what releases it; the next reconcile upgrades.
+    await coverImages([1]);
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'retract']);
   });
@@ -555,10 +578,9 @@ describe('evidence holds', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
-  it('a sent report with a verified evidence copy does not hold', async () => {
+  it('a sent report with a verified evidence copy covering the image does not hold', async () => {
     await image(1);
-    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
-              VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'))`;
+    await verifiedReport([1]);
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['retract']);
@@ -592,6 +614,102 @@ describe('evidence holds', () => {
     await moderatorBlock(2);
     await syncCdnAccess();
     expect(callsFor(SHARED)).toEqual(['deny']);
+  });
+});
+
+describe('report coverage', () => {
+  it('a takedown of a reported owner that no verified report covers is deny only', async () => {
+    await image(1);
+    await verifiedReport([2]);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+  });
+
+  it('a takedown a verified report covers retracts', async () => {
+    await image(1);
+    await verifiedReport([1]);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract']);
+  });
+
+  it('a takedown of an owner no report names retracts', async () => {
+    await image(1);
+    await verifiedReport([1], OTHER_OWNER);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract']);
+  });
+
+  it('a report that lists the image but names someone else does not release a reported owner', async () => {
+    await image(1);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
+              VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'))`;
+    await verifiedReport([1], OTHER_OWNER);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+  });
+
+  it('a covering report that is not verified, or not sent, does not release', async () => {
+    await image(1);
+    await image(2);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", images)
+              VALUES (${OWNER}, now(), '[{"id": 1}]'::jsonb)`;
+    await sql`INSERT INTO "CsamReport" ("userId", details, images)
+              VALUES (${OWNER}, jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'), '[{"id": 2}]'::jsonb)`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it('a covering report that is unsent or unverified covers nothing on its own', async () => {
+    await image(1);
+    await image(2);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", images)
+              VALUES (${OWNER}, now(), '[{"id": 1}]'::jsonb)`;
+    await sql`INSERT INTO "CsamReport" ("userId", details, images)
+              VALUES (${OWNER}, jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'),
+                      '[{"id": 2}]'::jsonb)`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    // The owner's evidence hold is read as lifted, so only coverage decides.
+    const queryRaw = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: unknown[]) => {
+      const rows = await queryRaw?.(...(a as Parameters<NonNullable<typeof queryRaw>>));
+      return (a[0] as readonly string[]).join('').includes('AS reported')
+        ? (rows as { held: boolean }[]).map((r) => ({ ...r, held: false }))
+        : rows;
+    }) as never);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it('a failed coverage lookup releases nothing', async () => {
+    await image(1);
+    await verifiedReport([1]);
+    await moderatorBlock(1);
+    await pg.db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN images TO "imagesAway"`);
+    try {
+      await syncCdnAccess();
+    } finally {
+      await pg.db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "imagesAway" TO images`);
+    }
+    expect(callsFor(u(1))).toEqual(['deny']);
+  });
+
+  it('a verified report with no image list covers nothing', async () => {
+    await image(1);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images)
+              VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'), '{"id": 1}'::jsonb)`;
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 });
 
@@ -649,11 +767,22 @@ describe('moderator-app deletes', () => {
     await reconcileCdnAccess();
     expect(await stateOf(GONE)).toBe('Denied');
 
-    await sql`UPDATE "CsamReport" SET "reportSentAt" = now(),
-              details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await coverImages([1]);
     await reconcileCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny', 'retract']);
     expect(await stateOf(GONE)).toBe('Retracted');
+  });
+
+  it('releases a delete flagged for CSAM review only once a verified report covers it', async () => {
+    await queueDelete(1, GONE, { csamReview: true });
+    await verifiedReport([900]);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny']);
+
+    await verifiedReport([1]);
+    await reconcileCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny', 'retract']);
   });
 
   it('denies only when the queue row does not say whose image it was', async () => {
@@ -733,6 +862,50 @@ describe('failures', () => {
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'allow', 'retract']);
     expect(await stateOf(u(1))).toBe('Retracted');
+  });
+
+  it("a re-takedown during another run's lift of a retracted url is not lost", async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    await sql`UPDATE "Image" SET ingestion = 'Scanned', "blockedFor" = NULL WHERE id = 1`;
+    fetchFake.mockImplementationOnce(async (input: string, init?: { method?: string }) => {
+      calls.push({ method: init?.method ?? 'GET', path: input.replace(CACHER, '') });
+      // The lift is in flight: the image is taken down again and a second run reads it as done.
+      await moderatorBlock(1);
+      await syncCdnAccess();
+      return { ok: true, status: 200 } as Response;
+    });
+    await syncCdnAccess();
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract', 'allow', 'retract']);
+    expect(await stateOf(u(1))).toBe('Retracted');
+  });
+
+  it('keeps the queue row of a url another run changed after this run read it', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    const queryRaw = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: unknown[]) => {
+      if ((a[0] as readonly string[]).join('').includes('"ImageCdnAccessClaim" k'))
+        // Another run finished lifting the url between this run's read and its last look.
+        await sql`DELETE FROM "ImageCdnAccess" WHERE url = ${u(1)}`;
+      return queryRaw?.(...(a as Parameters<NonNullable<typeof queryRaw>>));
+    }) as never);
+    await syncCdnAccess();
+    expect((await queued()).n).toBe(1);
+  });
+
+  it('removes the queue row of a url already in its state', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract']);
+    expect((await queued()).n).toBe(0);
   });
 
   it('keeps a row that was queued again while the run was reading it', async () => {
