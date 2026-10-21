@@ -145,15 +145,19 @@ describe('refundBidsForVersions', () => {
   });
 
   it('counts a plain refund already on the ledger as done', async () => {
-    refundTransaction.mockRejectedValueOnce(
+    // Every attempt answers 409, so only reading the ledger can make it count as done.
+    refundTransaction.mockRejectedValue(
       new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
     );
     getTransactionByExternalId.mockImplementation(async (id: string) =>
       id === `refund-${PLAIN}` ? { externalTransactionId: id } : null
     );
     const { refundFailed } = await run();
+    const ledgerReads = getTransactionByExternalId.mock.calls.map(([id]) => id);
+    refundTransaction.mockReset().mockResolvedValue({ transactionId: 'x' });
     getTransactionByExternalId.mockReset().mockResolvedValue(null);
     expect(refundFailed).toEqual([]);
+    expect(ledgerReads).toContain(`refund-${PLAIN}`);
   });
 
   it('works with no model row to read', async () => {
