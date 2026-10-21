@@ -1,6 +1,6 @@
 import { ActionIcon, Badge, Group, Loader, Select, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -19,6 +19,8 @@ export function ShopSectionsPanel({
   placeable: true | string;
 }) {
   const queryUtils = trpc.useUtils();
+  // Controlled so a pick clears the typed text: the select itself never holds a value.
+  const [search, setSearch] = useState('');
   const placed = trpc.cosmeticShop.getShopItemSections.useQuery({ shopItemId });
   const sections = trpc.cosmeticShop.getAllSections.useQuery({});
 
@@ -100,8 +102,12 @@ export function ShopSectionsPanel({
           searchable
           disabled={busy || sections.isLoading}
           nothingFoundMessage="No other sections"
+          searchValue={search}
+          onSearchChange={setSearch}
           onChange={(value) => {
-            if (value) add.mutate({ shopItemId, sectionId: Number(value) });
+            if (!value) return;
+            setSearch('');
+            add.mutate({ shopItemId, sectionId: Number(value) });
           }}
           comboboxProps={{ withinPortal: true }}
         />
