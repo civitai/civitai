@@ -1,5 +1,7 @@
+import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
-import type { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enums';
+import type { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import { TagSource } from '~/shared/utils/prisma/enums';
 
 /**
  * Moderation rules are used to automatically moderate content based on certain conditions.
@@ -19,10 +21,6 @@ import type { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enum
  *       tags: ['nsfw'],
  *       match: 'any',
  *     },
- *     {
- *      type: 'property',
- *      condition: '$.modelVersion.baseModel === 'LTX',
- *     },
  *   ],
  * };
  */
@@ -40,11 +38,6 @@ export type TagRule = {
   sources?: TagSource[];
 };
 
-export type PropertyRule = {
-  type: 'property';
-  condition: string; // i.e.: $.metadata.width > 400
-};
-
 export type AndRule = {
   type: 'and';
   rules: RuleDefinition[];
@@ -55,7 +48,32 @@ export type OrRule = {
   rules: RuleDefinition[];
 };
 
-export type RuleDefinition = AndRule | OrRule | ContentRule | TagRule | PropertyRule;
+export type RuleDefinition = AndRule | OrRule | ContentRule | TagRule;
+
+export const SUPPORTED_RULE_TYPES = ['content', 'tag', 'and', 'or'] as const;
+
+export const ruleDefinitionSchema: z.ZodType<RuleDefinition> = z.lazy(() =>
+  z.discriminatedUnion(
+    'type',
+    [
+      z.looseObject({
+        type: z.literal('content'),
+        target: z.array(z.enum(['prompt', 'name', 'description'])),
+        match: z.string(),
+      }),
+      z.looseObject({
+        type: z.literal('tag'),
+        tags: z.array(z.string()),
+        match: z.enum(['all', 'any']),
+        sources: z.array(z.enum(TagSource)).optional(),
+      }),
+      z.looseObject({ type: z.literal('and'), rules: z.array(ruleDefinitionSchema) }),
+      z.looseObject({ type: z.literal('or'), rules: z.array(ruleDefinitionSchema) }),
+    ],
+    { error: `Unsupported rule type: rules support ${SUPPORTED_RULE_TYPES.join(', ')}` }
+  )
+);
+
 type ModRule = {
   id: number;
   definition: RuleDefinition;
@@ -91,24 +109,14 @@ export function evaluateRule(rule: RuleDefinition, obj: any): boolean {
 
       if (rule.match === 'all') return rule.tags.every((tag) => tags.includes(tag));
       else return rule.tags.some((tag) => tags.includes(tag));
-    case 'property':
-      return evaluateCondition(rule.condition, obj);
     default:
+      // A stored rule of any other type (e.g. a retired `property` rule) never matches.
+      logToAxiom({
+        name: 'moderation-rule',
+        type: 'error',
+        message: 'Unsupported rule type',
+        ruleType: (rule as { type?: unknown }).type,
+      });
       return false;
-  }
-}
-
-function evaluateCondition(condition: string, obj: any): boolean {
-  try {
-    const func = new Function('$', `return ${condition}`);
-    return func(obj);
-  } catch (error) {
-    logToAxiom({
-      name: 'moderation-rule',
-      type: 'error',
-      message: 'Error evaluating condition',
-      error,
-    });
-    return false;
   }
 }
