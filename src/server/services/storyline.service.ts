@@ -17,6 +17,7 @@ import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import {
+  approveAppealOfLift,
   liftScanTakedown as liftScanTakedownWrite,
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
@@ -676,34 +677,12 @@ export async function moderateStorylineTitle({
     select: { id: true, ...storylineTakedownSelect, ...storylineTitleLevelSelect },
   });
   if (liftScanTakedown && !liftScanTakedown.leaveAppealOpen && !result.tosViolation)
-    await approveAppealOfDirectLift(id, moderatorId);
-  return result;
-}
-
-/**
- * The lift has already landed, so a failure here is logged and not thrown: failing the request
- * would send the moderator back to a lift that now answers "not taken down by its title scan".
- * The appeal stays on the title-appeals page, where a grant with nothing left to lift closes it.
- */
-async function approveAppealOfDirectLift(id: number, moderatorId?: number) {
-  try {
-    await resolveEntityAppeal({
-      ids: [id],
-      entityType: EntityType.Storyline,
-      status: AppealStatus.Approved,
+    await approveAppealOfLift(id, {
       resolvedReason: DIRECT_LIFT_APPEAL_REASON,
       internalNotes: DIRECT_LIFT_APPEAL_NOTE,
       userId: moderatorId,
     });
-  } catch (error) {
-    logToAxiom({
-      name: 'storyline-lift-appeal-close',
-      type: 'error',
-      message: 'takedown lifted, but its open appeal was not closed',
-      storylineId: id,
-      error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
-  }
+  return result;
 }
 
 const storylineTakedownSelect = {
