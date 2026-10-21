@@ -13,6 +13,7 @@ import {
   csamHoldSearch,
   decideAuthorHolds,
   decideCsamHold,
+  getCleanRescans,
   getHoldCoverImages,
   listCsamHolds,
   type CsamHoldCovers,
@@ -69,8 +70,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     console.error('CSAM hold context failed', err);
     return new Map<number, HoldContext>();
   });
+  // Also decoration: a failed read just leaves the "edited since" line off.
+  const cleanRescans = await getCleanRescans(queue.items).catch((err) => {
+    console.error('CSAM hold rescans failed', err);
+    return new Map<number, Date>();
+  });
   const items = queue.items.map((hold) => ({
     ...hold,
+    cleanRescanAt: cleanRescans.get(hold.id) ?? null,
     coverImages: covers.get(hold.id)?.images ?? [],
     imageTotal: covers.get(hold.id)?.total ?? 0,
     profile: contexts.get(hold.id)?.profile ?? null,

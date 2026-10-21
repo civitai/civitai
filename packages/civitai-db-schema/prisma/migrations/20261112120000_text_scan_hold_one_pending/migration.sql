@@ -50,6 +50,29 @@ SET "status" = 'Dismissed',
 FROM ranked r
 WHERE h."id" = r."id" AND r."rank" > 1;
 
+-- 1b. A pending hold with a ruling before it on the same entity is a re-detection, as the application marks
+--     one: kind 'redetected' and priorHoldId = the latest ruling before it. Superseded holds were never ruled on.
+--     Holds that already carry a priorHoldId are left alone, so a re-run changes nothing.
+WITH marks AS (
+  SELECT p."id",
+         (SELECT x."id"
+          FROM "TextScanHold" x
+          WHERE x."entityType" = p."entityType" AND x."entityId" = p."entityId" AND x."label" = p."label"
+            AND x."status" <> 'Pending' AND x."id" < p."id"
+            AND x."meta"->>'decision' IS DISTINCT FROM 'superseded'
+          ORDER BY x."id" DESC
+          LIMIT 1) AS "priorHoldId"
+  FROM "TextScanHold" p
+  WHERE p."status" = 'Pending' AND p."label" = 'csam' AND p."entityType" <> 'ChatMessage'
+    AND NOT coalesce(p."meta" ? 'priorHoldId', false)
+)
+UPDATE "TextScanHold" AS p
+SET "meta" = (CASE WHEN jsonb_typeof(p."meta") = 'object' THEN p."meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('kind', 'redetected', 'priorHoldId', m."priorHoldId"),
+    "updatedAt" = now()
+FROM marks m
+WHERE p."id" = m."id" AND m."priorHoldId" IS NOT NULL;
+
 -- 2. The text hash is no longer unique per entity: a later scan of the same text after a decision is
 --    skipped by the application, and changed text is a new hold or an in-place update.
 DROP INDEX IF EXISTS "TextScanHold_entityType_entityId_label_textHash_key";

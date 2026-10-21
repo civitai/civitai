@@ -8,9 +8,11 @@ const {
   decideAuthorHolds,
   getHoldCoverImages,
   getHoldContexts,
+  getCleanRescans,
 } = vi.hoisted(() => ({
   decideAuthorHolds: vi.fn(),
   getHoldCoverImages: vi.fn(),
+  getCleanRescans: vi.fn(),
   getHoldContexts: vi.fn(),
   listCsamHolds: vi.fn(),
   countCsamHoldsByType: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   decideCsamHold,
   decideAuthorHolds,
   getHoldCoverImages,
+  getCleanRescans,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -77,6 +80,7 @@ beforeEach(() => {
   decideCsamHold.mockResolvedValue({ ok: true });
   decideAuthorHolds.mockResolvedValue([{ holdId: 13, ok: true }]);
   getHoldCoverImages.mockResolvedValue(new Map());
+  getCleanRescans.mockResolvedValue(new Map());
   getHoldContexts.mockResolvedValue(new Map());
 });
 
@@ -203,6 +207,24 @@ describe('csam text holds load', () => {
     getHoldCoverImages.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
     expect(data.items).toMatchObject([{ id: 1, coverImages: [], imageTotal: 0 }]);
+  });
+
+  it('marks a hold whose content was scanned clean since, in one read for the page', async () => {
+    const scannedAt = new Date('2026-10-20T10:00:00Z');
+    listCsamHolds.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }], hasMore: false });
+    getCleanRescans.mockResolvedValue(new Map([[2, scannedAt]]));
+    const data = await loadAt('');
+    expect(getCleanRescans).toHaveBeenCalledTimes(1);
+    expect(data.items).toMatchObject([
+      { id: 1, cleanRescanAt: null },
+      { id: 2, cleanRescanAt: scannedAt },
+    ]);
+  });
+
+  it('still lists the queue when the rescans cannot be read', async () => {
+    getCleanRescans.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data.items).toMatchObject([{ id: 1, cleanRescanAt: null }]);
   });
 
   it('hands each row its profile or comment parent from one batched read of the page', async () => {
@@ -529,6 +551,20 @@ describe('csam hold row text', () => {
     expect(holdTitle({ ...base, entityType: 'Comment' })).toBe('Comment');
     expect(holdTitle({ ...base, entityType: 'UserProfile', username: 'someone' })).toBe('someone');
     expect(holdTitle({ ...base, entityType: 'UserProfile', userId: 3 })).toBe('user #3');
+  });
+
+  it('says when the text of a pending hold was last updated, once it was', () => {
+    const now = Date.parse('2026-10-20T12:00:00Z');
+    const createdAt = new Date('2026-10-20T02:00:00Z');
+    expect(
+      holdMeta(
+        { status: 'Pending', createdAt, decidedAt: null, textUpdatedAt: '2026-10-20T11:55:00Z' },
+        now
+      )
+    ).toBe('text updated 5m');
+    expect(
+      holdMeta({ status: 'Pending', createdAt, decidedAt: null, textUpdatedAt: null }, now)
+    ).toBe('held 10h');
   });
 
   it('says how long ago a pending hold was held, and a decided one was decided', () => {

@@ -190,13 +190,21 @@ export function holdTitle(hold: {
   }
 }
 
+/** A pending row shows the newest event: when its text was last replaced, else when it was held. */
 export function holdMeta(
-  hold: { status: string; createdAt: Date; decidedAt: Date | null },
+  hold: {
+    status: string;
+    createdAt: Date;
+    decidedAt: Date | null;
+    textUpdatedAt?: Date | string | null;
+  },
   now = Date.now()
 ): string {
-  return hold.status === 'Pending' || !hold.decidedAt
-    ? `held ${shortAge(hold.createdAt, now)}`
-    : `decided ${shortAge(hold.decidedAt, now)}`;
+  if (hold.status === 'Pending' || !hold.decidedAt)
+    return hold.textUpdatedAt
+      ? `text updated ${shortAge(hold.textUpdatedAt, now)}`
+      : `held ${shortAge(hold.createdAt, now)}`;
+  return `decided ${shortAge(hold.decidedAt, now)}`;
 }
 
 export function splitEmptyTypes<T extends string>(

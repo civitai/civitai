@@ -228,6 +228,7 @@
         <span class="block w-full truncate text-xs text-dark-0">{row.reason}</span>
         <MetaChip>{entityLabel(row.entityType)}</MetaChip>
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.cleanRescanAt && row.status === 'Pending'}<MetaChip tone="green">edited since</MetaChip>{/if}
         {#if row.userId !== null && row.otherPendingByAuthor > 0}
           <HoldGroupChip
             href={authorHref(row.userId)}

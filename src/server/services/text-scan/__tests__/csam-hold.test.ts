@@ -390,6 +390,19 @@ describe('one pending hold per entity', () => {
     expect(typeof previous[0].at).toBe('string');
   });
 
+  it('stamps when the text was last replaced, and leaves it off a hold never updated', async () => {
+    await scan(edited(1));
+    expect((await rows())[0].meta).not.toHaveProperty('textUpdatedAt');
+    await scan(edited(2));
+    const [held] = await rows();
+    const { textUpdatedAt, previous } = held.meta as {
+      textUpdatedAt: string;
+      previous: { at: string }[];
+    };
+    expect(Number.isNaN(Date.parse(textUpdatedAt))).toBe(false);
+    expect(textUpdatedAt).toBe(previous[0].at);
+  });
+
   it('keeps at most the five latest replaced texts', async () => {
     for (let n = 1; n <= 8; n++) await scan(edited(n));
     const [held] = await rows();

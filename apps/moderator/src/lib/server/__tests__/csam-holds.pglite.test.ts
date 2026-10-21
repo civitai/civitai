@@ -30,8 +30,13 @@ const {
   getHoldCoverImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
-const { EARLIER_TEXT_CHARS, filterAuthorPendingHolds, getChatHold, getHoldAuthorHolds } =
-  await import('../csam-holds.queries');
+const {
+  EARLIER_TEXT_CHARS,
+  filterAuthorPendingHolds,
+  getCleanRescans,
+  getChatHold,
+  getHoldAuthorHolds,
+} = await import('../csam-holds.queries');
 
 const OLDEST_PENDING: CsamHoldQuery = {
   status: 'pending',
@@ -99,7 +104,8 @@ beforeEach(async () => {
   db = await freshPglite();
   // The migration reads the last scanned text hash of each entity from it.
   await db.exec(`CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL,
-    "entityId" INTEGER NOT NULL, "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+    "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Succeeded', "result" JSONB,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
   for (const migration of MIGRATIONS) await db.exec(migration);
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
   await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
@@ -316,6 +322,28 @@ describe('re-detected holds', () => {
       priorStatus: null,
       priorDecidedByUsername: null,
     });
+  });
+
+  it('reads when the text was last updated, from the stamp or else the newest replaced text', async () => {
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-10-06',
+        meta: {
+          textUpdatedAt: '2026-10-07T00:00:00.000Z',
+          previous: [{ text: 'old', at: '2026-10-06T12:00:00.000Z' }],
+        },
+      },
+      {
+        id: 9,
+        createdAt: '2026-10-06',
+        meta: { previous: [{ text: 'old', at: '2026-10-06T12:00:00.000Z' }] },
+      },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'pending' });
+    expect(items.find((h) => h.id === 8)?.textUpdatedAt).toBe('2026-10-07T00:00:00.000Z');
+    expect(items.find((h) => h.id === 9)?.textUpdatedAt).toBe('2026-10-06T12:00:00.000Z');
+    expect(items.find((h) => h.id === 1)?.textUpdatedAt).toBeNull();
   });
 
   it('reads the earlier texts and the earlier ruling kept in meta, cutting long text and skipping junk', async () => {
@@ -612,6 +640,60 @@ describe('getHoldCoverImages', () => {
 
   it('reads nothing for an empty page', async () => {
     expect((await getHoldCoverImages([])).size).toBe(0);
+  });
+});
+
+describe('getCleanRescans', () => {
+  const scan = (
+    entityType: string,
+    entityId: number,
+    result: unknown,
+    updatedAt = '2026-10-10',
+    status = 'Succeeded'
+  ) =>
+    db.query(
+      `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt") VALUES ($1,$2,$3,$4::jsonb,$5)`,
+      [entityType, entityId, status, JSON.stringify(result), updatedAt]
+    );
+  const clean = (textHash: string) => ({ textHash, labels: { csam: { detected: false } } });
+  // A hold's hash is `h-<id>`; hold 2 is a chat message, which this does not look at.
+  const holds = [
+    { id: 1, entityType: 'Post', entityId: 10 },
+    { id: 2, entityType: 'ChatMessage', entityId: 20 },
+    { id: 3, entityType: 'Post', entityId: 30 },
+  ];
+
+  it('names the pending holds whose latest scan is of other text and found nothing', async () => {
+    await scan('Post', 10, clean('edited'));
+    await scan('Post', 30, clean('h-3'));
+    const found = await getCleanRescans(holds);
+    expect([...found.keys()]).toEqual([1]);
+    expect(found.get(1)).toBeInstanceOf(Date);
+  });
+
+  it('reads the newest of an entity’s scans, shadow row included', async () => {
+    await scan('Post', 10, clean('edited'), '2026-10-10');
+    await scan(
+      'Post:shadow',
+      10,
+      { textHash: 'h-1', labels: { csam: { detected: true } } },
+      '2026-10-11'
+    );
+    expect((await getCleanRescans(holds)).size).toBe(0);
+  });
+
+  it('is not clean when the newer scan detected csam, did not run the label, failed or has no hash', async () => {
+    await scan('Post', 10, { textHash: 'edited', labels: { csam: { detected: true } } });
+    await scan('Post', 30, { textHash: 'edited', labels: { nsfw: {} } });
+    expect((await getCleanRescans(holds)).size).toBe(0);
+    await db.exec(`DELETE FROM "EntityModeration"`);
+    await scan('Post', 10, clean('edited'), '2026-10-10', 'Pending');
+    await scan('Post', 30, { labels: { csam: { detected: false } } });
+    expect((await getCleanRescans(holds)).size).toBe(0);
+  });
+
+  it('reads nothing for no holds', async () => {
+    expect((await getCleanRescans([])).size).toBe(0);
   });
 });
 

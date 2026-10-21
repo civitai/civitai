@@ -52,8 +52,10 @@ so a ruling cannot land between the read and the write:
 
 - A Pending hold exists with another text: it is updated in place (text, reason, text hash, workflow,
   prompt, content time, meta) and keeps its queue position. The text it replaces is kept in
-  `meta.previous` (text, hash, reason, workflow, when; the five newest, newest first), and the detail
-  shows it under "Earlier held text". If the new text is one a moderator already ruled on, the hold
+  `meta.previous` (text, hash, reason, workflow, when; the five newest, newest first) and the time of
+  the replacement in `meta.textUpdatedAt`. A row then reads "text updated 5m" instead of "held 10h",
+  and the detail shows both "held" and "text updated" (a hold without the stamp falls back to the
+  newest `meta.previous` time). The detail shows the replaced text under "Earlier held text". If the new text is one a moderator already ruled on, the hold
   carries `meta.ruledBefore` (that hold's id and outcome) and the detail says so. A hold with a
   decision in progress (`meta.decisionClaim` younger than 30 minutes) is left alone, and the write
   throws so the callback fails and the retry cron's rescan records the new text later (the claim of a
@@ -65,7 +67,12 @@ so a ruling cannot land between the read and the write:
 - No Pending hold and changed text after a decision: a new hold is inserted with
   `meta.kind = 'redetected'` and `meta.priorHoldId` set to the latest ruling. The queue shows a
   re-detected chip and "Dismissed before by ... ago" with a link to that hold.
-- A clean rescan never closes a Pending hold; a moderator does.
+- A clean rescan never closes a Pending hold; a moderator does. When the entity's latest text scan
+  (its `EntityModeration` row, the shadow row included) succeeded on a text hash other than the
+  hold's with the `csam` label evaluated and not detected, the row and the detail show an "edited
+  since" chip and the detail says the latest scan is clean and the held text may no longer be on the
+  content. The queue reads this for the whole page in one query, and a failed read only leaves the
+  chip off. A chat message hold never shows it, because chat is scanned as a window of messages.
 
 `ChatMessage` holds keep grouping by conversation window and stay unique per text hash.
 
@@ -81,6 +88,11 @@ keep the gap between the migration and the main release short. The moderator shi
 old moderator app does not send `textHash`, which the new endpoint accepts but then guards less
 strictly. When the migration closes duplicates it keeps the hold a moderator is mid-decision on, else
 the one holding the entity's last scanned text, else the newest; run it while nobody is deciding.
+It then marks every Pending non-chat hold that has a ruling before it on the same entity (a
+dismissed or removed hold with a lower id, superseded ones not counting) with `meta.kind =
+'redetected'` and `meta.priorHoldId` set to the latest such ruling, unless a `priorHoldId` is
+already there, so a survivor of the cleanup reads "Dismissed before by ..." like a live
+re-detection. The file is safe to run again.
 
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.

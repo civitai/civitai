@@ -248,6 +248,9 @@
       {#snippet chips()}
         <MetaChip>{typeName}</MetaChip>
         <MetaChip>held {shortAge(row.createdAt)} ago</MetaChip>
+        {#if row.textUpdatedAt && !decidedRow}
+          <MetaChip tone="amber">text updated {shortAge(row.textUpdatedAt)} ago</MetaChip>
+        {/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
         {#if !decidedRow && row.live}
           <MetaChip tone="amber">still live</MetaChip>
@@ -326,6 +329,13 @@
             <a href={priorHref} class={LINK_CLASS}>See that hold</a>
           </p>
         {/if}
+        {#if row.cleanRescanAt && !decidedRow}
+          <p class="m-0 mt-2 text-[13px] text-dark-0">
+            <MetaChip tone="green">edited since</MetaChip>
+            The latest scan of this {typeName.toLowerCase()} is clean ({shortAge(row.cleanRescanAt)} ago); the
+            text held here may no longer be on it. The hold stays open until you decide.
+          </p>
+        {/if}
         {#if row.ruledBefore}
           <p class="m-0 mt-2 text-[13px] text-dark-0">
             This text was ruled on before: {row.ruledBefore.status === 'Confirmed'
@@ -390,6 +400,9 @@
     <TriageCard dense title="Details">
       <dl class="m-0 space-y-1.5">
         <FactRow label="Held">{dateTime(row.createdAt)}</FactRow>
+        {#if row.textUpdatedAt}
+          <FactRow label="Text updated">{dateTime(row.textUpdatedAt)}</FactRow>
+        {/if}
         <FactRow label="Content from">{dateTime(row.contentAt)}</FactRow>
         <FactRow label="Workflow"
           ><span class="font-mono break-all">{row.workflowId ?? '—'}</span></FactRow

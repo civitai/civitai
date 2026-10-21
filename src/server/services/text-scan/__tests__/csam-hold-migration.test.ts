@@ -32,12 +32,19 @@ beforeEach(async () => {
   await db.pg.exec(`DROP INDEX IF EXISTS "TextScanHold_one_pending_per_entity_key"`);
 });
 
-const hold = (hash: string, meta = '{}', entityId = 1) =>
+const hold = (hash: string, meta = '{}', entityId = 1, status = 'Pending', entityType = 'Post') =>
   db.pg.query(
-    `INSERT INTO "TextScanHold" ("entityType","entityId","label","textHash","text","reason","meta","updatedAt")
-     VALUES ('Post', $1, 'csam', $2, $3, 'r', $4::jsonb, now())`,
-    [entityId, hash, `text ${hash}`, meta]
+    `INSERT INTO "TextScanHold" ("entityType","entityId","label","textHash","status","text","reason","meta","updatedAt")
+     VALUES ($5, $1, 'csam', $2, $6::"TextScanHoldStatus", $3, 'r', $4::jsonb, now())`,
+    [entityId, hash, `text ${hash}`, meta, entityType, status]
   );
+const metaOf = async (id: number) =>
+  (
+    await db.pg.query<{ meta: Record<string, unknown> }>(
+      `SELECT "meta" FROM "TextScanHold" WHERE "id" = $1`,
+      [id]
+    )
+  ).rows[0].meta;
 const scanned = (hash: string, entityType = 'Post', entityId = 1) =>
   db.pg.query(
     `INSERT INTO "EntityModeration" ("entityType","entityId","result") VALUES ($1, $2, $3::jsonb)`,
@@ -103,6 +110,59 @@ describe('one pending hold migration', () => {
       status: 'Dismissed',
       decidedById: null,
       meta: { decision: 'superseded', supersededBy: 2 },
+    });
+  });
+
+  describe('re-detection marker', () => {
+    it('marks the survivor of duplicates as re-detected after the latest ruling', async () => {
+      await hold('a', '{}', 1, 'Dismissed');
+      await hold('b');
+      await hold('c');
+      await migrate();
+      expect(await survivors()).toEqual([{ id: 3, textHash: 'c' }]);
+      expect(await metaOf(3)).toMatchObject({ kind: 'redetected', priorHoldId: 1 });
+    });
+
+    it('marks a single pending hold that came after a ruling, keeping its other meta', async () => {
+      await hold('a', '{}', 1, 'Confirmed');
+      await hold('b', '{"contentAt":"2026-10-01"}');
+      await migrate();
+      expect(await metaOf(2)).toEqual({
+        contentAt: '2026-10-01',
+        kind: 'redetected',
+        priorHoldId: 1,
+      });
+    });
+
+    it('points at the latest ruling, and ignores holds the migration superseded', async () => {
+      await hold('a', '{}', 1, 'Dismissed');
+      await hold('b', '{}', 1, 'Dismissed');
+      await hold('c', '{"decision":"superseded"}', 1, 'Dismissed');
+      await hold('d');
+      await migrate();
+      expect(await metaOf(4)).toMatchObject({ kind: 'redetected', priorHoldId: 2 });
+    });
+
+    it('leaves a pending hold with no ruling before it, other entities and chat messages alone', async () => {
+      await hold('a');
+      await hold('b', '{}', 2, 'Dismissed');
+      await hold('c', '{}', 3, 'Dismissed', 'ChatMessage');
+      await hold('d', '{}', 3, 'Pending', 'ChatMessage');
+      await hold('e', '{"decision":"superseded"}', 4, 'Dismissed');
+      await hold('f', '{}', 4);
+      await migrate();
+      expect(await metaOf(1)).toEqual({});
+      expect(await metaOf(4)).toEqual({});
+      expect(await metaOf(6)).toEqual({});
+    });
+
+    it('does not overwrite a marker the application already wrote, and is safe to run twice', async () => {
+      await hold('a', '{}', 1, 'Dismissed');
+      await hold('b', '{}', 1, 'Dismissed');
+      await hold('c', '{"kind":"redetected","priorHoldId":1}');
+      await migrate();
+      await migrate();
+      expect(await metaOf(3)).toEqual({ kind: 'redetected', priorHoldId: 1 });
     });
   });
 });

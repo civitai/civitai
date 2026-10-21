@@ -10,6 +10,7 @@ export {
   countCsamHoldsByType,
   countPendingCsamHolds,
   csamHoldSearch,
+  getCleanRescans,
   getHoldAuthorHolds,
   getHoldCoverImages,
   listCsamHolds,
@@ -20,7 +21,12 @@ export {
   type HoldAuthorHolds,
 } from './csam-holds.queries';
 
-export type CsamHoldItem = CsamHoldRow & { coverImages: CsamHoldImage[]; imageTotal: number };
+export type CsamHoldItem = CsamHoldRow & {
+  coverImages: CsamHoldImage[];
+  imageTotal: number;
+  /** When the content was last scanned clean on text other than the held one; null while nothing says it changed. */
+  cleanRescanAt: Date | null;
+};
 
 export type CsamHoldDecisionResult = { ok: true } | { ok: false; error: string };
 

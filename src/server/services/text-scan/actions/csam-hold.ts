@@ -132,6 +132,7 @@ async function writePendingHold(hold: {
     const meta = JSON.stringify({
       ...kept,
       ...hold.meta,
+      textUpdatedAt: replaced.at,
       ...(priorHoldId === null ? {} : { kind: 'redetected', priorHoldId }),
       ...(ruled ? { ruledBefore: { holdId: ruled.id, status: ruled.status } } : {}),
       previous: [replaced, ...(Array.isArray(previous) ? previous : [])].slice(

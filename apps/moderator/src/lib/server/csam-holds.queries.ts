@@ -42,6 +42,8 @@ export type CsamHoldRow = {
   priorDecidedByUsername: string | null;
   /** Text a moderator ruled on before, put back on this pending hold by a later edit. */
   ruledBefore: { holdId: number; status: string } | null;
+  /** When an edit last replaced this pending hold's text; null while it holds the text first detected. */
+  textUpdatedAt: string | null;
   /** Text this pending hold held before later edits replaced it, newest first; plain text, cut at `EARLIER_TEXT_CHARS`. */
   earlierTexts: { text: string; at: string | null }[];
   /** Other pending holds by the same author, across the whole queue and not just this page. */
@@ -213,20 +215,33 @@ export async function listCsamHolds({
     .execute();
 
   const items = rows.slice(0, limit).map(({ meta, ...row }) => {
-    const { chatId, decision, kind, priorHoldId, messageIds, senderId, previous, ruledBefore } =
-      (meta ?? {}) as {
-        previous?: unknown;
-        ruledBefore?: unknown;
-        chatId?: unknown;
-        messageIds?: unknown;
-        senderId?: unknown;
-        decision?: unknown;
-        kind?: unknown;
-        priorHoldId?: unknown;
-      };
+    const {
+      chatId,
+      decision,
+      kind,
+      priorHoldId,
+      messageIds,
+      senderId,
+      previous,
+      ruledBefore,
+      textUpdatedAt,
+    } = (meta ?? {}) as {
+      textUpdatedAt?: unknown;
+      previous?: unknown;
+      ruledBefore?: unknown;
+      chatId?: unknown;
+      messageIds?: unknown;
+      senderId?: unknown;
+      decision?: unknown;
+      kind?: unknown;
+      priorHoldId?: unknown;
+    };
+    const earlierTexts = earlierTextsOf(previous);
     return {
       ...row,
-      earlierTexts: earlierTextsOf(previous),
+      earlierTexts,
+      textUpdatedAt:
+        typeof textUpdatedAt === 'string' ? textUpdatedAt : earlierTexts[0]?.at ?? null,
       ruledBefore: ruledBeforeOf(ruledBefore),
       redetected: kind === 'redetected' && typeof priorHoldId === 'number',
       priorHoldId: typeof priorHoldId === 'number' ? priorHoldId : null,
@@ -345,6 +360,34 @@ export async function filterAuthorPendingHolds(
     .where('o.id', '<>', holdId)
     .where('o.id', 'in', ids)
     .execute();
+}
+
+/**
+ * Of these pending holds, the ones whose entity was scanned again since, on other text, with the csam
+ * label evaluated and not detected: the content was edited after the hold and no longer says what the
+ * hold quotes. Keyed by hold id, valued with when that scan was recorded. A chat message is judged in a
+ * window of messages, not as one text, so it is never listed. The hold stays open: a moderator decides.
+ */
+export async function getCleanRescans(
+  holds: { id: number; entityType: string; entityId: number }[]
+): Promise<Map<number, Date>> {
+  const ids = holds.filter((h) => h.entityType !== 'ChatMessage').map((h) => h.id);
+  if (!ids.length) return new Map();
+  // The shadow row is the same entity scanned while the type was not yet active.
+  const { rows } = await sql<{ id: number; scannedAt: Date }>`
+    select t.id, t."scannedAt" from (
+      select distinct on (h.id) h.id, em."updatedAt" as "scannedAt", em.status::text as status,
+        em.result->>'textHash' as "scannedHash", h."textHash" as "heldHash",
+        em.result->'labels'->'csam'->>'detected' as detected
+      from "TextScanHold" h
+      join "EntityModeration" em
+        on em."entityId" = h."entityId" and em."entityType" in (h."entityType", h."entityType" || ':shadow')
+      where h.id in (${sql.join(ids)}) and h.status = 'Pending' and h.label = 'csam'
+      order by h.id, em."updatedAt" desc, em.id desc
+    ) t
+    where t.status = 'Succeeded' and t."scannedHash" is not null and t."scannedHash" <> t."heldHash"
+      and t.detected = 'false'`.execute(dbRead);
+  return new Map(rows.map((row) => [row.id, new Date(row.scannedAt)]));
 }
 
 export async function countCsamHoldsByType(args: {
