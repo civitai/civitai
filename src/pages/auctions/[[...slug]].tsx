@@ -19,7 +19,7 @@ import React, { useEffect } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AuctionInfo } from '~/components/Auction/AuctionInfo';
 import { AuctionMyBids } from '~/components/Auction/AuctionMyBids';
-import { MY_BIDS, useAuctionContext } from '~/components/Auction/AuctionProvider';
+import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useAuctionTopicListener } from '~/components/Auction/AuctionUtils';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -30,6 +30,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getAuctionNameBySlug } from '~/server/services/auction.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MY_BIDS } from '~/shared/constants/auction.constants';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 

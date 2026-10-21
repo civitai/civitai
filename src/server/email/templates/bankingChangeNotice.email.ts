@@ -20,26 +20,37 @@ type BankingChangeNoticeData = {
 
 const cell = 'border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top;';
 
-// Email clients drop <style> blocks, so the table and images are styled inline.
-const noticeHtml = String(
-  unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    .use(remarkBreaks)
-    .use(remarkRehype)
-    .use(rehypeStringify)
-    .processSync(BANKING_CHANGE_NOTICE_MARKDOWN)
-)
-  .replace(/<table>/g, '<table style="border-collapse: collapse; width: 100%;">')
-  .replace(/<th>/g, `<th style="${cell}">`)
-  .replace(/<td>/g, `<td style="${cell}">`)
-  .replace(/<img /g, '<img style="max-width: 100%; height: auto;" ')
-  // Margin rather than padding: Outlook ignores list padding, and client defaults indent ~40px.
-  .replace(/<(ul|ol)>/g, (_, tag: string) => `<${tag} style="margin: 8px 0 8px 20px; padding: 0;">`)
-  .replace(/<h2>/g, '<h2 style="font-size: 18px; margin: 24px 0 8px;">');
+// Rendered on first use, not at import: every module that reaches the email template index loads
+// this file, and almost none of them send the notice.
+let noticeHtml: string | undefined;
+function renderNoticeHtml() {
+  // Email clients drop <style> blocks, so the table and images are styled inline.
+  return (
+    String(
+      unified()
+        .use(remarkParse)
+        .use(remarkGfm)
+        .use(remarkBreaks)
+        .use(remarkRehype)
+        .use(rehypeStringify)
+        .processSync(BANKING_CHANGE_NOTICE_MARKDOWN)
+    )
+      .replace(/<table>/g, '<table style="border-collapse: collapse; width: 100%;">')
+      .replace(/<th>/g, `<th style="${cell}">`)
+      .replace(/<td>/g, `<td style="${cell}">`)
+      .replace(/<img /g, '<img style="max-width: 100%; height: auto;" ')
+      // Margin rather than padding: Outlook ignores list padding, and client defaults indent ~40px.
+      .replace(
+        /<(ul|ol)>/g,
+        (_, tag: string) => `<${tag} style="margin: 8px 0 8px 20px; padding: 0;">`
+      )
+      .replace(/<h2>/g, '<h2 style="font-size: 18px; margin: 24px 0 8px;">')
+  );
+}
 
 export function getBankingChangeNoticeHtml(username: string) {
   const baseUrl = getBaseUrl();
+  noticeHtml ??= renderNoticeHtml();
   return noticeHtml
     .replace(/(src|href)="\//g, (_, attr: string) => `${attr}="${baseUrl}/`)
     .replace(/\{username\}/g, () => escapeHtml(username));
