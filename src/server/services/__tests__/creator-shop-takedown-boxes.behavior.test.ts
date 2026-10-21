@@ -363,6 +363,18 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     });
   });
 
+  // The shelf buyers' refunds and the revoke still have to run.
+  it('finishes the takedown when the boxes holding it cannot be read', async () => {
+    await seedBox();
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({ stage: 'box', boxId: 0, error: expect.stringContaining('reset') }),
+    ]);
+  });
+
   it('refunds a box buyer who drew it, once, and marks the opening refunded', async () => {
     const boxId = await seedBox();
     const { boxItemId, sourceKey } = await seedOpening(boxId);

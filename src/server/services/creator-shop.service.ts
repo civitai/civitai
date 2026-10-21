@@ -2481,11 +2481,12 @@ export const takedownCosmeticShopItem = async ({
     updated = await archive();
     // Boxes stop drawing it too, before anything is refunded: openers are found after this, so none
     // can draw it in between and keep it unrefunded.
+    // Never thrown: the buyers below are still owed their refunds.
     if (item.cosmeticId != null)
       boxesPulled = await pullCosmeticFromBoxes({
         cosmeticId: item.cosmeticId,
         userId: moderatorId,
-      });
+      }).catch((error) => ({ pulled: [], failed: [{ boxId: 0, error: errorMessage(error) }] }));
     // Primary, not the replica: a sale made seconds ago may not have replicated
     // yet, and missing it would strip that buyer's cosmetic without refunding it.
     purchases = await dbWrite.userCosmeticShopPurchases.findMany({
@@ -2676,6 +2677,7 @@ export const takedownCosmeticShopItem = async ({
   }
 
   for (const { boxId, error } of boxesPulled.failed) {
+    // Box 0: the boxes holding it could not be read, so any may still hold it.
     failures.push({ stage: 'box', userId: 0, boxId, error: `Box still holds it: ${error}` });
     await logTakedown('error', 'Box pull failed', { shopItemId: id, boxId, error });
   }
@@ -2686,7 +2688,10 @@ export const takedownCosmeticShopItem = async ({
   let boxRefundedValue = 0;
   const boxClaims =
     item.cosmeticId != null
-      ? await claimBoxRefundsForCosmetic({ cosmeticId: item.cosmeticId })
+      ? await claimBoxRefundsForCosmetic({ cosmeticId: item.cosmeticId }).catch((error) => ({
+          claimed: [],
+          failed: [{ userId: 0, boxItemId: 'any', error: errorMessage(error) }],
+        }))
       : { claimed: [], failed: [] };
   for (const { userId, boxItemId, error } of boxClaims.failed) {
     failures.push({
