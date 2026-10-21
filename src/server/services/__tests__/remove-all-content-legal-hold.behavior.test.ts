@@ -94,6 +94,8 @@ const EVIDENCE = ['CommentV2', 'Comment', 'Article', 'Post', 'Model', 'ChatMessa
 /** Runs just before the first guarded delete: a hold landing after the check. */
 let beforeEvidence: (() => Promise<unknown>) | null = null;
 let failLookups = false;
+/** Replaces what the wipe's re-check after its evidence deletes reads back. */
+let afterHeld: unknown = undefined;
 
 const run = (sql: Prisma.Sql) => holder.db.query(sql.text, sql.values);
 const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
@@ -122,6 +124,7 @@ beforeEach(async () => {
   beforeEvidence = null;
   holder.beforeImages = null;
   failLookups = false;
+  afterHeld = undefined;
   session.user = { id: 9, isModerator: true, bannedAt: null };
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
@@ -143,7 +146,10 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     if (failLookups) throw new Error('connection reset');
-    return (await run(asSql(first, values))).rows;
+    const sql = asSql(first, values);
+    if (afterHeld !== undefined && sql.text.trimEnd().endsWith('AS held'))
+      return [{ held: afterHeld }];
+    return (await run(sql)).rows;
   }) as never);
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
@@ -241,6 +247,44 @@ describe('removeAllContent', () => {
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
   });
+
+  it('wipes an unheld account while the marker view exists', async () => {
+    await createMarkerView();
+    await removeAllContent({ id: CLEAN });
+    expect(await remaining(CLEAN)).toEqual(all(0));
+  });
+
+  it('keeps evidence when a marker lands mid-wipe', async () => {
+    await createMarkerView();
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+  });
+
+  it.each([
+    [
+      'an image put to review',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${CLEAN * 100}`,
+    ],
+    [
+      'an image blocked with no sent report',
+      `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${CLEAN * 100}`,
+    ],
+    [
+      'an image listed on a pending report',
+      `INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${CLEAN * 100}}]')`,
+    ],
+  ])('keeps evidence when %s lands mid-wipe', async (_, landing) => {
+    beforeEvidence = () => holder.db.exec(landing);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+  });
+
+  it('reports a hold when its re-check cannot be read', async () => {
+    afterHeld = null;
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    expect(indexes.queueUpdate).not.toHaveBeenCalled();
+  });
 });
 
 /** A Next API response that records what the handler sent. */
@@ -318,6 +362,13 @@ describe('/api/mod/delete-user-images', () => {
     // The post that held them goes with them.
     expect((await remaining(CLEAN)).Post).toBe(0);
     expect((await remaining(BYSTANDER)).Image).toBe(1);
+    expect((await remaining(BYSTANDER)).Post).toBe(1);
+  });
+
+  it('deletes an unheld account’s images while the marker view exists', async () => {
+    await createMarkerView();
+    expect((await call(CLEAN)).statusCode).toBe(200);
+    expect((await remaining(CLEAN)).Image).toBe(0);
   });
 
   it('refuses a held account with the hold refusal, deleting nothing', async () => {
@@ -330,7 +381,9 @@ describe('/api/mod/delete-user-images', () => {
   it('keeps the images and posts when a hold lands mid-run', async () => {
     holder.beforeImages = () =>
       holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    await call(CLEAN);
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ deletedImages: 0, deletedPosts: 0 });
     expect((await remaining(CLEAN)).Image).toBe(2);
     expect((await remaining(CLEAN)).Post).toBe(1);
   });
