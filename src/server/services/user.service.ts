@@ -78,7 +78,7 @@ import {
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { refundBidsForVersions } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import {
   isCosmeticAvailable,
@@ -1385,6 +1385,15 @@ export const updateAccountScope = async ({
   }
 };
 
+/** The listed ids whose row no longer exists, read on the primary. */
+async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids: number[]) {
+  if (!ids.length) return [];
+  const left = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
+  const kept = new Set(left.map((r) => r.id));
+  return ids.filter((i) => !kept.has(i));
+}
+
 /** Queues a search-index Delete for each listed row that no longer exists. */
 async function unindexDeleted(
   lists: [
@@ -1394,17 +1403,37 @@ async function unindexDeleted(
   ][]
 ) {
   for (const [index, table, rows] of lists) {
-    if (!rows.length) continue;
-    const ids = rows.map((r) => r.id);
-    const left = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
-    const kept = new Set(left.map((r) => r.id));
-    const gone = ids.filter((i) => !kept.has(i));
+    const gone = await goneIds(
+      table,
+      rows.map((r) => r.id)
+    );
     if (gone.length)
       await index.queueUpdate(
         gone.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
       );
   }
+}
+
+/**
+ * Refunds the bids on each listed model the wipe really deleted. A model a hold kept keeps its bids.
+ * By version id, since the model row is gone by now.
+ */
+async function refundBidsForDeletedModels(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[]
+) {
+  const gone = new Set(
+    await goneIds(
+      'Model',
+      models.map((m) => m.id)
+    )
+  );
+  for (const m of models)
+    if (gone.has(m.id))
+      await refundBidsForVersions({
+        versionIds: m.modelVersions.map((v) => v.id),
+        name: m.name,
+        notificationKey: m.id,
+      });
 }
 
 /**
@@ -1429,7 +1458,10 @@ export const removeAllContent = async ({
   const { markerView } = await assertAccountNotUnderLegalHold(id);
   const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
 
-  const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
+  const models = await dbRead.model.findMany({
+    where: { userId: id },
+    select: { id: true, name: true, modelVersions: { select: { id: true } } },
+  });
   const images = await dbRead.image.findMany({
     where: { userId: id },
     select: { id: true, url: true },
@@ -1539,6 +1571,14 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
+    await refundBidsForDeletedModels(models).catch((e: unknown) =>
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: `Refunding bids after a stopped wipe failed: ${(e as Error).message}`,
+        userId: id,
+      }).catch(() => undefined)
+    );
     throw new LegalHoldStoppedError();
   }
 
@@ -1565,9 +1605,7 @@ export const removeAllContent = async ({
   await userMetrics.queueUpdate(id);
   await articleMetrics.queueUpdate(articles.map((a) => a.id));
 
-  for (const m of models) {
-    await deleteBidsForModel({ modelId: m.id });
-  }
+  await refundBidsForDeletedModels(models);
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.

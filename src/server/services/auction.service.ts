@@ -894,27 +894,27 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
     .catch();
 };
 
-export const deleteBidsForModel = async ({
-  modelId,
+/**
+ * Cancels the live and recurring bids on these model versions and refunds each live bid once. Reads
+ * no model row, so it still works once the model is gone. A bid already marked deleted is skipped, so
+ * a second run refunds nothing again.
+ */
+export const refundBidsForVersions = async ({
+  versionIds,
+  name,
+  notificationKey,
   tx,
 }: {
-  modelId: number;
+  versionIds: number[];
+  /** The model name shown in the cancellation notice. */
+  name: string | null;
+  /** Scopes the notice's dedupe key: one notice per key per day. */
+  notificationKey: number;
   tx?: Prisma.TransactionClient;
 }) => {
+  if (!versionIds.length) return { bidsDeleted: [], recurringBidsDeleted: [] };
   const db = tx ?? dbWrite;
   const now = new Date();
-
-  const model = await db.model.findFirst({
-    where: { id: modelId },
-    select: { name: true, modelVersions: { select: { id: true } } },
-  });
-
-  if (!model) throw throwNotFoundError('Model not found.');
-  const versionIds = model.modelVersions.map((mv) => mv.id);
-  if (!versionIds.length) {
-    // early return if no versions
-    return { bidsDeleted: [], recurringBidsDeleted: [] };
-  }
 
   const aData = await db.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
@@ -935,137 +935,7 @@ export const deleteBidsForModel = async ({
   if (aIds.length > 0) {
     // we could reverse the logic here and refund first
     const deleted = await db.bid.updateManyAndReturn({
-      where: { auctionId: { in: aIds }, entityId: { in: versionIds } },
-      data: {
-        deleted: true,
-      },
-      select: {
-        id: true,
-        userId: true,
-        transactionIds: true,
-      },
-    });
-
-    for (const bid of deleted) {
-      for (const transactionId of bid.transactionIds) {
-        try {
-          await withRetries(async () => {
-            if (isAuctionTransactionPrefix(transactionId)) {
-              await refundMultiAccountTransaction({
-                externalTransactionIdPrefix: transactionId,
-                description: 'Deleted bid - model not available.',
-              });
-            }
-
-            await refundTransaction(transactionId, 'Deleted bid - model not available.');
-
-            return;
-          });
-        } catch (e) {
-          const error = e as Error;
-          logToAxiom({
-            name: 'handle-auctions',
-            type: 'error',
-            message: `Failed to refund user for removed bid`,
-            stack: error.stack,
-            cause: error.cause,
-            data: { transactionId, message: error.message },
-          }).catch();
-        }
-      }
-    }
-
-    if (deleted.length > 0) {
-      const details: DetailsCanceledBid = {
-        name: model?.name ?? null,
-        reason: 'Model not available',
-        recurring: false,
-      };
-      await createNotification({
-        userIds: uniq(deleted.map((d) => d.userId)),
-        category: NotificationCategory.System,
-        type: 'canceled-bid-auction',
-        key: `canceled-bid-auction:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
-        details,
-      });
-
-      deletedIds = deleted.map((d) => d.id);
-    }
-  }
-
-  const recToDelete = await db.bidRecurring.findMany({
-    where: { entityId: { in: versionIds } },
-    select: { id: true, userId: true },
-  });
-
-  if (recToDelete.length > 0) {
-    await db.bidRecurring.deleteMany({
-      where: { id: { in: recToDelete.map((r) => r.id) } },
-    });
-    const details: DetailsCanceledBid = {
-      name: model?.name ?? null,
-      reason: 'Model no longer available',
-      recurring: true,
-    };
-    await createNotification({
-      userIds: uniq(recToDelete.map((d) => d.userId)),
-      category: NotificationCategory.System,
-      type: 'canceled-bid-auction',
-      key: `canceled-bid-auction:recurring:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
-      details,
-    });
-
-    deletedRecurringIds = recToDelete.map((d) => d.id);
-  }
-
-  for (const a of aData) {
-    const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.Auction}:${a.id}`,
-        target: SignalMessages.AuctionBidChange,
-        data: signalData,
-      })
-      .catch();
-  }
-
-  return {
-    bidsDeleted: deletedIds,
-    recurringBidsDeleted: deletedRecurringIds,
-  };
-};
-
-export const deleteBidsForModelVersion = async ({
-  modelVersionId,
-  tx,
-}: {
-  modelVersionId: number;
-  tx?: Prisma.TransactionClient;
-}) => {
-  const dbClient = tx ?? dbWrite;
-  // TODO combine this function with one above
-  const now = new Date();
-
-  const aData = await dbClient.auction.findMany({
-    where: { startAt: { lte: now }, endAt: { gt: now } },
-    select: {
-      id: true,
-      auctionBase: {
-        select: {
-          slug: true,
-        },
-      },
-    },
-  });
-  const aIds = aData.map((a) => a.id);
-
-  let deletedIds: number[] = [];
-  let deletedRecurringIds: number[] = [];
-
-  if (aIds.length > 0) {
-    // we could reverse the logic here and refund first
-    const deleted = await dbClient.bid.updateManyAndReturn({
-      where: { auctionId: { in: aIds }, entityId: modelVersionId },
+      where: { auctionId: { in: aIds }, entityId: { in: versionIds }, deleted: false },
       data: {
         deleted: true,
       },
@@ -1107,7 +977,7 @@ export const deleteBidsForModelVersion = async ({
 
     if (deleted.length > 0) {
       const details: DetailsCanceledBid = {
-        name: 'a model',
+        name,
         reason: 'Model not available',
         recurring: false,
       };
@@ -1115,7 +985,7 @@ export const deleteBidsForModelVersion = async ({
         userIds: uniq(deleted.map((d) => d.userId)),
         category: NotificationCategory.System,
         type: 'canceled-bid-auction',
-        key: `canceled-bid-auction:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
+        key: `canceled-bid-auction:${notificationKey}:${formatDate(now, 'YYYY-MM-DD')}`,
         details,
       });
 
@@ -1123,17 +993,17 @@ export const deleteBidsForModelVersion = async ({
     }
   }
 
-  const recToDelete = await dbClient.bidRecurring.findMany({
-    where: { entityId: modelVersionId },
+  const recToDelete = await db.bidRecurring.findMany({
+    where: { entityId: { in: versionIds } },
     select: { id: true, userId: true },
   });
 
   if (recToDelete.length > 0) {
-    await dbClient.bidRecurring.deleteMany({
+    await db.bidRecurring.deleteMany({
       where: { id: { in: recToDelete.map((r) => r.id) } },
     });
     const details: DetailsCanceledBid = {
-      name: 'a model',
+      name,
       reason: 'Model no longer available',
       recurring: true,
     };
@@ -1141,7 +1011,7 @@ export const deleteBidsForModelVersion = async ({
       userIds: uniq(recToDelete.map((d) => d.userId)),
       category: NotificationCategory.System,
       type: 'canceled-bid-auction',
-      key: `canceled-bid-auction:recurring:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
+      key: `canceled-bid-auction:recurring:${notificationKey}:${formatDate(now, 'YYYY-MM-DD')}`,
       details,
     });
 
@@ -1164,6 +1034,43 @@ export const deleteBidsForModelVersion = async ({
     recurringBidsDeleted: deletedRecurringIds,
   };
 };
+
+export const deleteBidsForModel = async ({
+  modelId,
+  tx,
+}: {
+  modelId: number;
+  tx?: Prisma.TransactionClient;
+}) => {
+  const db = tx ?? dbWrite;
+
+  const model = await db.model.findFirst({
+    where: { id: modelId },
+    select: { name: true, modelVersions: { select: { id: true } } },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found.');
+  return refundBidsForVersions({
+    versionIds: model.modelVersions.map((mv) => mv.id),
+    name: model.name,
+    notificationKey: modelId,
+    tx,
+  });
+};
+
+export const deleteBidsForModelVersion = ({
+  modelVersionId,
+  tx,
+}: {
+  modelVersionId: number;
+  tx?: Prisma.TransactionClient;
+}) =>
+  refundBidsForVersions({
+    versionIds: [modelVersionId],
+    name: 'a model',
+    notificationKey: modelVersionId,
+    tx,
+  });
 
 export const deleteRecurringBid = async ({
   userId,

@@ -81,7 +81,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/apps/user-storage-purge.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -109,7 +109,7 @@ import {
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import { deleteImages } from '~/server/services/image.service';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { refundBidsForVersions } from '~/server/services/auction.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
@@ -123,6 +123,7 @@ const COLLECTION = 300;
 const ARTICLE = 500;
 const MODEL = 700;
 const BOUNTY = 900;
+const MODEL_VERSION = (modelId: number) => modelId * 10;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -233,7 +234,19 @@ beforeEach(async () => {
         ])
       ).rows) as never;
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
-  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(rowsOf('Model', 'id'));
+  // Each model has one version, id MODEL_VERSION(model).
+  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation((async (args: {
+    where: { userId: number };
+  }) =>
+    (
+      await holder.db.query<{ id: number }>(`SELECT id FROM "Model" WHERE "userId" = $1`, [
+        args.where.userId,
+      ])
+    ).rows.map(({ id }) => ({
+      id,
+      name: 'zzfixture',
+      modelVersions: [{ id: MODEL_VERSION(id) }],
+    }))) as never);
   vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
   vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
   vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
@@ -450,21 +463,54 @@ describe('removeAllContent', () => {
   });
 
   it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
-    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+      return { bidsDeleted: [], recurringBidsDeleted: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
   });
 
   it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {
-    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       failLookups = true;
+      return { bidsDeleted: [], recurringBidsDeleted: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+  });
+
+  it('refunds the bids on its models by version, after the models are gone', async () => {
+    await removeAllContent({ id: CLEAN });
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledWith({
+      versionIds: [MODEL_VERSION(MODEL)],
+      name: 'zzfixture',
+      notificationKey: MODEL,
+    });
+    expect((await remaining(CLEAN)).Model).toBe(0);
+    // The refund no longer needs the model row, which is what threw here before.
+    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('leaves the bids on a model a hold kept', async () => {
+    landsBefore = 'Model';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect((await remaining(CLEAN)).Model).toBe(1);
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('refunds the bids on a model that went before a hold stopped the wipe', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect((await remaining(CLEAN)).Model).toBe(0);
+    expect(refundBidsForVersions).toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL)] })
+    );
   });
 
   it('stops, keeping the evidence, when the marker view is dropped mid-wipe', async () => {

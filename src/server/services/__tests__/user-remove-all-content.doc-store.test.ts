@@ -81,7 +81,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
