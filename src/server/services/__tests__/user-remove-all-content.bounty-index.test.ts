@@ -88,11 +88,23 @@ beforeEach(() => {
   // Ids distinct per table and per database, so an index fed from the wrong one is visible.
   dbMock.dbRead.bounty.findMany.mockResolvedValue([{ id: 799 }]);
   dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 991 }]);
+  // Answers only the account's own rows, and the unsettled list only for the exact unsettled filter,
+  // so a query that drops either condition gets nothing back and the assertions below go red.
   dbMock.dbWrite.bounty.findMany.mockImplementation((async (args: {
-    where: { payoutRecordedAt?: unknown; id?: { notIn: number[] } };
+    where: {
+      userId?: number;
+      payoutRecordedAt?: { not?: unknown };
+      payoutSettledAt?: unknown;
+      id?: { notIn: number[] };
+    };
   }) => {
-    if (args.where.payoutRecordedAt) return unsettled.map((id) => ({ id }));
-    const kept = args.where.id?.notIn ?? [];
+    const { where } = args;
+    if (where.userId !== USER) return [];
+    if ('payoutRecordedAt' in where) {
+      const exact = where.payoutRecordedAt?.not === null && where.payoutSettledAt === null;
+      return exact ? unsettled.map((id) => ({ id })) : [];
+    }
+    const kept = where.id?.notIn ?? [];
     return BOUNTIES.filter((id) => !kept.includes(id)).map((id) => ({ id }));
   }) as never);
 });
@@ -128,5 +140,17 @@ describe('removeAllContent and the bounty index', () => {
       where: { userId: USER, id: { notIn: [702] } },
     });
     expect(queued(bountiesIndex)).toEqual(del(701));
+  });
+
+  it('removes a bounty from the index once its award is refunded', async () => {
+    unsettled = [701, 702];
+    bountyService.refundUnpayableBountyAward.mockImplementation(async (id: number) => id === 702);
+
+    await removeAllContent({ id: USER });
+
+    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER, id: { notIn: [701] } },
+    });
+    expect(queued(bountiesIndex)).toEqual(del(702));
   });
 });
