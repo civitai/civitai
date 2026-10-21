@@ -53,8 +53,11 @@ service refuses every run-API request (401). See [Not built yet](#not-built-yet)
   browser's token route (ban, onboarding, mute, email verification, the App Assistant flag) on the
   user as its database has them now, then the consent check, so any of them going off ends a reply at
   its next request with a refusal that is never retried. A grant is deleted on every end the runner
-  writes to the head; an end it could not save after retries is kept with the grant and written by
-  the maintenance pass while the grant is live. The sweep deletes expired grants.
+  writes to the head, and when its workflow throws; an end it could not save after retries is kept
+  with the grant and written by a repair pass every 30 s while the grant is live. The sweep deletes
+  expired grants, and logs (by run id) any end that never got saved. If civitai cannot judge the
+  gates just now (its session hub or Flipt is down), the mint answers `unavailable`, which is
+  retried, never a refusal.
 - **The model** is orchestration's OpenAI-compatible `POST /v1/chat/completions`
   (`ORCHESTRATION_URL`), asked as the browser's App Assistant asks it: the chat package's provider
   name and options, the viewer's own `chat` token (so orchestration bills the viewer under the App

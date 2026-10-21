@@ -11,7 +11,7 @@ import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
-import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 import {
   APP_ASSISTANT_DAILY_BUZZ_CAP,
   APP_ASSISTANT_SCOPES,
@@ -95,21 +95,35 @@ export async function getAppAssistantRefusal({
   return accountRefusal(user) ?? (await featureRefusal({ user, req }));
 }
 
+/** The gates could not be judged just now (the session hub or Flipt is unavailable): ask again. */
+export interface AppAssistantGateUnavailable {
+  status: 503;
+  error: string;
+  unavailable: true;
+}
+
+/** The flags `canAccessAppAssistant` reads. */
+const APP_ASSISTANT_FLAGS = ['appBlocks', 'appAssistant'] as const;
+
 /**
- * The same gates for a user known only by id (the server runner's mints, which have no session):
- * the gated fields are read fresh from the primary database on every call, never from a cached
- * session, so a ban, a mute or a lost email verification stops the next mint.
+ * The same gates for a user known only by id (the server runner's mints, which have no session).
+ * The gated account fields are read fresh from the primary database on every call, never from a
+ * cached session, so a ban, a mute or a lost email verification stops the next mint.
  *
- * The feature gate is evaluated with no request. The flags it reads (`appBlocks`, `appAssistant`)
- * carry no region or host restriction, so a request would only add the runner's own host and
- * region, which say nothing about the user; without one they are evaluated as for the user on
- * civitai.com. Flipt's targeting attributes that only the session carries (tier, early-adopter,
- * granted permissions) come from the session cache when it has the user; every refusal field above
- * comes from the database and wins.
+ * The feature gate is evaluated with no request, which matches the token route's evaluation on
+ * civitai.com only while all of these hold:
+ * - `appBlocks` and `appAssistant` carry no region or host rule (true today: their availability is
+ *   `['mod']` and `[]`), so the request's region and host would change nothing;
+ * - the session hub returns the user, which supplies Flipt's targeting attributes the database row
+ *   lacks (tier, membership, early adopter, granted permissions);
+ * - Flipt decides both flags (`isFliptDecisive`), rather than `hasFeature` falling back to the
+ *   static rules, which admit moderators only.
+ * When the session hub misses or Flipt is undecided, the answer is `unavailable` (the runner asks
+ * again), never a refusal: only a definite answer on that complete context refuses.
  */
 export async function getAppAssistantRefusalForUserId(
   userId: number
-): Promise<AppAssistantRefusal | null> {
+): Promise<AppAssistantRefusal | AppAssistantGateUnavailable | null> {
   const row = await dbWrite.user.findUnique({
     where: { id: userId },
     select: {
@@ -125,10 +139,17 @@ export async function getAppAssistantRefusalForUserId(
   if (!row) return { status: 403, error: 'App Assistant is not available on this account' };
   const refused = accountRefusal(row);
   if (refused) return refused;
+  const unavailable: AppAssistantGateUnavailable = {
+    status: 503,
+    error: 'App Assistant could not check this account just now',
+    unavailable: true,
+  };
   // Imported here, not at the top: the session client is built at module load, and only this path needs it.
   const { sessionClient } = await import('~/server/auth/session-client');
   const cached = await sessionClient.getSessionUserById(userId).catch(() => null);
+  if (!cached) return unavailable;
   const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
+  if (!(await isFliptDecisive([...APP_ASSISTANT_FLAGS], user))) return unavailable;
   return featureRefusal({ user });
 }
 

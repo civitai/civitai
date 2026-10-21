@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type pg from 'pg';
 
 import type { EndedReply } from './head';
-import type { GrantStore, PendingEnd, StoredGrant } from './interfaces';
+import type { GrantStore, Logger, PendingEnd, StoredGrant } from './interfaces';
 
 /** The runner's own tables, apart from DBOS's `dbos` schema. */
 export const RUNNER_SCHEMA = 'assistant_runner';
@@ -15,10 +15,12 @@ const TABLE = `"${RUNNER_SCHEMA}".run_grants`;
  */
 export class RunGrants implements GrantStore {
   readonly #pool: pg.Pool;
+  readonly #log: Pick<Logger, 'warn'> | undefined;
   #ready: Promise<void> | undefined;
 
-  constructor(pool: pg.Pool) {
+  constructor(pool: pg.Pool, log?: Pick<Logger, 'warn'>) {
     this.#pool = pool;
+    this.#log = log;
   }
 
   /** Creates the table. Safe to call on every replica at every start. */
@@ -115,8 +117,18 @@ export class RunGrants implements GrantStore {
    * deletes its run's grant itself (`Runner`), so this only catches what those missed.
    */
   async sweep(): Promise<number> {
-    const { rowCount } = await this.#pool.query(`delete from ${TABLE} where expires_at <= now()`);
-    return rowCount ?? 0;
+    const { rows } = await this.#pool.query<{ run_id: string; pending: boolean }>(
+      `delete from ${TABLE} where expires_at <= now() returning run_id, pending_end is not null as pending`
+    );
+    // An end still pending when its grant expired can no longer be minted for: it is lost. Said so,
+    // by run id only.
+    for (const row of rows)
+      if (row.pending)
+        this.#log?.warn(
+          { runId: row.run_id },
+          'a reply end was never saved before its grant expired'
+        );
+    return rows.length;
   }
 }
 

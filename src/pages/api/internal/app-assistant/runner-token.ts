@@ -27,7 +27,7 @@ import { isConfiguredSecret } from '~/server/utils/configured-secret';
  *   200 `{ token, expiresAt }`
  *   401 the runner's secret is missing or wrong, or the grant is not a current run grant
  *   403 `refused` when a gate refuses the user; `consent_required` once they turned App Assistant off
- *   503 not configured, or the mint failed
+ *   503 not configured, the mint failed, or the gates could not be judged just now (`unavailable`)
  *
  * Like `TokenSecuredEndpoint`, a blank configured secret answers 503. Mints are logged without the
  * token.
@@ -67,6 +67,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
 
   try {
     const refusal = await getAppAssistantRefusalForUserId(grant.userId);
+    // Not judged (the session hub or Flipt is down): a passing fault, which the runner retries.
+    if (refusal && 'unavailable' in refusal)
+      return res.status(503).json({ error: refusal.error, code: 'unavailable' });
     if (refusal) {
       logToAxiom({
         type: 'app-assistant.runner-token.refused',

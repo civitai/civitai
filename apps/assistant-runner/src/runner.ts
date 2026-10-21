@@ -119,6 +119,9 @@ export interface ReplyInput {
   grantExpiresAt?: number;
 }
 
+/** How often pending reply ends are written to the head. */
+const REPAIR_INTERVAL_MS = 30_000;
+
 /** How long before its grant expires a run ends, so its last saves still mint. */
 const GRANT_END_MARGIN_MS = 2 * 60 * 1000;
 
@@ -166,6 +169,7 @@ export class Runner implements RunService {
   #ready = false;
   #executorId = '';
   #maintenance: ReturnType<typeof setInterval> | undefined;
+  #repair: ReturnType<typeof setInterval> | undefined;
   /** The runs whose pass runs in this process, and how to stop each. */
   readonly #running = new Map<string, () => void>();
   #cancelCheck: ReturnType<typeof setTimeout> | undefined;
@@ -230,7 +234,12 @@ export class Runner implements RunService {
    * Sweeps runs stranded on another workflow version now, then every `intervalMs` sweeps again and
    * deletes runs that ended more than `retentionMs` ago.
    */
-  startMaintenance(options: { retentionMs: number; intervalMs: number }): void {
+  startMaintenance(options: {
+    retentionMs: number;
+    intervalMs: number;
+    /** How often pending reply ends are written (`repairPendingEnds`); 30 s unless set. */
+    repairIntervalMs?: number;
+  }): void {
     const run = async (cleanup: boolean) => {
       try {
         await this.sweepStranded();
@@ -246,6 +255,17 @@ export class Runner implements RunService {
     void run(false);
     this.#maintenance = setInterval(() => void run(true), options.intervalMs);
     this.#maintenance.unref();
+    // On a cadence of its own: a pending end must land while its grant is live, which the
+    // maintenance interval alone may give one chance at, or none, near the end of a long run.
+    let repairing = false;
+    this.#repair = setInterval(() => {
+      if (repairing) return;
+      repairing = true;
+      void this.repairPendingEnds()
+        .catch((error) => this.#deps.log.error({ err: error }, 'repairing reply ends failed'))
+        .finally(() => (repairing = false));
+    }, options.repairIntervalMs ?? REPAIR_INTERVAL_MS);
+    this.#repair.unref();
   }
 
   /**
@@ -255,6 +275,7 @@ export class Runner implements RunService {
   async shutdown(graceMs = 0): Promise<void> {
     this.#ready = false;
     if (this.#maintenance) clearInterval(this.#maintenance);
+    if (this.#repair) clearInterval(this.#repair);
     if (this.#cancelCheck) clearTimeout(this.#cancelCheck);
     await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
     await this.#pool?.end();
@@ -503,6 +524,52 @@ export class Runner implements RunService {
   }
 
   async #workflow(input: ReplyInput): Promise<ReplyOutput> {
+    try {
+      return await this.#replyBody(input);
+    } catch (error) {
+      // The reply's own code threw (a step failed), so the workflow ends ERROR and nothing else will
+      // end it. A DBOS error (a cancel, a recovery limit) or a throw while this process shuts down
+      // is not that: the run is ended elsewhere, or resumes in the next process, and keeps its grant.
+      if (this.#ready && !(error instanceof DBOSErrors.DBOSError)) await this.#failed(input);
+      throw error;
+    }
+  }
+
+  /**
+   * A reply whose workflow threw: its end is written to the head while the grant can still mint,
+   * and then the grant is forgotten (unless an end is already pending for repair).
+   */
+  async #failed(input: ReplyInput): Promise<void> {
+    const { runId, userId, conversationId, seq } = input;
+    try {
+      await this.#deps.store.update(userId, conversationId, (current) => {
+        const turn = savedTurn(current, seq);
+        if (!current || !turn || hasEnded(turn)) return null;
+        return withEnd(
+          current,
+          seq,
+          {
+            messages: shownMessages(turn),
+            status: 'error',
+            error: 'The reply stopped unexpectedly.',
+          },
+          new Date()
+        );
+      });
+    } catch (error) {
+      this.#deps.log.warn(
+        { err: error, runId },
+        'writing the end of a failed run to the head failed'
+      );
+    }
+    await this.#deps.grants
+      .forgetUnlessEndPending(runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId }, 'forgetting a run grant failed')
+      );
+  }
+
+  async #replyBody(input: ReplyInput): Promise<ReplyOutput> {
     const begun = await DBOS.runStep(() => this.#begin(input), { name: 'begin' });
     const stop = new AbortController();
     const why: { reason?: 'stopped' | 'ran_out' } = {};

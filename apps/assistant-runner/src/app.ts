@@ -272,6 +272,12 @@ export function buildApp(options: AppOptions): FastifyInstance {
               'refused',
               `This chat needs a current run grant in ${GRANT_HEADER} to be changed now.`
             );
+          // The user is refused, or turned the assistant off: the same answer the run would get.
+          if (
+            error instanceof MintRefusedError &&
+            (error.code === 'refused' || error.code === 'consent_required')
+          )
+            return refuse(reply, 'refused', error.message);
           throw error;
         }
         if (!found) return refuse(reply, 'not-found', 'No such chat.');
