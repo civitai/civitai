@@ -1288,8 +1288,13 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       expect((await DBOS.getWorkflowStatus(runId))?.status).toBe('CANCELLED');
       // Long enough for the workflow's catch to have run.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
-      // Nothing wrote over the turn: the kept end is still waiting for its repair.
-      expect((await store.load(user, conversationId))!.turns[0]!.assistant?.status).toBe('running');
+      // Nothing wrote over the turn: the kept end is waiting for its repair, or the repair loop an
+      // earlier test started already landed it. Never "stopped unexpectedly".
+      const kept = (await store.load(user, conversationId))!.turns[0]!.assistant;
+      expect(kept?.status === 'running' || kept?.status === 'done', JSON.stringify(kept)).toBe(
+        true
+      );
+      expect(JSON.stringify(kept)).not.toContain('stopped unexpectedly');
 
       await runner.repairPendingEnds();
       const reply = (await store.load(user, conversationId))!.turns[0]!.assistant;
