@@ -517,6 +517,27 @@ describe('Auto-flagged: hash auto-flags', () => {
     expect(await getModelAppealState(21)).toMatchObject({ pendingAppeal: false });
   });
 
+  it('counts poi as flagged only with an open text-scan poi flag, as the appeal resolver does', async () => {
+    await seedModel(40, 1, {});
+    await seedModel(41, 1, { poi: { workflowId: 'wf', textHash: 'a' } });
+    await seedModel(42, 1, { poi: { workflowId: 'wf', textHash: 'a', appealGranted: grant } });
+    await pg.exec(`UPDATE "Model" SET minor = TRUE, poi = TRUE WHERE id IN (40, 41, 42)`);
+    expect(await getModelAppealState(40)).toMatchObject({ minor: true, poi: false });
+    expect(await getModelAppealState(41)).toMatchObject({ minor: true, poi: true });
+    expect(await getModelAppealState(42)).toMatchObject({ minor: true, poi: false });
+  });
+
+  it('reads the text each text-scan flag is bound to, and any newer held text', async () => {
+    await seedModel(43, 1, {
+      minor: { workflowId: 'wf', textHash: 'a', redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { workflowId: 'wf', textHash: 'a' },
+    });
+    expect((await getModelAppealState(43)).textScan).toEqual({
+      minor: { textHash: 'a', redetectedTextHash: 'new' },
+      poi: { textHash: 'a', redetectedTextHash: null },
+    });
+  });
+
   it('carries the rulings kept on the minor entry and the model facts for a hash row', async () => {
     await pg.exec(`
       UPDATE "Model" SET meta = meta || '{"textScanFlags":{"minor":{"rulings":[{"decision":"appealUpheld","by":5}]}}}'

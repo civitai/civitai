@@ -47,6 +47,9 @@ import {
   type NeedsReviewSources,
 } from '$lib/minor-flags/needs-review';
 import { denied, type PermissionSet } from '$lib/permissions';
+import { canAccess } from '$lib/server/access';
+import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
+import { appealVerdict } from '$lib/minor-flags/appeal-split';
 import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
@@ -412,7 +415,13 @@ const decideAction =
     if (typeof input === 'string') return refusal(input);
     if (appealAware && routesThroughAppeal(flags, true)) {
       const state = await getModelAppealState(modelId);
-      if (state.pendingAppeal) return decideThroughAppeal(modelId, plan, state, input, refusal);
+      if (state.pendingAppeal !== (form.get('hasPendingAppeal') === 'true'))
+        return refusal("The owner's appeal changed since you loaded this row — reload.");
+      if (state.pendingAppeal) {
+        if (!canAccess(event.locals.user, MODEL_FLAGS_APPEALS_PATH))
+          return refusal('Rule this from Appeals — you need access to the Appeals tab.');
+        return decideThroughAppeal(modelId, plan, state, input, refusal);
+      }
     }
     const reasons: (RulingReason | null)[] = [];
     for (const flag of plan) {
@@ -473,21 +482,34 @@ const decideAction =
     };
   };
 
-/**
- * An Auto-flagged decision on a model whose owner has an open appeal: the main app refuses to keep a
- * flag past an open appeal, so the decision resolves the appeal instead, through the resolver the
- * Appeals tab uses. Keeping every flag upholds it, reverting every flag overturns it, and a split
- * rules each label. The resolver also rules any label the model carries that it was not told about
- * (the whole-appeal and per-label calls both default unnamed labels), so a model flagged beyond what
- * this row lists is refused rather than ruled on a label the moderator never saw.
- */
+type AppealState = Awaited<ReturnType<typeof getModelAppealState>>;
+
+/** Syncs with `ruleModelTextScanFlag` (main app), whose per-flag path this decision replaces under an
+ *  appeal; the appeal resolver grants against the last-scanned text and checks neither. */
+const staleTextScanFlag = (plan: readonly PlannedFlagRef[], state: AppealState) => {
+  for (const flag of plan) {
+    if (flag.source !== 'text-scan') continue;
+    const entry = state.textScan[flag.label];
+    if (entry.textHash !== flag.textHash)
+      return 'The text changed since this flag. Reload and review it again.';
+    if (entry.redetectedTextHash && entry.redetectedTextHash !== flag.textHash)
+      return 'Newer text is held for review on this flag. Rule it from the re-detection queue.';
+  }
+  return null;
+};
+
+/** An Auto-flagged decision while the owner's appeal is open resolves that appeal, as the Appeals tab
+ *  does: the main app refuses a per-flag keep past an open appeal. The resolver also rules a label the
+ *  row does not list, so a model flagged beyond the row is refused rather than ruled unseen. */
 async function decideThroughAppeal(
   modelId: number,
   plan: readonly PlannedFlagRef[],
-  state: { minor: boolean; poi: boolean },
+  state: AppealState,
   input: { resolvedReason?: string; internalNotes?: string },
   refusal: (error: string) => ReturnType<typeof fail>
 ) {
+  const stale = staleTextScanFlag(plan, state);
+  if (stale) return refusal(stale);
   const listed = new Set(plan.map((f) => f.label));
   for (const label of ['minor', 'poi'] as const)
     if (state[label] && !listed.has(label))
@@ -508,11 +530,8 @@ async function decideThroughAppeal(
     ? await resolveMinorFlagAppealPerLabel(modelId, ruling.perLabel, reason)
     : await resolveMinorFlagAppeal(modelId, ruling.verdict === 'Rejected', reason);
   if (!result.ok) return refusal(result.error);
-  return {
-    success: true,
-    modelId,
-    resolved: ruling.verdict === 'Rejected' ? 'kept' : 'dismissed',
-  };
+  const resolved = ruling.perLabel ? 'split' : ruling.verdict === 'Rejected' ? 'kept' : 'dismissed';
+  return { success: true, modelId, resolved };
 }
 
 /** What happened to a ruled flag: an applied flag is kept or reverted; a Needs review lead, which had
@@ -603,13 +622,10 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
-    // The verdict rule from `RULINGS` in AppealDetail.svelte.
-    const lifted = (['minor', 'poi'] as const).filter(
-      (label) => ({ minor, poi }[label].data === 'overturn')
-    );
+    const { verdict, lifted } = appealVerdict({ minor: minor.data, poi: poi.data });
     const reason = rulingReasonFromForm(
       'flagAppeal',
-      lifted.length ? 'Approved' : 'Rejected',
+      verdict,
       form,
       lifted.length ? lifted : undefined
     );

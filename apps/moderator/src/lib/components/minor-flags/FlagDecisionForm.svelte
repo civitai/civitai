@@ -35,6 +35,7 @@
     flags,
     decisions,
     hasPendingAppeal,
+    canRuleAppeals = true,
     submit,
     actionHref,
     hint,
@@ -45,6 +46,8 @@
     /** In key order: digit `n + 1` picks index `n`. */
     decisions: FlaggedDecision[];
     hasPendingAppeal: boolean;
+    /** Whether the viewer holds the Appeals tab, which ruling through an appeal needs. */
+    canRuleAppeals?: boolean;
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
     /** Under the bar while a reason select shows. */
@@ -52,20 +55,16 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  // Mirrors the main app's refusal: an open appeal blocks a re-detection ruling either way. Auto-flagged
-  // rows are ruled through the appeal instead. Change with `flaggedDecisionEnabled`.
+  // Change with `flaggedDecisionEnabled`.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
+  const APPEALS_ACCESS = 'Rule this from Appeals: you need access to the Appeals tab.';
 
-  const withAppeal = $derived(flags.map((f) => ({ ...f, hasPendingAppeal })));
+  const withAppeal = $derived(flags.map((f) => ({ ...f, hasPendingAppeal, canRuleAppeals })));
   const enabled = $derived(decisions.map((d) => decisionEnabled(withAppeal, d)));
-  // Under an open appeal the decision resolves it, so its reason comes from the appeal's lists.
   const viaAppeal = $derived(routesThroughAppeal(flags, hasPendingAppeal));
+  const unavailable = $derived(viaAppeal && !canRuleAppeals ? APPEALS_ACCESS : APPEAL_FIRST);
   const reasonGroups = $derived(
-    flaggedReasonGroups(
-      flags,
-      { keep: decisions[0].label, revert: decisions[1].label },
-      viaAppeal
-    )
+    flaggedReasonGroups(flags, { keep: decisions[0].label, revert: decisions[1].label }, viaAppeal)
   );
   const reasonOptions = $derived(reasonGroups ? decisionReasonOptions(reasonGroups) : null);
   // Key 1 takes one press when it has a single specific reason.
@@ -97,7 +96,7 @@
       index < 0
         ? 'Pick a decision.'
         : !enabled[index]
-          ? APPEAL_FIRST
+          ? unavailable
           : planReasonProblem(
               planDecision(flags, decisions[index].keep),
               decisions[index].label,
@@ -108,7 +107,7 @@
     if (refusal) {
       input.cancel();
       problem = refusal;
-      if (refusal !== APPEAL_FIRST) reasonSelect?.focus();
+      if (!(refusal === APPEAL_FIRST || refusal === APPEALS_ACCESS)) reasonSelect?.focus();
       return;
     }
     problem = null;
@@ -128,7 +127,7 @@
 
 {#snippet decisionButtons()}
   {#each decisions as d, i (d.keep.join(','))}
-    {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
+    {@const why = !enabled[i] ? unavailable : null}
     <TriageKeyButton
       type="submit"
       key={i + 1}
@@ -137,8 +136,8 @@
       name="keep"
       value={d.keep.join(',')}
       formaction={actionHref('decideFlags')}
-      disabled={!!unavailable}
-      title={unavailable ?? undefined}
+      disabled={!!why}
+      title={why ?? undefined}
     >
       {d.label}
     </TriageKeyButton>
@@ -192,6 +191,7 @@
 <form method="POST" action={actionHref('decideFlags')} use:enhance={decide} class="w-full">
   <input type="hidden" name="modelId" value={modelId} />
   <input type="hidden" name="flags" value={JSON.stringify(flags)} />
+  <input type="hidden" name="hasPendingAppeal" value={hasPendingAppeal} />
   <TriageDecisionBar
     buttons={decisionButtons}
     picker={reasonOptions && reasonPicker.open !== null ? picker : undefined}

@@ -119,7 +119,8 @@
     <IconMessage class="mt-px size-3.5 shrink-0" aria-hidden="true" />
     <p class="m-0">
       The owner has an open appeal on this model. Deciding here resolves it: keeping every flag
-      rejects the appeal, reverting every flag approves it, and the reason is recorded on the appeal.
+      rejects the appeal, reverting every flag approves it, and a split rules each label. The reason
+      is recorded on the appeal.
       {#if canOpenAppeals}
         <a href={appealsHref} class={LINK_CLASS}>Open it in Appeals</a>.
       {:else}
@@ -250,6 +251,7 @@
       flags={flagRefs}
       {decisions}
       hasPendingAppeal={row.hasPendingAppeal}
+      canRuleAppeals={canOpenAppeals}
       {submit}
       {actionHref}
       hint={row.hasPendingAppeal

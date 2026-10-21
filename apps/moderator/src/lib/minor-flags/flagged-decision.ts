@@ -4,24 +4,30 @@ import {
   type ResolutionVerdict,
 } from '@civitai/shared/resolution-reasons';
 import { decisionReasonProblem } from '$lib/triage/decision-reasons';
+import { appealVerdict } from './appeal-split';
 
 /** What raised a flag or lead: an applied hash or text-scan flag (Auto-flagged), or a held detection
  *  or file match nothing was applied for (Needs review). */
 export type FlaggedSource = 'hash' | 'redetected' | 'text-scan' | 'file-match';
 export type FlaggedLabel = 'minor' | 'poi';
 
-/** Key order: 1 keeps the flag, 2 lifts it. A hash or text-scan row under appeal is ruled through the
- *  appeal (`appealRuling`), so both keys stay on. The main app still refuses a re-detection ruling
- *  while the owner has an open appeal, so both keys go off there. A file match is not tied to an
- *  appeal. */
+/** Key order: 1 keeps the flag, 2 lifts it. Syncs with the main app's `ruleModelTextScanFlag` and
+ *  `resolveTextScanRedetection`, which refuse a ruling while the owner's appeal is open: a hash or
+ *  text-scan row is ruled through the appeal instead (`routesThroughAppeal`), which needs the Appeals
+ *  tab; a held detection has no such path. */
 export const flaggedDecisionEnabled = (row: {
   source: FlaggedSource;
   hasPendingAppeal: boolean;
-}): readonly boolean[] =>
-  row.source === 'redetected' && row.hasPendingAppeal ? [false, false] : [true, true];
+  /** Whether the viewer holds the Appeals tab; unknown (omitted) is treated as held. */
+  canRuleAppeals?: boolean;
+}): readonly boolean[] => {
+  if (!row.hasPendingAppeal) return [true, true];
+  if (row.source === 'redetected') return [false, false];
+  const viaAppeal = row.source === 'hash' || row.source === 'text-scan';
+  return viaAppeal && row.canRuleAppeals === false ? [false, false] : [true, true];
+};
 
-/** Whether a decision on these flags resolves the owner's open appeal instead of ruling each flag:
- *  Auto-flagged rows only, since the main app's appeal resolver covers applied flags. */
+/** Whether a decision on these flags resolves the owner's open appeal instead of ruling each flag. */
 export const routesThroughAppeal = (flags: readonly Pick<FlagRef, 'source'>[], pending: boolean) =>
   pending && flags.every((f) => f.source === 'hash' || f.source === 'text-scan');
 
@@ -42,34 +48,17 @@ export type FlaggedDecision = { label: string; keep: string[] };
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/**
- * The appeal ruling a plan amounts to: keeping every flag rejects the appeal, reverting every flag
- * approves it, and a split rules each label (`perLabel`) and approves the appeal for the reverted
- * ones. `lifted` is the labels the approval covers, which the reason is checked against.
- */
-export function appealRuling(plan: readonly PlannedFlag[]):
-  | {
-      verdict: 'Rejected' | 'Approved';
-      lifted: FlaggedLabel[];
-      perLabel: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' } | null;
-    }
-  | { error: string } {
+/** The appeal ruling a plan amounts to: keeping a flag upholds its label, reverting it overturns it. */
+export function appealRuling(plan: readonly PlannedFlag[]) {
   const kept = new Map<FlaggedLabel, boolean>();
   for (const flag of plan) {
     if (kept.has(flag.label) && kept.get(flag.label) !== flag.keep)
       return { error: 'A flag on the same label cannot be both kept and reverted.' };
     kept.set(flag.label, flag.keep);
   }
-  const lifted = [...kept].filter(([, keep]) => !keep).map(([label]) => label);
-  if (!lifted.length) return { verdict: 'Rejected', lifted, perLabel: null };
-  if (lifted.length === kept.size) return { verdict: 'Approved', lifted, perLabel: null };
-  const decision = (label: FlaggedLabel): 'uphold' | 'overturn' =>
-    kept.get(label) ? 'uphold' : 'overturn';
-  return {
-    verdict: 'Approved',
-    lifted,
-    perLabel: { minor: decision('minor'), poi: decision('poi') },
-  };
+  return appealVerdict(
+    Object.fromEntries([...kept].map(([label, keep]) => [label, keep ? 'uphold' : 'overturn']))
+  );
 }
 
 /**
@@ -122,7 +111,7 @@ export function needsReviewDecisions(flags: readonly FlagRef[]): FlaggedDecision
 
 /** Whether every flag allows its part of the decision (see `flaggedDecisionEnabled`). */
 export const decisionEnabled = (
-  flags: readonly (FlagRef & { hasPendingAppeal: boolean })[],
+  flags: readonly (FlagRef & { hasPendingAppeal: boolean; canRuleAppeals?: boolean })[],
   decision: Pick<FlaggedDecision, 'keep'>
 ) =>
   flags.every((flag) => {

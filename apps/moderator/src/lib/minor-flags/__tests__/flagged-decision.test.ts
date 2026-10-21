@@ -30,6 +30,15 @@ describe('flaggedDecisionEnabled', () => {
     }
   );
 
+  it.each(['hash', 'text-scan'] as const)(
+    'locks both keys for a %s row under appeal when the viewer lacks the Appeals tab',
+    (source) => {
+      const row = { source, hasPendingAppeal: true, canRuleAppeals: false };
+      expect(flaggedDecisionEnabled(row)).toEqual([false, false]);
+      expect(flaggedDecisionEnabled({ ...row, hasPendingAppeal: false })).toEqual([true, true]);
+    }
+  );
+
   it('locks both keys for a re-detection under appeal', () => {
     expect(flaggedDecisionEnabled({ source: 'redetected', hasPendingAppeal: true })).toEqual([
       false,
@@ -272,9 +281,9 @@ describe('an Auto-flagged row with a pending appeal', () => {
   it('checks the reason against the appeal verdict, not the flag-review lists', () => {
     const keepAll = plan(['minor:text-scan', 'poi:text-scan']);
     expect(planReasonProblem(keepAll, 'Confirm both flags', 'flag-confirmed', '', true)).toBeNull();
-    expect(
-      planReasonProblem(keepAll, 'Confirm both flags', 'detection-correct', '', true)
-    ).toMatch(/not a reason/);
+    expect(planReasonProblem(keepAll, 'Confirm both flags', 'detection-correct', '', true)).toMatch(
+      /not a reason/
+    );
     expect(planReasonProblem(plan([]), 'Revert both', '', '', true)).toMatch(/Pick a reason/);
     // A hash flag records no reason outside an appeal; the appeal always needs one.
     expect(planReasonProblem(plan(['minor:hash'], [minorHash]), 'Confirm', '', '', true)).toMatch(
@@ -283,11 +292,7 @@ describe('an Auto-flagged row with a pending appeal', () => {
   });
 
   it('offers the appeal reasons for keep and revert', () => {
-    const groups = flaggedReasonGroups(
-      [minorHash],
-      { keep: 'Confirm', revert: 'Revert' },
-      true
-    )!;
+    const groups = flaggedReasonGroups([minorHash], { keep: 'Confirm', revert: 'Revert' }, true)!;
     expect(groups[0].reasons.map((r) => r.value)).toEqual(['flag-confirmed', 'other']);
     expect(groups[1].reasons.map((r) => r.value)).toContain('not-a-minor');
   });
