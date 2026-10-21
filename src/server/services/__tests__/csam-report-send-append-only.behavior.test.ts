@@ -72,6 +72,7 @@ import {
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
+import { createCsamReport } from '~/server/services/csam.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 
@@ -119,6 +120,22 @@ async function findFirst({ where }: { where: Where }) {
   return rows[0] ?? null;
 }
 
+async function create({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  const { rows } = await db.pg.query(
+    `INSERT INTO "CsamReport" (${entries.map(([column]) => `"${column}"`).join(', ')})
+     VALUES (${entries
+       .map(([column], i) => (JSON_COLUMNS.has(column) ? `$${i + 1}::jsonb` : `$${i + 1}`))
+       .join(', ')})
+     RETURNING *`,
+    entries.map(([column, value]) => (JSON_COLUMNS.has(column) ? JSON.stringify(value) : value))
+  );
+  return rows[0];
+}
+
+const queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+  (await db.pg.query(strings.map((part, i) => (i ? `$${i}` : '') + part).join(''), values)).rows;
+
 async function deleteMany({ where }: { where: Where }) {
   const params: unknown[] = [];
   const result = await db.pg.query(
@@ -136,7 +153,11 @@ async function readRow(id: number) {
 }
 
 beforeAll(async () => {
-  db.pg = new PGlite();
+  // A zone-less timestamp reads back as UTC, as Prisma reads it: otherwise a claim's age read back
+  // is shifted by the local offset.
+  db.pg = new PGlite({
+    parsers: { 1114: (value: string) => new Date(`${value.replace(' ', 'T')}Z`) },
+  });
   await db.pg.exec(`
     CREATE TYPE "CsamReportType" AS ENUM ('Image', 'TrainingData', 'GeneratedImage', 'ExternalLink');
     CREATE TABLE "CsamReport" (
@@ -190,6 +211,8 @@ beforeEach(() => {
   dbMock.dbWrite.csamReport.updateMany.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(findFirst as never);
   dbMock.dbWrite.csamReport.deleteMany.mockReset().mockImplementation(deleteMany as never);
+  dbMock.dbWrite.csamReport.create.mockReset().mockImplementation(create as never);
+  dbMock.dbWrite.$queryRaw.mockReset().mockImplementation(queryRaw as never);
   dbMock.dbWrite.$executeRaw.mockReset().mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -204,9 +227,7 @@ async function sendNewReport() {
     `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
      VALUES (20, 10, '[{"id":501}]', '{}') RETURNING id`
   );
-  // Set here, not by SQL: a zone-less timestamp read back is shifted by the local offset.
-  const report = { ...(await readRow(rows[0].id)), createdAt: new Date(Date.now() - 3_600_000) };
-  await processCsamReport(report);
+  await processCsamReport(await readRow(rows[0].id));
   return rows[0].id;
 }
 
@@ -283,18 +304,15 @@ describe('the send claim under the append-only trigger', () => {
       )
     ).rows;
 
-  async function insertClaimed(claimedSecondsAgo: number) {
+  async function insertClaimed(claimedSecondsAgo: number, userId = 20) {
     const { rows } = await db.pg.query<{ id: number }>(
       `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details", "reportId", "sendClaimId", "sendClaimedAt")
-       VALUES (20, 10, '[{"id":501}]', '{}', 800, gen_random_uuid(), $1) RETURNING id`,
-      [new Date(Date.now() - claimedSecondsAgo * 1000)]
+       VALUES ($2, 10, '[{"id":501}]', '{}', 800, gen_random_uuid(), $1) RETURNING id`,
+      [new Date(Date.now() - claimedSecondsAgo * 1000), userId]
     );
     return rows[0].id;
   }
-  const runStartCopy = async (id: number) => ({
-    ...(await readRow(id)),
-    createdAt: new Date(Date.now() - 3_600_000),
-  });
+  const runStartCopy = readRow;
 
   it('claims, stores the id and marks the report sent unaudited while unsent; the archive write after is audited', async () => {
     const id = await sendNewReport();
@@ -347,5 +365,76 @@ describe('the send claim under the append-only trigger', () => {
     expect(row).toMatchObject({ reportId: 900, sendClaimId: null });
     expect(row.reportSentAt).not.toBeNull();
     expect(row.details).toMatchObject({ cancelledReportIds: [800] });
+  });
+
+  // Each filing test files for an account of its own: rows from earlier tests stay in the stand-in.
+  let account = 1000;
+  const unsentOthers = async (id: number) =>
+    (
+      await db.pg.query<CsamReportProps>(
+        `SELECT * FROM "CsamReport" WHERE "userId" = $2 AND id <> $1 AND "reportSentAt" IS NULL`,
+        [id, account]
+      )
+    ).rows;
+  const fileImage = (imageId: number) =>
+    createCsamReport({ userId: account, reportedById: 10, type: 'Image', imageIds: [imageId] });
+
+  it('sends a report as claimed, and a filing made during the send becomes a report of its own', async () => {
+    account++;
+    const { rows } = await db.pg.query<{ id: number }>(
+      `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
+       VALUES ($1, 10, '[{"id":501}]', '{}') RETURNING id`,
+      [account]
+    );
+    const id = rows[0].id;
+    uploadFile.mockImplementationOnce(async () => {
+      await fileImage(502);
+      return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+    });
+
+    await processCsamReport(await runStartCopy(id));
+
+    const sent = await readRow(id);
+    expect(sent.reportSentAt).not.toBeNull();
+    expect(sent.images).toEqual([{ id: 501 }]);
+    expect(sent.details.images?.map((image) => image.id)).toEqual([501]);
+    expect(await unsentOthers(id)).toEqual([
+      expect.objectContaining({ images: [{ id: 502 }], sendClaimId: null }),
+    ]);
+  });
+
+  it('once the claim has expired, takes a filing in and sends the union on the next run', async () => {
+    account++;
+    const id = await insertClaimed(CSAM_SEND_CLAIM_EXPIRY_SECONDS + 60, account);
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async ({ where }: { where: { id: { in: number[] } } }) =>
+        where.id.in.map((imageId) => ({
+          id: imageId,
+          url: `stored-key-${imageId}`,
+          name: 'upload.png',
+          type: 'image',
+          mimeType: 'image/png',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          meta: {},
+          post: null,
+          tags: [],
+        }))
+    );
+
+    await fileImage(502);
+
+    expect(await unsentOthers(id)).toEqual([]);
+    expect(await readRow(id)).toMatchObject({
+      images: [{ id: 501 }, { id: 502 }],
+      sendClaimId: null,
+    });
+
+    await processCsamReport(await runStartCopy(id));
+
+    expect(cancelReport).toHaveBeenCalledWith({ id: 800 });
+    expect(uploadFile).toHaveBeenCalledTimes(2);
+    const sent = await readRow(id);
+    expect(sent.reportSentAt).not.toBeNull();
+    expect(sent.details.images?.map((image) => image.id)).toEqual([501, 502]);
   });
 });
