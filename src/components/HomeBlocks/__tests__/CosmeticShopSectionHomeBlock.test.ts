@@ -2,6 +2,8 @@
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 // The block's body is shared by every viewer, so a viewer's blocks are applied here and nowhere
 // else. These pin the two halves of that: nothing renders before the viewer's blocks are known,
@@ -15,8 +17,11 @@ const { prefs, homeBlock } = vi.hoisted(() => ({
 vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
   useHiddenPreferencesContext: () => prefs,
 }));
-vi.mock('~/utils/trpc', () => ({
-  trpc: { homeBlock: { getHomeBlock: { useQuery: () => ({ data: homeBlock.data }) } } },
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy({
+    'homeBlock.getHomeBlock': { useQuery: () => ({ data: homeBlock.data }) },
+  }),
 }));
 vi.mock('~/components/Shop/ShopItem', () => ({
   ShopItem: ({ item }: { item: { id: number } }) =>
