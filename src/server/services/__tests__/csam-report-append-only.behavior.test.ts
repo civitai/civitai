@@ -191,7 +191,18 @@ describe('a sent report', () => {
     await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
 
     const [row] = await audit(id);
-    expect(row.oldDetailsFingerprint).toBe(await fingerprint({ contents: ['a'] }));
+    const {
+      rows: [{ key }],
+    } = await db.pg.query<{ key: string }>(`SELECT "key" FROM csam_audit.secret`);
+    // A generated key, so a blank or constant one cannot pass for it.
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    const {
+      rows: [{ fp }],
+    } = await db.pg.query<{ fp: string }>(
+      `SELECT encode(sha256(convert_to($1 || ':' || $2::jsonb::text, 'UTF8')), 'hex') AS fp`,
+      [key, JSON.stringify({ contents: ['a'] })]
+    );
+    expect(row.oldDetailsFingerprint).toBe(fp);
     expect(row.oldDetailsFingerprint).not.toBe(await plainSha256({ contents: ['a'] }));
   });
 
@@ -390,32 +401,47 @@ describe('a sent report', () => {
 });
 
 describe('the fingerprint key', () => {
-  it('cannot be read or used by a role that can read the audit', async () => {
-    const id = await insertReport(30);
-    await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
-    await db.pg.exec(`
-      DROP ROLE IF EXISTS audit_reader;
-      CREATE ROLE audit_reader;
-      GRANT SELECT ON "CsamReportAudit" TO audit_reader;
-    `);
+  it.each([
+    [
+      'with no grant on its schema',
+      '',
+      'permission denied for schema csam_audit',
+      'permission denied for schema csam_audit',
+    ],
+    [
+      'even once granted its schema',
+      'GRANT USAGE ON SCHEMA csam_audit TO audit_reader_with_usage;',
+      'permission denied for table secret',
+      'permission denied for function details_fingerprint',
+    ],
+  ])(
+    'cannot be read or used by a role that can read the audit, %s',
+    async (_case, extraGrant, keyError, functionError) => {
+      const role = extraGrant ? 'audit_reader_with_usage' : 'audit_reader';
+      const id = await insertReport(30);
+      await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
+      await db.pg.exec(`
+        CREATE ROLE ${role};
+        GRANT SELECT ON "CsamReportAudit" TO ${role};
+        ${extraGrant}
+      `);
 
-    await db.pg.exec(`SET ROLE audit_reader`);
-    try {
-      // The role works: it reads the audit row it was granted.
-      const { rows } = await db.pg.query(
-        `SELECT 1 FROM "CsamReportAudit" WHERE "csamReportId" = $1`,
-        [id]
-      );
-      expect(rows).toHaveLength(1);
+      await db.pg.exec(`SET ROLE ${role}`);
+      try {
+        // The role works: it reads the audit row it was granted.
+        const { rows } = await db.pg.query(
+          `SELECT 1 FROM "CsamReportAudit" WHERE "csamReportId" = $1`,
+          [id]
+        );
+        expect(rows).toHaveLength(1);
 
-      await expect(db.pg.query(`SELECT "key" FROM csam_audit.secret`)).rejects.toThrow(
-        'permission denied'
-      );
-      await expect(
-        db.pg.query(`SELECT csam_audit.details_fingerprint('{}'::jsonb)`)
-      ).rejects.toThrow('permission denied');
-    } finally {
-      await db.pg.exec(`RESET ROLE`);
+        await expect(db.pg.query(`SELECT "key" FROM csam_audit.secret`)).rejects.toThrow(keyError);
+        await expect(
+          db.pg.query(`SELECT csam_audit.details_fingerprint('{}'::jsonb)`)
+        ).rejects.toThrow(functionError);
+      } finally {
+        await db.pg.exec(`RESET ROLE`);
+      }
     }
-  });
+  );
 });

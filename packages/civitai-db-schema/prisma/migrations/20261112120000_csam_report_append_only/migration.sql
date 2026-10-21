@@ -47,7 +47,8 @@ CREATE TABLE "CsamReportAudit" (
   "oldDetailsFingerprint" TEXT,
   "oldReportSentAt" TIMESTAMP(3),
   "changedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "changedBy" TEXT NOT NULL DEFAULT current_user
+  -- The session's login: inside the guard, current_user names the guard's owner instead.
+  "changedBy" TEXT NOT NULL DEFAULT session_user
 );
 
 CREATE INDEX "CsamReportAudit_csamReportId_idx" ON "CsamReportAudit" ("csamReportId");

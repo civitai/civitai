@@ -6545,7 +6545,7 @@ model CsamReportAudit {
   oldDetailsFingerprint String?
   oldReportSentAt DateTime?
   changedAt       DateTime  @default(now())
-  changedBy       String    @default(dbgenerated("CURRENT_USER"))
+  changedBy       String    @default(dbgenerated("SESSION_USER"))
 
   @@index([csamReportId])
 }
