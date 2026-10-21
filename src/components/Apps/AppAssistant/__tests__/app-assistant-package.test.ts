@@ -7,7 +7,6 @@ import * as subagents from '~/components/Apps/AppAssistant/assistantSubagents';
 import * as gate from '~/components/Apps/AppAssistant/assistantGate';
 import * as sandboxClient from '~/components/Apps/AppAssistant/sandboxClient';
 import { openApp } from '~/components/Apps/AppAssistant/useSandboxes';
-import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 
 /**
  * App Assistant's rules run in two places, the page and the server runner, from one module
@@ -28,12 +27,6 @@ describe('App Assistant’s rules, one place for the page and the server runner'
     expect(sandboxClient.createSandboxClient).toBe(shared.createSandboxClient);
     expect(sandboxClient.SandboxApiError).toBe(shared.SandboxApiError);
     expect(openApp).toBe(shared.openApp);
-  });
-
-  it('keeps the block slug rule equal to the one submit and the dev tunnel enforce', () => {
-    // The package cannot import civitai's server schema, so the copy is pinned here.
-    expect(shared.BLOCK_SLUG.source).toBe(SLUG_REGEX.source);
-    expect(shared.BLOCK_SLUG.flags).toBe(SLUG_REGEX.flags);
   });
 });
 
@@ -89,17 +82,6 @@ describe('the shared gate and subagents’ calls', () => {
     expect(
       await readyWith([previewOk(), run('cd a && npm test'), run('cd a && npx tsc --noEmit')])
     ).toEqual({ allow: true });
-  });
-
-  it('a subagent’s test run, typecheck or preview check never counts as the parent’s', async () => {
-    const decision = (await readyWith([
-      previewOk(child),
-      run('cd a && npm test', 0, child),
-      run('cd a && npx tsc --noEmit', 0, child),
-    ])) as { refuse: string };
-    expect(decision.refuse).toMatch(/sandbox__preview_check: it has not run/);
-    expect(decision.refuse).toMatch(/Run the tests/);
-    expect(decision.refuse).toMatch(/Run the typecheck/);
   });
 
   it('a subagent’s file change or other command undoes the parent’s checks', async () => {

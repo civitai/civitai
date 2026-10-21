@@ -101,6 +101,19 @@ describePg('assistant-runner on DBOS + Postgres', () => {
             }
           : { text: 'Done.' }
       ),
+    // A read (meanwhile the user opens another app), then a write the paused app refuses.
+    'sandbox-pause': () =>
+      scriptedModel((prompt) => {
+        if (toolResults(prompt) === 0)
+          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 1)
+          return {
+            calls: [
+              { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'y' } },
+            ],
+          };
+        return { text: 'Written.' };
+      }),
     // A file written, then the model fails once: the retry carries on after the write.
     'sandbox-flaky': () =>
       scriptedModel((prompt) => {
@@ -1304,6 +1317,43 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         '"toolName":"sandbox__write_file"'
       );
       expect(carried.history?.current.some((m) => m.role === 'tool')).toBe(true);
+    });
+
+    it('the user opening another app mid-reply keeps it running and ends the reply to be continued', async () => {
+      const user = 'u-sandbox-pause';
+      const writesBefore = sandbox.callsTo('write_file');
+      const readFile = sandbox.tools.get('read_file')!;
+      // As the read runs, the user opens another app from the page: the service pauses this one.
+      sandbox.tools.set('read_file', (args, signal) => {
+        sandbox.userOpens('other-app');
+        return readFile(args, signal);
+      });
+      try {
+        const start = await post(
+          '/runs',
+          as(user),
+          startBody({ conversationId: 'c-sandbox-pause', model: 'sandbox-pause', page })
+        );
+        const entries = await events(start.body!.runId as string, user);
+        expect(ended(entries)).toMatchObject({ status: 'error', resumable: true });
+        expect(
+          entries.some(
+            ({ event }) => event.type === 'error' && /you opened another app/.test(event.message)
+          )
+        ).toBe(true);
+        // Nothing woke this app, which would have paused the user's; the write never ran.
+        expect(sandbox.sandboxes.find((s) => s.app === 'other-app')?.state).toBe('running');
+        expect(sandbox.sandboxes.find((s) => s.app === 'my-app')?.state).toBe('suspended');
+        expect(sandbox.callsTo('write_file')).toBe(writesBefore);
+        const head = await store.load(user, 'c-sandbox-pause');
+        expect(head!.turns[0]!.assistant).toMatchObject({
+          status: 'error',
+          errorKind: 'interrupted',
+        });
+      } finally {
+        sandbox.tools.set('read_file', readFile);
+        sandbox.userOpens('my-app');
+      }
     });
 
     it('gives a reply subagents only when civitai’s grant says so', async () => {

@@ -100,7 +100,12 @@ describe('/apps/assistant getServerSideProps', () => {
     expect((await resolve(ON)).result).toMatchObject({ props: { subagents: false } });
   });
 
-  it('runs replies on the server only with its flag, and only once the runner is configured', async () => {
+  it('runs replies on the server only with its flag, and only once the runner and the sandbox service are configured', async () => {
+    // No sandbox service: the runner would refuse every start, so the page stays in the browser.
+    expect((await resolve({ ...ON, appAssistantRemoteRunner: true })).result).toMatchObject({
+      props: { remoteRunner: false },
+    });
+    serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
     expect((await resolve({ ...ON, appAssistantRemoteRunner: true })).result).toMatchObject({
       props: { remoteRunner: true },
     });

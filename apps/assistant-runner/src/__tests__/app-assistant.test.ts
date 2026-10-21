@@ -1,8 +1,9 @@
 import {
-  APP_ASSISTANT_RULES,
-  APP_ASSISTANT_SUBAGENT_RULES,
   REMOTE_NO_PREVIEW,
   TURN_LIMIT_REFUSAL,
+  assistantRules,
+  assistantSubagentRules,
+  assistantSubagentInstructions,
 } from '@civitai/app-assistant';
 import { REFUSED_BY_PAGE_NOTE } from '@civitai/components-chat/core';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
@@ -11,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { toolResultsOf } from '../app-assistant/history';
 import { AppAssistantTools, readPageState } from '../app-assistant/provider';
-import { SANDBOX_GONE } from '../app-assistant/sandbox';
+import { PAUSED_BY_OTHER_APP, PAUSED_IDLE, SANDBOX_GONE } from '../app-assistant/sandbox';
 import type { OpenTools, ToolContext } from '../interfaces';
 import type { TokenPurpose } from '../minter';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
@@ -58,6 +59,7 @@ function provider() {
 
 async function open(overrides: Partial<ToolContext> = {}) {
   const reported: ChatToolResult[] = [];
+  const ended: string[] = [];
   const stop = new AbortController();
   const tools = await provider().open({
     userId: 'u-1',
@@ -66,11 +68,15 @@ async function open(overrides: Partial<ToolContext> = {}) {
     page: { app: 'my-app' },
     signal: stop.signal,
     report: (result) => reported.push(result),
+    endReply: (message) => ended.push(message),
     ...overrides,
   });
   opened.push(tools);
-  return { tools, reported, stop };
+  return { tools, reported, ended, stop };
 }
+
+const opensApps = () =>
+  fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
 
 let callId = 0;
 function call(tools: ToolSet, name: string, input: Record<string, unknown> = {}) {
@@ -109,7 +115,7 @@ describe('App Assistant’s tools on the runner', () => {
     expect(names).not.toContain('stop_preview');
     expect(tools.hostTools?.sort()).toEqual(['create_app', 'report_ready', 'set_checklist']);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
-    expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${APP_ASSISTANT_RULES}`);
+    expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${assistantRules('remote')}`);
     expect(tools.instructions).toContain(REMOTE_NO_PREVIEW);
     expect(tools.instructions).toContain('sb-my-app-1');
     expect(tools.instructions).not.toContain('call start_preview with');
@@ -133,12 +139,20 @@ describe('App Assistant’s tools on the runner', () => {
     expect(tools.instructions).toContain('It is running');
   });
 
-  it('opens no app the page names but the user does not have', async () => {
+  it('opens no app the page names but the user does not have, whatever the key looks like', async () => {
     fake.add('my-app');
-    const { tools } = await open({ page: { app: 'someone-elses-app' } });
-    expect(Object.keys(tools.tools).filter((name) => name.startsWith('sandbox__'))).toEqual([]);
-    expect(tools.instructions).toContain('No app is open');
+    for (const app of ['someone-elses-app', '../my-app', 'MY-APP', 'my-app/../x']) {
+      const { tools } = await open({ page: { app } });
+      expect(
+        Object.keys(tools.tools).filter((name) => name.startsWith('sandbox__')),
+        app
+      ).toEqual([]);
+      expect(tools.instructions, app).toContain('No app is open');
+    }
     expect(fake.requests.some((r) => r.method === 'POST')).toBe(false);
+    // Control: its own key opens it.
+    const own = await open();
+    expect(Object.keys(own.tools.tools)).toContain('sandbox__read_file');
   });
 
   it('sends no token to an MCP address outside the sandbox service, and offers none of its tools', async () => {
@@ -151,16 +165,33 @@ describe('App Assistant’s tools on the runner', () => {
     expect(seen.filter((url) => url.startsWith('http://127.0.0.2'))).toEqual([]);
   });
 
-  it('finds a sandbox paused mid-reply again, wakes it and makes the call there, once', async () => {
+  it('never wakes a sandbox that paused mid-reply: the call is not made again and the reply ends to be continued', async () => {
     const record = fake.add('my-app');
-    const { tools } = await open();
+    const { tools, ended } = await open();
     // Idle for 30 minutes while the reply only talked to the model: the service paused it.
     record.state = 'suspended';
-    expect(await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'abc' })).toBe(
-      'wrote 3 bytes'
-    );
-    expect(fake.callsTo('write_file')).toBe(1);
-    expect(fake.requests.some((r) => r.method === 'POST' && r.path === '/v1/sandboxes')).toBe(true);
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'abc' })
+    ).toMatchObject({
+      error: expect.stringMatching(/paused/),
+      retryable: true,
+    });
+    expect(fake.callsTo('write_file')).toBe(0);
+    expect(opensApps()).toEqual([]);
+    expect(record.state).toBe('suspended');
+    expect(ended).toEqual([PAUSED_IDLE]);
+  });
+
+  it('when the user opens another app mid-reply, leaves it running and ends the reply as paused', async () => {
+    fake.add('my-app');
+    const { tools, ended } = await open();
+    const other = fake.userOpens('other-app');
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
+    expect(ended).toEqual([PAUSED_BY_OTHER_APP]);
+    // The user's app keeps running: nothing woke this one, which would have paused it.
+    expect(other.state).toBe('running');
+    expect(opensApps()).toEqual([]);
+    expect(fake.callsTo('write_file')).toBe(0);
   });
 
   it('never makes a call again when an app that still runs answered it with an error status', async () => {
@@ -183,25 +214,27 @@ describe('App Assistant’s tools on the runner', () => {
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
   });
 
-  it('wakes a paused app once for calls that failed together', async () => {
+  it('looks at the user’s apps once for calls refused together, and ends the reply once', async () => {
     const record = fake.add('my-app');
-    const { tools } = await open();
+    const { tools, ended } = await open();
     record.state = 'suspended';
-    const results = await Promise.all([
+    await Promise.all([
       call(tools.tools, 'sandbox__read_file', { path: 'a' }),
       call(tools.tools, 'sandbox__read_file', { path: 'b' }),
     ]);
-    expect(results).toEqual(['export {}', 'export {}']);
-    expect(fake.callsTo('read_file')).toBe(2);
     expect(
-      fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes')
-    ).toHaveLength(1);
-    // The connection it made is the one Stop closes.
-    const running = call(tools.tools, 'sandbox__run_command', run('hang'));
-    running.catch(() => undefined);
-    await expect.poll(() => fake.callsTo('run_command'), { timeout: 5_000 }).toBe(1);
-    await tools.close();
-    await expect.poll(() => fake.abandoned.length, { timeout: 5_000 }).toBe(1);
+      fake.requests.filter((r) => r.method === 'GET' && r.path === '/v1/sandboxes')
+    ).toHaveLength(2);
+    expect(ended).toEqual([PAUSED_IDLE]);
+    expect(opensApps()).toEqual([]);
+  });
+
+  it('ends the reply when waking the app at its start would make a new, empty one', async () => {
+    fake.add('my-app', 'suspended');
+    // Deleted after the list was read: the service's open makes a new app under the same key.
+    fake.deleteBeforeOpen.add('my-app');
+    await expect(open()).rejects.toThrow(SANDBOX_GONE);
+    expect(fake.calls).toEqual([]);
   });
 
   it('does not offer the tunnel tools, which serve only the page’s preview', async () => {
@@ -344,16 +377,20 @@ describe('App Assistant’s gate on the runner', () => {
     const child = scriptedModel(() => ({ text: 'ok' }));
     const off = await open({ subagents: false, model: () => child });
     expect(Object.keys(off.tools.tools)).not.toContain('dispatch_agent');
-    expect(off.tools.rules?.('D')).not.toContain(APP_ASSISTANT_SUBAGENT_RULES);
+    expect(off.tools.rules?.('D')).not.toContain(assistantSubagentRules('remote'));
     const on = await open({ subagents: true, model: () => child });
     expect(Object.keys(on.tools.tools)).toContain('dispatch_agent');
-    expect(on.tools.rules?.('D')).toContain(APP_ASSISTANT_SUBAGENT_RULES);
+    expect(on.tools.rules?.('D')).toContain(assistantSubagentRules('remote'));
   });
 
   it('a reply carried on from saved steps keeps its count and what it verified', async () => {
     fake.add('my-app');
     const current = messagesOf([
-      ['set_checklist', { items: [{ label: 'Tip', done: true }] }, { updated: true, open: 0 }],
+      [
+        'set_checklist',
+        { items: [{ label: 'Tip', done: true }] },
+        { updated: true, open: 0, app: 'my-app' },
+      ],
       ['sandbox__preview_check', {}, 'render: ok'],
       ['sandbox__run_command', run('cd my-app && npm test'), 'exit_code: 0'],
       ['sandbox__run_command', run('cd my-app && npx tsc --noEmit'), 'exit_code: 0'],
@@ -373,7 +410,11 @@ describe('App Assistant’s gate on the runner', () => {
   it('a new reply keeps the conversation’s checklist but checks the app again', async () => {
     fake.add('my-app');
     const earlier = messagesOf([
-      ['set_checklist', { items: [{ label: 'Tip', done: true }] }, { updated: true, open: 0 }],
+      [
+        'set_checklist',
+        { items: [{ label: 'Tip', done: true }] },
+        { updated: true, open: 0, app: 'my-app' },
+      ],
       ['sandbox__preview_check', {}, 'render: ok'],
       ['sandbox__run_command', run('cd my-app && npm test'), 'exit_code: 0'],
       ['sandbox__run_command', run('cd my-app && npx tsc --noEmit'), 'exit_code: 0'],
@@ -385,10 +426,126 @@ describe('App Assistant’s gate on the runner', () => {
   });
 });
 
+describe('the gate follows the app', () => {
+  it('within a reply: checks passed on one app do not make another ready', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    await passAll(tools.tools);
+    // Control: ready on the app the checks ran on.
+    expect(await call(tools.tools, 'report_ready')).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
+      app: 'tip-calculator',
+    });
+    const refusal = ((await call(tools.tools, 'report_ready')) as { error: string }).error;
+    expect(refusal).toMatch(/sandbox__preview_check: it has not run/);
+    expect(refusal).toMatch(/Call set_checklist/);
+  });
+
+  it('across replies: one app’s finished checklist does not count for another', async () => {
+    fake.add('my-app');
+    fake.add('other-app');
+    const earlier = messagesOf([
+      [
+        'set_checklist',
+        { items: [{ label: 'Tip', done: true }] },
+        { updated: true, open: 0, app: 'my-app' },
+      ],
+    ]);
+    const other = await open({ page: { app: 'other-app' }, history: { earlier, current: [] } });
+    expect(((await call(other.tools.tools, 'report_ready')) as { error: string }).error).toMatch(
+      /Call set_checklist/
+    );
+    // Control: the app it was made for still has it.
+    const mine = await open({ history: { earlier, current: [] } });
+    expect(((await call(mine.tools.tools, 'report_ready')) as { error: string }).error).not.toMatch(
+      /Call set_checklist/
+    );
+  });
+
+  it('tags each checklist the runner shows with its app', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(await call(tools.tools, 'set_checklist', { items: [{ label: 'Tip' }] })).toMatchObject({
+      awaitsUser: true,
+      app: 'my-app',
+    });
+  });
+});
+
+describe('the runner’s prompt', () => {
+  /** Every tool name an App Assistant prompt (the page's or the runner's) may mention. */
+  const KNOWN = [
+    'create_app',
+    'set_checklist',
+    'report_ready',
+    'start_preview',
+    'stop_preview',
+    'dispatch_agent',
+    'fetch_page',
+    'get_guide',
+    'web_search',
+    'run_step',
+    'run_workflow',
+  ];
+
+  it('names only tools the runner offers', async () => {
+    fake.add('my-app');
+    const child = scriptedModel(() => ({ text: 'ok' }));
+    const { tools } = await open({ subagents: true, model: () => child });
+    const offered = Object.keys(tools.tools);
+    const prompt = `${tools.rules?.('')}\n${tools.instructions}\n${assistantSubagentInstructions(
+      'remote'
+    )}`;
+    const named = new Set<string>();
+    for (const name of KNOWN) if (new RegExp(`\\b${name}\\b`).test(prompt)) named.add(name);
+    for (const match of prompt.matchAll(/\bsandbox__([a-z_]+)(\*)?/g))
+      named.add(match[2] ? `sandbox__${match[1]}*` : `sandbox__${match[1]}`);
+    expect(named.size).toBeGreaterThan(5);
+    const missing = [...named].filter((name) =>
+      name.endsWith('*')
+        ? !offered.some((tool) => tool.startsWith(name.slice(0, -1)))
+        : !offered.includes(name)
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('the page’s prompt does name tools the runner lacks (the control)', async () => {
+    const { buildAssistantSystemPromptWithSubagents, buildAssistantInstructions } = await import(
+      '@civitai/app-assistant'
+    );
+    const page = `${buildAssistantSystemPromptWithSubagents('')}\n${buildAssistantInstructions({
+      sandbox: { name: 's', app: 'my-app', state: 'running' },
+      apps: [],
+      canPreview: true,
+      previewHost: null,
+    })}`;
+    expect(page).toMatch(/sandbox__tunnel_\*/);
+    expect(page).toMatch(/\bstart_preview\b/);
+  });
+});
+
+describe('what the page is told of a call', () => {
+  it('carries a command and a result’s first lines, never a file’s contents', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    const content = 'SECRET-LOOKING-BUT-TEST-ONLY '.repeat(50);
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content });
+    await call(tools.tools, 'sandbox__run_command', run('cd my-app && npm test'));
+    expect(JSON.stringify(reported[0])).not.toContain('SECRET-LOOKING');
+    expect(reported[0]).toMatchObject({ name: 'sandbox__write_file', input: {}, isError: false });
+    expect(reported[1]).toMatchObject({
+      input: { command: 'cd my-app && npm test' },
+      output: expect.stringMatching(/^exit_code: 0/),
+    });
+    expect((reported[1].output as string).length).toBeLessThanOrEqual(200);
+  });
+});
+
 describe('the page state the runner reads', () => {
-  it('takes an app key and nothing else', () => {
+  it('takes a string and nothing else; the lookup among the user’s own apps decides the rest', () => {
     expect(readPageState({ app: 'my-app' })).toEqual({ app: 'my-app' });
-    for (const app of ['../x', 'A', '', 42, null, 'x'.repeat(80)])
+    expect(readPageState({ app: '../x' })).toEqual({ app: '../x' });
+    for (const app of ['', 42, null, { a: 1 }, 'x'.repeat(201)])
       expect(readPageState({ app } as never)).toEqual({ app: null });
     expect(readPageState(undefined)).toEqual({ app: null });
   });

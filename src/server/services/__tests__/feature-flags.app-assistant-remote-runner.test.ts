@@ -19,24 +19,24 @@ import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 
-/** App Assistant on the server runner ships to moderators first; the Flipt flag widens it or turns it off. */
+/** App Assistant on the server runner is dark until its Flipt flag turns it on, mods included. */
 describe('appAssistantRemoteRunner', () => {
   afterEach(() => {
     mocks.isFliptSync.mockReset();
     mocks.isFliptSync.mockImplementation(() => null);
   });
 
-  it('is on for a moderator and off for anyone else while Flipt has no answer', async () => {
+  it('is off for everyone, moderators included, while Flipt has no answer (down or no flag yet)', async () => {
     const mod = { id: 9411, isModerator: true, tier: 'free' } as SessionUser;
     const user = { id: 9412, isModerator: false, tier: 'gold' } as SessionUser;
-    expect((await getFeatureFlagsAsync({ user: mod })).appAssistantRemoteRunner).toBe(true);
-    // Control: this user does get a flag open to members, so the absence below is the declaration.
-    const userFlags = await getFeatureFlagsAsync({ user });
-    expect(userFlags.civitaiLink).toBe(true);
-    expect(userFlags.appAssistantRemoteRunner).toBeUndefined();
+    const modFlags = await getFeatureFlagsAsync({ user: mod });
+    // Control: a moderator does get a mod-only flag, so the absence below is this flag's own rule.
+    expect(modFlags.appAssistantSubagents).toBe(true);
+    expect(modFlags.appAssistantRemoteRunner).toBeUndefined();
+    expect((await getFeatureFlagsAsync({ user })).appAssistantRemoteRunner).toBeUndefined();
   });
 
-  it('follows its own Flipt key, off for a moderator and on for anyone else', async () => {
+  it('follows its own Flipt key: on for whom it says, off when it says so', async () => {
     mocks.isFliptSync.mockImplementation((key?: string) =>
       key === 'app-assistant-remote-runner' ? false : null
     );
@@ -48,5 +48,7 @@ describe('appAssistantRemoteRunner', () => {
     );
     const user = { id: 9414, isModerator: false, tier: 'free' } as SessionUser;
     expect((await getFeatureFlagsAsync({ user })).appAssistantRemoteRunner).toBe(true);
+    const mod2 = { id: 9415, isModerator: true, tier: 'free' } as SessionUser;
+    expect((await getFeatureFlagsAsync({ user: mod2 })).appAssistantRemoteRunner).toBe(true);
   });
 });

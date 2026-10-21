@@ -30,15 +30,25 @@ export type FakeToolBody = (
   signal: AbortSignal
 ) => Promise<string> | string;
 
+/** The tools a hosted sandbox lists (as App Assistant's prompt names them). */
 const TOOLS: { name: string; description: string }[] = [
-  { name: 'read_file', description: 'Read a file.' },
-  { name: 'list_dir', description: 'List a directory.' },
-  { name: 'write_file', description: 'Write a file.' },
-  { name: 'run_command', description: 'Run a command.' },
-  { name: 'preview_check', description: 'Check the preview renders.' },
-  { name: 'dev_server_logs', description: 'Read the dev server logs.' },
-  { name: 'tunnel_key', description: 'Make a tunnel key.' },
-];
+  'read_file',
+  'list_dir',
+  'write_file',
+  'edit_file',
+  'delete_path',
+  'run_command',
+  'preview_check',
+  'dev_server_start',
+  'dev_server_restart',
+  'dev_server_stop',
+  'dev_server_status',
+  'dev_server_logs',
+  'tunnel_key',
+  'tunnel_connect',
+  'tunnel_status',
+  'tunnel_disconnect',
+].map((name) => ({ name, description: `The sandbox's ${name}.` }));
 
 /**
  * The hosted sandbox service and each sandbox's MCP server, in one local HTTP server, for tests. No
@@ -57,6 +67,8 @@ export class FakeSandboxService {
   failCalls = 0;
   /** How many looks at a starting sandbox it takes to run. */
   startsAfter = 1;
+  /** Apps deleted just before their next open: the open then makes a new, empty one (201). */
+  readonly deleteBeforeOpen = new Set<string>();
   readonly tools = new Map<string, FakeToolBody>();
   #server: HttpServer | undefined;
   #base = '';
@@ -91,6 +103,20 @@ export class FakeSandboxService {
     };
     this.sandboxes.push(record);
     return record;
+  }
+
+  /** Deletes `app`'s sandbox, as the user can from another tab. */
+  remove(app: string): void {
+    const index = this.sandboxes.findIndex((s) => s.app === app);
+    if (index >= 0) this.sandboxes.splice(index, 1);
+  }
+
+  /** The user opens `app` elsewhere: it runs, and every other app is paused (one runs at a time). */
+  userOpens(app: string): FakeSandboxRecord {
+    for (const sandbox of this.sandboxes) if (sandbox.app !== app) sandbox.state = 'suspended';
+    const found = this.sandboxes.find((s) => s.app === app) ?? this.add(app);
+    found.state = 'running';
+    return found;
   }
 
   callsTo(tool: string): number {
@@ -130,6 +156,7 @@ export class FakeSandboxService {
       return json(200, { sandboxes: this.sandboxes.map((s) => this.#view(s)) });
     if (url.pathname === '/v1/sandboxes' && method === 'POST') {
       const app = String((body as { app?: unknown } | undefined)?.app ?? '');
+      if (this.deleteBeforeOpen.delete(app)) this.remove(app);
       const found = this.sandboxes.find((s) => s.app === app);
       if (found) {
         if (found.state === 'suspended') found.state = 'starting';

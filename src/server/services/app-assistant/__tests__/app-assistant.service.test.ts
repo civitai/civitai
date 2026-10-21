@@ -59,7 +59,7 @@ import {
   getAppAssistantRefusalForUserId,
   mintAppAssistantToken,
 } from '../app-assistant.service';
-import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 
 const USER_ID = 42;
 const CLIENT_ID = 'appassist-42';
@@ -229,6 +229,21 @@ describe('getAppAssistantRefusalForUserId (the runner’s mints)', () => {
     expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
     featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: true });
     expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toBeNull();
+  });
+
+  it('with remoteRunner, answers unavailable (asked again), never a refusal, while Flipt cannot decide the runner flag', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    vi.mocked(isFliptDecisive).mockImplementation(
+      async (keys) => !keys.includes('appAssistantRemoteRunner')
+    );
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+    // Control: App Assistant's own mints are not held to the runner's flag.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    vi.mocked(isFliptDecisive).mockImplementation(async () => decisiveMock());
   });
 });
 

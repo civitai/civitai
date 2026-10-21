@@ -31,7 +31,7 @@ const minted = (token: string, inMs: number, now: number) =>
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
 describe('TokenMinter', () => {
-  it('trades the grant with the runner secret, and keeps the token until shortly before it expires', async () => {
+  it('trades the grant with the runner secret, and uses one token for a minute at most', async () => {
     let now = Date.parse('2026-10-20T12:00:00Z');
     let n = 0;
     const civitai = fakeCivitai((body) => minted(`${body.purpose}-token-${++n}`, 5 * 60_000, now));
@@ -49,15 +49,34 @@ describe('TokenMinter', () => {
       authorization: `Bearer ${SECRET}`,
       body: { grant: 'grant-a', purpose: 'chat' },
     });
-    now += 3 * 60_000;
+    now += 30_000;
     expect(await minter.token('grant-a', 'chat')).toBe('chat-token-1');
     expect(await minter.token('grant-b', 'chat')).toBe('chat-token-2');
-    // Within a minute of expiry: minted again.
-    now += 90_000;
+    // Valid for minutes more, but a minute old: minted again, so civitai's gates (the runner's flag
+    // among them) are asked again at least that often.
+    now += 40_000;
     expect(await minter.token('grant-a', 'chat')).toBe('chat-token-3');
     // A fresh one on request (after a 401), whatever the cache holds.
     expect(await minter.token('grant-a', 'chat', { fresh: true })).toBe('chat-token-4');
     expect(civitai.calls).toHaveLength(4);
+  });
+
+  it('mints again a minute before expiry, for a token valid less than two minutes', async () => {
+    let now = Date.parse('2026-10-20T12:00:00Z');
+    let n = 0;
+    const civitai = fakeCivitai(() => minted(`t-${++n}`, 90_000, now));
+    const minter = new TokenMinter({
+      civitaiUrl: 'https://civitai.example/',
+      secret: SECRET,
+      log: quiet,
+      fetch: civitai.doFetch,
+      now: () => now,
+    });
+    expect(await minter.token('g', 'sandbox')).toBe('t-1');
+    now += 20_000;
+    expect(await minter.token('g', 'sandbox')).toBe('t-1');
+    now += 15_000;
+    expect(await minter.token('g', 'sandbox')).toBe('t-2');
   });
 
   it('shares one mint between concurrent callers', async () => {
