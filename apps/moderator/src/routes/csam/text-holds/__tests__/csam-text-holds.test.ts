@@ -254,7 +254,7 @@ describe('csam text holds decide', () => {
 });
 
 describe('csam hold removal', () => {
-  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Post', 'Model'])(
+  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Post', 'Model', 'Article'])(
     'offers removal for a %s hold',
     (type) => expect(canRemoveHeld(type)).toBe(true)
   );

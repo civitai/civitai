@@ -7,6 +7,7 @@ export const NOTE_MAX_LENGTH = 500;
 export const CSAM_HOLD_ENTITY_TYPES = [
   'Model',
   'Post',
+  'Article',
   'ChatMessage',
   'Comment',
   'CommentV2',
@@ -18,6 +19,7 @@ export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
 export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   Model: 'Model',
   Post: 'Post',
+  Article: 'Article',
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
@@ -69,6 +71,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'UserProfile',
   'Post',
   'Model',
+  'Article',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     post: vi.fn(),
     modelEvent: vi.fn(),
     chatAudit: vi.fn(),
+    article: vi.fn(),
   },
   deleteChatMessage: vi.fn(),
   unpublishPostAsModerator: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   clearUserProfileFields: vi.fn(),
   createStrike: vi.fn(),
   unpublishModelById: vi.fn(),
+  unpublishArticleById: vi.fn(),
   refreshModelCache: vi.fn(),
 }));
 
@@ -35,6 +37,7 @@ vi.mock('~/server/clickhouse/client', () => ({
     post = mocks.tracker.post;
     modelEvent = mocks.tracker.modelEvent;
     chatAudit = mocks.tracker.chatAudit;
+    article = mocks.tracker.article;
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -58,6 +61,9 @@ vi.mock('~/server/services/model.service', () => ({
 }));
 vi.mock('~/server/services/post.service', () => ({
   unpublishPostAsModerator: mocks.unpublishPostAsModerator,
+}));
+vi.mock('~/server/services/article.service', () => ({
+  unpublishArticleById: mocks.unpublishArticleById,
 }));
 vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: mocks.deleteChatMessage }));
 vi.mock('~/server/redis/caches', () => ({
@@ -116,6 +122,7 @@ beforeEach(() => {
   );
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null });
   dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: {}, nsfw: false });
+  dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Published', metadata: {} });
   mocks.bulkSetCommentTosViolation.mockResolvedValue({ count: 1 });
   mocks.bulkSetCommentV2TosViolation.mockResolvedValue({ count: 1 });
   mocks.deleteChatMessage.mockResolvedValue({ messageId: 55, chatId: 3 });
@@ -288,6 +295,89 @@ describe('textScan.resolveCsamHold', () => {
         expect.objectContaining({ type: 'Unpublish', modelId: 55 })
       );
       expect(mocks.refreshModelCache).toHaveBeenCalledWith(55);
+    });
+
+    describe('article', () => {
+      const articleUpdate = () => dbMock.dbWrite.article.updateMany;
+      beforeEach(() => {
+        findFirst.mockResolvedValue(pendingHold({ entityType: 'Article' }));
+        articleUpdate().mockResolvedValue({ count: 1 });
+      });
+
+      it('unpublishes a published article as a violation, keeping its content', async () => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({
+          status: 'Published',
+          metadata: { foo: 1 },
+        });
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).toHaveBeenCalledTimes(1);
+        expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 55,
+            reason: 'csam-text-hold',
+            metadata: { foo: 1 },
+            userId: 7,
+            isModerator: true,
+          })
+        );
+        expect(mocks.tracker.article).toHaveBeenCalledTimes(1);
+        expect(mocks.tracker.article).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'Unpublish', articleId: 55 })
+        );
+        expect(articleUpdate()).not.toHaveBeenCalled();
+        expect(labelCalls()).toHaveLength(1);
+      });
+
+      it.each([
+        ['a draft', { status: 'Draft', scheduledAt: null }],
+        ['a scheduled draft', { status: 'Draft', scheduledAt: new Date('2027-01-01') }],
+        ['a processing article', { status: 'Processing', scheduledAt: null }],
+        ['an owner-unpublished article', { status: 'Unpublished', scheduledAt: null }],
+      ])('marks %s as a violation so it cannot go live later', async (_name, row) => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...row, metadata: { foo: 1 } });
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
+        expect(articleUpdate()).toHaveBeenCalledTimes(1);
+        expect(articleUpdate()).toHaveBeenCalledWith({
+          where: { id: 55, status: row.status },
+          data: {
+            status: 'UnpublishedViolation',
+            metadata: {
+              foo: 1,
+              unpublishedReason: 'csam-text-hold',
+              unpublishedAt: expect.any(String),
+              unpublishedBy: 7,
+            },
+          },
+        });
+        expect(labelCalls()).toHaveLength(1);
+      });
+
+      it('takes the ingestion lock before reading and writing the article', async () => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({
+          status: 'Processing',
+          metadata: {},
+        });
+        await call({ holdId: 12, decision: 'remove' });
+        const lock = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0];
+        expect(lock).toBeDefined();
+        expect(lock).toBeLessThan(dbMock.dbWrite.article.findUnique.mock.invocationCallOrder[0]);
+        expect(lock).toBeLessThan(articleUpdate().mock.invocationCallOrder[0]);
+      });
+
+      it.each([
+        ['already removed', { status: 'UnpublishedViolation', metadata: {} }],
+        ['missing', null],
+      ])('records the decision for an article that is %s, without writing', async (_name, row) => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue(row);
+        const { status } = await call({ holdId: 12, decision: 'remove' });
+        expect(status).toBe(200);
+        expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
+        expect(articleUpdate()).not.toHaveBeenCalled();
+        expect(labelCalls()).toHaveLength(1);
+      });
     });
 
     it('unpublishes a post instead of deleting it', async () => {

@@ -46,7 +46,7 @@ replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
 
-ChatMessage, Comment, CommentV2, UserProfile, Post and Model also list `csam`, asked only while its
+ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.
