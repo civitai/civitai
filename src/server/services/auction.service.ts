@@ -954,10 +954,13 @@ export const refundBidsForVersions = async ({
         try {
           await withRetries(async () => {
             if (isAuctionTransactionPrefix(transactionId)) {
-              await refundAllLegsByPrefix({
+              const refund = await refundAllLegsByPrefix({
                 externalTransactionIdPrefix: transactionId,
                 description: 'Deleted bid - model not available.',
               });
+              // A bid holds this id only after its charge went through, so no legs is a fault.
+              if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+                throw new Error(`No transactions found under ${transactionId}`);
             } else {
               await refundTransactionOnce(transactionId, 'Deleted bid - model not available.');
             }

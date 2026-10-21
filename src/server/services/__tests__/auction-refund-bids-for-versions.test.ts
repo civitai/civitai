@@ -10,7 +10,7 @@ const {
 } = vi.hoisted(() => ({
   refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
   refundMultiAccountTransaction: vi.fn(async (_input: unknown) => ({
-    refundedTransactions: [] as { amount: number }[],
+    refundedTransactions: [{ amount: 10 }] as { amount: number }[],
   })),
   getTransactionByExternalId: vi.fn(async (_id: string) => null as unknown),
   getMultiAccountTransactionsByPrefix: vi.fn(
@@ -186,16 +186,31 @@ describe('refundBidsForVersions', () => {
       id === 'refund-leg-1' ? { externalTransactionId: id } : null
     );
     const { refundFailed } = await run();
-    refundMultiAccountTransaction.mockReset().mockResolvedValue({ refundedTransactions: [] });
+    refundMultiAccountTransaction
+      .mockReset()
+      .mockResolvedValue({ refundedTransactions: [{ amount: 10 }] });
     getMultiAccountTransactionsByPrefix.mockReset().mockResolvedValue([]);
     getTransactionByExternalId.mockReset().mockResolvedValue(null);
     expect(refundFailed).toEqual([]);
   });
 
+  it('returns a multi-account refund that found no transactions as failed', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'NOT_FOUND', message: 'missing', cause: new BuzzApiError(404, 'x') })
+    );
+    const { refundFailed } = await run();
+    refundMultiAccountTransaction.mockReset().mockResolvedValue({
+      refundedTransactions: [{ amount: 10 }],
+    });
+    expect(refundFailed).toEqual([PREFIX]);
+  });
+
   it('returns a multi-account refund that still failed', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
     const { refundFailed } = await run();
-    refundMultiAccountTransaction.mockReset().mockResolvedValue({ refundedTransactions: [] });
+    refundMultiAccountTransaction
+      .mockReset()
+      .mockResolvedValue({ refundedTransactions: [{ amount: 10 }] });
     expect(refundFailed).toEqual([PREFIX]);
   });
 
