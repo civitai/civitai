@@ -656,12 +656,18 @@ export async function bulkSetReportStatus({
   status,
   userId,
   ip,
+  noRewardFor = [],
+  rewardRemovedReporters = true,
 }: {
   ids: number[];
   status: ReportStatus;
   userId: number;
   ip?: string;
+  /** Reporters whose report is still actioned but who get no reward for it. */
+  noRewardFor?: number[];
+  rewardRemovedReporters?: boolean;
 }) {
+  if (!ids.length) return;
   const statusSetAt = new Date();
 
   const reports = await dbRead.report.findMany({
@@ -691,9 +697,20 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
+    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+    const removed = rewardRemovedReporters
+      ? []
+      : await dbRead.user.findMany({
+          where: {
+            id: { in: reporterIds },
+            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+          },
+          select: { id: true },
+        });
+    const unrewarded = new Set([...noRewardFor, ...removed.map((user) => user.id)]);
     const prepReports = reports.map((report) => ({
       id: report.id,
-      userIds: [report.userId, ...report.alsoReportedBy],
+      userIds: [report.userId, ...report.alsoReportedBy].filter((id) => !unrewarded.has(id)),
     }));
 
     await Promise.allSettled(

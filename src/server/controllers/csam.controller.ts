@@ -35,10 +35,13 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
-    const affectedImages = await dbWrite.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { pHash: true },
-    });
+    const [affectedImages, imageReports] = await Promise.all([
+      dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }),
+      dbWrite.imageReport.findMany({
+        where: { imageId: { in: imageIds } },
+        select: { reportId: true, image: { select: { userId: true } } },
+      }),
+    ]);
 
     await Promise.all([
       bulkAddBlockedImages({
@@ -50,9 +53,12 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           })),
       }),
       bulkSetReportStatus({
-        ids: imageIds,
+        ids: imageReports.map((report) => report.reportId),
         status: ReportStatus.Actioned,
         userId: reportedById,
+        // The reported account and the images' owners are never rewarded for reporting them.
+        noRewardFor: [userId, ...imageReports.map((report) => report.image.userId)],
+        rewardRemovedReporters: false,
       }),
     ]);
   } else if (type === 'TrainingData') {
