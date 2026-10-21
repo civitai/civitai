@@ -80,14 +80,10 @@ export const decisionForOtherHolds = (decision: CsamHoldDecision): CsamHoldDecis
 
 /** Mirrors the main app's `CSAM_HOLD_BATCH_MAX`. */
 const BATCH_MAX = 50;
-/** The main app decides the holds one after another inside one request. */
+// The main app decides the holds one after another inside one request.
 const BATCH_TIMEOUT_MS = 120_000;
 
-/**
- * Decides the author's other pending holds in one main-app call, each against the text hash the moderator
- * saw: a hold that changed since is reported, never forced. Call it only after the hold on screen was
- * decided, so a refused strike or ban never leaves the others already removed.
- */
+/** Decides the author's other pending holds in one call, each against the hash the moderator saw; a changed hold is reported, never forced. Call only after the on-screen hold is decided, so a refused strike or ban never leaves the others removed. */
 export async function decideAuthorHolds({
   holdId,
   also,

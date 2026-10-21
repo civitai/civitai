@@ -12,10 +12,7 @@ const orNull = <T>(read: Promise<T>) =>
     return null;
   });
 
-// Loaded for the selected hold only: the counts are one query per content type, and the queue switches
-// holds without rerunning the page load. The hold history needs the page and `csam.report.file`; the
-// account card, content counts and reports are User Lookup's, so they go only to a moderator who could
-// open that page anyway.
+// Per selected hold: the counts cost one query per content type. History needs the page and csam.report.file; account card, counts and reports are User Lookup's, so only moderators who can open it get them.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const holdId = requireIdParam(locals, params.holdId, '/csam/text-holds', 'holdId');
   requirePermission(locals, 'csam.report.file');

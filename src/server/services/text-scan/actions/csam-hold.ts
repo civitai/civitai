@@ -28,7 +28,8 @@ type PendingHoldWrite = 'created' | 'updated' | 'unchanged' | 'skipped';
 
 /**
  * Thrown when new csam text cannot replace a pending hold because a moderator is mid-decision on it. The
- * detection is recorded nowhere else, so the callback must fail and let the retry cron's rescan redo it.
+ * detection is recorded nowhere else, so the callback must fail and let the retry cron's rescan redo it;
+ * that relies on the cron outlasting the 30-minute claim window.
  */
 export class CsamHoldBusyError extends Error {
   constructor() {
@@ -37,10 +38,7 @@ export class CsamHoldBusyError extends Error {
   }
 }
 
-/**
- * The advisory lock the write below and a decision's final update both take, so a decision cannot land
- * between the ruled-text check and the upsert. A pair key keeps it off the single-key article lock.
- */
+/** Advisory lock shared with a decision's final update, so a decision cannot land between the ruled-text check and the write. */
 export const lockCsamHold = (
   tx: Pick<typeof dbWrite, '$executeRaw'>,
   entityType: string,
@@ -120,7 +118,7 @@ async function writePendingHold(hold: {
 
     if (pending.textHash === hold.textHash)
       return { holdId: null, write: 'unchanged', priorHoldId };
-    // Hazard: relies on the retry cron outlasting the 30-minute claim window to redo this detection.
+    // Leave a hold mid-decision alone: swapping the text would apply the ruling to text the moderator never saw. A claim is live for 30 min, well past the 5 a decision waits.
     if (pending.claimed) throw new CsamHoldBusyError();
 
     const { decisionClaim: _claim, ruledBefore: _ruled, previous, ...kept } = pending.meta ?? {};

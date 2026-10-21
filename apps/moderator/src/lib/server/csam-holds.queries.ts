@@ -15,7 +15,6 @@ export type CsamHoldRow = {
   userId: number | null;
   username: string | null;
   text: string;
-  /** What a moderator reviewed; sent back with the decision so a hold edited underneath it is refused. */
   textHash: string;
   reason: string;
   workflowId: string | null;
@@ -183,7 +182,6 @@ export async function listCsamHolds({
       'ph.decidedAt as priorDecidedAt',
       'pd.username as priorDecidedByUsername',
       'lc.modelId as commentModelId',
-      // Both count only for a hold still pending: the chip leads to the holds a decision could still cover.
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
         select count(*)::int from "TextScanHold" x
         where x."userId" = h."userId" and x.label = 'csam' and x.status = 'Pending' and x.id <> h.id
@@ -310,7 +308,7 @@ export async function getHoldAuthorHolds(holdId: number): Promise<HoldAuthorHold
   return { userId, total: Number(count?.count ?? 0), others: rows };
 }
 
-/** Of `ids`, the holds that are still pending and have the same author as `holdId`: all that a decision may be applied to along with it. */
+/** Of `ids`, the pending holds with the same author as `holdId`. */
 export async function filterAuthorPendingHolds(
   holdId: number,
   ids: number[]
@@ -372,7 +370,7 @@ const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
   return byEntity;
 };
 
-/** A post's first images and videos in post order (lowest `index`, then id). One read for every post, bounded per post. */
+/** A post's first images and videos in post order (lowest `index`, then id). */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
     select p.id as "entityId", c.id, c.url, c."nsfwLevel", c.type::text as type, c.minor, c."acceptableMinor", n.total
@@ -418,8 +416,7 @@ async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldC
   return toCovers(rows);
 }
 
-/** Cover media for `Post` and `Model` references, keyed `Type:id`; any other type is skipped. One read
- *  per type, whatever the number of references. */
+/** Cover media for `Post` and `Model` references, keyed `Type:id`; other types are skipped. */
 export async function getEntityCovers(
   refs: { type: string; id: number }[]
 ): Promise<Map<string, CsamHoldCovers>> {

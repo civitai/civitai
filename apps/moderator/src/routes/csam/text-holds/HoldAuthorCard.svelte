@@ -24,7 +24,6 @@
 
   const SHOWN = 6;
 
-  // Searching the author's id lists every hold they have had; the link opens the one asked for.
   const holdHref = (id: number) =>
     urlWith(page.url, { hold: id, status: 'all', entityType: null, q: author?.userId, page: null });
 

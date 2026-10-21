@@ -41,8 +41,7 @@ export const forgetHoldAuthors = () => loaded.clear();
 
 type OtherHold = Pick<Jsonified<AuthorHoldSummary>, 'id' | 'entityType' | 'status' | 'textHash'>;
 
-/** The author's other pending holds that `decision` can be applied to along with the open one: it has to be
- *  one the main app can carry out for the type. */
+/** The author's other pending holds that `decision` can cover for this type. */
 export function alsoDecidable(
   others: readonly OtherHold[],
   decision: string,

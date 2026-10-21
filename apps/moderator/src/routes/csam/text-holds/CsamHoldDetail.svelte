@@ -109,7 +109,7 @@
   let confirming = $state<CsamHoldDecision | null>(null);
   let confirmOpen = $state(false);
 
-  // The author loads for the open hold only; it also says which other holds a decision can cover.
+  // Also says which other holds a decision can cover.
   let author = $state<HoldAuthor | null>(null);
   let authorFailed = $state(false);
   let authorAttempt = $state(0);
@@ -134,13 +134,11 @@
   });
 
   const otherPending = $derived(author?.holds.others.filter((h) => h.status === 'Pending') ?? []);
-  // What the toggle would add to `next`; the ones its type cannot take stay pending and are said so.
-  const qualifying = (next: CsamHoldDecision) => alsoDecidable(otherPending, next, canRemoveHeld);
-  const alsoFor = (next: CsamHoldDecision) => (applyToAuthor ? qualifying(next) : []);
+  const coverable = (next: CsamHoldDecision) => alsoDecidable(otherPending, next, canRemoveHeld);
+  const alsoFor = (next: CsamHoldDecision) => (applyToAuthor ? coverable(next) : []);
   // Every removal takes the same holds, so two counts cover the five decisions.
-  const dismissCount = $derived(qualifying('dismiss').length);
-  const removeCount = $derived(qualifying('remove').length);
-  // Ticked, yet nothing would be covered by this decision: said before it is taken, not skipped silently.
+  const dismissCount = $derived(coverable('dismiss').length);
+  const removeCount = $derived(coverable('remove').length);
   const coversNone = (next: CsamHoldDecision) =>
     applyToAuthor && otherPending.length > 0 && !alsoFor(next).length;
   let also = $state<{ holdId: number; textHash: string }[]>([]);
@@ -217,7 +215,7 @@
     const inner = submit(outcome)(input);
     return async (opts) => {
       const finish = await inner;
-      // Before the shell moves on, so it skips the holds this decision just closed.
+      // Before the shell moves on, so it skips the holds just closed.
       if (opts.result.type === 'success') {
         forgetHoldAuthors();
         const others = (opts.result.data as { others?: AlsoResult[] } | undefined)?.others;

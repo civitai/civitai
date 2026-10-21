@@ -290,7 +290,7 @@ export async function decideCsamHold(args: DecideArgs) {
     const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
     const decidedAt = new Date();
     await dbWrite.$transaction(async (tx) => {
-      // The lock a new detection takes before it checks for rulings, so the two never interleave.
+      // Same lock a new detection takes, so the two never interleave.
       if (hold.entityType !== 'ChatMessage') await lockCsamHold(tx, hold.entityType, hold.entityId);
       const { count } = await tx.textScanHold.updateMany({
         where: { id: holdId, label: 'csam', status: 'Pending', textHash: expectedHash },
@@ -351,6 +351,7 @@ const note = z.string().trim().max(500).optional();
 export const resolveCsamHoldInput = z
   .object({
     holdId: holdId.optional().describe('The hold to decide. Give this or `holds`, not both.'),
+    // Optional for the rollout only: make it required once the moderator release that sends it is live.
     textHash: textHash
       .optional()
       .describe(

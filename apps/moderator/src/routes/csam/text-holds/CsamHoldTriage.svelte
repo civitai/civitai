@@ -80,14 +80,12 @@
   const grants = $derived({ canDecide, canStrike, canBan });
   const ondecision = (_row: unknown, index: number) => pressDecisionKey(index);
 
-  // The author's other holds a decision was applied to along with the open one: dimmed in place like any
-  // decided hold, and summarised once because the queue moves on to the next hold.
+  // Other holds this decision covered: dimmed until the reload shows them decided. The summary survives that
+  // reload and is dropped when filters, search or page change.
   const alsoDecided = new SvelteMap<number, string>();
   let alsoSummary = $state<{ done: number; failed: { holdId: number; error: string }[] } | null>(
     null
   );
-  // A reload shows them decided, so the dimming is only needed until then. The summary outlives the reload
-  // it triggers and goes with the queue it was about: other filters, search or page.
   $effect(() => {
     void data.items;
     alsoDecided.clear();
@@ -107,7 +105,6 @@
     };
   };
 
-  // A chip filters the queue to the author's pending holds, chat messages only for "same chat".
   const authorHref = (userId: number, chat = false) =>
     urlWith(page.url, {
       q: userId,

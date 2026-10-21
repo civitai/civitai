@@ -6,7 +6,7 @@
 
   let { holdId, chatId }: { holdId: number; chatId: number } = $props();
 
-  // Bumped by "Try again" so the derived request is made anew; a failed fetch is not cached.
+  // Bumped by "Try again" to re-run the derived request; failures are not cached.
   let attempt = $state(0);
   const chat = $derived.by(() => {
     void attempt;

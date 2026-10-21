@@ -5,9 +5,7 @@ import { requireIdParam, requirePermission } from '$lib/server/api-guard';
 import { getChatWindow } from '$lib/server/chat-audit.service';
 import { getChatHold } from '$lib/server/csam-holds.queries';
 
-// Loaded for the selected hold only: the list holds up to 200 rows and most are never opened, and the
-// queue switches holds without rerunning the page load. The conversation is private direct messages, so
-// it is gated like the held text itself: the page and `csam.report.file`.
+// Per selected hold, since the list holds up to 200 rows. Private direct messages, so gated like the held text: the page and `csam.report.file`.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const holdId = requireIdParam(locals, params.holdId, '/csam/text-holds', 'holdId');
   requirePermission(locals, 'csam.report.file');

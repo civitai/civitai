@@ -2287,9 +2287,7 @@ enum TextScanHoldStatus {
   Confirmed
 }
 
-// A text-scan verdict held for a moderator; nothing else acts on it. Partial indexes Prisma cannot model
-// live in migrations 20261016150000_text_scan_hold (pending queue) and 20261112120000_text_scan_hold_one_pending
-// (unique per entity while Pending, and unique per text hash for ChatMessage).
+// A text-scan verdict held for a moderator. Partial indexes Prisma cannot model live in the text_scan_hold migrations.
 model TextScanHold {
   id           Int                @id @default(autoincrement())
   entityType   String

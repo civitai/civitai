@@ -206,12 +206,7 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
   return parents;
 }
 
-/**
- * The context a moderator needs to judge a hold without leaving the queue: a profile's own images and
- * text, or what a comment was posted on. Batched over the page's holds, one read per type. It is
- * decoration like the cover images, so a failing read leaves that kind of context out rather than the
- * page down.
- */
+/** Profile images and text, or a comment's parent, batched per type. Decoration: a failing read drops that context, not the page. */
 export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, HoldContext>> {
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
   const commentHolds = holds.filter(

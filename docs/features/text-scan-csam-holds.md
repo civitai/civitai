@@ -41,21 +41,25 @@ positive; nothing else happens to the content or its author. See the hold paragr
 
 ### One hold per entity
 
-Every type except `ChatMessage` keeps at most one Pending hold per entity, enforced by a partial
+Every type except `ChatMessage` keeps at most one Pending hold per entity, backed by a partial
 unique index on `(entityType, entityId, label)` where the status is Pending. Rescans only run when
-the scanned text changed, so a later detection means new text, and `applyCsamHold` handles it as one
-upsert:
+the scanned text changed, so a later detection means new text. `applyCsamHold` reads the entity's
+holds in one transaction, under a per-entity advisory lock that a decision's final update takes too,
+so a ruling cannot land between the read and the write:
 
-- A Pending hold exists: it is updated in place (text, reason, text hash, workflow, prompt, content
-  time, meta) and keeps its queue position. A hold with a decision in progress (`meta.decisionClaim`
-  younger than 30 minutes) is left alone, and the write throws so the callback fails and the
-  retry cron's rescan records the new text later (the claim of a decision that crashed is retaken
-  by another decision after 5 minutes, but a new detection only after 30). The check for earlier
-  rulings and the upsert run in one transaction under a per-entity advisory lock, which a decision's
-  final update takes too, so a ruling cannot land between them.
-- The same text hash is already decided (dismissed or removed): nothing is written, because a
-  moderator ruled on that exact text.
-- Changed text after a decision, with nothing Pending: a new hold is inserted with
+- A Pending hold exists with another text: it is updated in place (text, reason, text hash, workflow,
+  prompt, content time, meta) and keeps its queue position. The text it replaces is kept in
+  `meta.previous` (text, hash, reason, workflow, when; the five newest, newest first), and the detail
+  shows it under "Earlier held text". If the new text is one a moderator already ruled on, the hold
+  carries `meta.ruledBefore` (that hold's id and outcome) and the detail says so. A hold with a
+  decision in progress (`meta.decisionClaim` younger than 30 minutes) is left alone, and the write
+  throws so the callback fails and the retry cron's rescan records the new text later (the claim of a
+  decision that crashed is retaken by another decision after 5 minutes, but a new detection only
+  after 30).
+- The same text as the Pending hold: nothing is written.
+- No Pending hold, and the text hash is already decided (dismissed or removed): nothing is written,
+  because a moderator ruled on that exact text.
+- No Pending hold and changed text after a decision: a new hold is inserted with
   `meta.kind = 'redetected'` and `meta.priorHoldId` set to the latest ruling. The queue shows a
   re-detected chip and "Dismissed before by ... ago" with a link to that hold.
 - A clean rescan never closes a Pending hold; a moderator does.
@@ -72,13 +76,15 @@ applied by hand. Roll out in this order: migration, then main app release, then 
 Main app code from before this change swallows the new index's unique violation for edited text, so
 keep the gap between the migration and the main release short. The moderator ships last because the
 old moderator app does not send `textHash`, which the new endpoint accepts but then guards less
-strictly.
+strictly. When the migration closes duplicates it keeps the hold a moderator is mid-decision on, else
+the one holding the entity's last scanned text, else the newest; run it while nobody is deciding.
 
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
-Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta;
-the row, reason, ids and decision stay. Confirmed holds are kept whole, text and meta included.
+Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta
+(`meta.previous` included); the row, reason, ids and decision stay. Confirmed holds are kept whole,
+text and meta included, and so are holds the migration superseded, which no moderator ruled on.
 
 ## Decisions
 
@@ -124,6 +130,15 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   Remove + strike, Remove + ban and the report action still ask for confirmation first; while a
   confirmation is open, decision keys, J/K and V do nothing. K/J move to the next/previous hold, and
   V toggles image reveal.
+- Author context. A selected hold with a recorded author shows a card from
+  `/api/csam-hold-author/[holdId]`: the author's other holds (newest 50, with the total), each
+  linking to it. The history needs the page and `csam.report.file`; the account card, content counts
+  and reported content are User Lookup's, so only a moderator who can open that page gets them.
+  A "same author" chip on a pending row filters the queue to that author's pending holds, and a "same
+  chat" chip to their pending chat holds.
+- Also apply. Deciding the hold on screen with remove or dismiss can cover the author's other pending
+  holds that qualify, by checkbox. They go in one batch call (see above), each against the `textHash` the
+  moderator saw; strike and ban apply to the hold on screen only.
 - Hiding content while a hold waits is not built: holds stay non-hiding.
 
 ## Access
