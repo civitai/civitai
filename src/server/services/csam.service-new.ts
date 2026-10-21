@@ -1421,7 +1421,6 @@ async function archiveAndUpload({
     (stored) => stored,
     (e: unknown) => {
       uploadError = e;
-      return undefined;
       // Fail the sink. The `stream.pipeline` above is what turns that into a stop signal for the
       // producer: it destroys the archiver WITH THIS ERROR, the archiver emits `'error'`, and
       // `createBoundedArchive` latches it and releases every parked `append()`. `finalize()`'s
