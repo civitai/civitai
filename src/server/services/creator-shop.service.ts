@@ -21,6 +21,7 @@ import {
   type OwedBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { constants } from '~/server/common/constants';
@@ -2356,6 +2357,38 @@ const TAKEDOWN_RETRY_DELAY_MS = 1000;
 const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
   withRetries(fn, TAKEDOWN_MONEY_RETRIES, TAKEDOWN_RETRY_DELAY_MS);
 
+type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+
+/**
+ * A shelf purchase's refund, finished when an earlier attempt reversed part of it: a lost response,
+ * or a run that died before flagging it, makes the prefix refund answer 409 and reverse nothing, so
+ * every retry would read a refunded buyer as owed. Reports every leg now reversed, as the plain
+ * refund does, for the payout reversal that follows.
+ */
+async function refundShelfPurchase(input: {
+  externalTransactionIdPrefix: string;
+  description: string;
+}) {
+  try {
+    return await refundMultiAccountTransaction(input);
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+  }
+  await refundAllLegsByPrefix(input);
+  const { reversed } = await getPrefixRefundState(input.externalTransactionIdPrefix);
+  return {
+    refundedTransactions: reversed.map((leg) => ({
+      originalTransactionId: leg.transactionId,
+      refundTransactionId: `refund-${leg.transactionId}`,
+      accountType: leg.accountType,
+      amount: leg.amount,
+      originalExternalTransactionId: leg.externalTransactionId,
+    })),
+    totalRefunded: reversed.reduce((sum, leg) => sum + leg.amount, 0),
+    externalTransactionIdPrefix: input.externalTransactionIdPrefix,
+  } satisfies PrefixRefund;
+}
+
 const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
   logToAxiom({ level, name: 'cosmetic-takedown', message, data }).catch(() => undefined);
 
@@ -2577,10 +2610,10 @@ export const takedownCosmeticShopItem = async ({
         refundedUserIds.push(purchase.userId);
         continue;
       }
-      let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+      let refund: PrefixRefund;
       try {
         refund = await takedownMoneyMove(() =>
-          refundMultiAccountTransaction({
+          refundShelfPurchase({
             externalTransactionIdPrefix: purchase.buzzTransactionId,
             description: `Cosmetic removed - ${item.title}`,
           })

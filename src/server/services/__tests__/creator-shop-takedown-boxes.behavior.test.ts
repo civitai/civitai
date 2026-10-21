@@ -602,25 +602,33 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
   });
 });
 
-/** Runs `fail` for every top-level raw statement containing `marker`, else the real statement. */
-const failTopLevel = (method: '$queryRaw' | '$executeRaw', marker: string) => {
-  const real = pgliteRaw(holder.db)[method === '$queryRaw' ? 'queryRaw' : 'executeRaw'];
+/**
+ * Runs `run` with every top-level raw statement containing `marker` rejected, and returns how many
+ * were: a marker that matches nothing fails nothing, and the test would pass as the happy path.
+ */
+const withFailing = async <T>(
+  method: '$queryRaw' | '$executeRaw',
+  marker: string,
+  run: () => Promise<T>
+) => {
+  const raw = () => pgliteRaw(holder.db)[method === '$queryRaw' ? 'queryRaw' : 'executeRaw'];
+  let hits = 0;
   dbMock.dbWrite[method].mockImplementation(((
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) =>
-    strings.join('?').includes(marker)
-      ? Promise.reject(new Error(`${marker} failed`))
-      : real(strings, ...values)) as never);
-  return () =>
+  ) => {
+    if (!strings.join('?').includes(marker)) return raw()(strings, ...values);
+    hits++;
+    return Promise.reject(new Error(`${marker} failed`));
+  }) as never);
+  try {
+    return { result: await run(), hits };
+  } finally {
     dbMock.dbWrite[method].mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
-    ) =>
-      pgliteRaw(holder.db)[method === '$queryRaw' ? 'queryRaw' : 'executeRaw'](
-        strings,
-        ...values
-      )) as never);
+    ) => raw()(strings, ...values)) as never);
+  }
 };
 
 describe('takedownCosmeticShopItem paying box refunds still owed', () => {
@@ -661,23 +669,19 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     const boxId = await seedBox();
     const first = await seedOpening(boxId);
     const second = await seedOpening(boxId, { userId: 103 });
-    const restore = failTopLevel('$executeRaw', 'jsonb_set');
+    const { result, hits } = await withFailing('$executeRaw', 'jsonb_set', takedown);
 
-    const result = await takedown();
-    restore();
-
+    expect(hits).toBe(2);
     expect(refundedPrefixes()).toEqual([first.sourceKey, second.sourceKey]);
     expect([result.boxOpeningsRefunded, result.failures]).toEqual([2, []]);
     // The retry asks the prefix again; Buzz answers that it is already refunded.
-    buzz.refundMultiAccountTransaction
-      .mockReset()
-      .mockRejectedValue(
-        new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'conflict',
-          cause: new BuzzApiError(409, 'x'),
-        })
-      );
+    buzz.refundMultiAccountTransaction.mockReset().mockRejectedValue(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'conflict',
+        cause: new BuzzApiError(409, 'x'),
+      })
+    );
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
       { transactionId: 'charge-1', amount: 800 },
     ]);
@@ -692,11 +696,13 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
-    const restore = failTopLevel('$queryRaw', 'o."boxSourceKey" AND p."userId"');
+    const { result, hits } = await withFailing(
+      '$queryRaw',
+      'o."boxSourceKey" AND p."userId"',
+      takedown
+    );
 
-    const result = await takedown();
-    restore();
-
+    expect(hits).toBe(1);
     expect(result.failures).toEqual([
       expect.objectContaining({ stage: 'box', error: expect.stringContaining('not read') }),
     ]);
@@ -723,6 +729,39 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
 
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(await purchaseRefunded(sourceKey)).toBe(false);
+  });
+
+  // A first attempt that landed with its response lost: the retry is refused as a conflict.
+  it('finishes a shelf refund an earlier attempt landed, and reverses its seller payout', async () => {
+    await seedBox();
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      {
+        userId: 104,
+        buzzTransactionId: 'shelf-1',
+        unitAmount: 500,
+        meta: {
+          payouts: [{ userId: CREATOR, amount: 350, color: 'yellow', transactionId: 'payout-9' }],
+        },
+      },
+    ]);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'charge-9',
+        externalTransactionId: 'shelf-1:0',
+        accountType: 'yellow',
+        accountId: 104,
+        amount: 500,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-charge-9' });
+
+    const result = await takedown();
+
+    expect([result.refunded, result.failures]).toEqual([1, []]);
+    expect(buzz.refundTransaction).toHaveBeenCalledWith('payout-9', expect.any(String));
   });
 
   it('does not take back a payout the purchase refund already reversed', async () => {
@@ -766,10 +805,13 @@ describe('Retry takedown on an item already taken down', () => {
       )) as never);
     dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((async ({
       where,
+      data,
     }: {
       where: { buzzTransactionId: string };
+      data: { refunded?: boolean };
     }) => {
-      table.find((row) => row.buzzTransactionId === where.buzzTransactionId)!.refunded = true;
+      const row = table.find((r) => r.buzzTransactionId === where.buzzTransactionId)!;
+      if (data.refunded !== undefined) row.refunded = data.refunded;
     }) as never);
   };
 
@@ -801,18 +843,25 @@ describe('Retry takedown on an item already taken down', () => {
     ]);
   });
 
-  it('keeps the first takedown record and archive date, and does not tell the creator again', async () => {
+  it('keeps the first takedown record, archive date and the rest of the meta, and does not tell the creator again', async () => {
     await seedBox();
-    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({ meta: { takedown: original } });
+    const earlier = { at: '2026-09-01T00:00:00.000Z', userId: 7, kind: 'reviewed', note: 'ok' };
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
+      meta: { takedown: original, history: [earlier], sellerShare: 10 },
+    });
 
     await takedown();
 
     const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls.at(-1)![0] as {
-      data: { archivedAt?: Date; meta: { takedown: unknown; history: { note: string }[] } };
+      data: {
+        archivedAt?: Date;
+        meta: { takedown: unknown; sellerShare: number; history: { note: string }[] };
+      };
     };
     expect(data.meta.takedown).toEqual(original);
     expect(data.archivedAt).toBeUndefined();
-    expect(data.meta.history.at(-1)!.note).toBe('Retried: Infringing');
+    expect(data.meta.sellerShare).toBe(10);
+    expect(data.meta.history.map((entry) => entry.note)).toEqual(['ok', 'Retried: Infringing']);
     expect(notifications.createNotification).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'creator-shop-item-taken-down' })
     );
