@@ -49,9 +49,10 @@ export type StorylineContinuationStatus =
  * - **Answerable**: present, and its storyline is not taken down. Only then may the owner accept or
  *   decline it.
  *
- * A takedown can be lifted (a title appeal, a clean rescan), so a continuation in a taken-down
- * storyline is held, not refunded: it stays in the queue marked as not answerable until the
- * takedown lifts, or is refunded at its own deadline.
+ * A takedown can be lifted (a title appeal, a clean rescan), so the orphan sweep does not refund a
+ * continuation in a taken-down storyline: it stays in the queue marked as not answerable until the
+ * takedown lifts. Its deadline refunds it, and so does the placer-block cascade, which uses the
+ * answerable rule.
  */
 export function isAnswerableParentChapter(chapter: {
   removedAt: Date | null;
