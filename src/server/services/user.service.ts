@@ -1412,7 +1412,7 @@ export const removeAllContent = async ({
     where: { userId: id },
     select: { id: true },
   });
-  const bounties = await dbRead.collection.findMany({
+  const bounties = await dbRead.bounty.findMany({
     where: { userId: id },
     select: { id: true },
   });
@@ -1486,8 +1486,11 @@ export const removeAllContent = async ({
   await collectionsSearchIndex.queueUpdate(
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  // A kept bounty still exists, so it stays in the index.
   await bountiesSearchIndex.queueUpdate(
-    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+    bounties
+      .filter((b) => !keptBountyIds.includes(b.id))
+      .map((b) => ({ id: b.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
