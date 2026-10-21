@@ -80,7 +80,7 @@ export class AppSandbox {
   #connection: McpConnection | null = null;
   #closed = false;
   /** The one look at the user's apps after a refused call, shared by the calls refused together. */
-  #checking: Promise<'gone' | 'paused' | 'running'> | null = null;
+  #checking: Promise<'gone' | 'paused' | 'running' | 'starting'> | null = null;
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
@@ -186,6 +186,12 @@ export class AppSandbox {
         retryable: true,
         note: LOST_NOTE,
       };
+    if (state === 'starting')
+      return {
+        error: `Your app is starting again, so the ${tool} call may have finished or may not have run.`,
+        retryable: true,
+        note: LOST_NOTE,
+      };
     // Still running: an error status (a proxy's 502, a pod restart) may have come after it ran.
     if (error instanceof StreamableHTTPError && (error.code ?? 0) >= 400)
       return {
@@ -201,8 +207,8 @@ export class AppSandbox {
    * is gone, still running (the refusal was a proxy's or a restart's), or paused. A paused app ends the
    * reply as interrupted, saying whether the user opened another app; it is never woken from here.
    */
-  #check(): Promise<'gone' | 'paused' | 'running'> {
-    this.#checking ??= (async (): Promise<'gone' | 'paused' | 'running'> => {
+  #check(): Promise<'gone' | 'paused' | 'running' | 'starting'> {
+    this.#checking ??= (async (): Promise<'gone' | 'paused' | 'running' | 'starting'> => {
       const app = this.#app;
       if (!app) return 'gone';
       let listed: Sandbox[];
@@ -217,7 +223,10 @@ export class AppSandbox {
       }
       const found = listed.find((sandbox) => sandbox.app === app);
       if (!found) return 'gone';
-      if (found.state === 'running') return 'running';
+      // Starting (a pod restart, or the user opening it again): neither asleep nor paused for another
+      // app, and the call may have run before the restart; reported as maybe finished, as a running
+      // app's error status is, and the reply goes on.
+      if (found.state !== 'suspended') return found.state === 'starting' ? 'starting' : 'running';
       this.#active = found;
       const other = listed.some((sandbox) => sandbox.app !== app && sandbox.state !== 'suspended');
       this.#deps.endReply?.(other ? PAUSED_BY_OTHER_APP : PAUSED_IDLE);

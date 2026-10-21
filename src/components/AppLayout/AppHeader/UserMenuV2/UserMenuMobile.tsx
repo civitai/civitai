@@ -2,7 +2,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import {
   closestCenter,
   DndContext,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
@@ -257,9 +257,9 @@ export function MobilePinned({
   announce: (text: string) => void;
 }) {
   const guard = useDragClickGuard();
-  // A press-and-hold starts a drag on touch, so a swipe still scrolls the panel.
+  // No PointerSensor: a finger emits pointer events too, so it would start a drag on any swipe.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } })
   );
 

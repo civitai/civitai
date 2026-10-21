@@ -19,6 +19,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { ReviewCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
+import { lockBox } from '~/server/services/box-version-lock';
 import {
   checkProposal,
   creatorIsRestricted,
@@ -190,21 +191,6 @@ function draftOf(
     })
   );
   return { tiers, contents };
-}
-
-const BOX_LOCK_TIMEOUT = '3s';
-
-/**
- * FOR NO KEY UPDATE waits for every open in flight (each reads this row FOR SHARE). Never take the
- * item-holder lock after it: opens take that lock before this row. The wait is bounded because
- * Prisma's transaction timeout doesn't cancel a waiting statement; it stays set to commit.
- */
-async function lockBox(tx: Tx, boxId: number) {
-  await tx.$executeRaw`SELECT set_config('lock_timeout', ${BOX_LOCK_TIMEOUT}, true)`;
-  const [box] = await tx.$queryRaw<{ status: string; version: number; updatedAt: Date }[]>`
-    SELECT status, version, "updatedAt" FROM "ItemDefinition" WHERE id = ${boxId}
-    FOR NO KEY UPDATE`;
-  return box;
 }
 
 /** The builder's save on Prisma, in the builder's order: changed rows only, batched. */

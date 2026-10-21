@@ -232,6 +232,28 @@ describe('mapSearchInputToFeedQuery', () => {
     });
   });
 
+  it("serves the gallery's post completion to the website, whole or not at all", () => {
+    const completion = { ...base, postIds: [5, 4], postIdsInRequestedSort: true, limit: 37 };
+    const m = mapSearchInputToFeedQuery(completion, 'primary', 'website');
+    expect(m.ok).toBe(true);
+    const q = m.ok ? new URLSearchParams(m.query) : new URLSearchParams();
+    expect(q.get('postIds')).toBe('5,4');
+    expect(q.get('limit')).toBe('37');
+    // A post page without the opt-in keeps its Postgres path.
+    expect(mapSearchInputToFeedQuery({ ...base, postIds: [5, 4] }, 'primary', 'website')).toEqual({
+      ok: false,
+      reason: 'input:postId',
+    });
+    // More rows than the feed answers would leave posts short: refused, not capped.
+    expect(mapSearchInputToFeedQuery({ ...completion, limit: 201 }, 'primary', 'website')).toEqual({
+      ok: false,
+      reason: 'postIds:limit>200',
+    });
+    expect(mapSearchInputToFeedQuery({ ...completion, limit: 200 }, 'primary', 'website').ok).toBe(
+      true
+    );
+  });
+
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
     const signedIn = { ...base, currentUserId: 9, followed: true };
     const m = mapSearchInputToFeedQuery({ ...signedIn, followedUserIds: [7, 3, 0] });

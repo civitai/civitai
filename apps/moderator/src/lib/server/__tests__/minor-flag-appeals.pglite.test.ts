@@ -61,7 +61,8 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
-  "postId" INTEGER, "index" INTEGER, "type" TEXT NOT NULL DEFAULT 'image'
+  "postId" INTEGER, "index" INTEGER, "type" TEXT NOT NULL DEFAULT 'image',
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL);
 CREATE TABLE "TagsOnModels" ("modelId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL);
@@ -354,10 +355,17 @@ describe('row context', () => {
     expect((await rowFor(2)).tags).toEqual([]);
   });
 
-  it('serves up to four owner-posted images, published posts first, in version then post then image order', async () => {
+  it('serves up to four owner-posted images and videos, published posts first, in version then post then image order', async () => {
     const row = await rowFor(1);
-    expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
-    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b', nsfwLevel: 4 });
+    expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-vid', 'u-c']);
+    expect(row.coverImages[1]).toEqual({
+      id: 2,
+      url: 'u-b',
+      nsfwLevel: 4,
+      type: 'image',
+      minor: false,
+      acceptableMinor: false,
+    });
     expect((await rowFor(2)).coverImages).toEqual([]);
   });
 
@@ -373,7 +381,9 @@ describe('row context', () => {
         (9, 'u-unpub', 1, 204, 0, 'image'), (10, 'u-early-unpub', 1, 205, 0, 'image'),
         (11, 'u-late-pub', 1, 206, 0, 'image');
     `);
-    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub', nsfwLevel: 1 }]);
+    expect((await rowFor(3)).coverImages).toEqual([
+      { id: 9, url: 'u-unpub', nsfwLevel: 1, type: 'image', minor: false, acceptableMinor: false },
+    ]);
     expect((await rowFor(4)).coverImages.map((i) => i.url)).toEqual([
       'u-late-pub',
       'u-early-unpub',
