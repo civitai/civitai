@@ -7,12 +7,10 @@ import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 
-/**
- * Reads the bytes a user uploaded, for CSAM evidence (the report archive and the NCMEC upload).
- *
- * 🔴 IMPORT-GUARDED: `no-csam-original-image-import.test.ts` fails if any other module references
- * it. It bypasses every delivery-side control (edge, NSFW level, moderation), so it must not
- * become a general "serve the original" helper.
+/*
+ * Reads the bytes a user uploaded, for CSAM evidence (report archive and NCMEC upload).
+ * 🔴 IMPORT-GUARDED by `no-csam-original-image-import.test.ts`: it bypasses every delivery-side
+ * control (edge, NSFW level, moderation), so it must not become a general "serve the original" helper.
  */
 
 export type OriginalImageSource = 'original' | 'edge-fallback' | 'missing';
@@ -34,12 +32,12 @@ type ImageInput = { url: string; type: MediaType; mimeType?: string | null };
 type ImageBackend = { s3: S3Client; bucket: string };
 type ReadOptions = { backend?: ImageBackend; fetchImpl?: typeof fetch };
 
-/** Long enough for a maximum-size video original over the internal network. */
+/** Long enough for a maximum-size original. */
 export const ORIGINAL_IMAGE_READ_TIMEOUT_MS = 10 * 60 * 1000;
 
 const PROBE_TIMEOUT_MS = 60 * 1000;
 
-/** Above any upload limit: a larger object or response is not an image we stored. */
+/** A larger object or response is not an image we stored. */
 export const MAX_ORIGINAL_IMAGE_BYTES = 1024 * 1024 * 1024;
 
 const OCTET_STREAM = 'application/octet-stream';
@@ -119,15 +117,17 @@ const declaredLength = (header: string | null) => {
   return Number.isFinite(length) && length >= 0 ? length : UNKNOWN_SIZE;
 };
 
+// A stored key is joined into the edge URL as is: it must stay a plain path.
+const isPlainKey = (key: string) => !/\.\.|%2e|%2f|%3f|%23|[?#]/i.test(key);
+
 function edgeRefusal(url: string, passthrough: boolean) {
   if (!isAllowedImageScanUrl(url)) return missing('url not allowed');
-  // A stored key is joined into the edge URL as is: it must stay a plain path.
-  if (!passthrough && /\.\.|%2e|[?#]/i.test(url)) return missing('url not allowed');
+  if (!passthrough && !isPlainKey(url)) return missing('url not allowed');
 }
 
 /**
- * The edge's full-size copy, never a resized one. Only "not found" or a non-media body is
- * `missing`; any other failure throws.
+ * The edge's full-size copy, never a resized one. `missing` for a 404/410, a body that is not
+ * media, or a length over the cap; any other failure throws.
  */
 async function fetchEdge(
   image: ImageInput,
@@ -166,6 +166,12 @@ async function fetchEdge(
     await response.body.cancel().catch(() => undefined);
     return missing('edge copy is not media');
   }
+  // Fetch decodes a compressed body whatever was asked for, and the budget reserves the declared length.
+  const encoding = response.headers.get('content-encoding')?.trim().toLowerCase();
+  if (encoding && encoding !== 'identity') {
+    await response.body.cancel().catch(() => undefined);
+    throw new Error('edge copy is encoded');
+  }
   const declared = declaredLength(response.headers.get('content-length'));
   if (declared > MAX_ORIGINAL_IMAGE_BYTES) {
     await response.body.cancel().catch(() => undefined);
@@ -179,8 +185,7 @@ async function fetchEdge(
  * transient storage error cannot quietly downgrade evidence to an edge copy; it throws and the
  * caller retries.
  *
- * `reserve` is called with the object's size before its body is read, so a caller can bound how
- * many bytes are held at once.
+ * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at once.
  */
 export async function readOriginalImage(
   image: ImageInput,
@@ -192,6 +197,7 @@ export async function readOriginalImage(
 ): Promise<OriginalImageRead> {
   const noReservation = () => undefined;
   const passthrough = isEdgeUrlPassthrough(image.url);
+  if (!passthrough && !isPlainKey(image.url)) return missing('url not allowed');
 
   if (!passthrough) {
     const { s3, bucket } = backend ?? (await getImageUploadBackend());
@@ -258,15 +264,16 @@ export async function readOriginalImage(
 }
 
 /**
- * A storage HEAD, or the edge's headers with the body released, in place of the bytes, so a
- * caller can decide before acting on the file. Throws on the errors the read throws on, except a
- * wrong bucket (a HEAD says only `NotFound`) and a body that fails mid-read.
+ * A storage HEAD, or the edge's headers with the body released, so a caller can decide before
+ * reading. Throws what the read throws, except a wrong bucket (a HEAD says only `NotFound`) and a
+ * body that fails mid-read.
  */
 export async function probeOriginalImage(
   image: ImageInput,
   { backend, fetchImpl = fetch }: ReadOptions = {}
 ): Promise<{ source: 'original' | 'edge-fallback' } | MissingImage> {
   const passthrough = isEdgeUrlPassthrough(image.url);
+  if (!passthrough && !isPlainKey(image.url)) return missing('url not allowed');
 
   if (!passthrough) {
     const { s3, bucket } = backend ?? (await getImageUploadBackend());

@@ -272,6 +272,71 @@ describe('NCMEC image upload', () => {
       expect(lines('send-all-unreadable')).toHaveLength(2);
     });
 
+    it('sends a file in full once storage is back, after it failed on two runs', async () => {
+      let readFailures: Record<string, number> = {};
+      const run = () =>
+        processCsamReport({
+          ...report,
+          createdAt: new Date(Date.now() - 3 * 3_600_000),
+          details: { readFailures },
+        } as CsamReportProps);
+      const recorded = () =>
+        JSON.parse(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.[1] as string) as Record<
+          string,
+          number
+        >;
+
+      headObject.mockRejectedValueOnce(storageOutage());
+      await run();
+      readFailures = recorded();
+      headObject.mockRejectedValueOnce(storageOutage());
+      await run();
+      readFailures = recorded();
+      expect(readFailures).toEqual({ 501: 2 });
+      expect(submitReport).not.toHaveBeenCalled();
+
+      await run();
+
+      expect(submitReport).toHaveBeenCalledTimes(1);
+      expect(cancelReport).not.toHaveBeenCalled();
+      expect(finishReport).toHaveBeenCalledTimes(1);
+      expect(sentUpdate().details.images).toEqual([
+        expect.objectContaining({ id: 501, source: 'original', sha256: sha256(stored) }),
+      ]);
+      expect(lines('send-short')).toEqual([]);
+      expect(lines('send-all-unreadable')).toHaveLength(2);
+    });
+
+    it('counts no read failure when NCMEC refuses an upload of a file that was read', async () => {
+      uploadFile.mockRejectedValue(new Error('synthetic NCMEC outage'));
+
+      await processCsamReport(report);
+
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('counts the read failure of a file still being read when another fails', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockImplementation(async (key: string) => {
+        if (key === 'stored-key-502') await new Promise((resolve) => setTimeout(resolve, 20));
+        throw storageOutage();
+      });
+
+      await processCsamReport({ ...report, images: [{ id: 501 }, { id: 502 }] } as CsamReportProps);
+
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
+        JSON.stringify({ 501: 1, 502: 1 }),
+        report.id,
+      ]);
+      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        cancelReport.mock.invocationCallOrder[0]
+      );
+    });
+
     it('stops reading the other files once one fails after opening', async () => {
       dbMock.dbRead.image.findMany.mockResolvedValue([501, 502, 503, 504].map(imageRow));
       headObject.mockResolvedValue({ ContentLength: stored.length });

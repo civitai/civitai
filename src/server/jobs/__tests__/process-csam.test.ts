@@ -237,8 +237,6 @@ describe('the CSAM jobs’ locks survive the caller hanging up', () => {
   });
 
   it('CONTROL: a job that does not opt in still releases on a disconnect', async () => {
-    // Same handler, same harness, an un-opted job: a green above is a fact about the opt-in and
-    // not about the harness.
     const unopted = createJob('probe', '0 */1 * * *', async () => undefined);
     expect(unopted.options.keepLockOnDisconnect).toBeUndefined();
     const { cancel, release, handler } = harness(unopted.options);

@@ -3,10 +3,8 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 
 /**
- * 🔴 `csam-original-image` reads a user's stored upload past every delivery-side control (edge,
- * browsing level, moderation). It exists for CSAM evidence only: the report archive and the
- * NCMEC upload, both in `csam.service-new.ts`. This fails when any other module reaches it, so it
- * cannot quietly become a general "serve the original" helper.
+ * 🔴 Fails when any module outside `ALLOWED` references `csam-original-image`, so it cannot become
+ * a general "serve the original" helper.
  */
 
 const REPO = path.resolve(__dirname, '../../../..');

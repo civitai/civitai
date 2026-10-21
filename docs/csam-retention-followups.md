@@ -31,14 +31,22 @@ and the moderator dashboard column that reads it (`src/pages/moderator/csam/inde
 
 ## 2. Alerting on a stranded CSAM report
 
-The send/archive pipeline has **no retry limit, no backoff, and no dead-letter**. A failure leaves
-`reportSentAt` NULL and retries hourly, with the exceptions below. Every image file is checked before
-a CyberTip is opened, so a report that is held opens none. A file that is gone (no stored object and
-no edge copy, over the size cap, or a URL the allowlist refuses) does not hold the report: it is
-recorded as `missing` with its reason and the rest is sent. A file whose reads keep failing does:
-once the report passes `CSAM_SEND_SHORT_AFTER_HOURS` and every such file has failed
-`CSAM_SEND_SHORT_MIN_READ_FAILURES` reads (constants in `csam.service-new.ts`), the report is sent
-without them. A report with no file that can be sent is never sent.
+The send/archive pipeline has **no report-level retry limit, backoff or dead-letter**. A failure
+leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the exceptions below.
+
+- Send checks every image file before it opens a CyberTip, so a held report opens none; a file whose
+  reads have failed before is read in full for that check. A file that is gone (no stored object, or
+  an edge copy that is missing or not media; over the size cap; or a URL the allowlist refuses) does
+  not hold the report: it is recorded as `missing` with its reason and the rest is sent. A file that
+  fails this run's check does hold it, until the report is `CSAM_SEND_SHORT_AFTER_HOURS` (24) past
+  filing and every such file has failed `CSAM_SEND_SHORT_MIN_READ_FAILURES` (2) reads; it is then
+  sent without them. A report with no file that can be sent is never sent.
+- Archive reads stored originals (`csam-original-image.ts`, import-guarded by
+  `no-csam-original-image-import`). A file stored as a full URL that is still unreadable
+  `CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS` (24) after the report was sent is recorded `missing` in the
+  manifest; a stored object's failure is always retried. The images archive holds at most
+  `MAX_ARCHIVE_SOURCE_BYTES` of source bytes at once.
+- Thresholds are the `CSAM_SEND_*` / `CSAM_ARCHIVE_*` constants in `csam.service-new.ts`.
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.
@@ -53,10 +61,12 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
       that is still unsent past `CSAM_SEND_BLOCKED_AFTER_HOURS`, whatever held it. A report with no
       readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
       `CSAM_SEND_DECISION_AFTER_HOURS`.
-- [ ] Route those lines to an alert, and alert when a report is unarchived for >7d.
+- [ ] Route those lines to an alert, and alert when a report is unarchived for >7d (the
+      `archive-data` error line carries `reportId` and `hoursSinceSent`).
 - [ ] Consider a report-level dead-letter so a permanently-failing report is visible rather than
       silently retried forever. Failed file reads are already counted per file in
-      `details.readFailures`; this is for the other causes (a non-zero NCMEC status, missing credentials).
+      `details.readFailures`, and a stale full-URL archive file is recorded `missing`; this is for
+      the other causes (a non-zero NCMEC status, missing credentials).
 
 In `remove-blocked-images`, the legal hold (`src/server/utils/legal-hold.ts`) keeps a user's blocked
 media while any report naming them is unsent, unarchived, or sent within the last year, with no

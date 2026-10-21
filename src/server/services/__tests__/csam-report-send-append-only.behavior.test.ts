@@ -72,7 +72,6 @@ const stored = Buffer.from('the bytes the user uploaded');
 const db = { pg: null as unknown as PGlite };
 const JSON_COLUMNS = new Set(['details', 'images']);
 
-/** Stands in for the Prisma update against PGlite. */
 async function applyUpdate({
   where,
   data,

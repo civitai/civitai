@@ -97,6 +97,9 @@ describe('readOriginalImage', () => {
       readOriginalImage(image, { backend, fetchImpl: edgeResponding(404) })
     ).resolves.toEqual({ source: 'missing', reason: 'edge 404' });
     await expect(
+      readOriginalImage(image, { backend, fetchImpl: edgeResponding(410) })
+    ).resolves.toEqual({ source: 'missing', reason: 'edge 410' });
+    await expect(
       readOriginalImage(image, {
         backend,
         fetchImpl: edgeResponding(200, Buffer.from('<html>placeholder</html>'), {
@@ -267,6 +270,40 @@ describe('readOriginalImage', () => {
       reason: 'url not allowed',
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['leaves the image path', '../other/path'],
+    ['hides a slash', 'key%2Fother'],
+    ['hides a query', 'key-uuid%3Fx=1'],
+    ['hides a fragment', 'key-uuid%23x'],
+  ])('reads neither storage nor the edge for a stored key that %s', async (_, url) => {
+    const { s3, backend } = backendReturning(async () => storedObject(Buffer.from('stored')));
+    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+
+    await expect(
+      readOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({ source: 'missing', reason: 'url not allowed' });
+    await expect(
+      probeOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({ source: 'missing', reason: 'url not allowed' });
+    expect(s3.send).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('throws on a compressed edge body, whose declared length is not what it holds', async () => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('edge bytes'), {
+      'content-type': 'image/jpeg',
+      'content-encoding': 'gzip',
+    });
+
+    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(
+      'edge copy is encoded'
+    );
+    await expect(probeOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(
+      'edge copy is encoded'
+    );
   });
 
   it('releases the body of an edge error response', async () => {

@@ -318,7 +318,6 @@ function fakeBlob(index: number) {
   };
 }
 
-/** Zip entry name for image row `i`: its id plus the stored content type's extension. */
 const entryNameForIndex = (index: number) => `${index + 1}.jpeg`;
 
 type InventoryEntry = { name: string; size: number; sha256: string };
@@ -354,7 +353,6 @@ function expectedInventory(): InventoryEntry[] {
   })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** The manifest, parsed. */
 async function zipManifest(bytes: Buffer) {
   const zip = await JSZip.loadAsync(bytes);
   return JSON.parse(await zip.file('manifest.json')!.async('string'));
@@ -622,11 +620,10 @@ describe('csam archive streaming upload', () => {
     // branch dropping it is the only thing standing between the rollback path and a derived part
     // size. That makes this assertion reachable, which the images route does not.
     //
-    // Made OBSERVABLE by a large estimate over a small archive: `expectedBytes` counts every URL,
-    // while only the ones that actually fetch become entries. At ~8 MiB/entry x 30,000 URLs the
-    // derived part size is ~96 MiB — larger than the ~14 MiB archive — so a leaked estimate
-    // collapses the upload to a single part (or a one-shot `PutObject`, `partCount === 0`).
-    // The fixed 5 MiB geometry gives several parts instead.
+    // Made observable by a large estimate over a small archive: `expectedBytes` counts every URL, but
+    // only those that fetch become entries. A leaked estimate derives a part larger than the archive
+    // and collapses the upload to one part (or a one-shot `PutObject`, `partCount === 0`); the fixed
+    // 5 MiB geometry gives several parts.
     const REAL_URLS = ENTRY_COUNT;
     const TOTAL_URLS = 30_000;
     const urls = Array.from({ length: TOTAL_URLS }, (_, i) =>

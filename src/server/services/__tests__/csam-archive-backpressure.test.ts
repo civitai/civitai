@@ -547,9 +547,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
 
   it('records each stored object, and how many of the images the report names it holds', async () => {
     seedDb();
-    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`. Two named images
-    // are gone from storage: one is gone from the edge too, and the edge serves the other as
-    // something other than an image.
+    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`.
     const unfetchable = `image-uuid-${IMAGE_COUNT - 1}`;
     const notAnImage = `image-uuid-${IMAGE_COUNT - 2}`;
     mockGetObject = async (key) => {
@@ -1154,7 +1152,6 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
-    // 7 is stored; 8 and 9 are gone from storage, and only 8 is still on the edge.
     mockGetObject = async (key) => {
       if (key === 'key-seven')
         return {
@@ -1257,6 +1254,17 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
         source: 'missing',
         reason: 'full url unreadable',
       });
+    });
+
+    it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
+      mockGetObject = async () => {
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      };
+
+      await expect(
+        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS + 1) as never)
+      ).rejects.toThrow('synthetic storage outage');
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
   });
 

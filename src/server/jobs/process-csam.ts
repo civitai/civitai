@@ -64,8 +64,8 @@ const sendCsamReportsJob = createJob(
       });
     }
   },
-  // Overlapping runs would each open a CyberTip for the same report, and a report's file reads can
-  // outlast the default lock. See CSAM_ARCHIVE_JOB_LOCK_SECONDS for why keepLockOnDisconnect is needed.
+  // A report's file reads can outlast the default lock, and an overlapping run would open a second
+  // CyberTip for it. keepLockOnDisconnect: see CSAM_ARCHIVE_JOB_LOCK_SECONDS.
   {
     dedicated: true,
     lockExpiration: CSAM_SEND_JOB_LOCK_SECONDS,

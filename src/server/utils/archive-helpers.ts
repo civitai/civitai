@@ -167,8 +167,8 @@ export function deriveUploadPartGeometry({
  * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
  * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
  * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
- * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for the images archive's
- * stored originals.
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals; the
+ * generated-images estimate shares it as an upper bound.
  */
 export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
 

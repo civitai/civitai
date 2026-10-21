@@ -77,7 +77,6 @@ type CsamReportUploadProps = {
   hash?: string | undefined;
 };
 
-/** Also the shape of an `images.zip` manifest entry, beside `imageId`. */
 type EvidenceFileRecord = {
   source: OriginalImageSource;
   sha256?: string;
@@ -666,18 +665,24 @@ async function reportImages(report: CsamReportProps) {
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
-  // Checked before a CyberTip is opened, so a held report opens none and nothing reaches NCMEC
-  // until it can be sent.
+  // Probed before the CyberTip is opened, so a report that cannot be sent opens none.
   const readFailures = { ...report.details?.readFailures };
   const checks = new Map<number, FileCheck>();
   await Limiter({ limit: 2, batchSize: 1 }).process(images, async ([image]) => {
     try {
-      const probe = await probeOriginalImage(image);
-      if (probe.source === 'missing') checks.set(image.id, { absent: probe.reason });
-      // A file that passes the check but whose reads keep failing is not opened for again.
-      else if ((readFailures[image.id] ?? 0) >= CSAM_SEND_SHORT_MIN_READ_FAILURES)
-        checks.set(image.id, { failed: true });
-      else checks.set(image.id, { readable: true });
+      let check: OriginalImageRead | Awaited<ReturnType<typeof probeOriginalImage>> =
+        await probeOriginalImage(image);
+      // A probe can pass where the read fails (a HEAD cannot tell a wrong bucket), so a file whose
+      // reads have failed is read in full first rather than opened for and cancelled again.
+      if (
+        check.source !== 'missing' &&
+        (readFailures[image.id] ?? 0) >= CSAM_SEND_SHORT_MIN_READ_FAILURES
+      )
+        check = await readOriginalImage(image);
+      checks.set(
+        image.id,
+        check.source === 'missing' ? { absent: check.reason } : { readable: true }
+      );
     } catch {
       readFailures[image.id] = (readFailures[image.id] ?? 0) + 1;
       checks.set(image.id, { failed: true });
@@ -728,6 +733,7 @@ async function reportImages(report: CsamReportProps) {
 
   let uploaded = 0;
   let failedAfterOpen = false;
+  const started: Promise<unknown>[] = [];
   try {
     const limit = plimit(2);
     const sendFile = async (image: (typeof images)[number]) => {
@@ -820,13 +826,15 @@ async function reportImages(report: CsamReportProps) {
     };
     const uploadResult = await Promise.all(
       images.map((image) =>
-        limit(() =>
-          sendFile(image).catch((e) => {
+        limit(() => {
+          const sending = sendFile(image);
+          started.push(sending);
+          return sending.catch((e) => {
             // Before this slot frees: queued files would otherwise still go to a cancelled CyberTip.
             limit.clearQueue();
             throw e;
-          })
-        )
+          });
+        })
       )
     );
     if (uploaded === 0) throw new Error('no file of the report could be read');
@@ -862,6 +870,8 @@ async function reportImages(report: CsamReportProps) {
       });
   } catch (e: any) {
     logSendFailure(report, e, 'archive-data', reportId);
+    // A file already being sent finishes before the cancel, so its read failure is counted too.
+    await Promise.allSettled(started);
     if (failedAfterOpen) await recordReadFailures(report, readFailures).catch(() => undefined);
     await cybertipClient.cancelReport({ id: reportId });
   }
@@ -1786,20 +1796,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   }
 
   /**
-   * A fresh keyset-paged scan of every image the reported user owns.
-   *
-   * This replaces a single `dbRead.image.findMany({ where: { userId } })` whose result array was
-   * shared by `archiveBaseReportData` and `archiveImages`. Two callers therefore now run two
-   * scans instead of sharing one snapshot. That is a deliberate trade and it does not weaken the
-   * bundle: the archive step already tolerates listing an image in `data.json` that is absent
-   * from `images.zip`, because an image whose original cannot be found is recorded as
-   * `missing` in `manifest.json` rather than failing the archive. What it buys is that neither caller ever holds more than one
-   * page of full `Image` rows.
-   *
-   * The `where`/column selection is unchanged — same filter, no `select`, so every column still
-   * lands in the bundle. Only the ORDER is new, and it was previously unspecified (i.e. whatever
-   * the query plan produced, not stable run to run), so nothing that was deterministic became
-   * less so.
+   * A fresh keyset-paged scan of every image the reported user owns. Each caller scans
+   * separately, so neither holds more than one page of rows; an image listed in `data.json` but
+   * absent from `images.zip` is recorded `missing` in `manifest.json`.
    */
   const scanUserImages = () =>
     scanPagesById(({ afterId, take }) =>
