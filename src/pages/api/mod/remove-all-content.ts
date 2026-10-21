@@ -1,8 +1,15 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { TRPCError } from '@trpc/server';
 import { Tracker } from '~/server/clickhouse/client';
+import {
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
@@ -11,12 +18,30 @@ const schema = z.object({
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const { userId } = schema.parse(req.query);
 
-  await removeAllContent({ id: userId });
-  const tracker = new Tracker(req, res);
-  tracker.userActivity({
-    type: 'RemoveContent',
-    targetUserId: userId,
-  });
+  const track = () =>
+    new Tracker(req, res).userActivity({
+      type: 'RemoveContent',
+      targetUserId: userId,
+    });
+  try {
+    await removeAllContent({ id: userId });
+  } catch (e) {
+    // Part of the account was deleted, so it is recorded like a wipe that finished.
+    if (e instanceof LegalHoldStoppedError) {
+      track();
+      return handleEndpointError(
+        res,
+        new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
+      );
+    }
+    if (e instanceof LegalHoldError)
+      return handleEndpointError(
+        res,
+        new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL })
+      );
+    throw e;
+  }
+  track();
 
   return res.status(200).json({
     userId,
