@@ -1189,7 +1189,6 @@ export class Runner implements RunService {
 export function endedElsewhere(error: unknown): boolean {
   return (
     error instanceof DBOSErrors.DBOSWorkflowCancelledError ||
-    error instanceof DBOSErrors.DBOSWorkflowConflictError ||
     error instanceof DBOSErrors.DBOSMaxRecoveryAttemptsExceededError
   );
 }
