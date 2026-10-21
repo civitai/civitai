@@ -129,7 +129,7 @@ type CsamReportDetails = CsamReportFormOutput & {
   generatedImageUploads?: CsamReportGeneratedImageData[];
   /** Why the archive stored less than the report's evidence. */
   archiveSkipped?: string;
-  /** Failed reads of each image's file across send runs, by image id. */
+  /** Failed reads of each file across send runs, by image id or generated-image URL. */
   readFailures?: Record<string, number>;
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
@@ -1038,7 +1038,8 @@ async function reportImages(claim: SendClaim) {
   if (!initialReport) return;
 
   const images = await getImages(report.images.map((x) => x.id));
-  if (!images.length) return await deleteUnderClaim(claim, 'no image of the report exists');
+  if (!images.length)
+    return logNoFiles(claim, `report ${report.id} names no image that still exists`);
 
   const modelVersions = await getModelVersions([
     ...new Set([...images.map((x) => x.modelVersionId).filter(isDefined)]),
@@ -1269,61 +1270,91 @@ async function reportGenerationData(claim: SendClaim) {
   if (!generatedImages?.length)
     return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
-  // Fetched before the CyberTip is opened, so a report that cannot be sent opens none.
-  const jobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, async ([job]) => [
-    {
-      job,
-      files: (
-        await Promise.all(
-          job.blobs.map(async ({ url }) => {
-            // An error response is not the file, and a fetch that throws is one that failed.
-            const file = await fetchBlobAsFile(url, undefined, { requireOk: true }).catch(
-              () => null
-            );
-            return file ? { url, file } : null;
-          })
-        )
-      ).filter(isDefined),
-    },
-  ]);
-  if (jobs.some(({ files }) => files.length === 0))
-    return logNoFiles(
-      claim,
-      `report ${report.id} has a generated job with no file that can be fetched`
+  // Fetched before the CyberTip is opened, so a report that cannot be sent opens none. A file that
+  // cannot be fetched is held for and sent without as an image's is.
+  const blobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, ([job]) =>
+    Promise.all(
+      job.blobs.map(async ({ url }) => ({
+        job,
+        url,
+        // An error response is not the file, and a fetch that throws is one that failed.
+        file: await fetchBlobAsFile(url, undefined, { requireOk: true }).catch(() => null),
+      }))
+    )
+  );
+  const fetched = blobs.flatMap(({ job, url, file }) => (file ? [{ job, url, file }] : []));
+  const failed = blobs.filter(({ file }) => !file);
+  const readFailures = { ...report.details.readFailures };
+  for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
+  if (failed.length > 0) await recordReadFailures(claim, readFailures);
+  if (!fetched.length)
+    return logNoFiles(claim, `report ${report.id} has no generated image that can be fetched`);
+  const sendShort =
+    hoursSinceFiled(report) >= CSAM_SEND_SHORT_AFTER_HOURS &&
+    failed.every(({ url }) => readFailures[url] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
+  if (failed.length > 0 && !sendShort)
+    return logSendFailure(
+      report,
+      new Error(`${failed.length} file(s) could not be read`),
+      'archive-data'
     );
 
   let sending: ReturnType<typeof sendEach> | undefined;
-  await sendCyberTip(claim, initialReport, {
-    sendFiles: async (reportId) => {
-      sending = sendEach(
-        jobs.flatMap(({ job, files }) => files.map((file) => ({ job, ...file }))),
-        async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
-          const {
-            data: { fileId, hash },
-          } = await uploadToCyberTip(claim, file);
-
-          const valuePair: Array<{ name: string; value: string }> = [];
-          if (prompt) valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-          if (negativePrompt)
-            valuePair.push({
-              name: 'negativePrompt',
-              value: trimNonAlphanumeric(negativePrompt) ?? '',
-            });
-          if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-          await cybertipClient.submitFileDetails({
-            fileId,
-            reportId,
-            publiclyAvailable: false,
-            // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-          });
-          return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
-        }
-      );
-      return { generatedImageUploads: await sending.sent };
+  const sent = await sendCyberTip(
+    claim,
+    {
+      ...initialReport,
+      ...(failed.length > 0 && {
+        additionalInfo: `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
+      }),
     },
-    beforeCancel: async () => sending?.settled(),
-  });
+    {
+      sendFiles: async (reportId) => {
+        sending = sendEach(
+          fetched,
+          async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+            const {
+              data: { fileId, hash },
+            } = await uploadToCyberTip(claim, file);
+
+            const valuePair: Array<{ name: string; value: string }> = [];
+            if (prompt)
+              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
+            if (negativePrompt)
+              valuePair.push({
+                name: 'negativePrompt',
+                value: trimNonAlphanumeric(negativePrompt) ?? '',
+              });
+            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
+
+            await cybertipClient.submitFileDetails({
+              fileId,
+              reportId,
+              publiclyAvailable: false,
+              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
+            });
+            return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
+          }
+        );
+        return {
+          ...(failed.length > 0 && { readFailures }),
+          generatedImageUploads: await sending.sent,
+        };
+      },
+      beforeCancel: async () => sending?.settled(),
+    }
+  );
+  if (sent && failed.length > 0)
+    logSendLine(
+      claim,
+      'send-short',
+      {
+        message: `report ${report.id} sent without ${failed.length} file(s)`,
+        filesMissing: failed.length,
+        filesAbsent: 0,
+      },
+      'error'
+    );
 }
 
 async function reportTrainingData(claim: SendClaim) {
@@ -1336,7 +1367,8 @@ async function reportTrainingData(claim: SendClaim) {
   ]);
 
   const version = modelVersions[0];
-  if (!version) return await deleteUnderClaim(claim, 'no model version of the report exists');
+  if (!version)
+    return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
   const dir = `${baseDir}/training-data/${report.id}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;

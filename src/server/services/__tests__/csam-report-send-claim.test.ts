@@ -82,6 +82,7 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import {
   CSAM_SEND_DECISION_AFTER_HOURS,
+  CSAM_SEND_SHORT_AFTER_HOURS,
   getCsamsToArchive,
   processCsamReport,
 } from '~/server/services/csam.service-new';
@@ -393,18 +394,32 @@ describe('deleting a report the send finds nothing to send for', () => {
   it.each([
     ['Image', { images: [{ id: 601 }] }],
     ['TrainingData', { details: { modelVersionIds: [6] } }],
-    ['ExternalLink', { userId: null, details: {} }],
-  ])('deletes a %s report only under the claim', async (type, copy) => {
+  ])('keeps a %s report whose evidence is gone, opening nothing', async (type, copy) => {
     primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
 
     await processCsamReport(primaryRow);
 
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledWith({
-      where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
-    });
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(submitReport).not.toHaveBeenCalled();
-    expect(releases()).toEqual([]);
+    expect(lines('send-no-files')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1 }),
+    ]);
   });
+
+  it.each([['ExternalLink', { userId: null, details: {} }]])(
+    'deletes a %s report only under the claim',
+    async (type, copy) => {
+      primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+
+      await processCsamReport(primaryRow);
+
+      expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledWith({
+        where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
+      });
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(releases()).toEqual([]);
+    }
+  );
 
   it('logs the report id when the delete is refused because the claim was lost', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(null);
@@ -527,7 +542,7 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     ['already retracted', answering(5101)],
   ])('is deleted for having nothing to send once its stored CyberTip is %s', async (_, answer) => {
     cancelReport.mockResolvedValue(answer);
-    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
 
     await processCsamReport(report);
 
@@ -536,7 +551,7 @@ describe('a report that may have a CyberTip at NCMEC', () => {
 
   it('is not deleted when its stored CyberTip cannot be cancelled', async () => {
     cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
-    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
 
     await processCsamReport(report);
 
@@ -557,7 +572,7 @@ describe('a report that may have a CyberTip at NCMEC', () => {
   });
 
   it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
-    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
 
     await processCsamReport(report);
 
@@ -573,7 +588,7 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     ['a possible duplicate noted', { details: { possibleDuplicateReportIds: [6] } }],
   ])('is not deleted when it has %s and nothing to send', async (_, held) => {
     cancelReport.mockResolvedValue(answering(5102));
-    primaryRow = { ...report, images: [{ id: 601 }], ...held } as unknown as CsamReportProps;
+    primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
 
     await processCsamReport(report);
 
@@ -848,13 +863,70 @@ describe('sending each type of report', () => {
 
       expect(submitReport).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-      expect(lines('send-no-files')).toEqual([
-        expect.objectContaining({ type: 'error', reportId: 1 }),
-      ]);
+      expect(lines('archive-data')).toEqual([expect.objectContaining({ reportId: 1 })]);
+      expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.[1]).toBe(
+        JSON.stringify({ 'blob-gone': 1 })
+      );
       // An error response must come back as no file, not as the file.
       expect(fetchBlobAsFile).toHaveBeenCalledWith('blob-gone', undefined, { requireOk: true });
     }
   );
+
+  describe('a generated image that cannot be fetched', () => {
+    const twoJobs = (hoursAgo: number, readFailures: Record<string, number> = {}) =>
+      ({
+        ...report,
+        type: 'GeneratedImage',
+        createdAt: new Date(Date.now() - hoursAgo * 3_600_000 - 60_000),
+        details: {
+          readFailures,
+          generatedImages: [
+            { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
+            { jobId: 'job-2', blobs: [{ url: 'blob-gone' }] },
+          ],
+        },
+      } as unknown as CsamReportProps);
+    beforeEach(() =>
+      fetchBlobAsFile.mockImplementation(async (url: string) =>
+        url === 'blob-gone' ? null : new File(['generated'], 'generated.png')
+      )
+    );
+
+    it('is sent without past the short-send limit on its second failed fetch, and NCMEC is told', async () => {
+      primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS, { 'blob-gone': 1 });
+
+      await processCsamReport(primaryRow);
+
+      expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+        '1 file(s) named in this report could not be read from storage after repeated attempts and are not included.'
+      );
+      expect(stamps()[0].data.details).toMatchObject({
+        readFailures: { 'blob-gone': 2 },
+        generatedImageUploads: [{ url: 'blob-1', fileId: 'file-1', hash: 'ncmec-md5' }],
+      });
+      expect(lines('send-short')).toEqual([
+        expect.objectContaining({ type: 'error', reportId: 1, filesMissing: 1 }),
+      ]);
+    });
+
+    it('holds the report at the short-send limit on the first failed fetch of that file', async () => {
+      primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS);
+
+      await processCsamReport(primaryRow);
+
+      expect(submitReport).not.toHaveBeenCalled();
+    });
+
+    it('keeps a report none of whose generated images can be fetched, waiting', async () => {
+      fetchBlobAsFile.mockResolvedValue(null);
+      primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS, { 'blob-1': 5, 'blob-gone': 5 });
+
+      await processCsamReport(primaryRow);
+
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(lines('send-no-files')).toHaveLength(1);
+    });
+  });
 
   it('sends an external-link report that names no evidence file', async () => {
     primaryRow = {
