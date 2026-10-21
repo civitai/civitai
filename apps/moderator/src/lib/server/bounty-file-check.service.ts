@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { callModEndpoint, type JsonResult } from './user-actions.service';
 
@@ -67,10 +67,34 @@ const entryFileColumns = sql`
 
 /**
  * Entry files the check refused and no moderator has cleared, oldest first: on open model bounties,
- * and on settled ones when a moderator re-blocked the file, so it can be cleared again.
+ * and on settled ones when a moderator re-blocked the file, so it can be cleared again. Two
+ * branches, not an OR: an OR loses the open-bounty narrowing and walks every settled bounty.
  */
 export async function getBlockedEntryFiles(limit: number) {
   const { rows } = await sql<BlockedEntryFile>`
+    SELECT * FROM (
+      (${blockedEntryFiles(sql`NOT b.complete AND NOT b.refunded`)})
+      UNION ALL
+      (${blockedEntryFiles(sql`(b.complete OR b.refunded)
+        AND be.id IN (
+          SELECT "entityId" FROM "ModActivity"
+          WHERE "entityType" = 'bountyEntry' AND activity LIKE 'reblockFileCheck:%'
+        )
+        AND EXISTS (
+          SELECT 1 FROM "ModActivity" ma
+          WHERE ma."entityType" = 'bountyEntry' AND ma."entityId" = be.id
+            AND ma.activity LIKE ('reblockFileCheck:{"fileId":' || f.id || ',%')
+        )`)})
+    ) blocked
+    ORDER BY "checkedAt", "fileId"
+    LIMIT ${limit + 1}
+  `.execute(dbRead);
+  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+}
+
+/** Blocked entry files of model bounties, narrowed by `where` over `b`, `be` and `f`. */
+function blockedEntryFiles(where: RawBuilder<unknown>) {
+  return sql`
     SELECT ${entryFileColumns}, f.metadata->>'hashCheckedAt' AS "checkedAt",
            m.id AS "matchModelId", m.name AS "matchModelName", mu.username AS "matchOwner",
            b.complete AS "bountyComplete", b.refunded AS "bountyRefunded"
@@ -91,20 +115,10 @@ export async function getBlockedEntryFiles(limit: number) {
     ) m ON true
     LEFT JOIN "User" mu ON mu.id = m."userId"
     WHERE b.type::text = ANY(${CHECKED_TYPES})
-      AND (
-        (NOT b.complete AND NOT b.refunded)
-        OR EXISTS (
-          SELECT 1 FROM "ModActivity" ma
-          WHERE ma."entityType" = 'bountyEntry' AND ma."entityId" = be.id
-            AND ma.activity LIKE ('reblockFileCheck:{"fileId":' || f.id || ',%')
-        )
-      )
+      AND ${where}
       AND f.metadata->>'blockedReason' IS NOT NULL
       AND NOT COALESCE(${validOverride}, false)
-    ORDER BY f.metadata->>'hashCheckedAt', f.id
-    LIMIT ${limit + 1}
-  `.execute(dbRead);
-  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+  `;
 }
 
 /**

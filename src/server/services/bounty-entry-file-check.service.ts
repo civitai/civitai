@@ -389,11 +389,20 @@ export async function reblockBountyEntryFileCheck({
         AND f.metadata->'checkOverride' = ${readOverride}::jsonb
       RETURNING f.metadata
     `;
-    // A re-block that leaves the file unblocked must not be recorded as one; throwing rolls it back.
-    if (rows.length !== 1 || fileCheckState(rows[0].metadata) !== 'blocked')
+    if (rows.length !== 1)
       throw throwBadRequestError(
         'This file changed while you were reviewing it. Reload and try again.'
       );
+    // A re-block that leaves the file unblocked must not be recorded as one; throwing rolls it back.
+    if (fileCheckState(rows[0].metadata) !== 'blocked') {
+      logToAxiom({
+        type: 'error',
+        name: 'bounty-entry-file-check',
+        message: 're-block would leave the file unblocked',
+        fileId: file.id,
+      }).catch(handleLogError);
+      throw throwBadRequestError("This file couldn't be re-blocked.");
+    }
 
     await trackModActivity(
       userId,

@@ -122,6 +122,33 @@ describe('the Blocked list', () => {
       }),
     ]);
   });
+
+  it('lists open-bounty and re-blocked settled-bounty files together, oldest first, once each', async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, name, type, complete) VALUES (11, 'Settled', 'LoraCreation', true);
+      INSERT INTO "BountyEntry" (id, "bountyId", "userId") VALUES (21, 11, 2);
+    `);
+    await file(1, { ...BLOCKED, hashCheckedAt: '2026-10-20T02:00:00Z' });
+    await file(3, { ...BLOCKED, hashCheckedAt: '2026-10-20T03:00:00Z' });
+    await db.query(
+      `INSERT INTO "File" (id, name, "entityType", "entityId", metadata) VALUES (2, 'settled.safetensors', 'BountyEntry', 21, $1)`,
+      [JSON.stringify({ ...BLOCKED, hashCheckedAt: '2026-10-20T01:00:00Z' })]
+    );
+    // Two re-blocks of the settled file: still one row.
+    for (let i = 0; i < 2; i++)
+      await db.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId") VALUES (1, $1, 'bountyEntry', 21)`,
+        [`reblockFileCheck:${JSON.stringify({ fileId: 2, reason: 'why' })}`]
+      );
+
+    const { items } = await getBlockedEntryFiles(10);
+    expect(items.map((f) => [f.fileId, f.bountyComplete])).toEqual([
+      [2, true],
+      [1, false],
+      [3, false],
+    ]);
+    expect((await getBlockedEntryFiles(2)).hasMore).toBe(true);
+  });
 });
 
 describe('Recently cleared', () => {

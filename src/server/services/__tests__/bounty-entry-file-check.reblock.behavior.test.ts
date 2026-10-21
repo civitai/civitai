@@ -263,12 +263,34 @@ describe('re-block of a planted clear', () => {
       return seen;
     }) as never);
 
-    await expect(reblock(MOD_A, 'stale page')).rejects.toThrow(
-      'This file changed while you were reviewing it.'
-    );
+    await expect(reblock(MOD_A, 'stale page')).rejects.toThrow("This file couldn't be re-blocked.");
     expect(raced).toContain('"checkOverride"');
     expect(await fileRow()).toBe(raced);
     expect((await activities()).map((a) => a.activity.split(':')[0])).toEqual(['clearFileCheck']);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', fileId: FILE_ID })
+    );
+  });
+
+  // SQL reads the stored text `5.0` as no clear, JavaScript reads the parsed 5 as one: the write puts
+  // it back, and the check after it refuses.
+  it('refuses a replaced value the SQL and JavaScript rules judge differently, and writes nothing', async () => {
+    const outer = { by: 2, at: '2026-10-20T00:00:00Z', reason: 'planted' };
+    await db.query(
+      `INSERT INTO "File" (id, name, url, "sizeKB", "entityType", "entityId", metadata)
+       VALUES ($1, 'entry.safetensors', $2, 1024, 'BountyEntry', $3,
+         $4::jsonb || jsonb_build_object('checkOverride', $5::jsonb || jsonb_build_object(
+           'replaced', '{"by": 5.0, "at": "x", "reason": "planted inner"}'::jsonb)))`,
+      [FILE_ID, URL, ENTRY_ID, JSON.stringify(BLOCKED), JSON.stringify(outer)]
+    );
+    expect(await fileRow()).toContain('"by": 5.0');
+    const before = await fileRow();
+
+    await expect(reblock(MOD_A, 'undo the planted clear')).rejects.toThrow(
+      "This file couldn't be re-blocked."
+    );
+    expect(await fileRow()).toBe(before);
+    expect(await activities()).toEqual([]);
   });
 });
 
