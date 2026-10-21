@@ -138,6 +138,12 @@ export function ModelListingTabs({
             />
           </Tabs.Panel>
         </Tabs>
+        {!modelId && (
+          <Text size="xs" c="dimmed">
+            You can select your main cover after you publish this model&apos;s first images. A
+            default cover will be selected for you from there.
+          </Text>
+        )}
       </Stack>
     </Paper>
   );
