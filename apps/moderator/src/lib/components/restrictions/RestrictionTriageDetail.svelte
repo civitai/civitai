@@ -6,19 +6,14 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
-  import { cn } from '@civitai/ui/utils.js';
   import {
     reasonRequiresNote,
-    resolutionReasonError,
     resolutionReasonLabel,
-    resolutionReasonsFor,
   } from '@civitai/shared/resolution-reasons';
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
-  import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
@@ -30,9 +25,9 @@
   import { countNotBlocking, planRecheck, type Recheck } from '$lib/restrictions/recheck';
   import { groupRepeats, formatSpan } from '$lib/restrictions/trigger-groups';
   import { summarizeTriggers } from '$lib/restrictions/trigger-summary';
-  import { rulingLabel } from '$lib/restrictions/verdict-label';
   import type { RemixSource, RestrictionRow } from '$lib/server/user-restriction.service';
   import type { Outcome } from '$lib/triage/queue';
+  import RestrictionDecisionForm from './RestrictionDecisionForm.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import TriageTriggerCard from './TriageTriggerCard.svelte';
   import TriggerSummary from './TriggerSummary.svelte';
@@ -51,7 +46,6 @@
     error,
     submit,
     actionHref,
-    choose,
     draft = $bindable(),
   }: {
     row: RestrictionRow;
@@ -123,19 +117,6 @@
     },
   });
 
-  const unrecordable = $derived(
-    draft.verdict
-      ? resolutionReasonError('restriction', draft.verdict, draft.reason, draft.note)
-      : null
-  );
-
-  // Every reason of the chosen verdict in one select: the verdict is picked before the reason.
-  const reasonOptions = $derived({
-    groups: [],
-    shared: draft.verdict ? [...resolutionReasonsFor('restriction', draft.verdict)] : [],
-  });
-  let resolveForm = $state<HTMLFormElement | null>(null);
-
   const triggerCount = $derived(summarizeTriggers(row.triggers));
   const triggerSpan = $derived(
     triggerCount.first && triggerCount.last
@@ -153,8 +134,7 @@
   );
 
   const VERDICT_BUTTON = 'h-8 gap-2 rounded-md px-3.5 text-[13px] font-semibold';
-  const KEY_CHIP =
-    'h-[13px] min-w-0 rounded-[3px] bg-black/25 px-[5px] text-[11px] font-semibold text-inherit';
+  const flagFormId = $derived(`restriction-${row.id}-flag`);
 
   let banOpen = $state(false);
   let banReason = $state('');
@@ -164,98 +144,57 @@
   };
 </script>
 
-{#snippet bar()}
-  <div class="flex w-full flex-col gap-2.5">
-    <div class="flex flex-wrap items-center gap-2">
-      <Button
-        variant="outline"
-        class={cn(
-          VERDICT_BUTTON,
-          draft.verdict === 'Upheld'
-            ? 'border-red-600 bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700'
-            : 'border-red-500 bg-transparent text-red-300 hover:bg-red-950 dark:bg-transparent'
-        )}
-        aria-pressed={draft.verdict === 'Upheld'}
-        disabled={!!unwiredReason}
-        onclick={() => choose('Upheld')}
-      >
-        Uphold mute <Kbd class={KEY_CHIP}>1</Kbd>
-      </Button>
-      <Button
-        variant={draft.verdict === 'Overturned' ? 'default' : 'outline'}
-        class="{VERDICT_BUTTON} {draft.verdict === 'Overturned'
-          ? ''
-          : 'border-dark-4 bg-transparent dark:bg-transparent'}"
-        aria-pressed={draft.verdict === 'Overturned'}
-        disabled={!!unwiredReason}
-        onclick={() => choose('Overturned')}
-      >
-        Overturn (remove mute) <Kbd class={KEY_CHIP}>2</Kbd>
-      </Button>
-      {#if canBan}
-        <Button
-          variant="outline"
-          class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
-          disabled={!!unwiredReason}
-          onclick={() => ((banReason = ''), (banOpen = true))}
-        >
-          Ban user…
-        </Button>
-      {/if}
-      {#if selected.size > 0}
-        <form method="POST" action={actionHref('flagSuspicious')} use:enhance={flag.enhance}>
-          <input type="hidden" name="userRestrictionId" value={row.id} />
-          {#each [...selected] as key (key)}
-            <input type="hidden" name="key" value={key} />
-          {/each}
-          <Button
-            type="submit"
-            variant="outline"
-            class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
-            disabled={flag.submitting}
-          >
-            Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
-          </Button>
-        </form>
-      {/if}
-      {#if flag.error}<span class="text-sm text-red-300">{flag.error}</span>{/if}
-    </div>
+{#snippet extras()}
+  {#if canBan}
+    <Button
+      type="button"
+      variant="outline"
+      class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
+      disabled={!!unwiredReason}
+      onclick={() => ((banReason = ''), (banOpen = true))}
+    >
+      Ban user…
+    </Button>
+  {/if}
+  {#if selected.size > 0}
+    <!-- Its form is a sibling of the ruling form: forms do not nest. -->
+    <Button
+      type="submit"
+      form={flagFormId}
+      variant="outline"
+      class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
+      disabled={flag.submitting}
+    >
+      Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
+    </Button>
+  {/if}
+  {#if flag.error}<span class="text-sm text-red-300">{flag.error}</span>{/if}
+{/snippet}
 
-    {#if draft.verdict}
-      <form
-        bind:this={resolveForm}
-        method="POST"
-        action={actionHref('resolve')}
-        use:enhance={submit(rulingLabel)}
-        class="grid gap-2 rounded-md border border-dark-4 bg-dark-7 p-2.5"
-      >
-        <input type="hidden" name="userRestrictionId" value={row.id} />
-        <input type="hidden" name="status" value={draft.verdict} />
-        <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-          <InlineReasonFields
-            options={reasonOptions}
-            bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-            bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-            onenter={() => !unrecordable && !unwiredReason && resolveForm?.requestSubmit()}
-          />
-        </div>
-        <div>
-          <Button
-            type="submit"
-            variant="default"
-            class={cn(
-              'h-8 rounded-md px-3.5 text-[13px] font-semibold',
-              draft.verdict === 'Upheld' && 'bg-red-600 text-white hover:bg-red-700'
-            )}
-            disabled={!!unrecordable || !!unwiredReason}
-          >
-            Confirm {draft.verdict === 'Upheld' ? 'uphold' : 'overturn'}
-          </Button>
-        </div>
-      </form>
-    {/if}
-    <p class="m-0 text-[11px] text-dark-2">{hint}</p>
-  </div>
+{#snippet bar()}
+  <RestrictionDecisionForm
+    restrictionId={row.id}
+    {unwiredReason}
+    {hint}
+    {submit}
+    {actionHref}
+    {extras}
+    bind:draft
+  />
+  {#if selected.size > 0}
+    <form
+      id={flagFormId}
+      method="POST"
+      action={actionHref('flagSuspicious')}
+      use:enhance={flag.enhance}
+      hidden
+    >
+      <input type="hidden" name="userRestrictionId" value={row.id} />
+      {#each [...selected] as key (key)}
+        <input type="hidden" name="key" value={key} />
+      {/each}
+    </form>
+  {/if}
 {/snippet}
 
 <TriageDetailFrame {verdict} {error} actions={pending ? bar : undefined}>

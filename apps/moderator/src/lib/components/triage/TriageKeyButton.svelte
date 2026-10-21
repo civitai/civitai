@@ -10,6 +10,7 @@
     primary = false,
     tone,
     reasons = false,
+    selected,
     children,
     ...rest
   }: {
@@ -18,6 +19,8 @@
     tone?: 'red' | 'dark-red' | 'darker-red' | 'red-outline';
     /** The decision offers reasons, so its key opens the reason list instead of submitting. */
     reasons?: boolean;
+    /** Opt-in: the page keeps a selected decision, so mark it (aria-pressed and a blue border). */
+    selected?: boolean;
     children: Snippet;
   } & Omit<ButtonProps, 'children' | 'size'> = $props();
 
@@ -37,8 +40,10 @@
       ? TONE[tone]
       : primary
         ? TONE.red
-        : 'border-dark-4 bg-transparent dark:bg-transparent'
+        : 'border-dark-4 bg-transparent dark:bg-transparent',
+    selected && 'border-blue-5 dark:border-blue-5'
   )}
+  aria-pressed={selected}
   data-triage-key={key}
   data-triage-reasons={reasons ? '' : undefined}
   {...rest}
