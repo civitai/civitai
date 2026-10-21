@@ -196,9 +196,24 @@ const sharpExecutingTestFiles = [
   'src/tests/api/og.milestone.test.ts',
 ];
 
-// Packages pre-bundled for the unit projects. One list, read by both the `ssr` and `client`
-// optimizers below, so the two environments cannot drift. The hazards to check before adding one
-// are on `deps.optimizer` inside `unitTestConfig`.
+// 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
+// sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
+// contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
+// mock factories keep working (see the `default` note on `deps.optimizer`).
+const mantineFamily = [
+  '@mantine/core',
+  '@mantine/hooks',
+  '@mantine/dates',
+  '@mantine/dropzone',
+  '@mantine/modals',
+  '@mantine/notifications',
+  '@mantine/nprogress',
+  '@mantine/tiptap',
+  'mantine-react-table',
+];
+
+// Packages pre-bundled for the unit projects' node environment. The hazards to check before adding
+// one are on `deps.optimizer` inside `unitTestConfig`.
 const prebundledDeps = [
   'lodash-es',
   'googleapis',
@@ -260,20 +275,15 @@ const prebundledDeps = [
   '@civitai/generation-metadata/civitai',
   // CommonJS and mocked: its factory must keep `default`.
   'cloudflare',
-  // 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
-  // sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
-  // contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
-  // mock factories keep working (see the `default` note on `deps.optimizer`).
-  '@mantine/core',
-  '@mantine/hooks',
-  '@mantine/dates',
-  '@mantine/dropzone',
-  '@mantine/modals',
-  '@mantine/notifications',
-  '@mantine/nprogress',
-  '@mantine/tiptap',
-  'mantine-react-table',
+  ...mantineFamily,
 ];
+
+// The `client` optimizer's list: only browser-safe ESM packages. A server CommonJS package bundled
+// for the browser target loses its Node built-ins (`redis` died on `util.inherits is not a
+// function`, and every happy-dom file that reached it collected zero tests), and a package that is
+// also reached through a native copy splits in two (`@tanstack/react-query`, via `@trpc/*`, failed
+// with "No QueryClient set").
+const clientPrebundledDeps = ['lodash-es', ...mantineFamily];
 
 // Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
 // Every other setting has to stay identical or the split changes behaviour as well as scheduling.
@@ -352,8 +362,8 @@ const unitTestConfig = {
     optimizer: {
       ssr: { enabled: true, include: prebundledDeps },
       // `@vitest-environment happy-dom`/`jsdom` files run in Vite's client environment, which has its
-      // own optimizer; `ssr` alone leaves them loading every entry natively.
-      client: { enabled: true, include: prebundledDeps },
+      // own optimizer; `ssr` alone leaves them loading these natively.
+      client: { enabled: true, include: clientPrebundledDeps },
     },
   },
   // A transform cache on disk, keyed per module and shared between separate `vitest run`
