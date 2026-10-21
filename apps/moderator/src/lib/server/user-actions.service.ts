@@ -1592,7 +1592,8 @@ export async function revokeCreatorScoreGrant(input: {
 /** Whether a legal hold blocks deleting the account. Anything but an explicit `held: false` reads as
  *  held, including a failed check: the endpoint refuses a held account regardless. */
 export async function deleteAccountHeld(userId: number): Promise<boolean> {
-  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check');
+  // Short: the Admin tab waits on this, and a slow answer reads as held anyway.
+  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
   return !(result.ok && result.body.held === false);
 }
 

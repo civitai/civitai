@@ -13,7 +13,7 @@ export default defineModeratorEndpoint('user.legalHold', {
     'Requires the moderator app permission `user.deleteAccount`, the same as the deletion it gates.',
     '`held` is true when the status cannot be read. `/api/mod/user/delete` checks again itself.',
   ],
-  rateLimit: { max: 60, windowSeconds: 60 },
+  rateLimit: { max: 20, windowSeconds: 60 },
   input: z.object({ userId }),
   async handler(input, ctx) {
     if (!(await hasModeratorGrant(ctx.actor, 'user.deleteAccount')))

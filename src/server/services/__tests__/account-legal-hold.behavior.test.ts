@@ -32,9 +32,14 @@ const IMAGE_BLOCKED_REPORTED_LONG_AGO = 8;
 const HOLD_MARKER = 10;
 const RELEASED_MARKER = 11;
 const REPORT_SUBJECT = 9;
+const SECONDARY_BLOCKED_REPORTED_LONG_AGO = 12;
+const OLD_REPORT_SUBJECT = 13; // owns nothing; names SECONDARY_BLOCKED_REPORTED_LONG_AGO
 
 let failQueries = false;
 let unreadable = false;
+type Row = Record<string, unknown>;
+/** Replaces what one statement answers, picked out by its text. */
+let answer: ((sql: string, rows: Row[]) => Row[]) | null = null;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -67,6 +72,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   failQueries = false;
   unreadable = false;
+  answer = null;
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
@@ -75,7 +81,8 @@ beforeEach(async () => {
     const sql = Array.isArray(first)
       ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
       : (first as Prisma.Sql);
-    const { rows } = await holder.db.query<Record<string, unknown>>(sql.text, sql.values);
+    const { rows } = await holder.db.query<Row>(sql.text, sql.values);
+    if (answer) return answer(sql.text, rows);
     // Every column comes back as something other than a boolean.
     return unreadable
       ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
@@ -91,12 +98,14 @@ beforeEach(async () => {
       (${RECENTLY_SENT}, now() - interval '30 days', 'null'),
       (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', '{}'),
       (${REPORT_SUBJECT}, now() - interval '30 days', '{"secondaryUserId": ${SECONDARY_ON_REPORT}}'),
-      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', '{}');
+      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', '{}'),
+      (${OLD_REPORT_SUBJECT}, now() - interval '400 days', '{"secondaryUserId": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}}');
     INSERT INTO "Image" ("userId", "needsReview", "blockedFor") VALUES
       (${CLEAN}, 'minor', 'AiNotVerified'),
       (${IMAGE_IN_REVIEW}, 'csam', NULL),
       (${IMAGE_BLOCKED_UNREPORTED}, NULL, 'CSAM'),
-      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM');
+      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
+      (${SECONDARY_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM');
   `);
 });
 
@@ -115,6 +124,10 @@ describe('getAccountLegalHoldLegs', () => {
     ['nothing on record', CLEAN],
     ['only a report sent over a year ago', SENT_OVER_A_YEAR_AGO],
     ['a blocked image whose report was sent', IMAGE_BLOCKED_REPORTED_LONG_AGO],
+    [
+      'a blocked image and a sent report naming them as secondary',
+      SECONDARY_BLOCKED_REPORTED_LONG_AGO,
+    ],
   ])('does not hold an account with %s', async (_, userId) => {
     expect(await getAccountLegalHoldLegs(userId)).toEqual([]);
   });
@@ -136,6 +149,24 @@ describe('an answer that is not a boolean', () => {
     expect((await getAccountLegalHoldLegs(CLEAN)).sort()).toEqual(
       ['hold-marker', 'image-blocked', 'image-review', 'report'].sort()
     );
+  });
+});
+
+describe('an answer that is missing', () => {
+  it('counts a hold-marker answer that is not a boolean, or no row, as a hold', async () => {
+    await createMarkerView();
+    const fromMarker = (replacement: Row[]) => (sql: string, rows: Row[]) =>
+      sql.includes('FROM "EvidenceHeldUser"') ? replacement : rows;
+
+    answer = fromMarker([{ held: null }]);
+    expect(await getAccountLegalHoldLegs(CLEAN)).toEqual(['hold-marker']);
+    answer = fromMarker([]);
+    expect(await getAccountLegalHoldLegs(CLEAN)).toEqual(['hold-marker']);
+  });
+
+  it('refuses when the lookup returns no row at all', async () => {
+    answer = (sql, rows) => (sql.includes('markerViewExists') ? [] : rows);
+    expect(await isAccountUnderLegalHold(CLEAN)).toBe(true);
   });
 });
 
