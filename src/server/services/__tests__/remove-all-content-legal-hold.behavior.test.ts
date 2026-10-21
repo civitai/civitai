@@ -522,7 +522,7 @@ describe('removeAllContent', () => {
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
   });
 
-  it('names the bid refunds, with every version, when it cannot tell which models went', async () => {
+  it('names the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
     failGoneModels = true;
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
