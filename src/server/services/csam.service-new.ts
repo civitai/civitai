@@ -893,7 +893,9 @@ async function cancelStoredCyberTip(
 /** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
 function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
-  logSendLine(claim, 'send-no-files', { message, hoursPending }, 'error');
+  // A CyberTip an earlier run left open is named, so whoever decides sees it.
+  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
       claim,
@@ -901,6 +903,7 @@ function logNoFiles(claim: SendClaim, message: string) {
       {
         message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
         hoursPending,
+        ...stored,
       },
       'error'
     );
@@ -1282,8 +1285,11 @@ async function reportGenerationData(claim: SendClaim) {
       }))
     )
   );
-  const fetched = blobs.flatMap(({ job, url, file }) => (file ? [{ job, url, file }] : []));
-  const failed = blobs.filter(({ file }) => !file);
+  // One filing can name a URL twice: it is one file, fetched, counted and sent once.
+  const named = new Set<string>();
+  const unique = blobs.filter(({ url }) => !named.has(url) && named.add(url));
+  const fetched = unique.flatMap(({ job, url, file }) => (file ? [{ job, url, file }] : []));
+  const failed = unique.filter(({ file }) => !file);
   const readFailures = { ...report.details.readFailures };
   for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
   if (failed.length > 0) await recordReadFailures(claim, readFailures);

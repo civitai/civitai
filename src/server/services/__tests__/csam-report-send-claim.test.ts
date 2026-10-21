@@ -549,6 +549,19 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
   });
 
+  it('names a CyberTip an earlier run left open when the report waits for having no file', async () => {
+    primaryRow = {
+      ...report,
+      type: 'GeneratedImage',
+      reportId: 77,
+      details: { generatedImages: [] },
+    } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(lines('send-no-files')).toEqual([expect.objectContaining({ ncmecReportId: 77 })]);
+  });
+
   it('is not deleted when its stored CyberTip cannot be cancelled', async () => {
     cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
     primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
@@ -907,6 +920,54 @@ describe('sending each type of report', () => {
       expect(lines('send-short')).toEqual([
         expect.objectContaining({ type: 'error', reportId: 1, filesMissing: 1 }),
       ]);
+    });
+
+    it('holds the report before the short-send limit, however often the file failed', async () => {
+      primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS - 1, { 'blob-gone': 5 });
+
+      await processCsamReport(primaryRow);
+
+      expect(submitReport).not.toHaveBeenCalled();
+    });
+
+    it('counts a URL the filing names twice as one file', async () => {
+      primaryRow = {
+        ...twoJobs(1),
+        details: {
+          generatedImages: [
+            { jobId: 'job-1', blobs: [{ url: 'blob-1' }, { url: 'blob-gone' }] },
+            { jobId: 'job-2', blobs: [{ url: 'blob-gone' }] },
+          ],
+        },
+      } as unknown as CsamReportProps;
+
+      await processCsamReport(primaryRow);
+
+      expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.[1]).toBe(
+        JSON.stringify({ 'blob-gone': 1 })
+      );
+    });
+
+    it('waits for an upload in flight before cancelling', async () => {
+      fetchBlobAsFile.mockResolvedValue(new File(['generated'], 'generated.png'));
+      let inFlightDone = false;
+      uploadFile
+        .mockRejectedValueOnce(new Error('synthetic upload failure'))
+        .mockImplementationOnce(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          inFlightDone = true;
+          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
+        });
+      let doneAtCancel: boolean | undefined;
+      cancelReport.mockImplementation(async () => {
+        doneAtCancel = inFlightDone;
+        return answering(0);
+      });
+      primaryRow = twoJobs(1);
+
+      await processCsamReport(primaryRow);
+
+      expect(doneAtCancel).toBe(true);
     });
 
     it('holds the report at the short-send limit on the first failed fetch of that file', async () => {
