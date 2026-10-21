@@ -10,8 +10,8 @@ const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
   bountiesIndex: { queueUpdate: vi.fn(async () => undefined) },
   collectionsIndex: { queueUpdate: vi.fn(async () => undefined) },
   bountyService: {
-    settleBountyPayout: vi.fn(async () => false),
-    refundUnpayableBountyAward: vi.fn(async () => false),
+    settleBountyPayout: vi.fn(async (_id: number) => false),
+    refundUnpayableBountyAward: vi.fn(async (_id: number) => false),
   },
 }));
 
@@ -64,37 +64,69 @@ vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   }),
 }));
 
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { removeAllContent } from '~/server/services/user.service';
 
 const USER = 4_301;
 
-const removedIds = (index: { queueUpdate: ReturnType<typeof vi.fn> }) =>
-  index.queueUpdate.mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
+/** Each queued `action:id`, so a removal queued as anything but a delete is visible. */
+const queued = (index: { queueUpdate: ReturnType<typeof vi.fn> }) =>
+  index.queueUpdate.mock.calls.flatMap(([items]) =>
+    (items as { id: number; action: string }[]).map((i) => `${i.action}:${i.id}`)
+  );
+const del = (...ids: number[]) => ids.map((id) => `${SearchIndexUpdateQueueAction.Delete}:${id}`);
+
+/** The account's bounties on the primary, and which of them have an unsettled payout. */
+let unsettled: number[] = [];
+const BOUNTIES = [701, 702];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Distinct ids, so an index fed from the wrong table is visible.
-  dbMock.dbRead.bounty.findMany.mockResolvedValue([{ id: 701 }, { id: 702 }]);
+  unsettled = [];
+  bountyService.settleBountyPayout.mockImplementation(async () => false);
+  bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);
+  // Ids distinct per table and per database, so an index fed from the wrong one is visible.
+  dbMock.dbRead.bounty.findMany.mockResolvedValue([{ id: 799 }]);
   dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 991 }]);
-  dbMock.dbWrite.bounty.findMany.mockResolvedValue([]);
+  dbMock.dbWrite.bounty.findMany.mockImplementation((async (args: {
+    where: { payoutRecordedAt?: unknown; id?: { notIn: number[] } };
+  }) => {
+    if (args.where.payoutRecordedAt) return unsettled.map((id) => ({ id }));
+    const kept = args.where.id?.notIn ?? [];
+    return BOUNTIES.filter((id) => !kept.includes(id)).map((id) => ({ id }));
+  }) as never);
 });
 
 describe('removeAllContent and the bounty index', () => {
   it('removes the account’s bounties by bounty id, and its collections by collection id', async () => {
     await removeAllContent({ id: USER });
 
-    expect(removedIds(bountiesIndex)).toEqual([701, 702]);
-    expect(removedIds(collectionsIndex)).toEqual([991]);
+    expect(queued(bountiesIndex)).toEqual(del(701, 702));
+    expect(queued(collectionsIndex)).toEqual(del(991));
   });
 
   it('keeps a bounty whose payout could not be settled in the index', async () => {
-    dbMock.dbWrite.bounty.findMany.mockResolvedValue([{ id: 702 }]);
+    unsettled = [702];
 
     await removeAllContent({ id: USER });
 
     expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER, id: { notIn: [702] } },
     });
-    expect(removedIds(bountiesIndex)).toEqual([701]);
+    expect(queued(bountiesIndex)).toEqual(del(701));
+  });
+
+  it('removes an unsettled bounty from the index once its payout settles, and only then', async () => {
+    unsettled = [701, 702];
+    bountyService.settleBountyPayout.mockImplementation(async (id: number) => id === 701);
+
+    await removeAllContent({ id: USER });
+
+    expect(bountyService.refundUnpayableBountyAward).toHaveBeenCalledWith(702);
+    expect(bountyService.refundUnpayableBountyAward).not.toHaveBeenCalledWith(701);
+    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER, id: { notIn: [702] } },
+    });
+    expect(queued(bountiesIndex)).toEqual(del(701));
   });
 });
