@@ -5,6 +5,8 @@ import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CsamHoldQuery } from '../csam-holds.queries';
+import { PREVIEW_COUNT_CAP } from '../../minor-flags/model-detail';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const { dbHandle, callModEndpoint } = vi.hoisted(() => ({
@@ -20,9 +22,20 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../user-actions.service', () => ({ callModEndpoint }));
 
-const { countPendingCsamHolds, decideCsamHold, listPendingCsamHolds } = await import(
-  '../csam-holds.service'
-);
+const {
+  countCsamHoldsByType,
+  countPendingCsamHolds,
+  decideCsamHold,
+  getHoldCoverImages,
+  listCsamHolds,
+} = await import('../csam-holds.service');
+
+const OLDEST_PENDING: CsamHoldQuery = {
+  status: 'pending',
+  sort: 'oldest',
+  limit: 10,
+  offset: 0,
+};
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = readFileSync(
@@ -43,6 +56,9 @@ type Seed = {
   userId?: number | null;
   createdAt: string;
   meta?: unknown;
+  decidedById?: number;
+  decidedAt?: string;
+  decisionNote?: string;
 };
 
 const seed = (rows: Seed[]) =>
@@ -50,8 +66,9 @@ const seed = (rows: Seed[]) =>
     rows.map((r) =>
       db.query(
         `INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","status","userId",
-           "text","reason","createdAt","updatedAt","meta")
-         VALUES ($1,$2,$3,$4,$5,$6::"TextScanHoldStatus",$7,'neutral text','neutral reason',$8,$8,$9::jsonb)`,
+           "text","reason","createdAt","updatedAt","meta","decidedById","decidedAt","decisionNote")
+         VALUES ($1,$2,$3,$4,$5,$6::"TextScanHoldStatus",$7,'neutral text','neutral reason',$8,$8,$9::jsonb,
+           $10,$11,$12)`,
         [
           r.id,
           r.entityType ?? 'Post',
@@ -62,6 +79,9 @@ const seed = (rows: Seed[]) =>
           r.userId === undefined ? 10 : r.userId,
           r.createdAt,
           r.meta === undefined ? null : JSON.stringify(r.meta),
+          r.decidedById ?? null,
+          r.decidedAt ?? null,
+          r.decisionNote ?? null,
         ]
       )
     )
@@ -71,14 +91,46 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(MIGRATION);
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
-  await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author')`);
+  await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
+  await db.exec(`
+    CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP,
+      "userId" INTEGER, "modelVersionId" INTEGER);
+    CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL,
+      "userId" INTEGER);
+    CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
+    CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
+      "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
+    INSERT INTO "Image" VALUES
+      (1, 'k-a', 'image', 10, 2, 4), (2, 'k-b', 'image', 10, 1, 1), (3, 'k-c', 'video', 10, 0, 1),
+      (4, 'k-d', 'image', 10, 3, 1), (5, 'k-e', 'image', 10, 4, 1), (6, 'k-f', 'image', 10, 5, 1),
+      (7, 'k-g', 'image', 60, 0, 1);
+    INSERT INTO "Post" VALUES (10, 'A post title', '2026-10-01'), (60, NULL, NULL);
+    INSERT INTO "Model" VALUES (70, 'A model name', 'Published');
+  `);
   await seed([
     { id: 1, createdAt: '2026-10-03' },
     { id: 2, createdAt: '2026-10-01', entityType: 'ChatMessage', meta: { chatId: 77 } },
     { id: 3, createdAt: '2026-10-02', userId: 404 },
-    { id: 4, createdAt: '2026-09-01', status: 'Dismissed' },
+    {
+      id: 4,
+      createdAt: '2026-09-01',
+      status: 'Dismissed',
+      decidedById: 11,
+      decidedAt: '2026-09-05',
+      decisionNote: 'fine',
+      meta: { decision: 'dismiss' },
+    },
     { id: 5, createdAt: '2026-09-02', label: 'scam' },
     { id: 6, createdAt: '2026-10-04', userId: null },
+    {
+      id: 7,
+      createdAt: '2026-09-10',
+      entityType: 'Model',
+      status: 'Confirmed',
+      decidedById: 11,
+      decidedAt: '2026-09-11',
+      meta: { decision: 'remove_ban' },
+    },
   ]);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -88,15 +140,42 @@ afterEach(async () => {
   await db.close();
 });
 
-describe('listPendingCsamHolds', () => {
+describe('listCsamHolds', () => {
+  it('titles a held post or model with the content it points at, and leaves other types untitled', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    const byId = new Map(items.map((h) => [h.id, h]));
+    expect(byId.get(1)?.title).toBe('A post title');
+    expect(byId.get(7)?.title).toBe('A model name');
+    // No row behind the id, an untitled post, and a chat message all fall back to null.
+    expect(byId.get(3)?.title).toBeNull();
+    expect(byId.get(6)?.title).toBeNull();
+    expect(byId.get(2)?.title).toBeNull();
+  });
+
+  it('says whether the held content is still live: true, false, or unknown for types without a state', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    const byId = new Map(items.map((h) => [h.id, h]));
+    expect(byId.get(1)?.live).toBe(true);
+    expect(byId.get(7)?.live).toBe(true);
+    expect(byId.get(6)?.live).toBe(false);
+    expect(byId.get(3)?.live).toBe(false);
+    expect(byId.get(2)?.live).toBeNull();
+  });
+
+  it('says a held model whose row is gone is not live', async () => {
+    await seed([{ id: 8, createdAt: '2026-10-05', entityType: 'Model' }]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, search: { id: 80 } });
+    expect(items.map((h) => [h.id, h.live])).toEqual([[8, false]]);
+  });
+
   it('lists only pending csam holds, oldest first', async () => {
-    const { items, hasMore } = await listPendingCsamHolds({ limit: 10, offset: 0 });
+    const { items, hasMore } = await listCsamHolds(OLDEST_PENDING);
     expect(items.map((h) => h.id)).toEqual([2, 3, 1, 6]);
     expect(hasMore).toBe(false);
   });
 
   it('names the author, and leaves the name null when the account is gone', async () => {
-    const { items } = await listPendingCsamHolds({ limit: 10, offset: 0 });
+    const { items } = await listCsamHolds(OLDEST_PENDING);
     const byId = new Map(items.map((h) => [h.id, h]));
     expect(byId.get(1)).toMatchObject({ userId: 10, username: 'author' });
     expect(byId.get(3)).toMatchObject({ userId: 404, username: null });
@@ -104,27 +183,84 @@ describe('listPendingCsamHolds', () => {
   });
 
   it('carries the chat id of a held chat message', async () => {
-    const { items } = await listPendingCsamHolds({ limit: 10, offset: 0 });
+    const { items } = await listCsamHolds(OLDEST_PENDING);
     expect(items.find((h) => h.id === 2)?.chatId).toBe(77);
     expect(items.find((h) => h.id === 1)?.chatId).toBeNull();
   });
 
   it('pages, and says when more remain', async () => {
-    const first = await listPendingCsamHolds({ limit: 2, offset: 0 });
+    const first = await listCsamHolds({ ...OLDEST_PENDING, limit: 2 });
     expect(first.items.map((h) => h.id)).toEqual([2, 3]);
     expect(first.hasMore).toBe(true);
-    const second = await listPendingCsamHolds({ limit: 2, offset: 2 });
+    const second = await listCsamHolds({ ...OLDEST_PENDING, limit: 2, offset: 2 });
     expect(second.items.map((h) => h.id)).toEqual([1, 6]);
     expect(second.hasMore).toBe(false);
   });
 
   it('narrows to one entity type', async () => {
-    const { items } = await listPendingCsamHolds({
-      limit: 10,
-      offset: 0,
-      entityType: 'ChatMessage',
-    });
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, entityType: 'ChatMessage' });
     expect(items.map((h) => h.id)).toEqual([2]);
+  });
+
+  const idsFor = async (query: Partial<CsamHoldQuery>) =>
+    (await listCsamHolds({ ...OLDEST_PENDING, ...query })).items.map((h) => h.id);
+
+  it('filters by decision status', async () => {
+    expect(await idsFor({ status: 'removed' })).toEqual([7]);
+    expect(await idsFor({ status: 'dismissed' })).toEqual([4]);
+    expect(await idsFor({ status: 'all' })).toEqual([4, 7, 2, 3, 1, 6]);
+  });
+
+  it('sorts newest first', async () => {
+    expect(await idsFor({ sort: 'newest' })).toEqual([6, 1, 3, 2]);
+  });
+
+  it('searches a number as a content id or an author id', async () => {
+    expect(await idsFor({ search: { id: 60 } })).toEqual([6]);
+    expect(await idsFor({ search: { id: 404 } })).toEqual([3]);
+    expect(await idsFor({ search: { id: 10 } })).toEqual([2, 1]);
+    expect(await idsFor({ search: { id: 1 } })).toEqual([]);
+  });
+
+  it('searches a username by case-insensitive exact name or prefix', async () => {
+    expect(await idsFor({ search: { username: 'AUTHOR' } })).toEqual([2, 1]);
+    expect(await idsFor({ search: { username: 'auth' } })).toEqual([2, 1]);
+    expect(await idsFor({ search: { username: 'thor' } })).toEqual([]);
+  });
+
+  it('takes a % in the search as a literal character', async () => {
+    expect(await idsFor({ search: { username: '%' } })).toEqual([]);
+  });
+
+  it('names who decided, when, what and why', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'dismissed' });
+    expect(items[0]).toMatchObject({
+      status: 'Dismissed',
+      decidedByUsername: 'Mod_Person',
+      decisionNote: 'fine',
+      decision: 'dismiss',
+    });
+    expect(items[0].decidedAt).toBeInstanceOf(Date);
+    const [pending] = (await listCsamHolds(OLDEST_PENDING)).items;
+    expect(pending).toMatchObject({ decidedAt: null, decidedByUsername: null, decision: null });
+  });
+});
+
+describe('countCsamHoldsByType', () => {
+  it('counts per entity type for one status', async () => {
+    expect(await countCsamHoldsByType({ status: 'pending' })).toEqual({ Post: 3, ChatMessage: 1 });
+    expect(await countCsamHoldsByType({ status: 'removed' })).toEqual({ Model: 1 });
+    expect(await countCsamHoldsByType({ status: 'all' })).toEqual({
+      Post: 4,
+      ChatMessage: 1,
+      Model: 1,
+    });
+  });
+
+  it('follows the search', async () => {
+    expect(
+      await countCsamHoldsByType({ status: 'pending', search: { username: 'author' } })
+    ).toEqual({ Post: 1, ChatMessage: 1 });
   });
 });
 
@@ -203,5 +339,108 @@ describe('decideCsamHold', () => {
   ] as const)('treats %s as a failure', async (_, decision, status) => {
     callModEndpoint.mockResolvedValue({ ok: true, body: status ? { status } : {} });
     expect(await decideCsamHold({ holdId: 3, decision })).toMatchObject({ ok: false });
+  });
+});
+
+describe('getHoldCoverImages', () => {
+  const hold = (id: number, entityType: string, entityId: number) => ({ id, entityType, entityId });
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" VALUES (71, 'Owned', 'Published', 10), (72, 'Drafty', 'Draft', 10),
+        (73, 'Bare', 'Published', 10);
+      INSERT INTO "ModelVersion" VALUES (710, 71, 1), (711, 71, 0), (720, 72, 0), (721, 72, 1),
+        (730, 73, 0);
+      INSERT INTO "Post" VALUES
+        (801, NULL, '2026-10-01', 10, 710), (802, NULL, '2026-10-01', 10, 711),
+        (803, NULL, '2026-10-01', 11, 711),
+        (804, NULL, NULL, 10, 720), (805, NULL, '2026-10-01', 10, 721),
+        (806, NULL, '2026-10-01', 11, 730);
+      INSERT INTO "Image" VALUES
+        (90, 'v-clip', 'video', 802, 0, 1), (91, 'm-first', 'image', 802, 1, 1),
+        (92, 'm-later', 'image', 801, 0, 1), (93, 'm-review', 'image', 803, 0, 1),
+        (94, 'u-draft', 'image', 804, 0, 1), (95, 'p-live', 'image', 805, 0, 1),
+        (96, 'm-other-only', 'image', 806, 0, 1);
+    `);
+  });
+
+  it('returns the first four stills of a post in post order with the true count, skipping videos', async () => {
+    const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(2, 'Post', 60)]);
+    expect(covers.get(1)).toEqual({
+      images: [
+        { id: 2, url: 'k-b', nsfwLevel: 1 },
+        { id: 1, url: 'k-a', nsfwLevel: 4 },
+        { id: 4, url: 'k-d', nsfwLevel: 1 },
+        { id: 5, url: 'k-e', nsfwLevel: 1 },
+      ],
+      total: 5,
+    });
+    expect(covers.get(2)).toEqual({ images: [{ id: 7, url: 'k-g', nsfwLevel: 1 }], total: 1 });
+  });
+
+  it("picks a model's owner stills by version then post order, ignoring other users' posts and videos", async () => {
+    const covers = await getHoldCoverImages([hold(3, 'Model', 71)]);
+    expect(covers.get(3)).toEqual({
+      images: [
+        { id: 91, url: 'm-first', nsfwLevel: 1 },
+        { id: 92, url: 'm-later', nsfwLevel: 1 },
+      ],
+      total: 2,
+    });
+  });
+
+  it('prefers a published post over an unpublished one', async () => {
+    const covers = await getHoldCoverImages([hold(4, 'Model', 72)]);
+    expect(covers.get(4)?.images.map((i) => i.url)).toEqual(['p-live', 'u-draft']);
+    expect(covers.get(4)?.total).toBe(2);
+  });
+
+  it('has no entry for a post or model without images, or a type with none', async () => {
+    const covers = await getHoldCoverImages([
+      hold(5, 'Post', 30),
+      hold(6, 'Model', 73),
+      hold(7, 'ChatMessage', 1),
+    ]);
+    expect(covers.size).toBe(0);
+  });
+
+  it('gives every hold its own entry when two holds share an entity', async () => {
+    const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
+    expect(covers.get(1)).toEqual(covers.get(8));
+    expect(covers.get(8)?.total).toBe(5);
+  });
+
+  it('bounds a model with many images to four and a capped count', async () => {
+    await db.exec(`
+      INSERT INTO "Model" VALUES (74, 'Big', 'Published', 10), (75, 'Huge', 'Published', 10);
+      INSERT INTO "ModelVersion" VALUES (740, 74, 0), (750, 75, 0);
+      INSERT INTO "Post" VALUES (810, NULL, '2026-10-01', 10, 740), (811, NULL, '2026-10-01', 10, 750);
+      INSERT INTO "Image" SELECT 6000 + g, 'big-' || g, 'image', 810, g, 1 FROM generate_series(1, 6) g;
+      INSERT INTO "Image" SELECT 7000 + g, 'huge-' || g, 'image', 811, g, 1 FROM generate_series(1, 150) g;
+    `);
+    const covers = await getHoldCoverImages([hold(1, 'Model', 74), hold(2, 'Model', 75)]);
+    expect(covers.get(1)?.images.map((i) => i.url)).toEqual(['big-1', 'big-2', 'big-3', 'big-4']);
+    expect(covers.get(1)?.total).toBe(6);
+    expect(covers.get(2)?.images).toHaveLength(4);
+    expect(covers.get(2)?.total).toBe(PREVIEW_COUNT_CAP + 1);
+  });
+
+  it('bounds a post with many images the same way', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (812, NULL, '2026-10-01', 10, NULL);
+      INSERT INTO "Image" SELECT 8000 + g, 'post-' || g, 'image', 812, g, 1 FROM generate_series(1, 150) g;
+    `);
+    const covers = await getHoldCoverImages([hold(1, 'Post', 812)]);
+    expect(covers.get(1)?.images.map((i) => i.url)).toEqual([
+      'post-1',
+      'post-2',
+      'post-3',
+      'post-4',
+    ]);
+    expect(covers.get(1)?.total).toBe(PREVIEW_COUNT_CAP + 1);
+  });
+
+  it('reads nothing for an empty page', async () => {
+    expect((await getHoldCoverImages([])).size).toBe(0);
   });
 });

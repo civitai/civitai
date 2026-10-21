@@ -486,12 +486,15 @@ export const cosmeticImageMetaSchema = z.object({
 // Per-side fit adjustment for avatar decorations, stored on the cosmetic's
 // `data.offsets` as pixels. Negative extends the frame outside the avatar —
 // effectively scaling it up (see decorationFrameStyle).
-export const DECORATION_OFFSET_LIMIT = 5;
+export const CREATOR_OFFSET_LIMIT = 20;
+export const MODERATOR_OFFSET_LIMIT = 50;
+// The schema takes the moderator ceiling because moderators call the same procedures;
+// the creator range is enforced in the service (`assertCreatorOffsets`).
 const cosmeticOffsetSideSchema = z
   .number()
   .int()
-  .min(-DECORATION_OFFSET_LIMIT)
-  .max(DECORATION_OFFSET_LIMIT);
+  .min(-MODERATOR_OFFSET_LIMIT)
+  .max(MODERATOR_OFFSET_LIMIT);
 export type CosmeticOffsets = z.infer<typeof cosmeticOffsetsSchema>;
 export const cosmeticOffsetsSchema = z.object({
   top: cosmeticOffsetSideSchema,

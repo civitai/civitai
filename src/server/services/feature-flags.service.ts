@@ -146,6 +146,9 @@ const featureFlags = createFeatureFlags({
   // Stripe and Tipalti `return_url`s, so a bad cutover strands payout onboarding rather than merely
   // looking wrong. Instant rollback = set the threshold to 0.
   accountSettingsV2: { availability: ['mod'], fliptKey: 'account-settings-v2' },
+  // `['mod']` is the fallback only, as for `accountSettingsV2`: the `user-menu-v2` rollout
+  // decides while Flipt answers. Also gates the unclaimed-prize query in `checkNotifications`.
+  userMenuV2: { availability: ['mod'], fliptKey: 'user-menu-v2' },
   // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
   // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
   // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
@@ -734,6 +737,12 @@ const featureFlags = createFeatureFlags({
   // deploy, before the Flipt flag exists; the flag then widens it or turns it off. Off leaves the
   // chat's `subagents` unset, so non-mods see no change.
   appAssistantSubagents: { availability: ['mod'], fliptKey: 'app-assistant-subagents' },
+  // App Assistant replies on the server runner (`apps/assistant-runner`), so a reply keeps going
+  // while the viewer is away. `[]`, not `['mod']`: dark for everyone, mods included, until the Flipt
+  // flag turns it on (after the route to the runner exists), and off again while Flipt cannot answer.
+  // Off, the page runs replies in the browser as before, `/api/apps/assistant/run-grant` refuses to
+  // start one on the runner, and the runner's token mints refuse (its kill switch).
+  appAssistantRemoteRunner: { availability: [], fliptKey: 'app-assistant-remote-runner' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag
@@ -1247,6 +1256,24 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
     });
   }
   return obj as FeatureAccess;
+}
+
+/**
+ * Whether Flipt itself decided each of `keys` for `user` right now. `false` when Flipt is not
+ * loaded or answers `null` for one of them (unavailable, or the flag unknown to it): `hasFeature`
+ * then falls back to the static rules, which for a Flipt-rolled flag are usually far narrower than
+ * the rollout, so a caller that must not mistake that fallback for a decision asks this first. A
+ * flag with no Flipt key, or one an env override pins, is decided statically and counts as decided.
+ */
+export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser): Promise<boolean> {
+  const flipt = await loadFliptModule();
+  if (flipt) await flipt.ensureFliptInitialized();
+  const context = buildFliptContext(user);
+  return keys.every((key) => {
+    const fliptKey = featureFlags[key].fliptKey;
+    if (!fliptKey || envOverriddenFlags.has(key)) return true;
+    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+  });
 }
 
 export async function getFeatureFlagsAsync(ctx: FeatureAccessContext) {

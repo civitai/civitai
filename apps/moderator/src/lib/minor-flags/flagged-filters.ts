@@ -43,7 +43,5 @@ export const flaggedFilterParams = (filters: FlaggedFilters): Record<string, str
   return params;
 };
 
-/** The page offers no flag chips (the design filters by source only), but a link that still sets
- *  `flag` keeps its chip so the filter stays visible and can be switched off. */
-export const flagChipValues = (active: FlaggedFlag): FlaggedFlag[] =>
-  active === DEFAULT_FLAGGED_FILTERS.flag ? [] : [active];
+/** The flag chips: All clears them, and an active chip switches itself off. */
+export const FLAG_CHIP_VALUES: readonly FlaggedFlag[] = ['minor', 'poi'];

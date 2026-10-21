@@ -472,7 +472,12 @@ export async function throwIfBlockedByOwners({
   if (isModerator) return;
   for (const ownerId of ownerIds) {
     if (!ownerId || ownerId === userId) continue;
-    const blocked = await amIBlockedByUser({ userId, targetUserId: ownerId });
+    // A write path: confirm a cache "not blocked" on the primary.
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: ownerId,
+      confirmOnPrimary: true,
+    });
     if (blocked) throw throwNotFoundError();
   }
 }

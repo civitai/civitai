@@ -18,7 +18,7 @@
     FLAGGED_FLAG_LABELS,
     FLAGGED_SORTS,
     FLAGGED_SORT_LABELS,
-    flagChipValues,
+    FLAG_CHIP_VALUES,
   } from '$lib/minor-flags/flagged-filters';
   import {
     DEFAULT_NEEDS_REVIEW_FILTERS,
@@ -75,7 +75,7 @@
   );
   const holdsNothing = $derived(!data.sources.detections && !data.sources.matches);
 
-  // Source chips only when the viewer holds both kinds of lead; a flag chip only while a link sets one.
+  // Source chips only when the viewer holds both kinds of lead.
   const chipGroups = $derived.by(() => {
     const f = data.needsReviewFilters;
     return [
@@ -91,7 +91,7 @@
       {
         key: 'flag',
         label: 'Flag',
-        values: flagChipValues(f.flag),
+        values: FLAG_CHIP_VALUES,
         labels: FLAGGED_FLAG_LABELS,
         active: f.flag,
         defaultValue: DEFAULT_NEEDS_REVIEW_FILTERS.flag,

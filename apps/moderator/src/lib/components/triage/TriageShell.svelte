@@ -10,7 +10,7 @@
   import { LINK_CLASS, num } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { submitDecisionForm } from '$lib/triage/decision-form';
-  import { isTypingTarget, triageKeyAction } from '$lib/triage/keys';
+  import { isDialogOpen, isTypingTarget, triageKeyAction } from '$lib/triage/keys';
   import { reasonPicker } from '$lib/triage/reason-picker.svelte';
   import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
@@ -210,6 +210,7 @@
       defaultPrevented: e.defaultPrevented,
       isComposing: e.isComposing,
       typing: isTypingTarget(e.target as Element | null),
+      dialogOpen: isDialogOpen(),
       picking: reasonPicker.open !== null,
       decisionEnabled:
         selected && selectedRowKey !== null && !acted.has(selectedRowKey)

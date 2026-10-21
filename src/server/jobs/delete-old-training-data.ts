@@ -1,6 +1,8 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { legalHoldSkipReason, ownerUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import {
   deleteModelFileObject,
   getQuarantineBucket,
@@ -16,6 +18,7 @@ type OldTrainingRow = {
   mf_id: number;
   job_id: string | null;
   url: string;
+  held: boolean;
 };
 
 /**
@@ -247,7 +250,8 @@ export const deleteOldTrainingData = createJob(
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
-             mf.url
+             mf.url,
+             ${ownerUnderLegalHoldSql(Prisma.raw('mf."modelVersionId"'))} as held
       FROM "ModelVersion" mv
              JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE mv."uploadType" = 'Trained'
@@ -299,8 +303,22 @@ export const deleteOldTrainingData = createJob(
     let skippedJobs = 0;
     let dryRunWouldDelete = 0;
     let dryRunWouldSkip = 0;
+    let legalHoldSkipped = 0;
 
-    for (const { mf_id, job_id, url } of oldTraining) {
+    for (const { mf_id, job_id, url, held } of oldTraining) {
+      const holdReason = legalHoldSkipReason(held);
+      if (holdReason) {
+        legalHoldSkipped += 1;
+        if (dryRun) dryRunWouldSkip += 1;
+        else skippedJobs += 1;
+        logJob({
+          type: 'info',
+          message: dryRun ? `Dry run, would skip` : `Skipped, object left in place`,
+          data: { reason: holdReason, jobId: job_id, modelFileId: mf_id },
+        });
+        continue;
+      }
+
       try {
         // 🔴 `deleteModelFileObject`, NOT a bare `deleteObject(bucket, key)` off `parseKey`.
         // That is what this loop used to do, and it is why nothing was ever purged from the
@@ -454,6 +472,7 @@ export const deleteOldTrainingData = createJob(
         eligibleTotal: Number(total),
         dryRunWouldDelete,
         dryRunWouldSkip,
+        legalHoldSkipped,
       },
     });
 

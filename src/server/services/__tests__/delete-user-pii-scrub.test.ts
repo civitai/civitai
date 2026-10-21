@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userFollowsCache } from '~/server/redis/caches';
 
+// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => undefined,
+}));
+
 /**
  * Account deletion is a SOFT delete, so no FK cascade fires and nothing is removed for
  * free. Measured on prod before this change, across 1,330,849 deleted accounts:

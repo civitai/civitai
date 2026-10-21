@@ -175,6 +175,30 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   ttl: CacheTTL.day,
 });
 
+/**
+ * For a bulk `UserCosmetic` write that changed what users wear: re-reads their entries so reads served
+ * from this cache drop or show the change now rather than at the TTL. Batched, and never throws — the
+ * write it follows has committed.
+ */
+export async function refreshUserCosmeticCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  for (let i = 0; i < ids.length; i += 500)
+    await userCosmeticCache.refresh(ids.slice(i, i + 500)).catch(() => undefined);
+}
+
+export type RemovedUserCosmetic = {
+  userId: number;
+  equippedAt: Date | null;
+  equippedToId: number | null;
+};
+
+/** `refreshUserCosmeticCache` for rows a bulk write deleted: only users who were wearing one. */
+export async function refreshUserCosmeticCacheForRemoved(rows: RemovedUserCosmetic[]) {
+  await refreshUserCosmeticCache(
+    rows.filter((x) => x.equippedAt && x.equippedToId === null).map((x) => x.userId)
+  );
+}
+
 type UserOwnedStickerLookup = {
   userId: number;
   cosmeticIds: number[];

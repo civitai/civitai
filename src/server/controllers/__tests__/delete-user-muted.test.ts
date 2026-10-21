@@ -34,7 +34,11 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   deleteUser: (...a: unknown[]) => deleteUser(...(a as [{ id: number }])),
 }));
 
-import { deleteUserHandler } from '~/server/controllers/user.controller';
+import {
+  deleteUserHandler,
+  SELF_DELETE_RESTRICTED_MESSAGE,
+} from '~/server/controllers/user.controller';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 
 type Ctx = Parameters<typeof deleteUserHandler>[0]['ctx'];
 
@@ -94,5 +98,21 @@ describe('user.delete (tRPC) refuses a muted account', () => {
     expect(trackUserActivity).toHaveBeenCalledWith(
       expect.objectContaining({ targetUserId: SELF, type: 'Account closure' })
     );
+  });
+});
+
+describe('user.delete (tRPC) refuses an account under a legal hold', () => {
+  it('with exactly the refusal a muted account gets, so the two cannot be told apart', async () => {
+    seed(true);
+    const muted = await deleteUserHandler({ ctx, input: { id: SELF } }).catch((e) => e);
+
+    seed(false);
+    deleteUser.mockRejectedValueOnce(new LegalHoldError());
+    const held = await deleteUserHandler({ ctx, input: { id: SELF } }).catch((e) => e);
+
+    expect(held).toMatchObject({ code: 'FORBIDDEN' });
+    expect(held.message).toBe(muted.message);
+    expect(held.message).toBe(SELF_DELETE_RESTRICTED_MESSAGE);
+    expect(trackUserActivity).not.toHaveBeenCalled();
   });
 });

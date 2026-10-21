@@ -35,6 +35,12 @@ interface TrainingStudioHost {
   /** SignalR access token for live workflow updates. Null => component falls back to polling. */
   getSignalsToken(): Promise<string | null>;
 
+  /** The main app's trigger word check for one run, called before anything is submitted
+   *  (`POST /api/training-studio/check-text`). Resolves { ok: false, error } on a refusal and
+   *  rejects when the check could not run. Without it the component refuses to start training. */
+  checkTrainingText(input: { triggerWord: string }):
+    Promise<{ ok: true } | { ok: false; error: string }>;
+
   /** Spendable balances for the header/pricing UI. The buzz service is internal-only (no
    *  browser CORS), so this stays a host call. Null => balances hidden, flow still works. */
   getBuzzBalances(): Promise<{ yellow: number; green: number; blue: number } | null>;
@@ -143,6 +149,8 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
   `getOrchestratorToken` (main app).
 - **Signals token minting** — internal signals endpoint.
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
+- **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
+  shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
 
 ## CORS requirement
 

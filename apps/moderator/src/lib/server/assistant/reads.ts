@@ -157,11 +157,37 @@ export type OpenUserReport = {
   alsoReportedBy: number;
 };
 
+/** The reasons a person can file a report under; `Automated` is never a human report. */
+export const HUMAN_REPORT_REASONS = Object.values(ReportReason).filter(
+  (r) => r !== ReportReason.Automated
+);
+
+export type OpenUserReportQuery = {
+  limit?: number;
+  order?: 'newest' | 'oldest';
+  /** Keyset: the last report id of the previous page, in the same `order`. */
+  cursor?: number;
+  statuses?: readonly string[];
+  reasons?: readonly string[];
+};
+
 /**
- * Open user reports, oldest first, human-filed only: the queue the moderator works. Reads the
+ * Open user reports, human-filed only: the queue the moderator works. Reads the
  * `Report_open_reason_id_idx` partial index, which holds exactly the open rows.
  */
-export async function getOpenUserReports(limit = 50, afterId?: number): Promise<OpenUserReport[]> {
+export async function getOpenUserReports({
+  limit = 50,
+  order = 'newest',
+  cursor,
+  statuses,
+  reasons,
+}: OpenUserReportQuery = {}): Promise<OpenUserReport[]> {
+  // These become SQL literals, so they are taken from the fixed lists, never from the caller.
+  // Nothing matching falls back to the whole open queue: never an empty `IN ()`, never a closed status.
+  const picked = DEFAULT_REPORT_STATUSES.filter((s) => statuses?.includes(s));
+  const status = picked.length ? picked : DEFAULT_REPORT_STATUSES;
+  const reason = HUMAN_REPORT_REASONS.filter((r) => reasons?.includes(r));
+  const newest = order === 'newest';
   const rows = await dbRead
     .selectFrom('Report as r')
     .innerJoin('UserReport as ur', 'ur.reportId', 'r.id')
@@ -176,10 +202,13 @@ export async function getOpenUserReports(limit = 50, afterId?: number): Promise<
       sql<number>`coalesce(cardinality(r."alsoReportedBy"), 0)`.as('alsoReportedBy'),
     ])
     // Literals, not bind parameters: a generic plan cannot prove a partial index's predicate from $1.
-    .where(sql<boolean>`r.status IN (${sql.join(DEFAULT_REPORT_STATUSES.map((s) => sql.lit(s)))})`)
+    .where(sql<boolean>`r.status IN (${sql.join(status.map((s) => sql.lit(s)))})`)
     .where(sql<boolean>`r.reason != ${sql.lit(ReportReason.Automated)}`)
-    .$if(!!afterId, (qb) => qb.where('r.id', '>', afterId!))
-    .orderBy('r.id', 'asc')
+    .$if(reason.length > 0, (qb) =>
+      qb.where(sql<boolean>`r.reason IN (${sql.join(reason.map((r) => sql.lit(r)))})`)
+    )
+    .$if(!!cursor, (qb) => qb.where('r.id', newest ? '<' : '>', cursor!))
+    .orderBy('r.id', newest ? 'desc' : 'asc')
     .limit(Math.min(100, Math.max(1, limit)))
     .execute();
   return rows.map((r) => ({

@@ -57,8 +57,16 @@ export const flagPromptId = (promptIds: unknown, label: string): number | null =
   return typeof id === 'number' ? id : null;
 };
 
-export const previewCountText = (total: number, shown: number) =>
-  `${plural(total, 'preview image')}${total > shown ? `, ${shown} shown` : ''}`;
+/** Bounded reads stop at one past this and pass that sentinel as the total, so `previewCountText` reads "N+" rather than too low a figure. */
+export const PREVIEW_COUNT_CAP = 100;
+
+export const previewCountText = (total: number, shown: number) => {
+  const count =
+    total === PREVIEW_COUNT_CAP + 1
+      ? `${PREVIEW_COUNT_CAP}+ preview images`
+      : plural(total, 'preview image');
+  return `${count}${total > shown ? `, ${shown} shown` : ''}`;
+};
 
 const ordinal = (n: number) => {
   const tens = n % 100;

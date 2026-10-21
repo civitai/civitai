@@ -98,7 +98,6 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPostRateLimit: 'post',
   checkBlockPostAppRateLimit: 'post-app',
   checkBlockPollRateLimit: 'poll',
-  checkBlockTrainingDatasetRateLimit: 'training-dataset',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
   checkBlockUploadAppRateLimit: 'upload-app',
 });
@@ -123,8 +122,7 @@ type Decision = {
  * on these procedures is the guard, the viewer/app scope assertions and the consent scopes.
  *
  * ⚠️ AND `weight` IS 1 EXCEPT WHERE THE COST IS PER ITEM. `checkBlockPublishRateLimit` is charged by
- * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), `training-dataset` likewise,
- * and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
+ * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
  * rest charge one token per call because the call is the unit. `createPostFromApp` charges BOTH —
  * `post`/`post-app` by the post, `publish` by the images it adopts — so a post cannot be used to
  * bypass the image ceiling. `estimateWorkflowBatch` charges BOTH for the mirror-image reason: the
@@ -196,21 +194,17 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['poll'],
     why: '#569 criterion 2 — its OWN bucket (1200/60 s), keyed on the install AND the viewer because blockInstanceId is page_<appBlockId> for a page app. Previously bounded only by the SDK’s sequential loop, a client-side pacing assumption and not a bound. A refusal RETURNS a non-terminal snapshot rather than throwing: both hosts convert a throw into status:failed, which the SDK treats as terminal, so a thrown 429 would end the watch loop on a paid generation.',
   },
-  prepareTrainingDataset: {
-    buckets: ['training-dataset'],
-    why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
-  },
   persistAppUploadImage: {
     buckets: ['upload-app'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
   previewQuoteGrant: {
     buckets: ['catalog'],
-    why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read (plus the dataset read for training); materialises nothing. previewTrainingQuote is its training-named delegate.',
+    why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read; materialises nothing. previewTrainingQuote is its training-named delegate.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],
-    why: 'The read-only half of the training consent pair — a quote + dataset read and a Buzz balance read; materialises nothing.',
+    why: 'The read-only half of the training consent pair — a quote read and a Buzz balance read; materialises nothing.',
   },
   previewPostFromApp: {
     buckets: ['catalog'],

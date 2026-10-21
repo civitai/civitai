@@ -71,6 +71,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
 import {
   getBaseModelConfig,
   getEcosystemTurboSettings,
@@ -1263,6 +1264,19 @@ export function ModelVersionUpsertForm({
                             turboOnly: true,
                           }}
                         />
+                        {turboLora && (
+                          <InputNumber
+                            name="settings.generation.turboLora.strength"
+                            label="Turbo LoRA strength"
+                            description={`Leave empty for the LoRA's own default (${
+                              turboLora.strength ?? 1
+                            }).`}
+                            min={turboLora.minStrength ?? LORA_STRENGTH_BOUNDS.min}
+                            max={turboLora.maxStrength ?? LORA_STRENGTH_BOUNDS.max}
+                            decimalScale={2}
+                            step={0.05}
+                          />
+                        )}
                         {turboLora && (turboLora.isPrivate || !turboLora.canGenerate) && (
                           <Text size="xs" c="yellow.6">
                             This LoRA is not published or not generatable right now. The generator
@@ -1301,8 +1315,8 @@ export function ModelVersionUpsertForm({
                         <InputNumber
                           name="settings.strength"
                           label="Strength"
-                          min={minStrength ?? -1}
-                          max={maxStrength ?? 2}
+                          min={minStrength ?? LORA_STRENGTH_BOUNDS.min}
+                          max={maxStrength ?? LORA_STRENGTH_BOUNDS.max}
                           decimalScale={1}
                           step={0.1}
                         />

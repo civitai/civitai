@@ -1,6 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
 import { dbRead } from './db';
+import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
 import {
   DEFAULT_APPEAL_FILTERS,
@@ -254,23 +255,9 @@ const coverImagesJoin = sql`
 LEFT JOIN LATERAL (
   SELECT jsonb_agg(
            jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
-           ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
-                    c."imageIndex" ASC NULLS LAST, c.id
+           ORDER BY ${MODEL_COVER_ORDER}
          ) AS images
-  FROM (
-    -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
-    -- unpublished or draft model with no images at all.
-    SELECT i.id, i.url, i."nsfwLevel", p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
-           p.id AS "postId", i.index AS "imageIndex"
-    FROM "ModelVersion" mv
-    JOIN "Post" p ON p."modelVersionId" = mv.id
-    JOIN "Image" i ON i."postId" = p.id
-    WHERE mv."modelId" = pg."modelId"
-      AND p."userId" = pg."userId"
-      AND i.type::text = 'image'
-    ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
-    LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
-  ) c
+  FROM (${modelCoverImages(sql.ref('pg.modelId'), sql.ref('pg.userId'), APPEAL_COVER_COUNT)}) c
 ) ci ON TRUE
 `;
 

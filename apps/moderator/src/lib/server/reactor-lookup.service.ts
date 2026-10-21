@@ -404,17 +404,40 @@ export type SharedIpAccount = {
 const CLUSTER_SCAN = 1_000;
 const CLUSTERS_PER_ACCOUNT = 12;
 
-export async function getSharedIps(
+export type SharedIpOptions = {
+  targetId: number;
+  groupIpv4?: boolean;
+  /** Stop ClickHouse after this long; the call then rejects (see `isClickhouseTimeout`). */
+  timeoutSeconds?: number;
+};
+
+export async function getSharedIps(userIds: number[], options: SharedIpOptions) {
+  return (await getSharedIpCoverage(userIds, options)).accounts;
+}
+
+/** A ClickHouse query stopped by `max_execution_time`, as opposed to one that failed. */
+export const isClickhouseTimeout = (e: unknown) =>
+  e instanceof Error && /TIMEOUT_EXCEEDED|Timeout exceeded/i.test(e.message);
+
+const timeoutSettings = (seconds?: number) =>
+  seconds ? `SETTINGS max_execution_time = ${Math.max(1, Math.trunc(seconds))}` : '';
+
+/**
+ * `getSharedIps`, plus whether the scan budget cut the address list: `scanCapped` means accounts
+ * past the budget were never correlated, so their absence from a finding is not evidence.
+ */
+export async function getSharedIpCoverage(
   userIds: number[],
-  { targetId, groupIpv4 = false }: { targetId: number; groupIpv4?: boolean }
-): Promise<SharedIpAccount[]> {
+  { targetId, groupIpv4 = false, timeoutSeconds }: SharedIpOptions
+): Promise<{ accounts: SharedIpAccount[]; scanCapped: boolean }> {
+  const none = { accounts: [], scanCapped: false };
   // 🔴 The target belongs in the correlation set even when it is not in the actor list — it usually
   // is not. A creator appears among their own reactors only through self-reactions, and plenty have
   // none (measured: 0 for one creator over 3 days, against 168 for another). Leave the target out
   // and the panel silently cannot test "this reactor shares an address with the creator they are
   // boosting", which is the strongest thing it has to say.
   const ids = [...new Set([...userIds, targetId])].filter(isInt4Id);
-  if (ids.length < 2) return [];
+  if (ids.length < 2) return none;
 
   const rows = await getClickhouse().$query<{
     cluster: string;
@@ -432,8 +455,9 @@ export async function getSharedIps(
     HAVING uniq(targetUserId) > 1
     ORDER BY max(targetUserId = ${targetId}) DESC, uniq(targetUserId) ASC, cluster ASC
     LIMIT ${CLUSTER_SCAN}
+    ${timeoutSettings(timeoutSeconds)}
   `);
-  if (!rows.length) return [];
+  if (!rows.length) return none;
 
   // Ordered in SQL, not after: clusters holding the target have to outrank the scan budget, not just
   // the rows that survived it. Fewest members next — a cluster of two is the decisive one, and
@@ -467,7 +491,8 @@ export async function getSharedIps(
   const [breadth, byId] = await Promise.all([
     accountsPerCluster(
       rows.filter((r) => kept.has(r.cluster)).flatMap((r) => r.ips),
-      groupIpv4
+      groupIpv4,
+      timeoutSeconds
     ),
     usersByIds(rows.flatMap((r) => r.userIds.map(Number))),
   ]);
@@ -477,7 +502,7 @@ export async function getSharedIps(
   const width = (a: SharedAddress) => a.totalAccounts ?? Number.MAX_SAFE_INTEGER;
   const narrowest = (list: SharedAddress[]) => Math.min(...list.map(width));
 
-  return [...accounts.entries()]
+  const shared = [...accounts.entries()]
     .map(([userId, entry]) => ({
       userId,
       username: byId.get(userId)?.username ?? null,
@@ -500,9 +525,14 @@ export async function getSharedIps(
         narrowest(a.addresses) - narrowest(b.addresses) ||
         b.addresses.length - a.addresses.length
     );
+  return { accounts: shared, scanCapped: rows.length >= CLUSTER_SCAN };
 }
 
-async function accountsPerCluster(ips: string[], groupIpv4: boolean): Promise<Map<string, number>> {
+async function accountsPerCluster(
+  ips: string[],
+  groupIpv4: boolean,
+  timeoutSeconds?: number
+): Promise<Map<string, number>> {
   const safe = [...new Set(ips)].filter((ip) => IP_PATTERN.test(ip));
   if (!safe.length) return new Map();
 
@@ -513,6 +543,7 @@ async function accountsPerCluster(ips: string[], groupIpv4: boolean): Promise<Ma
       AND targetUserId > 0
       AND ${OWN_ACTIVITY_ONLY}
     GROUP BY cluster
+    ${timeoutSettings(timeoutSeconds)}
   `);
   return new Map(rows.map((r) => [r.cluster, Number(r.total)]));
 }

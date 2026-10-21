@@ -32,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
@@ -999,7 +1000,7 @@ export const updatePost = async ({
             THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
         RETURNING "publishedAt"
@@ -1228,6 +1229,7 @@ export const getPostTags = async ({
 
 export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
+  await throwOnBlockedUserContent(await newTagNames([name]), { surface: 'post' });
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
       where: { name },

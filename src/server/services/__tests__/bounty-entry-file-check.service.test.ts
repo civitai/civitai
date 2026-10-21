@@ -16,7 +16,12 @@ vi.mock('~/server/services/bounty-entry-file-check.service', async (importOrigin
   isBountyEntryFileCheckOn: mockCheckOn,
 }));
 
-import { checkPendingBountyEntryFiles } from '~/server/services/bounty-entry-file-check.service';
+import {
+  checkPendingBountyEntryFiles,
+  fileCheckState,
+  getBountyEntryFileStates,
+  HASH_FAIL_COUNT_SQL,
+} from '~/server/services/bounty-entry-file-check.service';
 import {
   awardBountyEntry,
   getBountyEntryFilteredFiles,
@@ -35,6 +40,10 @@ const SHA = 'F'.repeat(64);
 
 const CLEAN = { hashCheckedAt: '2026-10-20T00:00:00Z', sha256Server: SHA };
 const BLOCKED = { ...CLEAN, blockedReason: 'other-users-model' };
+const CLEARED = {
+  ...BLOCKED,
+  checkOverride: { by: 1, at: '2026-10-21T00:00:00Z', reason: 'their own alt account' },
+};
 const UNCHECKED = {};
 
 loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
@@ -44,14 +53,60 @@ beforeEach(() => {
   mockCheckOn.mockResolvedValue(true);
 });
 
+describe('fileCheckState', () => {
+  it('a clear lifts the block', () => {
+    expect(fileCheckState(CLEARED)).toBe('clean');
+  });
+
+  // Metadata written before the clear was server-only can hold anything an entrant sent.
+  it.each([
+    ['true', true],
+    ['a string', 'ok'],
+    ['an array', [1]],
+    ['an empty object', {}],
+    ['a string moderator id', { by: '1', at: 'x', reason: 'r' }],
+    ['a fractional moderator id', { by: 1.5, at: 'x', reason: 'r' }],
+    ['a zero moderator id', { by: 0, at: 'x', reason: 'r' }],
+    ['no time', { by: 1, reason: 'r' }],
+    ['a numeric time', { by: 1, at: 1, reason: 'r' }],
+    ['no reason', { by: 1, at: 'x' }],
+    ['an empty reason', { by: 1, at: 'x', reason: '' }],
+    ['a whitespace reason', { by: 1, at: 'x', reason: ' \n\t\v\f\r ' }],
+    ['a moderator id past 15 digits', { by: 2 ** 53, at: 'x', reason: 'r' }],
+  ])('keeps the block when the stored clear is %s', (_, checkOverride) => {
+    expect(fileCheckState({ ...BLOCKED, checkOverride })).toBe('blocked');
+  });
+
+  // The SQL twin can't see Unicode spaces, so neither does this: both call these reasons present.
+  it.each([
+    ['a no-break space', ' '],
+    ['a byte order mark', '﻿'],
+    ['an ideographic space', '　'],
+  ])('counts a reason of only %s as a reason, as the SQL does', (_, reason) => {
+    expect(fileCheckState({ ...BLOCKED, checkOverride: { by: 1, at: 'x', reason } })).toBe('clean');
+  });
+
+  it('takes a 15-digit moderator id', () => {
+    expect(
+      fileCheckState({
+        ...BLOCKED,
+        checkOverride: { by: 999_999_999_999_999, at: 'x', reason: 'r' },
+      })
+    ).toBe('clean');
+  });
+});
+
 describe('checkPendingBountyEntryFiles', () => {
-  const pending = (...files: { id: number; sizeKB?: number; authorId?: number | null }[]) =>
+  const pending = (
+    ...files: { id: number; sizeKB?: number; authorId?: number | null; hashFailCount?: number }[]
+  ) =>
     dbMock.dbRead.$queryRaw.mockResolvedValue(
       files.map((f) => ({
         name: `file-${f.id}.safetensors`,
         url: `https://storage.example.com/u/${f.id}`,
         sizeKB: 1024,
         authorId: AUTHOR,
+        hashFailCount: 0,
         ...f,
       }))
     );
@@ -107,9 +162,42 @@ describe('checkPendingBountyEntryFiles', () => {
       },
     });
 
-    expect(writes().get(1)).toEqual({ hashAttemptedAt: expect.any(String) });
+    expect(writes().get(1)).toEqual({
+      hashAttemptedAt: expect.any(String),
+      hashFailCount: 1,
+      hashLastError: 'download failed: 503',
+    });
     expect(mockFindHashOwnership).not.toHaveBeenCalled();
     expect(result).toMatchObject({ checked: 0, failed: 1 });
+  });
+
+  it('reads a stored failure count only when it is a small whole number', async () => {
+    pending({ id: 1 });
+    await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
+
+    // A bare `::int` cast throws on a planted string and would fail every run of the job.
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const at = values.indexOf(HASH_FAIL_COUNT_SQL);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(strings[at + 1]).toMatch(/^\s*AS "hashFailCount"/);
+    expect(HASH_FAIL_COUNT_SQL.sql.replace(/\s+/g, ' ')).toBe(
+      `CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number' AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$' THEN (f.metadata->>'hashFailCount')::int ELSE 0 END`
+    );
+  });
+
+  it('counts repeated failures, and keeps urls out of the recorded error', async () => {
+    pending({ id: 1, hashFailCount: 2 });
+
+    await checkPendingBountyEntryFiles({
+      hashFile: async () => {
+        throw new Error('fetch https://cdn.example.com/f?token=s3cr3t failed: timeout');
+      },
+    });
+
+    expect(writes().get(1)).toMatchObject({
+      hashFailCount: 3,
+      hashLastError: 'fetch <url> failed: timeout',
+    });
   });
 
   it('an entry with no author blocks any match', async () => {
@@ -157,6 +245,11 @@ describe('awardBountyEntry', () => {
       "This entry's files match a model that belongs to another user and can't be awarded."
     );
     expect(dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('awards an entry whose blocked file a moderator cleared', async () => {
+    entryWithFiles('LoraCreation', CLEAN, CLEARED);
+    await expect(award()).rejects.toThrow(PAST_THE_GATE);
   });
 
   it('refuses an entry with a file not checked yet', async () => {
@@ -221,9 +314,39 @@ describe('getBountyEntryFilteredFiles', () => {
     ]);
   });
 
+  it('serves a file a moderator cleared', async () => {
+    entryFiles();
+    dbMock.dbRead.file.findMany.mockResolvedValue([
+      { id: 1, name: 'a', url: 'https://storage.example.com/u/1', sizeKB: 1, metadata: CLEARED },
+    ]);
+    expect(await urls({ userId: SUPPORTER })).toEqual(['https://storage.example.com/u/1']);
+  });
+
   it('serves a blocked file while the check is off', async () => {
     mockCheckOn.mockResolvedValue(false);
     entryFiles();
     expect((await urls({ userId: AUTHOR }))[0]).toBe('https://storage.example.com/u/1');
+  });
+});
+
+describe('getBountyEntryFileStates', () => {
+  const states = (...files: { entryId: number; metadata: object }[]) =>
+    getBountyEntryFileStates({
+      tx: {
+        bounty: { findUnique: async () => ({ type: 'LoraCreation' }) },
+        $queryRaw: async () => files,
+      } as never,
+      bountyId: BOUNTY_ID,
+      checkOn: true,
+    });
+
+  it('keeps an entry with a blocked file out of the expiry award, unless a moderator cleared it', async () => {
+    expect(
+      await states(
+        { entryId: 21, metadata: BLOCKED },
+        { entryId: 22, metadata: CLEARED },
+        { entryId: 23, metadata: CLEAN }
+      )
+    ).toEqual({ blockedEntryIds: [21], unchecked: false });
   });
 });

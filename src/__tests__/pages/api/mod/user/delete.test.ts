@@ -72,6 +72,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 import handler from '~/pages/api/mod/user/delete';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
@@ -492,5 +493,28 @@ describe('user.delete — the retry path, after a deletion reported as failed', 
       message: `User ${TARGET} is already deleted; nothing to delete.`,
     });
     expect(deleteUser).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('user.delete — an account under a legal hold', () => {
+  it('refuses with the neutral text and records no deletion', async () => {
+    deleteUser.mockRejectedValueOnce(new LegalHoldError());
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(mockUserActivity).not.toHaveBeenCalled();
+  });
+
+  // THE CONTROL: any other failure is not reported as a hold.
+  it('does not dress up another failure as a hold', async () => {
+    deleteUser.mockRejectedValueOnce(new Error('boom'));
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('legal hold');
   });
 });

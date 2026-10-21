@@ -8,23 +8,36 @@
   let {
     key,
     primary = false,
+    tone,
     reasons = false,
     children,
     ...rest
   }: {
     key: number;
     primary?: boolean;
+    tone?: 'red' | 'dark-red' | 'darker-red' | 'red-outline';
     /** The decision offers reasons, so its key opens the reason list instead of submitting. */
     reasons?: boolean;
     children: Snippet;
   } & Omit<ButtonProps, 'children' | 'size'> = $props();
+
+  const TONE = {
+    red: 'bg-red-600 hover:bg-red-700',
+    'dark-red': 'bg-red-800 hover:bg-red-900',
+    'darker-red': 'bg-red-950 hover:bg-red-900',
+    'red-outline': 'border-red-500 bg-transparent text-red-300 hover:bg-red-950 dark:bg-transparent',
+  } as const;
 </script>
 
 <Button
-  variant={primary ? 'default' : 'outline'}
+  variant={primary || (tone && tone !== 'red-outline') ? 'default' : 'outline'}
   class={cn(
     'h-8 gap-2 rounded-md px-3.5 text-[13px] font-semibold text-white',
-    primary ? 'bg-red-600 hover:bg-red-700' : 'border-dark-4 bg-transparent dark:bg-transparent'
+    tone
+      ? TONE[tone]
+      : primary
+        ? TONE.red
+        : 'border-dark-4 bg-transparent dark:bg-transparent'
   )}
   data-triage-key={key}
   data-triage-reasons={reasons ? '' : undefined}

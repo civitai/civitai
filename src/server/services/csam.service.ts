@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -29,7 +30,7 @@ import { isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
-import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -108,8 +109,16 @@ export async function createCsamReport({
         select: { id: true },
       });
 
+  // The update re-checks that the report is still unsent: once sent, a report cannot change, so one
+  // sent since the lookup gets a new report instead.
   const report = unsent
-    ? await dbWrite.csamReport.update({ where: { id: unsent.id }, data })
+    ? await dbWrite.csamReport
+        .update({ where: { id: unsent.id, reportSentAt: null }, data })
+        .catch((e: unknown) => {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025')
+            return dbWrite.csamReport.create({ data });
+          throw e;
+        })
     : await dbWrite.csamReport.create({ data });
 
   if (imageIds.length) {
@@ -395,7 +404,7 @@ async function constructReportPayload({
           email: reportingUser?.email,
         },
         contactPerson: {
-          email: 'report@civitai.com',
+          email: CYBERTIP_CONTACT_EMAIL,
         },
       },
       personOrUserReported: userId

@@ -1,10 +1,10 @@
 import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
-import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
 import { getStorage } from './storage';
 import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
+import { bustProfilePictures, profilePictureUserIds } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { syncSearchIndexBulk } from './search-index';
@@ -15,6 +15,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   // an image that still exists would hide it from search while it is live on the site.
   const deleted: number[] = [];
   const parentIds: (number | null)[] = [];
+  const avatarUserIds = await profilePictureUserIds(ids).catch(() => []);
   for (const id of ids) {
     try {
       await dbWrite.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
@@ -22,7 +23,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       const image = await dbWrite
         .deleteFrom('Image')
         .where('id', '=', id)
-        .returning(['url', 'postId', thumbnailParentId.as('parentId')])
+        .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
         .executeTakeFirst();
       if (!image) continue;
       // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
@@ -33,6 +34,14 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       if (image.postId != null) affectedPostIds.add(image.postId);
 
       if (image.url) {
+        // The main app's cdn-access-sync job stops the image serving; this app cannot reach the
+        // image server's admin API. Queued whether or not the url is shared: a takedown wins.
+        await queueCdnAccessForDelete({
+          id,
+          url: image.url,
+          userId: image.userId,
+          csamReview: image.needsReview === 'csam',
+        });
         // Another Image may share this url; deleting the S3 object while one does would break that image.
         const shared = await dbWrite
           .selectFrom('Image')
@@ -45,7 +54,6 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
           await getStorage()
             .deleteObject({ backend: 'b2Image', key: image.url })
             .catch((err) => console.error('[image-deletion] S3 delete failed', id, err));
-          await purgeResizeCache(image.url);
         }
       }
 
@@ -64,6 +72,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
 
   void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
   await invalidateThumbnails(deleted, parentIds);
+  await bustProfilePictures({ userIds: avatarUserIds });
 
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];
@@ -78,11 +87,21 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   }
 }
 
-async function purgeResizeCache(url: string): Promise<void> {
-  const base = env.IMAGE_CACHER_URL;
-  if (!base) return;
-  await fetch(`${base}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(2000),
-  }).catch(() => undefined);
+async function queueCdnAccessForDelete({
+  id,
+  url,
+  userId,
+  csamReview,
+}: {
+  id: number;
+  url: string;
+  userId: number;
+  csamReview: boolean;
+}): Promise<void> {
+  const payload = JSON.stringify({ url, userId, csamReview, moderatorDelete: true });
+  await sql`
+    SELECT queue_cdn_access_sync(${id}::int, 'Image', ${payload}::jsonb)
+  `
+    .execute(dbWrite)
+    .catch((err) => console.error('[image-deletion] CDN takedown not queued', id, err));
 }

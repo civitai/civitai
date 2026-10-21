@@ -29,12 +29,10 @@ export function mergePostPages<T extends PostCard>(pages: (T[] | undefined)[]) {
       }
       const card = posts[at];
       const images = mergePostImages(card.images, post.images);
-      // Each page counts only the images it ranked, and an image ranks on one page, so the
-      // counts add up; images both cards already carried are counted once.
-      const repeated = card.images.length + post.images.length - images.length;
+      // Every page's card counts the whole post, so the count is the largest one, not their sum.
       const imageCount =
         card.imageCount !== undefined
-          ? card.imageCount + (post.imageCount ?? post.images.length) - repeated
+          ? Math.max(card.imageCount, post.imageCount ?? post.images.length)
           : undefined;
       if (images.length === card.images.length && imageCount === card.imageCount) continue;
       posts[at] = { ...card, images, ...(imageCount !== undefined && { imageCount }) };

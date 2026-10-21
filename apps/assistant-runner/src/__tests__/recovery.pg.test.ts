@@ -8,6 +8,7 @@ import type { TurnPart } from '@civitai/components-chat/core';
 import { applyRunEvent } from '@civitai/components-chat/runner-protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { signGrant, testKeys } from '../test-support/keys';
 import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
 import { readEvents } from '../test-support/sse';
 
@@ -17,6 +18,8 @@ if (process.env.CI && !TEST_DATABASE_URL)
 
 const appDir = fileURLToPath(new URL('../..', import.meta.url));
 const fixture = fileURLToPath(new URL('../test-support/fixture-server.ts', import.meta.url));
+// TEST-ONLY keys: the runners verify the grants this file signs with them.
+const keys = testKeys();
 
 interface Child {
   process: ChildProcess;
@@ -39,6 +42,7 @@ function startRunner(
         DATABASE_URL: databaseUrl,
         RUNNER_EXECUTOR_ID: executorId,
         FIXTURE_DIR: dir,
+        FIXTURE_PUBLIC_KEY: keys.publicPem,
         NODE_ENV: 'test',
         ...env,
       },
@@ -98,6 +102,11 @@ describePg('crash recovery', () => {
           ? readFileSync(join(endDir, 'calls.log'), 'utf8').trim().split('\n')
           : [];
       const headers = { authorization: 'Bearer user:u-end', 'content-type': 'application/json' };
+      const grant = await signGrant(keys, {
+        userId: 'u-end',
+        conversationId: 'c-end',
+        idempotencyKey: 'end-1',
+      });
       const first = await startRunner(db.url, 'executor-end', endDir, {
         FIXTURE_SCRIPT: 'short',
         FIXTURE_HOLD_AFTER_END: '1',
@@ -106,7 +115,7 @@ describePg('crash recovery', () => {
       children2.push(first);
       const start = await fetch(`http://127.0.0.1:${first.port}/runs`, {
         method: 'POST',
-        headers,
+        headers: { ...headers, 'x-run-grant': grant },
         body: JSON.stringify({
           v: 1,
           idempotencyKey: 'end-1',
@@ -189,6 +198,15 @@ describePg('crash recovery', () => {
     started: (child: Child) => void
   ): Promise<{ first: Child; second: Child }> {
     const headers = { authorization: 'Bearer user:u-crash', 'content-type': 'application/json' };
+    const grant = await signGrant(keys, {
+      userId: 'u-crash',
+      conversationId: 'c-crash',
+      idempotencyKey: 'crash-1',
+    });
+    const grantLookups = () =>
+      existsSync(join(dir, 'grants.log'))
+        ? readFileSync(join(dir, 'grants.log'), 'utf8').trim().split('\n')
+        : [];
     const calls = () =>
       existsSync(join(dir, 'calls.log'))
         ? readFileSync(join(dir, 'calls.log'), 'utf8').trim().split('\n')
@@ -199,7 +217,7 @@ describePg('crash recovery', () => {
     started(first);
     const start = await fetch(`http://127.0.0.1:${first.port}/runs`, {
       method: 'POST',
-      headers,
+      headers: { ...headers, 'x-run-grant': grant },
       body: JSON.stringify({
         v: 1,
         idempotencyKey: 'crash-1',
@@ -256,6 +274,12 @@ describePg('crash recovery', () => {
       state: 'error',
     });
     expect(parts.at(-1)).toEqual({ kind: 'text', text: 'All done.' });
+
+    // The recovered run still had its grant to mint with: it lives in the runner's table, not in
+    // the process that died. Every model request in both processes found it.
+    const lookups = grantLookups();
+    expect(new Set(lookups.map((line) => line.split(' ')[1])).size).toBe(2);
+    expect(lookups.every((line) => line.startsWith('present '))).toBe(true);
 
     const exited = new Promise((resolve) => second.process.once('exit', resolve));
     second.process.kill('SIGTERM');

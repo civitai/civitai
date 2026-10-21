@@ -68,7 +68,7 @@
   }
 </script>
 
-<section class="min-w-0 rounded-xl border border-dark-4 bg-dark-6 p-5">
+<section class="flex min-h-0 min-w-0 flex-col overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
     <h2 class="text-sm font-semibold text-white">
       {promptKeyName(promptKey)}
@@ -115,12 +115,17 @@
 
   <Textarea
     aria-label="{promptKeyName(promptKey)} text"
-    class="mt-3 min-h-96 font-mono text-xs"
+    class="mt-3 min-h-96 flex-1 field-sizing-fixed font-mono text-xs"
     bind:value={() => text, (v) => changes.set(promptKey, v)}
   />
 
   {#if drafted && active}
-    <Button size="xs" variant="ghost" class="mt-2" onclick={() => (showDiff = !showDiff)}>
+    <Button
+      size="xs"
+      variant="ghost"
+      class="mt-2 self-start"
+      onclick={() => (showDiff = !showDiff)}
+    >
       {showDiff ? 'Hide differences' : 'Show differences'}
     </Button>
     {#if showDiff}

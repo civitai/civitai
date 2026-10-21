@@ -5,13 +5,17 @@ closes or loses its network. The page becomes a viewer: `<civitai-chat runner="r
 (`RemoteAgent` in `@civitai/components-chat`) starts a run, follows its events, reattaches to it from
 any tab or device, and stops it.
 
-**Status:** the runner core. The model, the tools, sign-in and the conversation store sit behind
-interfaces with fakes for tests; until a real authenticator is configured the service refuses every
-run-API request (401). See [Not built yet](#not-built-yet).
+**Status:** sign-in (civitai viewer tokens), run grants, the orchestration model, the
+orchestration-backed conversation store, and App Assistant's tools and gate (the sandbox MCP tools,
+`create_app`, `set_checklist`, `report_ready`, read-only subagents) are real. App Assistant's page uses
+it behind `appAssistantRemoteRunner` (dark until its Flipt flag turns it on). Without civitai's public
+key configured the service refuses every run-API request (401); with it but without `SANDBOX_URL` it
+refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
+See [Not built yet](#not-built-yet).
 
 ## How it works
 
-- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.21.0`, entry
+- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.22.1`, entry
   `@civitai/components-chat/runner-protocol`, protocol version `v: 1`:
 
   | Call                             | Answer                                                                                                                                                        |
@@ -23,7 +27,109 @@ run-API request (401). See [Not built yet](#not-built-yet).
   | `POST /runs/stop`                | `202`; stops the run a start with that key started, or makes a later start with it end at once                                                                |
   | `POST /conversations/<id>/patch` | `204`; title or model written into the head. `404` for a chat the viewer does not have                                                                        |
 
-  Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched).
+  Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched), always at the root.
+
+- **Where it is served.** The run API lives under `RUNNER_BASE_PATH`, e.g. `/api/assistant-runner`,
+  so the page reaches it on its own origin (its `remoteRunner.url`);
+  routing that path to the runner is the deployment's job. Empty serves it at the root.
+- **Sign-in.** Every run-API request carries a civitai **viewer token** in `Authorization: Bearer`:
+  an ES256 JWT civitai signs for about 5 minutes (`GET /api/apps/assistant/runner-viewer-token`, a
+  full-scope session). The runner verifies it with civitai's public key (signature, `iss`, `aud`,
+  `typ`, `exp`, 30 s of clock skew) and reads nothing else: no cookie, no query string. Without the
+  key every request is refused (401).
+- **Run grants.** A start (`POST /runs`) also carries a **run grant** in `X-Run-Grant`: an ES256 JWT
+  from `GET /api/apps/assistant/run-grant?conversationId=&idempotencyKey=` (a full-scope session and
+  App Assistant consent), naming the viewer, the conversation and the start's idempotency key, for
+  about 2 h 10 min (`ASSISTANT_RUNNER_GRANT_TTL_SECONDS`). The runner checks the conversation and key
+  when it starts the run (and the conversation at a patch); the tokens the grant mints are the
+  user's, user-wide, as the browser's are. A start whose grant is missing, expired, of
+  another kind, or for another viewer, conversation or key is refused (403 `refused`). The page sets
+  it per start from its `remoteRunner.fetch`, which sees the start's body. A
+  `POST /conversations/<id>/patch` may carry a grant for that conversation (any key); without one it
+  is written with a live run's grant, and a chat with neither is refused (403 `refused`).
+- **Tokens, per request.** The runner keeps each run's grant in its own table
+  (`assistant_runner.run_grants`, keyed by run id), never in a DBOS workflow input, step output or
+  the journal. Each model or store request trades the grant, with the runner's own secret, at
+  civitai's internal mint endpoint for a 5-minute App Assistant token of the purpose it needs
+  (`chat` for the model and the store, `sandbox` for the sandbox service and its MCP server), inside
+  that request's own fetch, and uses one token for a minute at most (and never in its last minute);
+  a Stop stops waiting for a mint at once. On every mint civitai runs the same gates as the
+  browser's token route (ban, onboarding, mute, email verification, the App Assistant flag), plus the runner's own
+  flag `appAssistantRemoteRunner` (so turning it off ends runs already under way at their next
+  model, store or sandbox request, within about a minute; a command already running in the sandbox
+  is not stopped by it), on the
+  user as its database has them now, then the consent check, so any of them going off ends a reply at
+  its next request with a refusal that is never retried. A grant is deleted on every end the runner
+  writes to the head, and when its workflow throws; an end it could not save after retries is kept
+  with the grant and written by a repair pass every 30 s while the grant is live. The sweep deletes
+  expired grants, and logs (by run id) any end that never got saved. If civitai cannot judge the
+  gates just now (its session hub or Flipt is down), the mint answers `unavailable`, which is
+  retried, never a refusal.
+- **App Assistant's tools** (`src/app-assistant/`, with `SANDBOX_URL`):
+  - **The sandbox.** As a reply starts, the runner looks up the app the page says is open
+    (`page: { app }`, an app key, nothing else) among the user's own sandboxes, with the user's
+    `sandbox` token, and wakes it when it is paused or starting (as the page does before a message:
+    `openApp`, which pauses another app only when the service runs one at a time), waiting up to 3
+    minutes for it to run. A key the user has no sandbox for opens nothing. Its MCP tools are offered as
+    `sandbox__<tool>`, over Streamable HTTP to the sandbox's MCP address, which must be on the sandbox
+    service's own origin (else the token is never sent and no tools are offered); each request carries a
+    freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
+    call may go 610 s without progress: the chat's own MCP connection and added-server tool adapter
+    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.22.1), so a lost
+    reply stream is answered at once, as in the browser.
+  - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
+    (the connection cannot be opened, or the MCP address answers with an error status), the runner
+    looks at the user's apps once and never makes the call again (it may have run before the refusal
+    came back), never wakes the app, and so never pauses the one the user is on:
+    - app paused, another app running (the user opened it): the reply ends as interrupted, "Paused:
+      you opened another app", and the page offers Continue (which starts the app again);
+    - app paused, nothing else running (30 idle minutes, the 8-hour cap): the same, saying it slept;
+    - app still running (a proxy's 502, a pod restart): the assistant is told the call may have finished;
+    - app deleted: the call fails, telling the user to open it again.
+    A reply ended this way keeps its saved steps, every call in them answered. Waking at the start makes
+    no new app: if the service's open made a new, empty one (deleted meanwhile), the reply ends with an
+    error. A call whose reply was lost (no progress for 610 s) is not made again either.
+  - **The tunnel tools** (`tunnel_*`) are not offered: they serve only the page's live preview.
+  - **Stop and the end of a reply close the MCP transport**, which aborts every request in flight:
+    the only way to reach a `sandbox__run_command` still running in the sandbox.
+  - **Save before run.** Every call, sandbox ones included, waits until the head save that records its
+    start has landed (`runAfterSaved`), so a recovered run sends a finished call's result and closes a
+    started one as interrupted, never running either again.
+  - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 150
+    parent calls per reply (a subagent's are not counted), then the reply ends with Continue;
+    `report_ready` refused until, since the last file change or other command, the parent's
+    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done;
+    `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
+    app: `create_app` opening another app starts both over, as the page does, and each checklist the
+    runner shows records its app, so a later reply carries over only the open app's. A reply carried on
+    from saved steps starts its count and checks from those steps; a new reply keeps the app's checklist
+    but checks the app again (the page, unlike the runner, also keeps checks across the replies of one
+    page load). Every finished call is journaled as `tool-reported` with what the page's own views read
+    (a command, a result's first 200 characters, a page tool's result), never a file's contents.
+  - **The prompt is App Assistant's**, the runner's variant from the same builders
+    (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
+    only tools the runner has (the setup guide read with `sandbox__run_command`, no tunnel, no guide tool
+    for subagents), built from the sandbox it found, in place of the page's `hostInstructions`.
+  - **Page-only:** the live preview (`start_preview`, `stop_preview`) needs the page's iframe, which may
+    be closed. The runner does not offer them, and the instructions tell the assistant the preview is not
+    available in this mode. The `page` state is not used to relay them.
+  - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
+    run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
+    page's word is not taken). Their progress is journaled as `subagent-progress`.
+  - Not offered: the orchestration and site MCP tools (`fetch_page`, `get_guide`, …) the browser's chat
+    adds itself.
+- **The model** is orchestration's OpenAI-compatible `POST /v1/chat/completions`
+  (`ORCHESTRATION_URL`), asked as the browser's App Assistant asks it: the chat package's provider
+  name and options, the viewer's own `chat` token (so orchestration bills the viewer under the App
+  Assistant's client and its daily Buzz cap), and `X-Civitai-Tier: free` while the viewer's free
+  allowance for the model lasts, as their `tier` setting allows. `RUN_MAX_STEPS` and
+  `RUN_CONTEXT_BUDGET_TOKENS` match App Assistant's page (1000 steps, 64 000 tokens).
+- **The conversation store** is where the browser keeps it: orchestration `echo` workflows tagged
+  `cvt:head`, one per turn, the conversation in the workflow's metadata, read and written exactly as
+  the chat's `ThreadStore` does (the same tags, `externalId` and v2/v3 format), as the viewer. So a
+  chat started on the runner opens in the browser, and one started in the browser carries on here.
+  A write holds a Postgres advisory lock for its conversation, so two replicas never lose each
+  other's change.
 
 - **One DBOS workflow per reply** ([DBOS Transact](https://docs.dbos.dev), Postgres only). The
   workflow id is the run id, derived from the viewer and the start's idempotency key, so a retried
@@ -68,10 +174,29 @@ run-API request (401). See [Not built yet](#not-built-yet).
   starts and lands, and how the reply ended (v2) before `run-ended`, in the format the chat package
   reads (`turnFrom`, `conversationMetadataOf`).
 - **Credentials.** DBOS persists every workflow input, step output and stream value. The runner
-  hands its workflows and providers a user id only: no request header, token or cookie goes into a
-  workflow argument, a step output, the journal or the head, and a test scans the DBOS tables for
-  a credential sent with the requests. A provider that needs a token must mint it inside its own
-  fetch, per request. Request headers are never logged.
+  hands its workflows and providers a user id and a run id only: no request header, grant, token or
+  cookie goes into a workflow argument, a step output, the journal or the head, and tests scan the
+  DBOS tables for the credentials sent with a start and for a token minted during the run. Request
+  headers are never logged.
+
+## Threat model
+
+- **What each credential can do.** A viewer token reads and stops the viewer's own runs, and with
+  a grant starts one, for about 5 minutes. A run grant mints user-wide App Assistant tokens for one
+  user, and only together with the runner's secret, until it expires; it starts nothing by itself. A minted
+  token is the same 5-minute App Assistant token the browser gets today.
+- **The runner's database alone mints nothing**: it holds grants but not the runner's secret.
+- **The runner's secret alone mints nothing**: civitai mints only for a grant it signed.
+- **Database and secret together** mint, for live grants only, until each expires (2 h 10 min at
+  most), and only while the user passes App Assistant's gates and consent.
+- **The runner cannot forge** a viewer token or a grant: it holds civitai's public key only. The two
+  kinds have distinct `aud` and `typ`, so neither passes as the other.
+- **A cookie never reaches the runner as a credential**: it reads the `Authorization` and
+  `X-Run-Grant` headers only, and logs neither.
+- **Revocation.** Revoking App Assistant's consent, a ban, a mute, a lost email verification or the
+  feature flag going off stops every mint at once; a run in flight ends at its next model or store
+  request.
+
 
 ## Environment
 
@@ -86,6 +211,14 @@ See [`.env.example`](./.env.example).
 | `RUN_WORKER_CONCURRENCY`    | `50`                      | Runs one process works on at once.                                                                                                       |
 | `RUN_RETENTION_DAYS`        | `7`                       | Ended runs are deleted after this many days.                                                                                             |
 | `RUN_SHUTDOWN_GRACE_MS`     | `10000`                   | On SIGTERM, how long runs in flight get to finish.                                                                                       |
+| `RUNNER_BASE_PATH`          | (empty)                   | The path the run API is served under, e.g. `/api/assistant-runner`.                                                                      |
+| `RUNNER_TOKEN_PUBLIC_KEY`   | (unset)                   | civitai's ES256 public key (SPKI PEM). Unset: every run-API request is refused. Set: the three below are required.                       |
+| `RUNNER_SECRET`             |                           | The runner's own secret for civitai's mint endpoint (civitai's `ASSISTANT_RUNNER_SECRET`).                                               |
+| `CIVITAI_URL`               |                           | civitai's base URL, where grants are traded for tokens.                                                                                  |
+| `ORCHESTRATION_URL`         |                           | Orchestration's base URL: the model and the conversation store.                                                                          |
+| `SANDBOX_URL`               | (unset)                   | The hosted sandbox service (civitai's `APP_ASSISTANT_SANDBOX_URL`): App Assistant's tools. Unset (with civitai configured): starts are refused. |
+| `RUN_MAX_STEPS`             | `1000`                    | The most model requests one reply takes.                                                                                                 |
+| `RUN_CONTEXT_BUDGET_TOKENS` | `64000`                   | About how many tokens of earlier conversation a reply sends.                                                                             |
 | `PORT`, `HOST`, `LOG_LEVEL` | `3000`, `0.0.0.0`, `info` |                                                                                                                                          |
 
 ## Run it locally
@@ -99,7 +232,7 @@ pnpm --filter @civitai/assistant-runner-app dev
 curl localhost:3000/readyz
 ```
 
-Every run-API call answers 401 until an authenticator is configured.
+Every run-API call answers 401 until `RUNNER_TOKEN_PUBLIC_KEY` (and the rest of that group) is set.
 
 ```bash
 pnpm --filter @civitai/assistant-runner-app typecheck
@@ -112,16 +245,12 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 ## Not built yet
 
-- The real `Authenticator` (the viewer's civitai sign-in) and CORS or same-origin routing for the page.
-- The real `ModelProvider`: orchestration's chat completions, billed to the viewer, with a short
-  token minted per request inside the provider's fetch.
-- The real `ToolProvider`: the sandbox MCP tools, with Stop closing the transport.
-- The App Assistant gate on the server (`set_checklist`, `report_ready`, `create_app`, the tool-call
-  cap) and its `tool-reported` events.
-- The real `ConversationStore` (the orchestrator-backed head the page reads), with concurrent writers
-  handled by the store.
+- The route from the page's origin (`/api/assistant-runner`) to the runner: the deployment's job.
+- The orchestration and site MCP tools the browser's chat adds (`fetch_page`, `get_guide`, …).
+- The live preview on the runner.
 
 Known gaps:
+
 
 - A model step cut by a crash is asked for again (and paid again) until orchestration can reattach
   to a step in flight.
@@ -130,3 +259,5 @@ Known gaps:
 - Journal reads poll Postgres; their load per viewer has not been measured.
 - A run left by a replica that was removed (its executor id never comes back) holds its user's
   slot until DBOS's workflow timeout cancels it, or until the user stops it.
+- A run ends `ran_out` two minutes before its grant expires, if that comes before its wall clock (a
+  run that waited long in the queue, or was recovered late), so it can still save its end.

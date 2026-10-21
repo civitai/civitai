@@ -91,6 +91,8 @@ vi.mock('../storage', () => ({
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex }));
 vi.mock('../cache', () => ({ bustCachedObject }));
+// Its own lookup reads `User`, which the Image-only db fake above refuses; profile-picture-bust covers it.
+vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn() }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
   invalidateThumbnails,

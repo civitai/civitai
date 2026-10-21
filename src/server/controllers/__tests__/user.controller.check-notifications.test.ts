@@ -3,8 +3,12 @@ import type * as NotificationService from '~/server/services/notification.servic
 import type * as PlacementService from '~/server/services/placement.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MysteryBoxInventoryService from '~/server/services/mystery-box-inventory.service';
+import type * as PrizeService from '~/server/services/prize.service';
 
-const { countBoxes } = vi.hoisted(() => ({ countBoxes: vi.fn() }));
+const { countBoxes, countPrizes } = vi.hoisted(() => ({
+  countBoxes: vi.fn(),
+  countPrizes: vi.fn(),
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -22,28 +26,35 @@ vi.mock('~/server/services/mystery-box-inventory.service', async (importOriginal
   ...(await importOriginal<typeof MysteryBoxInventoryService>()),
   countHeldMysteryBoxes: countBoxes,
 }));
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  countUnclaimedPrizes: countPrizes,
+}));
 
 const { checkUserNotificationsHandler } = await import('~/server/controllers/user.controller');
 
 const check = ({
   mysteryBox = true,
+  userMenuV2 = false,
   isModerator = false,
   country,
 }: Partial<{
   mysteryBox: boolean;
+  userMenuV2: boolean;
   isModerator: boolean;
   country: string;
 }> = {}) =>
   checkUserNotificationsHandler({
     ctx: {
       user: { id: 7, isModerator },
-      features: { mysteryBox },
+      features: { mysteryBox, userMenuV2 },
       req: { headers: country ? { 'cf-ipcountry': country } : {} },
     } as never,
   });
 
 beforeEach(() => {
   countBoxes.mockReset();
+  countPrizes.mockReset();
 });
 
 describe('checkNotifications', () => {
@@ -78,5 +89,36 @@ describe('checkNotifications', () => {
     expect(counts.unopenedBoxes).toBe(0);
     expect(counts.comment).toBe(2);
     expect(counts.pendingPlacements).toBe(1);
+  });
+
+  it('carries the unclaimed prize count for this viewer when the new user menu is on', async () => {
+    countBoxes.mockResolvedValue(0);
+    countPrizes.mockResolvedValue(2);
+
+    const counts = await check({ userMenuV2: true });
+
+    expect(counts.unclaimedPrizes).toBe(2);
+    expect(countPrizes).toHaveBeenCalledWith(7);
+  });
+
+  it('does not count prizes while the new user menu is off', async () => {
+    countBoxes.mockResolvedValue(0);
+    countPrizes.mockResolvedValue(2);
+
+    const counts = await check({ userMenuV2: false });
+
+    expect(counts.unclaimedPrizes).toBe(0);
+    expect(countPrizes).not.toHaveBeenCalled();
+  });
+
+  it('answers 0 prizes, and every other count, when the prize count fails', async () => {
+    countBoxes.mockResolvedValue(1);
+    countPrizes.mockRejectedValue(new Error('replica down'));
+
+    const counts = await check({ userMenuV2: true });
+
+    expect(counts.unclaimedPrizes).toBe(0);
+    expect(counts.unopenedBoxes).toBe(1);
+    expect(counts.comment).toBe(2);
   });
 });

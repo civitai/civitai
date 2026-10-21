@@ -1,0 +1,57 @@
+import { useDebouncedCallback } from '@mantine/hooks';
+import { useState } from 'react';
+import {
+  useCurrentUserSettingsState,
+  useMutateUserSettings,
+} from '~/components/UserSettings/hooks';
+import {
+  DEFAULT_USER_MENU_PINS,
+  USER_MENU_ITEM_IDS,
+  type UserMenuItemId,
+} from '~/shared/constants/user-menu.constants';
+import { showErrorNotification } from '~/utils/notifications';
+import { movePin, togglePin } from './resolveUserMenu';
+
+export const PIN_SAVE_DELAY_MS = 1000;
+
+const KNOWN_IDS: ReadonlySet<string> = new Set(USER_MENU_ITEM_IDS);
+
+/**
+ * Edits show at once and save after `PIN_SAVE_DELAY_MS` of quiet; `flush` saves now (menu close).
+ * Edits are refused until settings resolve: an earlier one would start from the defaults and
+ * overwrite the viewer's real pins.
+ */
+export function useUserMenuPins() {
+  const { settings, isResolved } = useCurrentUserSettingsState();
+  const [local, setLocal] = useState<UserMenuItemId[] | null>(null);
+  const pins = local ?? settings?.userMenu?.pinned ?? DEFAULT_USER_MENU_PINS;
+
+  // A failed save falls back to the saved pins rather than showing ones that never landed.
+  const { mutate } = useMutateUserSettings({
+    onError: (error) => {
+      setLocal(null);
+      showErrorNotification({ title: 'Could not save your pins', error: new Error(error.message) });
+    },
+  });
+  const save = useDebouncedCallback(
+    // A saved id that has since left `USER_MENU_ITEM_IDS` would fail the write schema for good.
+    (pinned: UserMenuItemId[]) =>
+      mutate({ userMenu: { pinned: pinned.filter((id) => KNOWN_IDS.has(id)) } }),
+    { delay: PIN_SAVE_DELAY_MS, flushOnUnmount: true }
+  );
+
+  const update = (next: UserMenuItemId[]) => {
+    if (!isResolved) return;
+    setLocal(next);
+    save(next);
+  };
+
+  return {
+    pins,
+    canEdit: isResolved,
+    toggle: (id: UserMenuItemId) => update(togglePin(pins, id)),
+    move: (id: UserMenuItemId, overId: UserMenuItemId) => update(movePin(pins, id, overId)),
+    // Read at call time: the debouncer swaps its `flush` on every call.
+    flush: () => save.flush(),
+  };
+}

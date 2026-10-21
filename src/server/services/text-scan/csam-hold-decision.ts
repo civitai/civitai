@@ -3,17 +3,23 @@ import type { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
+import type { ArticleMetadata } from '~/server/schema/article.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { unpublishArticleById } from '~/server/services/article.service';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import {
+  CSAM_HOLD_POST_UNPUBLISH_REASON,
+  MATURE_UNDERAGE_REASON,
+} from '~/server/services/cdn-access.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishPostAsModerator } from '~/server/services/post.service';
 import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { StrikeReason } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, StrikeReason } from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -45,6 +51,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'UserProfile',
   'Post',
   'Model',
+  'Article',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
   (REMOVABLE_ENTITY_TYPES as readonly string[]).includes(type);
@@ -52,8 +59,9 @@ const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[numb
 // Shown to the author in the strike notice.
 const STRIKE_DESCRIPTION = 'Content you posted violated our Terms of Service.';
 const STRIKE_POINTS = 1;
-const POST_UNPUBLISH_REASON = 'csam-text-hold';
-const MODEL_UNPUBLISH_REASON = 'mature-underage';
+const POST_UNPUBLISH_REASON = CSAM_HOLD_POST_UNPUBLISH_REASON;
+const MODEL_UNPUBLISH_REASON = MATURE_UNDERAGE_REASON;
+const ARTICLE_UNPUBLISH_REASON = 'csam-text-hold';
 
 /** The moderator-app grants a decision needs beyond `csam.report.file`: the ones the ban and strike actions carry elsewhere. */
 export const CSAM_HOLD_DECISION_GRANTS: Partial<
@@ -130,6 +138,46 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       });
       await tracker.modelEvent({ type: 'Unpublish', modelId: entityId, nsfw: model.nsfw });
       await dataForModelsCache.refresh(entityId);
+      return;
+    }
+    case 'Article': {
+      // The advisory lock is the one an ingestion recompute holds, so this status check and write
+      // cannot interleave with its publish. A Published article is never flipped by a recompute.
+      const published = await dbWrite.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${entityId})`;
+        const article = await tx.article.findUnique({
+          where: { id: entityId },
+          select: { status: true, metadata: true },
+        });
+        if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
+        const metadata = (article.metadata as ArticleMetadata | null) || {};
+        if (article.status === ArticleStatus.Published) return { metadata };
+        // unpublishArticleById refuses anything not Published. The violation status is what stops
+        // ingestion, the scheduler or the owner from publishing it later; it is not in search now.
+        await tx.article.updateMany({
+          where: { id: entityId, status: article.status },
+          data: {
+            status: ArticleStatus.UnpublishedViolation,
+            metadata: {
+              ...metadata,
+              unpublishedReason: ARTICLE_UNPUBLISH_REASON,
+              unpublishedAt: new Date().toISOString(),
+              unpublishedBy: actor.id,
+            },
+          },
+        });
+        return null;
+      });
+      if (!published) return;
+      const { metadata } = published;
+      await unpublishArticleById({
+        id: entityId,
+        reason: ARTICLE_UNPUBLISH_REASON,
+        metadata,
+        userId: actor.id,
+        isModerator: true,
+      });
+      await tracker.article({ type: 'Unpublish', articleId: entityId, nsfw: false });
       return;
     }
   }

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as ArticleService from '~/server/services/article.service';
 import type * as AutoMute from '~/server/services/scam-auto-mute.service';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as ReportService from '~/server/services/report.service';
@@ -30,6 +31,11 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
 // Hand-listed: the real action reaches model.service, whose graph builds clients at load.
 vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
   applyModelPoiMinor: vi.fn(async () => ({ notified: false })),
+}));
+// Hand-listed: the real service recomputes ingestion against the database.
+vi.mock('~/server/services/article.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ArticleService>()),
+  recomputeArticleIngestion: vi.fn(),
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
@@ -122,6 +128,7 @@ const WIRED = [
   'ResourceReview',
   'Model',
   'Post',
+  'Article',
 ] as const;
 
 describe('csam verdicts through the registered adapters', () => {

@@ -47,6 +47,7 @@
   import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
+  import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -156,7 +157,9 @@
                         {/snippet}
                       </CollapsibleTrigger>
                       <CollapsibleContent>
-                        <SidebarMenuSub>
+                        <!-- mr-0 pr-0: the sub-list's default right inset would leave its items narrower than the
+                             top-level ones; only the left indent and rule stay as the hierarchy cue. -->
+                        <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
                             {@const cnt = navCount(childLink, countFor)}
                             <SidebarMenuSubItem>
@@ -233,6 +236,7 @@
           </a>
         {/if}
       </div>
+      <p class="m-0 px-2 text-[11px] tabular-nums text-dark-2">v{__APP_VERSION__}</p>
     </SidebarFooter>
   </Sidebar>
 
@@ -265,6 +269,8 @@
 <!-- Success confirmations: a write that changes nothing on screen (a publish toggle, a saved banner)
      otherwise gives the operator no signal that it landed. -->
 <Toaster position="bottom-right" />
+
+<QuickSwitcher nav={data.nav} civitaiUrl={data.civitaiUrl} />
 
 {#if data.canSeeUserCard}<UserCardPopover />{/if}
 

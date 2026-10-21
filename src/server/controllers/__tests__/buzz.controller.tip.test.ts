@@ -66,6 +66,7 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 }));
 
 import { createBuzzTipTransactionHandler } from '../buzz.controller';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockUserFindMany = dbMock.dbWrite.user.findMany;
 const mockUserFindUnique = dbMock.dbWrite.user.findUnique;
@@ -320,3 +321,22 @@ describe.each(DUPLICATE_SHAPES)(
     });
   }
 );
+
+describe('createBuzzTipTransactionHandler — block gate', () => {
+  // A tip is a write: a cache "not blocked" is confirmed on the primary, so a block that
+  // landed a moment ago is not let through by a stale cache entry.
+  it('checks the block with confirmOnPrimary and refuses a blocked sender', async () => {
+    installLedger();
+    vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
+
+    await expect(
+      createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() })
+    ).rejects.toThrow('You cannot send Buzz to a user that has blocked you');
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 42,
+      targetUserId: 5,
+      confirmOnPrimary: true,
+    });
+    expect(mockCreateMany).not.toHaveBeenCalled();
+  });
+});

@@ -184,7 +184,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -4029,6 +4029,33 @@ export interface CsamReport {
   type: CsamReportType;
 }
 
+export interface CsamReportAudit {
+  id: number;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Date | null;
+  changedAt: Date;
+  changedBy: string;
+}
+
+export interface CsamReportArchiveObject {
+  id: number;
+  csamReportId: number;
+  kind: string;
+  key: string;
+  etag: string | null;
+  entries: number | null;
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Date;
+}
+
 export interface Link {
   id: number;
   url: string;
@@ -4342,6 +4369,28 @@ export interface UserPurchasedRewards {
   createdAt: Date;
   meta: JsonValue;
   code: string;
+}
+
+export interface ImageCdnAccess {
+  url: string;
+  state: string;
+  deniedAt: Date;
+  retractedAt: Date | null;
+  lastAssertedAt: Date;
+}
+
+export interface ImageCdnModeratorDelete {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: boolean;
+  deletedAt: Date;
+}
+
+export interface ImageCdnAccessClaim {
+  url: string;
+  token: string;
+  claimedUntil: Date;
 }
 
 export interface JobQueue {

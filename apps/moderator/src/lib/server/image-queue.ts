@@ -1,7 +1,8 @@
 import { fail, type Actions } from '@sveltejs/kit';
 import { z } from 'zod';
-import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
+import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import {
+  getCsamQueueByUser,
   getImageReviewQueue,
   getReportedImageQueue,
   getAppealImageQueue,
@@ -18,6 +19,7 @@ import {
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
+import { clearUserCsamFlags } from '$lib/server/csam-flag-clear';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead } from '$lib/server/db';
 import { approvedAppealOf } from '$lib/server/removal-hold';
@@ -40,6 +42,7 @@ const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().min(10).max(200).catch(100),
   level: z.coerce.number().int().min(0).catch(allBrowsingLevelsWithBlockedFlag),
+  userId: int4Id.optional().catch(undefined),
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
@@ -76,7 +79,7 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
 export async function loadImageQueue(view: ImageViewSlug, url: URL) {
-  const { cursor, limit, level } = parseQuery(url, querySchema);
+  const { cursor, limit, level, userId } = parseQuery(url, querySchema);
   const tagIds = parseIds(url.searchParams.get('tags'));
   const excludedTagIds = parseIds(url.searchParams.get('notags'));
 
@@ -146,11 +149,13 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     };
   }
 
+  const csamUserId = view === FLAG_KEPT_THROUGH_BLOCK ? userId : undefined;
   const { items, nextCursor } = await getImageReviewQueue({
     needsReview: view,
     browsingLevel: level,
     tagIds,
     excludedTagIds,
+    userId: csamUserId,
     cursor,
     limit,
   });
@@ -174,10 +179,18 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       }))
     ),
     nextCursor,
+    userId: csamUserId ?? null,
   };
 }
 
 export type ImageQueueData = Awaited<ReturnType<typeof loadImageQueue>>;
+
+/** `/images/csam?by=user`: the CSAM queue as one row per owning user. */
+export async function loadCsamQueueByUser(url: URL) {
+  const { level } = parseQuery(url, querySchema);
+  const { users, truncated } = await getCsamQueueByUser({ browsingLevel: level });
+  return { kind: 'csam-users' as const, level, users, truncated };
+}
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
 /** Which of the given reports is on which image. */
@@ -268,6 +281,30 @@ export const imageQueueActions = {
         imageId,
       });
     return { success: true, imageId };
+  },
+
+  // `dismissFlag` for every one of one user's removed images, from the by-user view of the same queue.
+  dismissUserFlags: async ({ request, locals, params }) => {
+    if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
+    const input = parseForm(
+      z.object({ userId: int4Id, expectedCount: z.coerce.number().int().positive() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await clearUserCsamFlags({ ...input, moderatorId: locals.user.id });
+    if (!result.ok)
+      return fail(409, {
+        error:
+          result.reason === 'held'
+            ? `User #${input.userId}'s flags cannot be cleared in bulk. Review the images one by one.`
+            : `User #${input.userId}'s queue changed since it was shown. Nothing was cleared. Reload.`,
+      });
+    return {
+      success: true,
+      cleared: `Cleared ${result.cleared} flag${result.cleared === 1 ? '' : 's'} for user #${
+        input.userId
+      }.${result.remaining ? ` ${result.remaining} still need a verdict.` : ''}`,
+    };
   },
 
   resolveAppeal: async ({ request, locals }) => {

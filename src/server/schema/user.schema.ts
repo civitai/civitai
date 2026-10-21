@@ -7,6 +7,7 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NAV_KEYS } from '~/shared/constants/nav.constants';
+import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -320,9 +321,23 @@ export const navigationSettingsSchema = z
       ctx.addIssue({ code: 'custom', message: 'A navigation item cannot be hidden twice' });
   });
 
+/**
+ * Bounded and allow-listed for the same reason as
+ * `navigationSettingsSchema`: settings ride every signed-in SSR render. An object, not a bare
+ * array: `splitSettingsPatch` drops a top-level empty array, which would turn "no pins" back into
+ * the defaults.
+ */
+export const userMenuSettingsSchema = z.object({
+  pinned: z
+    .array(z.enum(USER_MENU_ITEM_IDS))
+    .max(USER_MENU_ITEM_IDS.length)
+    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice'),
+});
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
+  userMenu: userMenuSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -451,6 +466,8 @@ export const setUserSettingsInput = z.object({
   // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
   // outright. The modal must send every zone, not a delta.
   navigation: navigationSettingsSchema.optional(),
+  // Whole-object writes, like `navigation`: the menu always sends the full pin order.
+  userMenu: userMenuSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),

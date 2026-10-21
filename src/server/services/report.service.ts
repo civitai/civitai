@@ -40,6 +40,7 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
@@ -612,6 +613,11 @@ export const createReport = async ({
           blockedFor: BlockedReason.CSAM,
         },
       });
+      // Right after the block, not after the transaction: the block above goes through dbWrite, so
+      // it autocommits and stands even if a search-index queue below throws, and a refresh placed
+      // after the transaction would then never run. The refresh reads the primary, which already
+      // has the Blocked row. Never throws.
+      await refreshProfilePicturesForImagesLazy([id]);
       // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
       await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
       // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): see above (CSAM-block path).
