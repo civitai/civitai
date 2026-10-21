@@ -144,6 +144,7 @@ import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { createComfyInput, resourcesToImageMetadataResources } from './handlers/comfy-input';
+import { withImageMetadata } from './step-image-metadata';
 import { sanitizeStepErrors } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -1027,24 +1028,6 @@ async function createImagePreprocessInput(
 // Main Router
 // =============================================================================
 
-/**
- * Step types whose orchestrator input schemas don't accept `imageMetadata`.
- * These run as intermediate (non-generation) steps inside multi-step workflows;
- * injecting imageMetadata into their input pollutes the request payload.
- */
-const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
-  'promptEnhancement',
-  'chatCompletion',
-  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
-  // tag, so injecting imageMetadata would only pollute the request payload.
-  'model3DPreview',
-];
-
-function withImageMetadata(input: object, type: string, imageMetadata: string): object {
-  if (STEP_TYPES_WITHOUT_IMAGE_METADATA.includes(type)) return input;
-  return { ...input, imageMetadata };
-}
-
 /** Context for step-level metadata (imageMetadata, params/resources, source lineage) */
 type StepMetadataCtx = {
   stepMetadata: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>> };
@@ -1779,6 +1762,14 @@ function extractInputImageUrls(data: Record<string, unknown>): string[] | undefi
   }
   const sourceImageUrl = (data.sourceImage as { url?: string } | null | undefined)?.url;
   if (typeof sourceImageUrl === 'string') urls.push(sourceImageUrl);
+  for (const key of ['keyframes', 'styleReferences']) {
+    const entries = data[key];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const url = (entry as { image?: { url?: string } } | null | undefined)?.image?.url;
+      if (typeof url === 'string') urls.push(url);
+    }
+  }
   return urls.length ? urls : undefined;
 }
 

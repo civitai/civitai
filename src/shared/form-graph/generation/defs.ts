@@ -48,6 +48,7 @@ export type AspectRatioOption = {
 export * from '../defs';
 import { cachedFactory } from 'form-graph';
 import { snapToStep, type NumberMeta } from '../defs';
+import { imageObjectSchema, type ImageObjectValue } from '~/shared/generation/values';
 
 /**
  * The field definitions every generation family composes from. Each pairs a LENIENT
@@ -556,14 +557,9 @@ export const imagesDef = cachedFactory(function imagesDef(config: {
 }) {
   const max = config.slots?.length ?? config.max ?? 1;
   const min = config.slots ? config.slots.filter((s) => s.required).length : config.min ?? 1;
-  const imageObject = z.object({
-    url: z.string(),
-    width: z.number().optional(),
-    height: z.number().optional(),
-  });
   return {
     input: z
-      .union([z.url(), imageObject])
+      .union([z.url(), imageObjectSchema])
       .array()
       .optional()
       .transform((arr) =>
@@ -610,6 +606,76 @@ export const imagesDef = cachedFactory(function imagesDef(config: {
     },
   } satisfies FieldDef<ImageEntry[], ImagesMeta>;
 });
+
+export const hasImage = (e: unknown): e is { image: { url: string } } =>
+  typeof e === 'object' && e !== null && !!(e as { image?: { url?: string } }).image?.url;
+
+export type ImageEntryValue<S extends z.ZodRawShape> = { image: ImageObjectValue } & z.infer<
+  z.ZodObject<S>
+>;
+
+export interface ImageEntryListMeta {
+  limit: number;
+}
+
+/**
+ * Entries without an image are dropped on the output side, so a half-filled row never blocks submit.
+ * `correct`, not `coerce`: staged entries can outlive the family whose limit they came from, and
+ * `input` carries the same cap, so it never fires on the server parse.
+ */
+export function imageEntryListDef<S extends z.ZodRawShape, M extends object = object>(opts: {
+  /** The fields beside `image`, as their OUTPUT schema. */
+  fields: S;
+  /** Filled in on input when an entry omits a field. */
+  defaults: z.infer<z.ZodObject<S>>;
+  limit: number;
+  min?: number;
+  noun: { one: string; many: string };
+  refinements?: Array<[check: (entries: ImageEntryValue<S>[]) => boolean, message: string]>;
+  meta?: M;
+}) {
+  type Entry = ImageEntryValue<S>;
+  type EntryInput = { image?: string | ImageObjectValue } & Record<string, unknown>;
+  const { limit, noun } = opts;
+  const entryInputSchema = z
+    .object({ image: z.union([z.string(), imageObjectSchema]).optional() })
+    .extend(z.object(opts.fields).partial().shape) as unknown as z.ZodType<EntryInput, unknown>;
+  const entryOutputSchema = z.object({
+    image: imageObjectSchema,
+    ...opts.fields,
+  }) as unknown as z.ZodType<Entry, unknown>;
+
+  let entries = entryOutputSchema.array().max(limit, `Maximum ${limit} ${noun.many} allowed`);
+  if (opts.min)
+    entries = entries.min(
+      opts.min,
+      `At least ${opts.min === 1 ? `one ${noun.one} is` : `${opts.min} ${noun.many} are`} required`
+    );
+  let output: z.ZodType<Entry[], unknown> = entries;
+  for (const [check, message] of opts.refinements ?? []) output = output.refine(check, message);
+
+  return {
+    input: entryInputSchema
+      .array()
+      .max(limit)
+      .optional()
+      .transform((arr) =>
+        arr?.map((entry) => {
+          const { image, ...rest } = entry;
+          const given = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+          const object = typeof image === 'string' ? { url: image } : image;
+          return { ...opts.defaults, ...given, image: object?.url ? object : undefined };
+        })
+      ),
+    output: z.preprocess((arr) => (Array.isArray(arr) ? arr.filter(hasImage) : arr), output),
+    default: [] as Entry[],
+    correct: (value: Entry[] | undefined) =>
+      (value?.length ?? 0) > limit
+        ? { value: value!.slice(0, limit), reason: 'over_cap' }
+        : undefined,
+    meta: { limit, ...(opts.meta as M) } as ImageEntryListMeta & M,
+  };
+}
 
 const videoMetadataSchema = z.object({
   fps: z.number(),
@@ -698,17 +764,12 @@ export const refusingRangeDef = cachedFactory(function refusingRangeDef(opts: {
 
 // --- controlNets ----------------------------------------------------------------
 
-const controlNetImageObjectSchema = z.object({
-  url: z.string(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-});
 const controlNetModes = ['auto', 'preprocessed'] as const;
 
 const controlNetEntryInputSchema = z.object({
   preprocessor: z.string(),
   mode: z.enum(controlNetModes).optional(),
-  image: z.union([z.string(), controlNetImageObjectSchema]).optional(),
+  image: z.union([z.string(), imageObjectSchema]).optional(),
   weight: z.coerce.number().min(0).max(2).optional(),
   startStep: z.coerce.number().min(0).max(1).optional(),
   endStep: z.coerce.number().min(0).max(1).optional(),
@@ -724,7 +785,7 @@ const controlNetEntryOutputSchema = z.object({
     ]
   ),
   mode: z.enum(controlNetModes),
-  image: controlNetImageObjectSchema,
+  image: imageObjectSchema,
   weight: z.number().min(0).max(2),
   startStep: z.number().min(0).max(1),
   endStep: z.number().min(0).max(1),
