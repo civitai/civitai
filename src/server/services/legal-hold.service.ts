@@ -29,6 +29,7 @@ export type AccountHoldLeg =
   | 'reported-image';
 
 const markerView = Prisma.raw(`"${HOLD_MARKER_VIEW}"`);
+const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 
 /** Every hold except the marker, as SQL over `id`, an int expression. */
 function holdLegsSql(id: Prisma.Sql) {
@@ -179,9 +180,7 @@ BEGIN
   WHERE id = ${id} AND NOT (${Prisma.join(holds, ' OR ')});
   GET DIAGNOSTICS scrubbed = ROW_COUNT;
   IF scrubbed = 0 THEN
-    RAISE EXCEPTION USING ERRCODE = ${Prisma.raw(
-      `'${HOLD_ABORT_CODE}'`
-    )}, MESSAGE = 'account under legal hold';
+    RAISE EXCEPTION USING ERRCODE = ${abortCode}, MESSAGE = 'account under legal hold';
   END IF;
 END
 $guard$`;
