@@ -153,6 +153,13 @@ beforeEach(() => {
   ]);
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
+  dbMock.dbWrite.$executeRaw.mockReset().mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const sql = strings.map((part, i) => (i ? `$${i}` : '') + part).join('');
+    return (await db.pg.query(sql, values)).affectedRows ?? 0;
+  }) as never);
 });
 
 async function sendNewReport() {
@@ -203,6 +210,30 @@ describe('sending a report under the append-only trigger', () => {
     const row = await readRow(id);
     expect(row.archivedAt).not.toBeNull();
     expect(row.details).toEqual({ ...sent.details, archiveSkipped: 'no reported user' });
+  });
+
+  it('counts a failed read into the stored details, keeping what a report filed meanwhile wrote', async () => {
+    const { rows } = await db.pg.query<{ id: number }>(
+      `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
+       VALUES (20, 10, '[{"id":501}]', '{}') RETURNING id`
+    );
+    const id = rows[0].id;
+    getObject.mockImplementation(async () => {
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "details" = "details" || '{"filedMeanwhile":true}' WHERE id = $1`,
+        [id]
+      );
+      throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+    });
+
+    await processCsamReport({
+      ...(await readRow(id)),
+      createdAt: new Date(Date.now() - 3_600_000),
+    });
+
+    const row = await readRow(id);
+    expect(row.reportSentAt).toBeNull();
+    expect(row.details).toEqual({ filedMeanwhile: true, readFailures: { 501: 1 } });
   });
 
   it('refuses a later rewrite of a recorded sha256', async () => {

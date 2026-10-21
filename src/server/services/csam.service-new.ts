@@ -630,13 +630,19 @@ export async function logBlockedCsamReports(reportIds: number[]) {
   }
 }
 
-/** Only while the report is unsent: a sent report is append-only. */
+/**
+ * Only while the report is unsent: a sent report is append-only. Merged into the stored details
+ * rather than written from this run's copy, which a report filed meanwhile may have changed.
+ */
 async function recordReadFailures(report: CsamReportProps, readFailures: Record<string, number>) {
   if (!isProd) return;
-  await dbWrite.csamReport.updateMany({
-    where: { id: report.id, reportSentAt: null },
-    data: { details: { ...report.details, readFailures } },
-  });
+  await dbWrite.$executeRaw`
+    UPDATE "CsamReport"
+    SET details = details || jsonb_build_object('readFailures', ${JSON.stringify(
+      readFailures
+    )}::jsonb)
+    WHERE id = ${report.id} AND "reportSentAt" IS NULL
+  `;
 }
 
 async function reportImages(report: CsamReportProps) {

@@ -114,7 +114,7 @@ describe('NCMEC image upload', () => {
     ]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockReset().mockResolvedValue({});
-    dbMock.dbWrite.csamReport.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.$executeRaw.mockReset().mockResolvedValue(1);
   });
 
   it('uploads the stored original bytes', async () => {
@@ -208,7 +208,10 @@ describe('NCMEC image upload', () => {
         .mock.calls.map(([payload]) => payload as Record<string, unknown>)
         .filter((line) => line.subType === subType);
     const recordedFailures = () =>
-      dbMock.dbWrite.csamReport.updateMany.mock.calls.map(([args]) => args);
+      dbMock.dbWrite.$executeRaw.mock.calls.map(([strings, ...values]) => ({
+        sql: (strings as string[]).join('?'),
+        values,
+      }));
 
     beforeEach(() => {
       vi.mocked(logToAxiom).mockClear();
@@ -240,8 +243,8 @@ describe('NCMEC image upload', () => {
 
       expect(recordedFailures()).toEqual([
         {
-          where: { id: report.id, reportSentAt: null },
-          data: { details: { readFailures: { 502: 4 } } },
+          sql: expect.stringMatching(/WHERE id = \? AND "reportSentAt" IS NULL/),
+          values: [JSON.stringify({ 502: 4 }), report.id],
         },
       ]);
       expect(cancelReport).toHaveBeenCalledTimes(1);
