@@ -197,8 +197,11 @@ describe('marking a report sent', () => {
     expect(releases()).toHaveLength(1);
   });
 
-  it('builds the sent details on the row re-read under the claim, not on the run copy', async () => {
-    primaryRow = { ...report, details: { writtenSinceClaim: true } } as CsamReportProps;
+  it('builds the sent details on the row re-read at the final write, not on the claimed copy', async () => {
+    // Read back as claimed, then with a key written to it since.
+    dbMock.dbWrite.csamReport.findFirst
+      .mockResolvedValueOnce(report)
+      .mockResolvedValue({ ...report, details: { writtenSinceClaim: true } });
 
     await processCsamReport(report);
 
