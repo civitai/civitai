@@ -1,5 +1,6 @@
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
@@ -9,6 +10,9 @@ import type { CsamArchiveObjectKind } from '~/server/services/csam.service-new';
 import { getCsamS3Client } from '~/server/services/csam.service-new';
 
 type S3 = Pick<S3Client, 'send'>;
+
+/** The `CsamReport.details` key that marks a report's evidence copy verified. */
+export const EVIDENCE_VERIFIED_AT = 'evidenceVerifiedAt';
 
 type Candidate = { id: number; type: string };
 
@@ -78,10 +82,15 @@ async function verifyObject(s3: S3, bucket: string, object: ArchiveObjectRow) {
     throw e;
   }
   if (etag !== normalizeEtag(object.etag)) return 'object_missing' as const;
-  if (object.entries == null) return null;
+  if (object.kind === 'base') return null;
+  // Every media object is a zip. One the archive did not build (training data) has no recorded
+  // count, so it must at least read as a complete, non-empty zip.
   const entries = await readZipEntryCount(s3, bucket, object.key);
+  if (object.entries == null) return entries ? null : ('entries_mismatch' as const);
   return entries === object.entries ? null : ('entries_mismatch' as const);
 }
+
+const MARKED = Prisma.sql`COALESCE(jsonb_typeof(details) = 'object' AND jsonb_exists(details, ${EVIDENCE_VERIFIED_AT}), false)`;
 
 /** Why a report's evidence cannot be marked verified, or null when every check passed. */
 export async function checkReportEvidence(
@@ -146,7 +155,7 @@ export async function checkCsamArchiveEvidence({
     WHERE c."reportSentAt" IS NOT NULL
       AND c."archivedAt" IS NOT NULL
       AND c.type <> 'ExternalLink'
-      AND c.details ->> 'evidenceVerifiedAt' IS NULL
+      AND NOT ${MARKED}
       AND EXISTS (SELECT 1 FROM "CsamReportArchiveObject" o WHERE o."csamReportId" = c.id)
     ORDER BY c.id
   `;
@@ -169,21 +178,21 @@ export async function checkCsamArchiveEvidence({
         report,
         objects.filter((o) => o.csamReportId === report.id)
       );
+      if (!failure) {
+        const marked = await dbWrite.$executeRaw`
+          UPDATE "CsamReport"
+          SET details = CASE WHEN jsonb_typeof(details) = 'object' THEN details ELSE '{}'::jsonb END
+            || jsonb_build_object(${EVIDENCE_VERIFIED_AT}::text, ${now.toISOString()}::text)
+          WHERE id = ${report.id} AND NOT ${MARKED}
+        `;
+        if (marked !== 1) failure = 'check_error';
+      }
     } catch (e) {
       failure = 'check_error';
     }
 
-    if (failure) {
-      counts[failure] += 1;
-    } else {
-      await dbWrite.$executeRaw`
-        UPDATE "CsamReport"
-        SET details = CASE WHEN jsonb_typeof(details) = 'object' THEN details ELSE '{}'::jsonb END
-          || jsonb_build_object('evidenceVerifiedAt', ${now.toISOString()}::text)
-        WHERE id = ${report.id} AND details ->> 'evidenceVerifiedAt' IS NULL
-      `;
-      verified += 1;
-    }
+    if (failure) counts[failure] += 1;
+    else verified += 1;
     logToAxiom({
       name: 'csam-report',
       type: 'info',

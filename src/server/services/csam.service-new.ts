@@ -111,6 +111,9 @@ type CsamReportDetails = CsamReportFormOutput & {
 
 type StoredObject = { key: string; etag: string | null };
 
+/** Only image or video bytes count as an archived copy of a named item. */
+const isArchivedMedia = (blob: Blob) => /^(image|video)\//.test(blob.type);
+
 export type CsamArchiveObjectKind = 'base' | 'images' | 'generatedImages' | 'trainingData';
 
 type ArchivedObject = StoredObject & {
@@ -1838,7 +1841,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                   getEdgeUrl(image.url, {
                     type: image.type,
                     width: width < maxWidth ? width : maxWidth,
-                  })
+                  }),
+                  undefined,
+                  { requireOk: true }
                 );
                 if (!blob) return;
                 const arrayBuffer = await blob.arrayBuffer();
@@ -1852,7 +1857,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
                 await boundedArchive.append(buffer, { name: filename });
                 entries += 1;
-                appendedIds.add(image.id);
+                if (isArchivedMedia(blob)) appendedIds.add(image.id);
               });
             })
           );
@@ -1902,7 +1907,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         await Promise.all(
           imageUrls.map((url, index) => {
             return limit(async () => {
-              const blob = await fetchBlob(url);
+              const blob = await fetchBlob(url, undefined, { requireOk: true });
               if (!blob) return;
               try {
                 const arrayBuffer = await blob.arrayBuffer();
@@ -1912,7 +1917,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
                 await boundedArchive.append(buffer, { name: imageName });
                 entries += 1;
-                appendedUrls.add(url);
+                if (isArchivedMedia(blob)) appendedUrls.add(url);
               } catch (e) {
                 //
               }
