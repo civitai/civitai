@@ -5,11 +5,12 @@ import { endedElsewhere, writesFailedEnd } from '../runner';
 
 /**
  * A reply whose workflow threw has its end written by the runner (and its grant forgotten) only
- * when nothing else ends it. A cancel (DBOS 5.3 usually reports a hard cancel as a conflict: the
- * next step or stream write finds the workflow no longer owned by this execution, and the executor
- * adopts the recorded outcome, never ERROR), the deadline sweep, the recovery re-enqueue and the
- * recovery limit are ended elsewhere; and a throw once shutdown's drain is over leaves the run
- * PENDING for the next process to recover.
+ * when nothing else ends it. A hard cancel or the deadline sweep (usually reaching the catch as a
+ * cancel: the reply's `finally` sends to the workflow, and DBOS 5.3's send checks for a cancel
+ * first), a conflict (an ownership hand-off with no cancel, as a recovery re-enqueue, or a cancel
+ * during `begin`; the executor adopts the recorded outcome, never ERROR) and the recovery limit are
+ * ended elsewhere; and a throw once shutdown's drain is over leaves the run PENDING for the next
+ * process to recover.
  */
 describe('which workflow errors another path ends', () => {
   it('a cancel: Stop’s fallback, or DBOS’s timeout, ends the reply', () => {

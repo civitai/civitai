@@ -565,11 +565,13 @@ export class Runner implements RunService {
       return await this.#replyBody(input);
     } catch (error) {
       // The reply's own failure ends the workflow ERROR, which DBOS never recovers, so its end is
-      // written now (before launch finished, or while shutdown still drains, too). A cancel, the
-      // deadline sweep, a recovery re-enqueue (all reported as a cancel or a conflict) and the
-      // recovery limit are ended elsewhere; a throw once the drain is over (the executor gone) leaves
-      // the run PENDING for the next process. Writing an end then would replace the real one: a kept
-      // end waiting for repair, Stop's aborted end, a ran-out end.
+      // written now (before launch finished, or while shutdown still drains, too). Ended elsewhere,
+      // so nothing is written: a hard cancel (or the deadline sweep), which reaches here as a cancel
+      // (the `finally`'s send checks for one first); a conflict, from an ownership hand-off with no
+      // cancel (a recovery re-enqueue) or a cancel during `begin`, before the try; the recovery
+      // limit; and a throw once the drain is over (the executor gone), which leaves the run PENDING
+      // for the next process. Writing an end then would replace the real one: a kept end waiting for
+      // repair, Stop's aborted end, a ran-out end.
       if (writesFailedEnd(error, { drained: this.#drained })) await this.#failed(input);
       throw error;
     }
@@ -1181,14 +1183,17 @@ export class Runner implements RunService {
 
 /**
  * Whether a workflow's error is one whose reply another path ends: a cancel (Stop's fallback, DBOS's
- * timeout), reported as a cancel or, in DBOS 5.3 usually, as a conflict (the next step or stream
- * write finds the workflow no longer owned by this execution: cancelled, swept at its deadline or
- * re-enqueued for recovery, and the executor adopts the recorded outcome, never ERROR); or the
- * recovery limit, which the first reader of the run's stream writes to the head.
+ * deadline sweep), which a hard cancel during the pass usually reaches the catch as (the reply
+ * body's `finally` sends to the workflow, and DBOS 5.3's send checks for a cancel first); a conflict
+ * (the workflow is no longer owned by this execution: an ownership hand-off with no cancel, as a
+ * recovery re-enqueue, or a cancel during `begin`, before that `finally`; the executor adopts the
+ * recorded outcome, never ERROR); or the recovery limit, which the first reader of the run's stream
+ * writes to the head.
  */
 export function endedElsewhere(error: unknown): boolean {
   return (
     error instanceof DBOSErrors.DBOSWorkflowCancelledError ||
+    error instanceof DBOSErrors.DBOSWorkflowConflictError ||
     error instanceof DBOSErrors.DBOSMaxRecoveryAttemptsExceededError
   );
 }

@@ -173,12 +173,16 @@ See [Not built yet](#not-built-yet).
   `RUN_SHUTDOWN_GRACE_MS` to finish (the check for runs cancelled outright keeps running meanwhile),
   and exits; the rest resume when a process with the same executor id starts. A workflow that
   throws its own error (before launch finished, or while the drain lasts) ends ERROR, which DBOS
-  never recovers, so its end is written to the head then. Nothing is written for a cancel, the
-  deadline sweep or a recovery re-enqueue (DBOS 5.3 reports these as a cancel or, usually, a
-  conflict: the workflow is no longer this execution's, and the executor keeps its recorded
-  outcome), for the recovery limit, or for anything thrown once the drain is over (the executor
-  gone; the run stays PENDING for the next process): each has its own path, and an end written
-  then would replace the real one (a kept end waiting for repair, Stop's aborted end, a ran-out end).
+  never recovers, so its end is written to the head then. Nothing is written for a hard cancel or
+  the deadline sweep (reported here as a cancel: the reply's `finally` sends to the workflow, and
+  DBOS 5.3's send checks for a cancel first), for a conflict (an ownership hand-off with no cancel,
+  as a recovery re-enqueue, or a cancel during `begin`; the executor keeps the recorded outcome),
+  for the recovery limit, or for anything thrown once the drain is over (the executor gone; the run
+  stays PENDING for the next process). Each has its own path, and an end written then would
+  replace the real one (a kept end waiting for repair, Stop's aborted end, a ran-out end). One
+  window remains: a hard cancel landing between a reply keeping its end for repair and journaling
+  `run-ended`, while a client reads the stream, lets the end from the head (or Stop's forced end)
+  write over the kept end and drop the grant.
 - **The head.** In remote mode the runner is the only writer of the saved conversation. It saves
   the user's turn as the run starts, the reply's progress as a v3 head (`running`) as each call
   starts and lands, and how the reply ended (v2) before `run-ended`, in the format the chat package
