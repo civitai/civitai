@@ -6,12 +6,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
-  import {
-    HOLD_UNKNOWN_BUTTON_TEXT,
-    LEGAL_HOLD_BUTTON_TEXT,
-    deleteButtonState,
-    type DeleteHold,
-  } from '$lib/legal-hold';
+  import { deleteButtonState, deleteButtonView, type DeleteHold } from '$lib/legal-hold';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -67,6 +62,7 @@
   const deleteButton = $derived(
     deleteButtonState({ canDelete, deleted: !!identity.deletedAt, hold: deleteHold })
   );
+  const deleteView = $derived(deleteButtonView(deleteButton));
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
   // in the main app refuses it, which is what this panel posts through. Without this the panel offered
@@ -201,13 +197,14 @@
         </Button>
       {/if}
 
-      {#if deleteButton === 'enabled'}
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'delete')}>
-          Delete account
-        </Button>
-      {:else if deleteButton !== 'absent'}
-        <Button size="sm" variant="destructive" disabled>
-          {deleteButton === 'held' ? LEGAL_HOLD_BUTTON_TEXT : HOLD_UNKNOWN_BUTTON_TEXT}
+      {#if deleteView}
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={deleteView.disabled}
+          onclick={() => (confirming = 'delete')}
+        >
+          {deleteView.label}
         </Button>
       {/if}
     </div>

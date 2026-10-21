@@ -86,21 +86,35 @@ describe('deleteAccount action — a legal hold', () => {
 });
 
 describe('load — the hold behind the Delete account button', () => {
-  const loadEvent = (section: string, grants: Record<string, boolean>) =>
+  const loadEvent = (
+    section: string,
+    grants: Record<string, boolean>,
+    result: unknown = { identity: { id: TARGET } }
+  ) =>
     ({
       params: { section },
       url: new URL('https://moderator.invalid/retool/user-lookup/admin?q=1'),
       locals: { grants },
-      parent: async () => ({ result: { identity: { id: TARGET } } }),
+      parent: async () => ({ result }),
     } as unknown as Parameters<typeof load>[0]);
 
-  it('reads the hold on Admin for someone with the permission', async () => {
-    deleteAccountHold.mockResolvedValue('held');
-    expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
-      section: 'admin',
-      deleteHold: 'held',
+  it.each(['clear', 'held', 'unknown'] as const)(
+    'passes a %s hold through on Admin for someone with the permission',
+    async (hold) => {
+      deleteAccountHold.mockResolvedValue(hold);
+      expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
+        section: 'admin',
+        deleteHold: hold,
+      });
+      expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
+    }
+  );
+
+  it('asks nothing when no account was found', async () => {
+    expect(await load(loadEvent('admin', { 'user.deleteAccount': true }, null))).toMatchObject({
+      deleteHold: null,
     });
-    expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
+    expect(deleteAccountHold).not.toHaveBeenCalled();
   });
 
   it('does not ask without the permission or off Admin', async () => {

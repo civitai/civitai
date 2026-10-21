@@ -22,3 +22,19 @@ export function deleteButtonState(input: {
   if (input.hold === 'clear') return 'enabled';
   return input.hold === 'held' ? 'held' : 'unknown';
 }
+
+/** What the button shows; `null` renders nothing. Only `enabled` can be pressed. */
+export function deleteButtonView(
+  state: DeleteButtonState
+): { label: string; disabled: boolean } | null {
+  switch (state) {
+    case 'absent':
+      return null;
+    case 'enabled':
+      return { label: 'Delete account', disabled: false };
+    case 'held':
+      return { label: LEGAL_HOLD_BUTTON_TEXT, disabled: true };
+    default:
+      return { label: HOLD_UNKNOWN_BUTTON_TEXT, disabled: true };
+  }
+}

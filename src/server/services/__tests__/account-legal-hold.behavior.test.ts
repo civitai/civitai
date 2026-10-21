@@ -35,6 +35,7 @@ const REPORT_SUBJECT = 9;
 const SECONDARY_BLOCKED_REPORTED_LONG_AGO = 12;
 const OLD_REPORT_SUBJECT = 13; // owns nothing; names SECONDARY_BLOCKED_REPORTED_LONG_AGO
 const NEW_IMAGE_AFTER_OLD_REPORT = 14;
+const SENT_LONG_AGO_NOT_ARCHIVED = 15;
 
 let failQueries = false;
 let unreadable = false;
@@ -49,6 +50,7 @@ beforeAll(async () => {
       id serial PRIMARY KEY,
       "userId" int,
       "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
@@ -95,21 +97,28 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image";
-    -- Image ids are the owner's id times 100, plus one for a second image.
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images) VALUES
-      (${PENDING_REPORT}, NULL, '{}', '[]'),
-      (${RECENTLY_SENT}, now() - interval '30 days', 'null', '[]'),
-      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', '{}', '[]'),
-      (${REPORT_SUBJECT}, now() - interval '30 days', '{"secondaryUserId": ${SECONDARY_ON_REPORT}}', '[]'),
-      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', '{}',
-        '[{"id": ${IMAGE_BLOCKED_REPORTED_LONG_AGO * 100}}]'),
-      (${OLD_REPORT_SUBJECT}, now() - interval '400 days',
+    -- Image ids are the owner's id times 100, plus one for a second image. A sent report's images
+    -- carry the upload's keys beside the id, as the sending job writes them.
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details, images) VALUES
+      (${PENDING_REPORT}, NULL, NULL, '{}', '[]'),
+      (${RECENTLY_SENT}, now() - interval '30 days', now(), 'null', '[]'),
+      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', now(), '{}', '[]'),
+      (${SENT_LONG_AGO_NOT_ARCHIVED}, now() - interval '400 days', NULL, '{}', '[]'),
+      (${REPORT_SUBJECT}, now() - interval '30 days', now(),
+        '{"secondaryUserId": ${SECONDARY_ON_REPORT}}', '[]'),
+      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', now(), '{}',
+        '[{"id": ${
+          IMAGE_BLOCKED_REPORTED_LONG_AGO * 100
+        }, "fileId": "f1", "hash": "h1", "fileAnnotations": {}}]'),
+      (${OLD_REPORT_SUBJECT}, now() - interval '400 days', now(),
         '{"secondaryUserId": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}}',
-        '[{"id": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO * 100}}]'),
-      (${NEW_IMAGE_AFTER_OLD_REPORT}, now() - interval '400 days', '{}',
+        '[{"id": 1, "fileId": "f0"}, {"id": ${
+          SECONDARY_BLOCKED_REPORTED_LONG_AGO * 100
+        }, "fileId": "f2", "hash": "h2"}]'),
+      (${NEW_IMAGE_AFTER_OLD_REPORT}, now() - interval '400 days', now(), '{}',
         '[{"id": ${NEW_IMAGE_AFTER_OLD_REPORT * 100}}]'),
       -- Sent and naming the unreported owner, but listing none of their images.
-      (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', '{}', '[{"id": 1}]');
+      (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', now(), '{}', '[{"id": 1}]');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
       (${CLEAN * 100}, ${CLEAN}, 'minor', 'AiNotVerified'),
       (${IMAGE_IN_REVIEW * 100}, ${IMAGE_IN_REVIEW}, 'csam', NULL),
@@ -127,6 +136,7 @@ describe('getAccountLegalHoldLegs', () => {
   it.each([
     ['a pending report', PENDING_REPORT, ['report']],
     ['a report sent within the year', RECENTLY_SENT, ['report']],
+    ['a report sent long ago and not yet archived', SENT_LONG_AGO_NOT_ARCHIVED, ['report']],
     ['the secondary user on a report', SECONDARY_ON_REPORT, ['report']],
     ['an image awaiting that review', IMAGE_IN_REVIEW, ['image-review']],
     [

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deleteButtonState, type DeleteHold } from '$lib/legal-hold';
+import { deleteButtonState, deleteButtonView, type DeleteHold } from '$lib/legal-hold';
 
 /**
  * The spoke's read of a legal hold, which disables Delete account. Only an explicit `held: false`
@@ -76,5 +76,20 @@ describe('deleteButtonState', () => {
   it('shows nothing to someone without the permission, or for an account already deleted', () => {
     expect(deleteButtonState({ canDelete: false, deleted: false, hold: 'held' })).toBe('absent');
     expect(deleteButtonState({ canDelete: true, deleted: true, hold: 'clear' })).toBe('absent');
+  });
+});
+
+describe('deleteButtonView', () => {
+  it('lets only an enabled button be pressed, and names a hold apart from a failed check', () => {
+    expect(deleteButtonView('absent')).toBeNull();
+    expect(deleteButtonView('enabled')).toEqual({ label: 'Delete account', disabled: false });
+    expect(deleteButtonView('held')).toEqual({
+      label: 'Account under legal hold. Contact Legal.',
+      disabled: true,
+    });
+    expect(deleteButtonView('unknown')).toEqual({
+      label: "Couldn't check legal hold status. Try again.",
+      disabled: true,
+    });
   });
 });
