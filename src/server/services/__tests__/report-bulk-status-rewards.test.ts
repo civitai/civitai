@@ -75,12 +75,12 @@ describe('bulkSetReportStatus', () => {
       ids: [7, 8],
       status: 'Actioned',
       userId: 2,
-      noRewardFor: (reportId) => (reportId === 8 ? [UPLOADER] : []),
+      noRewardFor: (reportId) => (reportId === 8 ? [UPLOADER] : [ALSO]),
       rewardRemovedReporters: false,
     });
 
     expect(dbMock.dbWrite.report.update.mock.calls.map(([args]) => args.where.id)).toEqual([7, 8]);
-    expect(rewarded()).toEqual([`7:${REPORTER}`, `7:${ALSO}`, `7:${UPLOADER}`].sort());
+    expect(rewarded()).toEqual([`7:${REPORTER}`, `7:${UPLOADER}`].sort());
   });
 
   it('still rewards every reporter by default', async () => {

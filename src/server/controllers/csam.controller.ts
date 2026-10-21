@@ -63,6 +63,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         logToAxiom({
           name: 'csam-report',
           type: 'error',
+          important: true,
           message: 'actioning the reports on filed images failed',
           userId,
           reportedById,

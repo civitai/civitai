@@ -218,11 +218,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
-import {
-  bulkSetReportStatus,
-  csamReportRewardExclusions,
-  resolveEntityAppeal,
-} from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   getBasicDataForUsers,
@@ -7555,15 +7551,14 @@ export async function reportCsamImages({
     where: { id: { in: imageIds } },
     select: { userId: true, reports: { select: { reportId: true } } },
   });
-  const imageReports = images.flatMap((image) =>
-    image.reports.map(({ reportId }) => ({ reportId, image: { userId: image.userId } }))
-  );
+  // Every owner in the batch is being reported, so none is rewarded for any report in it.
+  const owners = [...new Set(images.map((image) => image.userId))];
   await bulkSetReportStatus({
-    ids: imageReports.map((report) => report.reportId),
+    ids: images.flatMap((image) => image.reports.map((report) => report.reportId)),
     status: ReportStatus.Actioned,
     userId: user.id,
     ip,
-    noRewardFor: csamReportRewardExclusions(undefined, imageReports),
+    noRewardFor: () => owners,
     rewardRemovedReporters: false,
   });
 }

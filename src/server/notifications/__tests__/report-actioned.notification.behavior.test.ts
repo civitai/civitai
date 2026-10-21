@@ -12,6 +12,7 @@ const ALSO = 31;
 const BANNED = 32;
 const DELETED = 33;
 const OWNER = 34;
+const OTHER_OWNER = 35;
 
 let pg: PGlite;
 
@@ -34,12 +35,14 @@ beforeAll(async () => {
     CREATE TABLE "CollectionReport" ("reportId" int);
     INSERT INTO "User" VALUES
       (${REPORTER}, NULL, NULL), (${ALSO}, NULL, NULL), (${BANNED}, now(), NULL),
-      (${DELETED}, NULL, now()), (${OWNER}, NULL, NULL);
-    INSERT INTO "Image" VALUES (500, ${OWNER});
+      (${DELETED}, NULL, now()), (${OWNER}, NULL, NULL), (${OTHER_OWNER}, NULL, NULL);
+    INSERT INTO "Image" VALUES (500, ${OWNER}), (600, ${OTHER_OWNER});
     INSERT INTO "Report" (id, "userId", "alsoReportedBy", reason, status, "statusSetAt") VALUES
       (7, ${REPORTER}, '{${ALSO},${BANNED},${DELETED},${OWNER}}', 'TOSViolation', 'Actioned', now()),
-      (8, ${OWNER}, '{}', 'TOSViolation', 'Actioned', now());
-    INSERT INTO "ImageReport" VALUES (500, 7), (500, 8);
+      (8, ${OWNER}, '{}', 'TOSViolation', 'Actioned', now()),
+      (9, ${REPORTER}, '{}', 'TOSViolation', 'Pending', NULL),
+      (10, ${OTHER_OWNER}, '{}', 'TOSViolation', 'Actioned', now());
+    INSERT INTO "ImageReport" VALUES (500, 7), (500, 8), (600, 9), (500, 10);
   `);
 });
 
@@ -54,6 +57,8 @@ describe('report-actioned', () => {
     expect(await notified()).toEqual([
       `${REPORTER}:report-actioned:7`,
       `${ALSO}:report-actioned:7`,
+      // Owns a reported image, but this report is about someone else's.
+      `${OTHER_OWNER}:report-actioned:10`,
     ]);
   });
 

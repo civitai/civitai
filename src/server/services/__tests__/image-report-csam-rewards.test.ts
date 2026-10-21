@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 describe('reportCsamImages', () => {
-  it('actions the images’ reports, rewarding no owner for a report on their own image', async () => {
+  it('actions the images’ reports, rewarding no owner in the batch for any of them', async () => {
     await reportCsamImages({ imageIds: [500, 501], user: { id: 2, isModerator: true } as never });
 
     expect(bulkSetReportStatus).toHaveBeenCalledTimes(1);
@@ -45,7 +45,7 @@ describe('reportCsamImages', () => {
     };
     expect(ids).toEqual([7, 8, 9]);
     expect(rewardRemovedReporters).toBe(false);
-    expect(noRewardFor(7)).toEqual([OWNER]);
-    expect(noRewardFor(9)).toEqual([OTHER_OWNER]);
+    for (const reportId of [7, 9])
+      expect(new Set(noRewardFor(reportId))).toEqual(new Set([OWNER, OTHER_OWNER]));
   });
 });
