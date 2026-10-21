@@ -1,8 +1,11 @@
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { hasEnded, savedTurn, withEnd, withProgress, type EndedReply } from './head';
+import { hasEnded, ownedBy, savedTurn, withEnd, withProgress, type EndedReply } from './head';
 import type { ConversationStore, Logger } from './interfaces';
+
+/** The waits between attempts at saving how a reply ended, after the first fails. */
+export const END_RETRY_DELAYS_MS: readonly number[] = [1_000, 4_000];
 
 /** How long a tool call waits for its start to be saved before it fails without running. */
 export const CALL_SAVE_TIMEOUT_MS = 15_000;
@@ -22,7 +25,9 @@ export class ProgressWriter {
     private readonly userId: string,
     private readonly conversationId: string,
     private readonly seq: number,
-    private readonly log: Logger
+    private readonly log: Logger,
+    /** The run saving: once a retry of the same turn took the turn over, this run saves nothing more to it. */
+    private readonly runId?: string
   ) {}
 
   save(messages: ModelMessage[]): void {
@@ -49,17 +54,39 @@ export class ProgressWriter {
     });
   }
 
-  async end(reply: EndedReply): Promise<void> {
+  /** Resolves once every save asked for so far has landed or failed. */
+  async idle(): Promise<void> {
+    while (this.#running) await this.#running;
+  }
+
+  /**
+   * Saves how the reply ended, asking again (`END_RETRY_DELAYS_MS`) when a save fails. Resolves
+   * `true` once the head holds an end (this one, or one written before it), `false` when every
+   * attempt failed: the caller then keeps what it needs to write it later.
+   */
+  async end(
+    reply: EndedReply,
+    delaysMs: readonly number[] = END_RETRY_DELAYS_MS
+  ): Promise<boolean> {
     this.#pending = undefined;
     await this.#running;
-    await this.#write((head) => withEnd(head, this.seq, reply, new Date()));
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await this.#write((head) => withEnd(head, this.seq, reply, new Date()));
+      if (outcome !== 'failed') return true;
+      const delay = delaysMs[attempt];
+      if (delay === undefined) return false;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
 
   async #drain(): Promise<void> {
     while (this.#pending) {
       const messages = this.#pending;
       this.#pending = undefined;
-      if (await this.#write((head) => withProgress(head, this.seq, messages, new Date()))) {
+      if (
+        (await this.#write((head) => withProgress(head, this.seq, messages, new Date()))) ===
+        'written'
+      ) {
         for (const id of callIds(messages)) this.#markSaved(id);
       }
     }
@@ -74,22 +101,25 @@ export class ProgressWriter {
 
   async #write(
     change: (head: StoredConversationMetadata) => StoredConversationMetadata
-  ): Promise<boolean> {
+  ): Promise<'written' | 'skipped' | 'failed'> {
     let written = false;
     try {
       await this.store.update(this.userId, this.conversationId, (current) => {
-        // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it.
-        if (!current || hasEnded(savedTurn(current, this.seq))) return null;
+        // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it; and a
+        // turn a newer run of it owns is that run's alone.
+        const turn = current ? savedTurn(current, this.seq) : undefined;
+        if (!current || hasEnded(turn)) return null;
+        if (this.runId !== undefined && turn && !ownedBy(turn, this.runId)) return null;
         written = true;
         return change(current);
       });
-      return written;
+      return written ? 'written' : 'skipped';
     } catch (error) {
       this.log.error(
         { err: error, conversationId: this.conversationId, seq: this.seq },
         'saving the reply to the head failed'
       );
-      return false;
+      return 'failed';
     }
   }
 }

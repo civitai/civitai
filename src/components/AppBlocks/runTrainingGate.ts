@@ -1,4 +1,8 @@
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
+import {
+  findForeignTrainingBlobKeys,
+  trainingBlobKeyIdentity,
+} from '~/server/schema/blocks/training-dataset.schema';
 
 /**
  * The decision + copy layer for the `RUN_TRAINING` host bridge (App Blocks
@@ -12,11 +16,14 @@ import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
  * `RUN_TRAINING { requestId, body }` the PAGE host:
  *   1. asks the server for the quote it is about to confirm
  *      (`blocks.previewTrainingQuote`) — price, base model, epochs/steps, image
- *      count, thumbnails, expiry, shortfall — all server-resolved;
- *   2. shows that in a host-chrome confirm;
- *   3. on confirm, records the viewer's confirmation (`blocks.consentTrainingQuote`,
+ *      count, blob keys, expiry, shortfall — all server-resolved;
+ *   2. refuses, with no dialog, a quote naming any blob this host did not upload for
+ *      the block (`OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }`);
+ *   3. shows the rest in a host-chrome confirm, with the host's own uploads of those
+ *      keys as the thumbnails;
+ *   4. on confirm, records the viewer's confirmation (`blocks.consentTrainingQuote`,
  *      session-required) and THEN submits the body (`blocks.submitWorkflow`);
- *   4. replies `TRAINING_RESULT { requestId, snapshot }` or `{ requestId, error }`.
+ *   5. replies `TRAINING_RESULT { requestId, snapshot }` or `{ requestId, error }`.
  *
  * 🔴 THE DIALOG IS THE CONSENT SURFACE, NOT THE CONTROL. The server refuses a
  * training submit whose quote nobody confirmed, and only a signed-in session can
@@ -42,7 +49,8 @@ export type TrainingQuotePreview = {
   epochs: number | null;
   steps: number | null;
   expiresAt: string;
-  thumbnails: string[];
+  /** The blob keys the quoted dataset names. */
+  itemKeys: string[];
   /** Buzz the viewer is short by; `null` when the balance could not be read. */
   shortfall: number | null;
 };
@@ -63,6 +71,8 @@ export const RUN_TRAINING_HOST_ERRORS = [
   'invalid training request',
   /** The host holds no block token yet. */
   'no block token',
+  /** The quote names an image this host did not upload for the block. Nothing was shown. */
+  'training data not uploaded here',
   /** The viewer dismissed the confirm. Guaranteed to mean NO run was submitted. */
   'declined',
   /**
@@ -95,11 +105,8 @@ export type TrainingBridgeGateInput = {
 export type TrainingBridgePreludeError = 'review-mode' | 'block is not ready' | 'sign in to train';
 
 /**
- * The checks every `kind:'training'` bridge message (`RUN_TRAINING`,
- * `PREPARE_TRAINING_DATASET`) runs before looking at its own payload, in one place
- * so the two cannot refuse in a different order or with different codes. Drop only
- * without a `requestId` (nothing to reply to); the order is review mode, ready,
- * signed in.
+ * The checks `RUN_TRAINING` runs before looking at its own payload. Drop only without
+ * a `requestId` (nothing to reply to); the order is review mode, ready, signed in.
  */
 export function resolveTrainingBridgePrelude(
   input: TrainingBridgeGateInput
@@ -112,7 +119,7 @@ export function resolveTrainingBridgePrelude(
 
 /**
  * The prelude every CONSENT-GATED spend message shares (`RUN_TRAINING`,
- * `PREPARE_TRAINING_DATASET`, `RUN_CONFIRMED_STEP`), parameterised only by the
+ * `RUN_CONFIRMED_STEP`), parameterised only by the
  * signed-out code each one names. One order, one place: drop without a `requestId`,
  * then review mode, ready, signed in.
  */
@@ -156,6 +163,22 @@ export function resolveRunTrainingRequest(input: TrainingBridgeGateInput): RunTr
   return { kind: 'proceed', request: { requestId, quoteId: b.quoteId, body: b } };
 }
 
+/**
+ * The consent thumbnails for a preview — this host's own upload of each quoted key —
+ * or `null` when the quote names any key the host did not upload for this block.
+ * `uploads` maps `trainingBlobKeyIdentity(key)` to the url the upload returned.
+ */
+export function resolveTrainingConsentThumbnails(
+  preview: Pick<TrainingQuotePreview, 'itemKeys'>,
+  uploads: ReadonlyMap<string, string>,
+  max = 12
+): string[] | null {
+  if (findForeignTrainingBlobKeys(preview.itemKeys, uploads.keys()).length > 0) return null;
+  return preview.itemKeys
+    .slice(0, max)
+    .map((key) => uploads.get(trainingBlobKeyIdentity(key)) as string);
+}
+
 export type TrainingConsentCopy = {
   title: string;
   intro: string;
@@ -187,7 +210,7 @@ export function buildTrainingConsentCopy({
   ].filter((s): s is string => s !== null);
   return {
     title: 'Start this training run?',
-    intro: `${who} wants to train a LoRA on ${images} from your account.`,
+    intro: `${who} wants to train a LoRA on ${images} you uploaded.`,
     priceLine: `This run costs ${preview.total.toLocaleString(
       'en-US'
     )} Buzz, charged when it starts.`,

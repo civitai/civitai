@@ -1418,6 +1418,7 @@ export const KEY_VALUE_KEYS = {
   MODEL_FILE_OPTIONS: 'modelFileOptions',
   CONTEST_SCORING: 'contestScoring',
   CREATOR_SHOP_FEES: 'creatorShopFees',
+  USER_MENU_DEFAULT_PINS: 'userMenuDefaultPins',
 } as const;
 
 // Snapshot rows are one KeyValue per run: `contestSnapshot:<collectionId>:<takenAt ISO>`.

@@ -1,7 +1,8 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import type { RemovedUserCosmetic } from '~/server/redis/caches';
-import { refreshUserCosmeticCacheForRemoved } from '~/server/redis/caches';
+import { refreshUserCosmeticCacheForRemoved, wornUserIds } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 
 export async function deliverMembershipCosmetics({
   now,
@@ -51,13 +52,21 @@ export async function deliverMembershipCosmetics({
     FROM subscription_tiers s
     JOIN "Cosmetic" c ON
       c."productId" = s."productId"
-      -- Compare the period start, not job time: a late-paid September period is still owed
-      -- September's badge. Civitai keeps the current-month limit because prepaid periods
-      -- can start long before the month being delivered.
-      AND (s.provider <> 'Civitai' OR c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp))
-      -- Date granularity: availableStart carries a time of day, so a timestamp compare
-      -- misses a renewal earlier that day (e.g. 00:30 on the 1st).
-      AND s."currentPeriodStart"::date >= c."availableStart"::date
+      AND (
+        -- Undated (the Supporter Nameplate): held for as long as the membership is. Civitai
+        -- members get these from deliverMonthlyCosmetics, which leaves out Buzz-purchased
+        -- memberships; the level join here would map those onto civitai-bronze.
+        (c."availableStart" IS NULL AND c.source = 'Membership' AND s.provider <> 'Civitai')
+        OR (
+          -- Compare the period start, not job time: a late-paid September period is still owed
+          -- September's badge. Civitai keeps the current-month limit because prepaid periods
+          -- can start long before the month being delivered.
+          (s.provider <> 'Civitai' OR c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp))
+          -- Date granularity: availableStart carries a time of day, so a timestamp compare
+          -- misses a renewal earlier that day (e.g. 00:30 on the 1st).
+          AND s."currentPeriodStart"::date >= c."availableStart"::date
+        )
+      )
       AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
     ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
@@ -116,6 +125,7 @@ export async function deliverMembershipCosmetics({
     RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
   await refreshUserCosmeticCacheForRemoved(revoked);
+  await queueWornCosmeticsUpdate(wornUserIds(revoked));
 }
 
 export const deliverPurchasedCosmetics = createJob(

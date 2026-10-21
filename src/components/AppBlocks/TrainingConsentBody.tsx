@@ -8,8 +8,8 @@ import type {
  * The BODY of the `RUN_TRAINING` host-chrome consent dialog.
  *
  * Every value comes from `copy` / `preview`, both derived from the SERVER'S
- * preview of the stored quote — there is no prop a block can set. The thumbnails
- * are the dataset the run trains on, so the viewer can see whose images these are.
+ * preview of the stored quote, and `thumbnails`, the host's own uploads of the keys
+ * that preview names — there is no prop a block can set.
  *
  * `onBuyBuzz` is offered only when the server reports a shortfall; it opens the
  * existing Buy-Buzz modal and does not close this dialog.
@@ -17,19 +17,21 @@ import type {
 export function TrainingConsentBody({
   copy,
   preview,
+  thumbnails,
   onBuyBuzz,
 }: {
   copy: TrainingConsentCopy;
   preview: TrainingQuotePreview;
+  thumbnails: string[];
   onBuyBuzz?: () => void;
 }) {
   return (
     <Stack gap="sm" data-testid="block-training-consent">
       <Text size="sm">{copy.intro}</Text>
 
-      {preview.thumbnails.length > 0 && (
+      {thumbnails.length > 0 && (
         <Group gap="xs" wrap="wrap" data-testid="block-training-thumbs">
-          {preview.thumbnails.map((url, i) => (
+          {thumbnails.map((url, i) => (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={`${url}-${i}`}

@@ -25,6 +25,19 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 const BLOCKED_REASON_MODERATED = 'moderated';
 
 /**
+ * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
+ * so this un-block's `review` activity would read as a takedown of the next block.
+ */
+async function dropBlockedImageDeleteQueue(imageId: number) {
+  await dbWrite
+    .deleteFrom('JobQueue')
+    .where('type', '=', 'BlockedImageDelete')
+    .where('entityType', '=', 'Image')
+    .where('entityId', '=', imageId)
+    .execute();
+}
+
+/**
  * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
  * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
@@ -119,6 +132,7 @@ export async function acceptImage({
     throw new FlagOnlyRemovedError(imageId);
   }
 
+  await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
   const reviewTags = await dbRead
@@ -494,7 +508,10 @@ export async function resolveImageAppeal({
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .executeTakeFirst();
     restored = numUpdatedRows > 0n;
-    if (restored) await resetBlockedNsfwLevel(imageId);
+    if (restored) {
+      await dropBlockedImageDeleteQueue(imageId);
+      await resetBlockedNsfwLevel(imageId);
+    }
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });

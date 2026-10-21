@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navCount, navHref } from '$lib/nav-links';
+import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -310,5 +310,65 @@ describe('the Feedback section', () => {
     expect(active('/feedback?area=apps-platform&status=reviewed')).toEqual([true, false]);
     expect(active('/feedback/12')).toEqual([true, false]);
     expect(active('/abuse')).toEqual([false, false]);
+  });
+});
+
+describe('switcherEntries', () => {
+  const civitai = 'https://civitai.test';
+
+  it('lists a top-level page by its label and a group child as "Group › Page"', () => {
+    const entries = switcherEntries(
+      [
+        { path: '/', label: 'Dashboard' },
+        {
+          label: 'Images',
+          children: [{ path: '/images/review', label: 'Review' }],
+        },
+      ],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Dashboard', href: '/', external: false },
+      { label: 'Images › Review', href: '/images/review', external: false },
+    ]);
+  });
+
+  it('lists a tabs group once, at the href the sidebar opens', () => {
+    const entries = switcherEntries(
+      [
+        {
+          label: 'Decisions',
+          children: [
+            {
+              label: 'Support',
+              tabs: true,
+              path: '/decisions/support',
+              children: [
+                { path: '/decisions/support/open', label: 'Open' },
+                { path: '/decisions/support/closed', label: 'Closed' },
+              ],
+            },
+          ],
+        },
+      ],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Decisions › Support', href: '/decisions/support/open', external: false },
+    ]);
+  });
+
+  it('points an external link at the main site', () => {
+    const entries = switcherEntries(
+      [{ label: 'Site', children: [{ path: '/moderator/x', label: 'Old page', external: true }] }],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Site › Old page', href: 'https://civitai.test/moderator/x', external: true },
+    ]);
+  });
+
+  it('skips a group with no reachable page', () => {
+    expect(switcherEntries([{ label: 'Empty', children: [] }], civitai)).toEqual([]);
   });
 });

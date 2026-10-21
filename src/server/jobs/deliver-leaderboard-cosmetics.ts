@@ -4,7 +4,9 @@ import type { RemovedUserCosmetic } from '~/server/redis/caches';
 import {
   refreshUserCosmeticCache,
   refreshUserCosmeticCacheForRemoved,
+  wornUserIds,
 } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 export const deliverLeaderboardCosmetics = createJob(
@@ -99,6 +101,7 @@ async function deliverSeasonCosmetics() {
 
   await refreshUserCosmeticCache(equipped.map((x) => x.userId));
   await refreshUserCosmeticCacheForRemoved(revoked);
+  await queueWornCosmeticsUpdate([...equipped.map((x) => x.userId), ...wornUserIds(revoked)]);
 }
 
 const LEGEND_COSMETIC_CUTOFF = 10;
@@ -154,4 +157,5 @@ async function deliverLegendCosmetics() {
     RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
   await refreshUserCosmeticCacheForRemoved(revoked);
+  await queueWornCosmeticsUpdate(wornUserIds(revoked));
 }

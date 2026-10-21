@@ -3,13 +3,26 @@ import type { PlannerActions } from './props';
 
 export interface BulkBarProps {
   selectedIds: ReadonlySet<number>;
+  selectableIds: number[];
   actions: PlannerActions;
 }
 
-export function renderBulkBar({ selectedIds, actions }: BulkBarProps): TemplateResult {
+export function renderBulkBar({
+  selectedIds,
+  selectableIds,
+  actions,
+}: BulkBarProps): TemplateResult {
   const count = selectedIds.size;
+  const allSelected = selectableIds.every((id) => selectedIds.has(id));
   return html`<div class="bulk-bar">
     <strong>${count} selected</strong>
+    <civitai-button
+      size="sm"
+      variant="subtle"
+      ?disabled=${allSelected}
+      @click=${() => actions.selectAll()}
+      >Select all ${selectableIds.length}</civitai-button
+    >
     <civitai-button
       size="sm"
       variant="outline"

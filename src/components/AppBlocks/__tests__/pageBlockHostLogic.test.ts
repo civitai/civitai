@@ -609,6 +609,17 @@ describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule +
     });
   });
 
+  it('threads purpose:trainingData for the training-image upload mode', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_tr', purpose: 'trainingData' })).toEqual({
+      requestId: 'u_tr',
+      purpose: 'trainingData',
+      asyncScan: false,
+    });
+    expect(resolveImageUploadRequest({ requestId: 'u_tr2', purpose: 'TrainingData' }).purpose).toBe(
+      'display'
+    );
+  });
+
   it('opts into asyncScan ONLY for a literal asyncScan === true', () => {
     expect(resolveImageUploadRequest({ requestId: 'u_a', asyncScan: true })).toEqual({
       requestId: 'u_a',

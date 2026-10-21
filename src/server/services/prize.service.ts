@@ -1,5 +1,5 @@
 import type { Prize, PrizeSourceType } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -279,6 +279,10 @@ export async function getPrize({
   const prize = await dbWrite.prize.findFirst({ where: { id, userId } });
   if (!prize) throw throwNotFoundError('Prize not found');
   return toPrizeView(prize, choices);
+}
+
+export async function countUnclaimedPrizes(userId: number) {
+  return dbRead.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
 }
 
 export async function getMyPrizes({

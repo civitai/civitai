@@ -11,7 +11,10 @@
     meta,
     metaClass = 'text-dark-2',
     coverUrl,
+    coverType,
+    coverBlurred = false,
     cover = true,
+    coverIcon,
     verdict,
     error,
     onselect,
@@ -26,8 +29,12 @@
     /** Colour of the meta text, e.g. amber for someone waiting. */
     metaClass?: string;
     coverUrl?: string | undefined;
+    /** `video` shows the poster frame; anything else, or none, is an image. */
+    coverType?: string | null | undefined;
+    coverBlurred?: boolean;
     /** False for items with no image, which drops the thumbnail slot. */
     cover?: boolean;
+    coverIcon?: Snippet;
     verdict: string | undefined;
     error: string | undefined;
     onselect: () => void;
@@ -55,7 +62,17 @@
     {#if cover}
       <div class="size-11 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7">
         {#if coverUrl}
-          <EdgeMedia src={coverUrl} type="image" width={96} class="size-full object-cover" />
+          <EdgeMedia
+            src={coverUrl}
+            type={coverType === 'video' ? 'video' : 'image'}
+            anim={coverType === 'video' ? false : undefined}
+            width={96}
+            class={cn('size-full object-cover', coverBlurred && 'scale-125 blur-md')}
+          />
+        {:else if coverIcon}
+          <div class="grid size-full place-items-center text-dark-2 [&_svg]:size-[18px]">
+            {@render coverIcon()}
+          </div>
         {/if}
       </div>
     {/if}

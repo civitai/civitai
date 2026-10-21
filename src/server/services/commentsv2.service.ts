@@ -29,6 +29,7 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -694,15 +695,54 @@ export const deleteComment = async ({ id }: { id: number }) => {
   return deleted;
 };
 
-export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Read before the delete, for the event points removal; a failed read only skips that.
-  const removed = await dbWrite.commentV2
-    .findMany({ where: { id: { in: ids } }, select: { userId: true, threadId: true } })
-    .catch(() => []);
-  const result = await dbWrite.commentV2.deleteMany({ where: { id: { in: ids } } });
-  void onCommentsRemoved(removed);
-  return { count: result.count };
+/**
+ * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
+ * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
+ * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
+ * anywhere below it.
+ */
+export async function deleteCommentsV2UnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
+    DELETE FROM "CommentV2" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
+          UNION
+          SELECT t.id FROM "Thread" t
+          JOIN "CommentV2" k ON t."commentId" = k.id
+          JOIN below b ON k."threadId" = b.id
+        )
+        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+      )
+    RETURNING c."userId", c."threadId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+/** What follows a committed `deleteCommentsV2UnlessHeld`. */
+export async function afterCommentsV2Deleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteCommentsV2UnlessHeld>>) {
+  if (retained.length)
+    await logHoldRetained(
+      'commentV2.bulkDelete',
+      retained.map((r) => r.userId)
+    );
+  void onCommentsRemoved(deleted);
 }
 
 /**

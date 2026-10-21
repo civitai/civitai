@@ -948,6 +948,7 @@ export const JobQueueType = {
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
+  CdnAccessSync: 'CdnAccessSync',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

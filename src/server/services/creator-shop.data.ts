@@ -4,6 +4,7 @@ import type {
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
+import { CREATOR_OFFSET_LIMIT } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import {
@@ -119,6 +120,13 @@ export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]
 // Allowlist: a newly recorded edit field that changes what holders see must be added here, or
 // editing it after approval leaves the item wearable unreviewed.
 const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+
+// Edges a creator may not set. A value a moderator pushed past the creator range is left alone
+// when it comes back unchanged, so editing anything else is neither refused nor clamped.
+export const edgesBeyondCreatorRange = (next: CosmeticOffsets, stored?: CosmeticOffsets | null) =>
+  (['top', 'right', 'bottom', 'left'] as const).filter(
+    (side) => Math.abs(next[side]) > CREATOR_OFFSET_LIMIT && next[side] !== stored?.[side]
+  );
 
 export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
   !!changes?.some((change) => DISPLAYED_FIELDS.has(change.field));

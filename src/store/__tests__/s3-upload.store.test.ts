@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { UploadType } from '~/server/common/enums';
 import { MAX_PART_ATTEMPTS } from '~/utils/upload-retry';
+import { useCatchNavigationStore } from '~/store/catch-navigation.store';
 
 /**
  * Regression cover for large-file uploads that transferred every byte and then
@@ -55,6 +56,8 @@ let abortCalls: AbortBody[];
 let abortShouldReject: boolean;
 /** Part numbers whose PUT stays in-flight forever, so a test can cancel mid-upload. */
 let hangPartNumbers: number[];
+/** File names (see `makeMultiFileFetch`) whose part PUTs stay in-flight until aborted. */
+let hangFiles: string[];
 /** Fires when `/api/upload/complete` is requested, to mutate state mid-flight. */
 let onCompleteRequest: (() => void) | null;
 /** Fires when `/api/upload/abort` is requested, so a test can order it against other effects. */
@@ -99,7 +102,11 @@ class FakeXHR {
     setTimeout(() => {
       if (this.settled) return;
       const partNumber = Number(new URL(this.url, 'https://b2.test').searchParams.get('part'));
-      if (hangPartNumbers.includes(partNumber)) return; // in-flight forever until aborted
+      if (
+        hangPartNumbers.includes(partNumber) ||
+        hangFiles.some((f) => this.url.includes(`f=${f}`))
+      )
+        return; // in-flight forever until aborted
       this.settled = true;
       const res = partHandler(this.url, partNumber);
       this.readyState = 4;
@@ -231,6 +238,7 @@ beforeEach(() => {
   abortCalls = [];
   abortShouldReject = false;
   hangPartNumbers = [];
+  hangFiles = [];
   onCompleteRequest = null;
   onAbortRequest = null;
   partHandler = () => ({ status: 200, etag: 'etag' });
@@ -673,5 +681,262 @@ describe('useS3UploadStore.upload abort failure reason', () => {
 
     expect(abortCalls).toHaveLength(1);
     expect(abortCalls[0].failure).toBeUndefined();
+  });
+});
+
+/**
+ * SEQUENTIAL GROUPS: files of one group upload one after another, so a failure on file N leaves
+ * files 1..N-1 completed AND saved. In parallel, every file advances together, so nothing has
+ * completed when a network drop hits and every file's progress is discarded at once.
+ *
+ * Each file here is one part named by `f=<name>` in its part URL, which is how `partHandler` and
+ * `hangFiles` pick a file out. The `log` is the whole point: it records the order the SERVER sees
+ * init, complete and abort requests, which is what "one after another" means.
+ */
+describe('useS3UploadStore.upload sequential group', () => {
+  type TestGroup = { id: string; sequential: boolean };
+  // A fresh group per test: an upload left hanging by one test would otherwise keep holding the
+  // slot of a shared id for every test after it.
+  let groupCount = 0;
+  let SEQ: TestGroup;
+  const [A, B, C] = ['a.bin', 'b.bin', 'c.bin'];
+  let log: string[];
+  /** File names whose `/api/upload` init answers with an error body instead of URLs. */
+  let failInit: string[];
+  const files = new Map<string, File>();
+
+  const fileOf = (name: string) => {
+    if (!files.has(name)) files.set(name, new File([new Uint8Array(CHUNK)], name));
+    return files.get(name) as File;
+  };
+  const rowOf = (name: string) => useS3UploadStore.getState().items.find((x) => x.name === name);
+  const start = (
+    name: string,
+    uploadGroup: TestGroup | null = SEQ,
+    cb?: (r: { name: string }) => void
+  ) =>
+    useS3UploadStore.getState().upload(
+      {
+        file: fileOf(name),
+        type: UploadType.Model,
+        meta: { uuid: name },
+        uploadGroup: uploadGroup ?? undefined,
+      },
+      cb
+    );
+  /** Drives the fake clock so every request that is going to happen has happened. */
+  async function settle() {
+    for (let turn = 0; turn < 20; turn++) await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
+  }
+
+  beforeEach(() => {
+    log = [];
+    failInit = [];
+    SEQ = { id: `version-${++groupCount}`, sequential: true };
+    files.clear();
+    useCatchNavigationStore.setState({ handlers: [] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? '{}') as { filename?: string; key?: string };
+        if (url === '/api/upload') {
+          const name = decodeURIComponent(body.filename ?? '');
+          log.push(`start:${name}`);
+          if (failInit.includes(name))
+            return { ok: true, status: 200, json: async () => ({ error: 'init refused' }) };
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ...UPLOAD_IDENTITY,
+              key: `model/${name}`,
+              chunkSize: CHUNK,
+              urls: [{ url: `https://b2.test/upload?part=1&f=${name}`, partNumber: 1 }],
+            }),
+          };
+        }
+        const name = (body.key ?? '').replace('model/', '');
+        if (url === '/api/upload/complete') log.push(`complete:${name}`);
+        if (url === '/api/upload/abort') log.push(`abort:${name}`);
+        return { ok: true, status: 200, json: async () => ({}) };
+      })
+    );
+  });
+
+  it('uploads the files of a sequential group one after another', async () => {
+    const all = Promise.all([start(A), start(B), start(C)]);
+    await settle();
+    await all;
+
+    expect(log).toEqual([
+      `start:${A}`,
+      `complete:${A}`,
+      `start:${B}`,
+      `complete:${B}`,
+      `start:${C}`,
+      `complete:${C}`,
+    ]);
+  });
+
+  it('keeps the finished file, fails only the broken one, runs the next, and retries just the broken one', async () => {
+    partHandler = (url) => (url.includes(`f=${B}`) ? { status: 400 } : { status: 200, etag: 'e' });
+    const saved: string[] = [];
+    const cb = (r: { name: string }) => {
+      saved.push(r.name);
+    };
+
+    const all = Promise.all([start(A, SEQ, cb), start(B, SEQ, cb), start(C, SEQ, cb)]);
+    await settle();
+    await all;
+
+    // B's multipart is torn down BEFORE C asks the server for URLs.
+    expect(log).toEqual([
+      `start:${A}`,
+      `complete:${A}`,
+      `start:${B}`,
+      `abort:${B}`,
+      `start:${C}`,
+      `complete:${C}`,
+    ]);
+    expect(saved).toEqual([A, C]);
+    expect([A, B, C].map((n) => rowOf(n)?.status)).toEqual(['success', 'error', 'success']);
+
+    partHandler = () => ({ status: 200, etag: 'e' });
+    log.length = 0;
+    const retry = start(B, SEQ, cb);
+    await settle();
+    await retry;
+
+    expect(log).toEqual([`start:${B}`, `complete:${B}`]);
+    expect(saved).toEqual([A, C, B]);
+    expect(rowOf(A)?.status).toBe('success');
+  });
+
+  it('cancelling the RUNNING file frees the slot for the next one', async () => {
+    hangFiles = [A];
+    const first = start(A);
+    const second = start(B);
+    await settle();
+    expect(log).toEqual([`start:${A}`]);
+
+    rowOf(A)?.abort();
+    await settle();
+    await Promise.all([first, second]);
+
+    expect(log).toEqual([`start:${A}`, `abort:${A}`, `start:${B}`, `complete:${B}`]);
+    expect([A, B].map((n) => rowOf(n)?.status)).toEqual(['aborted', 'success']);
+  });
+
+  it('shows a waiting file as pending, and cancelling it never starts it', async () => {
+    hangFiles = [A];
+    const first = start(A);
+    const waiting = start(B);
+    const last = start(C);
+    await settle();
+    expect(rowOf(B)?.status).toBe('pending');
+
+    rowOf(B)?.abort();
+    await settle();
+    expect(rowOf(B)?.status).toBe('aborted');
+    expect(await waiting).toBeUndefined();
+
+    rowOf(A)?.abort();
+    await settle();
+    await Promise.all([first, last]);
+
+    expect(log).toEqual([`start:${A}`, `abort:${A}`, `start:${C}`, `complete:${C}`]);
+  });
+
+  it('does not upload a waiting file whose row was removed before its turn', async () => {
+    hangFiles = [A];
+    const first = start(A);
+    const removed = start(B);
+    await settle();
+
+    useS3UploadStore.getState().clear((x) => x.name === B);
+    rowOf(A)?.abort();
+    await settle();
+    await Promise.all([first, removed]);
+
+    expect(log).toEqual([`start:${A}`, `abort:${A}`]);
+    expect(await removed).toBeUndefined();
+  });
+
+  it('releases the slot, and marks the row failed, when a waiting upload cannot even start', async () => {
+    failInit = [B];
+    const all = [start(A), start(B), start(C)];
+    const outcome = all[1].then(
+      () => 'resolved',
+      () => 'rejected'
+    );
+    await settle();
+
+    expect(await outcome).toBe('rejected');
+    expect(await all[2]).toBeTruthy();
+    expect(rowOf(B)?.status).toBe('error');
+    expect(log).toEqual([
+      `start:${A}`,
+      `complete:${A}`,
+      `start:${B}`,
+      `start:${C}`,
+      `complete:${C}`,
+    ]);
+  });
+
+  it('does not make different groups wait for each other', async () => {
+    hangFiles = [A];
+    void start(A);
+    const other = start(B, { id: `${SEQ.id}-other`, sequential: true });
+    await settle();
+    await other;
+
+    expect(log).toEqual([`start:${A}`, `start:${B}`, `complete:${B}`]);
+  });
+
+  it.each([
+    ['a group with sequential off', (id: string) => ({ id, sequential: false })],
+    ['no group', () => null],
+  ])('keeps uploading in parallel with %s', async (_label, makeGroup) => {
+    const group = makeGroup(SEQ.id);
+    const all = Promise.all([start(A, group), start(B, group), start(C, group)]);
+    await settle();
+    await all;
+
+    expect(log.slice(0, 3)).toEqual([`start:${A}`, `start:${B}`, `start:${C}`]);
+  });
+
+  it('makes a sequential file wait for a parallel upload already running in its group', async () => {
+    hangFiles = [A];
+    void start(A, { id: SEQ.id, sequential: false });
+    const queued = start(B, SEQ);
+    await settle();
+    expect(log).toEqual([`start:${A}`]);
+
+    rowOf(A)?.abort();
+    await settle();
+    await queued;
+
+    expect(log).toEqual([`start:${A}`, `abort:${A}`, `start:${B}`, `complete:${B}`]);
+  });
+
+  it('keeps the leave-page warning armed while files are only waiting', async () => {
+    hangFiles = [A];
+    void start(A);
+    void start(B);
+    await settle();
+    const warning = () =>
+      useCatchNavigationStore.getState().handlers.find((x) => x.name === 'file-upload');
+
+    // Only the waiting file is left to lose: the running one has stopped reporting 'uploading'.
+    useS3UploadStore.setState({
+      items: useS3UploadStore
+        .getState()
+        .items.map((x) => (x.name === A ? { ...x, status: 'error' as const } : x)),
+    });
+    const predicate = warning()?.predicate as () => boolean;
+    expect(predicate()).toBe(true);
+
+    useS3UploadStore.getState().clear((x) => x.name === B);
+    expect(predicate()).toBe(false);
   });
 });

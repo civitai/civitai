@@ -160,6 +160,7 @@ export async function getScheduledPosts({
     imageCount: row.imageCount,
     cover: row.coverUrl && row.coverType ? { url: row.coverUrl, type: row.coverType } : null,
     release: releaseOf({ userId: user.id, ...row }),
+    model: row.modelName ? { name: row.modelName, versionName: row.versionName ?? '' } : null,
   }));
 
   return {

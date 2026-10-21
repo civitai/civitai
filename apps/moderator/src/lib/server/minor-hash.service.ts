@@ -1,6 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
+import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
 import {
   DEFAULT_APPEAL_FILTERS,
@@ -198,7 +199,17 @@ export type MinorHashReviewRow = {
   sameFileAppeals: SameFileAppeals;
 };
 
-export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
+export type AppealCoverImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  /** `'video'` renders as a poster frame; absent, the media is an image. */
+  type?: string;
+  minor?: boolean;
+  acceptableMinor?: boolean;
+  /** Names what the tile is when the set is not one entity's gallery, e.g. a profile's avatar. */
+  caption?: string;
+};
 
 export type MinorFlagAppealRow = {
   appealId: number;
@@ -253,24 +264,11 @@ const APPEAL_COVER_COUNT = 4;
 const coverImagesJoin = sql`
 LEFT JOIN LATERAL (
   SELECT jsonb_agg(
-           jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
-           ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
-                    c."imageIndex" ASC NULLS LAST, c.id
+           jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel", 'type', c.type,
+                            'minor', c.minor, 'acceptableMinor', c."acceptableMinor")
+           ORDER BY ${MODEL_COVER_ORDER}
          ) AS images
-  FROM (
-    -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
-    -- unpublished or draft model with no images at all.
-    SELECT i.id, i.url, i."nsfwLevel", p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
-           p.id AS "postId", i.index AS "imageIndex"
-    FROM "ModelVersion" mv
-    JOIN "Post" p ON p."modelVersionId" = mv.id
-    JOIN "Image" i ON i."postId" = p.id
-    WHERE mv."modelId" = pg."modelId"
-      AND p."userId" = pg."userId"
-      AND i.type::text = 'image'
-    ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
-    LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
-  ) c
+  FROM (${modelCoverImages(sql.ref('pg.modelId'), sql.ref('pg.userId'), APPEAL_COVER_COUNT)}) c
 ) ci ON TRUE
 `;
 
@@ -838,11 +836,7 @@ const flaggedPageSql = <R>(
          pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
          -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
          -- a ruling while the model has a Pending appeal.
-         EXISTS (
-           SELECT 1 FROM "Appeal" a
-           WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
-             AND a.status::text = 'Pending' AND a.category IS NULL
-         ) AS "hasPendingAppeal",
+         ${pendingModelAppealExists(sql`pg."modelId"`)} AS "hasPendingAppeal",
          v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
          COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
          COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
@@ -1199,6 +1193,54 @@ export async function getModelMinor(modelId: number) {
     SELECT m.minor FROM "Model" m WHERE m.id = ${modelId}
   `.execute(dbRead);
   return result.rows[0]?.minor ?? false;
+}
+
+/** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal
+ *  carries a category and is not one. */
+const pendingModelAppealExists = (modelId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "Appeal" a
+  WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
+    AND a.status::text = 'Pending' AND a.category IS NULL
+)`;
+
+const textScanEntryView = (label: 'minor' | 'poi') => sql`jsonb_build_object(
+  'textHash', m.meta->'textScanFlags'->${sql.lit(label)}->>'textHash',
+  'redetectedTextHash', m.meta->'textScanFlags'->${sql.lit(label)}->'redetected'->>'textHash'
+)`;
+
+type TextScanEntryView = { textHash: string | null; redetectedTextHash: string | null };
+
+/** What an Auto-flagged ruling decides from, read from the primary: a replica lagging behind a
+ *  just-resolved appeal would send it down the wrong path. `minor` and `poi` count as flagged by the
+ *  appeal resolver's rule (`resolveMinorFlagAppeal`): `poi` only with an open text-scan flag, since
+ *  owners set it by hand. `textScan` is what the main app's `ruleModelTextScanFlag` checks a ruling's
+ *  text hash against. */
+export async function getModelAppealState(modelId: number) {
+  const result = await sql<{
+    pendingAppeal: boolean;
+    minor: boolean;
+    poi: boolean;
+    textScan: Record<'minor' | 'poi', TextScanEntryView>;
+  }>`
+    SELECT ${pendingModelAppealExists(sql`m.id`)} AS "pendingAppeal",
+           m.minor,
+           (m.poi
+             AND COALESCE(m.meta->'textScanFlags'->'poi'->>'workflowId', '') <> ''
+             AND m.meta->'textScanFlags'->'poi'->>'appealGranted' IS NULL) AS poi,
+           jsonb_build_object('minor', ${textScanEntryView('minor')}, 'poi', ${textScanEntryView(
+    'poi'
+  )}) AS "textScan"
+    FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbWrite);
+  const none = { textHash: null, redetectedTextHash: null };
+  return (
+    result.rows[0] ?? {
+      pendingAppeal: false,
+      minor: false,
+      poi: false,
+      textScan: { minor: none, poi: none },
+    }
+  );
 }
 
 /** Models with a held detection: the detections part of the Needs review badge. Rides

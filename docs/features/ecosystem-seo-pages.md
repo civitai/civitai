@@ -52,16 +52,9 @@ A comparison cell may hold a `{loras:Key}` token (`Key` = an `ECOSYSTEM_SEO` key
 
 When a hosted model gets an announced end-of-life, add `sunset: { date, note }` to its config. Before `date` the page shows a warning banner; from `date` on the banner switches to past tense, the page goes `noindex`, and it drops out of the sitemap — an SEO page that ranks for a model nobody can run is worse than no page. The `/ecosystems` index card shows a "Retiring" badge as soon as the field is set.
 
-## The funnel — and the one real blocker
+## The funnel
 
-CTAs deep-link into the generator, pre-selecting the ecosystem: `/generate?modelVersionId=<featuredVersionId>`.
-
-**Blocker:** `/generate` today (`src/pages/generate/index.tsx`) redirects logged-out users to login and is `deIndex`ed, and it does **not** parse `modelVersionId` from the URL — pre-selection happens client-side through the generation panel. So an anonymous visitor clicking "Generate" hits a login wall with no ecosystem primed. Two things needed before launch:
-
-1. Have `/generate` read `?modelVersionId=` (or a new `?baseModel=<key>`) and prime the panel.
-2. Confirm the login `returnUrl` round-trips back to that primed URL (search → page → generate → signup → generate).
-
-Until then the CTA still works as a signup funnel, just without pre-selection.
+CTAs deep-link into the generator, pre-selecting the ecosystem: `/generate?modelVersionId=<featuredVersionId>`. `/generate` is `deIndex`ed but open to logged-out visitors: it primes the form from `?modelVersionId=`, and login is asked only when they press Generate, with the same URL as the `returnUrl` so the primed form is waiting after signup.
 
 ## Adding an ecosystem
 

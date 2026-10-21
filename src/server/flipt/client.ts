@@ -95,6 +95,8 @@ export enum FLIPT_FEATURE_FLAGS {
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
+  // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
+  CDN_ACCESS_SYNC = 'cdn-access-sync',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.

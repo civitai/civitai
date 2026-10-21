@@ -456,12 +456,15 @@ export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRe
 //     generator uses (uploadConsumerBlob) — NO createImage, NO scan, NO SFW
 //     gate — and returns only { url, width, height }. Platform safety is
 //     preserved because the ORCHESTRATOR scans the generation OUTPUT.
+//   - 'trainingData': PRIVATE training images for a `kind:'training'` run — several
+//     files through the same consumer-blob path the Training Studio uses; returns
+//     `{ images: [{ url, air }] }`, and the host remembers each key it uploaded.
 //
 // The only wire-validation is: require a string requestId (drop otherwise, never
 // open the modal) and normalize `purpose` to the safe default when unknown. Kept
 // pure + unit-tested for the same reason as resolveResourcePickerRequest.
 
-export type BlockUploadPurpose = 'display' | 'generationSource';
+export type BlockUploadPurpose = 'display' | 'generationSource' | 'trainingData';
 
 export type ImageUploadRequest = {
   requestId: string;
@@ -474,7 +477,7 @@ export type ImageUploadRequest = {
    * push, instead of blocking the modal on the poll gate. Normalized to `true`
    * ONLY for a literal `asyncScan === true` (any other value ⇒ false), so an old
    * SDK that sends no flag keeps the byte-compatible blocking behavior, and the
-   * flag is IGNORED for generationSource (that path has no scan).
+   * flag is IGNORED for generationSource and trainingData (those paths have no scan).
    */
   asyncScan: boolean;
 };
@@ -492,7 +495,7 @@ export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | nu
   const obj = raw as Record<string, unknown>;
   if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
   const purpose: BlockUploadPurpose =
-    obj.purpose === 'generationSource' ? 'generationSource' : 'display';
+    obj.purpose === 'generationSource' || obj.purpose === 'trainingData' ? obj.purpose : 'display';
   const asyncScan = obj.asyncScan === true;
   return { requestId: obj.requestId, purpose, asyncScan };
 }

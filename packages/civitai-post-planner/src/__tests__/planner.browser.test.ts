@@ -29,6 +29,7 @@ const post = (id: number, when: Date, extra: Partial<PlannerPost> = {}): Planner
   imageCount: 3,
   cover: null,
   release: null,
+  model: null,
   ...extra,
 });
 
@@ -69,7 +70,7 @@ function fakeHost(initial: PlannerPost[]) {
       return { publishedAt, scope: 'post' as const, movedPostIds: [] };
     }),
     publishNow: vi.fn(),
-    unschedule: vi.fn(),
+    unschedule: vi.fn(async (ids: number[]) => ({ unscheduledIds: ids, skippedReleaseIds: [] })),
     shift: vi.fn(async ({ ids, deltaMinutes }: { ids: number[]; deltaMinutes: number }) => ({
       moved: ids.map((id) => {
         const target = find(id);
@@ -260,6 +261,26 @@ describe('<civitai-post-planner>', () => {
       [at(14, 15, 7), at(14, 9, 5)].map((d) => d.toISOString()).sort()
     );
     expect(backend.shift).not.toHaveBeenCalled();
+  });
+
+  it('selects every standalone scheduled post at once and unschedules them together', async () => {
+    const release = { scope: 'version' as const, modelName: 'Model', versionName: 'v1' };
+    const { backend } = await mount({ view: 'month', anchor: '2026-10-01' }, [
+      post(1, POST_A),
+      post(2, POST_B),
+      post(3, at(12, 10, 0), { modelVersionId: 5, release }),
+    ]);
+
+    await userEvent.click(page.getByRole('button', { name: 'Select' }));
+    await userEvent.click(page.getByRole('button', { name: 'Select all 2' }));
+    await expect.element(page.getByText('2 selected')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Select all 2' })).toBeDisabled();
+
+    await userEvent.click(page.getByRole('button', { name: 'Unschedule to drafts' }));
+    await userEvent.click(page.getByRole('button', { name: 'Unschedule', exact: true }));
+
+    await vi.waitFor(() => expect(backend.unschedule).toHaveBeenCalledTimes(1));
+    expect(backend.unschedule).toHaveBeenCalledWith([1, 2]);
   });
 
   it('keeps the drawer prev/next controls in the header and focus on the one pressed', async () => {

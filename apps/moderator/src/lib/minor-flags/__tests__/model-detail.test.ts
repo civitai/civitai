@@ -8,6 +8,7 @@ import {
   ratingText,
   textSinceFlag,
   hashSweepText,
+  PREVIEW_COUNT_CAP,
   versionsText,
 } from '../model-detail';
 
@@ -18,6 +19,10 @@ describe('previewCountText', () => {
     expect(previewCountText(12, 4)).toBe('12 preview images, 4 shown');
     expect(previewCountText(3, 3)).toBe('3 preview images');
     expect(previewCountText(1, 1)).toBe('1 preview image');
+  });
+
+  it('reads a count that hit its bound as "100+"', () => {
+    expect(previewCountText(PREVIEW_COUNT_CAP + 1, 4)).toBe('100+ preview images, 4 shown');
   });
 });
 

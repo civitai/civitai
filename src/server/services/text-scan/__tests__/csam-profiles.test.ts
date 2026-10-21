@@ -12,10 +12,11 @@ const CSAM_PROFILES: readonly string[] = [
   'UserProfile',
   'Post',
   'Model',
+  'Article',
 ];
 
 describe('csam profiles', () => {
-  it.each(TEXT_SCAN_ENTITY_TYPES)('%s asks for csam only if it is one of the six', (entityType) => {
+  it.each(TEXT_SCAN_ENTITY_TYPES)('%s asks for csam only if it is a csam profile', (entityType) => {
     const profile = getTextScanProfile(entityType);
     expect(profile).toBeDefined();
     expect(profile!.labels.includes('csam')).toBe(CSAM_PROFILES.includes(entityType));

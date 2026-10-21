@@ -5,12 +5,11 @@ import { BlockedReason } from '~/server/common/enums';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
- * 🔴 REACHABILITY GUARD for a cross-account destructive capability.
+ * 🔴 REACHABILITY GUARD for blob retraction.
  *
- * `remove-blocked-images` is the one flow allowed to pass `retractPublicBlobs`, which asks the
- * image-cache service to destroy the SHARED, content-addressed stored object behind an image —
- * removing the full-resolution original for every byte-identical image of every OTHER owner,
- * irreversibly, with no way to enumerate or notify them.
+ * `remove-blocked-images` passes `retractPublicBlobs`, which asks the image-cache service to
+ * delete an image's public copies and purge them from the CDN. Only a moderator's takedown of that
+ * image may turn it on.
  *
  * The job reads a QUEUE that a database trigger fills on any write landing
  * `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified'. So the population that
@@ -227,7 +226,10 @@ function presenceTest(sql: string, key: string) {
 }
 
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
@@ -548,8 +550,8 @@ describe('who can reach blob retraction, driven through the real block writers',
   }
 
   // The other direction of the same forgery, and the more dangerous one under a POSITIVE
-  // discriminator: a marker that turns retraction ON would let an uploader destroy the shared
-  // object behind any byte-identical image simply by getting their own copy blocked.
+  // discriminator: a marker that turns retraction ON would let an uploader make an automated
+  // block read as a moderator takedown.
   it('a forged marker cannot make an automated block retract', async () => {
     await createImage({
       userId: SCANNED_USER,
@@ -626,8 +628,8 @@ describe('who can reach blob retraction, driven through the real block writers',
       expect(retractionFor(id), `image ${id} was not deleted at all`).not.toBeUndefined();
       expect(
         retractionFor(id),
-        'a whole-library ban block reached the retracting call: banning an account must not ' +
-          'destroy other owners’ stored bytes'
+        'a whole-library ban block reached the retracting call: banning an account is not a ' +
+          'per-image takedown'
       ).toBe(false);
     }
   });
@@ -684,10 +686,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(10), 'the image was not deleted at all').not.toBeUndefined();
-    expect(
-      retractionFor(10),
-      'a rating change was read as a decision to destroy the shared stored object'
-    ).toBe(false);
+    expect(retractionFor(10), 'a rating change was read as a takedown decision').toBe(false);
   });
 
   // Not a retraction claim. `unblockAccountDeletionImages` restores an image on the presence of

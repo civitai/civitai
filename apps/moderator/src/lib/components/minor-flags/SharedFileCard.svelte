@@ -45,7 +45,7 @@
 {#snippet cover(url: string | null | undefined, type: string | null | undefined)}
   <!-- Same box for both, filled per the design; cropped from the top, where a subject's face usually
        is. The full previews are one click away in the preview card. -->
-  <div class="h-[90px] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6">
+  <div class="aspect-[4/5] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6">
     {#if url}
       <EdgeMedia
         src={url}

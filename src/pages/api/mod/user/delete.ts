@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
+import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
@@ -17,6 +18,7 @@ export default defineModeratorEndpoint('user.delete', {
     'Requires the moderator app permission `user.deleteAccount`: held by `moderator:admin`, and by any role granted it on the moderator app’s `/admin`.',
     '`username` is REQUIRED for any account that has one — it is the only check that catches a mistyped id landing on another live account. Accounts with a null username, and already-deleted rows, do not ask for it.',
     'Refuses an account that is already deleted rather than re-running the scrub.',
+    'Refuses an account under a legal hold, with no override.',
     'Images are kept for the 7-day grace period unless you send `removeImages: true`. An erasure asking for immediate removal needs that flag set deliberately, and THE CHOICE IS ONE-SHOT: once the account is deleted this endpoint refuses it. Getting it wrong costs a 7-day delay, not permanent retention — the purge still runs on day 7.',
     'Records a `deleteAccount` ModActivity row against the acting moderator. `auditRecorded: false` means the deletion succeeded and that row did not land.',
   ],
@@ -114,13 +116,20 @@ export default defineModeratorEndpoint('user.delete', {
         `That username does not belong to user ${input.userId}. Check the id and try again.`
       );
 
-    await deleteUser({
-      id: input.userId,
-      // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
-      username: target.username ?? undefined,
-      removeModels: input.removeModels,
-      removeImages: input.removeImages,
-    });
+    try {
+      await deleteUser({
+        id: input.userId,
+        // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
+        username: target.username ?? undefined,
+        removeModels: input.removeModels,
+        removeImages: input.removeImages,
+      });
+    } catch (e) {
+      // No moderator override: a hold is released by Legal, not here.
+      if (e instanceof LegalHoldError)
+        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      throw e;
+    }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in
     // `apps/moderator/src/lib/server/user-actions.service.ts`. Most `defineModeratorEndpoint`s leave

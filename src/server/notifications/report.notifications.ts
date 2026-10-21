@@ -73,6 +73,13 @@ export const reportNotifications = createNotificationProcessor({
         WHERE
           r."userId" > 0 AND
           r.reason != 'NSFW' AND
+          u."bannedAt" IS NULL AND
+          u."deletedAt" IS NULL AND
+          -- Never tell an owner that their own reported image was actioned.
+          NOT EXISTS (
+            SELECT 1 FROM "ImageReport" ir JOIN "Image" i ON i.id = ir."imageId"
+            WHERE ir."reportId" = r.id AND i."userId" = u.id
+          ) AND
           r."statusSetAt" > '${lastSent}' AND
           r.status = 'Actioned'
       )

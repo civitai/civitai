@@ -10,6 +10,7 @@ const SUPER_ROLE = 'moderator:admin';
 /** Grant ids this module can check; declared in `apps/moderator/src/lib/permissions.ts`. */
 export type ModeratorGrantId =
   | 'user.deleteAccount'
+  | 'user.purge'
   | 'user.removeReactions'
   | 'user.membership.code'
   | 'user.creatorScore.grant'

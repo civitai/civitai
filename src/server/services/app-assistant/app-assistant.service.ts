@@ -11,7 +11,7 @@ import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
-import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 import {
   APP_ASSISTANT_DAILY_BUZZ_CAP,
   APP_ASSISTANT_SCOPES,
@@ -50,17 +50,21 @@ export interface AppAssistantRefusal {
 
 type GateContext = { user: SessionUser; req?: NextApiRequest | IncomingMessage };
 
-/** The `guardedProcedure` gates, then the feature gate. */
-export async function getAppAssistantRefusal({
-  user,
-  req,
-}: GateContext): Promise<AppAssistantRefusal | null> {
+/** What the account gates read: the fields `guardedProcedure` checks. */
+type GatedAccount = {
+  bannedAt?: Date | null;
+  onboarding?: number | null;
+  muted?: boolean | null;
+} & NonNullable<Parameters<typeof requiresEmailVerification>[0]>;
+
+/** The account gates `guardedProcedure` applies, as one predicate both entry points share. */
+function accountRefusal(user: GatedAccount): AppAssistantRefusal | null {
   if (user.bannedAt)
     return {
       status: 403,
       error: 'You cannot perform this action because your account has been banned',
     };
-  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz))
+  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz))
     return {
       status: 403,
       error: 'You must complete the onboarding process before performing this action',
@@ -72,10 +76,96 @@ export async function getAppAssistantRefusal({
     };
   if (requiresEmailVerification(user))
     return { status: 403, error: 'Verify your email address to do this' };
-  const features = await getFeatureFlagsAsync({ user, req });
+  return null;
+}
+
+/** The feature gate: App Assistant is on for this user (and, when asked, its server runner). */
+async function featureRefusal(
+  ctx: GateContext,
+  { remoteRunner = false }: { remoteRunner?: boolean } = {}
+): Promise<AppAssistantRefusal | null> {
+  const features = await getFeatureFlagsAsync(ctx);
   if (!canAccessAppAssistant(features))
     return { status: 403, error: 'App Assistant is not available on this account' };
+  if (remoteRunner && !features.appAssistantRemoteRunner)
+    return { status: 403, error: 'Replies on the server are not available on this account' };
   return null;
+}
+
+/** The `guardedProcedure` gates, then the feature gate, for a signed-in session's user. */
+export async function getAppAssistantRefusal({
+  user,
+  req,
+}: GateContext): Promise<AppAssistantRefusal | null> {
+  return accountRefusal(user) ?? (await featureRefusal({ user, req }));
+}
+
+/** The gates could not be judged just now (the session hub or Flipt is unavailable): ask again. */
+export interface AppAssistantGateUnavailable {
+  status: 503;
+  error: string;
+  unavailable: true;
+}
+
+/** The flags `canAccessAppAssistant` reads. */
+const APP_ASSISTANT_FLAGS = ['appBlocks', 'appAssistant'] as const;
+
+/**
+ * The same gates for a user known only by id (the server runner's mints, which have no session).
+ * The gated account fields are read fresh from the primary database on every call, never from a
+ * cached session, so a ban, a mute or a lost email verification stops the next mint.
+ *
+ * The feature gate is evaluated with no request, which matches the token route's evaluation on
+ * civitai.com only while all of these hold:
+ * - `appBlocks` and `appAssistant` carry no region or host rule (true today: their availability is
+ *   `['mod']` and `[]`), so the request's region and host would change nothing;
+ * - the session hub returns the user, which supplies Flipt's targeting attributes the database row
+ *   lacks (tier, membership, early adopter, granted permissions);
+ * - Flipt decides both flags (`isFliptDecisive`), rather than `hasFeature` falling back to the
+ *   static rules, under which nobody passes (`appAssistant` is `availability: []`; `appBlocks`'s
+ *   `['mod']` alone admits no one past it).
+ * When the session hub misses or Flipt is undecided, the answer is `unavailable` (the runner asks
+ * again), never a refusal: only a definite answer on that complete context refuses.
+ *
+ * `remoteRunner` also requires `appAssistantRemoteRunner`, decided by Flipt the same way (its static
+ * rule is off for everyone), so turning the runner off stops every mint of runs already holding a
+ * grant, at their next mint, not only new grants; while Flipt cannot decide it the mint answers
+ * `unavailable` and the runner asks again.
+ */
+export async function getAppAssistantRefusalForUserId(
+  userId: number,
+  { remoteRunner = false }: { remoteRunner?: boolean } = {}
+): Promise<AppAssistantRefusal | AppAssistantGateUnavailable | null> {
+  const row = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      bannedAt: true,
+      onboarding: true,
+      muted: true,
+      emailVerified: true,
+      meta: true,
+      isModerator: true,
+    },
+  });
+  if (!row) return { status: 403, error: 'App Assistant is not available on this account' };
+  const refused = accountRefusal(row);
+  if (refused) return refused;
+  const unavailable: AppAssistantGateUnavailable = {
+    status: 503,
+    error: 'App Assistant could not check this account just now',
+    unavailable: true,
+  };
+  // Imported here, not at the top: the session client is built at module load, and only this path needs it.
+  const { sessionClient } = await import('~/server/auth/session-client');
+  const cached = await sessionClient.getSessionUserById(userId).catch(() => null);
+  if (!cached) return unavailable;
+  const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
+  const flags = remoteRunner
+    ? [...APP_ASSISTANT_FLAGS, 'appAssistantRemoteRunner' as const]
+    : [...APP_ASSISTANT_FLAGS];
+  if (!(await isFliptDecisive(flags, user))) return unavailable;
+  return featureRefusal({ user }, { remoteRunner });
 }
 
 export interface AppAssistantToken {
@@ -140,16 +230,29 @@ export async function mintAppAssistantToken(
   userId: number,
   purpose: AppAssistantTokenPurpose
 ): Promise<AppAssistantToken | null> {
-  const clientId = appAssistantClientId(userId);
+  if (!(await hasAppAssistantConsent(userId, purpose))) return null;
+  const minted = await mintAppToken({
+    userId,
+    clientId: appAssistantClientId(userId),
+    scope: scopeFor(purpose),
+  });
+  return { token: minted.accessToken, expiresAt: minted.expiresAt };
+}
+
+/**
+ * Whether the user's App Assistant consent covers `purpose`'s scopes: written by
+ * `enableAppAssistant`, gone once the user revokes it under connected apps.
+ */
+export async function hasAppAssistantConsent(
+  userId: number,
+  purpose: AppAssistantTokenPurpose = 'chat'
+): Promise<boolean> {
   const scope = scopeFor(purpose);
   const consent = await dbWrite.oauthConsent.findUnique({
-    where: { userId_clientId: { userId, clientId } },
+    where: { userId_clientId: { userId, clientId: appAssistantClientId(userId) } },
     select: { scope: true },
   });
-  if (!consent || (consent.scope & scope) !== scope) return null;
-
-  const minted = await mintAppToken({ userId, clientId, scope });
-  return { token: minted.accessToken, expiresAt: minted.expiresAt };
+  return !!consent && (consent.scope & scope) === scope;
 }
 
 export type AppAssistantPreview =

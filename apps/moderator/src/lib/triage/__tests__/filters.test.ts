@@ -31,7 +31,7 @@ describe('chipHref', () => {
 describe('carriedSearchParams', () => {
   it('keeps the tab filters and drops the search, page and selection params', () => {
     const params = new URLSearchParams(
-      'label=poi&sort=new&q=cat&page=2&item=5&appeal=6&model=7&label=minor'
+      'label=poi&sort=new&q=cat&page=2&item=5&hold=8&appeal=6&model=7&label=minor'
     );
     expect(carriedSearchParams(params)).toEqual([
       ['label', 'poi'],

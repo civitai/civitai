@@ -169,8 +169,9 @@ describe('challenge-entry gates when the replica has not caught up', () => {
     });
   });
 
-  // The cache (replica-fed) has no Block yet and the primary does: an entry is a write, so it
-  // must be decided by the primary. The stand-in answers differently per source, so the gate
+  // The cache has no Block yet and the primary does (it refills from the primary, but an entry
+  // cached before the Block committed can miss it): an entry is a write, so it must be decided by
+  // the primary. The stand-in answers differently per source, so the gate
   // only refuses if it asked for the primary confirmation.
   it("refuses an entry when only the primary has the creator's Block", async () => {
     seed({ replica: [], primary: [challenge()] });

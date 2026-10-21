@@ -20,7 +20,7 @@ const { getCsamQueueByUser, getImageReviewQueue } = await import('../image-revie
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT, "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
@@ -44,7 +44,10 @@ CREATE TABLE "Image" (
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3));
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
+  "images" JSONB NOT NULL DEFAULT '[]'
+);
 `;
 
 // Every level, Blocked included, so the browsing-level filter is not what decides a row.
@@ -107,6 +110,16 @@ describe('the CSAM queue by user', () => {
       { userId: 102, reported: true, sent: null },
       { userId: 103, reported: false, sent: null },
     ]);
+  });
+
+  it('says what a bulk clear would take, whatever the level filter, and whom it would refuse', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: 4 });
+    expect(users.map(({ userId, removed, held }) => ({ userId, removed, held }))).toEqual([
+      { userId: 101, removed: 1, held: true },
+      { userId: 102, removed: 0, held: true },
+    ]);
+    const all = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    expect(all.users.find((u) => u.userId === 103)).toMatchObject({ removed: 1, held: false });
   });
 
   it('applies the browsing-level filter the flat queue applies', async () => {

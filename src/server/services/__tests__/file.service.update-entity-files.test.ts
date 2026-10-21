@@ -7,13 +7,17 @@ const OTHER_ITEMS_FILE = 2;
 
 const URL = 'https://storage.example.com/default/8/lora.safetensors';
 const CHECKED = { sha256Server: 'F'.repeat(64), hashCheckedAt: '2026-10-20T00:00:00Z' };
+const CLEARED = {
+  blockedReason: 'other-users-model',
+  checkOverride: { by: 1, at: '2026-10-21T00:00:00Z', reason: 'their own alt account' },
+};
 const rows = [
   {
     id: OWN_FILE,
     entityId: ENTRY,
     entityType: 'BountyEntry',
     url: URL,
-    metadata: { ...CHECKED, blockedReason: 'other-users-model', unlockAmount: 5 },
+    metadata: { ...CHECKED, ...CLEARED, unlockAmount: 5 },
   },
   { id: OTHER_ITEMS_FILE, entityId: 99, entityType: 'BountyEntry', url: URL, metadata: {} },
 ];
@@ -102,7 +106,10 @@ describe('updateEntityFiles: the file check result', () => {
     sha256Server: '0'.repeat(64),
     hashCheckedAt: 'x',
     hashAttemptedAt: 'x',
+    hashFailCount: 0,
+    hashLastError: '',
     blockedReason: '',
+    checkOverride: { by: 2, at: 'x', reason: 'forged' },
   };
   const savedMetadata = () => tx.file.updateMany.mock.calls[0][0].data.metadata;
 
@@ -118,19 +125,19 @@ describe('updateEntityFiles: the file check result', () => {
   it('is kept when a file is saved again at the same url, whatever the caller sends', async () => {
     await save([{ ...file(OWN_FILE), metadata: { ...FORGED, unlockAmount: 7 } }]);
 
-    expect(savedMetadata()).toEqual({
-      ...CHECKED,
-      blockedReason: 'other-users-model',
-      unlockAmount: 7,
-      ownRights: true,
-    });
+    expect(savedMetadata()).toEqual({ ...CHECKED, ...CLEARED, unlockAmount: 7, ownRights: true });
   });
 
-  it('is dropped when the file gets a new url, so it is checked again', async () => {
+  it("is dropped when the file gets a new url, a moderator's clear with it", async () => {
+    // The form sends back the metadata it read, so the old result rides along unless it is stripped.
     await save([
-      { ...file(OWN_FILE), url: 'https://storage.example.com/default/8/other.safetensors' },
+      {
+        ...file(OWN_FILE),
+        url: 'https://storage.example.com/default/8/other.safetensors',
+        metadata: rows[0].metadata,
+      },
     ]);
 
-    expect(savedMetadata()).toEqual({ ownRights: true });
+    expect(savedMetadata()).toEqual({ unlockAmount: 5, ownRights: true });
   });
 });
