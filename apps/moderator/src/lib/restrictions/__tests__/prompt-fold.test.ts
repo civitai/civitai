@@ -121,6 +121,10 @@ describe('lastMatchEnd', () => {
     expect(keepThroughFor(text, 'prompt', [{ text: 'CAT' }])).toBe(text.length);
   });
 
+  it('finds the last occurrence even when occurrences overlap', () => {
+    expect(lastMatchEnd('aaa', ['aa'])).toBe(3);
+  });
+
   it('ignores blank needles and reports 0 without a match', () => {
     expect(lastMatchEnd('nothing here', [' ', 'zebra'])).toBe(0);
   });

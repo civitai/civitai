@@ -274,7 +274,6 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
-      choose={ruling.choose}
       bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}

@@ -41,7 +41,11 @@ export function foldPrompt(
 function lastEndOf(text: string, needle: string): number {
   const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
   let end = -1;
-  for (const m of text.matchAll(pattern)) end = m.index + m[0].length;
+  for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
+    end = m.index + m[0].length;
+    // Step one character, not past the match, so overlapping occurrences still count.
+    pattern.lastIndex = m.index + 1;
+  }
   return end;
 }
 

@@ -60,7 +60,6 @@
     error: string | undefined;
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
-    choose: (verdict: Verdict) => void;
     draft: RulingDraft<Verdict>;
   } = $props();
 
