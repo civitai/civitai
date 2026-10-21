@@ -46,6 +46,7 @@ import type {
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
+  SetCrucibleEventTagsSchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
@@ -1450,6 +1451,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator = false,
   viewerId,
   isGreen = false,
+  eventTag,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
@@ -1457,8 +1459,11 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator?: boolean;
   viewerId?: number;
   isGreen?: boolean;
+  /** Server-side only: event tags are moderator data, so no public input may filter on them. */
+  eventTag?: string;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
+  if (eventTag !== undefined) where.eventTags = { has: eventTag };
 
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
@@ -1571,6 +1576,23 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     rows.length > take ? (rows.pop() as { id: number } & (typeof rows)[number]).id : undefined;
 
   return { items: rows, nextCursor };
+};
+
+export const getCrucibleEventTags = async (id: number) => {
+  const crucible = await dbRead.crucible.findUnique({ where: { id }, select: { eventTags: true } });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  return crucible.eventTags;
+};
+
+export const setCrucibleEventTags = async ({ id, eventTags }: SetCrucibleEventTagsSchema) => {
+  const exists = await dbWrite.crucible.findUnique({ where: { id }, select: { id: true } });
+  if (!exists) throw throwNotFoundError('Crucible not found');
+  const updated = await dbWrite.crucible.update({
+    where: { id },
+    data: { eventTags },
+    select: { eventTags: true },
+  });
+  return updated.eventTags;
 };
 
 /**
@@ -4673,8 +4695,7 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner)))
-      cruciblesWon++;
+    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner))) cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);
   }

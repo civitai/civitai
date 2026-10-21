@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -22,6 +22,8 @@ import {
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getAllImagesIndex } from '~/server/services/image.service';
+import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
+import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
   bustSystemHomeBlockCaches,
   getHomeBlockCached,
@@ -58,7 +60,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
-import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
@@ -257,7 +260,8 @@ type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>
 /** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
 export type FeedBlockItems =
   | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
-  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] }
+  | { entity: 'crucibles'; items: AsyncReturnType<typeof getFeedCrucibles> };
 
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
@@ -359,6 +363,38 @@ const modelFeedDefaults = {
   favorites: false,
   hidden: false,
 } as const;
+
+const CRUCIBLE_FEED_LIMIT = 8;
+
+/**
+ * Running crucibles first, then upcoming, each by prize pool: `getCrucibles` under the PrizePool
+ * sort. No viewer, because the result is shared-cached; the client still applies the viewer's
+ * hidden users and browsing level.
+ */
+const getFeedCrucibles = async ({
+  eventTag,
+  limit,
+  browsingLevel,
+  domain,
+}: {
+  eventTag: string;
+  limit: number;
+  browsingLevel: number;
+  domain?: DomainColor;
+}) => {
+  const { items } = await getCrucibles({
+    input: {
+      limit: Math.min(limit, CRUCIBLE_FEED_LIMIT),
+      sort: CrucibleSort.PrizePool,
+      status: [CrucibleStatus.Active, CrucibleStatus.Pending],
+      browsingLevel,
+    },
+    select: crucibleListSelect,
+    isGreen: domain === 'green',
+    eventTag,
+  });
+  return withEntryCounts(items);
+};
 
 // PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
 // nothing on the home page has passed human review before appearing there.
@@ -541,6 +577,20 @@ export const getHomeBlockData = async ({
       // truthiness and strips every version off every model, ejecting the whole block.
       // Metadata is cast rather than parsed and is hand-written, so `[]` is reachable.
       const baseModels = feed.baseModels?.length ? feed.baseModels : undefined;
+
+      if (feed.entity === 'crucibles') {
+        // Without a tag the block would list every running crucible on the site.
+        const eventTag = normalizeCrucibleEventTag(feed.eventTag ?? '');
+        if (!eventTag) return null;
+
+        const items = await getFeedCrucibles({
+          eventTag,
+          limit,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          domain: input.domain,
+        });
+        return { ...homeBlock, metadata, feedItems: { entity: 'crucibles' as const, items } };
+      }
 
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
