@@ -60,6 +60,9 @@ export async function submitAutoLabel(
           mediaUrl: item.mediaUrl,
           temperature: CAPTION_TEMPERATURE,
           maxNewTokens: CAPTION_MAX_TOKENS,
+          // Training wants the caption itself, not the moderation-oriented transcript.
+          includeCaption: true,
+          prepareForModeration: false,
         },
         metadata,
       };
