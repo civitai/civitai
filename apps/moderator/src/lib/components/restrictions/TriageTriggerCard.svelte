@@ -21,7 +21,7 @@
     promptTesterHref,
     sourceLabel,
   } from '$lib/restrictions/trigger-evidence';
-  import { cutSegments, foldPrompt } from '$lib/restrictions/prompt-fold';
+  import { cutSegments, foldPrompt, lastMatchEnd, lastSegmentEnd } from '$lib/restrictions/prompt-fold';
   import { attemptTimes, formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
   import type {
     RemixSource,
@@ -107,19 +107,6 @@
     } catch {
       copiedKey = null;
     }
-  };
-  // A highlight hidden by the fold would hide the very evidence the ruling turns on.
-  const markedAfter = (text: string, at: number, needles: string[]) => {
-    const tail = text.slice(at).toLowerCase();
-    return needles.some((n) => !!n.trim() && tail.includes(n.trim().toLowerCase()));
-  };
-  const segmentMarkedAfter = (segments: { text: string; category: string | null }[], at: number) => {
-    let used = 0;
-    for (const s of segments) {
-      if (used >= at && s.category) return true;
-      used += s.text.length;
-    }
-    return false;
   };
 </script>
 
@@ -216,14 +203,11 @@
   {@const differs = !!b.segments && normalisedDiffers(b.segments, b.raw)}
   {@const legend = showSegments ? legendFor(b.segments!) : []}
   {@const shown = showSegments ? b.segments!.map((s) => s.text).join('') : b.raw}
-  {@const fold = foldPrompt(shown, FOLD)}
-  {@const hiddenMark = fold.folded
-    ? showSegments
-      ? segmentMarkedAfter(b.segments!, fold.head.length)
-      : markedAfter(shown, fold.head.length, b.highlight)
-    : false}
-  {@const foldable = fold.folded && !hiddenMark}
-  {@const collapsed = foldable && !expanded[b.key]}
+  {@const fold = foldPrompt(shown, {
+    ...FOLD,
+    keepThrough: showSegments ? lastSegmentEnd(b.segments!) : lastMatchEnd(shown, b.highlight),
+  })}
+  {@const collapsed = fold.folded && !expanded[b.key]}
   <div class="rounded-md border border-dark-4 bg-dark-7">
     <div
       class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-dark-4 px-3 py-1.5 text-xs font-semibold tracking-wide text-dark-2 uppercase"
@@ -248,7 +232,7 @@
             Show all {fold.total.toLocaleString()} characters
           </button>
         </p>
-      {:else if foldable}
+      {:else if fold.folded}
         <button
           type="button"
           class="mt-1 cursor-pointer text-xs {LINK_CLASS}"
