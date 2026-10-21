@@ -8,7 +8,10 @@ import {
 import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
-import { USER_MENU_GROUP_IDS } from '~/shared/constants/user-menu-groups.constants';
+import {
+  USER_MENU_GROUP_IDS,
+  USER_MENU_HEADER_GROUP,
+} from '~/shared/constants/user-menu-groups.constants';
 
 /*
  * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
@@ -874,9 +877,9 @@ const userMenuClickSchema = z.object({
   type: z.literal('UserMenu_Click'),
   details: z.object({
     item: z.enum(USER_MENU_ITEM_IDS),
-    // The item's home group in the layout, also when it was opened from the Pinned section.
-    // Null for a top-level item.
-    group: z.enum(USER_MENU_GROUP_IDS).nullable(),
+    // The item's home group in the layout, also when it was opened from the Pinned section;
+    // `header` for the profile and Buzz rows above the menu. Null for a top-level item.
+    group: z.enum([...USER_MENU_GROUP_IDS, USER_MENU_HEADER_GROUP]).nullable(),
     // Opened from the Pinned section, not merely an item that is pinned.
     pinned: z.boolean(),
     surface: z.enum(['desktop', 'mobile']),

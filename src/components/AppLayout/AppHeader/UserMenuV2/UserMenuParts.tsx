@@ -16,6 +16,7 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TrackActionInput } from '~/server/schema/track.schema';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
+import { USER_MENU_HEADER_GROUP } from '~/shared/constants/user-menu-groups.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function MenuItemLabel({ item }: { item: UserMenuItem }) {
@@ -129,6 +130,19 @@ export function useTrackMenuOpen(surface: UserMenuSurface) {
     if (!id) return;
     trackAction(userMenuClickAction({ id, signedIn, fromPins, surface })).catch(() => undefined);
   };
+}
+
+/**
+ * Records the profile and Buzz rows above the menu. They link where the `profile` and
+ * `buzz-dashboard` items do, so opens from both places show whether a pin of either is redundant.
+ */
+export function useTrackHeaderOpen(surface: UserMenuSurface) {
+  const { trackAction } = useTrackEvent();
+  return (item: Extract<UserMenuItemId, 'profile' | 'buzz-dashboard'>) =>
+    trackAction({
+      type: 'UserMenu_Click',
+      details: { item, group: USER_MENU_HEADER_GROUP, pinned: false, surface },
+    }).catch(() => undefined);
 }
 
 export const isPinKey = (event: React.KeyboardEvent) =>

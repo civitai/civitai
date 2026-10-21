@@ -6,6 +6,10 @@ import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackActionInput } from '~/server/schema/track.schema';
+import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
+import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
+import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
+import type * as IsMobile from '~/hooks/useIsMobile';
 
 /**
  * `UserMenu_Click` decides the default pins, so a row must record exactly one open per real
@@ -36,8 +40,32 @@ vi.mock('~/components/NextLink/NextLink', () => ({
   }),
 }));
 
-const { DesktopItem, PinnedList } = await import('./UserMenuDesktop');
-const { MobileItem, MobilePinned } = await import('./UserMenuMobile');
+// The header rows' balances, avatar and Buy Buzz modal are not what is under test.
+const buyBuzz = vi.hoisted(() => vi.fn());
+vi.mock('~/components/User/UserBuzz', () => ({ UserBuzz: () => null }));
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: () => createElement('span', null, 'Avatar'),
+}));
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<typeof IsMobile>()),
+  useIsMobile: () => true,
+}));
+vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
+vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzUtils>()),
+  useBuyBuzz: () => buyBuzz,
+}));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
+  useFeatureFlags: () => ({ buzz: true }),
+}));
+vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof HeaderHooks>()),
+  useGetCreator: () => null,
+}));
+
+const { DesktopHeaderRows, DesktopItem, PinnedList } = await import('./UserMenuDesktop');
+const { MobileHeaderRows, MobileItem, MobilePinned } = await import('./UserMenuMobile');
 const { useDragClickGuard } = await import('./UserMenuParts');
 const { UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { trackActionInputSchema } = await import('~/server/schema/track.schema');
@@ -98,6 +126,7 @@ beforeEach(() => {
   mocks.actions = [];
   mocks.user = { id: 1, username: 'tester' };
   handleClose.mockClear();
+  buyBuzz.mockClear();
   civitaiLink.onClick.mockClear();
 });
 afterEach(() => {
@@ -211,6 +240,35 @@ describe('UserMenu_Click', () => {
       { item: 'support-faq', group: 'help', pinned: false, surface: 'mobile' },
     ]);
   });
+
+  // The avatar row links to the profile and the Buzz row to the dashboard, so opens there sit beside
+  // opens of the `profile` and `buzz-dashboard` pins: that is what settles whether those pins earn
+  // their place.
+  it.each([
+    // Desktop rows are Mantine Menu.Items, which close the menu themselves.
+    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0],
+    ['mobile', () => createElement(MobileHeaderRows), 2],
+  ] as const)(
+    'records the %s header rows as header opens, and not Buy Buzz',
+    async (surface, node, closes) => {
+      await mount(node());
+      await click(row('Avatar'));
+      await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
+      await click(
+        [...document.querySelectorAll('.mantine-Button-root')].find(
+          (el) => el.textContent === 'Buy Buzz'
+        )
+      );
+
+      expect(buyBuzz).toHaveBeenCalledTimes(1);
+      expect(handleClose).toHaveBeenCalledTimes(closes);
+      expect(details()).toEqual([
+        { item: 'profile', group: 'header', pinned: false, surface },
+        { item: 'buzz-dashboard', group: 'header', pinned: false, surface },
+      ]);
+      expect(trackActionInputSchema.safeParse(mocks.actions[1]).success).toBe(true);
+    }
+  );
 
   it('gives a signed-out top-level item no group', async () => {
     mocks.user = null;

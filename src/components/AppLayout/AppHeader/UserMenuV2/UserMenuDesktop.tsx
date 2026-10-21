@@ -27,6 +27,7 @@ import {
   pinMoveDirection,
   useDragClickGuard,
   usePinActions,
+  useTrackHeaderOpen,
   useTrackMenuOpen,
 } from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
@@ -72,7 +73,6 @@ type Pins = UserMenuShellProps['pins'];
 
 function DesktopBody({ pins }: { pins: Pins }) {
   const currentUser = useCurrentUser();
-  const creator = useGetCreator();
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
     opened: true,
     pins: pins.pins,
@@ -82,12 +82,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   return (
     <div className="p-1">
       {region}
-      {currentUser && (
-        <Menu.Item component={NextLink} href={`/user/${currentUser.username}`}>
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </Menu.Item>
-      )}
-      {currentUser && <DesktopBuzzItem />}
+      {currentUser && <DesktopHeaderRows />}
       {events.map((item, i) => (
         <DesktopItem key={`event-${i}`} item={item} />
       ))}
@@ -422,7 +417,27 @@ export function DesktopItem({
   return <Menu.Item {...common} />;
 }
 
-function DesktopBuzzItem() {
+export function DesktopHeaderRows() {
+  const currentUser = useCurrentUser();
+  const creator = useGetCreator();
+  const trackHeader = useTrackHeaderOpen('desktop');
+  if (!currentUser) return null;
+
+  return (
+    <>
+      <Menu.Item
+        component={NextLink}
+        href={`/user/${currentUser.username}`}
+        onClick={() => trackHeader('profile')}
+      >
+        <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
+      </Menu.Item>
+      <DesktopBuzzItem onOpen={() => trackHeader('buzz-dashboard')} />
+    </>
+  );
+}
+
+function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
   const features = useFeatureFlags();
   const onBuyBuzz = useBuyBuzz();
   const [mainBuzzColor] = useAvailableBuzz();
@@ -432,6 +447,8 @@ function DesktopBuzzItem() {
     <Menu.Item
       component={NextLink}
       href="/user/buzz-dashboard"
+      // Buy Buzz below stops its click, so it is not counted as an open.
+      onClick={onOpen}
       className="my-1 bg-gray-2 dark:bg-dark-4"
       rightSection={
         <Button

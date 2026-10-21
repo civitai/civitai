@@ -35,6 +35,7 @@ import {
   PinGlyph,
   useDragClickGuard,
   usePinActions,
+  useTrackHeaderOpen,
   useTrackMenuOpen,
 } from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
@@ -188,18 +189,12 @@ function TopLevel({
   announce: (text: string) => void;
 }) {
   const currentUser = useCurrentUser();
-  const creator = useGetCreator();
   const features = useFeatureFlags();
   const support = useSupportOption();
 
   return (
     <>
-      {currentUser && (
-        <MenuItemLink href={`/user/${currentUser.username}`} data-panel-row>
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </MenuItemLink>
-      )}
-      {currentUser && <BuzzMenuItem />}
+      {currentUser && <MobileHeaderRows />}
       {currentUser && features.buzzSpendPop && features.canWrite && (
         <MenuItemLink href={support.href}>
           <support.icon stroke={1.5} />
@@ -222,6 +217,30 @@ function TopLevel({
           </div>
         </>
       )}
+    </>
+  );
+}
+
+export function MobileHeaderRows() {
+  const currentUser = useCurrentUser();
+  const creator = useGetCreator();
+  const { handleClose } = useContext(UserMenuCtx);
+  const trackHeader = useTrackHeaderOpen('mobile');
+  if (!currentUser) return null;
+
+  return (
+    <>
+      <MenuItemLink
+        href={`/user/${currentUser.username}`}
+        onClick={() => {
+          trackHeader('profile');
+          handleClose();
+        }}
+        data-panel-row
+      >
+        <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
+      </MenuItemLink>
+      <BuzzMenuItem onOpen={() => trackHeader('buzz-dashboard')} />
     </>
   );
 }
