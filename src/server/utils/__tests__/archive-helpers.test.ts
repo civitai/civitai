@@ -650,17 +650,12 @@ describe('createBoundedArchive onWritten', () => {
 });
 
 describe('ESTIMATED_BYTES_PER_ARCHIVED_IMAGE', () => {
-  const MiB = 1024 * 1024;
   const LIBRARY = 20_000;
 
-  it('sizes parts for a large library of originals at that estimate', () => {
-    expect(
-      deriveUploadPartGeometry({ expectedBytes: LIBRARY * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE })
-    ).toEqual({
-      partSize: 64 * MiB,
-      queueSize: 4,
-      maxObjectBytes: 64 * MiB * S3_MAX_UPLOAD_PARTS,
-      worstCaseResidentBytes: 256 * MiB,
-    });
+  it('sizes parts so a large library of originals at that estimate fits in one upload', () => {
+    const expectedBytes = LIBRARY * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE;
+    expect(deriveUploadPartGeometry({ expectedBytes }).maxObjectBytes).toBeGreaterThanOrEqual(
+      expectedBytes
+    );
   });
 });

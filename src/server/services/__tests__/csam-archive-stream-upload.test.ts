@@ -354,7 +354,7 @@ function expectedInventory(): InventoryEntry[] {
   })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** The manifest, parsed: compared by content so a serialisation change cannot redden it. */
+/** The manifest, parsed. */
 async function zipManifest(bytes: Buffer) {
   const zip = await JSZip.loadAsync(bytes);
   return JSON.parse(await zip.file('manifest.json')!.async('string'));

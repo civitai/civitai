@@ -1,10 +1,11 @@
 import { createHash } from 'crypto';
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
 import {
   extensionForContentType,
-  MAX_EDGE_FALLBACK_BYTES,
+  MAX_ORIGINAL_IMAGE_BYTES,
+  probeOriginalImage,
   readOriginalImage,
 } from '~/server/services/csam-original-image';
 
@@ -94,7 +95,7 @@ describe('readOriginalImage', () => {
 
     await expect(
       readOriginalImage(image, { backend, fetchImpl: edgeResponding(404) })
-    ).resolves.toEqual({ source: 'missing' });
+    ).resolves.toEqual({ source: 'missing', reason: 'edge 404' });
     await expect(
       readOriginalImage(image, {
         backend,
@@ -102,7 +103,7 @@ describe('readOriginalImage', () => {
           'content-type': 'text/html',
         }),
       })
-    ).resolves.toEqual({ source: 'missing' });
+    ).resolves.toEqual({ source: 'missing', reason: 'edge 403' });
   });
 
   it.each([408, 429, 500, 503])('throws on an edge %i so the run is retried', async (status) => {
@@ -146,19 +147,48 @@ describe('readOriginalImage', () => {
 
     await expect(
       readOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
-    ).resolves.toEqual({ source: 'missing' });
+    ).resolves.toEqual({ source: 'missing', reason: 'url not allowed' });
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(s3.send).not.toHaveBeenCalled();
   });
 
-  it('refuses an edge response larger than the cap before reading it', async () => {
+  it('records an edge response larger than the cap as missing, without reading it', async () => {
     const { backend } = backendReturning(missingKey);
     const fetchImpl = edgeResponding(200, Buffer.from('small'), {
       'content-type': 'image/jpeg',
-      'content-length': String(MAX_EDGE_FALLBACK_BYTES + 1),
+      'content-length': String(MAX_ORIGINAL_IMAGE_BYTES + 1),
     });
 
-    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(/size cap/);
+    await expect(readOriginalImage(image, { backend, fetchImpl })).resolves.toEqual({
+      source: 'missing',
+      reason: 'exceeds the size cap',
+    });
+  });
+
+  it('records a stored object larger than the cap as missing, without reading it', async () => {
+    const object = {
+      ...storedObject(Buffer.from('small')),
+      ContentLength: MAX_ORIGINAL_IMAGE_BYTES + 1,
+    };
+    const { backend } = backendReturning(async () => object);
+
+    await expect(readOriginalImage(image, { backend })).resolves.toEqual({
+      source: 'missing',
+      reason: 'exceeds the size cap',
+    });
+    expect(object.Body.transformToByteArray).not.toHaveBeenCalled();
+    expect(object.Body.destroy).toHaveBeenCalled();
+  });
+
+  it('asks the edge for identity encoding, so the declared length is what is read', async () => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('edge bytes'));
+
+    await readOriginalImage(image, { backend, fetchImpl });
+
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({
+      headers: { 'accept-encoding': 'identity' },
+    });
   });
 
   it('reserves the object size before reading the body, and hands back the release', async () => {
@@ -208,17 +238,37 @@ describe('readOriginalImage', () => {
 
     await readOriginalImage(image, { backend, fetchImpl, reserve });
 
-    expect(reserve).toHaveBeenCalledWith(MAX_EDGE_FALLBACK_BYTES);
+    expect(reserve).toHaveBeenCalledWith(MAX_ORIGINAL_IMAGE_BYTES);
   });
 
-  it('never fetches the edge for a stored key the URL allowlist refuses', async () => {
+  it.each([
+    ['the URL allowlist refuses', '\\evil.example/x.png'],
+    ['leaves the image path', '../../other/path'],
+    ['carries a query', 'key-uuid?x=1'],
+  ])('never fetches the edge for a stored key that %s', async (_, url) => {
     const { backend } = backendReturning(missingKey);
     const fetchImpl = edgeResponding(200, Buffer.from('remote'));
 
     await expect(
-      readOriginalImage({ url: '\\evil.example/x.png', type: 'image' }, { backend, fetchImpl })
-    ).resolves.toEqual({ source: 'missing' });
+      readOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({
+      source: 'missing',
+      reason: 'url not allowed',
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('releases the body of an edge error response', async () => {
+    const { backend } = backendReturning(missingKey);
+    const cancel = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async () => {
+      const response = new Response('busy', { status: 503 });
+      Object.defineProperty(response, 'body', { value: { cancel } });
+      return response;
+    });
+
+    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow('503');
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it('gives the reservation back and frees the socket when the body read fails', async () => {
@@ -260,6 +310,67 @@ describe('readOriginalImage', () => {
     await expect(
       readOriginalImage({ url: 'k', type: 'video', mimeType: 'video/mp4' }, octet)
     ).resolves.toMatchObject({ contentType: 'video/mp4' });
+  });
+});
+
+describe('probeOriginalImage', () => {
+  it('asks storage for the headers only, and reads no bytes', async () => {
+    const { s3, backend } = backendReturning(async () => ({ ContentLength: 10 }));
+    const fetchImpl = edgeResponding(200);
+
+    await expect(probeOriginalImage(image, { backend, fetchImpl })).resolves.toEqual({
+      source: 'original',
+    });
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    expect(s3.send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+    expect(s3.send.mock.calls[0][0].input).toEqual({ Bucket: BUCKET, Key: image.url });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('finds a stored object larger than the cap missing, as the read would', async () => {
+    const { backend } = backendReturning(async () => ({
+      ContentLength: MAX_ORIGINAL_IMAGE_BYTES + 1,
+    }));
+
+    await expect(probeOriginalImage(image, { backend })).resolves.toEqual({
+      source: 'missing',
+      reason: 'exceeds the size cap',
+    });
+  });
+
+  it.each([
+    ['NotFound', storageError('NotFound', 404)],
+    ['NoSuchKey', storageError('NoSuchKey', 404)],
+  ])('checks the edge when storage answers %s, releasing its body', async (_, send) => {
+    const { backend } = backendReturning(send);
+    const cancel = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async () => {
+      const response = new Response('edge bytes', { status: 200 });
+      Object.defineProperty(response, 'body', { value: { cancel } });
+      return response;
+    });
+
+    await expect(probeOriginalImage(image, { backend, fetchImpl })).resolves.toEqual({
+      source: 'edge-fallback',
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('finds a file the edge does not have missing', async () => {
+    const { backend } = backendReturning(storageError('NotFound', 404));
+
+    await expect(
+      probeOriginalImage(image, { backend, fetchImpl: edgeResponding(404) })
+    ).resolves.toEqual({ source: 'missing', reason: 'edge 404' });
+  });
+
+  it.each([
+    ['a storage server error', storageError('InternalError', 500), edgeResponding(200)],
+    ['an edge server error', storageError('NotFound', 404), edgeResponding(503)],
+  ])('throws on %s, as the read would', async (_, send, fetchImpl) => {
+    const { backend } = backendReturning(send);
+
+    await expect(probeOriginalImage(image, { backend, fetchImpl })).rejects.toThrow();
   });
 });
 

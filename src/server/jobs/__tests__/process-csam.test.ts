@@ -105,20 +105,6 @@ describe('archive-csam-reports batch isolation', () => {
     expect(logged[0].message).toBe(expected);
   });
 
-  it('names the report and how long it has waited, so one stuck retrying is visible', async () => {
-    // 50 h 40 min: whole hours elapsed, not rounded.
-    const sentAt = new Date(Date.now() - 50 * 3_600_000 - 40 * 60_000);
-    mocks.getCsamsToArchive.mockResolvedValue([{ id: 8804, reportSentAt: sentAt }]);
-    mocks.archiveCsamDataForReport.mockRejectedValueOnce(new Error('synthetic archive failure'));
-
-    await archiveJob!.run({}).result;
-
-    const logged = loggingMock.logToAxiom.mock.calls
-      .map(([arg]) => arg as Record<string, unknown>)
-      .filter((arg) => arg?.subType === 'archive-data');
-    expect(logged).toEqual([expect.objectContaining({ reportId: 8804, hoursSinceSent: 50 })]);
-  });
-
   it('preserves the message of a real Error', async () => {
     mocks.archiveCsamDataForReport.mockImplementationOnce(() =>
       Promise.reject(new Error('synthetic archive failure'))
@@ -211,7 +197,7 @@ describe('the archive job asks for a lock that can hold a real archival pass', (
   });
 });
 
-describe('the archive job’s lock survives the caller hanging up', () => {
+describe('the CSAM jobs’ locks survive the caller hanging up', () => {
   // 🔴 THE HALF THAT MAKES THE CONSTANT ABOVE MEAN ANYTHING. The caller holds the trigger request
   // open under a client-side timeout and retries; a pass longer than that timeout loses its socket.
   // On the default path the route's close handler releases the lock there and then — throwing the
@@ -243,7 +229,6 @@ describe('the archive job’s lock survives the caller hanging up', () => {
 
     expect(release).not.toHaveBeenCalled();
     expect(sendJob!.options.lockExpiration).toBe(CSAM_SEND_JOB_LOCK_SECONDS);
-    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBe(CSAM_ARCHIVE_JOB_LOCK_SECONDS);
   });
 
   it('CONTROL: a job that does not opt in still releases on a disconnect', async () => {

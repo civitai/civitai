@@ -9,25 +9,35 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * was sent. All ids and bytes below are invented.
  */
 
-// `isProd: true` below makes this client variable required at module scope; a local `.env` hides
+// `isProd: true` makes `NEXT_PUBLIC_CIVITAI_LINK` required at module scope; a local `.env` hides
 // that, CI does not.
 await vi.hoisted(async () => {
   process.env.NEXT_PUBLIC_CIVITAI_LINK ??= 'https://example.invalid/civitai-link';
 });
 
-const { uploadFile, submitFileDetails, finishReport, cancelReport, getObject } = vi.hoisted(() => ({
+const {
+  submitReport,
+  uploadFile,
+  submitFileDetails,
+  finishReport,
+  cancelReport,
+  getObject,
+  headObject,
+} = vi.hoisted(() => ({
+  submitReport: vi.fn(),
   uploadFile: vi.fn(),
   submitFileDetails: vi.fn(),
   finishReport: vi.fn(),
   cancelReport: vi.fn(),
   getObject: vi.fn(),
+  headObject: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   ...(await importOriginal<typeof CybertiplineTools>()),
   Client: class {
     getStatus = async () => ({ data: { responseCode: 0 } });
-    submitReport = async () => ({ data: { reportId: 99 } });
+    submitReport = submitReport;
     uploadFile = uploadFile;
     submitFileDetails = submitFileDetails;
     finishReport = finishReport;
@@ -51,7 +61,12 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   getImageUploadBackend: async () => ({
     bucket: 'test-images',
     backend: 'backblaze',
-    s3: { send: (command: { input: { Key: string } }) => getObject(command.input.Key) },
+    s3: {
+      send: (command: { constructor: { name: string }; input: { Key: string } }) =>
+        command.constructor.name === 'HeadObjectCommand'
+          ? headObject(command.input.Key)
+          : getObject(command.input.Key),
+    },
   }),
 }));
 
@@ -68,6 +83,13 @@ import { logToAxiom } from '~/server/logging/client';
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
+const storageOutage = () =>
+  Object.assign(new Error('synthetic storage outage'), {
+    name: 'InternalError',
+    $metadata: { httpStatusCode: 500 },
+  });
+const goneFromStorage = () => Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+
 const report = {
   id: 1,
   userId: 20,
@@ -79,10 +101,29 @@ const report = {
   details: {},
 } as unknown as CsamReportProps;
 
+const imageRow = (id: number) => ({
+  id,
+  url: `stored-key-${id}`,
+  name: 'upload.png',
+  type: 'image',
+  mimeType: 'image/png',
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  meta: {},
+  post: null,
+  tags: [],
+});
+
 const sentUpdate = () => dbMock.dbWrite.csamReport.update.mock.calls[0]?.[0]?.data;
+const lines = (subType: string) =>
+  vi
+    .mocked(logToAxiom)
+    .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+    .filter((line) => line.subType === subType);
 
 describe('NCMEC image upload', () => {
   beforeEach(() => {
+    vi.mocked(logToAxiom).mockClear();
+    submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
     submitFileDetails.mockReset().mockResolvedValue({});
     finishReport.mockReset();
@@ -93,25 +134,18 @@ describe('NCMEC image upload', () => {
       ContentType: 'image/webp',
       ContentLength: stored.length,
     }));
+    // A HEAD sees what a GET of the same key would.
+    headObject.mockReset().mockImplementation(async (key: string) => {
+      const object = await getObject(key);
+      return { ContentLength: object.ContentLength, ContentType: object.ContentType };
+    });
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
     dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
       where.id === 10
         ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
         : { id: 20, email: 'user@example.invalid', name: 'User', username: 'user' }
     );
-    dbMock.dbRead.image.findMany.mockResolvedValue([
-      {
-        id: 501,
-        url: 'stored-key-501',
-        name: 'upload.png',
-        type: 'image',
-        mimeType: 'image/png',
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-        meta: {},
-        post: null,
-        tags: [],
-      },
-    ]);
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501)]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockReset().mockResolvedValue({});
     dbMock.dbWrite.$executeRaw.mockReset().mockResolvedValue(1);
@@ -145,28 +179,45 @@ describe('NCMEC image upload', () => {
     ]);
   });
 
-  it('cancels and leaves the report unsent when the stored original cannot be read', async () => {
-    getObject.mockRejectedValue(
-      Object.assign(new Error('synthetic storage outage'), {
-        name: 'InternalError',
-        $metadata: { httpStatusCode: 500 },
-      })
-    );
+  describe('a report that is held', () => {
+    it('opens no CyberTip on any run while the stored original cannot be read', async () => {
+      getObject.mockRejectedValue(storageOutage());
 
-    await processCsamReport(report);
+      for (const hours of [1, 6, CSAM_SEND_SHORT_AFTER_HOURS + 1])
+        await processCsamReport({
+          ...report,
+          createdAt: new Date(Date.now() - hours * 3_600_000 - 60_000),
+          details: { readFailures: { 501: hours } },
+        } as CsamReportProps);
 
-    expect(uploadFile).not.toHaveBeenCalled();
-    expect(cancelReport).toHaveBeenCalledTimes(1);
-    expect(finishReport).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(cancelReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('opens once and cancels once when a file that checked out cannot then be read', async () => {
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockRejectedValue(storageOutage());
+
+      await processCsamReport(report);
+
+      expect(submitReport).toHaveBeenCalledTimes(1);
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(cancelReport).toHaveBeenCalledWith({ id: 99 });
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(lines('archive-data')).toEqual([
+        expect.objectContaining({ reportId: report.id, ncmecReportId: 99 }),
+      ]);
+      expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
+        JSON.stringify({ 501: 1 }),
+        report.id,
+      ]);
+    });
   });
 
   describe('a report still unsent after the send run', () => {
     const filedHoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000 - 60_000);
-
-    beforeEach(() => {
-      vi.mocked(logToAxiom).mockClear();
-    });
 
     it('raises a blocked line for each one pending past the threshold, read from the primary', async () => {
       dbMock.dbWrite.csamReport.findMany.mockResolvedValue([
@@ -179,22 +230,13 @@ describe('NCMEC image upload', () => {
       expect(dbMock.dbWrite.csamReport.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: { in: [1, 2, 3] }, reportSentAt: null } })
       );
-      const blocked = vi
-        .mocked(logToAxiom)
-        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
-        .filter((line) => line.subType === 'send-blocked');
-      expect(blocked).toEqual([
+      expect(lines('send-blocked')).toEqual([
         expect.objectContaining({ reportId: 2, hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS }),
       ]);
     });
   });
 
   describe('a file that stays unreadable', () => {
-    const storageOutage = () =>
-      Object.assign(new Error('synthetic storage outage'), {
-        name: 'InternalError',
-        $metadata: { httpStatusCode: 500 },
-      });
     const filed = (hours: number, readFailures?: Record<string, number>) =>
       ({
         ...report,
@@ -202,11 +244,6 @@ describe('NCMEC image upload', () => {
         createdAt: new Date(Date.now() - hours * 3_600_000 - 60_000),
         details: readFailures ? { readFailures } : {},
       } as CsamReportProps);
-    const lines = (subType: string) =>
-      vi
-        .mocked(logToAxiom)
-        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
-        .filter((line) => line.subType === subType);
     const recordedFailures = () =>
       dbMock.dbWrite.$executeRaw.mock.calls.map(([strings, ...values]) => ({
         sql: (strings as string[]).join('?'),
@@ -214,20 +251,7 @@ describe('NCMEC image upload', () => {
       }));
 
     beforeEach(() => {
-      vi.mocked(logToAxiom).mockClear();
-      dbMock.dbRead.image.findMany.mockResolvedValue(
-        [501, 502].map((id) => ({
-          id,
-          url: `stored-key-${id}`,
-          name: 'upload.png',
-          type: 'image',
-          mimeType: 'image/png',
-          createdAt: new Date('2026-01-01T00:00:00Z'),
-          meta: {},
-          post: null,
-          tags: [],
-        }))
-      );
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
       getObject.mockImplementation(async (key: string) => {
         if (key === 'stored-key-502') throw storageOutage();
         return {
@@ -247,23 +271,20 @@ describe('NCMEC image upload', () => {
           values: [JSON.stringify({ 502: 4 }), report.id],
         },
       ]);
-      expect(cancelReport).toHaveBeenCalledTimes(1);
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
     });
 
     it('holds the report back before the limit, however often the file failed', async () => {
       await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS - 1, { 502: 5 }));
 
-      expect(cancelReport).toHaveBeenCalledTimes(1);
-      expect(finishReport).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
 
     it('holds the report back at the limit on the first failed read of that file, as after an outage', async () => {
       await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS));
 
-      expect(cancelReport).toHaveBeenCalledTimes(1);
-      expect(finishReport).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
 
@@ -286,7 +307,43 @@ describe('NCMEC image upload', () => {
         { id: 502, source: 'missing', reason: 'storage read failed after retries' },
       ]);
       expect(lines('send-short')).toEqual([
-        expect.objectContaining({ reportId: report.id, filesMissing: 1 }),
+        expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 0 }),
+      ]);
+    });
+
+    it('holds the report at the limit while any one unreadable file has failed only once', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502), imageRow(503)]);
+      getObject.mockImplementation(async (key: string) => {
+        if (key !== 'stored-key-501') throw storageOutage();
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      });
+
+      await processCsamReport({
+        ...filed(CSAM_SEND_SHORT_AFTER_HOURS, { 502: 1 }),
+        images: [{ id: 501 }, { id: 502 }, { id: 503 }],
+      } as CsamReportProps);
+
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('holds a report whose only other file is gone, however often this one failed', async () => {
+      getObject.mockImplementation(async (key: string) => {
+        throw key === 'stored-key-501' ? goneFromStorage() : storageOutage();
+      });
+      vi.mocked(globalThis.fetch).mockImplementation(
+        async () => new Response('not found', { status: 404 })
+      );
+
+      await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS + 1, { 502: 9 }));
+
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(lines('send-all-unreadable')).toEqual([
+        expect.objectContaining({ filesUnreadable: 1, filesAbsent: 1 }),
       ]);
     });
 
@@ -298,12 +355,11 @@ describe('NCMEC image upload', () => {
       it('alerts on the first run and never sends it short', async () => {
         await processCsamReport(filed(1));
         expect(lines('send-all-unreadable')).toEqual([
-          expect.objectContaining({ reportId: report.id, hoursPending: 1 }),
+          expect.objectContaining({ reportId: report.id, hoursPending: 1, filesUnreadable: 2 }),
         ]);
 
         await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS + 1, { 501: 9, 502: 9 }));
-        expect(finishReport).not.toHaveBeenCalled();
-        expect(cancelReport).toHaveBeenCalledTimes(2);
+        expect(submitReport).not.toHaveBeenCalled();
         expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
       });
 
@@ -322,21 +378,53 @@ describe('NCMEC image upload', () => {
     });
   });
 
-  it('records an image missing from storage and from the edge, rather than dropping it', async () => {
-    getObject.mockRejectedValue(Object.assign(new Error('gone'), { name: 'NoSuchKey' }));
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response('not found', { status: 404 }));
+  describe('a file gone from storage and the edge', () => {
+    beforeEach(() => {
+      vi.mocked(globalThis.fetch).mockImplementation(
+        async () => new Response('not found', { status: 404 })
+      );
+    });
 
-    await processCsamReport(report);
+    it('holds a report with no other file, as one with nothing readable', async () => {
+      getObject.mockRejectedValue(goneFromStorage());
 
-    expect(uploadFile).not.toHaveBeenCalled();
-    expect(sentUpdate().details.images).toEqual([{ id: 501, source: 'missing' }]);
+      await processCsamReport(report);
+
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(lines('send-all-unreadable')).toEqual([
+        expect.objectContaining({ reportId: report.id, filesUnreadable: 0, filesAbsent: 1 }),
+      ]);
+    });
+
+    it('is recorded with its reason when another file is sent', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+      getObject.mockImplementation(async (key: string) => {
+        if (key === 'stored-key-502') throw goneFromStorage();
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      });
+
+      await processCsamReport({ ...report, images: [{ id: 501 }, { id: 502 }] } as CsamReportProps);
+
+      expect(uploadFile).toHaveBeenCalledTimes(1);
+      expect(sentUpdate().details.images).toEqual([
+        expect.objectContaining({ id: 501, source: 'original' }),
+        { id: 502, source: 'missing', reason: 'edge 404' },
+      ]);
+      expect(lines('send-short')).toEqual([
+        expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 1 }),
+      ]);
+    });
   });
 
   it('records an edge copy as such when the stored object is gone', async () => {
     const edge = Buffer.from('edge bytes');
-    getObject.mockRejectedValue(Object.assign(new Error('gone'), { name: 'NoSuchKey' }));
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+    getObject.mockRejectedValue(goneFromStorage());
+    vi.mocked(globalThis.fetch).mockImplementation(
+      async () => new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
     );
 
     await processCsamReport(report);

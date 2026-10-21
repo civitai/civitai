@@ -223,6 +223,7 @@ import {
 // Overshoot the bound by a wide, non-multiple margin so the fixture cannot sit on the boundary
 // it is testing. Invented figures — the real report was a different size entirely.
 const IMAGE_COUNT = 53;
+const MANIFEST_ENTRIES = 1;
 const IMAGE_BYTES = 97 * 1024;
 
 function fakeObject(bytes: number, contentType = 'image/jpeg') {
@@ -369,8 +370,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
     // because it is the only counter that reads IMAGE_COUNT on BOTH the fixed and the unfixed
     // code — asserting the processed count instead would kill this test on the un-awaited
     // finalize defect before the bound assertion below ever ran, i.e. green for the wrong reason.
-    // Every image plus the manifest.
-    expect(imageArchive!.appended).toBe(IMAGE_COUNT + 1);
+    expect(imageArchive!.appended).toBe(IMAGE_COUNT + MANIFEST_ENTRIES);
 
     // The regression. Pre-fix this reads IMAGE_COUNT, because every append was fire-and-forget.
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
@@ -581,8 +581,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
         kind: 'images',
         key: uploadedKeys.find((k) => k.endsWith('images.zip')),
         etag: expect.stringMatching(/^"etag-\d+"$/),
-        // Every image but the missing one, plus the manifest.
-        entries: IMAGE_COUNT,
+        entries: IMAGE_COUNT - 1 + MANIFEST_ENTRIES,
         namedExpected: 3,
         namedMissing: 2,
       },
@@ -1077,6 +1076,10 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     ]);
 
     expect(outcome).toBe('synthetic storage outage');
+    // The readers parked on the budget are refused rather than granted once the archive fails.
+    const readAtFailure = bodiesRead;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(bodiesRead).toBe(readAtFailure);
   });
 });
 
@@ -1192,6 +1195,34 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     expect((await zip.file('8.jpeg')!.async('nodebuffer')).equals(edge)).toBe(true);
   });
 
+  it('records a full URL whose host keeps failing as missing, and still archives the rest', async () => {
+    const withFullUrl = [
+      ...rows,
+      { id: 10, url: 'https://image.civitai.com/legacy/ten.png', name: 'ten.png', type: 'image' },
+    ];
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        withFullUrl.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+      String(input).includes('ten.png')
+        ? new Response('unavailable', { status: 503 })
+        : String(input).includes('key-eight')
+        ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+        : new Response('not found', { status: 404 })
+    );
+
+    const zip = await archivedZip();
+
+    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(manifest.images.at(-1)).toEqual({
+      imageId: 10,
+      source: 'missing',
+      reason: 'full url unreadable',
+    });
+  });
+
   it('writes a manifest of ids, hashes, sizes, sources and content types only', async () => {
     const zip = await archivedZip();
     const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
@@ -1212,7 +1243,7 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
           bytes: edge.length,
           contentType: 'image/jpeg',
         },
-        { imageId: 9, source: 'missing' },
+        { imageId: 9, source: 'missing', reason: 'edge 404' },
       ],
     });
   });

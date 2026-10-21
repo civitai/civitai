@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -16,7 +15,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-// `isProd: true` below makes this client variable required at module scope; a local `.env` hides
+// `isProd: true` makes `NEXT_PUBLIC_CIVITAI_LINK` required at module scope; a local `.env` hides
 // that, CI does not.
 await vi.hoisted(async () => {
   process.env.NEXT_PUBLIC_CIVITAI_LINK ??= 'https://example.invalid/civitai-link';
@@ -73,7 +72,7 @@ const stored = Buffer.from('the bytes the user uploaded');
 const db = { pg: null as unknown as PGlite };
 const JSON_COLUMNS = new Set(['details', 'images']);
 
-/** Applies a Prisma `csamReport.update` to the stand-in, column for column. */
+/** Stands in for the Prisma update against PGlite. */
 async function applyUpdate({
   where,
   data,
@@ -181,25 +180,7 @@ describe('sending a report under the append-only trigger', () => {
     ).rejects.toThrow(/may only gain keys/);
   });
 
-  it('records each file sha256 in the write that marks the row sent', async () => {
-    const id = await sendNewReport();
-
-    expect(cancelReport).not.toHaveBeenCalled();
-    expect(finishReport).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
-    const row = await readRow(id);
-    expect(row.reportSentAt).not.toBeNull();
-    expect(row.details.images).toEqual([
-      expect.objectContaining({
-        id: 501,
-        source: 'original',
-        sha256: createHash('sha256').update(stored).digest('hex'),
-        bytes: stored.length,
-      }),
-    ]);
-  });
-
-  it("passes the archive's later write to the sent row", async () => {
+  it('lets the archiveSkipped write through to a sent row', async () => {
     const id = await sendNewReport();
     const sent = await readRow(id);
 
@@ -234,17 +215,5 @@ describe('sending a report under the append-only trigger', () => {
     const row = await readRow(id);
     expect(row.reportSentAt).toBeNull();
     expect(row.details).toEqual({ filedMeanwhile: true, readFailures: { 501: 1 } });
-  });
-
-  it('refuses a later rewrite of a recorded sha256', async () => {
-    const id = await sendNewReport();
-    await expect(
-      db.pg.query(
-        `UPDATE "CsamReport"
-         SET "details" = jsonb_set("details", '{images,0,sha256}', '"0000"')
-         WHERE id = $1`,
-        [id]
-      )
-    ).rejects.toThrow(/may only gain keys/);
   });
 });

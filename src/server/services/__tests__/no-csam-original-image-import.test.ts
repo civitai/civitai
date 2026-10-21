@@ -7,8 +7,6 @@ import path from 'path';
  * browsing level, moderation). It exists for CSAM evidence only: the report archive and the
  * NCMEC upload, both in `csam.service-new.ts`. This fails when any other module reaches it, so it
  * cannot quietly become a general "serve the original" helper.
- *
- * A convention guard, not a boundary: a computed specifier gets past it.
  */
 
 const REPO = path.resolve(__dirname, '../../../..');
@@ -36,11 +34,11 @@ const SKIP_DIRS = new Set([
   '.turbo',
 ]);
 
-/** Every module allowed to reference it. Production callers first; then the tests that drive them. */
+/** Every module allowed to reference it. */
 const ALLOWED = [
   'src/server/services/csam.service-new.ts',
   'src/server/services/__tests__/csam-original-image.test.ts',
-  // Names the path as the URL-guard consumer it is; imports nothing.
+  // Lists the path in the media-fetch ledger; imports nothing.
   'src/server/services/__tests__/media-fetch-funnel-ledger.test.ts',
 ];
 

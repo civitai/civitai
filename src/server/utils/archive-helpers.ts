@@ -167,8 +167,8 @@ export function deriveUploadPartGeometry({
  * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
  * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
  * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
- * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals, not
- * width-capped copies.
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for the images archive's
+ * stored originals.
  */
 export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
 
@@ -192,8 +192,7 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
   let aborted: Error | undefined;
   const queue: Array<{ want: number; grant: () => void; fail: (e: Error) => void }> = [];
 
-  // `reserved === 0` admits an oversize reservation, alone.
-  const fits = (want: number) => reserved === 0 || reserved + want <= limitBytes;
+  const fits = (want: number) => reserved + want <= limitBytes;
   const drain = () => {
     while (queue.length > 0 && fits(queue[0].want)) queue.shift()?.grant();
   };
@@ -204,7 +203,7 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
     },
     async reserve(bytes) {
       if (aborted) throw aborted;
-      // An unknown size takes the whole budget.
+      // Clamped to the budget: an unknown-size or oversize object takes all of it, so it runs alone.
       const want = Number.isFinite(bytes) ? Math.min(Math.max(0, bytes), limitBytes) : limitBytes;
       // Counted at grant time, not on resume: `drain` grants several in one loop, and each must
       // see the bytes the previous one took.
@@ -249,8 +248,8 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
  * That is the point regardless: 38 is a CONSTANT, set by the two concurrency caps. The defect
  * being fixed is that the peak previously scaled with how many images the account had.
  *
- * The images archive holds stored originals and is bounded in bytes by
- * `MAX_ARCHIVE_SOURCE_BYTES` instead.
+ * The images archive holds stored originals, so this count does not bound its bytes; it also
+ * reserves against `MAX_ARCHIVE_SOURCE_BYTES`.
  */
 export const MAX_PENDING_ARCHIVE_ENTRIES = 8;
 
@@ -288,7 +287,8 @@ export type BoundedArchive = {
   /**
    * Appends an entry, first waiting until the archiver has drained below the pending-entry
    * ceiling. Resolves once the entry has been accepted (not once it has been written).
-   * `onWritten` runs once the archiver has written the entry, or when the archive fails.
+   * `onWritten` runs once the archiver has written the entry, or when the archive fails. Not
+   * called if append itself throws.
    */
   append: (source: Buffer | Readable, data: EntryData, onWritten?: () => void) => Promise<void>;
   /** Finalizes the archive and waits for the output sink to flush and close. */

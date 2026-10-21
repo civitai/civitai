@@ -56,8 +56,13 @@ import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
-import { extensionForContentType, readOriginalImage } from '~/server/services/csam-original-image';
+import {
+  extensionForContentType,
+  probeOriginalImage,
+  readOriginalImage,
+} from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
   environment: isDev ? Environment.Testing : Environment.Production,
@@ -578,12 +583,11 @@ async function getInitialReportData(report: CsamReportProps) {
   } satisfies Report;
 }
 
-/** Hours after filing at which an unsent report is logged as `send-blocked`. */
 export const CSAM_SEND_BLOCKED_AFTER_HOURS = 6;
 
 /**
- * Hours after filing at which a report is sent without a file that still cannot be read, once
- * reads of that file have failed CSAM_SEND_SHORT_MIN_READ_FAILURES times.
+ * A report is sent without its unreadable files only after this many hours, once each of those
+ * files has failed CSAM_SEND_SHORT_MIN_READ_FAILURES reads, and only if another file can be sent.
  */
 export const CSAM_SEND_SHORT_AFTER_HOURS = 24;
 export const CSAM_SEND_SHORT_MIN_READ_FAILURES = 2;
@@ -596,19 +600,24 @@ export const SEND_SHORT_REASON = 'storage read failed after retries';
 const hoursSinceFiled = (report: { createdAt: Date }) =>
   Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
 
-/** An unsent report is retried every run; the id and age make one stuck retrying traceable. */
-function logSendFailure(report: CsamReportProps, e: unknown, subType: string) {
+function logSendFailure(
+  report: CsamReportProps,
+  e: unknown,
+  subType: string,
+  ncmecReportId?: number
+) {
   logToAxiom({
     name: 'csam-report',
     type: 'error',
     subType,
     message: (e as Error | undefined)?.message,
     reportId: report.id,
+    ncmecReportId,
     hoursPending: hoursSinceFiled(report),
   });
 }
 
-/** Logs `send-blocked` for each of these reports still unsent this long after filing, whatever held it. */
+/** Logs `send-blocked` for each of these reports still unsent CSAM_SEND_BLOCKED_AFTER_HOURS after filing. */
 export async function logBlockedCsamReports(reportIds: number[]) {
   if (!reportIds.length) return;
   // The primary: a replica may not have this run's sends yet.
@@ -638,12 +647,15 @@ async function recordReadFailures(report: CsamReportProps, readFailures: Record<
   if (!isProd) return;
   await dbWrite.$executeRaw`
     UPDATE "CsamReport"
-    SET details = details || jsonb_build_object('readFailures', ${JSON.stringify(
+    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('readFailures', ${JSON.stringify(
       readFailures
     )}::jsonb)
     WHERE id = ${report.id} AND "reportSentAt" IS NULL
   `;
 }
+
+/** What the pre-open check found for one file. */
+type FileCheck = { readable: true } | { absent: string } | { failed: true };
 
 async function reportImages(report: CsamReportProps) {
   const initialReport = await getInitialReportData(report);
@@ -658,15 +670,67 @@ async function reportImages(report: CsamReportProps) {
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
+  // Every file is checked before a CyberTip is opened: a report that will be held opens none, so
+  // nothing about it reaches NCMEC until it can be sent.
+  const readFailures = { ...report.details?.readFailures };
+  const checks = new Map<number, FileCheck>();
+  await Limiter({ limit: 2, batchSize: 1 }).process(images, async ([image]) => {
+    try {
+      const probe = await probeOriginalImage(image);
+      checks.set(
+        image.id,
+        probe.source === 'missing' ? { absent: probe.reason } : { readable: true }
+      );
+    } catch {
+      readFailures[image.id] = (readFailures[image.id] ?? 0) + 1;
+      checks.set(image.id, { failed: true });
+    }
+  });
+  const failed = images.filter((image) => 'failed' in (checks.get(image.id) ?? {}));
+  const absent = images.filter((image) => 'absent' in (checks.get(image.id) ?? {}));
+  if (failed.length > 0) await recordReadFailures(report, readFailures);
+
+  const hoursPending = hoursSinceFiled(report);
+  if (failed.length + absent.length === images.length) {
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'send-all-unreadable',
+      message: `report ${report.id} has no readable file`,
+      reportId: report.id,
+      hoursPending,
+      filesUnreadable: failed.length,
+      filesAbsent: absent.length,
+    });
+    if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-decision-needed',
+        message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
+        reportId: report.id,
+        hoursPending,
+      });
+    return logSendFailure(report, new Error('no file of the report could be read'), 'archive-data');
+  }
+  const sendShort =
+    hoursPending >= CSAM_SEND_SHORT_AFTER_HOURS &&
+    failed.every((image) => readFailures[image.id] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
+  if (failed.length > 0 && !sendShort)
+    return logSendFailure(
+      report,
+      new Error(`${failed.length} file(s) could not be read`),
+      'archive-data'
+    );
+
   const {
     data: { reportId },
   } = await cybertipClient.submitReport({
     ...initialReport,
   });
 
-  const readFailures = { ...report.details.readFailures };
-  const failedReads: number[] = [];
   let uploaded = 0;
+  let failedAfterOpen = false;
   try {
     const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
       images,
@@ -701,20 +765,34 @@ async function reportImages(report: CsamReportProps) {
           fileAnnotations.physicalHarm = true;
         }
 
-        let original: OriginalImageRead;
-        try {
-          original = await readOriginalImage(image);
-        } catch {
-          readFailures[image.id] = (readFailures[image.id] ?? 0) + 1;
-          failedReads.push(image.id);
+        const check = checks.get(image.id) ?? {};
+        if ('failed' in check)
           return {
             ...imageReportInfo,
             source: 'missing',
             reason: SEND_SHORT_REASON,
           } satisfies CsamReportImage;
+        if ('absent' in check)
+          return {
+            ...imageReportInfo,
+            source: 'missing',
+            reason: check.absent,
+          } satisfies CsamReportImage;
+
+        let original: OriginalImageRead;
+        try {
+          original = await readOriginalImage(image);
+        } catch (e) {
+          readFailures[image.id] = (readFailures[image.id] ?? 0) + 1;
+          failedAfterOpen = true;
+          throw e;
         }
         if (original.source === 'missing')
-          return { ...imageReportInfo, source: original.source } satisfies CsamReportImage;
+          return {
+            ...imageReportInfo,
+            source: 'missing',
+            reason: original.reason,
+          } satisfies CsamReportImage;
         // A Buffer read from storage is backed by a plain ArrayBuffer.
         const bytes = original.data as Uint8Array<ArrayBuffer>;
         const file = blobToFile(new Blob([bytes], { type: original.contentType }));
@@ -745,35 +823,7 @@ async function reportImages(report: CsamReportProps) {
         } satisfies CsamReportImage;
       }
     );
-
-    if (failedReads.length > 0) {
-      await recordReadFailures(report, readFailures);
-      const hoursPending = hoursSinceFiled(report);
-      if (uploaded === 0) {
-        logToAxiom({
-          name: 'csam-report',
-          type: 'error',
-          subType: 'send-all-unreadable',
-          message: `report ${report.id} has no readable file`,
-          reportId: report.id,
-          hoursPending,
-        });
-        if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
-          logToAxiom({
-            name: 'csam-report',
-            type: 'error',
-            subType: 'send-decision-needed',
-            message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
-            reportId: report.id,
-            hoursPending,
-          });
-        throw new Error('no file of the report could be read');
-      }
-      const sendShort =
-        hoursPending >= CSAM_SEND_SHORT_AFTER_HOURS &&
-        failedReads.every((id) => readFailures[id] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
-      if (!sendShort) throw new Error(`${failedReads.length} file(s) could not be read`);
-    }
+    if (uploaded === 0) throw new Error('no file of the report could be read');
 
     if (isProd) {
       await dbWrite.csamReport.update({
@@ -784,7 +834,7 @@ async function reportImages(report: CsamReportProps) {
           reportSentAt: new Date(),
           details: {
             ...report.details,
-            ...(failedReads.length > 0 && { readFailures }),
+            ...(failed.length > 0 && { readFailures }),
             images: uploadResult.filter(isDefined),
           },
         },
@@ -792,18 +842,22 @@ async function reportImages(report: CsamReportProps) {
     }
 
     await cybertipClient.finishReport({ id: reportId });
-    if (failedReads.length > 0)
+    const filesMissing = uploadResult.filter((entry) => entry?.source === 'missing').length;
+    if (filesMissing > 0)
       logToAxiom({
         name: 'csam-report',
         type: 'error',
         subType: 'send-short',
-        message: `report ${report.id} sent without ${failedReads.length} unreadable file(s)`,
+        message: `report ${report.id} sent without ${filesMissing} file(s)`,
         reportId: report.id,
-        filesMissing: failedReads.length,
+        ncmecReportId: reportId,
+        filesMissing,
+        filesAbsent: filesMissing - failed.length,
       });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
-    logSendFailure(report, e, 'archive-data');
+    logSendFailure(report, e, 'archive-data', reportId);
+    if (failedAfterOpen) await recordReadFailures(report, readFailures).catch(() => undefined);
   }
 }
 
@@ -1958,15 +2012,23 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         imageCount !== undefined ? imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE : undefined,
       append: async (boundedArchive) => {
         const limit = plimit(10);
-        // Bounded in bytes, not count: originals run to hundreds of MiB.
+        // Bounded in bytes, not count: original sizes vary too much for an entry count to bound memory.
         const budget = createByteBudget();
         const manifest: ({ imageId: number } & EvidenceFileRecord)[] = [];
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          const original = await readOriginalImage(image, { reserve: budget.reserve });
+          let original: OriginalImageRead;
+          try {
+            original = await readOriginalImage(image, { reserve: budget.reserve });
+          } catch (e) {
+            // A full URL is on a host we do not control; its failing must not hold the archive
+            // back for good. A stored object's failure is retried.
+            if (!isEdgeUrlPassthrough(image.url)) throw e;
+            original = { source: 'missing', reason: 'full url unreadable' };
+          }
           if (original.source === 'missing') {
-            manifest.push({ imageId: image.id, source: 'missing' });
+            manifest.push({ imageId: image.id, source: 'missing', reason: original.reason });
             return;
           }
           // Named by id: Image.name is user input.
@@ -1978,7 +2040,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             throw e;
           }
           entries += 1;
-          // A stored object is the upload itself; an edge copy counts only as media.
+          // A stored object always counts as archived; an edge copy only if it is image or video, not an error page.
           if (original.source === 'original' || /^(image|video)\//.test(original.contentType))
             appendedIds.add(image.id);
           manifest.push({
