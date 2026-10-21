@@ -786,6 +786,10 @@ describe('/api/mod/remove-all-content', () => {
     });
     await call(CLEAN, { moderatorId: '9' });
     expect(refundAlerts()).toEqual([expect.objectContaining({ moderatorId: 9 })]);
+    // Unverified, so never written as the actor of a store's audit row.
+    expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: null })
+    );
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {

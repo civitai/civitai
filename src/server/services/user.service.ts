@@ -1489,10 +1489,14 @@ async function refundEachDeletedModel(
 export const removeAllContent = async ({
   id,
   actorUserId = null,
+  claimedModeratorId = null,
 }: {
   id: number;
   actorUserId?: number | null;
+  /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
+  claimedModeratorId?: number | null;
 }) => {
+  const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertAccountNotUnderLegalHold(id);
@@ -1611,7 +1615,7 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    await refundBidsForDeletedModels(models, { userId: id, actorUserId });
+    await refundBidsForDeletedModels(models, alertedBy);
     throw new LegalHoldStoppedError();
   }
 
@@ -1654,7 +1658,7 @@ export const removeAllContent = async ({
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
-  const refundFailures = await refundBidsForDeletedModels(models, { userId: id, actorUserId });
+  const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
   if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
