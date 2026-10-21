@@ -171,9 +171,14 @@ See [Not built yet](#not-built-yet).
   no retention setting of its own; this uses its `listWorkflows` and `deleteWorkflows`.
 - **Shutdown.** On SIGTERM the runner stops taking requests, gives runs in flight up to
   `RUN_SHUTDOWN_GRACE_MS` to finish (the check for runs cancelled outright keeps running meanwhile),
-  and exits; the rest resume when a process with the same executor id starts. A workflow that throws
-  (in the shutdown window too) ends ERROR, which DBOS never recovers, so its end is written to the
-  head then; only a cancel and the recovery limit are left to their own paths.
+  and exits; the rest resume when a process with the same executor id starts. A workflow that
+  throws its own error (before launch finished, or while the drain lasts) ends ERROR, which DBOS
+  never recovers, so its end is written to the head then. Nothing is written for a cancel, the
+  deadline sweep or a recovery re-enqueue (DBOS 5.3 reports these as a cancel or, usually, a
+  conflict: the workflow is no longer this execution's, and the executor keeps its recorded
+  outcome), for the recovery limit, or for anything thrown once the drain is over (the executor
+  gone; the run stays PENDING for the next process): each has its own path, and an end written
+  then would replace the real one (a kept end waiting for repair, Stop's aborted end, a ran-out end).
 - **The head.** In remote mode the runner is the only writer of the saved conversation. It saves
   the user's turn as the run starts, the reply's progress as a v3 head (`running`) as each call
   starts and lands, and how the reply ended (v2) before `run-ended`, in the format the chat package
@@ -181,8 +186,9 @@ See [Not built yet](#not-built-yet).
   the chat's reader ignores): the latest run started for it, a retry included. Only its owner writes
   its progress or its end, so a late end of an older run (written by a stale reader of its stream)
   never lands on a newer retry of the turn, and a run recovered after a retry took its turn over ends
-  without writing to it. A turn with no owner (the browser's, or saved before owners were) is
-  written as before.
+  without writing to it (and its grant goes). A turn with no owner is written as before (any run of
+  it may): one saved before owners were, and any turn the browser runner saved since, because its
+  `ThreadStore` rebuilds turns through `turnFrom` and drops the owner (switching modes fails open).
 - **Credentials.** DBOS persists every workflow input, step output and stream value. The runner
   hands its workflows and providers a user id and a run id only: no request header, grant, token or
   cookie goes into a workflow argument, a step output, the journal or the head, and tests scan the

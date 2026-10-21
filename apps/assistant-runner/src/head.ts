@@ -31,8 +31,11 @@ type Head = StoredConversationMetadata;
 /**
  * A saved turn, with the run that owns it (`runId`) when the runner started it: the latest run
  * started for that turn (a retry of the same turn takes it over). An extra field the chat's own
- * reader (`turnFrom`, `conversationMetadataOf`) ignores and its store keeps as written. A turn the
- * browser saved, or one saved before the runner recorded owners, has none.
+ * reader (`turnFrom`, `conversationMetadataOf`) ignores. The runner's store keeps it as written, but
+ * the browser runner's `ThreadStore` (components-chat 0.22.1) rebuilds every turn through `turnFrom`
+ * when it saves, which drops it: after a save in browser mode the turn has no owner again, and the
+ * runner writes it under the old rules (any run of the turn may), which fails open. A turn saved
+ * before the runner recorded owners has none either.
  */
 export type HeadTurn = SavedTurnV3 & { runId?: string };
 
