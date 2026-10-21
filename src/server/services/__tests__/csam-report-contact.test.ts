@@ -57,6 +57,8 @@ describe('CyberTipline report contact person', () => {
       makeReport({ type: 'ExternalLink', details: { email: 'x@example.invalid' } }),
     ],
   ])('names the compliance address on a submitted %s', async (_, report) => {
+    dbMock.dbWrite.csamReport.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(report);
     await processCsamReport(report);
 
     expect(submitReport).toHaveBeenCalledTimes(1);

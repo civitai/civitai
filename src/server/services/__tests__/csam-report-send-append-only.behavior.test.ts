@@ -21,10 +21,11 @@ await vi.hoisted(async () => {
   process.env.NEXT_PUBLIC_CIVITAI_LINK ??= 'https://example.invalid/civitai-link';
 });
 
-const MIGRATION = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261112120000_csam_report_append_only/migration.sql'
-);
+const migration = (name: string) =>
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+  );
 
 const { uploadFile, finishReport, cancelReport, getObject } = vi.hoisted(() => ({
   uploadFile: vi.fn(),
@@ -65,32 +66,66 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import { archiveCsamDataForReport, processCsamReport } from '~/server/services/csam.service-new';
+import {
+  archiveCsamDataForReport,
+  CSAM_SEND_CLAIM_EXPIRY_SECONDS,
+  processCsamReport,
+} from '~/server/services/csam.service-new';
+import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 
 const stored = Buffer.from('the bytes the user uploaded');
 
 const db = { pg: null as unknown as PGlite };
 const JSON_COLUMNS = new Set(['details', 'images']);
 
-async function applyUpdate({
-  where,
-  data,
-}: {
-  where: { id: number };
-  data: Record<string, unknown>;
-}) {
+// The Prisma filters the send uses, as SQL: equality, null, `lt` and `OR`.
+type Where = { [column: string]: unknown; OR?: Where[] };
+function whereSql(where: Where, params: unknown[]): string {
+  const parts = Object.entries(where).map(([column, value]) => {
+    if (column === 'OR')
+      return `(${(value as Where[]).map((w) => whereSql(w, params)).join(' OR ')})`;
+    if (value === null) return `"${column}" IS NULL`;
+    if (value instanceof Object && 'lt' in value) {
+      params.push(value.lt);
+      return `"${column}" < $${params.length}`;
+    }
+    params.push(value);
+    return `"${column}" = $${params.length}`;
+  });
+  return parts.join(' AND ') || 'true';
+}
+
+async function applyUpdate({ where, data }: { where: Where; data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, value]) => value !== undefined);
-  const sets = entries.map(([column, value], i) =>
-    JSON_COLUMNS.has(column) ? `"${column}" = $${i + 1}::jsonb` : `"${column}" = $${i + 1}`
-  );
-  const values = entries.map(([column, value]) =>
+  const params: unknown[] = entries.map(([column, value]) =>
     JSON_COLUMNS.has(column) ? JSON.stringify(value) : value
   );
-  await db.pg.query(
-    `UPDATE "CsamReport" SET ${sets.join(', ')} WHERE id = $${entries.length + 1}`,
-    [...values, where.id]
+  const sets = entries.map(([column], i) =>
+    JSON_COLUMNS.has(column) ? `"${column}" = $${i + 1}::jsonb` : `"${column}" = $${i + 1}`
   );
-  return {};
+  const result = await db.pg.query(
+    `UPDATE "CsamReport" SET ${sets.join(', ')} WHERE ${whereSql(where, params)}`,
+    params
+  );
+  return { count: result.affectedRows ?? 0 };
+}
+
+async function findFirst({ where }: { where: Where }) {
+  const params: unknown[] = [];
+  const { rows } = await db.pg.query(
+    `SELECT * FROM "CsamReport" WHERE ${whereSql(where, params)} LIMIT 1`,
+    params
+  );
+  return rows[0] ?? null;
+}
+
+async function deleteMany({ where }: { where: Where }) {
+  const params: unknown[] = [];
+  const result = await db.pg.query(
+    `DELETE FROM "CsamReport" WHERE ${whereSql(where, params)}`,
+    params
+  );
+  return { count: result.affectedRows ?? 0 };
 }
 
 async function readRow(id: number) {
@@ -118,7 +153,8 @@ beforeAll(async () => {
       "type" "CsamReportType" NOT NULL DEFAULT 'Image'
     );
   `);
-  await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
+  await db.pg.exec(readFileSync(migration('20261112120000_csam_report_append_only'), 'utf8'));
+  await db.pg.exec(readFileSync(migration('20261122120000_csam_report_send_claim'), 'utf8'));
 });
 
 beforeEach(() => {
@@ -151,6 +187,9 @@ beforeEach(() => {
   ]);
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
+  dbMock.dbWrite.csamReport.updateMany.mockReset().mockImplementation(applyUpdate as never);
+  dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(findFirst as never);
+  dbMock.dbWrite.csamReport.deleteMany.mockReset().mockImplementation(deleteMany as never);
   dbMock.dbWrite.$executeRaw.mockReset().mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -186,7 +225,7 @@ describe('sending a report under the append-only trigger', () => {
     // No user: the archive's shortest path, which stamps the row and adds a details key.
     await archiveCsamDataForReport({ ...sent, userId: null });
 
-    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
     const row = await readRow(id);
     expect(row.archivedAt).not.toBeNull();
     expect(row.details).toEqual({ ...sent.details, archiveSkipped: 'no reported user' });
@@ -232,5 +271,81 @@ describe('sending a report under the append-only trigger', () => {
     });
 
     expect((await readRow(id)).details).toEqual({ readFailures: { 501: 1 } });
+  });
+});
+
+describe('the send claim under the append-only trigger', () => {
+  const audit = async (id: number) =>
+    (
+      await db.pg.query<{ op: string; oldDetailsFingerprint: string | null }>(
+        `SELECT op, "oldDetailsFingerprint" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+        [id]
+      )
+    ).rows;
+
+  async function insertClaimed(claimedSecondsAgo: number) {
+    const { rows } = await db.pg.query<{ id: number }>(
+      `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details", "reportId", "sendClaimId", "sendClaimedAt")
+       VALUES (20, 10, '[{"id":501}]', '{}', 800, gen_random_uuid(), $1) RETURNING id`,
+      [new Date(Date.now() - claimedSecondsAgo * 1000)]
+    );
+    return rows[0].id;
+  }
+  const runStartCopy = async (id: number) => ({
+    ...(await readRow(id)),
+    createdAt: new Date(Date.now() - 3_600_000),
+  });
+
+  it('claims, stores the id and marks the report sent unaudited while unsent; the archive write after is audited', async () => {
+    const id = await sendNewReport();
+
+    const sent = await readRow(id);
+    expect(sent).toMatchObject({ reportId: 900, sendClaimId: null, sendClaimedAt: null });
+    expect(sent.reportSentAt).not.toBeNull();
+    expect(await audit(id)).toEqual([]);
+
+    await archiveCsamDataForReport({ ...sent, userId: null });
+
+    expect(await audit(id)).toEqual([
+      { op: 'update', oldDetailsFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    ]);
+  });
+
+  it('takes no claim on a sent report, from a run copy that still reads it unsent', async () => {
+    const id = await sendNewReport();
+    uploadFile.mockClear();
+
+    await processCsamReport({ ...(await runStartCopy(id)), reportSentAt: null });
+
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(await audit(id)).toEqual([]);
+    expect(await readRow(id)).toMatchObject({ reportId: 900, sendClaimId: null });
+  });
+
+  it('leaves a report to a run that has held it as long as the job lock', async () => {
+    expect(CSAM_SEND_CLAIM_EXPIRY_SECONDS).toBeGreaterThan(CSAM_SEND_JOB_LOCK_SECONDS);
+    const id = await insertClaimed(CSAM_SEND_JOB_LOCK_SECONDS + 60);
+    const held = await readRow(id);
+
+    await processCsamReport(await runStartCopy(id));
+
+    expect(cancelReport).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(await readRow(id)).toEqual(held);
+  });
+
+  it('takes over a claim past its expiry, cancelling the CyberTip its run left open first', async () => {
+    const id = await insertClaimed(CSAM_SEND_CLAIM_EXPIRY_SECONDS + 60);
+
+    await processCsamReport(await runStartCopy(id));
+
+    expect(cancelReport).toHaveBeenCalledWith({ id: 800 });
+    expect(cancelReport.mock.invocationCallOrder[0]).toBeLessThan(
+      uploadFile.mock.invocationCallOrder[0]
+    );
+    const row = await readRow(id);
+    expect(row).toMatchObject({ reportId: 900, sendClaimId: null });
+    expect(row.reportSentAt).not.toBeNull();
+    expect(row.details).toMatchObject({ cancelledReportIds: [800] });
   });
 });
