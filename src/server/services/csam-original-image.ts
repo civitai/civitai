@@ -117,12 +117,10 @@ const declaredLength = (header: string | null) => {
   return Number.isFinite(length) && length >= 0 ? length : UNKNOWN_SIZE;
 };
 
-// A stored key is joined into the edge URL as is: it must stay a plain path.
-const isPlainKey = (key: string) => !/\.\.|%2e|%2f|%3f|%23|[?#]/i.test(key);
-
 function edgeRefusal(url: string, passthrough: boolean) {
   if (!isAllowedImageScanUrl(url)) return missing('url not allowed');
-  if (!passthrough && !isPlainKey(url)) return missing('url not allowed');
+  // A stored key is joined into the edge URL as is: it must stay a plain path. Minted keys hold no %.
+  if (!passthrough && /\.\.|%|[?#]/.test(url)) return missing('url not allowed');
 }
 
 /**
@@ -138,7 +136,6 @@ async function fetchEdge(
   let response: Response;
   try {
     // A stored full URL is fetched as is, so it must not redirect somewhere we did not vet.
-    // Identity encoding: the declared length is then the length of the bytes read.
     response = await fetchImpl(getEdgeUrl(image.url, { type: image.type }), {
       signal: AbortSignal.timeout(timeoutMs),
       redirect: passthrough ? 'error' : 'follow',
@@ -166,13 +163,13 @@ async function fetchEdge(
     await response.body.cancel().catch(() => undefined);
     return missing('edge copy is not media');
   }
-  // Fetch decodes a compressed body whatever was asked for, and the budget reserves the declared length.
+  // Identity is asked for, but fetch decodes a compressed body anyway, so its declared length is not
+  // what it holds.
   const encoding = response.headers.get('content-encoding')?.trim().toLowerCase();
-  if (encoding && encoding !== 'identity') {
-    await response.body.cancel().catch(() => undefined);
-    throw new Error('edge copy is encoded');
-  }
-  const declared = declaredLength(response.headers.get('content-length'));
+  const declared =
+    encoding && encoding !== 'identity'
+      ? UNKNOWN_SIZE
+      : declaredLength(response.headers.get('content-length'));
   if (declared > MAX_ORIGINAL_IMAGE_BYTES) {
     await response.body.cancel().catch(() => undefined);
     return missing(OVER_CAP);
@@ -197,7 +194,6 @@ export async function readOriginalImage(
 ): Promise<OriginalImageRead> {
   const noReservation = () => undefined;
   const passthrough = isEdgeUrlPassthrough(image.url);
-  if (!passthrough && !isPlainKey(image.url)) return missing('url not allowed');
 
   if (!passthrough) {
     const { s3, bucket } = backend ?? (await getImageUploadBackend());
@@ -273,7 +269,6 @@ export async function probeOriginalImage(
   { backend, fetchImpl = fetch }: ReadOptions = {}
 ): Promise<{ source: 'original' | 'edge-fallback' } | MissingImage> {
   const passthrough = isEdgeUrlPassthrough(image.url);
-  if (!passthrough && !isPlainKey(image.url)) return missing('url not allowed');
 
   if (!passthrough) {
     const { s3, bucket } = backend ?? (await getImageUploadBackend());

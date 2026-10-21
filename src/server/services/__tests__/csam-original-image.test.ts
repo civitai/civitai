@@ -259,26 +259,12 @@ describe('readOriginalImage', () => {
     ['leaves the image path', '../../other/path'],
     ['carries a query', 'key-uuid?x=1'],
     ['hides a dot segment', '%2e%2e/%2E%2e/other/path'],
+    ['hides a slash', 'key%2Fother'],
+    ['carries a fragment', 'key-uuid#x'],
+    ['hides a query', 'key-uuid%3Fx=1'],
+    ['is encoded twice', '%252e%252e/other/path'],
   ])('never fetches the edge for a stored key that %s', async (_, url) => {
     const { backend } = backendReturning(missingKey);
-    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
-
-    await expect(
-      readOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
-    ).resolves.toEqual({
-      source: 'missing',
-      reason: 'url not allowed',
-    });
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['leaves the image path', '../other/path'],
-    ['hides a slash', 'key%2Fother'],
-    ['hides a query', 'key-uuid%3Fx=1'],
-    ['hides a fragment', 'key-uuid%23x'],
-  ])('reads neither storage nor the edge for a stored key that %s', async (_, url) => {
-    const { s3, backend } = backendReturning(async () => storedObject(Buffer.from('stored')));
     const fetchImpl = edgeResponding(200, Buffer.from('remote'));
 
     await expect(
@@ -287,23 +273,31 @@ describe('readOriginalImage', () => {
     await expect(
       probeOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
     ).resolves.toEqual({ source: 'missing', reason: 'url not allowed' });
-    expect(s3.send).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('throws on a compressed edge body, whose declared length is not what it holds', async () => {
+  it('reads the stored object under such a key, which storage takes as a literal name', async () => {
+    const { backend } = backendReturning(async () => storedObject(Buffer.from('stored')));
+
+    await expect(
+      readOriginalImage({ url: 'x..png', type: 'image' }, { backend })
+    ).resolves.toMatchObject({ source: 'original' });
+  });
+
+  it('reserves the whole cap for a compressed edge body, whose declared length is not what it holds', async () => {
     const { backend } = backendReturning(missingKey);
-    const fetchImpl = edgeResponding(200, Buffer.from('edge bytes'), {
+    const data = Buffer.from('edge bytes');
+    const fetchImpl = edgeResponding(200, data, {
       'content-type': 'image/jpeg',
       'content-encoding': 'gzip',
+      'content-length': '3',
     });
+    const reserve = vi.fn(async () => () => undefined);
 
-    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(
-      'edge copy is encoded'
-    );
-    await expect(probeOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(
-      'edge copy is encoded'
-    );
+    const read = await readOriginalImage(image, { backend, fetchImpl, reserve });
+
+    expect(reserve).toHaveBeenCalledWith(MAX_ORIGINAL_IMAGE_BYTES);
+    expect(read).toMatchObject({ source: 'edge-fallback', sha256: sha256(data) });
   });
 
   it('releases the body of an edge error response', async () => {

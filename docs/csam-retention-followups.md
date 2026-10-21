@@ -34,19 +34,18 @@ and the moderator dashboard column that reads it (`src/pages/moderator/csam/inde
 The send/archive pipeline has **no report-level retry limit, backoff or dead-letter**. A failure
 leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the exceptions below.
 
-- Send checks every image file before it opens a CyberTip, so a held report opens none; a file whose
-  reads have failed before is read in full for that check. A file that is gone (no stored object, or
-  an edge copy that is missing or not media; over the size cap; or a URL the allowlist refuses) does
-  not hold the report: it is recorded as `missing` with its reason and the rest is sent. A file that
-  fails this run's check does hold it, until the report is `CSAM_SEND_SHORT_AFTER_HOURS` (24) past
-  filing and every such file has failed `CSAM_SEND_SHORT_MIN_READ_FAILURES` (2) reads; it is then
-  sent without them. A report with no file that can be sent is never sent.
+- Send checks every image file before it opens a CyberTip, so a held report opens none; a file that
+  has failed repeatedly is read in full for that check, not just probed. A file that is gone does not
+  hold the report: it is recorded as `missing` with its reason and the rest is sent. A file that fails
+  this run's check holds the report until it has failed repeatedly and the report is a day old; it is
+  then sent without it. A report with no file that can be sent is never sent. Thresholds are the
+  `CSAM_SEND_*` constants in `csam.service-new.ts`.
 - Archive reads stored originals (`csam-original-image.ts`, import-guarded by
-  `no-csam-original-image-import`). A file stored as a full URL that is still unreadable
-  `CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS` (24) after the report was sent is recorded `missing` in the
-  manifest; a stored object's failure is always retried. The images archive holds at most
-  `MAX_ARCHIVE_SOURCE_BYTES` of source bytes at once.
-- Thresholds are the `CSAM_SEND_*` / `CSAM_ARCHIVE_*` constants in `csam.service-new.ts`.
+  `no-csam-original-image-import`). A stored object that cannot be read holds the archive, which is
+  retried; other unreadable files are recorded `missing` in the manifest after a bounded time. The images archive bounds the source bytes it holds at once
+  (`MAX_ARCHIVE_SOURCE_BYTES`).
+
+Still unbounded (these retry hourly with no limit):
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.

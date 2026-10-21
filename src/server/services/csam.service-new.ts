@@ -665,15 +665,15 @@ async function reportImages(report: CsamReportProps) {
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
-  // Probed before the CyberTip is opened, so a report that cannot be sent opens none.
+  // Checked before the CyberTip is opened, so a report that cannot be sent opens none.
   const readFailures = { ...report.details?.readFailures };
   const checks = new Map<number, FileCheck>();
   await Limiter({ limit: 2, batchSize: 1 }).process(images, async ([image]) => {
     try {
       let check: OriginalImageRead | Awaited<ReturnType<typeof probeOriginalImage>> =
         await probeOriginalImage(image);
-      // A probe can pass where the read fails (a HEAD cannot tell a wrong bucket), so a file whose
-      // reads have failed is read in full first rather than opened for and cancelled again.
+      // A HEAD can pass where the read fails (it cannot tell a wrong bucket), so a file that has failed
+      // CSAM_SEND_SHORT_MIN_READ_FAILURES reads is read in full here, not opened for and cancelled again.
       if (
         check.source !== 'missing' &&
         (readFailures[image.id] ?? 0) >= CSAM_SEND_SHORT_MIN_READ_FAILURES

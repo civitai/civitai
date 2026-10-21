@@ -303,8 +303,25 @@ describe('NCMEC image upload', () => {
       expect(sentUpdate().details.images).toEqual([
         expect.objectContaining({ id: 501, source: 'original', sha256: sha256(stored) }),
       ]);
-      expect(lines('send-short')).toEqual([]);
       expect(lines('send-all-unreadable')).toHaveLength(2);
+    });
+
+    it('sends every file in full past the short-send limit once their reads succeed again', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+
+      await processCsamReport({
+        ...report,
+        images: [{ id: 501 }, { id: 502 }],
+        createdAt: new Date(Date.now() - (CSAM_SEND_SHORT_AFTER_HOURS + 1) * 3_600_000),
+        details: { readFailures: { 501: 2 } },
+      } as CsamReportProps);
+
+      expect(finishReport).toHaveBeenCalledTimes(1);
+      expect(sentUpdate().details.images).toEqual([
+        expect.objectContaining({ id: 501, source: 'original' }),
+        expect.objectContaining({ id: 502, source: 'original' }),
+      ]);
+      expect(lines('send-short')).toEqual([]);
     });
 
     it('counts no read failure when NCMEC refuses an upload of a file that was read', async () => {
