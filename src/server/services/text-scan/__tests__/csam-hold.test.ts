@@ -77,8 +77,14 @@ const setStatus = (id: number, status: string) =>
 const asRawSql = (strings: TemplateStringsArray, values: unknown[]) =>
   strings.reduce((acc, part, i) => acc + part + (i < values.length ? `$${i + 1}` : ''), '');
 
+// Only the columns the one-pending migration reads to pick a survivor.
+const ENTITY_MODERATION_STUB = `CREATE TABLE "EntityModeration" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INT NOT NULL,
+  "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now())`;
+
 beforeAll(async () => {
   db.pg = await PGlite.create();
+  await db.pg.exec(ENTITY_MODERATION_STUB);
   for (const name of MIGRATIONS) await db.pg.exec(migrationSql(name));
 });
 afterAll(async () => {
@@ -637,6 +643,7 @@ describe('the one-pending-hold migration over existing duplicates', () => {
   it('keeps the newest pending hold per entity and closes the rest as superseded', async () => {
     const old = await PGlite.create();
     try {
+      await old.exec(ENTITY_MODERATION_STUB);
       await old.exec(migrationSql(MIGRATIONS[0]));
       const insert = (entityType: string, entityId: number, textHash: string, status = 'Pending') =>
         `INSERT INTO "TextScanHold" ("entityType","entityId","label","textHash","status","text","reason","updatedAt")
