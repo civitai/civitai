@@ -146,9 +146,10 @@ describe('textScan.resolveCsamHold', () => {
     expect(updateMany).not.toHaveBeenCalled();
   });
 
-  it('rejects a decision without the text hash', async () => {
+  // Older moderator builds send no hash while the two apps roll out.
+  it('accepts a decision without the text hash', async () => {
     const { status } = await call({ holdId: 12, decision: 'dismiss' });
-    expect(status).toBe(400);
+    expect(status).toBe(200);
   });
 
   describe('do nothing (dismiss)', () => {
