@@ -1,0 +1,34 @@
+.panelIn {
+  animation: panel-in 160ms ease-out;
+}
+
+.panelBack {
+  animation: panel-back 160ms ease-out;
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes panel-back {
+  from {
+    transform: translateX(-30%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panelIn,
+  .panelBack {
+    animation: none;
+  }
+}

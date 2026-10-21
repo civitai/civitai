@@ -63,6 +63,7 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { countUnclaimedPrizes } from '~/server/services/prize.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
 import { countHeldMysteryBoxes } from '~/server/services/mystery-box-inventory.service';
 import { mysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
@@ -310,6 +311,9 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
 
   try {
     const unopenedBoxes = countHeldMysteryBoxes(mysteryBoxViewer(ctx)).catch(() => 0);
+    const unclaimedPrizes = ctx.features.userMenuV2
+      ? countUnclaimedPrizes(id).catch(() => 0)
+      : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
     // notifications service over HTTP (with its own retries) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
@@ -354,6 +358,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // rather than merely zero a count.
       pendingCollectionReviews: collectionReviewCounts.total,
       unopenedBoxes: await unopenedBoxes,
+      unclaimedPrizes: await unclaimedPrizes,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
