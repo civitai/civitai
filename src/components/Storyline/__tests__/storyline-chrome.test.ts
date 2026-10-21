@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
 import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as NextRouterModule from 'next/router';
 import type * as DialogProviderModule from '~/components/Dialog/DialogProvider';
@@ -77,16 +77,29 @@ vi.mock('~/components/Storyline/StorylineModeProvider', async (importOriginal) =
   useStorylineMode: () => mocks.mode,
 }));
 
+// Every root is unmounted after its test. A root left mounted keeps Mantine's tooltip and transition
+// effects alive past the file, and their cleanup then runs after happy-dom has torn `document` down:
+// an unhandled "`document` global ... not defined anymore" error that fails the run.
+const roots: Root[] = [];
+
 function render(element: ReturnType<typeof createElement>) {
   const container = document.createElement('div');
   document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
   act(() => {
-    createRoot(container).render(
+    root.render(
       createElement(MantineProvider, { forceColorScheme: 'light', env: 'test' }, element)
     );
   });
   return container;
 }
+
+afterEach(() => {
+  act(() => {
+    for (const root of roots.splice(0)) root.unmount();
+  });
+});
 
 beforeEach(() => {
   document.body.innerHTML = '';

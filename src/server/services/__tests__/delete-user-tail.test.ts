@@ -13,7 +13,7 @@ import { usersSearchIndex } from '~/server/search-index';
 // No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => undefined,
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
 }));
 
 /**

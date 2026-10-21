@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 /** The owner `deleteUser` hands a kept model to. */
 export const PLACEHOLDER_OWNER_ID = -1;
 
-const reportHolds = (hc: string) =>
+/** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */
+export const reportHolds = (hc: string) =>
   Prisma.raw(`(
     ${hc}."reportSentAt" IS NULL
     OR ${hc}."archivedAt" IS NULL

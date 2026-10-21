@@ -3,7 +3,7 @@ title: Privacy Policy
 description: "Civitai values the privacy of individuals who use our application, websites and related services. This privacy policy explains how we collect, use, and disclose information from users."
 ---
 
-**Last Updated**: October 20, 2026
+**Last Updated**: October 21, 2026
 
 Civit AI, Inc. (**"Civitai**," "**we**," "**our**," and/or "**us**") values the privacy of individuals who use our application, websites and related services (collectively, our "**Services**"). This privacy policy (the "**Privacy Policy**") explains how we collect, use, and disclose information from users of our Services ("**Users**" "**you**," and/or "**your**") to enable creators to share content with other creators and to continue to improve our Services. By using our Services, you agree to the collection, use, disclosure, and procedures this Privacy Policy describes. Beyond the Privacy Policy, your use of our Services is also subject to our [Terms of Service](/content/tos).
 
@@ -71,6 +71,8 @@ User Content. Our Services are a social service in which you can find, enjoy, an
 - Additional information regarding privacy settings can be found here.
 
 **Marketing Communications.** You can unsubscribe from our promotional emails via the link provided in the emails. Even if you opt out of receiving promotional messages from us, you will continue to receive administrative messages from us.
+
+**Deleting Your Account.** You may delete your account at any time from your account settings. When you do, your profile is no longer visible to other users. We may retain certain information for legitimate business purposes or where we believe it is required by applicable law.
 
 **If you choose not to provide us with information we request, some features of our Services may not work as intended.**
 
