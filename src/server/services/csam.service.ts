@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -108,8 +109,16 @@ export async function createCsamReport({
         select: { id: true },
       });
 
+  // The update re-checks that the report is still unsent: once sent, a report cannot change, so one
+  // sent since the lookup gets a new report instead.
   const report = unsent
-    ? await dbWrite.csamReport.update({ where: { id: unsent.id }, data })
+    ? await dbWrite.csamReport
+        .update({ where: { id: unsent.id, reportSentAt: null }, data })
+        .catch((e: unknown) => {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025')
+            return dbWrite.csamReport.create({ data });
+          throw e;
+        })
     : await dbWrite.csamReport.create({ data });
 
   if (imageIds.length) {

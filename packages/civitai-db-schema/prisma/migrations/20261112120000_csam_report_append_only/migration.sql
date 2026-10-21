@@ -1,7 +1,10 @@
 -- A sent CSAM report is append-only. Once "reportSentAt" is set, its identifying columns and
 -- "images" are frozen, "details" may only gain keys, and the row may be deleted only after its
 -- retention period and while no evidence hold covers its users. Every change that passes, and
--- every delete, is recorded in "CsamReportAudit".
+-- every delete, is recorded in "CsamReportAudit", whose rows cannot be changed or removed.
+--
+-- The guard runs as its owner, so a role that may write "CsamReport" needs no grant on the audit
+-- table. Apply this as the owner of "CsamReport".
 
 CREATE TABLE "CsamReportAudit" (
   "id" SERIAL PRIMARY KEY,
@@ -49,7 +52,8 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF NEW."userId" IS DISTINCT FROM OLD."userId"
+  IF NEW."id" IS DISTINCT FROM OLD."id"
+    OR NEW."userId" IS DISTINCT FROM OLD."userId"
     OR NEW."reportedById" IS DISTINCT FROM OLD."reportedById"
     OR NEW."createdAt" IS DISTINCT FROM OLD."createdAt"
     OR NEW."reportSentAt" IS DISTINCT FROM OLD."reportSentAt"
@@ -73,7 +77,7 @@ BEGIN
   VALUES (OLD."id", 'update', OLD."details", OLD."reportSentAt");
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 CREATE TRIGGER "CsamReport_guard_sent"
 BEFORE UPDATE OR DELETE ON "CsamReport"
@@ -88,3 +92,17 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "CsamReport_refuse_truncate"
 BEFORE TRUNCATE ON "CsamReport"
 FOR EACH STATEMENT EXECUTE FUNCTION csam_report_refuse_truncate();
+
+CREATE OR REPLACE FUNCTION csam_report_audit_refuse_change() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'CsamReportAudit rows cannot be changed or removed';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "CsamReportAudit_refuse_change"
+BEFORE UPDATE OR DELETE ON "CsamReportAudit"
+FOR EACH ROW EXECUTE FUNCTION csam_report_audit_refuse_change();
+
+CREATE TRIGGER "CsamReportAudit_refuse_truncate"
+BEFORE TRUNCATE ON "CsamReportAudit"
+FOR EACH STATEMENT EXECUTE FUNCTION csam_report_audit_refuse_change();
