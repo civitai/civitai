@@ -14527,9 +14527,10 @@ async function estimateTrainingWorkflow(opts: {
 /**
  * THE trigger-word rule for every App Blocks carrier of a training run — `kind:'training'`,
  * a pass-through `kind:'step'`, every step of a `kind:'workflow'` — called by each
- * estimate and submit before any quote or reservation. A trigger word that cannot be
- * read as a literal string is refused; each other one gets the check every training
- * path applies (`assertTrainingTriggerWordAllowed`).
+ * estimate and submit before any quote or reservation. Which input field is the trigger
+ * word, per training `$type`, is `collectTrainingTriggerWords`'s. One that cannot be read
+ * as a literal string is refused; each other one gets the check every training path
+ * applies (`assertTrainingTriggerWordAllowed`).
  */
 async function assertBlockTrainingTriggerWordsAllowed(opts: {
   claims: BlockClaims;

@@ -737,11 +737,12 @@ A quote is single-use, expires after 15 minutes, and is re-priced at submit; a h
 re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
 reserved, when the balance can be read). Training charges no author fee.
 
-The trigger word of every training step an app runs — a `kind: 'training'` body, a
-`kind: 'step'` training `$type`, or a training step in a `kind: 'workflow'` (inside a
-`repeat` too) — gets the same trigger-word check the trainer and Training Studio use, at the
-estimate and again at the submit, before anything is reserved. It must be a literal string; a
-reference is refused.
+The trigger word of every training step an app runs gets the same trigger-word check the
+trainer and Training Studio use, at the estimate and again at the submit, before anything is
+reserved. The trigger word is the body's `triggerWord` on a `kind: 'training'` body; on a
+`kind: 'step'` step or a step of a `kind: 'workflow'` (inside a `repeat` too) it is
+`input.triggerWord` for `$type: 'training'` and `input.loraName` for
+`$type: 'imageResourceTraining'`. That field must be a literal string; a reference is refused.
 
 If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
 it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
