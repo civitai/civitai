@@ -41,11 +41,12 @@ leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the except
   then sent without it. A report with no file that can be sent is never sent. Thresholds are the
   `CSAM_SEND_*` constants in `csam.service-new.ts`.
 - Archive reads stored originals (`csam-original-image.ts`, import-guarded by
-  `no-csam-original-image-import`). A stored object that cannot be read holds the archive, which is
-  retried; other unreadable files are recorded `missing` in the manifest after a bounded time. The images archive bounds the source bytes it holds at once
+  `no-csam-original-image-import`). A file stored as a key that fails to read holds the archive,
+  which is retried with no limit; a full-URL file that stays unreadable is recorded `missing` in the
+  manifest after a bounded time. The images archive bounds the source bytes it holds at once
   (`MAX_ARCHIVE_SOURCE_BYTES`).
 
-Still unbounded (these retry hourly with no limit):
+Other causes of a stranded report (these also retry hourly with no limit):
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.
