@@ -67,7 +67,7 @@ vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
 const { DesktopHeaderRows, DesktopItem, PinnedList } = await import('./UserMenuDesktop');
 const { MobileHeaderRows, MobileItem, MobilePinned } = await import('./UserMenuMobile');
 const { useDragClickGuard } = await import('./UserMenuParts');
-const { UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
+const { BuzzMenuItem, UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { trackActionInputSchema } = await import('~/server/schema/track.schema');
 
 const inventory = { id: 'inventory' as const, label: 'Inventory', icon: IconBox, href: '/x' };
@@ -269,6 +269,15 @@ describe('UserMenu_Click', () => {
       expect(trackActionInputSchema.safeParse(mocks.actions[1]).success).toBe(true);
     }
   );
+
+  // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
+  it('closes the legacy Buzz row without onOpen, and records nothing', async () => {
+    await mount(createElement(BuzzMenuItem));
+    await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
+
+    expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(mocks.actions).toEqual([]);
+  });
 
   it('gives a signed-out top-level item no group', async () => {
     mocks.user = null;
