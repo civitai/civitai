@@ -2905,6 +2905,13 @@ export type CsamReportAudit = {
   id: Generated<number>;
   csamReportId: number;
   op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldImageCount: number | null;
+  /**
+   * Kept for a change to a sent report; a delete records no details.
+   */
   oldDetails: unknown | null;
   oldReportSentAt: Timestamp | null;
   changedAt: Generated<Timestamp>;

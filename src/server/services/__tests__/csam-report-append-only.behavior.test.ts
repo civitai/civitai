@@ -109,7 +109,7 @@ describe('an unsent report', () => {
     await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
     expect(await exists(id)).toBe(false);
-    expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: {} }]);
+    expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: null }]);
   });
 
   it('can be sent, setting details in the same update', async () => {
@@ -244,7 +244,15 @@ describe('a sent report', () => {
       await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
       expect(await exists(id)).toBe(false);
-      expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: { contents: ['a'] } }]);
+      expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: null }]);
+      const { rows } = await db.pg.query(
+        `SELECT "oldUserId", "oldReportId", "oldType", "oldImageCount"
+         FROM "CsamReportAudit" WHERE "csamReportId" = $1`,
+        [id]
+      );
+      expect(rows).toEqual([
+        { oldUserId: SUBJECT, oldReportId: 900, oldType: 'Image', oldImageCount: 0 },
+      ]);
       expect(await auditedSendTimes(id)).toEqual([true]);
     });
 

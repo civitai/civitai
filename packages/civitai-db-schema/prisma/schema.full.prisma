@@ -6536,6 +6536,11 @@ model CsamReportAudit {
   id              Int       @id @default(autoincrement())
   csamReportId    Int
   op              String
+  oldUserId       Int?
+  oldReportId     Int?
+  oldType         String?
+  oldImageCount   Int?
+  /// Kept for a change to a sent report; a delete records no details.
   oldDetails      Json?
   oldReportSentAt DateTime?
   changedAt       DateTime  @default(now())

@@ -4033,6 +4033,10 @@ export interface CsamReportAudit {
   id: number;
   csamReportId: number;
   op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldImageCount: number | null;
   oldDetails: JsonValue | null;
   oldReportSentAt: Date | null;
   changedAt: Date;

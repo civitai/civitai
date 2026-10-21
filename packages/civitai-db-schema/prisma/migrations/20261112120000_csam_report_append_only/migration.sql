@@ -10,6 +10,11 @@ CREATE TABLE "CsamReportAudit" (
   "id" SERIAL PRIMARY KEY,
   "csamReportId" INTEGER NOT NULL,
   "op" TEXT NOT NULL,
+  "oldUserId" INTEGER,
+  "oldReportId" INTEGER,
+  "oldType" TEXT,
+  "oldImageCount" INTEGER,
+  -- Kept for a change to a sent report; a delete records no details.
   "oldDetails" JSONB,
   "oldReportSentAt" TIMESTAMP(3),
   "changedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -43,8 +48,15 @@ BEGIN
         RAISE EXCEPTION 'CsamReport % is under an evidence hold and cannot be deleted', OLD."id";
       END IF;
     END IF;
-    INSERT INTO "CsamReportAudit" ("csamReportId", "op", "oldDetails", "oldReportSentAt")
-    VALUES (OLD."id", 'delete', OLD."details", OLD."reportSentAt");
+    INSERT INTO "CsamReportAudit" (
+      "csamReportId", "op", "oldUserId", "oldReportId", "oldType", "oldImageCount", "oldDetails",
+      "oldReportSentAt"
+    )
+    VALUES (
+      OLD."id", 'delete', OLD."userId", OLD."reportId", OLD."type"::text,
+      CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
+      NULL, OLD."reportSentAt"
+    );
     RETURN OLD;
   END IF;
 
@@ -73,8 +85,15 @@ BEGIN
     END IF;
   END IF;
 
-  INSERT INTO "CsamReportAudit" ("csamReportId", "op", "oldDetails", "oldReportSentAt")
-  VALUES (OLD."id", 'update', OLD."details", OLD."reportSentAt");
+  INSERT INTO "CsamReportAudit" (
+    "csamReportId", "op", "oldUserId", "oldReportId", "oldType", "oldImageCount", "oldDetails",
+    "oldReportSentAt"
+  )
+  VALUES (
+    OLD."id", 'update', OLD."userId", OLD."reportId", OLD."type"::text,
+    CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
+    OLD."details", OLD."reportSentAt"
+  );
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
