@@ -35,6 +35,10 @@ export type ClearedEntryFile = EntryFile & {
   clearedAt: string;
   moderator: string | null;
   reason: string | null;
+  /** A re-block withholds the file again but leaves an award already made. */
+  entryAwarded: boolean;
+  bountyComplete: boolean;
+  bountyRefunded: boolean;
 };
 
 // The main app's VALID_OVERRIDE_SQL: only the shape a clear writes counts. Pinned equal to it by
@@ -119,14 +123,20 @@ export async function getStuckEntryFiles(limit: number) {
 
 /**
  * Files still carrying a moderator's clear, newest first. The entries come from the ModActivity rows
- * the clear writes; a file re-uploaded since has lost its clear and drops off.
+ * the clear writes; a file re-uploaded or re-blocked since has lost its clear and drops off.
  */
 export async function getClearedEntryFiles(limit: number) {
   const { rows } = await sql<ClearedEntryFile>`
     SELECT ${entryFileColumns},
            f.metadata->'checkOverride'->>'at' AS "clearedAt",
            mu.username AS moderator,
-           f.metadata->'checkOverride'->>'reason' AS reason
+           f.metadata->'checkOverride'->>'reason' AS reason,
+           EXISTS (
+             SELECT 1 FROM "BountyBenefactor" bb
+             WHERE bb."bountyId" = b.id AND bb."awardedToId" = be.id
+           ) AS "entryAwarded",
+           b.complete AS "bountyComplete",
+           b.refunded AS "bountyRefunded"
     FROM "BountyEntry" be
     JOIN "Bounty" b ON b.id = be."bountyId"
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -146,3 +156,6 @@ export async function getClearedEntryFiles(limit: number) {
 
 export const clearEntryFileCheck = (fileId: number, reason: string): Promise<JsonResult> =>
   callModEndpoint('bounty-entry-file/clear-check', { fileId, reason }, 'Clear file check');
+
+export const reblockEntryFileCheck = (fileId: number, reason: string): Promise<JsonResult> =>
+  callModEndpoint('bounty-entry-file/reblock-check', { fileId, reason }, 'Re-block file');

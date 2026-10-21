@@ -117,10 +117,11 @@ type FeedbackModActivity = {
 };
 
 /** A moderator cleared a bounty entry file's check result
- *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`). */
+ *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`), or
+ *  undid that clear (`reblockFileCheck:<{fileId,reason} JSON>`). */
 type BountyEntryModActivity = {
   entityType: 'bountyEntry';
-  activity: `clearFileCheck:${string}`;
+  activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
 type ModActivity = {

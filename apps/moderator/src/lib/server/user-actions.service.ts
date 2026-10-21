@@ -207,6 +207,7 @@ async function postJson(opts: {
  */
 export type ModEndpoint =
   | 'bounty-entry-file/clear-check'
+  | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'

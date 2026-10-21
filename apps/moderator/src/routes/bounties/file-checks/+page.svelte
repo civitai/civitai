@@ -14,11 +14,17 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const cleared = new SvelteMap<number, true>();
+  const reblocked = new SvelteMap<number, true>();
   // Held here, not in the form: the row dims on submit and comes back on a refusal.
   const reasons = new SvelteMap<number, string>();
+  const reblockReasons = new SvelteMap<number, string>();
   $effect(() => {
     void data.blocked;
     cleared.clear();
+  });
+  $effect(() => {
+    void data.cleared;
+    reblocked.clear();
   });
 
   const refusal = $derived.by(() => {
@@ -27,11 +33,11 @@
     return fileId ? `File #${fileId}: ${form.error}` : form.error;
   });
 
-  const submit = (fileId: number) =>
+  const submit = (done: SvelteMap<number, true>, fileId: number) =>
     optimisticEnhancer(
       () => {
-        cleared.set(fileId, true);
-        return () => cleared.delete(fileId);
+        done.set(fileId, true);
+        return () => done.delete(fileId);
       },
       { reload: true }
     );
@@ -126,7 +132,7 @@
             <form
               method="POST"
               action="?/clear"
-              use:enhance={submit(row.fileId)}
+              use:enhance={submit(cleared, row.fileId)}
               class="mt-3 flex flex-col gap-2"
             >
               <input type="hidden" name="fileId" value={row.fileId} />
@@ -197,13 +203,63 @@
   {:else}
     <ul class="space-y-2">
       {#each data.cleared as row (row.fileId)}
-        <li class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+        {@const done = reblocked.has(row.fileId)}
+        <li
+          class={cn(
+            'rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
+            done && 'opacity-50'
+          )}
+        >
           {@render entry(row)}
           <p class="mt-1 text-xs text-dark-2">
             Cleared {dateTime(row.clearedAt)}{#if row.moderator}&nbsp;by {row.moderator}{/if}
           </p>
           {#if row.reason}
             <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{row.reason}</p>
+          {/if}
+          {#if done}
+            <p class="mt-3 text-sm text-dark-2">Re-blocked</p>
+          {:else}
+            <form
+              method="POST"
+              action="?/reblock"
+              use:enhance={submit(reblocked, row.fileId)}
+              class="mt-3 flex flex-col gap-2"
+            >
+              <input type="hidden" name="fileId" value={row.fileId} />
+              <Textarea
+                name="reason"
+                required
+                rows={2}
+                placeholder="Why the clear is undone (moderators only)"
+                bind:value={() => reblockReasons.get(row.fileId) ?? '',
+                  (v: string) => reblockReasons.set(row.fileId, v)}
+              />
+              <div class="flex flex-wrap items-center gap-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="destructive"
+                  disabled={!(reblockReasons.get(row.fileId) ?? '').trim()}
+                >
+                  Re-block
+                </Button>
+                {#if row.entryAwarded}
+                  <Badge variant="outline">entry awarded</Badge>
+                {/if}
+                {#if row.bountyRefunded}
+                  <Badge variant="outline">bounty refunded</Badge>
+                {:else if row.bountyComplete}
+                  <Badge variant="outline">bounty complete</Badge>
+                {/if}
+              </div>
+              {#if row.entryAwarded || row.bountyComplete}
+                <p class="text-xs text-dark-2">
+                  The award stands. Re-blocking withholds the file from everyone but moderators,
+                  including whoever paid for it.
+                </p>
+              {/if}
+            </form>
           {/if}
         </li>
       {/each}

@@ -7,7 +7,9 @@ import {
   getBlockedEntryFiles,
   getClearedEntryFiles,
   getStuckEntryFiles,
+  reblockEntryFileCheck,
 } from '$lib/server/bounty-file-check.service';
+import type { JsonResult } from '$lib/server/user-actions.service';
 import { parseForm } from '$lib/server/query';
 
 const LIMIT = 100;
@@ -21,23 +23,28 @@ export const load: PageServerLoad = async () => {
   return { blocked, stuck, cleared, limit: LIMIT };
 };
 
-export const actions = {
-  clear: async ({ request }) => {
-    const input = parseForm(
-      z.object({
-        fileId: z.coerce.number().int().positive({ error: 'Missing file id.' }),
-        reason: z
-          .string({ error: 'A reason is required.' })
-          .trim()
-          .min(1, { error: 'A reason is required.' })
-          .max(RESOLUTION_NOTE_MAX_LENGTH, { error: 'The reason is too long.' }),
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return fail(400, { error: input });
+const fileReason = z.object({
+  fileId: z.coerce.number().int().positive({ error: 'Missing file id.' }),
+  reason: z
+    .string({ error: 'A reason is required.' })
+    .trim()
+    .min(1, { error: 'A reason is required.' })
+    .max(RESOLUTION_NOTE_MAX_LENGTH, { error: 'The reason is too long.' }),
+});
 
-    const result = await clearEntryFileCheck(input.fileId, input.reason);
-    if (!result.ok) return fail(400, { error: result.error, fileId: input.fileId });
-    return { success: true, fileId: input.fileId };
-  },
+async function fileAction(
+  request: Request,
+  send: (fileId: number, reason: string) => Promise<JsonResult>
+) {
+  const input = parseForm(fileReason, await request.formData());
+  if (typeof input === 'string') return fail(400, { error: input });
+
+  const result = await send(input.fileId, input.reason);
+  if (!result.ok) return fail(400, { error: result.error, fileId: input.fileId });
+  return { success: true, fileId: input.fileId };
+}
+
+export const actions = {
+  clear: ({ request }) => fileAction(request, clearEntryFileCheck),
+  reblock: ({ request }) => fileAction(request, reblockEntryFileCheck),
 } satisfies Actions;
