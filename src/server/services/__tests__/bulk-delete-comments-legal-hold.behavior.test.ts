@@ -111,6 +111,14 @@ beforeEach(async () => {
     }
     return (await holder.db.query(sql.text, sql.values)).rows;
   }) as never);
+  // The ORM writes the remove-as-ToS service makes. Nothing here should reach them; if something
+  // does, they answer like the real rows so its notification and rewards run and are seen.
+  vi.mocked(dbMock.dbWrite.comment.update).mockImplementation((async (args: {
+    where: { id: number };
+  }) => ({ id: args.where.id, modelId: 100, user: { id: 1 }, model: { name: '' } })) as never);
+  vi.mocked(dbMock.dbWrite.commentV2.update).mockImplementation((async (args: {
+    where: { id: number };
+  }) => ({ id: args.where.id, userId: 1 })) as never);
   vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation(
     (async (args: { where: { id: { in: number[] } } }) =>
       (
