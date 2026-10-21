@@ -56,7 +56,7 @@ import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
-import type { OriginalImageSource } from '~/server/services/csam-original-image';
+import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import { extensionForContentType, readOriginalImage } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -78,6 +78,8 @@ type EvidenceFileRecord = {
   sha256?: string;
   bytes?: number;
   contentType?: string;
+  /** Why a `missing` file was sent without its bytes, when it was not simply absent. */
+  reason?: string;
 };
 
 type CsamReportImage = {
@@ -578,11 +580,22 @@ async function getInitialReportData(report: CsamReportProps) {
 export const CSAM_SEND_BLOCKED_AFTER_HOURS = 6;
 
 /**
+ * After this long, a file that still cannot be read no longer holds the report back: it is sent
+ * without that file, recorded as missing. Holding a report longer is a code change.
+ */
+export const CSAM_SEND_SHORT_AFTER_HOURS = 24;
+
+export const SEND_SHORT_REASON = 'storage read failed after retries';
+
+const hoursSinceFiled = (report: CsamReportProps) =>
+  Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
+
+/**
  * An unsent report is retried every run. The id and age make one stuck retrying traceable, and
  * the separate `send-blocked` line is what an alert keys on.
  */
 function logSendFailure(report: CsamReportProps, e: unknown, subType: string) {
-  const hoursPending = Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
+  const hoursPending = hoursSinceFiled(report);
   logToAxiom({
     name: 'csam-report',
     type: 'error',
@@ -621,6 +634,7 @@ async function reportImages(report: CsamReportProps) {
     ...initialReport,
   });
 
+  let sentShort = 0;
   try {
     const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
       images,
@@ -655,10 +669,24 @@ async function reportImages(report: CsamReportProps) {
           fileAnnotations.physicalHarm = true;
         }
 
-        const original = await readOriginalImage(image);
+        let original: OriginalImageRead;
+        try {
+          original = await readOriginalImage(image);
+        } catch (e) {
+          if (hoursSinceFiled(report) < CSAM_SEND_SHORT_AFTER_HOURS) throw e;
+          sentShort++;
+          return {
+            ...imageReportInfo,
+            source: 'missing',
+            reason: SEND_SHORT_REASON,
+          } satisfies CsamReportImage;
+        }
         // Recorded rather than skipped, so the sent report shows the gap.
-        if (original.source === 'missing') return { ...imageReportInfo, source: original.source };
-        const file = blobToFile(new Blob([original.data], { type: original.contentType }));
+        if (original.source === 'missing')
+          return { ...imageReportInfo, source: original.source } satisfies CsamReportImage;
+        // A Buffer read from storage is backed by a plain ArrayBuffer.
+        const bytes = original.data as Uint8Array<ArrayBuffer>;
+        const file = blobToFile(new Blob([bytes], { type: original.contentType }));
 
         const {
           data: { fileId, hash },
@@ -700,6 +728,15 @@ async function reportImages(report: CsamReportProps) {
     }
 
     await cybertipClient.finishReport({ id: reportId });
+    if (sentShort > 0)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-short',
+        message: `report ${report.id} sent without ${sentShort} unreadable file(s)`,
+        reportId: report.id,
+        filesMissing: sentShort,
+      });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
     logSendFailure(report, e, 'archive-data');

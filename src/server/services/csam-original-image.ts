@@ -133,7 +133,7 @@ export async function readOriginalImage(
     if (response) {
       const body = response.Body;
       if (!body) throw new Error('original image response has no body');
-      let release = noReservation;
+      let release: () => void = noReservation;
       try {
         if (reserve) release = await reserve(response.ContentLength ?? 0);
         const data = Buffer.from(await body.transformToByteArray());
@@ -177,7 +177,7 @@ export async function readOriginalImage(
     throw new Error('edge fallback response exceeds the size cap');
   }
   const body = response.body;
-  let release = noReservation;
+  let release: () => void = noReservation;
   try {
     if (reserve) release = await reserve(declared);
     const data = await readCapped(

@@ -40,6 +40,8 @@ const SKIP_DIRS = new Set([
 const ALLOWED = [
   'src/server/services/csam.service-new.ts',
   'src/server/services/__tests__/csam-original-image.test.ts',
+  // Names the path as the URL-guard consumer it is; imports nothing.
+  'src/server/services/__tests__/media-fetch-funnel-ledger.test.ts',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -58,6 +58,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import {
   CSAM_SEND_BLOCKED_AFTER_HOURS,
+  CSAM_SEND_SHORT_AFTER_HOURS,
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
@@ -70,7 +71,8 @@ const report = {
   userId: 20,
   reportedById: 10,
   type: 'Image',
-  createdAt: new Date('2026-01-01T00:00:00Z'),
+  // Recent: an old report is sent without an unreadable file instead of retried.
+  createdAt: new Date(Date.now() - 3_600_000),
   reportSentAt: null,
   images: [{ id: 501 }],
   details: {},
@@ -195,6 +197,49 @@ describe('NCMEC image upload', () => {
           hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS,
         }),
       ]);
+    });
+  });
+
+  describe('a file that stays unreadable', () => {
+    const filedHoursAgo = (hours: number) =>
+      ({
+        ...report,
+        createdAt: new Date(Date.now() - hours * 3_600_000 - 60_000),
+      } as CsamReportProps);
+
+    beforeEach(() => {
+      vi.mocked(logToAxiom).mockClear();
+      getObject.mockRejectedValue(
+        Object.assign(new Error('synthetic storage outage'), {
+          name: 'InternalError',
+          $metadata: { httpStatusCode: 500 },
+        })
+      );
+    });
+
+    it('still holds the report back just before the limit', async () => {
+      await processCsamReport(filedHoursAgo(CSAM_SEND_SHORT_AFTER_HOURS - 1));
+
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('sends the report without it at the limit, recorded as missing with the reason', async () => {
+      await processCsamReport(filedHoursAgo(CSAM_SEND_SHORT_AFTER_HOURS));
+
+      expect(uploadFile).not.toHaveBeenCalled();
+      expect(cancelReport).not.toHaveBeenCalled();
+      expect(finishReport).toHaveBeenCalledTimes(1);
+      expect(sentUpdate().reportSentAt).toBeInstanceOf(Date);
+      expect(sentUpdate().details.images).toEqual([
+        { id: 501, source: 'missing', reason: 'storage read failed after retries' },
+      ]);
+      const alerts = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+        .filter((line) => line.subType === 'send-short');
+      expect(alerts).toEqual([expect.objectContaining({ reportId: report.id, filesMissing: 1 })]);
     });
   });
 
