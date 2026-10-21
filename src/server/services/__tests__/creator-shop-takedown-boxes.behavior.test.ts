@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import {
   boxOddsSnapshotSchema,
   snapshotOfLiveBox,
@@ -21,8 +23,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
-  // Run inside the next transaction, just before its first statement containing `marker`.
-  before: null as null | { marker: string; sql: string[] },
+  // Run inside the next transaction, just before its first statement containing `marker`; with
+  // `persist`, in every transaction that reaches it.
+  before: null as null | { marker: string; sql: string[]; persist?: boolean },
 }));
 
 const buzz = vi.hoisted(() => ({
@@ -72,7 +75,7 @@ const bridge = (tx: { query: PGlite['query'] }) => {
     async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const before = holder.before;
       if (before && strings.join('?').includes(before.marker)) {
-        holder.before = null;
+        if (!before.persist) holder.before = null;
         for (const statement of before.sql) await tx.query(statement);
       }
       return run(strings, ...values);
@@ -261,11 +264,21 @@ const purchaseRefunded = async (sourceKey: string) =>
     )
   )[0].refunded;
 
-/** What the moderator app's box refund writes, under the same holder lock. */
+/**
+ * The writes the moderator app's box refund makes (`refundShopPurchase` / `takeBackBox` in
+ * apps/moderator; Kysely there, so copied rather than imported). Injected inside the takedown's
+ * claim transaction, standing in for that refund committing first under the holder lock.
+ */
 const moderatorRefundSql = (sourceKey: string) => [
   `UPDATE "UserCosmeticShopPurchases" SET refunded = true WHERE "buzzTransactionId" = '${sourceKey}' AND NOT refunded`,
   `UPDATE "BoxOpening" SET "rewardStatus" = 'refunded' WHERE "boxSourceKey" = '${sourceKey}' AND "rewardStatus" = 'granted'`,
 ];
+
+const refunded800 = {
+  refundedTransactions: [],
+  totalRefunded: 800,
+  externalTransactionIdPrefix: 'p',
+};
 
 const takedown = () =>
   takedownCosmeticShopItem({ id: SHELF_LISTING, reason: 'Infringing', moderatorId: MOD });
@@ -278,11 +291,7 @@ const refundedPrefixes = () =>
 beforeEach(async () => {
   holder.before = null;
   for (const fn of Object.values(buzz)) fn.mockReset();
-  buzz.refundMultiAccountTransaction.mockResolvedValue({
-    refundedTransactions: [],
-    totalRefunded: 800,
-    externalTransactionIdPrefix: 'p',
-  });
+  buzz.refundMultiAccountTransaction.mockResolvedValue(refunded800);
   buzz.refundTransaction.mockResolvedValue({ transactionId: 'refund-tx' });
   notifications.createNotification.mockReset().mockResolvedValue(undefined);
   await holder.db.exec(`
@@ -363,9 +372,11 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     });
   });
 
-  // The shelf buyers' refunds and the revoke still have to run.
-  it('finishes the takedown when the boxes holding it cannot be read', async () => {
+  it('still refunds the shelf buyers when the boxes holding it cannot be read', async () => {
     await seedBox();
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
 
     const result = await takedown();
@@ -373,24 +384,119 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ stage: 'box', boxId: 0, error: expect.stringContaining('reset') }),
     ]);
+    expect([result.refunded, refundedPrefixes()]).toEqual([1, ['shelf-1']]);
   });
 
   it('refunds a box buyer who drew it, once, and marks the opening refunded', async () => {
     const boxId = await seedBox();
     const { boxItemId, sourceKey } = await seedOpening(boxId);
+    // The same buyer also bought it off the shelf: told once.
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValueOnce([
+      { userId: BUYER, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
 
     const first = await takedown();
-    // Run again, as a moderator finishing a partial takedown would.
+    // A second run of the same takedown finds nothing left to pay.
     const second = await takedown();
 
-    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect(refundedPrefixes()).toEqual(['shelf-1', sourceKey]);
     expect(await rewardStatusOf(boxItemId)).toBe('refunded');
     expect(await purchaseRefunded(sourceKey)).toBe(true);
     expect([first.boxOpeningsRefunded, first.boxRefundedValue]).toEqual([1, 800]);
     expect(second.boxOpeningsRefunded).toBe(0);
-    expect(notifications.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'cosmetic-shop-item-taken-down', userId: BUYER })
+    expect(
+      notifications.createNotification.mock.calls.filter(
+        ([n]) => n.type === 'cosmetic-shop-item-taken-down' && n.userId === BUYER
+      )
+    ).toHaveLength(1);
+  });
+
+  // The purchase is flagged refunded before the Buzz moves, so the flag alone would hide what is
+  // owed: the stamp keeps it owed, and running the takedown again pays it.
+  it('keeps a failed box refund owed, and pays it when the takedown runs again', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz is down'));
+
+    const failed = await takedown();
+
+    expect(failed.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 800, boxId }),
+    ]);
+    expect(failed.boxOpeningsRefunded).toBe(0);
+    expect(notifications.createNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'cosmetic-shop-item-taken-down' })
     );
+
+    buzz.refundMultiAccountTransaction.mockReset().mockResolvedValue(refunded800);
+    const retried = await takedown();
+
+    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect([retried.boxOpeningsRefunded, retried.failures]).toEqual([1, []]);
+  });
+
+  // An attempt whose response was lost is answered 409 on its retry: the refund landed.
+  it('counts a box refund refused as already made as paid, and makes no other', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'charge-1', amount: 800 },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-charge-1' });
+
+    const result = await takedown();
+
+    expect([result.boxOpeningsRefunded, result.failures]).toEqual([1, []]);
+    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('leaves an opening granted, and reports it, when its claim keeps failing', async () => {
+    const boxId = await seedBox();
+    const { boxItemId } = await seedOpening(boxId);
+    holder.before = { marker: 'UPDATE "BoxOpening"', sql: ['SELECT 1/0'], persist: true };
+
+    const result = await takedown();
+
+    expect(await rewardStatusOf(boxItemId)).toBe('granted');
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        stage: 'box',
+        userId: BUYER,
+        error: expect.stringContaining('zero'),
+      }),
+    ]);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  // Openers are read after the pull commits, so one that drew it just before is still found.
+  it('refunds an opener whose draw committed just before the pull', async () => {
+    const boxId = await seedBox();
+    await q(
+      `INSERT INTO "CosmeticShopItem" ("unitAmount", title, "itemDefinitionId", listed)
+       VALUES (800, 'Box listing', $1, false)`,
+      [boxId]
+    );
+    holder.before = {
+      marker: 'UPDATE "BoxContent"',
+      sql: [
+        `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "shopItemId", "unitAmount", refunded)
+         SELECT 'late-1', ${BUYER}, id, 800, false FROM "CosmeticShopItem" WHERE "itemDefinitionId" = ${boxId}`,
+        `INSERT INTO "BoxOpening" ("boxItemId", "boxDefinitionId", "boxVersion", "userId", "boxSourceKey",
+           "tierId", "contentId", "rewardDefinitionId", "rewardType", "tierWeight", "eligibleWeight",
+           "tierRoll", "tierPoolSize", "itemRoll", "rewardStatus")
+         SELECT 900, ${boxId}, 1, ${BUYER}, 'late-1', 0, 0, id, 'cosmetic', 10, 100, 0, 1, 0, 'granted'
+         FROM "ItemDefinition" WHERE "cosmeticId" = ${TAKEN_DOWN}`,
+      ],
+    };
+
+    await takedown();
+
+    expect(holder.before).toBeNull();
+    expect(refundedPrefixes()).toEqual(['late-1']);
   });
 
   it('marks a moderator-granted opening refunded and moves no Buzz', async () => {
@@ -420,6 +526,31 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(await rewardStatusOf(boxItemId)).toBe('refunded');
   });
 
+  // Each of the claim's two guards on its own: the moderator refund flips both, these flip one.
+  it('does not refund a box purchase already flagged refunded', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    await q(
+      `UPDATE "UserCosmeticShopPurchases" SET refunded = true WHERE "buzzTransactionId" = $1`,
+      [sourceKey]
+    );
+
+    await takedown();
+
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('does not refund an opening refunded between the read and its claim', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    holder.before = { marker: 'UPDATE "BoxOpening"', sql: [moderatorRefundSql(sourceKey)[1]] };
+
+    await takedown();
+
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(await purchaseRefunded(sourceKey)).toBe(false);
+  });
+
   // The moderator refund commits after the takedown read the openings and before it claimed this
   // one: it waited on the same holder lock.
   it('does not refund a box purchase a moderator refunds while the takedown runs', async () => {
@@ -441,6 +572,8 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
         payouts: [{ userId: CREATOR, amount: 560, color: 'yellow', transactionId: 'payout-1' }],
       },
     });
+
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
 
     const result = await takedown();
 

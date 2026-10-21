@@ -15,8 +15,12 @@ import {
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import {
   claimBoxRefundsForCosmetic,
+  listOwedBoxRefunds,
+  markBoxRefundPaid,
   pullCosmeticFromBoxes,
+  type OwedBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
+import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { constants } from '~/server/common/constants';
@@ -2514,12 +2518,12 @@ export const takedownCosmeticShopItem = async ({
   }
   if (!updated) throw throwNotFoundError('Shop item not found');
 
+  /** `reversed`: transaction ids the purchase's own refund already reversed. */
   function reverseRecordedPayouts(
     recordedPayouts: NonNullable<CosmeticPurchaseMeta['payouts']>,
-    refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>
+    reversed: Set<string>
   ) {
     // Payouts are keyed under the purchase prefix, so the refund may have reversed them.
-    const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
     for (const payout of recordedPayouts) {
       if (payout.amount <= 0) continue;
       if (payout.transactionId && reversed.has(payout.transactionId))
@@ -2610,7 +2614,10 @@ export const takedownCosmeticShopItem = async ({
       // paid nothing, and must not be charged back a re-derived share.
       const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
       if (recordedPayouts) {
-        reverseRecordedPayouts(recordedPayouts, refund);
+        reverseRecordedPayouts(
+          recordedPayouts,
+          new Set(refund.refundedTransactions.map((t) => t.originalTransactionId))
+        );
         continue;
       }
 
@@ -2686,77 +2693,103 @@ export const takedownCosmeticShopItem = async ({
   // (Justin, 2026-10-21). A box no one paid for is marked refunded and returns nothing.
   const boxRefundedUserIds: number[] = [];
   let boxRefundedValue = 0;
-  const boxClaims =
-    item.cosmeticId != null
-      ? await claimBoxRefundsForCosmetic({ cosmeticId: item.cosmeticId }).catch((error) => ({
-          claimed: [],
-          failed: [{ userId: 0, boxItemId: 'any', error: errorMessage(error) }],
-        }))
-      : { claimed: [], failed: [] };
-  for (const { userId, boxItemId, error } of boxClaims.failed) {
-    failures.push({
-      stage: 'box',
-      userId,
-      error: `Opening ${boxItemId} left unrefunded: ${error}`,
-    });
-    await logTakedown('error', 'Box opening refund claim failed', {
-      shopItemId: id,
-      userId,
-      boxItemId,
-      error,
-    });
-  }
-  // Each claim already flagged its purchase refunded, so a run that dies past here leaves only this
-  // record of the Buzz still owed.
-  if (boxClaims.claimed.length)
-    await logTakedown('info', 'Box openings claimed for refund', {
-      shopItemId: id,
-      claimed: boxClaims.claimed,
-    });
-  for (const claim of boxClaims.claimed) {
-    const { purchase } = claim;
-    if (!purchase || purchase.unitAmount === 0) continue;
-    let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+  if (item.cosmeticId != null) {
+    const cosmeticId = item.cosmeticId;
+    const boxClaims = await claimBoxRefundsForCosmetic({ cosmeticId, shopItemId: id }).catch(
+      (error) => ({
+        openings: 0,
+        failed: [{ userId: 0, boxItemId: 'any', error: errorMessage(error) }],
+      })
+    );
+    for (const { userId, boxItemId, error } of boxClaims.failed) {
+      failures.push({
+        stage: 'box',
+        userId,
+        error: `Opening ${boxItemId} left unrefunded: ${error}`,
+      });
+      await logTakedown('error', 'Box opening refund claim failed', {
+        shopItemId: id,
+        userId,
+        boxItemId,
+        error,
+      });
+    }
+
+    // Every purchase claimed, by this run or an earlier one, carries `meta.takedownRefund` until it
+    // is paid, so a run that dies past here is finished by running the takedown again.
+    let owed: OwedBoxRefund[] = [];
     try {
-      refund = await takedownMoneyMove(() =>
-        refundMultiAccountTransaction({
-          externalTransactionIdPrefix: purchase.buzzTransactionId,
-          description: `Cosmetic removed - ${item.title}`,
-        })
-      );
+      owed = await listOwedBoxRefunds({ cosmeticId, shopItemId: id });
     } catch (error) {
       failures.push({
-        stage: 'refund',
-        userId: claim.userId,
-        amount: purchase.unitAmount,
-        boxId: claim.boxDefinitionId,
-        error: errorMessage(error),
+        stage: 'box',
+        userId: 0,
+        error: `Box refunds not read: ${errorMessage(error)}`,
       });
-      await logTakedown('error', 'Box buyer refund failed', {
+      await logTakedown('error', 'Box refunds not read', {
         shopItemId: id,
-        userId: claim.userId,
-        boxItemId: claim.boxItemId,
-        buzzTransactionId: purchase.buzzTransactionId,
-        amount: purchase.unitAmount,
         error: errorMessage(error),
       });
-      continue;
     }
-    boxRefundedUserIds.push(claim.userId);
-    boxRefundedValue += purchase.unitAmount;
+    for (const purchase of owed) {
+      try {
+        // Not the raw prefix refund: once any leg is reversed it refuses the rest, so a retry after
+        // a lost response, or a re-run, would read a refunded buyer as owed.
+        if (purchase.unitAmount > 0)
+          await takedownMoneyMove(() =>
+            refundAllLegsByPrefix({
+              externalTransactionIdPrefix: purchase.buzzTransactionId,
+              description: `Cosmetic removed - ${item.title}`,
+            })
+          );
+      } catch (error) {
+        failures.push({
+          stage: 'refund',
+          userId: purchase.userId,
+          amount: purchase.unitAmount,
+          boxId: purchase.boxDefinitionId,
+          error: errorMessage(error),
+        });
+        await logTakedown('error', 'Box buyer refund failed', {
+          shopItemId: id,
+          userId: purchase.userId,
+          buzzTransactionId: purchase.buzzTransactionId,
+          amount: purchase.unitAmount,
+          error: errorMessage(error),
+        });
+        continue;
+      }
+      // The Buzz is back; a failed mark only means a re-run asks the prefix again and finds it done.
+      await markBoxRefundPaid(purchase.buzzTransactionId).catch((error) =>
+        logTakedown('error', 'Box refund paid but not marked', {
+          shopItemId: id,
+          buzzTransactionId: purchase.buzzTransactionId,
+          error: errorMessage(error),
+        })
+      );
+      if (purchase.unitAmount === 0) continue;
+      boxRefundedUserIds.push(purchase.userId);
+      boxRefundedValue += purchase.unitAmount;
 
-    const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-    if (recordedPayouts) reverseRecordedPayouts(recordedPayouts, refund);
-    // A platform box paid only the bank. A creator's box paid its creator, in a split only the
-    // record knows, so like a pack it is left to a moderator.
-    else if (claim.sellerId !== null)
-      failures.push({
-        stage: 'clawback',
-        userId: claim.sellerId,
-        amount: purchase.unitAmount,
-        boxId: claim.boxDefinitionId,
-        error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
-      });
+      const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
+      if (recordedPayouts?.length) {
+        // Payouts keyed under the purchase prefix were reversed with it.
+        const { reversed } = await getPrefixRefundState(purchase.buzzTransactionId).catch(() => ({
+          reversed: [],
+        }));
+        reverseRecordedPayouts(recordedPayouts, new Set(reversed.map((leg) => leg.transactionId)));
+      }
+      // A platform box paid only the bank. A creator's box paid its creator, in a split only the
+      // record knows, so like a pack it is left to a moderator.
+      else if (!recordedPayouts && purchase.sellerId !== null)
+        failures.push({
+          stage: 'clawback',
+          userId: purchase.sellerId,
+          amount: purchase.unitAmount,
+          boxId: purchase.boxDefinitionId,
+          error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
+        });
+    }
   }
 
   let clawedBack = reversedWithPurchase;

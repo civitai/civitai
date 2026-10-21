@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { boxOddsSnapshotSchema, snapshotOfLiveBox } from '@civitai/shared/box-odds-snapshot';
 import {
   BOX_OPENING_REWARD_STATUS,
@@ -126,85 +126,74 @@ export async function pullCosmeticFromBoxes({
   return { pulled, failed };
 }
 
-export type ClaimedBoxRefund = {
-  userId: number;
-  boxItemId: string;
-  boxDefinitionId: number;
-  boxSourceKey: string;
-  /** A creator's box: its sale paid them, not only the platform. */
-  sellerId: number | null;
-  /**
-   * The purchase this claim flagged refunded, whose Buzz the caller now owes back. Null for a box
-   * no one paid for (a moderator's grant) or whose purchase was already refunded.
-   */
-  purchase: { buzzTransactionId: string; unitAmount: number; meta: Prisma.JsonValue } | null;
-};
-
 type GrantedOpening = {
   boxItemId: bigint;
   userId: number;
   boxDefinitionId: number;
   boxSourceKey: string;
-  sellerId: number | null;
 };
 
 /**
- * Marks one opening refunded and, for a purchased box, flags its purchase refunded, under the
- * holder's lock: a moderator's refund of the same box takes that lock and flips the same two rows
- * only while they are unflipped, so whichever runs first refunds it and the other finds it done.
- * Null when it was already refunded.
+ * Marks one opening refunded and, for a purchased box, flags its purchase refunded and stamps it
+ * `meta.takedownRefund`: the Buzz is owed from here until `markBoxRefundPaid`. Under the holder's
+ * lock, and each flip only while unflipped, as the moderator app's box refund does, so whichever of
+ * the two runs first takes the refund and the other finds it done.
  */
-function claimOpening(opening: GrantedOpening): Promise<ClaimedBoxRefund | null> {
+function claimOpening(opening: GrantedOpening, shopItemId: number) {
   return dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, opening.userId);
     const flipped = await tx.$executeRaw`
       UPDATE "BoxOpening" SET "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
       WHERE "boxItemId" = ${opening.boxItemId}
         AND "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}`;
-    if (!flipped) return null;
-    const claim = {
-      userId: opening.userId,
-      boxItemId: opening.boxItemId.toString(),
-      boxDefinitionId: opening.boxDefinitionId,
-      boxSourceKey: opening.boxSourceKey,
-      sellerId: opening.sellerId,
-    };
-    if (opening.boxSourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX))
-      return { ...claim, purchase: null };
+    if (!flipped || opening.boxSourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX)) return;
     // Through the listing's box, as the moderator refund finds it: the source key alone is a string
     // anything could have written.
-    const [purchase] = await tx.$queryRaw<NonNullable<ClaimedBoxRefund['purchase']>[]>`
-      UPDATE "UserCosmeticShopPurchases" p SET refunded = true
+    await tx.$executeRaw`
+      UPDATE "UserCosmeticShopPurchases" p
+      SET refunded = true,
+        meta = COALESCE(p.meta, '{}'::jsonb) || jsonb_build_object(
+          'takedownRefund', jsonb_build_object('shopItemId', ${shopItemId}::int, 'at', now())
+        )
       FROM "CosmeticShopItem" s
       WHERE p."buzzTransactionId" = ${opening.boxSourceKey} AND p."userId" = ${opening.userId}
         AND NOT p.refunded
-        AND s.id = p."shopItemId" AND s."itemDefinitionId" = ${opening.boxDefinitionId}
-      RETURNING p."buzzTransactionId", p."unitAmount", p.meta`;
-    return { ...claim, purchase: purchase ?? null };
+        AND s.id = p."shopItemId" AND s."itemDefinitionId" = ${opening.boxDefinitionId}`;
   });
 }
+
+const boxesHoldingSql = (cosmeticId: number) => Prisma.sql`
+  SELECT bc."boxDefinitionId" FROM "BoxContent" bc
+  JOIN "ItemDefinition" d ON d.id = bc."rewardDefinitionId"
+  WHERE d."cosmeticId" = ${cosmeticId} AND d.type = ${ITEM_TYPE.cosmetic}`;
 
 /**
  * Every opening that drew this cosmetic and still holds it, claimed for a refund one by one. Read
  * after `pullCosmeticFromBoxes`, so no open drawing it can commit after this read. Best-effort per
  * opening: one whose holder's lock was busy is reported in `failed` and left granted.
  */
-export async function claimBoxRefundsForCosmetic({ cosmeticId }: { cosmeticId: number }) {
+export async function claimBoxRefundsForCosmetic({
+  cosmeticId,
+  shopItemId,
+}: {
+  cosmeticId: number;
+  /** The listing being taken down, stamped on each claimed purchase. */
+  shopItemId: number;
+}) {
   const openings = await dbWrite.$queryRaw<GrantedOpening[]>`
-    SELECT o."boxItemId", o."userId", o."boxDefinitionId", o."boxSourceKey", b."sellerId"
+    SELECT o."boxItemId", o."userId", o."boxDefinitionId", o."boxSourceKey"
     FROM "BoxOpening" o
     JOIN "ItemDefinition" d ON d.id = o."rewardDefinitionId"
-    JOIN "ItemDefinition" b ON b.id = o."boxDefinitionId"
     WHERE d."cosmeticId" = ${cosmeticId} AND d.type = ${ITEM_TYPE.cosmetic}
       AND o."rewardType" = ${ITEM_TYPE.cosmetic}
       AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}
     ORDER BY o."boxItemId"`;
-  const claimed: ClaimedBoxRefund[] = [];
   const failed: { userId: number; boxItemId: string; error: string }[] = [];
   for (const opening of openings) {
     try {
-      const claim = await withRetries(() => claimOpening(opening), 3, 1000);
-      if (claim) claimed.push(claim);
+      // A retry after an attempt that committed finds nothing left to flip; its purchase is still
+      // stamped, so `listOwedBoxRefunds` pays it.
+      await withRetries(() => claimOpening(opening, shopItemId), 3, 1000);
     } catch (error) {
       failed.push({
         userId: opening.userId,
@@ -213,5 +202,48 @@ export async function claimBoxRefundsForCosmetic({ cosmeticId }: { cosmeticId: n
       });
     }
   }
-  return { claimed, failed };
+  return { openings: openings.length, failed };
+}
+
+export type OwedBoxRefund = {
+  buzzTransactionId: string;
+  userId: number;
+  unitAmount: number;
+  meta: Prisma.JsonValue;
+  boxDefinitionId: number;
+  /** A creator's box: its sale paid them, not only the platform. */
+  sellerId: number | null;
+};
+
+/**
+ * Box purchases this takedown flagged refunded and has not paid back yet, including any an earlier
+ * run of it claimed and died before paying. Read from the stamp, not from this run's claims, so
+ * running the takedown again finishes them.
+ */
+export function listOwedBoxRefunds({
+  cosmeticId,
+  shopItemId,
+}: {
+  cosmeticId: number;
+  shopItemId: number;
+}) {
+  return dbWrite.$queryRaw<OwedBoxRefund[]>`
+    SELECT p."buzzTransactionId", p."userId", p."unitAmount", p.meta,
+      s."itemDefinitionId" AS "boxDefinitionId", b."sellerId"
+    FROM "CosmeticShopItem" s
+    JOIN "ItemDefinition" b ON b.id = s."itemDefinitionId"
+    JOIN "UserCosmeticShopPurchases" p ON p."shopItemId" = s.id
+    WHERE s."itemDefinitionId" IN (${boxesHoldingSql(cosmeticId)})
+      AND p.refunded
+      AND (p.meta->'takedownRefund'->>'shopItemId')::int = ${shopItemId}
+      AND p.meta->'takedownRefund'->>'paidAt' IS NULL
+    ORDER BY p."buzzTransactionId"`;
+}
+
+/** Ends what `claimOpening` owed: the Buzz for this purchase is back with its buyer. */
+export function markBoxRefundPaid(buzzTransactionId: string) {
+  return dbWrite.$executeRaw`
+    UPDATE "UserCosmeticShopPurchases"
+    SET meta = jsonb_set(meta, '{takedownRefund,paidAt}', to_jsonb(now()))
+    WHERE "buzzTransactionId" = ${buzzTransactionId}`;
 }
