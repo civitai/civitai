@@ -607,35 +607,38 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // Pages are cut by image, so an image-level sort leaves a post holding only the images that
     // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
     // carousel loads the tail from, the same on every page. A post whose row count is already on
-    // the page cannot be incomplete, so only the others are fetched again.
-    const pagePostIds = Object.keys(posts).map(Number);
-    const rowCounts = await getPostImageCounts({
-      postIds: pagePostIds,
-      dbTarget: pageFetchArgs.dbTarget,
-    }).catch((error: Error) => {
-      // Without counts, complete every post rather than leave one short.
-      logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
-      return undefined;
-    });
-    const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
-    const partialPostIds = pagePostIds.filter(
-      (postId) => rowCountOf(postId) > posts[postId].length
-    );
-    const completions = await Promise.all(
-      chunk(partialPostIds, COMPLETION_POSTS_PER_FETCH).map((postIds) =>
-        fetchFn({
-          ...pageFetchArgs,
-          cursor: undefined,
-          postIds,
-          // The rows a filtered fetch returns are a subset of the posts' rows.
-          limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
-        })
-      )
-    );
-    for (const { items: wholePosts } of completions) {
-      for (const image of wholePosts) {
-        const post = image?.postId ? posts[image.postId] : undefined;
-        if (post && !post.some((x) => x.id === image.id)) post.push(image);
+    // the page cannot be incomplete, so only the others are fetched again. It runs only with lazy
+    // post images on, so turning that flag off restores the page as the query returned it.
+    if (features.galleryLazyPostImages) {
+      const pagePostIds = Object.keys(posts).map(Number);
+      const rowCounts = await getPostImageCounts({
+        postIds: pagePostIds,
+        dbTarget: pageFetchArgs.dbTarget,
+      }).catch((error: Error) => {
+        // Without counts, complete every post rather than leave one short.
+        logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
+        return undefined;
+      });
+      const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
+      const partialPostIds = pagePostIds.filter(
+        (postId) => rowCountOf(postId) > posts[postId].length
+      );
+      const completions = await Promise.all(
+        chunk(partialPostIds, COMPLETION_POSTS_PER_FETCH).map((postIds) =>
+          fetchFn({
+            ...pageFetchArgs,
+            cursor: undefined,
+            postIds,
+            // The rows a filtered fetch returns are a subset of the posts' rows.
+            limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
+          })
+        )
+      );
+      for (const { items: wholePosts } of completions) {
+        for (const image of wholePosts) {
+          const post = image?.postId ? posts[image.postId] : undefined;
+          if (post && !post.some((x) => x.id === image.id)) post.push(image);
+        }
       }
     }
 

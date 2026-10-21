@@ -87,7 +87,7 @@ const run = (features = {}) =>
     } as never,
     ctx: {
       user: { id: 5 },
-      features: { imageIndexFeed: true, ...features },
+      features: { imageIndexFeed: true, galleryLazyPostImages: true, ...features },
       req: { headers: {} },
     } as never,
   });
@@ -98,16 +98,21 @@ const idsOf = (items: Awaited<ReturnType<typeof run>>['items'], postId: number) 
   items.find((p) => p.postId === postId)?.images.map((i) => i.id);
 
 describe('getImagesAsPostsInfiniteHandler post completion', () => {
-  it('returns the whole post on the first page', async () => {
+  // The card carries a first slice and the post's whole count, which the carousel loads the rest
+  // from; a count taken from the page alone is what stranded a card at two.
+  it('gives each card its first slice and the whole post count on the first page', async () => {
     const { items } = await run();
-    expect(idsOf(items, 500)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(idsOf(items, 500)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(items.find((p) => p.postId === 500)?.imageCount).toBe(8);
     expect(idsOf(items, 600)).toEqual([10, 11]);
-    expect(idsOf(items, 700)).toEqual([20]);
-    expect(idsOf(items, 800)).toEqual([30, 31]);
+    expect(items.find((p) => p.postId === 600)?.imageCount).toBe(2);
+    expect(items.find((p) => p.postId === 700)?.imageCount).toBe(1);
+    expect(items.find((p) => p.postId === 800)?.imageCount).toBe(2);
   });
 
-  it('keeps an image the page query would hide hidden', async () => {
+  it('does not count an image the page query would hide', async () => {
     const { items } = await run();
+    expect(items.find((p) => p.postId === 500)?.imageCount).toBe(8);
     expect(items.flatMap((p) => p.images.map((i) => i.id))).not.toContain(9);
   });
 
@@ -143,17 +148,15 @@ describe('getImagesAsPostsInfiniteHandler post completion', () => {
         .flatMap((c) => c.postIds ?? [])
         .sort()
     ).toEqual([500, 600, 700, 800]);
-    expect(idsOf(items, 500)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(items.find((p) => p.postId === 500)?.imageCount).toBe(8);
   });
 
-  // With lazy post images the card carries a first slice and the post's true count, which the
-  // carousel loads the rest from; a count taken from the page alone is what stranded a card at two.
-  it('gives a lazy card the whole post count, not the count of its page', async () => {
-    const { items } = await run({ galleryLazyPostImages: true });
-    const post = items.find((p) => p.postId === 500);
-    expect(post?.imageCount).toBe(8);
-    expect(post?.images.length).toBeLessThan(8);
-    expect(items.find((p) => p.postId === 600)?.imageCount).toBe(2);
+  it('leaves the page as the query returned it when lazy post images are off', async () => {
+    const { items } = await run({ galleryLazyPostImages: false });
+    expect(rowCounts).not.toHaveBeenCalled();
+    expect(completionCalls()).toHaveLength(0);
+    expect(idsOf(items, 500)).toEqual([1, 2]);
+    expect(items.find((p) => p.postId === 500)?.imageCount).toBeUndefined();
   });
 
   it('asks for no more than a bounded number of posts at a time', async () => {
