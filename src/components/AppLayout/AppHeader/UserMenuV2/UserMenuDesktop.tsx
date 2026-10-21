@@ -195,7 +195,7 @@ function SortablePinnedItem({
   );
 }
 
-function DesktopNodes({
+export function DesktopNodes({
   nodes,
   pins,
   onToggle,
@@ -204,6 +204,9 @@ function DesktopNodes({
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
 }) {
+  // One flyout per level: opening a group closes its siblings at once, instead of each on its own timer.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+
   return (
     <>
       {nodes.map((node) =>
@@ -215,7 +218,16 @@ function DesktopNodes({
             onToggle={onToggle}
           />
         ) : (
-          <DesktopGroup key={node.id} node={node} pins={pins} onToggle={onToggle} />
+          <DesktopGroup
+            key={node.id}
+            node={node}
+            pins={pins}
+            onToggle={onToggle}
+            opened={openGroup === node.id}
+            setOpened={(next) =>
+              setOpenGroup((current) => (next ? node.id : current === node.id ? null : current))
+            }
+          />
         )
       )}
     </>
@@ -242,12 +254,15 @@ function DesktopGroup({
   node,
   pins,
   onToggle,
+  opened,
+  setOpened,
 }: {
   node: Extract<ResolvedMenuNode, { kind: 'group' }>;
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
+  opened: boolean;
+  setOpened: (opened: boolean) => void;
 }) {
-  const [opened, setOpened] = useState(false);
   const timer = useRef<number>();
   const row = useRef<HTMLButtonElement>(null);
   const dropdown = useRef<HTMLDivElement>(null);
