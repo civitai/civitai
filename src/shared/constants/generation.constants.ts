@@ -1,11 +1,11 @@
-import type { WorkflowStatus } from '@civitai/client';
 import type {
   ComfySampler,
   ComfyScheduler,
   SdCppSampleMethod,
   SdCppSchedule,
+  WorkflowStatus,
 } from '@civitai/orchestration-client';
-import { Scheduler } from '@civitai/client';
+import { Scheduler } from '@civitai/orchestration-client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
 import { maxUpscaleSize, minDownscaleSize, maxRandomSeed } from '~/server/common/constants';
