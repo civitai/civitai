@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
+import type { DomainColor } from '~/shared/utils/prisma/enums';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -48,6 +49,7 @@ const matches = (value: Record<string, unknown>, where: Record<string, unknown>)
   Object.entries(where).every(([key, cond]) => {
     if (key === 'AND') return (cond as Record<string, unknown>[]).every((w) => matches(value, w));
     if (key === 'OR') return (cond as Record<string, unknown>[]).some((w) => matches(value, w));
+    if (!(key in value)) throw new Error(`fake where: unknown field ${key}`);
     const actual = value[key];
     if (cond !== null && typeof cond === 'object' && !Array.isArray(cond)) {
       const op = cond as Record<string, unknown>;
@@ -56,7 +58,6 @@ const matches = (value: Record<string, unknown>, where: Record<string, unknown>)
       if ('has' in op) return (actual as unknown[]).includes(op.has);
       return matches(actual as Record<string, unknown>, op);
     }
-    if (!(key in value)) throw new Error(`fake where: unknown field ${key}`);
     return actual === cond;
   });
 
@@ -91,8 +92,8 @@ const crucibleBlock = (feed: Record<string, unknown>) => ({
   metadata: { feed: { entity: 'crucibles', ...feed } },
 });
 
-const listedIds = async (feed: Record<string, unknown>) => {
-  const result = await getHomeBlockData({ input: {}, homeBlock: crucibleBlock(feed) });
+const listedIds = async (feed: Record<string, unknown>, domain?: DomainColor) => {
+  const result = await getHomeBlockData({ input: { domain }, homeBlock: crucibleBlock(feed) });
   if (result?.feedItems?.entity !== 'crucibles') return null;
   return result.feedItems.items.map(({ id }) => id);
 };
@@ -105,9 +106,14 @@ beforeEach(() => {
 
 describe('Feed home block, crucibles entity', () => {
   it('lists only crucibles carrying the block tag, matched case-insensitively', async () => {
-    serve([row(1), row(2, { eventTags: ['winter'] }), row(3, { eventTags: [] })]);
+    serve([
+      row(1),
+      row(2, { eventTags: ['winter'] }),
+      row(3, { eventTags: [] }),
+      row(4, { eventTags: ['winter', 'halloween'] }),
+    ]);
 
-    expect(await listedIds({ eventTag: ' Halloween ' })).toEqual([1]);
+    expect(await listedIds({ eventTag: ' Halloween ' })).toEqual([4, 1]);
   });
 
   // An untagged block must not fall through to "every running crucible on the site".
@@ -138,6 +144,7 @@ describe('Feed home block, crucibles entity', () => {
     serve(Array.from({ length: 12 }, (_, i) => row(i + 1, { prizePool: i })));
 
     expect(await listedIds({ eventTag: 'halloween', limit: 28 })).toHaveLength(8);
+    expect(await listedIds({ eventTag: 'halloween', limit: 3 })).toHaveLength(3);
   });
 
   // The block is shared-cached across every viewer, so it holds to the list's own visibility
@@ -161,11 +168,22 @@ describe('Feed home block, crucibles entity', () => {
     expect(await listedIds({ eventTag: 'halloween' })).toEqual([1]);
   });
 
-  it("lets a block opt up to PG-13 covers with browsingLevel 'sfw'", async () => {
+  it("lets a block opt up to PG-13 covers with browsingLevel 'sfw', and no further", async () => {
     serve([
       row(1, { image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG13 } }),
+      row(2, { image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.R } }),
+      row(3, { textNsfw: true }),
     ]);
 
     expect(await listedIds({ eventTag: 'halloween', browsingLevel: 'sfw' })).toEqual([1]);
+  });
+
+  // On the green site the crucible list also hides crucibles open to adult entries, whatever their
+  // cover; the shared entry is keyed per domain, so the block must ask for that.
+  it('leaves out a crucible open to adult entries on the green site only', async () => {
+    serve([row(1), row(2, { nsfwLevel: NsfwLevel.PG | NsfwLevel.R })]);
+
+    expect(await listedIds({ eventTag: 'halloween' }, 'green')).toEqual([1]);
+    expect(await listedIds({ eventTag: 'halloween' }, 'red')).toEqual([2, 1]);
   });
 });

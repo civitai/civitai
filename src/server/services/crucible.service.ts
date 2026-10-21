@@ -9,12 +9,15 @@ import {
   CrucibleEngagementType,
   CrucibleIngestionStatus,
   CrucibleStatus,
+  HomeBlockType,
   ImageIngestionStatus,
   MediaType,
   ModelStatus,
   ModelType,
   PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { Flags } from '~/shared/utils/flags';
@@ -920,11 +923,16 @@ export const updateCrucible = async ({
     if (settlement) Object.assign(data, settlement.data);
   }
 
-  let updated: Awaited<ReturnType<typeof dbWrite.crucible.update>>;
+  let updated: Omit<Awaited<ReturnType<typeof dbWrite.crucible.update>>, 'eventTags'>;
   try {
     // On the status read above: a cancel since then has already refunded the creator, and writing
     // the status back would revive a crucible whose seed is gone.
-    updated = await dbWrite.crucible.update({ where: { id, status: crucible.status }, data });
+    // The row goes back to the creator, and event tags are moderator data.
+    updated = await dbWrite.crucible.update({
+      where: { id, status: crucible.status },
+      data,
+      omit: { eventTags: true },
+    });
   } catch (error) {
     await settlement?.rollback();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
@@ -1592,7 +1600,25 @@ export const setCrucibleEventTags = async ({ id, eventTags }: SetCrucibleEventTa
     data: { eventTags },
     select: { eventTags: true },
   });
+  await bustCrucibleFeedBlocks();
   return updated.eventTags;
+};
+
+/**
+ * A crucibles Feed block caches its slice for 10 minutes, empty ones included, so without this a
+ * newly tagged crucible would not reach the homepage until that expired. Clones share their source's
+ * entry, so the system blocks are all there is to clear.
+ */
+const bustCrucibleFeedBlocks = async () => {
+  const blocks = await dbRead.homeBlock.findMany({
+    where: { userId: -1, type: HomeBlockType.Feed },
+    select: { id: true, metadata: true },
+  });
+  await Promise.all(
+    blocks
+      .filter((block) => (block.metadata as HomeBlockMetaSchema)?.feed?.entity === 'crucibles')
+      .map((block) => homeBlockCacheBust(HomeBlockType.Feed, block.id))
+  );
 };
 
 /**

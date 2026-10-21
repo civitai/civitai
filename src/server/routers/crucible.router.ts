@@ -198,7 +198,7 @@ export const crucibleRouter = router({
     .input(toggleCrucibleFollowSchema)
     .mutation(toggleCrucibleFollowHandler),
 
-  // Event tags are moderator data: neither procedure is public, and no public select carries them.
+  // Event tags are moderator data: no row sent to a non-moderator may carry them.
   getEventTags: moderatorProcedure
     .use(isFlagProtected('crucible'))
     .input(getCrucibleByIdSchema)

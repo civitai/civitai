@@ -1,16 +1,9 @@
 import { Loader, Paper, TagsInput, Text, Title } from '@mantine/core';
 import { IconTags } from '@tabler/icons-react';
-import {
-  CRUCIBLE_EVENT_TAG_MAX_LENGTH,
-  CRUCIBLE_EVENT_TAG_PATTERN,
-  CRUCIBLE_MAX_EVENT_TAGS,
-  normalizeCrucibleEventTag,
-} from '~/shared/constants/crucible.constants';
+import { crucibleEventTagSchema } from '~/server/schema/crucible.schema';
+import { CRUCIBLE_MAX_EVENT_TAGS } from '~/shared/constants/crucible.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-const isValidEventTag = (tag: string) =>
-  tag.length <= CRUCIBLE_EVENT_TAG_MAX_LENGTH && CRUCIBLE_EVENT_TAG_PATTERN.test(tag);
 
 /** Moderators only. Tags put the crucible in any homepage Feed block that lists that tag. */
 export function CrucibleEventTagsPanel({ crucibleId }: { crucibleId: number }) {
@@ -28,8 +21,8 @@ export function CrucibleEventTagsPanel({ crucibleId }: { crucibleId: number }) {
   });
 
   const handleChange = (values: string[]) => {
-    const normalized = [...new Set(values.map(normalizeCrucibleEventTag).filter(Boolean))];
-    const invalid = normalized.filter((tag) => !isValidEventTag(tag));
+    const parsed = values.map((value) => crucibleEventTagSchema.safeParse(value));
+    const invalid = values.filter((_, i) => !parsed[i].success);
     if (invalid.length) {
       showErrorNotification({
         title: 'Invalid event tag',
@@ -37,7 +30,8 @@ export function CrucibleEventTagsPanel({ crucibleId }: { crucibleId: number }) {
       });
       return;
     }
-    setEventTags.mutate({ id: crucibleId, eventTags: normalized });
+    const eventTags = parsed.flatMap((result) => (result.success ? [result.data] : []));
+    setEventTags.mutate({ id: crucibleId, eventTags: [...new Set(eventTags)] });
   };
 
   return (
