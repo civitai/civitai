@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -83,6 +83,39 @@ export async function getImageResources({ ids }: GetImageResourcesOutput) {
   });
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function unionLists<T>(stored: unknown, added: T[] | undefined, keyOf: (item: T) => unknown) {
+  if (!Array.isArray(stored) && !added) return undefined;
+  const kept = Array.isArray(stored) ? (stored as T[]) : [];
+  const keys = new Set(kept.map(keyOf));
+  return [...kept, ...(added ?? []).filter((item) => !keys.has(keyOf(item)))];
+}
+
+/** Keeps every image the report already names, with what was recorded on it, and adds the new ones. */
+function foldImages(stored: unknown, added: { id: number }[]) {
+  return unionLists(stored, added, (image) => image.id) ?? [];
+}
+
+/** The new form's answers win; what each report named is kept from both. */
+function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
+  const prior = isRecord(stored) ? stored : {};
+  const next = added ?? {};
+  const folded: Record<string, unknown> = { ...prior, ...next };
+  for (const key of ['modelVersionIds', 'capabilities', 'contents'] as const) {
+    const list = unionLists<unknown>(prior[key], next[key], (item) => item);
+    if (list) folded[key] = list;
+  }
+  const generatedImages = unionLists(
+    prior.generatedImages,
+    next.generatedImages,
+    (entry) => entry.jobId
+  );
+  if (generatedImages) folded.generatedImages = generatedImages;
+  return folded as Prisma.InputJsonObject;
+}
+
 export async function createCsamReport({
   reportedById,
   userId,
@@ -100,26 +133,34 @@ export async function createCsamReport({
     images: imageIds?.map((id) => ({ id })) ?? [],
   };
 
-  // An update replaces the row's images and details, so only fold into a report of the same account
-  // AND type: internal reports belong to no account, and a different type is a different report.
-  const unsent = isInternalReport
-    ? null
-    : await dbWrite.csamReport.findFirst({
-        where: { userId, type, reportSentAt: null },
-        select: { id: true },
-      });
+  // Only fold into a report of the same account AND type: internal reports belong to no account, and
+  // a different type is a different report.
+  const report = isInternalReport
+    ? await dbWrite.csamReport.create({ data })
+    : await dbWrite.$transaction(async (tx) => {
+        const unsent = await tx.csamReport.findFirst({
+          where: { userId, type, reportSentAt: null },
+          select: { id: true },
+        });
+        if (!unsent) return tx.csamReport.create({ data });
 
-  // The update re-checks that the report is still unsent: once sent, a report cannot change, so one
-  // sent since the lookup gets a new report instead.
-  const report = unsent
-    ? await dbWrite.csamReport
-        .update({ where: { id: unsent.id, reportSentAt: null }, data })
-        .catch((e: unknown) => {
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025')
-            return dbWrite.csamReport.create({ data });
-          throw e;
-        })
-    : await dbWrite.csamReport.create({ data });
+        // Locked and re-read, so a concurrent filing on the same report folds in after this one
+        // rather than overwriting it. A report sent since the lookup gets a new report instead.
+        const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
+          SELECT images, details FROM "CsamReport"
+          WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
+          FOR UPDATE`;
+        if (!locked) return tx.csamReport.create({ data });
+
+        return tx.csamReport.update({
+          where: { id: unsent.id },
+          data: {
+            ...data,
+            images: foldImages(locked.images, data.images),
+            details: foldDetails(locked.details, details),
+          },
+        });
+      });
 
   if (imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({

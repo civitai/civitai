@@ -71,6 +71,13 @@ beforeEach(() => {
   table.create.mockImplementation(async ({ data }: { data: Partial<Row> & Pick<Row, 'userId'> }) =>
     seed({ ...data, createdAt: new Date() })
   );
+  // The row lock: the report by id, while it is still unsent.
+  dbMock.dbWrite.$queryRaw
+    .mockReset()
+    .mockImplementation((async (_: unknown, id: number) =>
+      rows
+        .filter((row) => row.id === id && row.reportSentAt === null)
+        .map(({ images, details }) => structuredClone({ images, details }))) as never);
 });
 
 describe('unsent-report lookup', () => {
@@ -123,7 +130,7 @@ describe('unsent-report lookup', () => {
 
     expect(rows.find((r) => r.id === sent.id)).toEqual(sent);
     expect(rows.find((r) => r.id === other.id)).toEqual(other);
-    expect(rows.find((r) => r.id === unsent.id)).toMatchObject({ images: [{ id: 4 }] });
+    expect(rows.find((r) => r.id === unsent.id)).toMatchObject({ images: [{ id: 3 }, { id: 4 }] });
     expect(rows).toHaveLength(3);
   });
 
@@ -151,5 +158,72 @@ describe('unsent-report lookup', () => {
     expect(rows.find((r) => r.id === external.id)).toEqual(external);
     expect(rows).toHaveLength(2);
     expect(rows[1]).toMatchObject({ userId: 101, type: 'Image', images: [{ id: 4 }] });
+  });
+});
+
+describe('a second report folded into an unsent one', () => {
+  it('keeps the first report’s images, versions and recorded file data', async () => {
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1, fileId: 'file-1' }, { id: 2 }],
+      details: {
+        modelVersionIds: [7],
+        minorDepiction: 'real',
+        capabilities: ['create'],
+        readFailures: { 2: 1 },
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2, 3],
+      details: { modelVersionIds: [7, 8], minorDepiction: 'non-real', capabilities: ['edit'] },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows.find((r) => r.id === first.id)).toMatchObject({
+      images: [{ id: 1, fileId: 'file-1' }, { id: 2 }, { id: 3 }],
+      details: {
+        modelVersionIds: [7, 8],
+        minorDepiction: 'non-real',
+        capabilities: ['create', 'edit'],
+        readFailures: { 2: 1 },
+      },
+    });
+  });
+
+  it('keeps the first report’s generated images, by job', async () => {
+    const first = seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatedImages: [
+          { jobId: 'job-a', blobs: [{ url: 'a' }] },
+          { jobId: 'job-c', blobs: [{ url: 'c' }] },
+        ],
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: {
+        generatedImages: [
+          { jobId: 'job-a', blobs: [{ url: 'a' }] },
+          { jobId: 'job-b', blobs: [{ url: 'b' }] },
+        ],
+      },
+    });
+
+    expect(rows.find((r) => r.id === first.id)?.details).toEqual({
+      generatedImages: [
+        { jobId: 'job-a', blobs: [{ url: 'a' }] },
+        { jobId: 'job-c', blobs: [{ url: 'c' }] },
+        { jobId: 'job-b', blobs: [{ url: 'b' }] },
+      ],
+    });
   });
 });
