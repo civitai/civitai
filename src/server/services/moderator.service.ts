@@ -116,10 +116,11 @@ type FeedbackModActivity = {
   activity: 'hideFromOwner' | 'unhideFromOwner';
 };
 
-/** A moderator cleared a bounty entry file's check result (`File.metadata.checkOverride`). */
+/** A moderator cleared a bounty entry file's check result
+ *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`). */
 type BountyEntryModActivity = {
   entityType: 'bountyEntry';
-  activity: 'clearFileCheck';
+  activity: `clearFileCheck:${string}`;
 };
 
 type ModActivity = {

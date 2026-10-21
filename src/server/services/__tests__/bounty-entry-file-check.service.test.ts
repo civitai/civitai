@@ -20,6 +20,7 @@ import {
   checkPendingBountyEntryFiles,
   fileCheckState,
   getBountyEntryFileStates,
+  HASH_FAIL_COUNT_SQL,
 } from '~/server/services/bounty-entry-file-check.service';
 import {
   awardBountyEntry,
@@ -70,9 +71,28 @@ describe('fileCheckState', () => {
     ['a numeric time', { by: 1, at: 1, reason: 'r' }],
     ['no reason', { by: 1, at: 'x' }],
     ['an empty reason', { by: 1, at: 'x', reason: '' }],
-    ['a whitespace reason', { by: 1, at: 'x', reason: ' \n ' }],
+    ['a whitespace reason', { by: 1, at: 'x', reason: ' \n\t\v\f\r ' }],
+    ['a moderator id past 15 digits', { by: 2 ** 53, at: 'x', reason: 'r' }],
   ])('keeps the block when the stored clear is %s', (_, checkOverride) => {
     expect(fileCheckState({ ...BLOCKED, checkOverride })).toBe('blocked');
+  });
+
+  // The SQL twin can't see Unicode spaces, so neither does this: both call these reasons present.
+  it.each([
+    ['a no-break space', ' '],
+    ['a byte order mark', '﻿'],
+    ['an ideographic space', '　'],
+  ])('counts a reason of only %s as a reason, as the SQL does', (_, reason) => {
+    expect(fileCheckState({ ...BLOCKED, checkOverride: { by: 1, at: 'x', reason } })).toBe('clean');
+  });
+
+  it('takes a 15-digit moderator id', () => {
+    expect(
+      fileCheckState({
+        ...BLOCKED,
+        checkOverride: { by: 999_999_999_999_999, at: 'x', reason: 'r' },
+      })
+    ).toBe('clean');
   });
 });
 
@@ -156,11 +176,12 @@ describe('checkPendingBountyEntryFiles', () => {
     await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
 
     // A bare `::int` cast throws on a planted string and would fail every run of the job.
-    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[])
-      .join('?')
-      .replace(/\s+/g, ' ');
-    expect(sql).toContain(
-      `CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number' AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$' THEN (f.metadata->>'hashFailCount')::int ELSE 0 END AS "hashFailCount"`
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const at = values.indexOf(HASH_FAIL_COUNT_SQL);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(strings[at + 1]).toMatch(/^\s*AS "hashFailCount"/);
+    expect(HASH_FAIL_COUNT_SQL.sql.replace(/\s+/g, ' ')).toBe(
+      `CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number' AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$' THEN (f.metadata->>'hashFailCount')::int ELSE 0 END`
     );
   });
 

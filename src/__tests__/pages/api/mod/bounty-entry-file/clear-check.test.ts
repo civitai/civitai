@@ -20,10 +20,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 
 import handler from '~/pages/api/mod/bounty-entry-file/clear-check';
-import {
-  fileCheckState,
-  VALID_OVERRIDE_SQL,
-} from '~/server/services/bounty-entry-file-check.service';
+import { fileCheckState } from '~/server/services/bounty-entry-file-check.service';
 
 const FILE_ID = 31;
 const ENTRY_ID = 20;
@@ -94,15 +91,22 @@ describe('bountyEntryFile.clearCheck', () => {
     const [, ...values] = update as [string[], ...unknown[]];
     // Guarded on the url the moderator saw and on the file still being blocked.
     expect(sqlOf(update)).toContain(
-      `WHERE f.id = ? AND f.url = ? AND f."entityType" = 'BountyEntry' AND f.metadata->>'blockedReason' IS NOT NULL AND NOT COALESCE(?, false)`
+      `WHERE f.id = ? AND f.url = ? AND f."entityType" = 'BountyEntry' AND f.metadata->>'blockedReason' IS NOT NULL AND f.metadata->'checkOverride' IS NOT DISTINCT FROM ?::jsonb`
     );
-    expect(values.slice(1, 4)).toEqual([FILE_ID, URL, VALID_OVERRIDE_SQL]);
+    // No stored clear was read, so the write requires there still to be none.
+    expect(values.slice(1, 4)).toEqual([FILE_ID, URL, null]);
     const override = JSON.parse(values[0] as string);
     expect(override).toEqual({ by: 7, at: expect.any(String), reason: 'their own alt account' });
     expect(fileCheckState({ ...BLOCKED, checkOverride: override })).toBe('clean');
 
+    // One row per clear, carrying the reason, so it outlives the file's copy.
     expect(modActivityRows().map((c) => c.slice(1))).toEqual([
-      [7, 'bountyEntry', 'clearFileCheck', [ENTRY_ID]],
+      [
+        7,
+        'bountyEntry',
+        `clearFileCheck:${JSON.stringify({ fileId: FILE_ID, reason: 'their own alt account' })}`,
+        [ENTRY_ID],
+      ],
     ]);
     // Both writes ride the transaction; nothing goes to the bare client.
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -114,8 +118,18 @@ describe('bountyEntryFile.clearCheck', () => {
       if (strings.join('').includes('"ModActivity"')) throw new Error('insert failed');
       return 1;
     });
+    const settled: Promise<unknown>[] = [];
+    dbMock.dbWrite.$transaction.mockImplementation(((fn: (client: unknown) => unknown) => {
+      const run = Promise.resolve().then(() => fn(tx));
+      settled.push(run.catch((e) => e));
+      return run;
+    }) as never);
+
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(500);
+    // The UPDATE ran inside the transaction, and the transaction itself failed: Prisma rolls it back.
     expect(fileUpdates()).toHaveLength(1);
+    expect(await Promise.all(settled)).toEqual([new Error('insert failed')]);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(loggedClear()).toBe(false);
   });
 
@@ -152,16 +166,18 @@ describe('bountyEntryFile.clearCheck', () => {
     expect(anyWrite()).toBe(0);
   });
 
-  it('clears a file whose stored clear is malformed, which counts as no clear', async () => {
+  it('clears over a malformed stored clear, guarded on the exact value it read', async () => {
+    const planted = { by: '7', at: 'x', reason: 'planted' };
     dbMock.dbWrite.file.findUnique.mockResolvedValue({
       id: FILE_ID,
       url: URL,
       entityType: 'BountyEntry',
       entityId: ENTRY_ID,
-      metadata: { ...BLOCKED, checkOverride: { by: '7', at: 'x', reason: 'planted' } },
+      metadata: { ...BLOCKED, checkOverride: planted },
     } as never);
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(200);
-    expect(fileUpdates()).toHaveLength(1);
+    const [update] = fileUpdates();
+    expect(JSON.parse(update[4] as string)).toEqual(planted);
   });
 
   it('refuses when the file changed between the read and the write, and logs nothing', async () => {

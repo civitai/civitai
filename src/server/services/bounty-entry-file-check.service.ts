@@ -33,27 +33,45 @@ type FileCheckState = 'clean' | 'blocked' | 'unchecked';
 /** A moderator's ruling that a blocked file is fine. Dropped with the other check keys on a new url. */
 export type FileCheckOverride = { by: number; at: string; reason: string };
 
-/** Only the shape the clear writes counts: metadata from before these keys were server-only may hold anything. */
+/**
+ * Only the shape the clear writes counts: metadata from before these keys were server-only may hold
+ * anything. Kept to rules SQL states identically (VALID_OVERRIDE_SQL): an id of at most 15 digits,
+ * and ASCII whitespace only.
+ */
 export function isFileCheckOverride(value: unknown): value is FileCheckOverride {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const { by, at, reason } = value as Record<string, unknown>;
   return (
-    Number.isSafeInteger(by) &&
+    Number.isInteger(by) &&
     (by as number) > 0 &&
+    (by as number) <= 999_999_999_999_999 &&
     typeof at === 'string' &&
     typeof reason === 'string' &&
-    reason.trim() !== ''
+    /[^ \t\n\v\f\r]/.test(reason)
   );
 }
 
-/** `isFileCheckOverride` in SQL, over the File row aliased as `f`. */
+/**
+ * `isFileCheckOverride` in SQL, over the File row aliased as `f`. The moderator app keeps a copy,
+ * pinned equal to this one by a test.
+ */
 export const VALID_OVERRIDE_SQL = Prisma.sql`(
   jsonb_typeof(f.metadata->'checkOverride'->'by') = 'number'
-  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,15}$'
+  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,14}$'
   AND jsonb_typeof(f.metadata->'checkOverride'->'at') = 'string'
   AND jsonb_typeof(f.metadata->'checkOverride'->'reason') = 'string'
-  AND (f.metadata->'checkOverride'->>'reason') ~ '[^[:space:]]'
+  AND (f.metadata->'checkOverride'->>'reason')
+    ~ ('[^ ' || chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || ']')
 )`;
+
+/**
+ * The stored hash failure count of the File row aliased as `f`, 0 unless it is a small whole
+ * number: a bare `::int` throws on a planted value and would fail every run of the job. The
+ * moderator app keeps a copy, pinned equal to this one by a test.
+ */
+export const HASH_FAIL_COUNT_SQL = Prisma.sql`CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number'
+  AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$'
+  THEN (f.metadata->>'hashFailCount')::int ELSE 0 END`;
 
 export function fileCheckState(metadata: unknown): FileCheckState {
   const meta = (metadata ?? {}) as Record<string, unknown>;
@@ -167,9 +185,7 @@ export async function checkPendingBountyEntryFiles({
 } = {}) {
   const pending = await dbRead.$queryRaw<PendingFile[]>`
     SELECT f.id, f.url, f.name, f."sizeKB", be."userId" AS "authorId",
-      CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number'
-        AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$'
-        THEN (f.metadata->>'hashFailCount')::int ELSE 0 END AS "hashFailCount"
+      ${HASH_FAIL_COUNT_SQL} AS "hashFailCount"
     FROM "Bounty" b
     JOIN "BountyEntry" be ON be."bountyId" = b.id
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -270,9 +286,11 @@ export async function clearBountyEntryFileCheck({
     throw throwBadRequestError('This file is not blocked.');
 
   const override: FileCheckOverride = { by: userId, at: new Date().toISOString(), reason };
+  // The stored value just read, which fileCheckState judged no clear (absent, or malformed).
+  const meta = (file.metadata ?? {}) as Record<string, unknown>;
+  const readOverride = 'checkOverride' in meta ? JSON.stringify(meta.checkOverride) : null;
   // One transaction, so a clear is never left without its ModActivity row.
   await dbWrite.$transaction(async (tx) => {
-    // A malformed checkOverride (written before the key was server-only) counts as none.
     const count = await tx.$executeRaw`
       UPDATE "File" f
       SET metadata = f.metadata || jsonb_build_object('checkOverride', ${JSON.stringify(
@@ -282,16 +300,21 @@ export async function clearBountyEntryFileCheck({
         AND f.url = ${file.url}
         AND f."entityType" = 'BountyEntry'
         AND f.metadata->>'blockedReason' IS NOT NULL
-        AND NOT COALESCE(${VALID_OVERRIDE_SQL}, false)
+        AND f.metadata->'checkOverride' IS NOT DISTINCT FROM ${readOverride}::jsonb
     `;
     if (count !== 1)
       throw throwBadRequestError(
         'This file changed while you were reviewing it. Reload and try again.'
       );
 
+    // The reason goes in the row too: the file's copy is dropped on a re-upload.
     await trackModActivity(
       userId,
-      { entityType: 'bountyEntry', entityId: file.entityId, activity: 'clearFileCheck' },
+      {
+        entityType: 'bountyEntry',
+        entityId: file.entityId,
+        activity: `clearFileCheck:${JSON.stringify({ fileId: file.id, reason })}`,
+      },
       tx
     );
   });

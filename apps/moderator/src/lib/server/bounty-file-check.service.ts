@@ -37,16 +37,19 @@ export type ClearedEntryFile = EntryFile & {
   reason: string | null;
 };
 
-// The main app's `isFileCheckOverride`: only the shape a clear writes counts.
+// The main app's VALID_OVERRIDE_SQL: only the shape a clear writes counts. Pinned equal to it by
+// src/server/services/__tests__/bounty-entry-file-check.parity.test.ts.
 const validOverride = sql`(
   jsonb_typeof(f.metadata->'checkOverride'->'by') = 'number'
-  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,15}$'
+  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,14}$'
   AND jsonb_typeof(f.metadata->'checkOverride'->'at') = 'string'
   AND jsonb_typeof(f.metadata->'checkOverride'->'reason') = 'string'
-  AND (f.metadata->'checkOverride'->>'reason') ~ '[^[:space:]]'
+  AND (f.metadata->'checkOverride'->>'reason')
+    ~ ('[^ ' || chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || ']')
 )`;
 
-// Metadata from before the key was server-only may hold anything; a non-count reads as 0.
+// The main app's HASH_FAIL_COUNT_SQL: a planted non-count reads as 0 rather than throwing. Pinned
+// equal to it by the same test.
 const failCount = sql`CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number'
   AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$'
   THEN (f.metadata->>'hashFailCount')::int ELSE 0 END`;
@@ -132,7 +135,7 @@ export async function getClearedEntryFiles(limit: number) {
       THEN (f.metadata->'checkOverride'->>'by')::bigint END
     WHERE be.id IN (
         SELECT "entityId" FROM "ModActivity"
-        WHERE "entityType" = 'bountyEntry' AND activity = 'clearFileCheck'
+        WHERE "entityType" = 'bountyEntry' AND activity LIKE 'clearFileCheck:%'
       )
       AND ${validOverride}
     ORDER BY "clearedAt" DESC, f.id
