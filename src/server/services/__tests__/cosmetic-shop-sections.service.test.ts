@@ -29,6 +29,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import {
+  addShopItemToSection,
   getSectionById,
   getShopSectionsWithItems,
   upsertCosmeticShopSection,
@@ -309,5 +310,68 @@ describe('mystery box listings stay out of shop sections', () => {
     await upsertCosmeticShopSection({ id: 5, title: 'Badges', items: [7], userId: 1 });
 
     expect(dbMock.dbWrite.cosmeticShopSectionItem.deleteMany).toHaveBeenCalled();
+  });
+});
+
+// The review drawer's picker reaches every item in the creator queue, including ones the section
+// editor's search never offers: items still in review, creator packs, mystery boxes.
+describe('adding one item to a section from the review drawer', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValue(0);
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.cosmeticShopSectionItem.findMany.mockResolvedValue([]);
+    // The section editor's tests above write through it too.
+    dbMock.dbWrite.$executeRaw.mockClear();
+  });
+
+  it.each([
+    ['in review', { status: 'PendingReview', archivedAt: null }],
+    ['archived', { status: 'Published', archivedAt: new Date() }],
+  ])('refuses an item that is %s, writing nothing', async (_label, row) => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce(row);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'Only published items can be placed in a shop section'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("refuses a creator cosmetic whose creator hasn't allowed resale", async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockResolvedValueOnce([{ title: 'Pumpkin hat' }]);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'These creator items are not published resellable cosmetics: Pumpkin hat'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mystery box', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValueOnce(1);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'Mystery box listings cannot be placed in a shop section'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('places a published item the rules allow (control)', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+
+    await addShopItemToSection({ shopItemId: 7, sectionId: 5 });
+
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const [, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    expect(values).toEqual([5, 7, 5]);
   });
 });

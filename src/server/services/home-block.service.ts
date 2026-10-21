@@ -58,6 +58,10 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
+import {
+  COSMETIC_SHOP_ROTATION_DEFAULTS,
+  rotateShopSectionItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -240,7 +244,21 @@ export const getHomeBlockById = async ({
   const metadata = await resolveHomeBlockMetadata(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
 
-  return getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata);
+  const rotation = metadata.cosmeticShopSection;
+  if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+  return {
+    ...block,
+    cosmeticShopSection: {
+      ...block.cosmeticShopSection,
+      items: rotateShopSectionItems(block.cosmeticShopSection.items, {
+        sectionId: rotation.id,
+        rotateHours: rotation.rotateHours ?? COSMETIC_SHOP_ROTATION_DEFAULTS.rotateHours,
+        now: Date.now(),
+      }),
+    },
+  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -592,10 +610,12 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // No feature flags in this context — creator-listed items stay excluded
-      // from homepage shop blocks until the creatorShop flag goes GA.
+      // The creatorShop flag is on for everyone, and this body is shared by every viewer, so
+      // there is no viewer to resolve it for. The per-viewer block filter the shop page applies
+      // cannot live in a shared body either: the block applies it on the client.
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
+        creatorShopEnabled: true,
       });
 
       const [cosmeticShopSection] = data;

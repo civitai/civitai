@@ -239,6 +239,12 @@ export const upsertCosmeticShopSectionInput = z.object({
   meta: cosmeticShopSectionMeta.optional(),
 });
 
+export type ShopItemSectionInput = z.infer<typeof shopItemSectionInput>;
+export const shopItemSectionInput = z.object({
+  shopItemId: z.number().int().positive(),
+  sectionId: z.number().int().positive(),
+});
+
 export type UpdateCosmeticShopSectionsOrderInput = z.infer<
   typeof updateCosmeticShopSectionsOrderInput
 >;
