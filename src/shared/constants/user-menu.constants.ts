@@ -51,6 +51,8 @@ export type UserMenuItemId = (typeof USER_MENU_ITEM_IDS)[number];
 export const DEFAULT_USER_MENU_PINS: UserMenuItemId[] = ['collections', 'profile'];
 
 const KNOWN_IDS: ReadonlySet<string> = new Set(USER_MENU_ITEM_IDS);
+export const isUserMenuItemId = (id: unknown): id is UserMenuItemId =>
+  typeof id === 'string' && KNOWN_IDS.has(id);
 
 /**
  * Reads the hand-edited KeyValue row. Unknown ids are dropped, so a typo or a retired item costs
@@ -59,10 +61,6 @@ const KNOWN_IDS: ReadonlySet<string> = new Set(USER_MENU_ITEM_IDS);
  */
 export function parseUserMenuDefaultPins(value: unknown): UserMenuItemId[] {
   if (!Array.isArray(value)) return DEFAULT_USER_MENU_PINS;
-  const pins = [
-    ...new Set(
-      value.filter((id): id is UserMenuItemId => typeof id === 'string' && KNOWN_IDS.has(id))
-    ),
-  ];
+  const pins = [...new Set(value.filter(isUserMenuItemId))];
   return pins.length || !value.length ? pins : DEFAULT_USER_MENU_PINS;
 }

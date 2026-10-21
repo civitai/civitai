@@ -6,7 +6,7 @@ import {
 } from '~/components/UserSettings/hooks';
 import {
   DEFAULT_USER_MENU_PINS,
-  USER_MENU_ITEM_IDS,
+  isUserMenuItemId,
   type UserMenuItemId,
 } from '~/shared/constants/user-menu.constants';
 import { showErrorNotification } from '~/utils/notifications';
@@ -14,8 +14,6 @@ import { trpc } from '~/utils/trpc';
 import { movePin, togglePin } from './resolveUserMenu';
 
 export const PIN_SAVE_DELAY_MS = 1000;
-
-const KNOWN_IDS: ReadonlySet<string> = new Set(USER_MENU_ITEM_IDS);
 
 /**
  * Edits show at once and save after `PIN_SAVE_DELAY_MS` of quiet; `flush` saves now (menu close).
@@ -43,8 +41,7 @@ export function useUserMenuPins() {
   });
   const save = useDebouncedCallback(
     // A saved id that has since left `USER_MENU_ITEM_IDS` would fail the write schema for good.
-    (pinned: UserMenuItemId[]) =>
-      mutate({ userMenu: { pinned: pinned.filter((id) => KNOWN_IDS.has(id)) } }),
+    (pinned: UserMenuItemId[]) => mutate({ userMenu: { pinned: pinned.filter(isUserMenuItemId) } }),
     { delay: PIN_SAVE_DELAY_MS, flushOnUnmount: true }
   );
 

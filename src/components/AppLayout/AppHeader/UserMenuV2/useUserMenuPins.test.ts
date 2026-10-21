@@ -26,7 +26,10 @@ const { settings, defaults, mutate, mutateOptions } = vi.hoisted(() => ({
       isResolved: boolean;
     },
   },
-  defaults: { value: undefined as unknown as DefaultsQuery },
+  defaults: {
+    value: undefined as unknown as DefaultsQuery,
+    enabled: undefined as unknown as boolean,
+  },
   mutate: vi.fn(),
   mutateOptions: { value: undefined as undefined | { onError?: (error: Error) => void } },
 }));
@@ -43,7 +46,13 @@ vi.mock('~/components/UserSettings/hooks', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
-    'system.getUserMenuDefaultPins': { useQuery: () => defaults.value },
+    // A disabled query never settles, as in react-query, so a gate that waits on it shows here.
+    'system.getUserMenuDefaultPins': {
+      useQuery: (_input: undefined, options: { enabled: boolean }) => {
+        defaults.enabled = options.enabled;
+        return options.enabled ? defaults.value : { isSuccess: false, isError: false };
+      },
+    },
   }),
 }));
 
@@ -149,6 +158,17 @@ describe('useUserMenuPins', () => {
     expect(mutate).toHaveBeenCalledWith({
       userMenu: { pinned: ['vault', 'leaderboard', 'downloads'] },
     });
+  });
+
+  it('does not ask for the defaults for someone with saved pins, and lets them edit at once', () => {
+    settings.value = { settings: { userMenu: { pinned: ['vault'] } }, isResolved: true };
+    mount();
+    expect(defaults.enabled).toBe(false);
+
+    act(() => latest.toggle('downloads'));
+    act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+
+    expect(mutate).toHaveBeenCalledWith({ userMenu: { pinned: ['vault', 'downloads'] } });
   });
 
   it('lets someone edit from the fallback when the database defaults cannot be read', () => {
