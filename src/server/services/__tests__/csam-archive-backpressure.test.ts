@@ -1182,6 +1182,27 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     return JSZip.loadAsync(zip!);
   }
 
+  it('archives a stored object of an undeclared type as .bin, and still counts it as held', async () => {
+    const base = mockGetObject;
+    mockGetObject = async (key) =>
+      key === 'key-seven'
+        ? {
+            Body: { transformToByteArray: async () => new Uint8Array(stored) },
+            ContentType: 'application/hta',
+            ContentLength: stored.length,
+          }
+        : base(key);
+
+    await archiveCsamDataForReport({ ...report, images: [{ id: 7 }] } as never);
+    const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+
+    expect(Object.keys(zip.files)).toContain('7.bin');
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'images', namedExpected: 1, namedMissing: 0 })
+    );
+  });
+
   it('reads each image from storage by its key, not through the edge', async () => {
     await archivedZip();
     expect(getObjectKeys.sort()).toEqual(['key-eight', 'key-nine', 'key-seven']);

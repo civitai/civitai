@@ -8,8 +8,8 @@ import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * The sha256 of each uploaded file is on the row from the moment it is marked sent, and the
- * archive's later write to the sent row passes the append-only trigger. Runs the trigger's own
+ * The send and archive writes against the append-only trigger: a read-failure count merges into
+ * an unsent row, and the archive's later write to a sent row passes. Runs the trigger's own
  * migration against a Postgres stand-in. All ids and bytes below are invented.
  */
 

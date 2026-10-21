@@ -154,7 +154,6 @@ describe('NCMEC image upload', () => {
   it('uploads the stored original bytes', async () => {
     await processCsamReport(report);
 
-    expect(getObject).toHaveBeenCalledWith('stored-key-501');
     expect(uploadFile).toHaveBeenCalledTimes(1);
     const file = uploadFile.mock.calls[0][0].file as File;
     expect(Buffer.from(await file.arrayBuffer()).equals(stored)).toBe(true);
@@ -165,6 +164,7 @@ describe('NCMEC image upload', () => {
     await processCsamReport(report);
 
     expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(sentUpdate().reportSentAt).toBeInstanceOf(Date);
     expect(sentUpdate().details.images).toEqual([
       expect.objectContaining({
@@ -212,6 +212,45 @@ describe('NCMEC image upload', () => {
       expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
         JSON.stringify({ 501: 1 }),
         report.id,
+      ]);
+    });
+
+    it('cancels, and never finishes, when its only file is gone by the time it is read', async () => {
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockRejectedValue(goneFromStorage());
+      vi.mocked(globalThis.fetch).mockImplementation(
+        async () => new Response('not found', { status: 404 })
+      );
+
+      await processCsamReport(report);
+
+      expect(submitReport).toHaveBeenCalledTimes(1);
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('records a file gone by the time it is read, and sends the rest', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockImplementation(async (key: string) => {
+        if (key === 'stored-key-502') throw goneFromStorage();
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      });
+      vi.mocked(globalThis.fetch).mockImplementation(
+        async () => new Response('not found', { status: 404 })
+      );
+
+      await processCsamReport({ ...report, images: [{ id: 501 }, { id: 502 }] } as CsamReportProps);
+
+      expect(finishReport).toHaveBeenCalledTimes(1);
+      expect(sentUpdate().details.images).toEqual([
+        expect.objectContaining({ id: 501, source: 'original' }),
+        { id: 502, source: 'missing', reason: 'edge 404' },
       ]);
     });
 

@@ -229,6 +229,11 @@ describe('the CSAM jobs’ locks survive the caller hanging up', () => {
 
     expect(release).not.toHaveBeenCalled();
     expect(sendJob!.options.lockExpiration).toBe(CSAM_SEND_JOB_LOCK_SECONDS);
+    // Shorter than the hourly cron, or than the default, and two runs can overlap on one report.
+    const inherited = createJob('probe', '0 */1 * * *', async () => undefined);
+    expect(sendJob!.cron).toBe('0 */1 * * *');
+    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBeGreaterThan(60 * 60);
+    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
   });
 
   it('CONTROL: a job that does not opt in still releases on a disconnect', async () => {

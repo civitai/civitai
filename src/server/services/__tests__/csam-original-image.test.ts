@@ -325,6 +325,37 @@ describe('readOriginalImage', () => {
 });
 
 describe('probeOriginalImage', () => {
+  it.each([
+    ['a foreign host', 'https://example.invalid/legacy.png'],
+    ['a scheme-relative form', 'http:/127.0.0.1:6379/x'],
+    ['a stored key that leaves the image path', '../../other/path'],
+  ])('never fetches %s', async (_, url) => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+
+    await expect(
+      probeOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({
+      source: 'missing',
+      reason: 'url not allowed',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('checks an allowed full URL at the edge without asking storage', async () => {
+    const { s3, backend } = backendReturning(async () => ({ ContentLength: 1 }));
+    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+
+    await expect(
+      probeOriginalImage(
+        { url: 'https://image.civitai.com/legacy/path/legacy.png', type: 'image' },
+        { backend, fetchImpl }
+      )
+    ).resolves.toEqual({ source: 'edge-fallback' });
+    expect(s3.send).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+  });
+
   it('asks storage for the headers only, and reads no bytes', async () => {
     const { s3, backend } = backendReturning(async () => ({ ContentLength: 10 }));
     const fetchImpl = edgeResponding(200);
