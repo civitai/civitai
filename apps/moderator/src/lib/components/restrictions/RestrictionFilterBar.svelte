@@ -31,22 +31,22 @@
     status: string;
     origin: string | null;
     sort: SortOrder | null;
-    facets: RestrictionFacets;
+    facets: RestrictionFacets | undefined;
     q: string;
   } = $props();
 
   type Chip = { value: string; label: string; count?: number };
   const statuses = $derived<Chip[]>([
-    { value: 'Pending', label: 'Pending', count: facets.status.Pending },
-    { value: 'Upheld', label: 'Upheld', count: facets.status.Upheld },
-    { value: 'Overturned', label: 'Overturned', count: facets.status.Overturned },
-    { value: 'any', label: 'Any', count: facets.status.any },
+    { value: 'Pending', label: 'Pending', count: facets?.status.Pending },
+    { value: 'Upheld', label: 'Upheld', count: facets?.status.Upheld },
+    { value: 'Overturned', label: 'Overturned', count: facets?.status.Overturned },
+    { value: 'any', label: 'Any', count: facets?.status.any },
   ]);
   const origins = $derived<Chip[]>([
-    { value: '', label: 'All', count: facets.origin.all },
-    { value: 'remix', label: 'Has a remix', count: facets.origin.remix },
-    { value: 'typed', label: 'Typed', count: facets.origin.typed },
-    { value: 'unchanged-remix', label: 'Unchanged remix', count: facets.origin['unchanged-remix'] },
+    { value: '', label: 'All', count: facets?.origin.all },
+    { value: 'remix', label: 'Has a remix', count: facets?.origin.remix },
+    { value: 'typed', label: 'Typed', count: facets?.origin.typed },
+    { value: 'unchanged-remix', label: 'Unchanged remix', count: facets?.origin['unchanged-remix'] },
   ]);
   const sorts: Chip[] = SORT_ORDERS.map((s) => ({ value: s, label: SORT_LABELS[s] }));
   const defaultSort = $derived(defaultSortFor(status === 'any' ? undefined : status));

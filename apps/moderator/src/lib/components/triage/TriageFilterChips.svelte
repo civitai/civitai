@@ -11,6 +11,8 @@
     toggle?: boolean;
     /** A number after a chip's label (models it would list); a value with none shows no number. */
     counts?: Partial<Record<string, number>>;
+    /** Params cleared when this group changes, because they only made sense for the old value. */
+    resets?: readonly string[];
   };
 </script>
 

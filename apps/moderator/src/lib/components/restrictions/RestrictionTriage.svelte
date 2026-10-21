@@ -6,11 +6,11 @@
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
+  import { restrictionFilterParams, type RestrictionFilters } from '$lib/restriction-filters';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import {
     unwiredRulingReason,
     type RestrictionType,
-    type SortOrder,
   } from '$lib/restriction-types';
   import type {
     RemixSource,
@@ -32,15 +32,13 @@
     sources: Record<number, RemixSource>;
     sourcesFailed: boolean;
     sourcesNotLoaded: number[];
-    facets: RestrictionFacets;
+    facets: RestrictionFacets | undefined;
     totalCount: number;
     page: number;
     hasMore: boolean;
     offset: number;
     type: RestrictionType;
-    status: string;
-    origin: string | null;
-    sort: SortOrder | null;
+    filters: RestrictionFilters;
     q: string;
     civitaiUrl: string;
     grants: Record<string, boolean | undefined>;
@@ -66,9 +64,7 @@
   const actionHref = (action: string) =>
     formActionHref(action, {
       type: data.type === fallbackType ? undefined : data.type,
-      status: data.status === 'Pending' ? undefined : data.status,
-      origin: data.origin ?? undefined,
-      sort: data.sort ?? undefined,
+      ...restrictionFilterParams(data.filters),
       q: data.q,
       page: data.page > 1 ? data.page : undefined,
     });
@@ -92,16 +88,18 @@
       selected: null,
     })
   );
-  const filtersActive = $derived(data.status !== 'Pending' || !!data.origin || !!data.q);
+  const filtersActive = $derived(
+    data.filters.status !== 'Pending' || data.filters.origin !== 'all' || !!data.q
+  );
 </script>
 
 <RestrictionFilterBar
   type={data.type}
   {types}
   {fallbackType}
-  status={data.status}
-  origin={data.origin}
-  sort={data.sort}
+  status={data.filters.status}
+  origin={data.filters.origin === 'all' ? null : data.filters.origin}
+  sort={data.filters.sort}
   facets={data.facets}
   q={data.q}
 />
