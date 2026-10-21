@@ -56,7 +56,7 @@ import type {
   GetMyBidsReturn,
   GetMyRecurringBidsReturn,
 } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getHasExplicitBrowsingLevel,
@@ -780,7 +780,7 @@ export const ModelPlacementCard = memo(function ModelPlacementCard({
 }: {
   data: ModelData;
   aboveThreshold: boolean;
-  addBidFn: (r: GenerationResource) => void;
+  addBidFn: (r: GenerationResourceValue) => void;
   searchText: string;
   canBid: boolean;
 }) {

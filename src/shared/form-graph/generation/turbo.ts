@@ -5,7 +5,9 @@ import {
   getEcosystemTurboSettings,
   type TurboSettings,
 } from '~/shared/constants/basemodel.constants';
+import { asResourceValue, defaultStrength } from '~/shared/utils/resource.utils';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/shared/constants/generation.constants';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   getResourceSelectOptions,
   resourceInputSchema,
@@ -176,17 +178,17 @@ export type TurboToAdd =
 
 export function turboLoraToAdd(args: {
   pick: ResourceData;
-  hydrated: (ResourceData & { canGenerate?: boolean }) | undefined;
+  hydrated: GenerationResource | undefined;
   loading: boolean;
   familyDefaultId: number;
-  familyDefault: ResourceData | undefined;
+  familyDefault: GenerationResource | undefined;
 }): TurboToAdd {
   const { pick, hydrated, loading, familyDefaultId, familyDefault } = args;
   if (loading) return { status: 'loading' };
   if (hydrated && hydrated.canGenerate !== false) {
     return {
       status: 'ready',
-      lora: { ...hydrated, strength: pick.strength ?? hydrated.strength ?? 1 },
+      lora: asResourceValue(hydrated, pick.strength),
     };
   }
   if (familyDefaultId === pick.id) return { status: 'unavailable' };
@@ -194,7 +196,7 @@ export function turboLoraToAdd(args: {
     status: 'fallback',
     lora: {
       ...(familyDefault ?? turboLoraValue(familyDefaultId)),
-      strength: familyDefault?.strength ?? 1,
+      strength: familyDefault ? defaultStrength(familyDefault) : 1,
     },
   };
 }

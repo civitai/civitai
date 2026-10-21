@@ -55,7 +55,11 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
-import { getResourceData } from '~/server/services/generation/generation.service';
+import {
+  getResourceData,
+  swapGenerationAliases,
+  weightImageResources,
+} from '~/server/services/generation/generation.service';
 
 const VERSION_ID = 5151;
 
@@ -98,7 +102,6 @@ describe('getResourceData: the resource data shape', () => {
     const resource = await fetchOne(
       dbRow({
         clipSkip: 2,
-        vaeId: 7,
         settings: {
           minStrength: 0.2,
           maxStrength: 1.4,
@@ -111,13 +114,19 @@ describe('getResourceData: the resource data shape', () => {
     expect(resource.settings).toEqual({
       strength: { min: 0.2, max: 1.4, default: 0.9 },
       clipSkip: 2,
-      vae: 7,
       turboLora: { id: 77, strength: 0.6 },
     });
     expect(resource.turbo).toBe(true);
     expect(resource.recommendedSettings).toEqual(band);
-    expect(resource.strength).toBe(0.9);
-    for (const gone of ['minStrength', 'maxStrength', 'clipSkip', 'vaeId', 'turboLora']) {
+    // The data carries no weight; a value takes one from `settings.strength.default`.
+    for (const gone of [
+      'strength',
+      'minStrength',
+      'maxStrength',
+      'clipSkip',
+      'vaeId',
+      'turboLora',
+    ]) {
       expect(resource).not.toHaveProperty(gone);
     }
   });
@@ -125,8 +134,33 @@ describe('getResourceData: the resource data shape', () => {
   it('a version with no settings gets the default range and no flag, band or companions', async () => {
     const resource = await fetchOne(dbRow());
     expect(resource.settings).toEqual({ strength: { min: -1, max: 2, default: 1 } });
-    expect(resource.strength).toBe(1);
     expect(resource).not.toHaveProperty('turbo');
     expect(resource).not.toHaveProperty('recommendedSettings');
+  });
+});
+
+// The call site, not the helper, is what can drop the image's strength.
+describe('weightImageResources', () => {
+  it("takes the image's recorded weight and falls back to the version default", async () => {
+    const recorded = { ...(await fetchOne(dbRow({ settings: { strength: 0.9 } }))), id: 1 };
+    const unrecorded = { ...(await fetchOne(dbRow({ settings: { strength: 0.6 } }))), id: 2 };
+    const weighted = weightImageResources(
+      [recorded, unrecorded],
+      [{ modelVersionId: 1, strength: 0.4 }]
+    );
+    expect(weighted.map((r) => r.strength)).toEqual([0.4, 0.6]);
+  });
+});
+
+// A cover resource redirects to its alias target; the image's weight must ride across.
+describe('swapGenerationAliases', () => {
+  it("carries the image's weight onto the alias target", async () => {
+    const cover = { ...(await fetchOne(dbRow({ settings: { strength: 0.9 } }))), aliasId: 2 };
+    const target = dbRow({ id: 2, settings: { strength: 0.9 } });
+    fetchMock.mockResolvedValue([target]);
+    const [swapped] = await swapGenerationAliases([{ ...cover, strength: 0.4, air: 'urn:air:x' }], {
+      user: {},
+    });
+    expect(swapped).toMatchObject({ id: 2, strength: 0.4 });
   });
 });

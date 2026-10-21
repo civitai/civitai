@@ -4,6 +4,7 @@ import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo } from 'react';
 
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { PromptEnhanceImage } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
@@ -174,7 +175,7 @@ export function VersionGroupSelector({
   const handleChange = useCallback(
     (id: number) => {
       const resourceData = getResourceData(id);
-      onChange(resourceData ?? { id });
+      onChange(resourceData ? asResourceValue(resourceData) : { id });
     },
     [getResourceData, onChange]
   );

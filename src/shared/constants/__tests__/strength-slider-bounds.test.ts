@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { LORA_STRENGTH_BOUNDS, strengthSliderBounds } from '~/shared/constants/strength.constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  strengthSliderBounds,
+  clampStrength,
+} from '~/shared/constants/generation.constants';
 
 describe('strengthSliderBounds', () => {
   it("keeps a version's own range", () => {
@@ -12,5 +16,16 @@ describe('strengthSliderBounds', () => {
     ['no range', undefined],
   ])('falls back to the full range for %s', (_, range) => {
     expect(strengthSliderBounds(range)).toBe(LORA_STRENGTH_BOUNDS);
+  });
+});
+
+describe('clampStrength', () => {
+  it.each([
+    ['inside the range', 0.5, { min: 0, max: 1 }, 0.5],
+    ['above it', 1.5, { min: 0, max: 1 }, 1],
+    ['below it', -0.5, { min: 0, max: 1 }, 0],
+    ['with no range, into the full bounds', 3, undefined, LORA_STRENGTH_BOUNDS.max],
+  ])('keeps a weight %s', (_, strength, range, expected) => {
+    expect(clampStrength(strength, range)).toBe(expected);
   });
 });

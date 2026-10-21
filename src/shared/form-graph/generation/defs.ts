@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { rangeSchema } from '~/shared/zod/range.schema';
-import type { ResourceSettings } from '~/shared/types/generation.types';
 import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
@@ -46,6 +45,21 @@ export type AspectRatioOption = {
   width: number;
   height: number;
 };
+
+/** The option a ratio label names: exact, else the closest for an `a:b` label, else the default. */
+export function resolveAspectRatioLabel<T extends AspectRatioOption>(
+  label: string,
+  options: T[],
+  defaultOption: T
+): T {
+  const exact = options.find((o) => o.value === label);
+  if (exact) return exact;
+  const parts = label.split(':').map(Number);
+  if (parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!)) {
+    return findClosestAspectRatio({ width: parts[0]!, height: parts[1]! }, options);
+  }
+  return defaultOption;
+}
 
 export * from '../defs';
 import { cachedFactory } from 'form-graph';
@@ -182,11 +196,7 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
         if (typeof val === 'object' && val.width && val.height) {
           return toValue(findClosestAspectRatio({ width: val.width, height: val.height }, options));
         }
-        const parts = value.split(':').map(Number);
-        if (parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!)) {
-          return toValue(findClosestAspectRatio({ width: parts[0]!, height: parts[1]! }, options));
-        }
-        return toValue(defaultOption);
+        return toValue(resolveAspectRatioLabel(value, options, defaultOption));
       }),
     output: z.object({ value: z.string(), width: z.number(), height: z.number() }),
     default: toValue(defaultOption),
@@ -355,7 +365,11 @@ export const SNIPPETS: FieldDef<SnippetsValue> = {
 
 // --- resources / model ---------------------------------------------------------
 
-export const resourceSchema = z.object({
+/** Client state: `settings` comes from a hydrated checkpoint and `resourceSchema` omits it, so it never reaches the request. */
+const resourceStateSchema = z.object({
+  settings: z
+    .object({ turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional() })
+    .optional(),
   id: z.number(),
   baseModel: z.string().optional(),
   model: z.object({ type: z.string() }),
@@ -368,17 +382,15 @@ export const resourceSchema = z.object({
     .optional(),
   trainedWords: z.array(z.string()).optional(),
   epochDetails: z.object({ epochNumber: z.number().optional() }).optional(),
-  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row) —
-  // negative id + air + workflowId. This schema serializes the whatIf/generate payloads,
-  // so dropping these makes the server's StrictAirMap 400 on the synthetic id.
+  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row):
+  // negative id + air + workflowId. Dropping them from `resourceSchema` (derived from this)
+  // makes the server's StrictAirMap 400 on the synthetic id.
   air: z.string().optional(),
   workflowId: z.string().optional(),
   name: z.string().optional(),
 });
-/** `settings` is client state only: the output schema does not carry it, so nothing read from it reaches the request. */
-export type ResourceData = z.infer<typeof resourceSchema> & {
-  settings?: Partial<ResourceSettings>;
-};
+export type ResourceData = z.infer<typeof resourceStateSchema>;
+export const resourceSchema = resourceStateSchema.omit({ settings: true });
 
 export const resourceInputSchema = z.union([
   z.number().transform((id) => ({ id })),

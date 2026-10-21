@@ -411,7 +411,7 @@ function toResourceData(
     id: enriched.id,
     baseModel: enriched.baseModel,
     model: { type: enriched.model.type },
-    strength: legacyStrength ?? enriched.strength ?? undefined,
+    strength: legacyStrength ?? enriched.settings.strength.default,
     epochDetails: epochNumber != null ? { epochNumber } : undefined,
   };
 }

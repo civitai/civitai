@@ -23,6 +23,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo } from 'react';
+import { defaultStrength } from '~/shared/utils/resource.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useStepContext } from '~/components/Generation/Providers/StepProvider';
 import type { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
@@ -33,8 +34,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
-import { strengthSliderBounds } from '~/shared/constants/strength.constants';
-import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { strengthSliderBounds, getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getModelUrl } from '~/utils/string-helpers';
@@ -393,7 +393,7 @@ function ResourceInfoCard({
           <div className="flex w-full items-center gap-2">
             <NumberSlider
               className="flex-1"
-              value={resource.strength}
+              value={resource.strength ?? defaultStrength(resource)}
               onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
               min={strengthBounds.min}
               max={strengthBounds.max}

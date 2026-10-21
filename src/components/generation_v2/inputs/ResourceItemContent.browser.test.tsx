@@ -182,7 +182,6 @@ const makeResource = (over: Record<string, any> = {}): any => ({
   canGenerate: true,
   hasAccess: true,
   settings: { strength: { min: -1, max: 2, default: 1 } },
-  strength: 1,
   isOwnedByUser: false,
   isPrivate: false,
   model: { id: 42, name: 'My Cool Model', type: 'LORA', sfwOnly: false, minor: false },
@@ -627,9 +626,10 @@ describe('ResourceItemContent (render)', () => {
   });
 
   test('strength slider passes the disabled prop through and uses the value fallback', async () => {
-    // disabled pass-through + value = strengthValue ?? resource.strength ?? 1.
-    // Here strengthValue is omitted and resource.strength = 0.8 -> 0.8.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />);
 
     const slider = page.getByTestId('strength-slider');
@@ -638,9 +638,11 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(slider).toHaveAttribute('data-value', '0.8');
   });
 
-  test('strength slider prefers strengthValue over resource.strength', async () => {
-    // strengthValue (user-edited) wins the ?? chain over resource.strength.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+  test("strength slider prefers strengthValue over the version's default", async () => {
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(
       <ResourceItemContent resource={r} strengthValue={0.3} onStrengthChange={vi.fn()} />
     );

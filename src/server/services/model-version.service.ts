@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { asResourceValue } from '~/shared/utils/resource.utils';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -564,9 +566,12 @@ export function assertRecommendedSettingsForType(
  * Recommended-resource rows only write `strength`; spreading the row's settings JSON would
  * clobber the resource's hydrated `settings`.
  */
-export function withPairedStrength<T extends { strength: number }>(resource: T, row: unknown): T {
+export function withPairedStrength<T extends GenerationResource>(
+  resource: T,
+  row: unknown
+): T & { strength: number } {
   const strength = (row as { strength?: number | null } | null | undefined)?.strength;
-  return strength != null ? { ...resource, strength } : resource;
+  return asResourceValue(resource, strength);
 }
 
 /**

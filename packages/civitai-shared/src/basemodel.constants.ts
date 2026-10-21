@@ -5208,7 +5208,7 @@ export function getBaseModelGroup(baseModel: string): string {
   // Fall back to matching by ecosystem key directly (e.g., "NanoBanana", "OpenAI").
   // Matches the legacy base-model.constants.ts behavior where getBaseModelConfig
   // checked both `x.name === baseModel || x.group === baseModel`. Some constants
-  // (e.g. generationConfig.NanoBanana.checkpoint.baseModel = 'NanoBanana') store
+  // (e.g. a NanoBanana checkpoint whose resource baseModel is 'NanoBanana') store
   // the ecosystem key in the resource's baseModel field instead of the display
   // name, and downstream code like the form-watch subscription in
   // GenerationFormProvider relies on this lookup returning a real ecosystem key

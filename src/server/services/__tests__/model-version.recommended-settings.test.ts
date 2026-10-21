@@ -81,10 +81,9 @@ describe('recommendedGenerationSettingsSchema', () => {
 describe('withPairedStrength', () => {
   const resource = {
     id: 1,
-    strength: 1,
-    settings: { strength: { min: 0, max: 1, default: 1 } },
+    settings: { strength: { min: 0, max: 1, default: 0.7 } },
     turbo: true,
-  };
+  } as unknown as Parameters<typeof withPairedStrength>[0];
 
   it("takes the row's strength and nothing else from its settings JSON", () => {
     const paired = withPairedStrength(resource, {
@@ -95,7 +94,10 @@ describe('withPairedStrength', () => {
     expect(paired).toEqual({ ...resource, strength: 0.6 });
   });
 
-  it.each([null, undefined, {}, { strength: null }])('leaves the resource alone for %s', (row) => {
-    expect(withPairedStrength(resource, row)).toBe(resource);
-  });
+  it.each([null, undefined, {}, { strength: null }])(
+    "falls back to the version's default for %s",
+    (row) => {
+      expect(withPairedStrength(resource, row)).toEqual({ ...resource, strength: 0.7 });
+    }
+  );
 });

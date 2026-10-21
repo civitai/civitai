@@ -71,7 +71,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/strength.constants';
+import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
 import {
   getBaseModelConfig,
   getEcosystemTurboSettings,

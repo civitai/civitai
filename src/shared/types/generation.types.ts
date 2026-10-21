@@ -5,7 +5,6 @@ import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/e
 export type ResourceSettings = {
   strength: Range;
   clipSkip?: number;
-  vae?: number;
   /** A checkpoint's companion turbo LoRA; `strength` overrides the LoRA's own default. */
   turboLora?: { id: number; strength?: number };
 };
@@ -37,8 +36,6 @@ export type GenerationResourceBase = {
   /** A distilled variant; the band it runs at is in `recommendedSettings`. */
   turbo?: boolean;
   recommendedSettings?: RecommendedSettings;
-  /** Starts at `settings.strength.default`; the form holds the user's choice. */
-  strength: number;
   /** Whether the current user owns the model this resource belongs to (computed by server) */
   isOwnedByUser?: boolean;
   /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
@@ -64,6 +61,9 @@ export type GenerationResourceBase = {
   aliasId?: number | null;
 };
 
+/** A resource as the form holds it and the request carries it: the data plus the chosen weight. */
+export type GenerationResourceValue = GenerationResource & { strength: number };
+
 export type GenerationResource = GenerationResourceBase & {
   model: {
     id: number;
@@ -81,7 +81,7 @@ export type GenerationResource = GenerationResourceBase & {
     epochNumber: number;
     isExpired: boolean;
   };
-  substitute?: GenerationResourceBase;
+  substitute?: GenerationResourceBase & { strength?: number };
   image?: {
     id: number;
     url: string;
