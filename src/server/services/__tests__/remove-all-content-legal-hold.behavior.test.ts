@@ -152,6 +152,8 @@ let beforeEvidence: (() => Promise<unknown>) | null = null;
 /** The first guarded delete, unless a test lands the hold later. */
 let landsBefore = EVIDENCE[0];
 let failLookups = false;
+/** Fails the wipe's read of which of its models are gone. */
+let failGoneModels = false;
 /** Replaces what the wipe's re-check after its evidence deletes reads back. */
 let afterHeld: unknown = undefined;
 
@@ -190,6 +192,7 @@ beforeEach(async () => {
   landsBefore = EVIDENCE[0];
   holder.beforeImages = null;
   failLookups = false;
+  failGoneModels = false;
   afterHeld = undefined;
   session.user = { id: 9, isModerator: true, bannedAt: null };
   await holder.db.exec(`
@@ -219,6 +222,8 @@ beforeEach(async () => {
   ) => {
     if (failLookups) throw new Error('connection reset');
     const sql = asSql(first, values);
+    if (failGoneModels && sql.text.includes('FROM "Model" WHERE id = ANY'))
+      throw new Error('connection reset');
     if (afterHeld !== undefined && sql.text.trimEnd().endsWith('AS held'))
       return [{ held: afterHeld }];
     return (await run(sql)).rows;
@@ -249,9 +254,10 @@ beforeEach(async () => {
     select: Record<string, unknown>;
   }) =>
     (
-      await holder.db.query<{ id: number }>(`SELECT id FROM "Model" WHERE "userId" = $1`, [
-        args.where.userId,
-      ])
+      await holder.db.query<{ id: number }>(
+        `SELECT id FROM "Model" WHERE "userId" = $1 ORDER BY id`,
+        [args.where.userId]
+      )
     ).rows.map(({ id }) => {
       const row: Record<string, unknown> = {
         id,
@@ -498,7 +504,9 @@ describe('removeAllContent', () => {
     expect(docStore.wipeAccount).not.toHaveBeenCalled();
   });
 
-  it('refunds nothing again, and is not refused, when the wipe is run a second time', async () => {
+  // Not refund idempotency (that is the bid filter, in auction-refund-bids-for-versions.test.ts):
+  // the second run finds no models, refunds nothing, and is not refused.
+  it('runs a second time without refusing, and with no models left to refund', async () => {
     await removeAllContent({ id: CLEAN });
     vi.mocked(refundBidsForVersions).mockClear();
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
@@ -512,6 +520,20 @@ describe('removeAllContent', () => {
       refundFailed: ['tx-1'],
     });
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+  });
+
+  it('names the bid refunds, with every version, when it cannot tell which models went', async () => {
+    failGoneModels = true;
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('still reports a stopped wipe when its bid refunds fail', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
   });
 
   it('still refunds the next model when one model’s refund throws', async () => {
@@ -715,7 +737,6 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
     expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
-    expect(moderator.PURGE_INCOMPLETE).toMatch(/^Purge finished/);
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {

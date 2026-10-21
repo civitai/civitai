@@ -1414,7 +1414,11 @@ async function unindexDeleted(
   }
 }
 
-type BidRefundFailure = { versionIds: number[]; transactionIds?: string[]; error?: string };
+// `modelIds` alone when it could not be read which models went: some may still hold live bids, so
+// it names no versions to refund.
+type BidRefundFailure =
+  | { versionIds: number[]; transactionIds?: string[]; error?: string }
+  | { modelIds: number[]; error: string };
 
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
@@ -1434,7 +1438,7 @@ async function refundBidsForDeletedModels(
       )
     );
   } catch (e) {
-    return [{ versionIds: models.flatMap(versionIdsOf), error: (e as Error).message }];
+    return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
   }
   const failures: BidRefundFailure[] = [];
   for (const m of models) {
@@ -1656,38 +1660,22 @@ export const removeAllContent = async ({
     throw new LegalHoldStoppedError();
   });
 
-  // ── App Blocks per-user storage (W4) ────────────────────────────────────────
-  // Everything above lives in the MAIN db (plus S3 + the search indexes). A
-  // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in
-  // the SEPARATE apps database, reached through a different pool, and nothing in
-  // this function could see them. Before this, a moderator hard-wipe left them
-  // behind in full — `user-storage-purge.service.ts` names that as the second of
-  // the two gaps it exists to close, and closing it needs a caller.
+  // ── App Blocks per-user storage ─────────────────────────────────────────────
+  // A user's App Storage rows live in per-app `app_<slug>` schemas in the separate
+  // apps database, so nothing above this point reaches them.
   //
   // 🔴 LAST, AND LOG-AND-CONTINUE: the main-database wipe is already complete and
   // no transaction spans the two databases, so a failure here is logged and named
   // in `incomplete`, never thrown. Recover by hand with
   // `apps.mod.userStorage.purgeAccount`.
   //
-  // Dynamic import, again mirroring (3c): this module is already enormous and the
-  // purge service pulls in the apps-db pool, which nothing else on this path
-  // needs.
+  // Dynamic import: this module is already enormous and the purge service pulls in
+  // the apps-db pool, which nothing else on this path needs.
   //
-  // AUDIT SURVIVES THE FAILURE MODE, NOT JUST THE HAPPY PATH: the purge writes
-  // its `AppListingModerationEvent` row BEFORE it deletes anything, so a crash
-  // between the two leaves a record of what was about to go, never a silent
-  // destruction. That ordering is the purge's own safety argument and calling it
-  // from here does not weaken it.
+  // The purge writes its audit row before deleting anything; keep it that way.
   //
-  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep is log-and-continue BY
-  // DESIGN: it catches each app's failure into `failures[]` and RESOLVES. So a
-  // bare try/catch here sees a clean resolve and says nothing, no matter how
-  // much failed — the outer catch only ever fires for an enumeration-stage
-  // fault. That is not hypothetical: until the `action` CHECK widen is applied,
-  // EVERY app's audit write is rejected with 23514, every app lands in
-  // `failures[]`, nothing is purged, and the operator would have seen a silent
-  // success. A warning that cannot fire for the most likely failure is worse
-  // than no warning, because it reads as coverage.
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep resolves even when apps fail
+  // (they land in `failures[]`), so a bare try/catch sees a clean resolve.
   try {
     const { purgeUserAppStorageForAccountWipe } = await import(
       '~/server/services/apps/user-storage-purge.service'

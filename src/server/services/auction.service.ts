@@ -915,7 +915,9 @@ export const refundBidsForVersions = async ({
   const db = tx ?? dbWrite;
   const now = new Date();
   // Loaded here so the refund helper stays out of this service's import cycle.
-  const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
+  const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
+    '~/server/services/buzz-prefix-refund'
+  );
 
   const aData = await db.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
@@ -952,7 +954,7 @@ export const refundBidsForVersions = async ({
         try {
           await withRetries(async () => {
             if (isAuctionTransactionPrefix(transactionId)) {
-              await refundMultiAccountTransaction({
+              await refundAllLegsByPrefix({
                 externalTransactionIdPrefix: transactionId,
                 description: 'Deleted bid - model not available.',
               });

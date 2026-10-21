@@ -2,13 +2,21 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { refundTransaction, refundMultiAccountTransaction, getTransactionByExternalId } = vi.hoisted(
-  () => ({
-    refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
-    refundMultiAccountTransaction: vi.fn(async (_input: unknown) => ({})),
-    getTransactionByExternalId: vi.fn(async (_id: string) => null as unknown),
-  })
-);
+const {
+  refundTransaction,
+  refundMultiAccountTransaction,
+  getTransactionByExternalId,
+  getMultiAccountTransactionsByPrefix,
+} = vi.hoisted(() => ({
+  refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
+  refundMultiAccountTransaction: vi.fn(async (_input: unknown) => ({
+    refundedTransactions: [] as { amount: number }[],
+  })),
+  getTransactionByExternalId: vi.fn(async (_id: string) => null as unknown),
+  getMultiAccountTransactionsByPrefix: vi.fn(
+    async (_prefix: string) => [] as { transactionId: string; amount?: number }[]
+  ),
+}));
 
 // image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
 vi.mock('~/server/services/image.service', () => ({
@@ -24,7 +32,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId,
   createBuzzTransaction: vi.fn(),
   createMultiAccountBuzzTransaction: vi.fn(),
-  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getMultiAccountTransactionsByPrefix,
 }));
 
 import { refundBidsForVersions } from '~/server/services/auction.service';
@@ -158,6 +166,37 @@ describe('refundBidsForVersions', () => {
     getTransactionByExternalId.mockReset().mockResolvedValue(null);
     expect(refundFailed).toEqual([]);
     expect(ledgerReads).toContain(`refund-${PLAIN}`);
+  });
+
+  it('returns a 409 with no refund on the ledger behind it as failed', async () => {
+    refundTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    const { refundFailed } = await run();
+    refundTransaction.mockReset().mockResolvedValue({ transactionId: 'x' });
+    expect(refundFailed).toEqual([PLAIN]);
+  });
+
+  it('counts a multi-account refund whose legs are all on the ledger as done', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    getMultiAccountTransactionsByPrefix.mockResolvedValue([{ transactionId: 'leg-1', amount: 10 }]);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'refund-leg-1' ? { externalTransactionId: id } : null
+    );
+    const { refundFailed } = await run();
+    refundMultiAccountTransaction.mockReset().mockResolvedValue({ refundedTransactions: [] });
+    getMultiAccountTransactionsByPrefix.mockReset().mockResolvedValue([]);
+    getTransactionByExternalId.mockReset().mockResolvedValue(null);
+    expect(refundFailed).toEqual([]);
+  });
+
+  it('returns a multi-account refund that still failed', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+    const { refundFailed } = await run();
+    refundMultiAccountTransaction.mockReset().mockResolvedValue({ refundedTransactions: [] });
+    expect(refundFailed).toEqual([PREFIX]);
   });
 
   it('works with no model row to read', async () => {
