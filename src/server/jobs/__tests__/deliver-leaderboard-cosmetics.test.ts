@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type * as LeaderboardService from '~/server/services/leaderboard.service';
 
 vi.mock('~/server/jobs/job', () => ({
@@ -138,11 +138,11 @@ describe('deliver-leaderboard-cosmetics: users search index', () => {
   it('queues the users whose worn cosmetics the job changed, and only them', async () => {
     const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
     const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
 
     await deliverLeaderboardCosmetics.run();
 
     const queued = queue.mock.calls.flatMap(([items]) => items.map((x) => x.id));
     expect(queued.sort()).toEqual([WEARER, NEXT_BEST, LEGACY_WEARER].sort());
-    queue.mockRestore();
   });
 });

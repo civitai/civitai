@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -332,11 +332,11 @@ describe('withholding takes the cosmetic off everyone', () => {
   it('queues the search documents of the users who were wearing it, and only them', async () => {
     const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
     const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
 
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'reject' });
 
     expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([BUYER]);
-    queue.mockRestore();
   });
 
   it('re-approval grants without putting it back on anyone', async () => {

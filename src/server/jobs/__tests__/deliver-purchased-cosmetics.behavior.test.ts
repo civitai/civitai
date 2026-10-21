@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -457,10 +457,10 @@ describe('deliverMembershipCosmetics: users search index', () => {
     );
     const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
     const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
 
     await run();
 
     expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([LAPSED]);
-    queue.mockRestore();
   });
 });

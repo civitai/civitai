@@ -713,6 +713,15 @@ export async function revokeCosmeticsFromUsers({
     },
     select: equippedHatSelect,
   });
+  const wearers = await dbWrite.userCosmetic.findMany({
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
+      ...wornByUser,
+    },
+    select: { userId: true },
+  });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
     where: {
@@ -722,6 +731,7 @@ export async function revokeCosmeticsFromUsers({
     },
   });
   await afterHoldingsRemoved(uniqueUserIds, equipped);
+  await queueWornCosmeticsUpdate(wearers.map((row) => row.userId));
 
   return { revoked: count };
 }
@@ -770,6 +780,12 @@ export async function refuseIfWithheldAfterEquip(cosmeticIds: number[]) {
   for (const cosmeticId of withheld) await unequipWithheldCosmetic(cosmeticId);
   throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 }
+
+/** A holding the user wears themselves, which their search document shows. */
+const wornByUser = {
+  equippedAt: { not: null },
+  equippedToId: null,
+} satisfies Prisma.UserCosmeticWhereInput;
 
 type RemovedEquippedHolding = {
   userId: number;
@@ -916,10 +932,15 @@ export async function unassignCosmetic({
     where: { cosmeticId, userId: { in: userIds }, equippedToId: { not: null } },
     select: equippedHatSelect,
   });
+  const wearers = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId, userId: { in: userIds }, ...wornByUser },
+    select: { userId: true },
+  });
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
   await afterHoldingsRemoved(userIds, equipped);
+  await queueWornCosmeticsUpdate(wearers.map((row) => row.userId));
   return { count: result.count };
 }
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -340,11 +340,11 @@ describe('end-of-event cleanup', () => {
     }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
     const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
     const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
 
     await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
 
     expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([501, 502]);
-    queue.mockRestore();
   });
 
   const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);

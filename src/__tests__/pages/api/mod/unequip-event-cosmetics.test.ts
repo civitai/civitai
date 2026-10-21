@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // ModEndpoint wraps the handler in mod-auth; the handler itself is what is under test.
@@ -42,12 +42,12 @@ describe('/api/mod/unequip-event-cosmetics', () => {
         : []) as never);
     dbMock.dbWrite.userCosmetic.updateMany.mockResolvedValue({ count: 1 });
     const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
     const res = fakeRes();
 
     await handler({ query: { eventName: 'ended-event' } } as unknown as NextApiRequest, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([301, 302, 303]);
-    queue.mockRestore();
   });
 });
