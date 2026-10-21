@@ -6,6 +6,7 @@ import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 import {
   accountHoldSql,
   holdMarkerViewExists,
@@ -460,8 +461,20 @@ export async function bulkDeleteComments({
     v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
     v2: await deleteCommentsV2UnlessHeld(tx, commentV2Ids, markerView),
   }));
-  await afterLegacyCommentsDeleted(v1);
-  await afterCommentsV2Deleted(v2);
+  // The deletes have committed, so a failing follow-up is logged and never reported as a failed
+  // delete: the moderator app records only what the endpoint reports as done.
+  const followUps = await Promise.allSettled([
+    afterLegacyCommentsDeleted(v1),
+    afterCommentsV2Deleted(v2),
+  ]);
+  for (const f of followUps)
+    if (f.status === 'rejected')
+      logToAxiom({
+        type: 'error',
+        name: 'comment-bulk-delete',
+        message: 'A follow-up to a committed bulk comment delete failed',
+        details: { error: (f.reason as Error)?.message },
+      }).catch(() => undefined);
   return {
     commentDeleted: v1.deleted.length,
     commentV2Deleted: v2.deleted.length,

@@ -697,7 +697,9 @@ export const deleteComment = async ({ id }: { id: number }) => {
 
 /**
  * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
- * transaction. Deleting one leaves its replies: the reply thread's link is set null, not cascaded.
+ * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
+ * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
+ * anywhere below it.
  */
 export async function deleteCommentsV2UnlessHeld(
   tx: Prisma.TransactionClient,
@@ -709,6 +711,17 @@ export async function deleteCommentsV2UnlessHeld(
     DELETE FROM "CommentV2" c
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
+          UNION
+          SELECT t.id FROM "Thread" t
+          JOIN "CommentV2" k ON t."commentId" = k.id
+          JOIN below b ON k."threadId" = b.id
+        )
+        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+      )
     RETURNING c."userId", c."threadId"
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`

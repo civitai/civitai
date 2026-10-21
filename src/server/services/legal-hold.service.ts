@@ -129,7 +129,8 @@ export async function holdMarkerViewExists(): Promise<boolean> {
 
 /**
  * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
- * goes no further than here.
+ * goes no further than here. An author with no hold of their own had a row kept for a held reply
+ * below it.
  */
 export async function logHoldRetained(action: string, userIds: number[]) {
   for (const userId of new Set(userIds)) {
@@ -137,7 +138,8 @@ export async function logHoldRetained(action: string, userIds: number[]) {
     logToAxiom({
       type: 'info',
       name: 'account-legal-hold',
-      message: `${action}: rows retained`,
+      message:
+        hold?.legs.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
       details: { userId, legs: hold?.legs ?? null },
     });
   }

@@ -78,6 +78,10 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
       "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    -- A comment's reply thread; deleting the comment only unlinks it, as in production.
+    CREATE TABLE "Thread" (
+      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
+    );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
   `);
 });
@@ -93,17 +97,14 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Model";
+    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Comment" (id, "userId", "modelId", content) VALUES ${rows()};
     INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES ${rows()};
     INSERT INTO "Model" (id, "userId") VALUES ${authors.map((a) => `(${a * 100}, ${a + 50})`)};
   `);
 
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
-    first: TemplateStringsArray | Prisma.Sql,
-    ...values: unknown[]
-  ) => {
+  const queryRaw = async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = asSql(first, values);
     if (hook && sql.text.includes(hook.on)) {
       const { run } = hook;
@@ -111,17 +112,30 @@ beforeEach(async () => {
       await run();
     }
     return (await holder.db.query(sql.text, sql.values)).rows;
+  };
+  // The stand-in has one connection, so a statement sent outside the transaction would still land
+  // inside it. In production it would not: any write on the shared client while one is open fails.
+  let inTransaction = false;
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+    first: TemplateStringsArray | Prisma.Sql,
+    ...values: unknown[]
+  ) => {
+    if (inTransaction) throw new Error('a statement went outside the transaction');
+    return queryRaw(first, ...values);
   }) as never);
   // A real transaction on the stand-in, so a failure part-way is undone as it would be in production.
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (
     fn: (tx: unknown) => Promise<unknown>
   ) => {
     await holder.db.query('BEGIN');
+    inTransaction = true;
     try {
-      const result = await fn(dbMock.dbWrite);
+      const result = await fn({ $queryRaw: queryRaw });
+      inTransaction = false;
       await holder.db.query('COMMIT');
       return result;
     } catch (e) {
+      inTransaction = false;
       await holder.db.query('ROLLBACK');
       throw e;
     }
@@ -295,6 +309,22 @@ describe('a legacy comment with replies', () => {
     expect(await state('Comment')).toMatchObject({ 11: 'hidden', 51: 'public', 61: 'public' });
   });
 
+  it('is kept while a reply below is held only by the marker', async () => {
+    await createMarker();
+    await holder.db.exec(`
+      DELETE FROM "Comment" WHERE id = 41;
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES
+        (42, ${MARKED}, 100, 'zzfixture', 11);
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [11], commentV2Ids: [] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+    expect(await state('Comment')).toMatchObject({ 11: 'hidden', 42: 'public' });
+  });
+
   it('goes, with its replies, when no reply under it is held', async () => {
     await holder.db.exec(`
       DELETE FROM "Comment" WHERE id = 41;
@@ -308,6 +338,70 @@ describe('a legacy comment with replies', () => {
       retainedHidden: 0,
     });
     expect(await state('Comment')).not.toHaveProperty('51');
+  });
+});
+
+describe('a CommentV2 with replies', () => {
+  // Comment 11's reply thread is 900. A reply in it, or in the reply thread of one of its comments,
+  // is below 11.
+  beforeEach(async () => {
+    await holder.db.exec(`INSERT INTO "Thread" (id, "commentId") VALUES (900, 11);`);
+  });
+
+  it('is kept, hidden, while a held author replied in its thread', async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (71, ${HELD}, 900, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11, 12] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 1,
+      retainedHidden: 1,
+    });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 71: 'public' });
+    expect(await state('CommentV2')).not.toHaveProperty('12');
+  });
+
+  it('is kept while a held reply sits in the thread of a reply', async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES
+        (72, ${CLEAN}, 900, 'zzfixture'), (73, ${HELD}, 901, 'zzfixture');
+      INSERT INTO "Thread" (id, "commentId") VALUES (901, 72);
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 72: 'public', 73: 'public' });
+  });
+
+  it('is kept while a reply below is held only by the marker', async () => {
+    await createMarker();
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (74, ${MARKED}, 900, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+  });
+
+  it('goes when no reply below it is held, leaving its replies', async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (72, ${CLEAN}, 900, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 1,
+      retainedHidden: 0,
+    });
+    expect(await state('CommentV2')).toMatchObject({ 72: 'public' });
+    expect(await state('CommentV2')).not.toHaveProperty('11');
   });
 });
 
@@ -345,6 +439,19 @@ describe('both tables in one batch', () => {
       21: 'public',
       22: 'public',
     });
+  });
+
+  it('reports a committed delete as done when a follow-up fails', async () => {
+    vi.mocked(dbMock.dbWrite.model.findMany).mockRejectedValue(new Error('replica down'));
+
+    await expect(
+      bulkDeleteComments({ commentIds: ids(CLEAN), commentV2Ids: ids(HELD) })
+    ).resolves.toEqual({ commentDeleted: 2, commentV2Deleted: 0, retainedHidden: 2 });
+    // The CommentV2 follow-up still ran.
+    expect(retainedLogs()).toEqual([HELD]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'comment-bulk-delete' })
+    );
   });
 
   it('queues metrics for the models of deleted comments only', async () => {
