@@ -31,7 +31,13 @@ vi.mock('~/server/services/promotion.service', () => ({
 
 const { getImagesAsPostsInfiniteHandler } = await import('~/server/controllers/image.controller');
 
-type FetchArgs = { postIds?: number[]; cursor?: string; limit: number; browsingLevel: number };
+type FetchArgs = {
+  postIds?: number[];
+  postIdsInRequestedSort?: boolean;
+  cursor?: string;
+  limit: number;
+  browsingLevel: number;
+};
 
 const toImage = (row: Row) => ({
   ...row,
@@ -129,8 +135,17 @@ describe('getImagesAsPostsInfiniteHandler post completion', () => {
     const [completion] = completionCalls();
     expect(completion.cursor).toBeUndefined();
     expect(completion.limit).toBe(9 + 2);
+    // Only the completion opts in to the feed service's post walk; the page keeps its path.
+    expect(completion.postIdsInRequestedSort).toBe(true);
+    expect(page.postIdsInRequestedSort).toBeUndefined();
     const { cursor, limit, postIds, ...pageFilters } = page;
-    const { cursor: c2, limit: l2, postIds: p2, ...completionFilters } = completion;
+    const {
+      cursor: c2,
+      limit: l2,
+      postIds: p2,
+      postIdsInRequestedSort,
+      ...completionFilters
+    } = completion;
     expect(completionFilters).toEqual(pageFilters);
   });
 
