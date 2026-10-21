@@ -43,12 +43,15 @@ export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema
   }));
 };
 
-/** File metadata only the bounty entry file check writes. Never taken from a caller. */
+/** File metadata only the bounty entry file check and its moderator override write. Never taken from a caller. */
 export const SERVER_FILE_METADATA_KEYS = [
   'sha256Server',
   'hashCheckedAt',
   'hashAttemptedAt',
+  'hashFailCount',
+  'hashLastError',
   'blockedReason',
+  'checkOverride',
 ] as const;
 
 function pickMetadata(metadata: unknown, server: boolean) {

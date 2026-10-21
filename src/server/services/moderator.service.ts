@@ -116,6 +116,13 @@ type FeedbackModActivity = {
   activity: 'hideFromOwner' | 'unhideFromOwner';
 };
 
+/** A moderator cleared a bounty entry file's check result
+ *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`). */
+type BountyEntryModActivity = {
+  entityType: 'bountyEntry';
+  activity: `clearFileCheck:${string}`;
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -130,6 +137,7 @@ type ModActivity = {
   | ComicProjectModActivity
   | PlacementModActivity
   | FeedbackModActivity
+  | BountyEntryModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
