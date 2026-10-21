@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { callModEndpoint, type JsonResult } from './user-actions.service';
 
@@ -21,6 +21,8 @@ export type BlockedEntryFile = EntryFile & {
   matchModelId: number | null;
   matchModelName: string | null;
   matchOwner: string | null;
+  bountyComplete: boolean;
+  bountyRefunded: boolean;
 };
 
 export type StuckEntryFile = EntryFile & {
@@ -35,6 +37,10 @@ export type ClearedEntryFile = EntryFile & {
   clearedAt: string;
   moderator: string | null;
   reason: string | null;
+  /** A re-block withholds the file again but leaves an award already made. */
+  entryAwarded: boolean;
+  bountyComplete: boolean;
+  bountyRefunded: boolean;
 };
 
 // The main app's VALID_OVERRIDE_SQL: only the shape a clear writes counts. Pinned equal to it by
@@ -59,11 +65,39 @@ const entryFileColumns = sql`
   be."userId" AS "entrantId", u.username AS entrant, b.id AS "bountyId", b.name AS "bountyName"
 `;
 
-/** Entry files of open model bounties the check refused and no moderator has cleared, oldest first. */
+/**
+ * Entry files the check refused and no moderator has cleared, oldest first: on open model bounties,
+ * and on settled ones when a moderator re-blocked the file, so it can be cleared again. Two
+ * branches, not an OR: an OR loses the open-bounty narrowing and walks every settled bounty.
+ */
 export async function getBlockedEntryFiles(limit: number) {
   const { rows } = await sql<BlockedEntryFile>`
+    SELECT * FROM (
+      (${blockedEntryFiles(sql`NOT b.complete AND NOT b.refunded`)})
+      UNION ALL
+      (${blockedEntryFiles(sql`(b.complete OR b.refunded)
+        AND be.id IN (
+          SELECT "entityId" FROM "ModActivity"
+          WHERE "entityType" = 'bountyEntry' AND activity LIKE 'reblockFileCheck:%'
+        )
+        AND EXISTS (
+          SELECT 1 FROM "ModActivity" ma
+          WHERE ma."entityType" = 'bountyEntry' AND ma."entityId" = be.id
+            AND ma.activity LIKE ('reblockFileCheck:{"fileId":' || f.id || ',%')
+        )`)})
+    ) blocked
+    ORDER BY "checkedAt", "fileId"
+    LIMIT ${limit + 1}
+  `.execute(dbRead);
+  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+}
+
+/** Blocked entry files of model bounties, narrowed by `where` over `b`, `be` and `f`. */
+function blockedEntryFiles(where: RawBuilder<unknown>) {
+  return sql`
     SELECT ${entryFileColumns}, f.metadata->>'hashCheckedAt' AS "checkedAt",
-           m.id AS "matchModelId", m.name AS "matchModelName", mu.username AS "matchOwner"
+           m.id AS "matchModelId", m.name AS "matchModelName", mu.username AS "matchOwner",
+           b.complete AS "bountyComplete", b.refunded AS "bountyRefunded"
     FROM "Bounty" b
     JOIN "BountyEntry" be ON be."bountyId" = b.id
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -81,14 +115,10 @@ export async function getBlockedEntryFiles(limit: number) {
     ) m ON true
     LEFT JOIN "User" mu ON mu.id = m."userId"
     WHERE b.type::text = ANY(${CHECKED_TYPES})
-      AND NOT b.complete
-      AND NOT b.refunded
+      AND ${where}
       AND f.metadata->>'blockedReason' IS NOT NULL
       AND NOT COALESCE(${validOverride}, false)
-    ORDER BY f.metadata->>'hashCheckedAt', f.id
-    LIMIT ${limit + 1}
-  `.execute(dbRead);
-  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+  `;
 }
 
 /**
@@ -119,14 +149,20 @@ export async function getStuckEntryFiles(limit: number) {
 
 /**
  * Files still carrying a moderator's clear, newest first. The entries come from the ModActivity rows
- * the clear writes; a file re-uploaded since has lost its clear and drops off.
+ * the clear writes; a file re-uploaded or re-blocked since has lost its clear and drops off.
  */
 export async function getClearedEntryFiles(limit: number) {
   const { rows } = await sql<ClearedEntryFile>`
     SELECT ${entryFileColumns},
            f.metadata->'checkOverride'->>'at' AS "clearedAt",
            mu.username AS moderator,
-           f.metadata->'checkOverride'->>'reason' AS reason
+           f.metadata->'checkOverride'->>'reason' AS reason,
+           EXISTS (
+             SELECT 1 FROM "BountyBenefactor" bb
+             WHERE bb."bountyId" = b.id AND bb."awardedToId" = be.id
+           ) AS "entryAwarded",
+           b.complete AS "bountyComplete",
+           b.refunded AS "bountyRefunded"
     FROM "BountyEntry" be
     JOIN "Bounty" b ON b.id = be."bountyId"
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -146,3 +182,6 @@ export async function getClearedEntryFiles(limit: number) {
 
 export const clearEntryFileCheck = (fileId: number, reason: string): Promise<JsonResult> =>
   callModEndpoint('bounty-entry-file/clear-check', { fileId, reason }, 'Clear file check');
+
+export const reblockEntryFileCheck = (fileId: number, reason: string): Promise<JsonResult> =>
+  callModEndpoint('bounty-entry-file/reblock-check', { fileId, reason }, 'Re-block file');
