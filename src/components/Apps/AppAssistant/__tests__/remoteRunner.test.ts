@@ -197,4 +197,15 @@ describe('the flag decides where replies run', () => {
     applyRemoteRunner(chat, runner);
     expect(chat).toEqual({ runner: 'remote', remoteRunner: runner });
   });
+
+  it('passes components-chat 0.22’s remote-runner check: a non-blank url and no backend', () => {
+    // 0.22 (`assertRunner`) refuses runner "remote" without remote.url, or with a backend that names a
+    // gateway; App Assistant hands the chat an `app`, never a `backend`, and only these two fields.
+    const runner = appAssistantRemoteRunnerFor(true, () => ({ app: null }), credentials);
+    expect(runner?.url.trim()).toBe(ASSISTANT_RUNNER_BASE_PATH);
+    const chat: Record<string, unknown> = {};
+    applyRemoteRunner(chat, runner);
+    expect(Object.keys(chat).sort()).toEqual(['remoteRunner', 'runner']);
+    expect(chat).not.toHaveProperty('backend');
+  });
 });
