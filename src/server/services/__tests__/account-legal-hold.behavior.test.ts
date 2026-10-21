@@ -180,6 +180,7 @@ beforeEach(async () => {
       -- Pending, naming nobody, with image lists no job writes. Every lookup reads past them.
       (NULL, NULL, NULL, '{}', '{}'),
       (NULL, NULL, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 99999999999}]'),
+      (NULL, NULL, NULL, '{}', '[{"id": 12345678901234567890}]'),
       (NULL, NULL, NULL, '{}', '[{"id": ${BIG_IMAGE_ID}}]');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
       (${CLEAN * 100}, ${CLEAN}, 'minor', 'AiNotVerified'),
@@ -375,6 +376,14 @@ describe('deleteUser under a legal hold', () => {
     expect(await userRow(CLEAN)).toEqual(before);
   });
 
+  it('stops the scrub when the marker objects appear after a check that found none', async () => {
+    const before = await userRow(CLEAN);
+    beforeScrub = () => holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int NOT NULL)`);
+
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await userRow(CLEAN)).toEqual(before);
+  });
+
   it('stops the scrub for a marker that lands after the check', async () => {
     await createMarkerView();
     const before = await userRow(CLEAN);
@@ -456,7 +465,7 @@ describe('guardedAccountScrubSql', () => {
 
   it('carries no parameters, and names the marker view only when asked', () => {
     expect(guardedAccountScrubSql(CLEAN, false).values).toEqual([]);
-    expect(guardedAccountScrubSql(CLEAN, false).text).not.toContain('EvidenceHeldUser');
-    expect(guardedAccountScrubSql(CLEAN, true).text).toContain('"EvidenceHeldUser"');
+    expect(guardedAccountScrubSql(CLEAN, false).text).not.toContain('FROM "EvidenceHeldUser"');
+    expect(guardedAccountScrubSql(CLEAN, true).text).toContain('FROM "EvidenceHeldUser"');
   });
 });

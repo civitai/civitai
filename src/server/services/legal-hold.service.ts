@@ -68,6 +68,14 @@ function holdLegsSql(id: Prisma.Sql) {
 const markerSql = (id: Prisma.Sql) =>
   Prisma.sql`EXISTS (SELECT 1 FROM ${markerView} WHERE "userId" = ${id})`;
 
+/**
+ * For a statement built when neither marker object existed: held if either exists by the time it
+ * runs, since the marker leg it would need is not in it.
+ */
+const markerAppearedSql = Prisma.raw(
+  `(to_regclass('"${HOLD_MARKER_VIEW}"') IS NOT NULL OR to_regclass('"${HOLD_MARKER_TABLE}"') IS NOT NULL)`
+);
+
 export type AccountLegalHold = {
   legs: AccountHoldLeg[];
   /** The marker view exists, so a statement may name it. */
@@ -164,7 +172,7 @@ export function guardedAccountScrubSql(userId: number, withMarker: boolean): Pri
   if (!Number.isSafeInteger(userId) || userId <= 0)
     throw new Error(`Refusing to build an account scrub for user id ${String(userId)}`);
   const id = Prisma.raw(`${userId}::int`);
-  const holds = [...Object.values(holdLegsSql(id)), ...(withMarker ? [markerSql(id)] : [])];
+  const holds = [...Object.values(holdLegsSql(id)), withMarker ? markerSql(id) : markerAppearedSql];
   const statement = Prisma.sql`DO $guard$
 DECLARE scrubbed integer;
 BEGIN

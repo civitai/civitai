@@ -28,22 +28,20 @@ const coversFallback = (pattern: string) =>
   )})`;
 
 /**
- * Matched case-insensitively against an "Other" ban's notes. The deployed pattern comes from
- * `MOD_HOLD_BAN_NOTES_PATTERN` and may only widen the fallback: one that misses a fallback term is
- * replaced by the fallback in the statement itself, so it fails closed. It is a Postgres regex:
- * word boundaries are `\m` (start), `\M` (end) and `\y` (either), never `\b`, which Postgres reads
- * as a backspace.
+ * Whether `notes` match, case-insensitively, the fallback or the pattern deployed in
+ * `MOD_HOLD_BAN_NOTES_PATTERN`. The deployed pattern can only widen the match, never narrow it.
+ * It is a Postgres regex: word boundaries are `\m` (start), `\M` (end) and `\y` (either), never
+ * `\b`, which Postgres reads as a backspace.
  */
-function banNotesPatternSql() {
+function banNotesMatchSql(notes: RawBuilder<string>) {
   const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN;
-  if (!deployed) return sql`${FALLBACK_BAN_NOTES_PATTERN}`;
-  return sql`(CASE WHEN ${coversFallback(deployed)} THEN ${deployed}
-                   ELSE ${FALLBACK_BAN_NOTES_PATTERN} END)`;
+  const fallback = sql<boolean>`${notes} ~* ${FALLBACK_BAN_NOTES_PATTERN}`;
+  return deployed ? sql<boolean>`(${fallback} OR ${notes} ~* ${deployed})` : fallback;
 }
 
 let reportedPattern: string | undefined;
 
-/** Logs, once per pattern, a deployed pattern the statements are replacing with the fallback. */
+/** Logs, once per pattern, a deployed pattern that misses a fallback term, which is likely a mistake. */
 async function checkDeployedBanNotesPattern(db: Kysely<DB>) {
   const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN;
   if (!deployed || deployed === reportedPattern) return;
@@ -51,9 +49,17 @@ async function checkDeployedBanNotesPattern(db: Kysely<DB>) {
   reportedPattern = deployed;
   if (rows[0]?.ok !== true)
     console.error(
-      '[csam-flag-clear] MOD_HOLD_BAN_NOTES_PATTERN misses a fallback term; using the fallback'
+      '[csam-flag-clear] MOD_HOLD_BAN_NOTES_PATTERN misses a fallback term; the fallback still applies'
     );
 }
+
+/**
+ * For a statement built when neither marker object existed: held if either exists by the time it
+ * runs, since the marker leg it would need is not in it.
+ */
+const markerAppearedSql = () =>
+  sql<boolean>`(to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL
+               OR to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL)`;
 
 /** Each reason a user's review flags may not be cleared in bulk, as a boolean over `userId`. */
 export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarkerState) {
@@ -71,9 +77,9 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
         AND (
           ${reasonCode} IS NULL
           OR ${reasonCode} IN (${sql.join([...BAN_REASONS_ALWAYS_REMOVING_MEDIA])})
-          OR (${reasonCode} = 'Other' AND concat_ws(' ',
+          OR (${reasonCode} = 'Other' AND ${banNotesMatchSql(sql`concat_ws(' ',
                 u.meta #>> '{banDetails,detailsInternal}',
-                u.meta #>> '{banDetails,detailsExternal}') ~* ${banNotesPatternSql()})
+                u.meta #>> '{banDetails,detailsExternal}')`)})
         )
     )`,
     // Any image the clear would touch that a report lists, whoever the report names, sent or
@@ -98,7 +104,7 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
           )} h WHERE h."userId" = ${userId})`
         : marker === 'drift'
         ? sql<boolean>`true`
-        : sql<boolean>`false`,
+        : markerAppearedSql(),
   };
   return legs;
 }

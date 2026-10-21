@@ -73,6 +73,7 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   otherImageReported: { id: 151 },
   notedByDeployedPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
   driftProbe: { id: 170 },
+  lateMarker: { id: 171 },
 };
 
 let db: PGlite;
@@ -95,6 +96,8 @@ const activityFor = async (ids: number[]) =>
   ).rows;
 
 beforeAll(async () => {
+  // A pattern set in the shell would shift which users hold.
+  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   for (const { id, bannedAt, meta } of Object.values(USERS)) {
@@ -125,6 +128,7 @@ beforeAll(async () => {
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "details", "images") VALUES
       (-1, NULL, '{}', '[{"id": 1513}]'),
       (-1, NULL, '{"secondaryUserId": "99999999999"}', '{}'),
+      (-1, NULL, '{"secondaryUserId": "12345678901234567890"}', '[{"id": 12345678901234567890}]'),
       (-1, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 99999999999}]');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
@@ -236,6 +240,11 @@ describe('the ban-notes pattern', () => {
     expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
   });
 
+  it('keeps the fallback when a deployed pattern covers its terms but narrows it', async () => {
+    process.env.MOD_HOLD_BAN_NOTES_PATTERN = `^${FALLBACK_BAN_NOTES_PATTERN}$`;
+    expect(await clear(USERS.otherBanNoted.id)).toEqual({ ok: false, reason: 'held' });
+  });
+
   it('falls back, and says so, when the deployed pattern misses a fallback term', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzfixture';
@@ -307,6 +316,14 @@ describe('a hold marker', () => {
 
   it('still clears a user with no hold', async () => {
     expect(await clear(USERS.otherClean.id)).toMatchObject({ ok: true, cleared: 2 });
+  });
+
+  // Built when neither object existed, the update must still see one that appeared since.
+  it('is skipped by an update built before the marker objects appeared', async () => {
+    const kysely = dbHandle.current as Kysely<never>;
+    const id = USERS.lateMarker.id;
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, id, 'none')).toEqual([]);
+    expect(await flagged(id)).toHaveLength(3);
   });
 
   it('refuses everyone while the table exists without its view', async () => {
