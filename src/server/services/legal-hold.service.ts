@@ -115,6 +115,36 @@ export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql 
   return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
 }
 
+/**
+ * The `markerView` for `accountHoldSql` in a statement over many accounts' rows, where there is no
+ * single account to check first. Without the view, `accountHoldSql` holds every row if either marker
+ * object exists, so a view that is missing while its table is not still holds.
+ */
+export async function holdMarkerViewExists(): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS present
+  `;
+  return row?.present === true;
+}
+
+/**
+ * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
+ * goes no further than here. An author with no hold of their own had a row kept for a held reply
+ * below it.
+ */
+export async function logHoldRetained(action: string, userIds: number[]) {
+  for (const userId of new Set(userIds)) {
+    const hold = await holdOrNull(userId);
+    logToAxiom({
+      type: 'info',
+      name: 'account-legal-hold',
+      message:
+        hold?.legs.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
+      details: { userId, legs: hold?.legs ?? null },
+    });
+  }
+}
+
 export type AccountLegalHold = {
   legs: AccountHoldLeg[];
   /** The marker view exists, so a statement may name it. */

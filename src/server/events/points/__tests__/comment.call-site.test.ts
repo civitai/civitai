@@ -35,11 +35,8 @@ vi.mock('~/server/services/sticker.service', () => ({
 }));
 vi.mock('~/server/services/text-scan/scam-scan-queue', () => ({ queueScamScan: vi.fn() }));
 
-import {
-  bulkDeleteCommentsV2,
-  deleteComment,
-  upsertComment,
-} from '~/server/services/commentsv2.service';
+import { bulkDeleteComments } from '~/server/services/comment.service';
+import { deleteComment, upsertComment } from '~/server/services/commentsv2.service';
 
 const db = dbMock.dbWrite;
 const USER = 5;
@@ -103,24 +100,25 @@ describe('CommentV2 event points', () => {
     ]);
   });
 
-  it('removes for each author in a bulk delete, read before the rows go', async () => {
-    db.commentV2.findMany.mockResolvedValue([
-      { userId: USER, threadId: 70 },
-      { userId: 6, threadId: 70 },
-    ]);
-    db.commentV2.deleteMany.mockResolvedValue({ count: 2 });
+  it('removes for each author the bulk delete deleted, and none it kept', async () => {
+    // The DELETE returns the rows it took; a held author's comment stays and is not among them.
+    vi.mocked(db.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('DELETE FROM')
+        ? [
+            { userId: USER, threadId: 70 },
+            { userId: 6, threadId: 70 },
+          ]
+        : strings.join('').includes('UPDATE')
+        ? [{ userId: 8, threadId: 70 }]
+        : []) as never);
     db.commentV2.count.mockResolvedValue(0);
 
-    await expect(bulkDeleteCommentsV2({ ids: [1, 2] })).resolves.toEqual({ count: 2 });
-    await settle();
-
-    // Read before the delete: after it, the rows (and so the authors) are gone.
-    expect(db.commentV2.findMany.mock.invocationCallOrder[0]).toBeLessThan(
-      db.commentV2.deleteMany.mock.invocationCallOrder[0]
-    );
-    expect(db.commentV2.findMany.mock.calls[0][0]).toMatchObject({
-      select: { userId: true, threadId: true },
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 2,
+      retainedHidden: 1,
     });
+    await settle();
 
     expect(removeEventPoints.mock.calls.map(([[removal]]) => removal.sourceId)).toEqual([
       `CommentV2:Image:7:${USER}`,
@@ -130,15 +128,6 @@ describe('CommentV2 event points', () => {
 });
 
 describe('comment failure paths', () => {
-  it('still deletes when the pre-delete read fails, and removes nothing', async () => {
-    db.commentV2.findMany.mockRejectedValueOnce(new Error('read failed'));
-    db.commentV2.deleteMany.mockResolvedValue({ count: 2 });
-
-    await expect(bulkDeleteCommentsV2({ ids: [1, 2] })).resolves.toEqual({ count: 2 });
-    await settle();
-    expect(removeEventPoints).not.toHaveBeenCalled();
-  });
-
   it('resolves while the points call is still pending', async () => {
     db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
     awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
