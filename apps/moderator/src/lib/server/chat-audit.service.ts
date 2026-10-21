@@ -410,6 +410,59 @@ export async function getTranscript(
   return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
 }
 
+/** Messages shown above the oldest held one and below the newest held one. */
+export const CHAT_WINDOW_BEFORE = 10;
+export const CHAT_WINDOW_AFTER = 5;
+/** Bounds the span between the first and last held message, which is one sender's 24-hour window. */
+const CHAT_WINDOW_SPAN_CAP = 200;
+
+/**
+ * The conversation around a set of held messages, oldest first: every message from the first to the
+ * last held id, plus `before` earlier and `after` later ones. Keyset reads on `(chatId, id)`, so the
+ * cost follows the window, not the chat. System rows are excluded and deleted rows kept, as in
+ * `getTranscript`. Ids that are not in the chat simply do not anchor anything.
+ */
+export async function getChatWindow(
+  chatId: number,
+  ids: number[],
+  before = CHAT_WINDOW_BEFORE,
+  after = CHAT_WINDOW_AFTER
+): Promise<ChatMessageRow[]> {
+  const anchors = ids.filter(isInt4Id);
+  if (!isInt4Id(chatId) || !anchors.length) return [];
+  const first = Math.min(...anchors);
+  const last = Math.max(...anchors);
+
+  const read = () =>
+    dbRead
+      .selectFrom('ChatMessage as cm')
+      .leftJoin('User as u', 'u.id', 'cm.userId')
+      .select([
+        'cm.id',
+        'cm.createdAt',
+        'cm.userId',
+        'cm.content',
+        'cm.editedAt',
+        'cm.deletedAt',
+        'u.username',
+        'u.bannedAt',
+      ])
+      .where('cm.chatId', '=', chatId)
+      .where('cm.userId', '!=', SYSTEM_USER_ID);
+
+  const [span, earlier, later] = await Promise.all([
+    read()
+      .where('cm.id', '>=', first)
+      .where('cm.id', '<=', last)
+      .orderBy('cm.id', 'desc')
+      .limit(CHAT_WINDOW_SPAN_CAP)
+      .execute(),
+    read().where('cm.id', '<', first).orderBy('cm.id', 'desc').limit(before).execute(),
+    read().where('cm.id', '>', last).orderBy('cm.id', 'asc').limit(after).execute(),
+  ]);
+  return [...earlier.reverse(), ...span.reverse(), ...later];
+}
+
 /**
  * The text a message had BEFORE it was edited, from the `chatAuditEvents` ClickHouse log — Postgres
  * keeps only the current version. Best-effort: the log being down must not take the transcript with it.

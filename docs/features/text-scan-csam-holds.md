@@ -16,6 +16,14 @@ Reveal toggle (V) is on, and a blurred tile does not link to the original. The p
 at "100+". The model cover selection is shared with the Model Flags pages, which show videos and
 the minor tag the same way.
 
+Chat holds show a "Conversation" card: the messages from the first to the last judged one, ten
+before and five after, oldest first. Judged messages are highlighted, the sender's other messages
+and the other member's are styled apart, deleted and edited messages are labelled, and system
+messages are left out. The text is rendered as plain text, is not blurred, and links to the chat in
+Chat Audit. It is fetched when a hold is selected (`/api/csam-hold-chat/[holdId]`, which needs the
+page and `csam.report.file`), not with the page, and only while the hold still has its meta (the
+retention job clears it for old dismissed holds).
+
 ## Where holds come from
 
 The text-scan callback writes a hold when the `csam` label is in review mode and the verdict is

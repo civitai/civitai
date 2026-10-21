@@ -23,6 +23,9 @@ export type CsamHoldRow = {
   contentAt: Date | null;
   createdAt: Date;
   chatId: number | null;
+  /** A chat hold's judged messages, and who sent them; empty and null for other types. */
+  messageIds: number[];
+  senderId: number | null;
   title: string | null;
   live: boolean | null;
   status: string;
@@ -79,6 +82,31 @@ const csamHolds = ({
     );
   return query;
 };
+
+const chatMessageIds = (value: unknown): number[] =>
+  Array.isArray(value) ? value.filter((id): id is number => Number.isInteger(id)) : [];
+
+/** The chat and judged messages of a `ChatMessage` hold; null for any other hold, or once retention cleared its meta. */
+export async function getChatHold(
+  holdId: number
+): Promise<{ chatId: number; messageIds: number[]; senderId: number | null } | null> {
+  const row = await dbRead
+    .selectFrom('TextScanHold')
+    .select(['entityId', 'meta'])
+    .where('id', '=', holdId)
+    .where('label', '=', 'csam')
+    .where('entityType', '=', 'ChatMessage')
+    .executeTakeFirst();
+  if (!row) return null;
+  const { chatId, messageIds, senderId } = (row.meta ?? {}) as Record<string, unknown>;
+  if (typeof chatId !== 'number') return null;
+  const judged = chatMessageIds(messageIds);
+  return {
+    chatId,
+    messageIds: judged.length ? judged : [row.entityId],
+    senderId: typeof senderId === 'number' ? senderId : null,
+  };
+}
 
 export async function listCsamHolds({
   limit,
@@ -140,8 +168,10 @@ export async function listCsamHolds({
     .execute();
 
   const items = rows.slice(0, limit).map(({ meta, ...row }) => {
-    const { chatId, decision, kind, priorHoldId } = (meta ?? {}) as {
+    const { chatId, decision, kind, priorHoldId, messageIds, senderId } = (meta ?? {}) as {
       chatId?: unknown;
+      messageIds?: unknown;
+      senderId?: unknown;
       decision?: unknown;
       kind?: unknown;
       priorHoldId?: unknown;
@@ -158,6 +188,8 @@ export async function listCsamHolds({
       title: row.title ?? null,
       live: row.live ?? null,
       chatId: typeof chatId === 'number' ? chatId : null,
+      messageIds: chatMessageIds(messageIds),
+      senderId: typeof senderId === 'number' ? senderId : null,
       decision: typeof decision === 'string' ? decision : null,
     };
   });

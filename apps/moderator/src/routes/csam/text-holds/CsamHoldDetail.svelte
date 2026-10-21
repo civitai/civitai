@@ -28,6 +28,7 @@
   import type { CsamHoldItem } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
+  import HoldConversation from './HoldConversation.svelte';
   import {
     CSAM_HOLD_CONFIRMS,
     CSAM_HOLD_KEY_ORDER,
@@ -252,6 +253,10 @@
         </div>
       </TriageCard>
     </div>
+
+    {#if row.chatId !== null}
+      <HoldConversation holdId={row.id} chatId={row.chatId} />
+    {/if}
 
     <TriageCard dense title="Details">
       <dl class="m-0 space-y-1.5">

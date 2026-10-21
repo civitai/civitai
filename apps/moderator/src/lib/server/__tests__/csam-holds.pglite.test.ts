@@ -29,6 +29,7 @@ const {
   getHoldCoverImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
+const { getChatHold } = await import('../csam-holds.queries');
 
 const OLDEST_PENDING: CsamHoldQuery = {
   status: 'pending',
@@ -190,6 +191,25 @@ describe('listCsamHolds', () => {
     expect(byId.get(6)).toMatchObject({ userId: null, username: null });
   });
 
+  it('carries the judged message ids and sender of a held chat message', async () => {
+    await seed([
+      {
+        id: 20,
+        createdAt: '2026-10-08',
+        entityType: 'ChatMessage',
+        meta: { chatId: 78, messageIds: [5, 'x', 7], senderId: 10 },
+      },
+    ]);
+    const { items } = await listCsamHolds(OLDEST_PENDING);
+    expect(items.find((h) => h.id === 20)).toMatchObject({
+      chatId: 78,
+      messageIds: [5, 7],
+      senderId: 10,
+    });
+    expect(items.find((h) => h.id === 2)).toMatchObject({ messageIds: [], senderId: null });
+    expect(items.find((h) => h.id === 1)?.messageIds).toEqual([]);
+  });
+
   it('carries the chat id of a held chat message', async () => {
     const { items } = await listCsamHolds(OLDEST_PENDING);
     expect(items.find((h) => h.id === 2)?.chatId).toBe(77);
@@ -309,6 +329,41 @@ describe('re-detected holds', () => {
       decision: 'superseded',
       decidedByUsername: null,
     });
+  });
+});
+
+describe('getChatHold', () => {
+  it('reads the chat and judged messages of a chat hold', async () => {
+    await seed([
+      {
+        id: 20,
+        createdAt: '2026-10-08',
+        entityType: 'ChatMessage',
+        meta: { chatId: 78, messageIds: [5, 7], senderId: 10 },
+      },
+    ]);
+    expect(await getChatHold(20)).toEqual({ chatId: 78, messageIds: [5, 7], senderId: 10 });
+  });
+
+  it('falls back to the newest message when the hold lists none', async () => {
+    expect(await getChatHold(2)).toEqual({ chatId: 77, messageIds: [20], senderId: null });
+  });
+
+  it('is null for another type, another label, a missing hold or cleared meta', async () => {
+    await seed([
+      {
+        id: 21,
+        createdAt: '2026-10-08',
+        entityType: 'ChatMessage',
+        label: 'scam',
+        meta: { chatId: 1 },
+      },
+      { id: 22, createdAt: '2026-10-08', entityType: 'ChatMessage', meta: null },
+    ]);
+    expect(await getChatHold(1)).toBeNull();
+    expect(await getChatHold(21)).toBeNull();
+    expect(await getChatHold(22)).toBeNull();
+    expect(await getChatHold(999)).toBeNull();
   });
 });
 
