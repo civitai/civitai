@@ -140,11 +140,11 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   consentTrainingQuote: {
     buckets: ['catalog'],
-    why: 'The session-bound confirmation of a training quote: Redis reads + one write, reached only from a viewer click in host chrome. The read bucket, like its preview sibling.',
+    why: 'The session-bound confirmation of a training quote: one Redis read + write, reached only from a viewer click in host chrome. The read bucket, like its preview sibling.',
   },
   consentQuoteGrant: {
     buckets: ['catalog'],
-    why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): Redis reads + one write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
+    why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
   },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],

@@ -257,8 +257,8 @@ const POST_PAYLOAD = { sources: [{ kind: 'published', imageIds: [1] }] };
 const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.cancelAppWorkflow': { workflowId: 'wf_1' },
   'blocks.cancelWorkflow': { workflowId: 'wf_1' },
-  'blocks.consentQuoteGrant': { kind: 'training', quoteId: QUOTE_ID, uploadedBlobKeys: [] },
-  'blocks.consentTrainingQuote': { quoteId: QUOTE_ID, uploadedBlobKeys: [] },
+  'blocks.consentQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
+  'blocks.consentTrainingQuote': { quoteId: QUOTE_ID },
   'blocks.createPostFromApp': { ...POST_PAYLOAD, confirmedImageCount: 1 },
   'blocks.estimateWorkflow': { body: WORKFLOW_BODY },
   'blocks.estimateWorkflowBatch': { bodies: [WORKFLOW_BODY] },

@@ -5062,8 +5062,6 @@ export function PageBlockHost({
                 await trpcUtils.client.blocks.consentTrainingQuote.mutate({
                   blockToken: token,
                   quoteId,
-                  // Only the quoted keys, every one already checked as uploaded here.
-                  uploadedBlobKeys: preview.itemKeys.map(trainingBlobKeyIdentity),
                 });
                 let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
                 try {

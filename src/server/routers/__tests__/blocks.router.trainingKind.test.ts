@@ -222,7 +222,7 @@ const ITEMS = [
   { air: 'K1.jpeg', caption: 'a' },
   { air: 'K2.jpeg', caption: 'b' },
 ];
-/** What the host uploaded for this block — the keys a confirmation names. */
+/** The quoted dataset's blob keys. */
 const UPLOADED = ['K1.jpeg', 'K2.jpeg'];
 
 function claims(over: Record<string, unknown> = {}) {
@@ -357,7 +357,6 @@ async function consent(quoteId: string, sessionUserId = VIEWER) {
   return caller(sessionUserId).consentTrainingQuote({
     blockToken: 't',
     quoteId,
-    uploadedBlobKeys: UPLOADED,
   });
 }
 async function submit(b: Record<string, unknown>) {
@@ -511,7 +510,6 @@ describe('training CONSENT — session-only, and only the quote’s own subject'
       caller(undefined).consentTrainingQuote({
         blockToken: 't',
         quoteId: snapshot.trainingQuote.quoteId,
-        uploadedBlobKeys: UPLOADED,
       })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
@@ -1166,7 +1164,6 @@ describe('training — consent and preview edges', () => {
       muted.consentTrainingQuote({
         blockToken: 't',
         quoteId: snapshot.trainingQuote.quoteId,
-        uploadedBlobKeys: UPLOADED,
       })
     ).rejects.toThrow('restricted');
   });
@@ -1417,7 +1414,6 @@ describe('training on the shared confirmed-quote path', () => {
         kind: 'training',
         blockToken: 't',
         quoteId,
-        uploadedBlobKeys: UPLOADED,
       })
     ).resolves.toMatchObject({ consented: true, total: 1200 });
     const { snapshot: run } = (await submit(body({ quoteId }))) as {

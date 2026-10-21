@@ -22,8 +22,7 @@ import {
  *   3. shows the rest in a host-chrome confirm, with the host's own uploads of those
  *      keys as the thumbnails;
  *   4. on confirm, records the viewer's confirmation (`blocks.consentTrainingQuote`,
- *      session-required, naming the keys this host uploaded) and THEN submits the
- *      body (`blocks.submitWorkflow`);
+ *      session-required) and THEN submits the body (`blocks.submitWorkflow`);
  *   5. replies `TRAINING_RESULT { requestId, snapshot }` or `{ requestId, error }`.
  *
  * 🔴 THE DIALOG IS THE CONSENT SURFACE, NOT THE CONTROL. The server refuses a

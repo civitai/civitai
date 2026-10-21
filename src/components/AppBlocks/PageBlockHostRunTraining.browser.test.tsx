@@ -225,7 +225,6 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(consentMutate).toHaveBeenCalledWith({
       blockToken: 'tok_abc',
       quoteId: QUOTE_ID,
-      uploadedBlobKeys: [],
     });
     expect(submitMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', body: BODY });
     expect(consentMutate.mock.invocationCallOrder[0]).toBeLessThan(
@@ -383,7 +382,6 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(consentMutate).toHaveBeenCalledWith({
       blockToken: 'tok_abc',
       quoteId: QUOTE_ID,
-      uploadedBlobKeys: ['k2.png', 'k1.png'],
     });
     replies.stop();
   });

@@ -711,8 +711,8 @@ the viewer, and the viewer is signed in. Steps 2–3 check these server-side.
    the server and replies `error: 'training data not uploaded here'`, with no dialog, when
    it names an image this host did not upload for the block. Otherwise it shows the
    server's copy of the quote with its own uploads as thumbnails, and on the viewer's
-   confirm records it through `blocks.consentTrainingQuote` (signed-in session only,
-   naming the keys the host uploaded) and then submits. A submit
+   confirm records it through `blocks.consentTrainingQuote` (signed-in session only) and
+   then submits. A submit
    whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
    directly cannot start a run. If the outcome of the submit is unknown — the connection
    dropped, or the server attempted the run but could not confirm it — the host replies

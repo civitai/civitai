@@ -6,14 +6,11 @@ import type * as FeatureFlagsModule from '~/server/services/feature-flags.servic
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 
 /**
- * Two rules every App Blocks training run is held to, through `blocksRouter`:
- *
- *  - ONE trigger-word rule for every carrier — a pass-through `kind:'step'` training
- *    `$type` and every training step of a `kind:'workflow'` (a `repeat` template
- *    included) gets the trigger-word check every training path uses, at the estimate
- *    and the submit, before any quote or reservation, and a trigger word that is not a literal string is refused;
- *  - a training CONFIRMATION names the blob keys its host uploaded, and a quote naming
- *    any other key is never confirmed.
+ * ONE trigger-word rule for every App Blocks carrier of a training run, through
+ * `blocksRouter`: a pass-through `kind:'step'` training `$type` and every training step
+ * of a `kind:'workflow'` (a `repeat` template included) gets the trigger-word check every
+ * training path uses, at the estimate and the submit, before any quote or reservation;
+ * a trigger word that is not a literal string is refused.
  */
 
 const h = vi.hoisted(() => ({
@@ -93,7 +90,6 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const VIEWER = 42;
 const NOT_A_STRING = 'a training step’s triggerWord must be a literal string';
 const REFUSED = 'prompt refused';
-const FOREIGN = 'this training run names images that were not uploaded here — upload them again';
 
 const store = new Map<string, string>();
 function installRedis() {
@@ -326,82 +322,5 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
     });
     expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('a training confirmation refuses data its host did not upload', () => {
-  const QUOTE_ID = `tq_${'5'.repeat(32)}`;
-  const quoteKey = `system:blocks:training-quote:${QUOTE_ID}`;
-  function seedQuote() {
-    store.set(
-      quoteKey,
-      JSON.stringify({
-        v: 1,
-        quoteId: QUOTE_ID,
-        userId: VIEWER,
-        appBlockId: 'apb_test',
-        blockInstanceId: 'page_apb_test',
-        total: 1200,
-        bodyHash: 'x',
-        itemKeys: ['K1.jpeg', 'K2.jpeg'],
-        imageCount: 2,
-        modelKey: 'sdxl',
-        modelName: 'SDXL',
-        ecosystem: 'sdxl',
-        epochs: 5,
-        steps: null,
-        expiresAt: 'x',
-        consentedBy: null,
-        consentedAt: null,
-      })
-    );
-  }
-  const consentedBy = () => JSON.parse(store.get(quoteKey) as string).consentedBy;
-
-  beforeEach(seedQuote);
-
-  it('🔴 refuses a quote naming a key this host did not upload, and records nothing', async () => {
-    await expect(
-      caller(VIEWER).consentTrainingQuote({
-        blockToken: 't',
-        quoteId: QUOTE_ID,
-        uploadedBlobKeys: ['K1.jpeg', 'OTHER.jpeg'],
-      } as never)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: FOREIGN });
-    expect(consentedBy()).toBeNull();
-  });
-
-  it('🔴 refuses a confirmation that names no uploaded keys at all', async () => {
-    await expect(
-      caller(VIEWER).consentTrainingQuote({ blockToken: 't', quoteId: QUOTE_ID })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    await expect(
-      caller(VIEWER).consentQuoteGrant({ kind: 'training', blockToken: 't', quoteId: QUOTE_ID })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(consentedBy()).toBeNull();
-  });
-
-  it('positive control: every quoted key uploaded (case-insensitive) is confirmed', async () => {
-    await expect(
-      caller(VIEWER).consentTrainingQuote({
-        blockToken: 't',
-        quoteId: QUOTE_ID,
-        uploadedBlobKeys: ['k2.JPEG', 'k1.jpeg', 'extra.png'],
-      } as never)
-    ).resolves.toMatchObject({ consented: true, total: 1200 });
-    expect(consentedBy()).toBe(VIEWER);
-  });
-
-  it('the generic consent pair applies the same rule to a training quote', async () => {
-    await expect(
-      caller(VIEWER).consentQuoteGrant({
-        kind: 'training',
-        blockToken: 't',
-        quoteId: QUOTE_ID,
-        uploadedBlobKeys: ['K1.jpeg'],
-      } as never)
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: FOREIGN });
-    expect(consentedBy()).toBeNull();
   });
 });

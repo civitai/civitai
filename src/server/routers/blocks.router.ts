@@ -23,7 +23,6 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
 import type {
-  BlockQuoteBinding,
   BlockQuoteGrantKind,
   BlockQuoteGrantRecord,
 } from '~/server/services/blocks/block-quote-grant.service';
@@ -131,7 +130,6 @@ import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
   blockEstimateBatchInputSchema,
-  blockTrainingUploadedBlobKeysSchema,
   blockWorkflowBodySchema,
 } from '~/server/schema/blocks/workflow.schema';
 import type {
@@ -239,7 +237,6 @@ import {
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
-import { findForeignTrainingBlobKeys } from '~/server/schema/blocks/training-dataset.schema';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
@@ -6299,8 +6296,7 @@ export const blocksRouter = router({
    * that exact quote; the submit refuses a quote no one confirmed.
    *
    * Both are bound to a signed-in browser session whose user is the token subject
-   * (API-key and OAuth-token requests refused). A training CONFIRMATION also names the
-   * blob keys the confirming host uploaded, and refuses a quote naming any other.
+   * (API-key and OAuth-token requests refused).
    *
    * 🔴 THE CALLER NAMES THE KIND, AND THE ID MUST BE OF THAT KIND
    * (`blockQuoteGrantConsentInputSchema`). The kind is never inferred from the id: a
@@ -6345,7 +6341,6 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
-        uploadedBlobKeys: blockTrainingUploadedBlobKeysSchema,
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -13600,40 +13595,6 @@ async function previewQuoteGrantFor(
   };
 }
 
-const TRAINING_FOREIGN_DATA_MESSAGE =
-  'this training run names images that were not uploaded here — upload them again';
-
-/**
- * Refuses, before consent is recorded, a confirmation whose uploaded-key list omits any
- * blob the quote names. The list is the caller's own — the host's upload check is the
- * control — so this holds only while the procedure stays session-only.
- */
-async function assertTrainingQuoteUploadedByHost(
-  quoteId: string,
-  binding: BlockQuoteBinding,
-  uploadedBlobKeys: string[] | undefined
-): Promise<void> {
-  if (!uploadedBlobKeys) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'confirming a training run needs the blob keys this host uploaded',
-    });
-  }
-  const { readQuoteGrant } = await import('~/server/services/blocks/block-quote-grant.service');
-  const quote = await readQuoteGrant<BlockQuoteGrantRecord & { itemKeys?: unknown }>(
-    'training',
-    quoteId,
-    binding
-  );
-  if (!quote) return; // the consent write answers this one, as for every kind
-  if (findForeignTrainingBlobKeys(quote.itemKeys, uploadedBlobKeys).length > 0) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: TRAINING_FOREIGN_DATA_MESSAGE,
-    });
-  }
-}
-
 /**
  * The viewer's CONFIRMATION, both kinds: records that the signed-in viewer confirmed
  * this exact quote. Only this can confirm one, and it requires the viewer's own session,
@@ -13647,7 +13608,7 @@ async function consentQuoteGrantFor(
   kind: BlockQuoteGrantKind,
   ctx: Context,
   sessionUserId: number,
-  input: { blockToken: string; quoteId: string; uploadedBlobKeys?: string[] }
+  input: { blockToken: string; quoteId: string }
 ) {
   const { claims, auth } = await authorizeQuotedGrantConsentRequest(
     kind,
@@ -13666,15 +13627,12 @@ async function consentQuoteGrantFor(
   const { recordQuoteGrantConsent } = await import(
     '~/server/services/blocks/block-quote-grant.service'
   );
-  const binding = {
-    userId: auth.userId,
-    appBlockId: claims.appBlockId,
-    blockInstanceId: claims.blockInstanceId,
-  };
-  if (kind === 'training') {
-    await assertTrainingQuoteUploadedByHost(input.quoteId, binding, input.uploadedBlobKeys);
-  }
-  const updated = await recordQuoteGrantConsent(kind, input.quoteId, binding, sessionUserId);
+  const updated = await recordQuoteGrantConsent(
+    kind,
+    input.quoteId,
+    { userId: auth.userId, appBlockId: claims.appBlockId, blockInstanceId: claims.blockInstanceId },
+    sessionUserId
+  );
   if (!updated) {
     throw new TRPCError({
       code: 'NOT_FOUND',
@@ -14244,8 +14202,8 @@ const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
  *
  * A confirmed quote is what lets a job cost more than the per-call budget. For training
  * that grant belongs to `kind:'training'`, which resolves the run against the training
- * service's own gates, checks the training flag, and is confirmed only by the host that
- * uploaded its images. A training `$type` granted
+ * service's own gates, checks the training flag, and is confirmed in the page host,
+ * which shows only images it uploaded. A training `$type` granted
  * a STEP quote would run above the budget, under the step flag, with none of that.
  *
  * ⚠️ WHAT THIS DOES NOT CHANGE: a training `$type` priced WITHIN the per-call budget
