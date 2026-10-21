@@ -69,7 +69,13 @@ export class AppSandbox {
   #connection: McpConnection | null = null;
   #closed = false;
   /** The sandbox found again for the calls that failed together, so they wake it once. */
-  #resolving: Promise<'woken' | 'running' | 'gone'> | null = null;
+  #resolving: Promise<Found> | null = null;
+  /**
+   * Connections replaced by finding the sandbox again, and why. Not closed until the reply ends: a
+   * call still running on one is left to finish, and one that fails on it later is judged by why it
+   * was replaced (the sandbox it reached had to be woken, so the call cannot have run).
+   */
+  readonly #replaced = new Map<McpConnection, Exclude<Found, 'gone'>>();
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
@@ -143,15 +149,17 @@ export class AppSandbox {
 
   async close(): Promise<void> {
     this.#closed = true;
-    const connection = this.#connection;
+    const connections = [this.#connection, ...this.#replaced.keys()];
     this.#connection = null;
-    await connection?.close();
+    this.#replaced.clear();
+    await Promise.all(connections.map((connection) => connection?.close()));
   }
 
   async #call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     let result: CallToolResult;
+    const used = this.#connection;
     try {
-      result = await this.#callOnce(tool, args, signal);
+      result = await this.#callOnce(used, tool, args, signal);
     } catch (error) {
       if (signal?.aborted || this.#closed) throw error;
       if (replyLost(error))
@@ -162,8 +170,9 @@ export class AppSandbox {
           note: LOST_NOTE,
         };
       if (!refused(error)) throw error;
-      // The sandbox may have paused or moved: found again (and woken, if it no longer runs).
-      const found = await this.#resolveAgain();
+      // The sandbox may have paused or moved: found again (and woken, if it no longer runs), unless
+      // another call that failed on the same connection already did.
+      const found = (used && this.#replaced.get(used)) ?? (await this.#resolveAgain(used));
       if (found === 'gone') throw new Error(SANDBOX_GONE);
       // Made again only when it cannot have run: the connection never opened, or the sandbox had to be
       // woken. An error status from a sandbox that still runs (a proxy's 502, a pod restart) may have
@@ -174,14 +183,18 @@ export class AppSandbox {
           retryable: true,
           note: LOST_NOTE,
         };
-      result = await this.#callOnce(tool, args, signal);
+      result = await this.#callOnce(this.#connection, tool, args, signal);
     }
     const text = keepEnds(resultText(result), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
     return result.isError ? { error: text, note: SERVER_TOOL_FAILED_NOTE } : text;
   }
 
-  #callOnce(tool: string, args: Record<string, unknown>, signal?: AbortSignal) {
-    const connection = this.#connection;
+  #callOnce(
+    connection: McpConnection | null,
+    tool: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ) {
     if (!connection) return Promise.reject(new McpUnreachableError(null));
     return connection.callTool(tool, args, {
       ...(signal ? { signal } : {}),
@@ -194,13 +207,10 @@ export class AppSandbox {
    * woken, `running` when it still ran, `gone` when it is deleted or would not run. Calls that fail
    * together share one search, so the sandbox is woken once.
    */
-  #resolveAgain(): Promise<'woken' | 'running' | 'gone'> {
-    this.#resolving ??= (async (): Promise<'woken' | 'running' | 'gone'> => {
+  #resolveAgain(stale: McpConnection | null): Promise<Found> {
+    this.#resolving ??= (async (): Promise<Found> => {
       const app = this.#app;
       if (!app || this.#closed) return 'gone';
-      const stale = this.#connection;
-      this.#connection = null;
-      await stale?.close();
       try {
         const listed = await this.#deps.client.list();
         const found = listed.find((sandbox) => sandbox.app === app);
@@ -210,9 +220,13 @@ export class AppSandbox {
         const running = woken ? await this.#wake(app) : found;
         if (!running || this.#closed) return 'gone';
         this.#active = running;
+        const current = this.#connection;
         this.#connect(running);
-        if (!this.#connection) return 'gone';
-        return woken ? 'woken' : 'running';
+        if (this.#connection === current) return 'gone';
+        const why = woken ? 'woken' : 'running';
+        if (stale) this.#replaced.set(stale, why);
+        if (current && current !== stale) this.#replaced.set(current, why);
+        return why;
       } catch (error) {
         this.#deps.log.warn(
           { err: (error as Error)?.name, runId: this.#deps.runId },
@@ -264,6 +278,9 @@ export class AppSandbox {
     });
   }
 }
+
+/** How finding the sandbox again went: woken from paused, still running, or deleted or would not run. */
+type Found = 'woken' | 'running' | 'gone';
 
 /** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
 const PAGE_ONLY_TOOL = /^tunnel_/;
