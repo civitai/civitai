@@ -29,14 +29,6 @@
   align-items: baseline;
 }
 
-// A gain shares its account's colour with a spend, so the pill is what tells them apart.
-.credit {
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 18%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
-}
-
 // Per-type colour, darkened in light mode to stay legible on white.
 .blue {
   color: var(--mantine-color-blue-7);
