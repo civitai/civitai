@@ -1,5 +1,9 @@
 import { sql } from '@civitai/db/kysely';
-import { DIRECTIONAL_ACTIVITIES } from '$lib/mod-activity';
+import {
+  activityLabel,
+  DIRECTIONAL_ACTIVITIES,
+  PURGE_UNCONFIRMED_ACTIVITY,
+} from '$lib/mod-activity';
 import type { task_enum_0648e184 } from './moderator-db/enums';
 import { createCache } from './cache';
 import { dbRead } from './db';
@@ -75,6 +79,7 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   setNsfwLevelKono: 'ratings (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
+  [PURGE_UNCONFIRMED_ACTIVITY]: activityLabel(PURGE_UNCONFIRMED_ACTIVITY).toLowerCase(),
 };
 
 /** Membership is named, not inferred from the `:` — a colon is the separator every parameterised

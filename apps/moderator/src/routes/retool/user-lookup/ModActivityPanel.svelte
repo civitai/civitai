@@ -9,7 +9,7 @@
   import { entityUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import type { ModActivityCount, ModActivityCursor } from '$lib/mod-activity';
+  import { activityBadge, type ModActivityCount, type ModActivityCursor } from '$lib/mod-activity';
   import type { ModActivityRow, RetoolActivityRow } from '$lib/server/user-account.service';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import WalkPager from '$lib/components/WalkPager.svelte';
@@ -176,7 +176,7 @@
           {@const link = rowUrl(row)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-dark-2">{dateTime(row.createdAt)}</span>
-            <Badge variant="secondary">{row.activity}</Badge>
+            <Badge variant="secondary">{activityBadge(row.activity)}</Badge>
             {#if link}
               <a href={link} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                 {row.entityType}

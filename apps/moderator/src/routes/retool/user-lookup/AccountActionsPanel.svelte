@@ -24,6 +24,7 @@
     unwiredRulingReason,
   } from '$lib/restriction-types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
   import RulingForm, { emptyRulingDraft } from '$lib/components/RulingForm.svelte';
   import { RESTRICTION_RULING_CHOICES } from '$lib/ruling-choices';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
@@ -107,6 +108,9 @@
 
   {#if form.error}
     <ErrorAlert class="mb-3" message={form.error} />
+  {/if}
+  {#if form.warning}
+    <WarningAlert class="mb-3" message={form.warning} />
   {/if}
 
   {#if !canAct}

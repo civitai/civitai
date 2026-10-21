@@ -81,7 +81,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -241,7 +241,9 @@ describe('removeAllContent → document store', () => {
     };
     holder.maintenance = createDocStoreMaintenance({ db: down });
 
-    await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
+      incomplete: ['doc-store'],
+    });
 
     // The main-database wipe ran in full regardless.
     expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
@@ -278,7 +280,7 @@ describe('removeAllContent → document store', () => {
         failures: [{ appId: app, ns: NS_PROD, error: 'lock timeout' }],
       }),
     };
-    await expect(removeAllContent({ id: TARGET })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({ incomplete: ['doc-store'] });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls
       .map((c) => String(c[0]))

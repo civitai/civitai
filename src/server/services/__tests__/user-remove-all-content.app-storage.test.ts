@@ -205,7 +205,7 @@ vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -325,7 +325,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       Object.assign(new Error('new row violates check constraint'), { code: '23514' })
     );
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage'],
+    });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
     const incomplete = lines.find((l) => l.includes('purge INCOMPLETE'));
@@ -348,7 +350,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.extraSchemas = APP_USER_STORAGE_MAX_SCHEMAS + 1;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage-truncated'],
+    });
 
     const truncated = warn.mock.calls
       .map((c) => String(c[0]))
@@ -379,7 +383,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Positive control for the guard above: the warning must not fire on the
     // happy path, or it is noise that trains an operator to ignore it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({ incomplete: [] });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
     ).toEqual([]);
@@ -405,7 +409,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.poolDown = 'apps database unreachable';
 
     // Must RESOLVE, not reject.
-    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
+      incomplete: ['app-storage'],
+    });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
     // rejects, so "it resolved" alone is satisfied by the bug this whole commit

@@ -1,7 +1,9 @@
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The two account-wide content wipes refuse a held account, and a hold that lands mid-wipe stops
@@ -11,7 +13,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, indexes, metrics, session, pictures, tracked } = vi.hoisted(() => ({
+const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.hoisted(() => ({
   holder: {
     db: null as unknown as PGlite,
     /** Runs just before the first image delete: a hold landing mid-run. */
@@ -34,6 +36,9 @@ const { holder, indexes, metrics, session, pictures, tracked } = vi.hoisted(() =
   },
   pictures: { refresh: vi.fn<(ids: unknown) => Promise<undefined>>(async () => undefined) },
   tracked: vi.fn<(activity: unknown) => undefined>(() => undefined),
+  docStore: {
+    wipeAccount: vi.fn(async (_userId: number) => ({ namespaces: [], failures: [] })),
+  },
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -80,7 +85,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => ({
+    bidsDeleted: [] as number[],
+    recurringBidsDeleted: [] as number[],
+    refundFailed: [] as string[],
+  })),
 }));
 vi.mock('~/server/services/apps/user-storage-purge.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -95,7 +104,7 @@ vi.mock('~/server/services/apps/user-storage-purge.service', async (importOrigin
   })),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
-  getDocStoreMaintenance: () => ({ wipeAccount: async () => ({ namespaces: [], failures: [] }) }),
+  getDocStoreMaintenance: () => docStore,
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: async () => session,
@@ -105,10 +114,11 @@ import {
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import { deleteImages } from '~/server/services/image.service';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { refundBidsForVersions } from '~/server/services/auction.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
@@ -122,6 +132,7 @@ const COLLECTION = 300;
 const ARTICLE = 500;
 const MODEL = 700;
 const BOUNTY = 900;
+const MODEL_VERSION = (modelId: number) => modelId * 10;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -142,6 +153,8 @@ let beforeEvidence: (() => Promise<unknown>) | null = null;
 /** The first guarded delete, unless a test lands the hold later. */
 let landsBefore = EVIDENCE[0];
 let failLookups = false;
+/** Fails the wipe's read of which of its models are gone. */
+let failGoneModels = false;
 /** Replaces what the wipe's re-check after its evidence deletes reads back. */
 let afterHeld: unknown = undefined;
 
@@ -180,6 +193,7 @@ beforeEach(async () => {
   landsBefore = EVIDENCE[0];
   holder.beforeImages = null;
   failLookups = false;
+  failGoneModels = false;
   afterHeld = undefined;
   session.user = { id: 9, isModerator: true, bannedAt: null };
   await holder.db.exec(`
@@ -209,6 +223,8 @@ beforeEach(async () => {
   ) => {
     if (failLookups) throw new Error('connection reset');
     const sql = asSql(first, values);
+    if (failGoneModels && sql.text.includes('FROM "Model" WHERE id = ANY'))
+      throw new Error('connection reset');
     if (afterHeld !== undefined && sql.text.trimEnd().endsWith('AS held'))
       return [{ held: afterHeld }];
     return (await run(sql)).rows;
@@ -232,7 +248,25 @@ beforeEach(async () => {
         ])
       ).rows) as never;
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
-  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(rowsOf('Model', 'id'));
+  // Each model has one version, MODEL_VERSION(id). Only the selected fields come back, as from
+  // Prisma, so a select that drops one is visible.
+  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation((async (args: {
+    where: { userId: number };
+    select: Record<string, unknown>;
+  }) =>
+    (
+      await holder.db.query<{ id: number }>(
+        `SELECT id FROM "Model" WHERE "userId" = $1 ORDER BY id`,
+        [args.where.userId]
+      )
+    ).rows.map(({ id }) => {
+      const row: Record<string, unknown> = {
+        id,
+        name: 'zzfixture',
+        modelVersions: [{ id: MODEL_VERSION(id) }],
+      };
+      return Object.fromEntries(Object.entries(row).filter(([k]) => args.select?.[k]));
+    })) as never);
   vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
   vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
   vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
@@ -256,6 +290,13 @@ beforeEach(async () => {
     ).rows;
   }) as never);
 });
+
+/** The alertable lines for bids a wipe could not refund. */
+const refundAlerts = () =>
+  vi
+    .mocked(loggingMock.logToAxiom)
+    .mock.calls.map(([line]) => line as Record<string, unknown>)
+    .filter((line) => line.name === 'bid-refund-failed');
 
 /** The ids each search index was asked to drop. */
 function dropped() {
@@ -307,7 +348,7 @@ const seeded = (userId: number) => ({ ...all(1), Image: userId === CLEAN ? 2 : 1
 
 describe('removeAllContent', () => {
   it('wipes an account no hold covers, and no one else’s', async () => {
-    await removeAllContent({ id: CLEAN });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
@@ -342,6 +383,7 @@ describe('removeAllContent', () => {
     const refused = await removeAllContent({ id: userId }).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(LegalHoldError);
     expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
+    expect(refused).not.toBeInstanceOf(LegalHoldUnconfirmedError);
 
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
@@ -351,7 +393,7 @@ describe('removeAllContent', () => {
   it('refuses when the hold cannot be checked', async () => {
     failLookups = true;
     const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
-    expect(refused).toBeInstanceOf(LegalHoldError);
+    expect(refused).toBeInstanceOf(LegalHoldUnconfirmedError);
     expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
@@ -449,21 +491,154 @@ describe('removeAllContent', () => {
   });
 
   it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
-    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(docStore.wipeAccount).not.toHaveBeenCalled();
   });
 
   it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {
-    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       failLookups = true;
+      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(docStore.wipeAccount).not.toHaveBeenCalled();
+  });
+
+  // Not refund idempotency (that is the bid filter, in auction-refund-bids-for-versions.test.ts):
+  // the second run finds no models, refunds nothing, and is not refused.
+  it('runs a second time without refusing, and with no models left to refund', async () => {
+    await removeAllContent({ id: CLEAN });
+    vi.mocked(refundBidsForVersions).mockClear();
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('names the bid refunds when a refund failed after its bid was cancelled', async () => {
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-1'],
+    });
+    expect(await removeAllContent({ id: CLEAN, actorUserId: 9 })).toEqual({
+      incomplete: ['bid-refunds'],
+    });
+    expect(refundAlerts()).toEqual([
+      expect.objectContaining({
+        userId: CLEAN,
+        moderatorId: 9,
+        versionIds: [MODEL_VERSION(MODEL)],
+        transactionIds: ['tx-1'],
+      }),
+    ]);
+  });
+
+  it('raises a refund alert from a stopped wipe too', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-2'],
+    });
+    await expect(removeAllContent({ id: CLEAN, actorUserId: 9 })).rejects.toBeInstanceOf(
+      LegalHoldStoppedError
+    );
+    expect(refundAlerts()).toEqual([
+      expect.objectContaining({ moderatorId: 9, transactionIds: ['tx-2'] }),
+    ]);
+  });
+
+  it('raises no refund alert when every refund went through', async () => {
+    await removeAllContent({ id: CLEAN, actorUserId: 9 });
+    expect(refundAlerts()).toEqual([]);
+  });
+
+  it('names the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
+    failGoneModels = true;
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('still reports a stopped wipe when its bid refunds fail', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refunds the next model when one model’s refund throws', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL + 50}, ${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('auction read failed'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(2);
+    expect(refundBidsForVersions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL + 50)] })
+    );
+  });
+
+  it('refunds the bids on its models by version, after the models are gone', async () => {
+    await removeAllContent({ id: CLEAN });
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+    expect(refundBidsForVersions).toHaveBeenCalledWith({
+      versionIds: [MODEL_VERSION(MODEL)],
+      name: 'zzfixture',
+      notificationKey: MODEL,
+    });
+    expect((await remaining(CLEAN)).Model).toBe(0);
+    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('runs every later step when the bid refunds fail, and names the failed one', async () => {
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledTimes(1);
+    expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
+  });
+
+  it('still wipes the document store when the App Blocks purge fails, and names it', async () => {
+    vi.mocked(purgeUserAppStorageForAccountWipe).mockRejectedValueOnce(new Error('apps db down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['app-storage'] });
+    expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
+  });
+
+  it('runs the later index and metric steps when one index fails', async () => {
+    indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['index-models'] });
+    expect(dropped().users).toEqual([CLEAN]);
+    expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('names a document store wipe that failed', async () => {
+    docStore.wipeAccount.mockRejectedValueOnce(new Error('store down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['doc-store'] });
+  });
+
+  it('leaves the bids on a model a hold kept', async () => {
+    landsBefore = 'Model';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect((await remaining(CLEAN)).Model).toBe(1);
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('refunds the bids on a model that went before a hold stopped the wipe', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect((await remaining(CLEAN)).Model).toBe(0);
+    expect(refundBidsForVersions).toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL)] })
+    );
   });
 
   it('stops, keeping the evidence, when the marker view is dropped mid-wipe', async () => {
@@ -492,6 +667,16 @@ describe('removeAllContent', () => {
     });
   });
 
+  it('keeps in the index a bounty a stopped wipe did not delete', async () => {
+    landsBefore = 'Bounty';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    expect((await remaining(CLEAN)).Bounty).toBe(1);
+    expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
+  });
+
   it('keeps a bounty entry that won an award', async () => {
     await holder.db.exec(`
       INSERT INTO "BountyEntry" ("userId") VALUES (${CLEAN});
@@ -506,6 +691,41 @@ describe('removeAllContent', () => {
     expect(pictures.refresh).toHaveBeenCalledWith([CLEAN]);
   });
 });
+
+/**
+ * The moderator app's real body reader and refusal texts, loaded across the app boundary by path (both
+ * modules are import-free for this). It matches the reason against its own constants by equality, so
+ * a reworded constant on either side, or a body-shape drift, turns a refusal into a generic failure.
+ */
+const moderator = {} as {
+  restErrorReason: (body: unknown, status: number) => string | null;
+  LEGAL_HOLD_REFUSAL: string;
+  LEGAL_HOLD_STOPPED: string;
+  HOLD_UNKNOWN_REFUSAL: string;
+  purgeWarning: (body: unknown) => string | undefined;
+  PURGE_INCOMPLETE: string;
+};
+beforeAll(async () => {
+  const lib = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib');
+  const [reader, texts, purge] = await Promise.all([
+    import(/* @vite-ignore */ path.join(lib, 'server/rest-error-reason.ts')),
+    import(/* @vite-ignore */ path.join(lib, 'legal-hold.ts')),
+    import(/* @vite-ignore */ path.join(lib, 'purge-result.ts')),
+  ]);
+  Object.assign(moderator, {
+    restErrorReason: reader.restErrorReason,
+    LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
+    LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
+    HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
+    purgeWarning: purge.purgeWarning,
+    PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
+  });
+  expect(typeof moderator.purgeWarning).toBe('function');
+  expect(typeof moderator.restErrorReason).toBe('function');
+  expect(moderator.restErrorReason({ nothingReadable: true }, 403)).toBeNull();
+});
+const moderatorReads = (res: { body: unknown; statusCode: number }) =>
+  moderator.restErrorReason(res.body, res.statusCode);
 
 /** A Next API response that records what the handler sent. */
 function fakeRes() {
@@ -526,12 +746,12 @@ function fakeRes() {
 }
 
 describe('/api/mod/remove-all-content', () => {
-  const call = async (userId: number) => {
+  const call = async (userId: number, extra: Record<string, string> = {}) => {
     const res = fakeRes();
     await removeAllContentWebhook(
       {
         method: 'POST',
-        query: { token: 'test-webhook-token', userId: String(userId) },
+        query: { token: 'test-webhook-token', userId: String(userId), ...extra },
         headers: {},
         cookies: {},
       } as never,
@@ -541,15 +761,54 @@ describe('/api/mod/remove-all-content', () => {
   };
 
   it('wipes an unheld account', async () => {
-    expect((await call(CLEAN)).statusCode).toBe(200);
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: [] });
+    expect(moderatorReads(res)).toBeNull();
+    expect(moderator.purgeWarning(res.body)).toBeUndefined();
     expect(await remaining(CLEAN)).toEqual(all(0));
+  });
+
+  it('answers 200, records the activity and names the step when a cleanup step fails', async () => {
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
+    expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
+    expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
+  });
+
+  it('names the moderator the caller sent on a refund alert', async () => {
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-3'],
+    });
+    await call(CLEAN, { moderatorId: '9' });
+    expect(refundAlerts()).toEqual([expect.objectContaining({ moderatorId: 9 })]);
+    // Unverified, so never written as the actor of a store's audit row.
+    expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: null })
+    );
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
     expect(await remaining(HELD)).toEqual(seeded(HELD));
+    expect(tracked).not.toHaveBeenCalled();
+  });
+
+  it('answers 403 saying the hold could not be checked, deleting nothing', async () => {
+    failLookups = true;
+    const res = await call(CLEAN);
+    failLookups = false;
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
+    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     expect(tracked).not.toHaveBeenCalled();
   });
 
@@ -558,6 +817,7 @@ describe('/api/mod/remove-all-content', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
   });
 });
@@ -597,7 +857,18 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
     expect((await remaining(HELD)).Image).toBe(1);
+  });
+
+  it('refuses, saying the hold could not be checked, deleting nothing', async () => {
+    failLookups = true;
+    const res = await call(CLEAN);
+    failLookups = false;
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
+    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
+    expect((await remaining(CLEAN)).Image).toBe(2);
   });
 
   it('keeps the images and posts when a hold lands mid-run, and says it stopped', async () => {
@@ -606,6 +877,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect((await remaining(CLEAN)).Image).toBe(2);
     expect((await remaining(CLEAN)).Post).toBe(1);
   });
@@ -616,6 +888,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect((await remaining(CLEAN)).Image).toBe(2);
   });
 
@@ -624,6 +897,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
   });
 
   it('refuses a batch size of zero, deleting nothing', async () => {

@@ -5,6 +5,8 @@ import {
   LEGAL_HOLD_STOPPED,
   type DeleteHold,
 } from '$lib/legal-hold';
+import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
+import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -25,7 +27,7 @@ import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './it
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
-import { restErrorReason } from './rest-error-reason';
+import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, alwaysRemovesMedia, type ProfileField } from '$lib/enforcement';
 import type { HeldSummary } from './removal-hold';
@@ -1488,7 +1490,7 @@ export async function purgeAllContent(input: {
   const result = await postJson({
     path: '/api/mod/remove-all-content',
     body: {},
-    query: { userId: String(input.userId) },
+    query: { userId: String(input.userId), moderatorId: String(input.moderatorId) },
     label: 'Purge',
     auth: 'webhook',
     timeoutMs: 15_000,
@@ -1496,6 +1498,8 @@ export async function purgeAllContent(input: {
   if (!result.ok) {
     if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
       return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
+      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // A hold stopped it part-way, after some of the account was deleted: that is recorded.
     if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
       await logAction('purgeAllContent', input.userId, input.moderatorId);
@@ -1503,15 +1507,14 @@ export async function purgeAllContent(input: {
     }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
     // lost answer is reported as started, never as failed: a failure invites a second purge.
-    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-      return { ok: false, error: PURGE_MAY_BE_RUNNING };
-    if (result.status !== undefined || result.requestNeverSent)
-      return { ok: false, error: result.error };
+    if (!responseMayHaveLanded(result)) return { ok: false, error: result.error };
+    await logAction(PURGE_UNCONFIRMED_ACTIVITY, input.userId, input.moderatorId);
     return { ok: false, error: PURGE_MAY_BE_RUNNING };
   }
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
-  return { ok: true };
+  const warning = purgeWarning(result.body);
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 /** One sentence for every way this call can fail without proving the deletion did not happen. The

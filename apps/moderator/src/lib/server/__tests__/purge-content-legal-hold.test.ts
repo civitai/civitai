@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { activityBadge, activityLabel, PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import {
   deleteButtonState,
   holdButtonView,
@@ -8,6 +12,7 @@ import {
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
 } from '$lib/legal-hold';
+import { PURGE_INCOMPLETE } from '$lib/purge-result';
 
 /**
  * Purge content asks the main app whether the account is held before it sends anything, and reports a
@@ -67,7 +72,7 @@ describe('purgeAllContent and a legal hold', () => {
   it('purges an account that is clear, naming it in the query the endpoint reads', async () => {
     expect(await run()).toEqual({ ok: true });
     expect(purgeUrls).toEqual([
-      `https://civitai.com/api/mod/remove-all-content?token=shared-secret&userId=${TARGET}`,
+      `https://civitai.com/api/mod/remove-all-content?token=shared-secret&userId=${TARGET}&moderatorId=9`,
     ]);
   });
 
@@ -92,9 +97,31 @@ describe('purgeAllContent and a legal hold', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
+  it('shows the unknown-status refusal when the endpoint could not check the hold', async () => {
+    purge = () => json({ message: HOLD_UNKNOWN_REFUSAL }, 403);
+    expect(await run()).toEqual({ ok: false, error: HOLD_UNKNOWN_REFUSAL });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
   it('shows any other 403 as the endpoint wrote it, not as a hold', async () => {
     purge = () => json({ message: 'Forbidden' }, 403);
     expect(await run()).toEqual({ ok: false, error: 'Purge: Forbidden' });
+  });
+
+  it('records a purge that finished with failed cleanup steps, and warns', async () => {
+    purge = () => json({ userId: TARGET, incomplete: ['doc-store'] });
+    expect(await run()).toEqual({ ok: true, warning: PURGE_INCOMPLETE });
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: 9,
+      entityType: 'user',
+      entityId: TARGET,
+      activity: 'purgeAllContent',
+    });
+  });
+
+  it('does not warn when every cleanup step ran', async () => {
+    purge = () => json({ userId: TARGET, incomplete: [] });
+    expect(await run()).toEqual({ ok: true });
   });
 
   it('records a purge a hold stopped part-way, and says it stopped', async () => {
@@ -118,22 +145,50 @@ describe('purgeAllContent with a lost answer', () => {
       'our own timeout',
       () => Promise.reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })),
     ],
-  ])('reports %s as a purge that may still be running', async (_, response) => {
+  ])('reports %s as a purge that may still be running, recorded as sent', async (_, response) => {
     purge = response;
     expect(await run()).toEqual({ ok: false, error: PURGE_MAY_BE_RUNNING });
+    // Never as a purge: it may not have run.
+    expect(recordModActivity.mock.calls).toEqual([
+      [{ userId: 9, entityType: 'user', entityId: TARGET, activity: PURGE_UNCONFIRMED_ACTIVITY }],
+    ]);
   });
 
-  it('reports a request that never left as a failure', async () => {
+  it('reports a request that never left as a failure, recording nothing', async () => {
     purge = () =>
       Promise.reject(
         Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
       );
     expect(await run()).toEqual({ ok: false, error: 'Purge failed.' });
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   it('passes a refusal the endpoint wrote through to the operator', async () => {
     purge = () => json({ message: 'Invalid userId' }, 400);
     expect(await run()).toEqual({ ok: false, error: 'Purge: Invalid userId' });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('an unconfirmed purge in the activity panel', () => {
+  it('reads as sent, not confirmed, never as a purge', () => {
+    expect(activityBadge(PURGE_UNCONFIRMED_ACTIVITY)).toBe('Purge sent, not confirmed');
+    expect(activityLabel(PURGE_UNCONFIRMED_ACTIVITY)).toBe('Purge sent, not confirmed');
+    // Control: a confirmed purge keeps its own name.
+    expect(activityBadge('purgeAllContent')).toBe('purgeAllContent');
+  });
+
+  // A tripwire on text, not a render: this app has no Svelte test tier (see
+  // feedback-panel-tripwires.test.ts). It catches the panel going back to the raw name.
+  it('is how the user lookup panel labels each row', () => {
+    const panel = readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../../routes/retool/user-lookup/ModActivityPanel.svelte'
+      ),
+      'utf8'
+    );
+    expect(panel).toMatch(/<Badge variant="secondary">\{activityBadge\(row\.activity\)\}<\/Badge>/);
   });
 });
 

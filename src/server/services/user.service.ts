@@ -79,7 +79,7 @@ import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-ind
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { refundBidsForVersions } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import {
   isCosmeticAvailable,
@@ -1386,6 +1386,15 @@ export const updateAccountScope = async ({
   }
 };
 
+/** The listed ids whose row no longer exists, read on the primary. */
+async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids: number[]) {
+  if (!ids.length) return [];
+  const left = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
+  const kept = new Set(left.map((r) => r.id));
+  return ids.filter((i) => !kept.has(i));
+}
+
 /** Queues a search-index Delete for each listed row that no longer exists. */
 async function unindexDeleted(
   lists: [
@@ -1395,17 +1404,77 @@ async function unindexDeleted(
   ][]
 ) {
   for (const [index, table, rows] of lists) {
-    if (!rows.length) continue;
-    const ids = rows.map((r) => r.id);
-    const left = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
-    const kept = new Set(left.map((r) => r.id));
-    const gone = ids.filter((i) => !kept.has(i));
+    const gone = await goneIds(
+      table,
+      rows.map((r) => r.id)
+    );
     if (gone.length)
       await index.queueUpdate(
         gone.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
       );
   }
+}
+
+// `modelIds` alone when it could not be read which models went: some may still hold live bids, so
+// it names no versions to refund.
+type BidRefundFailure =
+  | { versionIds: number[]; transactionIds?: string[]; error?: string }
+  | { modelIds: number[]; error: string };
+
+/**
+ * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
+ * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
+ * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
+ */
+async function refundBidsForDeletedModels(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[],
+  wipe: { userId: number; actorUserId: number | null }
+): Promise<BidRefundFailure[]> {
+  const failures = await refundEachDeletedModel(models);
+  for (const failure of failures)
+    logToAxiom({
+      name: 'bid-refund-failed',
+      type: 'error',
+      message: 'A content wipe could not refund bids; refund them by hand',
+      source: 'remove-all-content',
+      userId: wipe.userId,
+      moderatorId: wipe.actorUserId,
+      ...failure,
+    }).catch(() => undefined);
+  return failures;
+}
+
+async function refundEachDeletedModel(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[]
+): Promise<BidRefundFailure[]> {
+  const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
+  let gone: Set<number>;
+  try {
+    gone = new Set(
+      await goneIds(
+        'Model',
+        models.map((m) => m.id)
+      )
+    );
+  } catch (e) {
+    return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
+  }
+  const failures: BidRefundFailure[] = [];
+  for (const m of models) {
+    if (!gone.has(m.id)) continue;
+    const versionIds = versionIdsOf(m);
+    try {
+      const { refundFailed } = await refundBidsForVersions({
+        versionIds,
+        name: m.name,
+        notificationKey: m.id,
+      });
+      if (refundFailed.length) failures.push({ versionIds, transactionIds: refundFailed });
+    } catch (e) {
+      failures.push({ versionIds, error: (e as Error).message });
+    }
+  }
+  return failures;
 }
 
 /**
@@ -1421,16 +1490,23 @@ async function unindexDeleted(
 export const removeAllContent = async ({
   id,
   actorUserId = null,
+  claimedModeratorId = null,
 }: {
   id: number;
   actorUserId?: number | null;
+  /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
+  claimedModeratorId?: number | null;
 }) => {
+  const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertAccountNotUnderLegalHold(id);
   const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
 
-  const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
+  const models = await dbRead.model.findMany({
+    where: { userId: id },
+    select: { id: true, name: true, modelVersions: { select: { id: true } } },
+  });
   const images = await dbRead.image.findMany({
     where: { userId: id },
     select: { id: true, url: true },
@@ -1540,35 +1616,51 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
+    await refundBidsForDeletedModels(models, alertedBy);
     throw new LegalHoldStoppedError();
   }
 
-  await modelsSearchIndex.queueUpdate(
-    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await imagesSearchIndex.queueUpdate(
-    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await imagesMetricsSearchIndex.queueUpdate(
-    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await articlesSearchIndex.queueUpdate(
-    articles.map((a) => ({ id: a.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await collectionsSearchIndex.queueUpdate(
-    collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await bountiesSearchIndex.queueUpdate(
-    bounties.map((b) => ({ id: b.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
+  // next step still runs; only the hold re-check below stops the rest.
+  const incomplete: string[] = [];
+  const failed = (step: string, message: string, details?: Record<string, unknown>) => {
+    incomplete.push(step);
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: `Step failed after the wipe: ${message}`,
+      step,
+      userId: id,
+      ...details,
+    }).catch(() => undefined);
+  };
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      failed(step, (error as Error)?.message);
+    }
+  };
+  const unindex = (step: string, index: typeof modelsSearchIndex, rows: { id: number }[]) =>
+    runStep(step, () =>
+      index.queueUpdate(
+        rows.map((r) => ({ id: r.id, action: SearchIndexUpdateQueueAction.Delete }))
+      )
+    );
 
-  await userMetrics.queueUpdate(id);
-  await articleMetrics.queueUpdate(articles.map((a) => a.id));
+  await unindex('index-models', modelsSearchIndex, models);
+  await unindex('index-images', imagesSearchIndex, images);
+  await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
+  await unindex('index-articles', articlesSearchIndex, articles);
+  await unindex('index-collections', collectionsSearchIndex, collections);
+  await unindex('index-bounties', bountiesSearchIndex, bounties);
+  await unindex('index-user', usersSearchIndex, [{ id }]);
 
-  for (const m of models) {
-    await deleteBidsForModel({ modelId: m.id });
-  }
+  await runStep('user-metrics', () => userMetrics.queueUpdate(id));
+  await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
+
+  const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
@@ -1582,48 +1674,29 @@ export const removeAllContent = async ({
     throw new LegalHoldStoppedError();
   });
 
-  // ── App Blocks per-user storage (W4) ────────────────────────────────────────
-  // Everything above lives in the MAIN db (plus S3 + the search indexes). A
-  // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in
-  // the SEPARATE apps database, reached through a different pool, and nothing in
-  // this function could see them. Before this, a moderator hard-wipe left them
-  // behind in full — `user-storage-purge.service.ts` names that as the second of
-  // the two gaps it exists to close, and closing it needs a caller.
+  // ── App Blocks per-user storage ─────────────────────────────────────────────
+  // A user's App Storage rows live in per-app `app_<slug>` schemas in the separate
+  // apps database, so nothing above this point reaches them.
   //
-  // 🔴 LAST, AND LOG-AND-CONTINUE. Same posture as the (3c) storage-provision
-  // block in `publish-request.service.ts`, for the same reason. The wipe is
-  // already complete by the time we get here, there is no transaction spanning
-  // the two databases, and a purge failure must NEVER abort or appear to undo it:
-  // a moderator's content wipe failing because an apps-DB schema was briefly
-  // unreachable would be a regression, not a safety feature. On ANY error we warn
-  // and return normally; the storage is recoverable via
-  // `apps.mod.userStorage.purgeAccount`, which is exactly this call by hand.
+  // 🔴 LAST, AND LOG-AND-CONTINUE: the main-database wipe is already complete and
+  // no transaction spans the two databases, so a failure here is logged and named
+  // in `incomplete`, never thrown. Recover by hand with
+  // `apps.mod.userStorage.purgeAccount`.
   //
-  // Dynamic import, again mirroring (3c): this module is already enormous and the
-  // purge service pulls in the apps-db pool, which nothing else on this path
-  // needs.
+  // Dynamic import: this module is already enormous and the purge service pulls in
+  // the apps-db pool, which nothing else on this path needs.
   //
-  // AUDIT SURVIVES THE FAILURE MODE, NOT JUST THE HAPPY PATH: the purge writes
-  // its `AppListingModerationEvent` row BEFORE it deletes anything, so a crash
-  // between the two leaves a record of what was about to go, never a silent
-  // destruction. That ordering is the purge's own safety argument and calling it
-  // from here does not weaken it.
+  // The purge writes its audit row before deleting anything; keep it that way.
   //
-  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep is log-and-continue BY
-  // DESIGN: it catches each app's failure into `failures[]` and RESOLVES. So a
-  // bare try/catch here sees a clean resolve and says nothing, no matter how
-  // much failed — the outer catch only ever fires for an enumeration-stage
-  // fault. That is not hypothetical: until the `action` CHECK widen is applied,
-  // EVERY app's audit write is rejected with 23514, every app lands in
-  // `failures[]`, nothing is purged, and the operator would have seen a silent
-  // success. A warning that cannot fire for the most likely failure is worse
-  // than no warning, because it reads as coverage.
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep resolves even when apps fail
+  // (they land in `failures[]`), so a bare try/catch sees a clean resolve.
   try {
     const { purgeUserAppStorageForAccountWipe } = await import(
       '~/server/services/apps/user-storage-purge.service'
     );
     const result = await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
     if (result.failures.length > 0) {
+      failed('app-storage', `${result.failures.length} app(s) failed`);
       // eslint-disable-next-line no-console
       console.warn(
         `[removeAllContent] App Blocks per-user storage purge INCOMPLETE (userId=${id}): ` +
@@ -1647,6 +1720,7 @@ export const removeAllContent = async ({
       // deterministically, forever. (Re-running genuinely does help for
       // `failures[]`, which is transient, and the `unmappedSchemas` warning
       // correctly asks for a human; this one needed its own remedy.)
+      failed('app-storage-truncated', 'schema sweep hit its candidate cap');
       // eslint-disable-next-line no-console
       console.warn(
         `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
@@ -1663,6 +1737,7 @@ export const removeAllContent = async ({
       // Reported separately because it is a different condition with a different
       // remedy: these schemas hold the user's rows but map to no single AppBlock,
       // so the sweep deliberately skipped them and they need a human.
+      failed('app-storage-unmapped', `${result.unmappedSchemas.length} unmapped schema(s)`);
       // eslint-disable-next-line no-console
       console.warn(
         `[removeAllContent] App Blocks per-user storage: ${result.unmappedSchemas.length} ` +
@@ -1672,6 +1747,7 @@ export const removeAllContent = async ({
     }
   } catch (err) {
     // The enumeration-stage faults only — a dead apps DB, a bad pool checkout.
+    failed('app-storage', err instanceof Error ? err.message : String(err));
     // eslint-disable-next-line no-console
     console.warn(
       `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +
@@ -1681,7 +1757,10 @@ export const removeAllContent = async ({
     );
   }
 
-  await wipeAccountFromDocStore(id);
+  const docStoreError = await wipeAccountFromDocStore(id);
+  if (docStoreError) failed('doc-store', docStoreError);
+
+  return { incomplete };
 };
 
 /**
@@ -1689,7 +1768,7 @@ export const removeAllContent = async ({
  * private documents, authored shared documents and marks deleted, usage released, in
  * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
  * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
- * wipe — a failure is logged, as the purge above logs its own.
+ * wipe: a failure is logged and returned for `incomplete`.
  *
  * RETRY: nothing retries it automatically. A wiped account leaves no state in the main database
  * that a sweep could find it by (the user row stays, with no flag), so the review-storage sweep's
@@ -1697,7 +1776,7 @@ export const removeAllContent = async ({
  * (`user.removeAllContent`, or the webhook) for that user: every step of it, this one included,
  * only removes what is still there. A namespace that failed rolled back in full.
  */
-async function wipeAccountFromDocStore(userId: number): Promise<void> {
+async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
   try {
     const { getDocStoreMaintenance } = await import(
       '~/server/services/apps/doc-store-maintenance.instance'
@@ -1712,7 +1791,9 @@ async function wipeAccountFromDocStore(userId: number): Promise<void> {
           `re-run user.removeAllContent for this user to retry. Failures: ` +
           result.failures.map((f) => `${f.appId}/${f.ns}: ${f.error}`).join('; ')
       );
+      return `${result.failures.length} namespace(s) failed`;
     }
+    return null;
   } catch (err) {
     const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
     // No store connection, or one the store refuses: nothing can be removed through it. Not
@@ -1720,13 +1801,15 @@ async function wipeAccountFromDocStore(userId: number): Promise<void> {
     // here if the store was configured, written to, and then disabled or pointed at a role it
     // refuses (logged once, by the store instance); re-running the wipe once the store is back
     // removes them.
-    if (isDocStoreError(err, 'storage_disabled')) return;
+    if (isDocStoreError(err, 'storage_disabled')) return null;
+    const message = err instanceof Error ? err.message : String(err);
     // eslint-disable-next-line no-console
     console.warn(
       `[removeAllContent] App Blocks document store wipe failed (userId=${userId}); ` +
         `the content wipe COMPLETED and is unaffected — re-run user.removeAllContent for this ` +
-        `user to retry: ${err instanceof Error ? err.message : String(err)}`
+        `user to retry: ${message}`
     );
+    return message;
   }
 }
 

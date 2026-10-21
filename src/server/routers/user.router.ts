@@ -1,9 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import {
-  LEGAL_HOLD_REFUSAL,
-  LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  legalHoldMessage,
 } from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
@@ -319,17 +318,16 @@ export const userRouter = router({
         type: 'RemoveContent',
         targetUserId: input.id,
       });
-    await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch((e: unknown) => {
-      // Part of the account was deleted, so it is recorded like a wipe that finished.
-      if (e instanceof LegalHoldStoppedError) {
-        track();
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_STOPPED });
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch(
+      (e: unknown) => {
+        if (!(e instanceof LegalHoldError)) throw e;
+        // Part of the account was deleted, so it is recorded like a wipe that finished.
+        if (e instanceof LegalHoldStoppedError) track();
+        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
       }
-      if (e instanceof LegalHoldError)
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
-      throw e;
-    });
+    );
     track();
+    return { incomplete: result.incomplete };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

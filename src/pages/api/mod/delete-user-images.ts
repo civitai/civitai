@@ -9,10 +9,10 @@ import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
   isLegalHoldAbort,
-  LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  legalHoldMessage,
 } from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -71,7 +71,7 @@ export default ModEndpoint(
       if (e instanceof LegalHoldError)
         return handleEndpointError(
           res,
-          new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL })
+          new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) })
         );
       return handleEndpointError(res, e);
     }
