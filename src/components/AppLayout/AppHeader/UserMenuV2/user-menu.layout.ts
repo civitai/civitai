@@ -2,6 +2,7 @@ import type { Icon, IconProps } from '@tabler/icons-react';
 import { IconBookmark, IconChartHistogram, IconCrown, IconLifebuoy } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
+import type { UserMenuGroupId } from '~/shared/constants/user-menu-groups.constants';
 
 /**
  * Data only: item definitions (link, icon, visibility, badge) live in the registry, keyed by the
@@ -10,7 +11,7 @@ import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 export type UserMenuItemNode = { kind: 'item'; id: UserMenuItemId };
 export type UserMenuGroupNode = {
   kind: 'group';
-  id: string;
+  id: UserMenuGroupId;
   label: string;
   icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
   children: UserMenuNode[];
@@ -21,7 +22,7 @@ export const USER_MENU_MAX_DEPTH = 3;
 
 const item = (id: UserMenuItemId): UserMenuItemNode => ({ kind: 'item', id });
 const group = (
-  id: string,
+  id: UserMenuGroupId,
   label: string,
   icon: UserMenuGroupNode['icon'],
   children: UserMenuNode[]
@@ -75,3 +76,20 @@ export const USER_MENU_SIGNED_OUT_LAYOUT: UserMenuNode[] = [
   getHelp,
   item('sign-in'),
 ];
+
+/** The innermost group holding `id` in `layout`: null for a top-level item, undefined if absent. */
+export function findUserMenuGroup(
+  layout: UserMenuNode[],
+  id: UserMenuItemId,
+  parent: UserMenuGroupId | null = null
+): UserMenuGroupId | null | undefined {
+  for (const node of layout) {
+    if (node.kind === 'item') {
+      if (node.id === id) return parent;
+      continue;
+    }
+    const found = findUserMenuGroup(node.children, id, node.id);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
