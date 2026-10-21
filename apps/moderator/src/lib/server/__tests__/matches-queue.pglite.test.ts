@@ -62,7 +62,8 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -157,7 +158,16 @@ describe('Needs review: file matches', () => {
       otherFlaggedModels: 1,
       pastAppeals: { approved: 0, rejected: 0, void: 0, pending: 0 },
     });
-    expect(row.coverImages).toEqual([{ id: 1, url: 'cover-url', nsfwLevel: 1 }]);
+    expect(row.coverImages).toEqual([
+      {
+        id: 1,
+        url: 'cover-url',
+        nsfwLevel: 1,
+        type: 'image',
+        minor: false,
+        acceptableMinor: false,
+      },
+    ]);
     // The shared file as this model stores it: its own name for the bytes the seed also carries.
     expect(row.match).toMatchObject({
       fileName: 'file-11.safetensors',

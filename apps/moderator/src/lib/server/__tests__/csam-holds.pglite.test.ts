@@ -104,11 +104,14 @@ beforeEach(async () => {
       "userId" INTEGER);
     CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
-      "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
-    INSERT INTO "Image" VALUES
+      "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
+      "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false);
+    INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") VALUES
       (1, 'k-a', 'image', 10, 2, 4), (2, 'k-b', 'image', 10, 1, 1), (3, 'k-c', 'video', 10, 0, 1),
       (4, 'k-d', 'image', 10, 3, 1), (5, 'k-e', 'image', 10, 4, 1), (6, 'k-f', 'image', 10, 5, 1),
       (7, 'k-g', 'image', 60, 0, 1);
+    UPDATE "Image" SET "minor" = true WHERE id = 2;
+    UPDATE "Image" SET "acceptableMinor" = true WHERE id = 1;
     INSERT INTO "Post" VALUES (10, 'A post title', '2026-10-01'), (60, NULL, NULL);
     INSERT INTO "Model" VALUES (70, 'A model name', 'Published');
   `);
@@ -423,7 +426,7 @@ describe('getHoldCoverImages', () => {
         (803, NULL, '2026-10-01', 11, 711),
         (804, NULL, NULL, 10, 720), (805, NULL, '2026-10-01', 10, 721),
         (806, NULL, '2026-10-01', 11, 730);
-      INSERT INTO "Image" VALUES
+      INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") VALUES
         (90, 'v-clip', 'video', 802, 0, 1), (91, 'm-first', 'image', 802, 1, 1),
         (92, 'm-later', 'image', 801, 0, 1), (93, 'm-review', 'image', 803, 0, 1),
         (94, 'u-draft', 'image', 804, 0, 1), (95, 'p-live', 'image', 805, 0, 1),
@@ -431,29 +434,32 @@ describe('getHoldCoverImages', () => {
     `);
   });
 
-  it('returns the first four stills of a post in post order with the true count, skipping videos', async () => {
+  it('returns the first four images of a post in post order, videos included, with the true count', async () => {
     const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(2, 'Post', 60)]);
+    const flags = { minor: false, acceptableMinor: false };
     expect(covers.get(1)).toEqual({
       images: [
-        { id: 2, url: 'k-b', nsfwLevel: 1 },
-        { id: 1, url: 'k-a', nsfwLevel: 4 },
-        { id: 4, url: 'k-d', nsfwLevel: 1 },
-        { id: 5, url: 'k-e', nsfwLevel: 1 },
+        { id: 3, url: 'k-c', nsfwLevel: 1, type: 'video', ...flags },
+        { id: 2, url: 'k-b', nsfwLevel: 1, type: 'image', minor: true, acceptableMinor: false },
+        { id: 1, url: 'k-a', nsfwLevel: 4, type: 'image', minor: false, acceptableMinor: true },
+        { id: 4, url: 'k-d', nsfwLevel: 1, type: 'image', ...flags },
       ],
-      total: 5,
+      total: 6,
     });
-    expect(covers.get(2)).toEqual({ images: [{ id: 7, url: 'k-g', nsfwLevel: 1 }], total: 1 });
+    expect(covers.get(2)).toEqual({
+      images: [{ id: 7, url: 'k-g', nsfwLevel: 1, type: 'image', ...flags }],
+      total: 1,
+    });
   });
 
-  it("picks a model's owner stills by version then post order, ignoring other users' posts and videos", async () => {
+  it("picks a model's owner media by version then post order, ignoring other users' posts", async () => {
     const covers = await getHoldCoverImages([hold(3, 'Model', 71)]);
-    expect(covers.get(3)).toEqual({
-      images: [
-        { id: 91, url: 'm-first', nsfwLevel: 1 },
-        { id: 92, url: 'm-later', nsfwLevel: 1 },
-      ],
-      total: 2,
-    });
+    expect(covers.get(3)?.images.map((i) => [i.url, i.type])).toEqual([
+      ['v-clip', 'video'],
+      ['m-first', 'image'],
+      ['m-later', 'image'],
+    ]);
+    expect(covers.get(3)?.total).toBe(3);
   });
 
   it('prefers a published post over an unpublished one', async () => {
@@ -474,7 +480,7 @@ describe('getHoldCoverImages', () => {
   it('gives every hold its own entry when two holds share an entity', async () => {
     const covers = await getHoldCoverImages([hold(1, 'Post', 10), hold(8, 'Post', 10)]);
     expect(covers.get(1)).toEqual(covers.get(8));
-    expect(covers.get(8)?.total).toBe(5);
+    expect(covers.get(8)?.total).toBe(6);
   });
 
   it('bounds a model with many images to four and a capped count', async () => {
@@ -482,8 +488,8 @@ describe('getHoldCoverImages', () => {
       INSERT INTO "Model" VALUES (74, 'Big', 'Published', 10), (75, 'Huge', 'Published', 10);
       INSERT INTO "ModelVersion" VALUES (740, 74, 0), (750, 75, 0);
       INSERT INTO "Post" VALUES (810, NULL, '2026-10-01', 10, 740), (811, NULL, '2026-10-01', 10, 750);
-      INSERT INTO "Image" SELECT 6000 + g, 'big-' || g, 'image', 810, g, 1 FROM generate_series(1, 6) g;
-      INSERT INTO "Image" SELECT 7000 + g, 'huge-' || g, 'image', 811, g, 1 FROM generate_series(1, 150) g;
+      INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") SELECT 6000 + g, 'big-' || g, 'image', 810, g, 1 FROM generate_series(1, 6) g;
+      INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") SELECT 7000 + g, 'huge-' || g, 'image', 811, g, 1 FROM generate_series(1, 150) g;
     `);
     const covers = await getHoldCoverImages([hold(1, 'Model', 74), hold(2, 'Model', 75)]);
     expect(covers.get(1)?.images.map((i) => i.url)).toEqual(['big-1', 'big-2', 'big-3', 'big-4']);
@@ -495,7 +501,7 @@ describe('getHoldCoverImages', () => {
   it('bounds a post with many images the same way', async () => {
     await db.exec(`
       INSERT INTO "Post" VALUES (812, NULL, '2026-10-01', 10, NULL);
-      INSERT INTO "Image" SELECT 8000 + g, 'post-' || g, 'image', 812, g, 1 FROM generate_series(1, 150) g;
+      INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") SELECT 8000 + g, 'post-' || g, 'image', 812, g, 1 FROM generate_series(1, 150) g;
     `);
     const covers = await getHoldCoverImages([hold(1, 'Post', 812)]);
     expect(covers.get(1)?.images.map((i) => i.url)).toEqual([

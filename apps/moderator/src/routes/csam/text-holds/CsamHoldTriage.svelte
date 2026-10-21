@@ -131,7 +131,7 @@
       href={state.href}
       selected={state.selected}
       title={holdTitle(row)}
-      coverUrl={row.coverImages[0]?.url}
+      coverUrl={row.coverImages.find((image) => image.type !== 'video')?.url}
       coverBlurred={!imageReveal.on}
       meta={holdMeta(row)}
       verdict={state.verdict}

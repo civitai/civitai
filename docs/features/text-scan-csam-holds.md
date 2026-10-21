@@ -8,10 +8,13 @@ held text as the scan composed it, the model's reason, the author, when the hold
 created, the prompt id and the workflow id, with a link to the content where one exists. Decided
 holds open read-only with their outcome, decider, time and note.
 
-Post and Model holds show a row thumbnail and up to four preview images, loaded with the page. They
-are blurred until the page-wide Reveal toggle (V) is on, and a blurred image does not link to the
-original. The preview count caps at "100+". The model cover-image selection is shared with the
-Model Flags pages.
+Post and Model holds show a row thumbnail and up to four preview tiles, loaded with the page. A
+video is a still poster frame with a play icon (it never autoplays, and does not preview on hover
+while blurred) and counts toward the total. A tile carries the browsing-level label and, when the
+image scan tagged it, a "minor" or "acceptable minor" badge. Tiles are blurred until the page-wide
+Reveal toggle (V) is on, and a blurred tile does not link to the original. The preview count caps
+at "100+". The model cover selection is shared with the Model Flags pages, which show videos and
+the minor tag the same way.
 
 ## Where holds come from
 

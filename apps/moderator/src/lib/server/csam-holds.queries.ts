@@ -182,33 +182,40 @@ export async function countPendingCsamHolds(entityType?: string): Promise<number
   return Number(row?.count ?? 0);
 }
 
-export type CsamHoldImage = { id: number; url: string; nsfwLevel: number };
+export type CsamHoldImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  type: string;
+  minor: boolean;
+  acceptableMinor: boolean;
+};
 
 export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
 
 export const HOLD_IMAGE_LIMIT = 4;
 
-type CoverRow = { entityId: number; id: number; url: string; nsfwLevel: number; total: string };
+type CoverRow = CsamHoldImage & { entityId: number; total: string };
 
 const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
   const byEntity = new Map<number, CsamHoldCovers>();
-  for (const { entityId, id, url, nsfwLevel, total } of rows) {
+  for (const { entityId, total, ...image } of rows) {
     const entry = byEntity.get(entityId) ?? { images: [], total: Number(total) };
-    entry.images.push({ id, url, nsfwLevel });
+    entry.images.push(image);
     byEntity.set(entityId, entry);
   }
   return byEntity;
 };
 
-/** A post's first stills in post order (lowest `index`, then id); videos are left out. One read for every post, bounded per post. */
+/** A post's first images and videos in post order (lowest `index`, then id). One read for every post, bounded per post. */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
-    select p.id as "entityId", c.id, c.url, c."nsfwLevel", n.total
+    select p.id as "entityId", c.id, c.url, c."nsfwLevel", c.type::text as type, c.minor, c."acceptableMinor", n.total
     from "Post" p
     cross join lateral (
-      select i.id, i.url, i."nsfwLevel", i.index
+      select i.id, i.url, i."nsfwLevel", i.type, i.minor, i."acceptableMinor", i.index
       from "Image" i
-      where i."postId" = p.id and i.type::text = 'image'
+      where i."postId" = p.id and i.type::text in ('image', 'video')
       order by i.index asc nulls last, i.id asc
       limit ${sql.raw(String(HOLD_IMAGE_LIMIT))}
     ) c
@@ -216,7 +223,7 @@ async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCov
       select count(*)::int as total
       from (
         select 1 from "Image" i
-        where i."postId" = p.id and i.type::text = 'image'
+        where i."postId" = p.id and i.type::text in ('image', 'video')
         limit ${sql.raw(String(PREVIEW_COUNT_CAP + 1))}
       ) capped
     ) n
@@ -225,11 +232,11 @@ async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCov
   return toCovers(rows);
 }
 
-/** A model's first stills, chosen as the model flags queues choose theirs (`modelCoverImages`). One
+/** A model's first images and videos, chosen as the model flags queues choose theirs (`modelCoverImages`). One
  *  read for every model, bounded per model like the post covers. */
 async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldCovers>> {
   const { rows } = await sql<CoverRow>`
-    select m.id as "entityId", c.id, c.url, c."nsfwLevel", n.total
+    select m.id as "entityId", c.id, c.url, c."nsfwLevel", c.type, c.minor, c."acceptableMinor", n.total
     from "Model" m
     cross join lateral (${modelCoverImages(
       sql.ref('m.id'),

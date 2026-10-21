@@ -58,7 +58,8 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -266,13 +267,16 @@ describe('Needs review: held detections', () => {
     const { items } = await needsReview({ limit: 10 });
     const covers = (id: number) =>
       items.find((r) => r.modelId === id)?.coverImages.map((c) => c.url);
-    expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
+    expect(covers(1)).toEqual(['published.jpg', 'clip.mp4', 'draft.jpg']);
     expect(covers(7)).toEqual(['only-draft.jpg']);
     expect(covers(2)).toEqual([]);
     expect(items.find((r) => r.modelId === 1)?.coverImages[0]).toEqual({
       id: 11,
       url: 'published.jpg',
       nsfwLevel: 1,
+      type: 'image',
+      minor: false,
+      acceptableMinor: false,
     });
   });
 

@@ -211,7 +211,7 @@
     {/if}
 
     {#if row.coverImages.length}
-      <TriageCard dense title={row.entityType === 'Model' ? 'Model images' : 'Post images'}>
+      <TriageCard dense title={row.entityType === 'Model' ? 'Model media' : 'Post media'}>
         <PreviewImagesCard
           images={row.coverImages}
           total={row.imageTotal}

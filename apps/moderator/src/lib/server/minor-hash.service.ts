@@ -199,7 +199,15 @@ export type MinorHashReviewRow = {
   sameFileAppeals: SameFileAppeals;
 };
 
-export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
+export type AppealCoverImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  /** `'video'` renders as a poster frame; absent, the media is an image. */
+  type?: string;
+  minor?: boolean;
+  acceptableMinor?: boolean;
+};
 
 export type MinorFlagAppealRow = {
   appealId: number;
@@ -254,7 +262,8 @@ const APPEAL_COVER_COUNT = 4;
 const coverImagesJoin = sql`
 LEFT JOIN LATERAL (
   SELECT jsonb_agg(
-           jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
+           jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel", 'type', c.type,
+                            'minor', c.minor, 'acceptableMinor', c."acceptableMinor")
            ORDER BY ${MODEL_COVER_ORDER}
          ) AS images
   FROM (${modelCoverImages(sql.ref('pg.modelId'), sql.ref('pg.userId'), APPEAL_COVER_COUNT)}) c
