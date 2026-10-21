@@ -65,6 +65,7 @@ beforeEach(async () => {
     entityId: 55,
     userId: 900,
     text: 'held text',
+    textHash: 'h',
     meta: null,
   });
   dbMock.dbWrite.textScanHold.updateMany.mockResolvedValue({ count: 1 });
@@ -88,9 +89,10 @@ beforeEach(async () => {
   );
 });
 
-const decide = (decision: 'dismiss' | 'remove' | 'remove_ban', note?: string) =>
+const decide = (decision: 'dismiss' | 'remove' | 'remove_ban', note?: string, textHash = 'h') =>
   decideCsamHold({
     holdId: 12,
+    textHash,
     decision,
     note,
     actor: { id: 7 },
@@ -170,5 +172,33 @@ describe('claiming the hold before its effects run, against the real hold table'
     const results = await Promise.allSettled([decide('remove_ban'), decide('remove_ban')]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(mocks.toggleBan).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('deciding text that changed underneath the moderator', () => {
+  it('refuses a hash that no longer matches, running no effect and leaving no claim', async () => {
+    dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({
+      id: 12,
+      status: 'Pending',
+      entityType: 'CommentV2',
+      entityId: 55,
+      userId: 900,
+      text: 'newer text',
+      textHash: 'h2',
+      meta: null,
+    });
+    await expect(decide('remove_ban')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(mocks.removeV2).not.toHaveBeenCalled();
+    expect(mocks.toggleBan).not.toHaveBeenCalled();
+  });
+
+  it('fails the claim when a rescan swapped the text after the hold was read', async () => {
+    await db.pg.exec(`UPDATE "TextScanHold" SET "textHash" = 'h2'`);
+    await expect(decide('remove_ban')).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(mocks.toggleBan).not.toHaveBeenCalled();
+    const { rows } = await db.pg.query(`SELECT meta->'decisionClaim' AS claim FROM "TextScanHold"`);
+    expect(rows[0]).toEqual({ claim: null });
   });
 });

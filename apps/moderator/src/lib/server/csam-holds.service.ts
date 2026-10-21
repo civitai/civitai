@@ -30,16 +30,19 @@ const MAY_HAVE_COMPLETED =
 /** The main app applies the decision (removal, strike, ban) and records it with the hold in one step. */
 export async function decideCsamHold({
   holdId,
+  textHash,
   decision,
   note,
 }: {
   holdId: number;
+  /** The hold's `textHash` as the moderator saw it; the main app refuses the decision if the text changed since. */
+  textHash: string;
   decision: CsamHoldDecision;
   note?: string;
 }): Promise<CsamHoldDecisionResult> {
   const result = await callModEndpoint(
     'text-scan/csam-hold/resolve',
-    { holdId, decision, ...(note ? { note } : {}) },
+    { holdId, textHash, decision, ...(note ? { note } : {}) },
     'Decide hold'
   );
   if (!result.ok) {

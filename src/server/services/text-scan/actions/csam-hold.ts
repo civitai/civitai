@@ -24,6 +24,73 @@ function contentAtOf(meta: Record<string, unknown> | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+type PendingHoldWrite = 'created' | 'updated' | 'unchanged' | 'skipped';
+
+/**
+ * One pending hold per entity, kept current. Rescans only happen when the scanned text changed, so a
+ * second detection means new text: it replaces the pending hold's text in place instead of queueing
+ * another row. Text a moderator already ruled on is not held again; changed text after a ruling is held
+ * once more and marked as re-detected.
+ */
+async function writePendingHold(hold: {
+  entityType: string;
+  entityId: number;
+  textHash: string;
+  userId: number | null;
+  text: string;
+  reason: string;
+  workflowId: string | undefined;
+  promptId: number | null;
+  contentAt: Date | null;
+  meta: Record<string, unknown>;
+}): Promise<{ holdId: number | null; write: PendingHoldWrite; priorHoldId: number | null }> {
+  // A hold the migration superseded was never ruled on, so it neither blocks nor marks a re-detection.
+  const [decided] = await dbWrite.$queryRaw<
+    { latestId: number | null; sameText: boolean | null }[]
+  >`
+    SELECT max("id") AS "latestId", bool_or("textHash" = ${hold.textHash}) AS "sameText"
+    FROM "TextScanHold"
+    WHERE "entityType" = ${hold.entityType} AND "entityId" = ${hold.entityId} AND "label" = 'csam'
+      AND "status" <> 'Pending' AND "meta"->>'decision' IS DISTINCT FROM 'superseded'
+  `;
+  const priorHoldId = decided?.latestId ?? null;
+  if (decided?.sameText) return { holdId: null, write: 'skipped', priorHoldId };
+
+  const meta = JSON.stringify(
+    priorHoldId === null ? hold.meta : { ...hold.meta, kind: 'redetected', priorHoldId }
+  );
+  // The update leaves a hold mid-decision alone (a claim older than the decision's own 5 minute expiry is a
+  // crashed one): swapping the text under a moderator would apply their ruling to text they never saw.
+  const rows = await dbWrite.$queryRaw<{ id: number; inserted: boolean }[]>`
+    INSERT INTO "TextScanHold"
+      ("entityType", "entityId", "label", "textHash", "userId", "text", "reason", "workflowId",
+       "promptId", "contentAt", "meta", "updatedAt")
+    VALUES (${hold.entityType}, ${hold.entityId}, 'csam', ${hold.textHash}, ${hold.userId},
+      ${hold.text}, ${hold.reason}, ${hold.workflowId ?? null}, ${hold.promptId},
+      (${hold.contentAt?.toISOString() ?? null}::timestamptz AT TIME ZONE 'UTC'),
+      ${meta}::jsonb, now())
+    ON CONFLICT ("entityType", "entityId", "label")
+      WHERE "status" = 'Pending' AND "entityType" <> 'ChatMessage'
+    DO UPDATE SET
+      "textHash" = EXCLUDED."textHash",
+      "text" = EXCLUDED."text",
+      "reason" = EXCLUDED."reason",
+      "workflowId" = EXCLUDED."workflowId",
+      "promptId" = EXCLUDED."promptId",
+      "contentAt" = EXCLUDED."contentAt",
+      "meta" = (CASE WHEN jsonb_typeof("TextScanHold"."meta") = 'object'
+        THEN "TextScanHold"."meta" - 'decisionClaim' ELSE '{}'::jsonb END) || EXCLUDED."meta",
+      "updatedAt" = now()
+    WHERE "TextScanHold"."textHash" IS DISTINCT FROM EXCLUDED."textHash"
+      AND ("TextScanHold"."meta"->'decisionClaim' IS NULL
+        OR ("TextScanHold"."meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
+    RETURNING "id", (xmax = 0) AS "inserted"
+  `;
+  const row = rows[0];
+  if (!row) return { holdId: null, write: 'unchanged', priorHoldId };
+  return { holdId: row.id, write: row.inserted ? 'created' : 'updated', priorHoldId };
+}
+
 const messageIdsOf = (meta: unknown) => {
   const ids = (meta as { messageIds?: unknown } | null)?.messageIds;
   return Array.isArray(ids) ? ids : [];
@@ -65,46 +132,74 @@ export async function applyCsamHold({
   if (!outcome.csam?.detected) return;
 
   const userId = subject.userId && subject.userId > 0 ? subject.userId : null;
-  const coveredBy =
-    entityType === 'ChatMessage' ? await coveringChatHold(userId, subject.meta) : null;
+  // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
+  const text = sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS));
+  const reason = sanitizeForPostgres(outcome.csam.reason);
+  const promptId = promptIds?.csam ?? null;
+  const contentAt = contentAtOf(subject.meta);
+  const meta = (subject.meta ? storable(subject.meta) : undefined) as
+    | Prisma.InputJsonObject
+    | undefined;
+
   let holdId: number | null = null;
-  if (coveredBy === null) {
-    try {
-      const hold = await dbWrite.textScanHold.create({
-        data: {
-          entityType,
-          entityId,
-          label: 'csam',
-          textHash,
-          userId,
-          // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
-          text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
-          reason: sanitizeForPostgres(outcome.csam.reason),
-          workflowId,
-          promptId: promptIds?.csam ?? null,
-          contentAt: contentAtOf(subject.meta),
-          meta: (subject.meta ? storable(subject.meta) : undefined) as
-            | Prisma.InputJsonValue
-            | undefined,
-        },
-        select: { id: true },
-      });
-      holdId = hold.id;
-    } catch (error) {
-      if (!isPrismaUniqueViolation(error)) throw error;
+  let write: PendingHoldWrite | 'covered' | 'duplicate' = 'unchanged';
+  let coveredBy: number | null = null;
+  let priorHoldId: number | null = null;
+  if (entityType === 'ChatMessage') {
+    coveredBy = await coveringChatHold(userId, subject.meta);
+    write = 'covered';
+    if (coveredBy === null) {
+      write = 'duplicate';
+      try {
+        const hold = await dbWrite.textScanHold.create({
+          data: {
+            entityType,
+            entityId,
+            label: 'csam',
+            textHash,
+            userId,
+            text,
+            reason,
+            workflowId,
+            promptId,
+            contentAt,
+            meta,
+          },
+          select: { id: true },
+        });
+        holdId = hold.id;
+        write = 'created';
+      } catch (error) {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      }
     }
+  } else {
+    ({ holdId, write, priorHoldId } = await writePendingHold({
+      entityType,
+      entityId,
+      textHash,
+      userId,
+      text,
+      reason,
+      workflowId,
+      promptId,
+      contentAt,
+      meta: (meta ?? {}) as Record<string, unknown>,
+    }));
   }
 
   logToAxiom({
     name: 'text-scan',
     type: 'csam-hold',
-    message: holdId ? 'csam hold created, awaiting moderator' : 'csam hold already recorded',
+    message: `csam hold ${write}`,
     entityType,
     entityId,
     workflowId,
     holdId,
-    created: holdId !== null,
+    write,
+    created: write === 'created',
     ...(coveredBy !== null ? { coveredBy } : {}),
+    ...(priorHoldId !== null ? { priorHoldId } : {}),
   }).catch(() => null);
 }
 

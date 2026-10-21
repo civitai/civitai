@@ -74,11 +74,16 @@ export const CSAM_HOLD_DECISION_GRANTS: Partial<
 
 type DecideArgs = {
   holdId: number;
+  /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
+  textHash: string;
   decision: CsamHoldDecision;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
 };
+
+export const STALE_HOLD_MESSAGE =
+  'This hold changed after you opened it (the author edited the content). Reload to review the new text.';
 
 type HeldRow = {
   id: number;
@@ -227,7 +232,7 @@ const subjectTypeOf = (entityType: string) =>
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
-  const { holdId, decision, note, actor } = args;
+  const { holdId, textHash, decision, note, actor } = args;
   const plan = PLAN[decision];
 
   const hold = await dbWrite.textScanHold.findFirst({
@@ -239,11 +244,13 @@ export async function decideCsamHold(args: DecideArgs) {
       entityId: true,
       userId: true,
       text: true,
+      textHash: true,
       meta: true,
     },
   });
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
+  if (hold.textHash !== textHash) throw throwConflictError(STALE_HOLD_MESSAGE);
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(
@@ -257,12 +264,13 @@ export async function decideCsamHold(args: DecideArgs) {
     UPDATE "TextScanHold"
     SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
       || jsonb_build_object('decisionClaim', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
-    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending'
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${textHash}
       AND ("meta"->'decisionClaim' IS NULL
         OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
     RETURNING "meta"->'decisionClaim'->>'at' AS "at"
   `;
-  if (!claimed.length) throw throwConflictError('Hold already decided or missing.');
+  // The claim also checks the hash, so a rescan landing after the read above fails here as stale.
+  if (!claimed.length) throw throwConflictError('Hold already decided, changed or missing.');
 
   const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
   try {
@@ -274,7 +282,7 @@ export async function decideCsamHold(args: DecideArgs) {
     const decidedAt = new Date();
     await dbWrite.$transaction(async (tx) => {
       const { count } = await tx.textScanHold.updateMany({
-        where: { id: holdId, label: 'csam', status: 'Pending' },
+        where: { id: holdId, label: 'csam', status: 'Pending', textHash },
         data: {
           status,
           decidedAt,

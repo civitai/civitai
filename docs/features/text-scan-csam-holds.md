@@ -19,6 +19,32 @@ The text-scan callback writes a hold when the `csam` label is in review mode and
 positive; nothing else happens to the content or its author. See the hold paragraph in
 [text-scan.md](text-scan.md).
 
+### One hold per entity
+
+Every type except `ChatMessage` keeps at most one Pending hold per entity, enforced by a partial
+unique index on `(entityType, entityId, label)` where the status is Pending. Rescans only run when
+the scanned text changed, so a later detection means new text, and `applyCsamHold` handles it as one
+upsert:
+
+- A Pending hold exists: it is updated in place (text, reason, text hash, workflow, prompt, content
+  time, meta) and keeps its queue position. A hold with a decision in progress (`meta.decisionClaim`
+  younger than 5 minutes) is left alone; the next scan after that decision holds the new text.
+- The same text hash is already decided (dismissed or removed): nothing is written, because a
+  moderator ruled on that exact text.
+- Changed text after a decision, with nothing Pending: a new hold is inserted with
+  `meta.kind = 'redetected'` and `meta.priorHoldId` set to the latest ruling. The queue shows a
+  re-detected chip and "Dismissed before by ... ago" with a link to that hold.
+- A clean rescan never closes a Pending hold; a moderator does.
+
+`ChatMessage` holds keep grouping by conversation window and stay unique per text hash.
+
+The moderator app sends the hold's `textHash` with every decision. The main app refuses (409) a
+decision whose hash no longer matches, and the moderator is told to reload, so a ruling never applies
+to text the moderator did not see. Migration `20261112120000_text_scan_hold_one_pending` closes
+existing duplicate Pending holds as `Dismissed` with `meta.decision = 'superseded'` (shown as
+"Superseded by a newer scan"; not a ruling, so it neither blocks nor marks a re-detection). It is
+applied by hand before the main app that relies on the new index is deployed.
+
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
@@ -57,7 +83,7 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   record (`record_label`, question `csam_text.verdict`, value `csam` or `not_csam`, the action as
   the reason) are then one transaction. If anything fails the hold stays Pending and the same
   decision can be sent again. The action is also kept in the hold's `meta.decision`.
-- The endpoint refuses (409) a hold that is missing or no longer Pending, and logs every decision to
+- The endpoint refuses (409) a hold that is missing, no longer Pending or whose text changed since the moderator opened it, and logs every decision to
   Axiom (`text-scan` / `csam-hold-decision`).
 - Decision keys 1-5 are Dismiss, Remove, Remove + strike, Remove + ban, Ban + file NCMEC report.
   A key is disabled when the content type cannot be removed or the moderator lacks the grant.

@@ -88,6 +88,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 const decideSchema = z.object({
   holdId: int4Id,
+  textHash: z.string().min(1).max(200),
   decision: z.enum(CSAM_HOLD_DECISIONS),
   note: z
     .string()

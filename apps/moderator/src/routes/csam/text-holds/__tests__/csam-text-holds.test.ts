@@ -30,8 +30,15 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
 }));
 
 const { actions, load } = await import('../+page.server');
-const { canRemoveHeld, holdDecisionEnabled, holdMeta, holdTitle, quotedPhrases, splitEmptyTypes } =
-  await import('../hold-entity');
+const {
+  canRemoveHeld,
+  decisionLabel,
+  holdDecisionEnabled,
+  holdMeta,
+  holdTitle,
+  quotedPhrases,
+  splitEmptyTypes,
+} = await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -185,13 +192,18 @@ describe('csam text holds decide', () => {
   it.each(['dismiss', 'remove', 'remove_strike', 'remove_ban', 'remove_ban_report'])(
     'sends %s to the main app with the note',
     async (decision) => {
-      expect(await decide({ holdId: '12', decision, note: ' looked fine ' }, holder)).toMatchObject(
-        {
-          success: true,
-          key: 12,
-        }
-      );
-      expect(decideCsamHold).toHaveBeenCalledWith({ holdId: 12, decision, note: 'looked fine' });
+      expect(
+        await decide({ holdId: '12', textHash: 'h-12', decision, note: ' looked fine ' }, holder)
+      ).toMatchObject({
+        success: true,
+        key: 12,
+      });
+      expect(decideCsamHold).toHaveBeenCalledWith({
+        holdId: 12,
+        textHash: 'h-12',
+        decision,
+        note: 'looked fine',
+      });
     }
   );
 
@@ -201,33 +213,38 @@ describe('csam text holds decide', () => {
     ['remove_ban_report', 'user.ban'],
   ])('refuses %s without the %s grant', async (decision, grant) => {
     const withoutIt = { ...holder, [grant]: false };
-    expect(await decide({ holdId: '12', decision }, withoutIt)).toMatchObject({
+    expect(await decide({ holdId: '12', textHash: 'h-12', decision }, withoutIt)).toMatchObject({
       status: 403,
       data: { key: 12 },
     });
     expect(decideCsamHold).not.toHaveBeenCalled();
-    expect(await decide({ holdId: '12', decision }, { ...holder, [grant]: true })).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision }, { ...holder, [grant]: true })
+    ).toMatchObject({
       success: true,
     });
   });
 
   it('lets a removal or a dismissal through without the strike or ban grant', async () => {
-    await decide({ holdId: '12', decision: 'remove' }, csamOnly);
-    await decide({ holdId: '12', decision: 'dismiss' }, csamOnly);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, csamOnly);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'dismiss' }, csamOnly);
     expect(decideCsamHold).toHaveBeenCalledTimes(2);
   });
 
   it('sends no note when the field is blank', async () => {
-    await decide({ holdId: '12', decision: 'remove', note: '   ' }, holder);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', note: '   ' }, holder);
     expect(decideCsamHold).toHaveBeenCalledWith({
       holdId: 12,
+      textHash: 'h-12',
       decision: 'remove',
       note: undefined,
     });
   });
 
   it('refuses a moderator without the csam permission', async () => {
-    expect(await decide({ holdId: '12', decision: 'remove_ban' }, {})).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove_ban' }, {})
+    ).toMatchObject({
       status: 403,
     });
     expect(decideCsamHold).not.toHaveBeenCalled();
@@ -235,18 +252,37 @@ describe('csam text holds decide', () => {
 
   it.each([
     ['no hold id', { decision: 'remove' }],
-    ['no decision', { holdId: '12' }],
-    ['a decision that is not offered', { holdId: '12', decision: 'confirm' }],
+    ['no decision', { holdId: '12', textHash: 'h-12' }],
+    ['a decision that is not offered', { holdId: '12', textHash: 'h-12', decision: 'confirm' }],
     ['a hold id past int4', { holdId: '3000000000', decision: 'remove' }],
-    ['a note over the limit', { holdId: '12', decision: 'remove', note: 'x'.repeat(501) }],
+    [
+      'a note over the limit',
+      { holdId: '12', textHash: 'h-12', decision: 'remove', note: 'x'.repeat(501) },
+    ],
   ])('refuses %s before calling the main app', async (_, fields) => {
     expect(await decide(fields, holder)).toMatchObject({ status: 400 });
     expect(decideCsamHold).not.toHaveBeenCalled();
   });
 
+  it('shows the main app message when the hold changed since it was opened', async () => {
+    decideCsamHold.mockResolvedValue({
+      ok: false,
+      error: 'Decide hold: This hold changed after you opened it. Reload to review the new text.',
+    });
+    expect(
+      await decide({ holdId: '12', textHash: 'h-old', decision: 'remove' }, holder)
+    ).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('Reload'), key: 12 },
+    });
+    expect(decideCsamHold).toHaveBeenCalledWith(expect.objectContaining({ textHash: 'h-old' }));
+  });
+
   it('reports the main app refusal against the hold', async () => {
     decideCsamHold.mockResolvedValue({ ok: false, error: 'already decided or missing' });
-    expect(await decide({ holdId: '12', decision: 'remove' }, holder)).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, holder)
+    ).toMatchObject({
       status: 400,
       data: { error: 'already decided or missing', key: 12 },
     });
@@ -344,6 +380,15 @@ describe('quotedPhrases', () => {
 
   it('lists a repeated phrase once', () => {
     expect(quotedPhrases(`'same one' then "same one"`)).toEqual(['same one']);
+  });
+});
+
+describe('decisionLabel', () => {
+  it('names a hold the migration superseded rather than calling it dismissed', () => {
+    expect(decisionLabel({ status: 'Dismissed', decision: 'superseded' })).toBe(
+      'Superseded by a newer scan'
+    );
+    expect(decisionLabel({ status: 'Dismissed', decision: 'dismiss' })).toBe('Dismissed');
   });
 });
 

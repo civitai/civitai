@@ -38,12 +38,17 @@ const OLDEST_PENDING: CsamHoldQuery = {
 };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION = readFileSync(
-  join(
-    HERE,
-    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261016150000_text_scan_hold/migration.sql'
-  ),
-  'utf-8'
+const MIGRATIONS = [
+  '20261016150000_text_scan_hold',
+  '20261112120000_text_scan_hold_one_pending',
+].map((name) =>
+  readFileSync(
+    join(
+      HERE,
+      `../../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
+    'utf-8'
+  )
 );
 
 let db: PGlite;
@@ -89,7 +94,7 @@ const seed = (rows: Seed[]) =>
 
 beforeEach(async () => {
   db = await freshPglite();
-  await db.exec(MIGRATION);
+  for (const migration of MIGRATIONS) await db.exec(migration);
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
   await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
   await db.exec(`
@@ -246,6 +251,64 @@ describe('listCsamHolds', () => {
   });
 });
 
+describe('re-detected holds', () => {
+  it('carries the text hash the decision must echo back', async () => {
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    expect(items.find((h) => h.id === 1)?.textHash).toBe('h-1');
+  });
+
+  it('marks a re-detection and names the ruling it follows, even when that hold is gone from the list', async () => {
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-10-06',
+        meta: { kind: 'redetected', priorHoldId: 4, contentAt: '2026-10-05T00:00:00.000Z' },
+      },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'pending' });
+    expect(items.find((h) => h.id === 8)).toMatchObject({
+      redetected: true,
+      priorHoldId: 4,
+      priorStatus: 'Dismissed',
+      priorDecidedByUsername: 'Mod_Person',
+    });
+    expect(items.find((h) => h.id === 8)?.priorDecidedAt).toBeInstanceOf(Date);
+    expect(items.find((h) => h.id === 1)).toMatchObject({
+      redetected: false,
+      priorHoldId: null,
+      priorStatus: null,
+      priorDecidedByUsername: null,
+    });
+  });
+
+  it('survives a prior id that points nowhere or is not a number', async () => {
+    await seed([
+      { id: 8, createdAt: '2026-10-06', meta: { kind: 'redetected', priorHoldId: 999 } },
+      { id: 9, createdAt: '2026-10-07', meta: { kind: 'redetected', priorHoldId: 'x' } },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'pending' });
+    expect(items.find((h) => h.id === 8)).toMatchObject({ redetected: true, priorStatus: null });
+    expect(items.find((h) => h.id === 9)).toMatchObject({ redetected: false, priorHoldId: null });
+  });
+
+  it('reads a hold the migration superseded as decided by nobody', async () => {
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-10-06',
+        status: 'Dismissed',
+        decidedAt: '2026-10-07',
+        meta: { decision: 'superseded', superseded: true, supersededBy: 1 },
+      },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'dismissed' });
+    expect(items.find((h) => h.id === 8)).toMatchObject({
+      decision: 'superseded',
+      decidedByUsername: null,
+    });
+  });
+});
+
 describe('countCsamHoldsByType', () => {
   it('counts per entity type for one status', async () => {
     expect(await countCsamHoldsByType({ status: 'pending' })).toEqual({ Post: 3, ChatMessage: 1 });
@@ -274,12 +337,14 @@ describe('countPendingCsamHolds', () => {
 describe('decideCsamHold', () => {
   it('asks the main app to dismiss the hold', async () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { holdId: 3, status: 'Dismissed' } });
-    expect(await decideCsamHold({ holdId: 3, decision: 'dismiss', note: 'fine' })).toEqual({
+    expect(
+      await decideCsamHold({ holdId: 3, textHash: 'h-3', decision: 'dismiss', note: 'fine' })
+    ).toEqual({
       ok: true,
     });
     expect(callModEndpoint).toHaveBeenCalledWith(
       'text-scan/csam-hold/resolve',
-      { holdId: 3, decision: 'dismiss', note: 'fine' },
+      { holdId: 3, textHash: 'h-3', decision: 'dismiss', note: 'fine' },
       expect.any(String)
     );
   });
@@ -288,10 +353,10 @@ describe('decideCsamHold', () => {
     'sends %s to the main app and expects the hold Confirmed',
     async (decision) => {
       callModEndpoint.mockResolvedValue({ ok: true, body: { holdId: 3, status: 'Confirmed' } });
-      expect(await decideCsamHold({ holdId: 3, decision })).toEqual({ ok: true });
+      expect(await decideCsamHold({ holdId: 3, textHash: 'h-3', decision })).toEqual({ ok: true });
       expect(callModEndpoint).toHaveBeenCalledWith(
         'text-scan/csam-hold/resolve',
-        { holdId: 3, decision },
+        { holdId: 3, textHash: 'h-3', decision },
         expect.any(String)
       );
     }
@@ -303,7 +368,7 @@ describe('decideCsamHold', () => {
       error: 'Decide hold: already decided',
       status: 409,
     });
-    expect(await decideCsamHold({ holdId: 3, decision: 'remove' })).toEqual({
+    expect(await decideCsamHold({ holdId: 3, textHash: 'h-3', decision: 'remove' })).toEqual({
       ok: false,
       error: 'Decide hold: already decided',
     });
@@ -315,7 +380,7 @@ describe('decideCsamHold', () => {
       error: 'Decide hold failed.',
       requestNeverSent: true,
     });
-    expect(await decideCsamHold({ holdId: 3, decision: 'remove' })).toEqual({
+    expect(await decideCsamHold({ holdId: 3, textHash: 'h-3', decision: 'remove' })).toEqual({
       ok: false,
       error: 'Decide hold failed.',
     });
@@ -327,7 +392,7 @@ describe('decideCsamHold', () => {
       error: 'Decide hold failed.',
       requestNeverSent: false,
     });
-    const result = await decideCsamHold({ holdId: 3, decision: 'remove_ban' });
+    const result = await decideCsamHold({ holdId: 3, textHash: 'h-3', decision: 'remove_ban' });
     expect(result).toMatchObject({ ok: false });
     expect(result.ok === false && result.error).toMatch(/may already have completed.*reload/i);
   });
@@ -338,7 +403,9 @@ describe('decideCsamHold', () => {
     ['a success with no status', 'remove', undefined],
   ] as const)('treats %s as a failure', async (_, decision, status) => {
     callModEndpoint.mockResolvedValue({ ok: true, body: status ? { status } : {} });
-    expect(await decideCsamHold({ holdId: 3, decision })).toMatchObject({ ok: false });
+    expect(await decideCsamHold({ holdId: 3, textHash: 'h-3', decision })).toMatchObject({
+      ok: false,
+    });
   });
 });
 

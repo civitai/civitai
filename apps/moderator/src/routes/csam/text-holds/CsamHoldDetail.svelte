@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
   import {
@@ -23,9 +24,10 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { LINK_BUTTON, dateTime, shortAge } from '$lib/format';
+  import { LINK_BUTTON, LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import type { CsamHoldItem } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
+  import { urlWith } from '$lib/url';
   import {
     CSAM_HOLD_CONFIRMS,
     CSAM_HOLD_KEY_ORDER,
@@ -73,6 +75,18 @@
   const enabled = $derived(holdDecisionEnabled(row, { canDecide, canStrike, canBan }));
   const phrases = $derived(quotedPhrases(row.reason));
   const typeName = $derived(entityLabel(row.entityType));
+  // Searching the entity id lists every hold it has had, so the earlier ruling is on the page the link opens.
+  const priorHref = $derived(
+    row.priorHoldId === null
+      ? null
+      : urlWith(page.url, {
+          hold: row.priorHoldId,
+          status: 'all',
+          entityType: row.entityType,
+          q: row.entityId,
+          page: null,
+        })
+  );
 
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<CsamHoldDecision>('dismiss');
@@ -141,6 +155,7 @@
       {#snippet chips()}
         <MetaChip>{typeName}</MetaChip>
         <MetaChip>held {shortAge(row.createdAt)} ago</MetaChip>
+        {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
         {#if !decidedRow && row.live}
           <MetaChip tone="amber">still live</MetaChip>
         {:else if decidedRow}
@@ -209,6 +224,15 @@
     <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <TriageCard dense title="Why it was held">
         <p class="m-0 text-[15px] leading-normal text-white">{row.reason}</p>
+        {#if row.redetected && priorHref}
+          <p class="m-0 mt-2 text-[13px] text-dark-0">
+            {row.priorStatus === 'Confirmed' ? 'Removed' : 'Dismissed'} before{row.priorDecidedByUsername
+              ? ` by ${row.priorDecidedByUsername}`
+              : ''}{row.priorDecidedAt ? ` ${shortAge(row.priorDecidedAt)} ago` : ''}, then the text
+            changed and was held again.
+            <a href={priorHref} class={LINK_CLASS}>See that hold</a>
+          </p>
+        {/if}
         {#if row.promptId !== null}
           <p class="m-0 mt-2 text-[11px] text-dark-2">
             csam prompt v{row.promptId} · {shortAge(row.createdAt)} ago
@@ -253,6 +277,7 @@
         class="min-w-0 flex-1"
       >
         <input type="hidden" name="holdId" value={row.id} />
+        <input type="hidden" name="textHash" value={row.textHash} />
         <input type="hidden" name="decision" value={decision} />
         <TriageDecisionBar
           hint="Dismiss closes the hold and changes nothing. 5 bans the author and opens the CSAM report form for them. The next hold opens after each decision; J/K to move."

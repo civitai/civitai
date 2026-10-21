@@ -152,6 +152,7 @@
       {#snippet badges()}
         <span class="block w-full truncate text-xs text-dark-0">{row.reason}</span>
         <MetaChip>{entityLabel(row.entityType)}</MetaChip>
+        {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
         {#if row.status !== 'Pending'}
           <MetaChip tone={row.status === 'Dismissed' ? 'neutral' : 'red'}>{decisionLabel(row)}</MetaChip>
         {/if}

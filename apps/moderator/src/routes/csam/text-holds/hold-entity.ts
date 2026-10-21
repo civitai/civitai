@@ -55,7 +55,11 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
+/** A duplicate pending hold the one-hold-per-entity migration closed; nobody ruled on it. */
+export const SUPERSEDED_OUTCOME = 'Superseded by a newer scan';
+
 export function decisionLabel(hold: { status: string; decision: string | null }): string {
+  if (hold.decision === 'superseded') return SUPERSEDED_OUTCOME;
   const outcome =
     hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
       ? CSAM_HOLD_OUTCOMES[hold.decision as CsamHoldDecision]

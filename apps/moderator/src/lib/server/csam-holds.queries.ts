@@ -15,6 +15,8 @@ export type CsamHoldRow = {
   userId: number | null;
   username: string | null;
   text: string;
+  /** What a moderator reviewed; sent back with the decision so a hold edited underneath it is refused. */
+  textHash: string;
   reason: string;
   workflowId: string | null;
   promptId: number | null;
@@ -28,6 +30,12 @@ export type CsamHoldRow = {
   decidedByUsername: string | null;
   decisionNote: string | null;
   decision: string | null;
+  /** Held again with new text after a moderator ruled on this entity. */
+  redetected: boolean;
+  priorHoldId: number | null;
+  priorStatus: string | null;
+  priorDecidedAt: Date | null;
+  priorDecidedByUsername: string | null;
 };
 
 export type CsamHoldSearch = { id: number } | { username: string };
@@ -82,6 +90,13 @@ export async function listCsamHolds({
 }: CsamHoldQuery): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
   let query = csamHolds({ status, search })
     .leftJoin('User as d', 'd.id', 'h.decidedById')
+    // The `~` guard keeps a malformed id from failing the whole list on the cast.
+    .leftJoin('TextScanHold as ph', (join) =>
+      join.on(
+        sql<boolean>`ph.id = case when h.meta->>'priorHoldId' ~ '^[0-9]{1,9}$' then (h.meta->>'priorHoldId')::int end`
+      )
+    )
+    .leftJoin('User as pd', 'pd.id', 'ph.decidedById')
     .leftJoin('Post as p', (join) =>
       join.onRef('p.id', '=', 'h.entityId').on('h.entityType', '=', 'Post')
     )
@@ -95,6 +110,7 @@ export async function listCsamHolds({
       'h.userId',
       'u.username',
       'h.text',
+      'h.textHash',
       'h.reason',
       'h.workflowId',
       'h.promptId',
@@ -105,6 +121,9 @@ export async function listCsamHolds({
       'h.decidedAt',
       'd.username as decidedByUsername',
       'h.decisionNote',
+      'ph.status as priorStatus',
+      'ph.decidedAt as priorDecidedAt',
+      'pd.username as priorDecidedByUsername',
       sql<string | null>`coalesce(p.title, m.name)`.as('title'),
       sql<
         boolean | null
@@ -121,9 +140,19 @@ export async function listCsamHolds({
     .execute();
 
   const items = rows.slice(0, limit).map(({ meta, ...row }) => {
-    const { chatId, decision } = (meta ?? {}) as { chatId?: unknown; decision?: unknown };
+    const { chatId, decision, kind, priorHoldId } = (meta ?? {}) as {
+      chatId?: unknown;
+      decision?: unknown;
+      kind?: unknown;
+      priorHoldId?: unknown;
+    };
     return {
       ...row,
+      redetected: kind === 'redetected' && typeof priorHoldId === 'number',
+      priorHoldId: typeof priorHoldId === 'number' ? priorHoldId : null,
+      priorStatus: row.priorStatus ?? null,
+      priorDecidedAt: row.priorDecidedAt ?? null,
+      priorDecidedByUsername: row.priorDecidedByUsername ?? null,
       username: row.username ?? null,
       decidedByUsername: row.decidedByUsername ?? null,
       title: row.title ?? null,
