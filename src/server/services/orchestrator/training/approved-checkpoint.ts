@@ -4,7 +4,7 @@ import type {
   TrainingModerationStatus,
   TrainingOutput,
   Workflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getTrainingStep } from '~/server/services/orchestrator/training/publish-from-workflow';
@@ -14,7 +14,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getConsumerBlobId, parseJobAssetUrl } from '~/shared/orchestrator/blob-url';
 
-// A typed literal rather than the client's runtime enum object: `@civitai/client` is mocked in the
+// A typed literal rather than the client's runtime enum object: `@civitai/orchestration-client` is mocked in the
 // unit test setup, so a value import from it is undefined there.
 const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
   ImageResouceTrainingModerationStatus;

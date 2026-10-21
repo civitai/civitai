@@ -25,8 +25,8 @@ import type {
   PreprocessImageStepTemplate,
   WorkflowCost,
   WorkflowStepTemplate,
-} from '@civitai/client';
-// The pinned @civitai/client predates preprocessVideo; this comes from
+} from '@civitai/orchestration-client';
+// The pinned @civitai/orchestration-client predates preprocessVideo; this comes from
 // orchestration-client.
 import type {
   Priority as DownloadPriority,
@@ -2205,7 +2205,7 @@ import type {
   WorkflowStatus,
   WorkflowStep,
   WorkflowStepQueuePosition,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';

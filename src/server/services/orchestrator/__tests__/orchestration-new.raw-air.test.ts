@@ -380,7 +380,7 @@ describe('ownership-fetch caching', () => {
  * raw-AIR validation reject with "not supported on this generation path"
  * before `getWorkflow` is ever reached, so the assertion below goes red.
  * The submissions themselves die later in step assembly (the shared
- * `@civitai/client` mock has no TimeSpan constructor) — irrelevant here.
+ * `@civitai/orchestration-client` mock has no TimeSpan constructor) — irrelevant here.
  */
 describe('orchestratorToken threading at the service boundary', () => {
   const externalCtx = (): GenerationCtx => ({

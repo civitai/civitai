@@ -1,4 +1,4 @@
-import type { ChatCompletionStep, ChatCompletionStepTemplate } from '@civitai/client';
+import type { ChatCompletionStep, ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 

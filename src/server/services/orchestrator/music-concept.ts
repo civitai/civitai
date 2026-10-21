@@ -1,4 +1,4 @@
-import type { ChatCompletionStepTemplate } from '@civitai/client';
+import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 
 const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';
 const SIMPLE_CHAT_TEMPERATURE = 0.9;

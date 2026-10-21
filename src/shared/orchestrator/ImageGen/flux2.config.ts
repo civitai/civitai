@@ -1,4 +1,4 @@
-import type { Flux2DevImageGenInput } from '@civitai/client';
+import type { Flux2DevImageGenInput } from '@civitai/orchestration-client';
 import { startCase } from 'lodash-es';
 import * as z from 'zod';
 import {

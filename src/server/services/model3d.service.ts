@@ -64,7 +64,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
-import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {

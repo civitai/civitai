@@ -1,5 +1,5 @@
 import type { VideoUpscalerSchema } from './video-upscaler.schema';
-import type { VideoUpscalerStepTemplate } from '@civitai/client';
+import type { VideoUpscalerStepTemplate } from '@civitai/orchestration-client';
 
 export async function createVideoUpscalerStep({
   videoUrl,

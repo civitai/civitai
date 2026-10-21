@@ -1,5 +1,5 @@
 /**
- * Step-input router: `generationHub.parse().data` in, @civitai/client steps out.
+ * Step-input router: `generationHub.parse().data` in, @civitai/orchestration-client steps out.
  * An unrouted ecosystem is a loud error rather than a silent fallthrough —
  * reaching here with one means the caller routed a family this has no handler for.
  *

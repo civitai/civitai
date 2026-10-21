@@ -1,4 +1,4 @@
-import { refreshBlob } from '@civitai/client';
+import { refreshBlob } from '@civitai/orchestration-client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 

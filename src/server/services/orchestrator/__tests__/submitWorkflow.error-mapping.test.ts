@@ -6,7 +6,7 @@ import { TRPCError } from '@trpc/server';
  *
  * These drive the REAL `submitWorkflow` (workflows.ts) through its
  * `if (!result.data)` → `switch (response.status)` branches, mocking ONLY the
- * generated `@civitai/client` + the client factory + env so the real
+ * generated `@civitai/orchestration-client` + the client factory + env so the real
  * `~/server/utils/errorHandling` TRPCError mapping runs end-to-end.
  *
  * The bug this covers (bursty causeless generic 500s on whatIf/generate):
@@ -25,7 +25,7 @@ const { mockSubmitWorkflow } = vi.hoisted(() => ({
   mockSubmitWorkflow: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // unused-by-these-tests named exports referenced at module load
   addWorkflowTag: vi.fn(),
@@ -66,7 +66,7 @@ const runWithFakeTimers = async <T>(fn: () => Promise<T>): Promise<T> => {
   return p;
 };
 
-// A resolve shape (NOT a reject): the @civitai/client with no `throwOnError` RESOLVES
+// A resolve shape (NOT a reject): the @civitai/orchestration-client with no `throwOnError` RESOLVES
 // `{ data: undefined, error, response }` on an upstream error response.
 const errorResolve = (status: number, error: Record<string, unknown>) => ({
   data: undefined,
@@ -151,7 +151,9 @@ describe('submitWorkflow — genuine app/validation faults are NOT converted to 
   });
 
   it('keeps an unhandled 4xx (422) as BAD_REQUEST, not 503', async () => {
-    mockSubmitWorkflow.mockResolvedValue(errorResolve(422, { status: 422, detail: 'unprocessable' }));
+    mockSubmitWorkflow.mockResolvedValue(
+      errorResolve(422, { status: 422, detail: 'unprocessable' })
+    );
 
     const err = await submitWorkflow({
       token: 'tok',

@@ -1673,7 +1673,7 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     // silently covering no type at all. The generated client is the
     // authoritative enumeration; this is the only thing that can catch it.
     const generated = readFileSync(
-      require.resolve('@civitai/client/dist/generated/types.gen.d.ts'),
+      require.resolve('@civitai/orchestration-client/dist/generated/types.gen.d.ts'),
       'utf8'
     );
     const declared = new Set(

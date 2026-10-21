@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { XGuardModerationOutput } from '@civitai/client';
+import type { XGuardModerationOutput } from '@civitai/orchestration-client';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as CrucibleService from '~/server/services/crucible.service';

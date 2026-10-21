@@ -1,4 +1,4 @@
-import type { NsfwLevel, WorkflowCost } from '@civitai/client';
+import type { NsfwLevel, WorkflowCost } from '@civitai/orchestration-client';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,

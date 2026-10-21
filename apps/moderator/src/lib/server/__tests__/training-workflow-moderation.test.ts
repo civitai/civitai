@@ -32,7 +32,10 @@ const chain: object = new Proxy(
 
 // The SDK's dist does not load under Node's ESM resolver (a directory import), and the workflow-only
 // path does not use it — it reads the manager API with plain fetch, which is what these cases stub.
-vi.mock('@civitai/client', () => ({ getWorkflow: vi.fn(), createCivitaiClient: vi.fn() }));
+vi.mock('@civitai/orchestration-client', () => ({
+  getWorkflow: vi.fn(),
+  createCivitaiClient: vi.fn(),
+}));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: chain }));
 vi.mock('$lib/server/clickhouse', () => ({ getClickhouse: () => ({ $query: chQuery }) }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));

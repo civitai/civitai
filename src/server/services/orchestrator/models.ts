@@ -1,4 +1,4 @@
-import { getResource, queryResources } from '@civitai/client';
+import { getResource, queryResources } from '@civitai/orchestration-client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
@@ -34,7 +34,7 @@ export async function queryResourcesClient({
   return await queryResources({ client, query });
 }
 
-// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/client: the operation
+// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/orchestration-client: the operation
 // carries [ApiExplorerSettings(IgnoreApi = true)] (orchestrator c2d2c370), so it is absent from the
 // OpenAPI documents the SDK is generated from — the endpoint itself is live.
 async function invalidateOrchestratorResource(air: string, etag: string, userId?: number) {

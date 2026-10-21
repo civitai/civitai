@@ -12,7 +12,7 @@ import {
 
 // ── image ──────────────────────────────────────────────────────────────────────
 
-/** Mirrors `@civitai/client`'s `PreprocessImageInput.kind` union. */
+/** Mirrors `@civitai/orchestration-client`'s `PreprocessImageInput.kind` union. */
 
 export const preprocessKinds = [
   'animal-pose',
@@ -56,7 +56,7 @@ export const preprocessKinds = [
 
 export type PreprocessKind = (typeof preprocessKinds)[number];
 
-/** Mirrors the `@civitai/client` enums. */
+/** Mirrors the `@civitai/orchestration-client` enums. */
 const safeModeOptions = ['enable', 'disable'] as const;
 const coarseModeOptions = ['disable', 'enable'] as const;
 const leresBoostOptions = ['disable', 'enable'] as const;

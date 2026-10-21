@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   WorkflowStatus: {},
   TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },

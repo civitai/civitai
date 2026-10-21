@@ -1,4 +1,8 @@
-import type { AiToolkitTrainingInput, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  AiToolkitTrainingInput,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -13,7 +17,7 @@ import {
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
- * *wrapper* prepends `civitai`, but the raw `@civitai/client` call this app uses does not, so the
+ * *wrapper* prepends `civitai`, but the raw `@civitai/orchestration-client` call this app uses does not, so the
  * query must pass both explicitly. */
 export const TRAINING_TAG = 'training';
 export const CIVITAI_TAG = 'civitai';

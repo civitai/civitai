@@ -1,4 +1,4 @@
-import type { NsfwLevel } from '@civitai/client';
+import type { NsfwLevel } from '@civitai/orchestration-client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 
 export async function getBlobData({ token, blobId }: { token: string; blobId: string }) {

@@ -39,7 +39,7 @@ import {
   useDeleteTextToImageRequest,
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
+import type { TransactionInfo, WorkflowStatus } from '@civitai/orchestration-client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';

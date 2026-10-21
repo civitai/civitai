@@ -170,7 +170,7 @@ describe('collectInlineAuditText — the moderation sweep', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AIR SHAPE GATE. Every case here is a MEASURED property of `Air.parseSafe`
-// (@civitai/client 0.2.0-beta.84) that fails OPEN if the gate is naive.
+// (@civitai/orchestration-client 0.2.0-beta.84) that fails OPEN if the gate is naive.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   // ───────────────────────────────────────────────────────────────────────────
@@ -597,7 +597,7 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
 // class is to pin one side against a machine-generated artifact from the other.
 // That artifact does not exist here. What was searched, and what was found:
 //
-//   • `@civitai/client@0.2.0-beta.84` (the GENERATED orchestrator client), all
+//   • `@civitai/orchestration-client@0.2.0-beta.84` (the GENERATED orchestrator client), all
 //     46 files under `dist/`, greppable with `grep -a`. `types.gen.js` emits 67
 //     runtime enums; NONE is an AIR type or AIR source enum. Every AIR-bearing field in
 //     the entire generated surface — `CustomComfyInput.resources`,
@@ -630,7 +630,7 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
 //
 // WHAT WOULD MAKE A REAL CONTRACT TEST POSSIBLE (neither exists today): the
 // orchestrator's OpenAPI JSON vendored here behind a re-vendor diff guard, or
-// `@civitai/client` typing those fields as enums instead of `string`.
+// `@civitai/orchestration-client` typing those fields as enums instead of `string`.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('INVARIANT GUARD (not a contract test) — allowlist membership', () => {
   it('pins the exact AIR TYPE allowlist', () => {

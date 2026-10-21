@@ -49,7 +49,7 @@ vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
   getOrchestratorCaller: mockGetCaller,
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { moveAsset } from '~/server/services/orchestrator/training/move-asset';

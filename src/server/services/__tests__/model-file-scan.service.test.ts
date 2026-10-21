@@ -66,7 +66,7 @@ const {
   };
 });
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   getWorkflow: mockGetWorkflow,
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),

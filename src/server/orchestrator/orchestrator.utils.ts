@@ -1,4 +1,4 @@
-import type { WorkflowCallback } from '@civitai/client';
+import type { WorkflowCallback } from '@civitai/orchestration-client';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { withSignals } from '~/server/signals/wrapper';

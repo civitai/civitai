@@ -1,4 +1,4 @@
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';

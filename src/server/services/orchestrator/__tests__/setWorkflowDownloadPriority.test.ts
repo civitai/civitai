@@ -19,7 +19,7 @@ vi.mock('~/server/utils/errorHandling', () => ({
     .mockImplementation((msg) => new Error(`unavailable: ${msg}`)),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock('@civitai/client', () => ({
   }),
 }));
 
-import { updateWorkflow as clientUpdateWorkflow } from '@civitai/client';
+import { updateWorkflow as clientUpdateWorkflow } from '@civitai/orchestration-client';
 import { setWorkflowDownloadPriority } from '../workflows';
 
 const ok = (data: unknown) => ({ data, error: undefined, response: { ok: true, status: 200 } });

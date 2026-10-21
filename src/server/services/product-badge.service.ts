@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { submitWorkflow } from '@civitai/client';
-import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
+import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import type {

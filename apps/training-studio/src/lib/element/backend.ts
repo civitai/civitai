@@ -1,7 +1,7 @@
 // The web-component's StudioBackend: the browser-direct half of the contract in
 // docs/training-studio-web-component.md. Every call runs with a freshly-minted host token and talks
 // to the orchestrator with the client-safe cores — no server routes involved.
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import type { StudioBackend } from '$lib/backend';
 import type {
   GenerateRequest,

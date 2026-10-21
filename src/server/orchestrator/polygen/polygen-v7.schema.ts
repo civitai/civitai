@@ -23,7 +23,7 @@
 import type {
   MeshyV7ImageTo3dFalPolyGenInput,
   MeshyV7MultiImageTo3dFalPolyGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import {

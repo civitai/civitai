@@ -1,6 +1,6 @@
 import type { WorkflowStepWarning } from '@civitai/orchestration-client';
 
-// The pinned @civitai/client types predate step warnings, so steps are read structurally.
+// The pinned @civitai/orchestration-client types predate step warnings, so steps are read structurally.
 type StepWithWarnings = { warnings?: WorkflowStepWarning[] | null };
 
 // The generator still sends the orchestrator's old input field names, so every step carries these;

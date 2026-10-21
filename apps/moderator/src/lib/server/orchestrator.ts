@@ -1,4 +1,4 @@
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '$env/dynamic/private';
 
 // The orchestrator is an external service (NOT the main app), so calling it directly isn't a main-app
