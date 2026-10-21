@@ -629,6 +629,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
             ...pageFetchArgs,
             cursor: undefined,
             postIds,
+            postIdsInRequestedSort: true,
             // The rows a filtered fetch returns are a subset of the posts' rows.
             limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
           })
