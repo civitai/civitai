@@ -27,6 +27,7 @@ import {
   pinMoveDirection,
   useDragClickGuard,
   usePinActions,
+  useTrackMenuOpen,
 } from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
@@ -179,6 +180,7 @@ function SortablePinnedItem({
     <DesktopItem
       item={item}
       pinned
+      fromPins
       onToggle={onToggle}
       rowRef={setNodeRef}
       rowProps={{
@@ -338,15 +340,17 @@ function DesktopGroup({
   );
 }
 
-function DesktopItem({
+export function DesktopItem({
   item,
   pinned = false,
+  fromPins = false,
   onToggle,
   rowRef,
   rowProps,
 }: {
   item: Omit<ResolvedMenuItem, 'id'> & { id?: ResolvedMenuItem['id'] };
   pinned?: boolean;
+  fromPins?: boolean;
   onToggle?: (item: ResolvedMenuItem) => void;
   rowRef?: (node: HTMLElement | null) => void;
   rowProps?: Record<string, unknown> & {
@@ -355,6 +359,7 @@ function DesktopItem({
 }) {
   const { handleClose } = useContext(UserMenuCtx);
   const flyout = useContext(FlyoutCtx);
+  const trackOpen = useTrackMenuOpen('desktop');
   const id = item.id;
   const canPin = !!onToggle && !!id && isPinnable(id);
   const toggle = () => canPin && onToggle({ ...item, id });
@@ -393,6 +398,7 @@ function DesktopItem({
     // An item in a flyout closes only the flyout's own menu; close the whole thing.
     onClick: (event: React.MouseEvent) => {
       if (event.defaultPrevented) return;
+      trackOpen(id, fromPins);
       item.onClick?.();
       handleClose();
     },

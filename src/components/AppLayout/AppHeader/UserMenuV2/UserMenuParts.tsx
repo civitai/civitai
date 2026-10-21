@@ -7,6 +7,15 @@ import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import type { ResolvedMenuItem } from './resolveUserMenu';
 import type { useUserMenuPins } from './useUserMenuPins';
+import {
+  findUserMenuGroup,
+  USER_MENU_LAYOUT,
+  USER_MENU_SIGNED_OUT_LAYOUT,
+} from './user-menu.layout';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { TrackActionInput } from '~/server/schema/track.schema';
+import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function MenuItemLabel({ item }: { item: UserMenuItem }) {
@@ -86,6 +95,39 @@ export function useDragClickGuard() {
     onDragSettled: () => {
       window.setTimeout(() => (dragging.current = false));
     },
+  };
+}
+
+export type UserMenuSurface = 'desktop' | 'mobile';
+
+export function userMenuClickAction({
+  id,
+  signedIn,
+  fromPins,
+  surface,
+}: {
+  id: UserMenuItemId;
+  signedIn: boolean;
+  fromPins: boolean;
+  surface: UserMenuSurface;
+}): TrackActionInput {
+  const layout = signedIn ? USER_MENU_LAYOUT : USER_MENU_SIGNED_OUT_LAYOUT;
+  return {
+    type: 'UserMenu_Click',
+    details: { item: id, group: findUserMenuGroup(layout, id) ?? null, pinned: fromPins, surface },
+  };
+}
+
+/**
+ * Records an item opened from the menu. Call it from the row's own click handler: the click
+ * `useDragClickGuard` cancels never reaches React, and a pin toggle stops its click before the row.
+ */
+export function useTrackMenuOpen(surface: UserMenuSurface) {
+  const { trackAction } = useTrackEvent();
+  const signedIn = !!useCurrentUser();
+  return (id: UserMenuItemId | undefined, fromPins: boolean) => {
+    if (!id) return;
+    trackAction(userMenuClickAction({ id, signedIn, fromPins, surface })).catch(() => undefined);
   };
 }
 
