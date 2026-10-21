@@ -188,6 +188,9 @@ export async function createMembershipGiftCheckout({
     session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      // A bank debit can be reversed as unauthorized weeks after it succeeds, long after the
+      // recipient has the membership.
+      payment_method_types: ['card'],
       line_items: [
         {
           price_data: { currency, unit_amount: unitAmount, product: productId },
@@ -213,10 +216,74 @@ export async function createMembershipGiftCheckout({
   return { giftId: gift.id, sessionId: session.id, url: session.url };
 }
 
+type GiftCheckoutEventType =
+  | 'checkout.session.completed'
+  | 'checkout.session.async_payment_succeeded'
+  | 'checkout.session.async_payment_failed';
+
 /**
- * Records the gifter's payment and puts the gift in the recipient's queue. Called from the
- * Stripe webhook on checkout.session.completed — must be safe to re-run (Stripe retries on
- * non-2xx), so anything past Pending/Failed bails early.
+ * A gift checkout's payment moved. Checkout completes 'unpaid' for a delayed payment method
+ * (a bank debit), whose money arrives days later or never, so the gift is only fulfilled once
+ * the payment has actually succeeded.
+ */
+export async function handleMembershipGiftCheckoutEvent({
+  type,
+  session,
+}: {
+  type: GiftCheckoutEventType;
+  session: Stripe.Checkout.Session;
+}) {
+  const giftId = session.metadata?.giftId;
+  if (!giftId) throw new Error('membershipGift checkout session missing giftId');
+
+  if (type === 'checkout.session.async_payment_failed')
+    return failMembershipGiftPayment({ giftId });
+
+  const paid =
+    type === 'checkout.session.async_payment_succeeded' || session.payment_status === 'paid';
+  if (!paid) {
+    // Gift checkout offers no promotion codes, so a gift that needed no payment is unexpected.
+    if (session.payment_status === 'no_payment_required')
+      await log({
+        type: 'warning',
+        stage: 'checkout',
+        giftId,
+        message: 'gift checkout completed without a payment; not fulfilled',
+      });
+    return { fulfilled: false as const, paymentStatus: session.payment_status };
+  }
+
+  return fulfillMembershipGift({
+    giftId,
+    paymentIntentId:
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id,
+  });
+}
+
+async function failMembershipGiftPayment({ giftId }: { giftId: string }) {
+  const gift = await dbWrite.membershipGift.findUnique({
+    where: { id: giftId },
+    select: { id: true, status: true },
+  });
+  if (!gift) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
+
+  if (gift.status !== MembershipGiftStatus.Pending)
+    return revokeMembershipGift({ giftId, reason: 'payment_failed' });
+
+  await dbWrite.membershipGift.update({
+    where: { id: gift.id },
+    data: { status: MembershipGiftStatus.Failed },
+  });
+  await log({ type: 'warning', stage: 'payment-failed', giftId: gift.id });
+  return true;
+}
+
+/**
+ * Records the gifter's payment and puts the gift in the recipient's queue. Must be safe to
+ * re-run (Stripe retries on non-2xx), so anything past Pending bails early. A Failed gift's
+ * payment can never clear, so it is never fulfilled.
  *
  * Deliberately applies NOTHING. Acceptance is the recipient's action.
  */
@@ -236,10 +303,7 @@ export async function fulfillMembershipGift({
   });
   if (!gift) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
 
-  // Failed rows stay retryable: a webhook redelivery is a legitimate recovery path
-  if (gift.status !== MembershipGiftStatus.Pending && gift.status !== MembershipGiftStatus.Failed) {
-    return { alreadyProcessed: true as const };
-  }
+  if (gift.status !== MembershipGiftStatus.Pending) return { alreadyProcessed: true as const };
 
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
@@ -846,32 +910,29 @@ export async function sweepGiftArming({ limit = 200 }: { limit?: number } = {}) 
   return { candidates: pending.length, armed };
 }
 
+const revokedStatus = {
+  refund: MembershipGiftStatus.Refunded,
+  chargeback: MembershipGiftStatus.Revoked,
+  payment_failed: MembershipGiftStatus.Failed,
+} as const;
+
 /**
- * Undo a gift after a refund or chargeback on the gifter's payment.
+ * Undo a gift after a refund, chargeback or failed payment on the gifter's payment.
  * Best-effort by design: Buzz already granted for elapsed months is not clawed back.
  * Returns false when the payment intent doesn't belong to a gift.
  */
 export async function revokeMembershipGift({
-  paymentIntentId,
   reason,
-}: {
-  paymentIntentId: string;
-  reason: 'refund' | 'chargeback';
-}) {
+  ...by
+}: { reason: keyof typeof revokedStatus } & ({ paymentIntentId: string } | { giftId: string })) {
   const gift = await dbWrite.membershipGift.findUnique({
-    where: { stripePaymentIntentId: paymentIntentId },
+    where: 'giftId' in by ? { id: by.giftId } : { stripePaymentIntentId: by.paymentIntentId },
   });
   if (!gift) return false;
 
-  const newStatus =
-    reason === 'refund' ? MembershipGiftStatus.Refunded : MembershipGiftStatus.Revoked;
+  const newStatus = revokedStatus[reason];
 
-  if (
-    gift.status === MembershipGiftStatus.Refunded ||
-    gift.status === MembershipGiftStatus.Revoked
-  ) {
-    return true;
-  }
+  if (Object.values(revokedStatus).some((status) => status === gift.status)) return true;
 
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
@@ -916,7 +977,13 @@ export async function revokeMembershipGift({
   await invalidateSubscriptionCaches(gift.holderId);
   await refreshSession(gift.holderId, { caller: 'membership' });
 
-  await log({ type: 'warning', stage: 'revoke', giftId: gift.id, reason, paymentIntentId });
+  await log({
+    type: 'warning',
+    stage: 'revoke',
+    giftId: gift.id,
+    reason,
+    paymentIntentId: gift.stripePaymentIntentId,
+  });
 
   return true;
 }

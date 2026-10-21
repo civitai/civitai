@@ -311,6 +311,17 @@ describe('createMembershipGiftCheckout', () => {
     expect(result).toMatchObject({ giftId: 'gift_1', sessionId: 'cs_1' });
   });
 
+  // Pinned on purpose, not an oversight to widen: a bank debit can be reversed as unauthorized
+  // weeks after it succeeded, long after the recipient has the membership. Cards only.
+  it('offers only card payment for a gift', async () => {
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+
+    await createMembershipGiftCheckout(input);
+
+    const sessionArgs = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(sessionArgs.payment_method_types).toEqual(['card']);
+  });
+
   it('deletes the pending row when session creation fails', async () => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
     mockStripe.checkout.sessions.create.mockRejectedValue(new Error('stripe down'));
