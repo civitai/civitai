@@ -266,6 +266,7 @@ export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
   | 'creator-services/disputes'
+  | 'user/legal-hold'
   | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
@@ -1586,6 +1587,17 @@ export async function revokeCreatorScoreGrant(input: {
   const { total } = result.body;
   if (typeof total !== 'number') return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
   return { ok: true, total };
+}
+
+/** Whether a legal hold blocks deleting the account. Anything but an explicit `held: false` reads as
+ *  held, including a failed check: the endpoint refuses a held account regardless. */
+export async function deleteAccountHeld(userId: number): Promise<boolean> {
+  try {
+    const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check');
+    return !(result.ok && result.body.held === false);
+  } catch {
+    return true;
+  }
 }
 
 export async function deleteAccount(input: {

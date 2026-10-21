@@ -251,6 +251,8 @@
         canToggleModerator={!!data.grants['user.moderator.toggle']}
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
+        canDelete={!!data.grants['user.deleteAccount']}
+        deleteHeld={data.deleteHeld}
       />
       {#if data.grants['user.removeReactions']}
         <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />

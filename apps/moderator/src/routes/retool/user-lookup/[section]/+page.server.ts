@@ -27,6 +27,7 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
+  deleteAccountHeld,
   countReactions,
   removeReactions,
   purgeAllContent,
@@ -57,16 +58,23 @@ import {
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
+import { LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   // A retired section keeps working: its slug is in tickets and pasted lookup URLs, and 404ing one
   // reads as the account being gone rather than the tab having moved.
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  return { section: params.section };
+  // Only where the Delete account button renders, and only for someone who may press it.
+  let deleteHeld: boolean | null = null;
+  if (params.section === 'admin' && locals.grants['user.deleteAccount']) {
+    const { result } = await parent();
+    if (result) deleteHeld = await deleteAccountHeld(result.identity.id);
+  }
+  return { section: params.section, deleteHeld };
 };
 
 const NOTE_MAX = 5000;
@@ -710,6 +718,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    // The endpoint refuses a held account too; this answers before anything is sent.
+    if (await deleteAccountHeld(input.userId)) return accountFail(LEGAL_HOLD_REFUSAL);
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({

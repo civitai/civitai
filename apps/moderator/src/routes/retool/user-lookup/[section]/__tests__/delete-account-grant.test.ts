@@ -8,15 +8,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { deleteAccount } = vi.hoisted(() => ({
+const { deleteAccount, deleteAccountHeld } = vi.hoisted(() => ({
   deleteAccount: vi.fn(async () => ({ ok: true as const })),
+  deleteAccountHeld: vi.fn(async () => false),
 }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
   deleteAccount,
+  deleteAccountHeld,
 }));
 
-const { actions } = await import('../+page.server');
+const { actions, load } = await import('../+page.server');
 
 const TARGET = 8675309;
 
@@ -29,7 +31,10 @@ const formEvent = (grants: Record<string, boolean>, fields: Record<string, strin
   } as unknown as Parameters<(typeof actions)['deleteAccount']>[0];
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  deleteAccountHeld.mockResolvedValue(false);
+});
 
 describe('deleteAccount action — bound to user.deleteAccount', () => {
   it('refuses a moderator without the grant, before reaching the service', async () => {
@@ -56,5 +61,53 @@ describe('deleteAccount action — bound to user.deleteAccount', () => {
       removeModels: undefined,
       removeImages: false,
     });
+  });
+});
+
+describe('deleteAccount action — a legal hold', () => {
+  const withGrant = () =>
+    formEvent(
+      { 'user.deleteAccount': true },
+      { userId: String(TARGET), username: 'not_a_real_user' }
+    );
+
+  it('refuses a held account without calling the deletion', async () => {
+    deleteAccountHeld.mockResolvedValue(true);
+
+    const result = await actions.deleteAccount(withGrant());
+
+    expect(result).toMatchObject({
+      status: 400,
+      data: { scope: 'account', error: 'Account under legal hold; contact Legal.' },
+    });
+    expect(deleteAccountHeld).toHaveBeenCalledWith(TARGET);
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('load — the hold behind the Delete account button', () => {
+  const loadEvent = (section: string, grants: Record<string, boolean>) =>
+    ({
+      params: { section },
+      url: new URL('https://moderator.invalid/retool/user-lookup/admin?q=1'),
+      locals: { grants },
+      parent: async () => ({ result: { identity: { id: TARGET } } }),
+    } as unknown as Parameters<typeof load>[0]);
+
+  it('reads the hold on Admin for someone with the permission', async () => {
+    deleteAccountHeld.mockResolvedValue(true);
+    expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
+      section: 'admin',
+      deleteHeld: true,
+    });
+    expect(deleteAccountHeld).toHaveBeenCalledWith(TARGET);
+  });
+
+  it('does not ask without the permission or off Admin', async () => {
+    expect(await load(loadEvent('admin', {}))).toMatchObject({ deleteHeld: null });
+    expect(await load(loadEvent('basic', { 'user.deleteAccount': true }))).toMatchObject({
+      deleteHeld: null,
+    });
+    expect(deleteAccountHeld).not.toHaveBeenCalled();
   });
 });
