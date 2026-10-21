@@ -30,8 +30,11 @@ export const BLOCKED_FILE_REASON = 'other-users-model';
 
 type FileCheckState = 'clean' | 'blocked' | 'unchecked';
 
-/** A moderator's ruling that a blocked file is fine. Dropped with the other check keys on a new url. */
-export type FileCheckOverride = { by: number; at: string; reason: string };
+/**
+ * A moderator's ruling that a blocked file is fine. Dropped with the other check keys on a new url.
+ * `replaced` is the malformed value the clear wrote over, kept so a re-block puts it back.
+ */
+export type FileCheckOverride = { by: number; at: string; reason: string; replaced?: unknown };
 
 /**
  * Only the shape the clear writes counts: metadata from before these keys were server-only may hold
@@ -285,10 +288,16 @@ export async function clearBountyEntryFileCheck({
   if (fileCheckState(file.metadata) !== 'blocked')
     throw throwBadRequestError('This file is not blocked.');
 
-  const override: FileCheckOverride = { by: userId, at: new Date().toISOString(), reason };
   // The stored value just read, which fileCheckState judged no clear (absent, or malformed).
   const meta = (file.metadata ?? {}) as Record<string, unknown>;
-  const readOverride = 'checkOverride' in meta ? JSON.stringify(meta.checkOverride) : null;
+  const hadOverride = 'checkOverride' in meta;
+  const readOverride = hadOverride ? JSON.stringify(meta.checkOverride) : null;
+  const override: FileCheckOverride = {
+    by: userId,
+    at: new Date().toISOString(),
+    reason,
+    ...(hadOverride ? { replaced: meta.checkOverride } : {}),
+  };
   // One transaction, so a clear is never left without its ModActivity row.
   await dbWrite.$transaction(async (tx) => {
     const count = await tx.$executeRaw`
@@ -323,6 +332,93 @@ export async function clearBountyEntryFileCheck({
     type: 'info',
     name: 'bounty-entry-file-check',
     message: 'override cleared',
+    fileId: file.id,
+  }).catch(handleLogError);
+
+  return { fileId: file.id, entryId: file.entityId };
+}
+
+/**
+ * A moderator undoes a clear: the file is blocked again exactly as the check left it. Never touches
+ * an award already made; it only withholds the file again.
+ */
+export async function reblockBountyEntryFileCheck({
+  fileId,
+  userId,
+  reason,
+}: {
+  fileId: number;
+  userId: number;
+  reason: string;
+}) {
+  const file = await dbWrite.file.findUnique({
+    where: { id: fileId },
+    select: { id: true, url: true, entityType: true, entityId: true, metadata: true },
+  });
+  if (!file || file.entityType !== 'BountyEntry')
+    throw throwNotFoundError(`No bounty entry file ${fileId}.`);
+  const meta = (file.metadata ?? {}) as Record<string, unknown>;
+  if (!meta.blockedReason || !isFileCheckOverride(meta.checkOverride))
+    throw throwBadRequestError('This file has no clear to undo.');
+
+  // Guarded on the exact clear the moderator saw: a newer clear by someone else is not this one.
+  const readOverride = JSON.stringify(meta.checkOverride);
+  await dbWrite.$transaction(async (tx) => {
+    // A `replaced` that is itself a valid clear was planted, not written over by a clear: putting it
+    // back would leave the file cleared. VALID_OVERRIDE_SQL reads `f`, so it judges `replaced` here
+    // through a row of that shape.
+    const rows = await tx.$queryRaw<{ metadata: unknown }[]>`
+      UPDATE "File" f
+      SET metadata = CASE
+        WHEN f.metadata->'checkOverride'->'replaced' IS NOT NULL
+          AND NOT COALESCE((
+            SELECT ${VALID_OVERRIDE_SQL}
+            FROM (
+              SELECT jsonb_build_object('checkOverride', f.metadata->'checkOverride'->'replaced')
+                AS metadata
+            ) f
+          ), false)
+          THEN jsonb_set(f.metadata, '{checkOverride}', f.metadata->'checkOverride'->'replaced')
+        ELSE f.metadata - 'checkOverride'
+      END
+      WHERE f.id = ${file.id}
+        AND f.url = ${file.url}
+        AND f."entityType" = 'BountyEntry'
+        AND f.metadata->>'blockedReason' IS NOT NULL
+        AND ${VALID_OVERRIDE_SQL}
+        AND f.metadata->'checkOverride' = ${readOverride}::jsonb
+      RETURNING f.metadata
+    `;
+    if (rows.length !== 1)
+      throw throwBadRequestError(
+        'This file changed while you were reviewing it. Reload and try again.'
+      );
+    // A re-block that leaves the file unblocked must not be recorded as one; throwing rolls it back.
+    if (fileCheckState(rows[0].metadata) !== 'blocked') {
+      logToAxiom({
+        type: 'error',
+        name: 'bounty-entry-file-check',
+        message: 're-block would leave the file unblocked',
+        fileId: file.id,
+      }).catch(handleLogError);
+      throw throwBadRequestError("This file couldn't be re-blocked.");
+    }
+
+    await trackModActivity(
+      userId,
+      {
+        entityType: 'bountyEntry',
+        entityId: file.entityId,
+        activity: `reblockFileCheck:${JSON.stringify({ fileId: file.id, reason })}`,
+      },
+      tx
+    );
+  });
+
+  logToAxiom({
+    type: 'info',
+    name: 'bounty-entry-file-check',
+    message: 'override revoked',
     fileId: file.id,
   }).catch(handleLogError);
 
