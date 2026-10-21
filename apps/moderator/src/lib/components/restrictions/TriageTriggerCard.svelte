@@ -219,9 +219,9 @@
   {@const collapsed = fold.folded && !expanded[b.key]}
   <div class="rounded-md border border-dark-4 bg-dark-8">
     <div
-      class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-dark-4 px-3 py-1.5 text-xs font-semibold tracking-wide text-dark-2 uppercase"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-dark-4 px-3 py-1.5 text-xs font-semibold text-dark-2"
     >
-      <span>{b.label}</span>
+      <span class="tracking-wide uppercase">{b.label}</span>
       {#if b.evidence}{@render b.evidence()}{/if}
     </div>
     <div class="px-3 py-2 text-dark-0">

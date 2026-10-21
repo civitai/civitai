@@ -18,6 +18,12 @@
     counts?: Partial<Record<RestrictionType, number>>;
   } = $props();
 
+  const HINTS: Record<RestrictionType, string> = {
+    generation: 'prompt blocked by the word list',
+    'bot-account': 'flagged as automated use',
+    scam: 'flagged as a scam',
+  };
+
   // The open item and the page index the result set being replaced.
   const hrefFor = (type: RestrictionType) =>
     urlWith(page.url, {
@@ -37,23 +43,26 @@
       data-sveltekit-keepfocus
       aria-current={active ? 'page' : undefined}
       class={cn(
-        '-mb-px flex items-center gap-2 border-b-2 px-3 pt-1.5 pb-2.5 text-sm',
+        '-mb-px flex flex-col gap-0.5 border-b-2 px-3 pt-1.5 pb-2.5',
         active
           ? 'border-blue-500 font-semibold text-white'
           : 'border-transparent font-medium text-dark-0 hover:text-white'
       )}
     >
-      {RESTRICTION_TYPE_LABELS[type]}
-      {#if count !== undefined}
-        <span
-          class={cn(
-            'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
-            active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
-          )}
-        >
-          {num(count)}
-        </span>
-      {/if}
+      <span class="flex items-center gap-2 text-sm">
+        {RESTRICTION_TYPE_LABELS[type]}
+        {#if count !== undefined}
+          <span
+            class={cn(
+              'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
+              active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
+            )}
+          >
+            {num(count)}
+          </span>
+        {/if}
+      </span>
+      <span class="text-[11px] font-normal text-dark-2">{HINTS[type]}</span>
     </a>
   {/each}
 </nav>
