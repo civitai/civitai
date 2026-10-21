@@ -37,7 +37,7 @@ export default function UserMenuV2() {
       indicator={
         currentUser && attention > 0 ? (
           <span
-            className="absolute -top-0.5 left-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-6 px-1 text-[10px] font-bold leading-none text-white @max-md:left-auto @max-md:right-0"
+            className="absolute -top-0.5 left-0 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-6 px-1 text-[10px] font-bold leading-none text-white @max-md:left-auto @max-md:right-0"
             aria-label={`${attention} waiting for you`}
           >
             {attention > 99 ? '99+' : attention}
