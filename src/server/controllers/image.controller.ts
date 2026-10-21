@@ -569,7 +569,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       user,
       eventDecorationViewer: user,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
-      include: [...input.include, 'tagIds', 'profilePictures'],
+      include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
       dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
       actor,
     };
