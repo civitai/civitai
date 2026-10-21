@@ -228,13 +228,13 @@ export async function getCsamsToArchive() {
     // the process. That has not been built.
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
-  // A skipped archive is not retried, and it keeps `archivedAt` null rather than being stamped:
+  // A skipped archive is not retried. One skipped for missing training data keeps `archivedAt` null:
   // the image retention holds release a user's images once all their reports are archived.
   return (data as unknown as CsamReportProps[]).filter((report) => !report.details?.archiveSkipped);
 }
 
-// Excludes reports whose archive was skipped: they never get archivedAt. Decide how to treat them
-// before scheduling content removal.
+// Excludes reports whose archive was skipped for missing training data: they never get archivedAt.
+// Decide how to treat them before scheduling content removal.
 export async function getCsamsToRemoveContent() {
   const data = await dbRead.csamReport.findMany({
     where: {
