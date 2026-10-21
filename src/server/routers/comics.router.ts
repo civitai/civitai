@@ -71,6 +71,7 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -2171,7 +2172,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You enhance prompts.' },
             { role: 'user', content: 'A sample prompt for cost estimation.' },
@@ -2265,7 +2266,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You plan comic panels.' },
             { role: 'user', content: 'A sample story for cost estimation.' },
