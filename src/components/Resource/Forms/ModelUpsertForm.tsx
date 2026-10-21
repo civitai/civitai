@@ -77,8 +77,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
-import { ModelCoverFields } from '~/components/Resource/Forms/ModelCoverFields';
-import { ModelSfwFaceFields } from '~/components/Resource/Forms/ModelSfwFaceFields';
+import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 
 const schema = modelUpsertSchema
   .extend({
@@ -382,12 +381,46 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
   const isDraft = model?.status === ModelStatus.Draft;
 
+  const nameInput = <InputText name="name" label="Name" placeholder="Name" withAsterisk />;
+  const descriptionInput = (
+    <InputRTE
+      name="description"
+      label="Description"
+      description="Tell us what your model does"
+      includeControls={[
+        'heading',
+        'formatting',
+        'list',
+        'link',
+        'media',
+        'mentions',
+        'colors',
+        'blurb',
+      ]}
+      editorSize="xl"
+      placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
+      withAsterisk
+    />
+  );
+
   return (
     <Form id={id} form={form} onSubmit={handleSubmit}>
       <ContainerGrid2 gutter="xl">
         <ContainerGrid2.Col span={12}>
           <Stack>
-            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+            {features.modelComFace ? (
+              <ModelListingTabs
+                modelId={model?.id}
+                redFields={
+                  <>
+                    {nameInput}
+                    {descriptionInput}
+                  </>
+                }
+              />
+            ) : (
+              nameInput
+            )}
             <Stack gap={5}>
               {replacedType && (
                 <AlertWithIcon
@@ -493,26 +526,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 </Text>
               </AlertWithIcon>
             )}
-            <InputRTE
-              name="description"
-              label="Description"
-              description="Tell us what your model does"
-              includeControls={[
-                'heading',
-                'formatting',
-                'list',
-                'link',
-                'media',
-                'mentions',
-                'colors',
-                'blurb',
-              ]}
-              editorSize="xl"
-              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
-              withAsterisk
-            />
-            {features.modelComFace && <ModelSfwFaceFields modelId={model?.id} />}
-            {features.modelComFace && model?.id && <ModelCoverFields modelId={model.id} />}
+            {!features.modelComFace && descriptionInput}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"

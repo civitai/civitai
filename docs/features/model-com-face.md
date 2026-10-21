@@ -82,5 +82,4 @@ one revision. Nothing is saved until the creator saves.
 - Search hits, resolved in the card, autocomplete, quick search and the generator picker.
 
 Code: `src/shared/utils/model-sfw-face.ts`, `src/server/services/model-sfw-face.service.ts`,
-`src/server/services/model-cover.service.ts`, `src/components/Resource/Forms/ModelSfwFaceFields.tsx`,
-`src/components/Resource/Forms/ModelCoverFields.tsx`.
+`src/server/services/model-cover.service.ts`, `src/components/Resource/Forms/ModelListingTabs.tsx`.
