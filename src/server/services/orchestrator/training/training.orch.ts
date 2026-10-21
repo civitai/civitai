@@ -52,6 +52,7 @@ import {
   isInvalidAiToolkit,
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
+  isKohyaEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -433,6 +434,13 @@ export const createTrainingWorkflow = async ({
 
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
+  // API caller can still carry it, and no worker would claim the step.
+  if (trainingParams.engine === 'kohya' && !isKohyaEnabled(features))
+    throw throwBadRequestError(
+      'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
+    );
 
   // Audio base types are marked `isAiToolkitMandatory`, so the check above
   // short-circuits to true regardless of feature flags. Enforce the rollout
