@@ -126,7 +126,9 @@ describe('model page path — the version comes from the page, not modelVersion.
 
     const result = useFromPage();
 
-    expect(result.isDownloadable).toBe(false);
+    // Falsy, not `false`: for a non-owner non-moderator the hook yields `false || undefined`
+    // (pre-existing); every consumer reads it as a boolean. The no-version default is `true`.
+    expect(result.isDownloadable).toBeFalsy();
     expect(result.isSelectableInGenerator).toBe(false);
     expect(result.isEarlyAccess).toBe(true);
     expect(result.canDownload).toBeFalsy();
@@ -143,7 +145,7 @@ describe('model page path — the version comes from the page, not modelVersion.
     state.entityAccess = [];
 
     state.currentUser = { id: VIEWER_ID };
-    expect(useFromPage().isDownloadable).toBe(false);
+    expect(useFromPage().isDownloadable).toBeFalsy();
 
     state.currentUser = { id: OWNER_ID };
     expect(useFromPage().isDownloadable).toBe(true);
