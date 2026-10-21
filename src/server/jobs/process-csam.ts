@@ -31,7 +31,6 @@ function errorMessage(e: unknown): string {
   }
 }
 
-/** How long `send-csam-reports` may hold its run lock; matches the archive job's. */
 export const CSAM_SEND_JOB_LOCK_SECONDS = 4 * 60 * 60;
 
 const sendCsamReportsJob = createJob(

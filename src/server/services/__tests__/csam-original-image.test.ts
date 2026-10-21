@@ -99,12 +99,22 @@ describe('readOriginalImage', () => {
     await expect(
       readOriginalImage(image, {
         backend,
-        fetchImpl: edgeResponding(403, Buffer.from('<html>forbidden</html>'), {
+        fetchImpl: edgeResponding(200, Buffer.from('<html>placeholder</html>'), {
           'content-type': 'text/html',
         }),
       })
-    ).resolves.toEqual({ source: 'missing', reason: 'edge 403' });
+    ).resolves.toEqual({ source: 'missing', reason: 'edge copy is not media' });
   });
+
+  it.each([401, 403])(
+    'throws on an edge %i, which may pass, so the run is retried',
+    async (status) => {
+      const { backend } = backendReturning(missingKey);
+      await expect(
+        readOriginalImage(image, { backend, fetchImpl: edgeResponding(status) })
+      ).rejects.toThrow(String(status));
+    }
+  );
 
   it.each([408, 429, 500, 503])('throws on an edge %i so the run is retried', async (status) => {
     const { backend } = backendReturning(missingKey);
@@ -245,6 +255,7 @@ describe('readOriginalImage', () => {
     ['the URL allowlist refuses', '\\evil.example/x.png'],
     ['leaves the image path', '../../other/path'],
     ['carries a query', 'key-uuid?x=1'],
+    ['hides a dot segment', '%2e%2e/%2E%2e/other/path'],
   ])('never fetches the edge for a stored key that %s', async (_, url) => {
     const { backend } = backendReturning(missingKey);
     const fetchImpl = edgeResponding(200, Buffer.from('remote'));
@@ -345,7 +356,10 @@ describe('probeOriginalImage', () => {
     const { backend } = backendReturning(send);
     const cancel = vi.fn(async () => undefined);
     const fetchImpl = vi.fn(async () => {
-      const response = new Response('edge bytes', { status: 200 });
+      const response = new Response('edge bytes', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      });
       Object.defineProperty(response, 'body', { value: { cancel } });
       return response;
     });

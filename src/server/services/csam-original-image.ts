@@ -44,7 +44,7 @@ export const MAX_ORIGINAL_IMAGE_BYTES = 1024 * 1024 * 1024;
 
 const OCTET_STREAM = 'application/octet-stream';
 
-/** Reservation for a body of unknown length; any byte budget clamps it to the whole budget. */
+/** Reserved for a body of unknown length, so it cannot slip under a byte budget. */
 const UNKNOWN_SIZE = MAX_ORIGINAL_IMAGE_BYTES;
 
 const OVER_CAP = 'exceeds the size cap';
@@ -75,11 +75,13 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
 };
 
 const TRANSIENT_CLIENT_STATUSES = new Set([408, 425, 429]);
+const ABSENT_STATUSES = new Set([404, 410]);
 
 // Only NoSuchKey: a plain 404 is also what a wrong bucket returns, and that must not quietly turn
-// every original into an edge copy. A HEAD has no error body, so its 404 is only `NotFound`; the
-// probe accepts that and leaves the distinction to the read.
+// every original into an edge copy.
 const isMissingObject = (e: unknown) => (e as { name?: string } | undefined)?.name === 'NoSuchKey';
+// A HEAD has no error body, so a missing key is only `NotFound`, and so is a wrong bucket. That
+// passes the probe; the read then throws.
 const isMissingHead = (e: unknown) =>
   isMissingObject(e) || (e as { name?: string } | undefined)?.name === 'NotFound';
 
@@ -117,16 +119,15 @@ const declaredLength = (header: string | null) => {
   return Number.isFinite(length) && length >= 0 ? length : UNKNOWN_SIZE;
 };
 
-/** Why the edge must not be asked for this image, if it must not. */
 function edgeRefusal(url: string, passthrough: boolean) {
   if (!isAllowedImageScanUrl(url)) return missing('url not allowed');
   // A stored key is joined into the edge URL as is: it must stay a plain path.
-  if (!passthrough && /\.\.|[?#]/.test(url)) return missing('url not allowed');
+  if (!passthrough && /\.\.|%2e|[?#]/i.test(url)) return missing('url not allowed');
 }
 
 /**
- * The edge's full-size copy, never a resized one. Statuses that say "try again" throw; any other
- * failure is `missing`, and the body is released either way.
+ * The edge's full-size copy, never a resized one. Only "not found" or a non-media body is
+ * `missing`; any other failure throws.
  */
 async function fetchEdge(
   image: ImageInput,
@@ -151,9 +152,19 @@ async function fetchEdge(
     await response.body?.cancel().catch(() => undefined);
     throw new Error(`edge fallback failed: ${response.status}`);
   }
+  // Only "not found" means absent; any other refusal may pass, so the caller retries.
+  if (!response.ok && !ABSENT_STATUSES.has(response.status)) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`edge fallback failed: ${response.status}`);
+  }
   if (!response.ok || !response.body) {
     await response.body?.cancel().catch(() => undefined);
     return missing(`edge ${response.status}`);
+  }
+  const type = response.headers.get('content-type');
+  if (type && !/^(image|video|audio)\//i.test(type.trim())) {
+    await response.body.cancel().catch(() => undefined);
+    return missing('edge copy is not media');
   }
   const declared = declaredLength(response.headers.get('content-length'));
   if (declared > MAX_ORIGINAL_IMAGE_BYTES) {
@@ -164,9 +175,9 @@ async function fetchEdge(
 }
 
 /**
- * The stored object under `Image.url`. Only a missing object falls back to the full-size edge
- * copy; a full URL goes straight to the edge. Any other storage error throws, so a transient
- * failure can never quietly downgrade evidence to an edge copy and the caller retries.
+ * The stored object under `Image.url`. Only a missing object falls back to the edge copy, so a
+ * transient storage error cannot quietly downgrade evidence to an edge copy; it throws and the
+ * caller retries.
  *
  * `reserve` is called with the object's size before its body is read, so a caller can bound how
  * many bytes are held at once.
@@ -247,9 +258,9 @@ export async function readOriginalImage(
 }
 
 /**
- * What `readOriginalImage` would find, without reading the bytes: a storage HEAD, or the edge's
- * headers with the body released. Throws where the read would, so a caller can decide before
- * acting on the file.
+ * A storage HEAD, or the edge's headers with the body released, in place of the bytes, so a
+ * caller can decide before acting on the file. Throws on the errors the read throws on, except a
+ * wrong bucket (a HEAD says only `NotFound`) and a body that fails mid-read.
  */
 export async function probeOriginalImage(
   image: ImageInput,

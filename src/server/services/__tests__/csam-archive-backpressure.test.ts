@@ -207,6 +207,7 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 import {
   archiveCsamDataForReport,
   ARCHIVE_SCAN_PAGE_SIZE,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
 import { createHash } from 'crypto';
@@ -581,7 +582,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
         kind: 'images',
         key: uploadedKeys.find((k) => k.endsWith('images.zip')),
         etag: expect.stringMatching(/^"etag-\d+"$/),
-        entries: IMAGE_COUNT - 1 + MANIFEST_ENTRIES,
+        entries: IMAGE_COUNT - 2 + MANIFEST_ENTRIES,
         namedExpected: 3,
         namedMissing: 2,
       },
@@ -1195,31 +1196,46 @@ describe('archiveCsamDataForReport (Image report, stored originals)', () => {
     expect((await zip.file('8.jpeg')!.async('nodebuffer')).equals(edge)).toBe(true);
   });
 
-  it('records a full URL whose host keeps failing as missing, and still archives the rest', async () => {
-    const withFullUrl = [
-      ...rows,
-      { id: 10, url: 'https://image.civitai.com/legacy/ten.png', name: 'ten.png', type: 'image' },
-    ];
-    dbMock.dbRead.image.findMany.mockImplementation(
-      async (args: { where?: { id?: { gt?: number } } } = {}) =>
-        withFullUrl.filter((row) => row.id > (args.where?.id?.gt ?? 0))
-    );
-    vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
-      String(input).includes('ten.png')
-        ? new Response('unavailable', { status: 503 })
-        : String(input).includes('key-eight')
-        ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
-        : new Response('not found', { status: 404 })
-    );
+  describe('a full URL whose host keeps failing', () => {
+    beforeEach(() => {
+      const withFullUrl = [
+        ...rows,
+        { id: 10, url: 'https://image.civitai.com/legacy/ten.png', name: 'ten.png', type: 'image' },
+      ];
+      dbMock.dbRead.image.findMany.mockImplementation(
+        async (args: { where?: { id?: { gt?: number } } } = {}) =>
+          withFullUrl.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+      );
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+        String(input).includes('ten.png')
+          ? new Response('unavailable', { status: 503 })
+          : String(input).includes('key-eight')
+          ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+          : new Response('not found', { status: 404 })
+      );
+    });
+    const sentHoursAgo = (hours: number) => ({
+      ...report,
+      reportSentAt: new Date(Date.now() - hours * 3_600_000),
+    });
 
-    const zip = await archivedZip();
+    it('fails the archive, to be retried, within a day of sending', async () => {
+      await expect(
+        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+      ).rejects.toThrow('503');
+    });
 
-    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
-    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
-    expect(manifest.images.at(-1)).toEqual({
-      imageId: 10,
-      source: 'missing',
-      reason: 'full url unreadable',
+    it('is recorded as missing after that, and the rest is archived', async () => {
+      await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+      const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+
+      expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+      const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+      expect(manifest.images.at(-1)).toEqual({
+        imageId: 10,
+        source: 'missing',
+        reason: 'full url unreadable',
+      });
     });
   });
 

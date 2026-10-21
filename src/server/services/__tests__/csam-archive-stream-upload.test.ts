@@ -623,8 +623,8 @@ describe('csam archive streaming upload', () => {
     // size. That makes this assertion reachable, which the images route does not.
     //
     // Made OBSERVABLE by a large estimate over a small archive: `expectedBytes` counts every URL,
-    // while only the ones that actually fetch become entries. At ~1.4 MiB/entry x 30,000 URLs the
-    // derived part size is ~17 MiB — larger than the ~14 MiB archive — so a leaked estimate
+    // while only the ones that actually fetch become entries. At ~8 MiB/entry x 30,000 URLs the
+    // derived part size is ~96 MiB — larger than the ~14 MiB archive — so a leaked estimate
     // collapses the upload to a single part (or a one-shot `PutObject`, `partCount === 0`).
     // The fixed 5 MiB geometry gives several parts instead.
     const REAL_URLS = ENTRY_COUNT;

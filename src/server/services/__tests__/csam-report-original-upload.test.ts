@@ -214,6 +214,63 @@ describe('NCMEC image upload', () => {
         report.id,
       ]);
     });
+
+    it('opens no CyberTip again for a file that checks out but keeps failing to read', async () => {
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockRejectedValue(storageOutage());
+      const keptFailing = (hours: number) =>
+        ({
+          ...report,
+          createdAt: new Date(Date.now() - hours * 3_600_000 - 60_000),
+          details: { readFailures: { 501: 2 } },
+        } as CsamReportProps);
+
+      await processCsamReport(keptFailing(1));
+      expect(submitReport).not.toHaveBeenCalled();
+
+      await processCsamReport(keptFailing(CSAM_SEND_SHORT_AFTER_HOURS + 1));
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(lines('send-all-unreadable')).toHaveLength(2);
+    });
+
+    it('stops reading the other files once one fails after opening', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([501, 502, 503, 504].map(imageRow));
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockImplementation(async (key: string) => {
+        if (key === 'stored-key-501') throw storageOutage();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      });
+
+      await processCsamReport({
+        ...report,
+        images: [{ id: 501 }, { id: 502 }, { id: 503 }, { id: 504 }],
+      } as CsamReportProps);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      // 501 fails at once and 502 was already reading beside it; 503 and 504 never start.
+      expect(getObject.mock.calls.map(([key]) => key).sort()).toEqual([
+        'stored-key-501',
+        'stored-key-502',
+      ]);
+    });
+
+    it('logs both ids before cancelling, even when the cancel fails', async () => {
+      headObject.mockResolvedValue({ ContentLength: stored.length });
+      getObject.mockRejectedValue(storageOutage());
+      cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
+
+      await expect(processCsamReport(report)).rejects.toThrow('synthetic NCMEC outage');
+
+      expect(lines('archive-data')).toEqual([
+        expect.objectContaining({ reportId: report.id, ncmecReportId: 99 }),
+      ]);
+    });
   });
 
   describe('a report still unsent after the send run', () => {

@@ -31,12 +31,14 @@ and the moderator dashboard column that reads it (`src/pages/moderator/csam/inde
 
 ## 2. Alerting on a stranded CSAM report
 
-The send/archive pipeline has **no retry limit, no backoff, and no dead-letter**. Every failure
-leaves `reportSentAt` NULL and retries hourly. Every image file is checked before a CyberTip is
-opened, so a report that is held opens none. The one exception to holding is an image file whose read
-keeps failing: once the report passes `CSAM_SEND_SHORT_AFTER_HOURS` and that file's read has failed
-`CSAM_SEND_SHORT_MIN_READ_FAILURES` times (`csam.service-new.ts`), the report is sent without it. A
-report with no readable file is never sent.
+The send/archive pipeline has **no retry limit, no backoff, and no dead-letter**. A failure leaves
+`reportSentAt` NULL and retries hourly, with the exceptions below. Every image file is checked before
+a CyberTip is opened, so a report that is held opens none. A file that is gone (no stored object and
+no edge copy, over the size cap, or a URL the allowlist refuses) does not hold the report: it is
+recorded as `missing` with its reason and the rest is sent. A file whose reads keep failing does:
+once the report passes `CSAM_SEND_SHORT_AFTER_HOURS` and every such file has failed
+`CSAM_SEND_SHORT_MIN_READ_FAILURES` reads (constants in `csam.service-new.ts`), the report is sent
+without them. A report with no file that can be sent is never sent.
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.
@@ -52,8 +54,9 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
       readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
       `CSAM_SEND_DECISION_AFTER_HOURS`.
 - [ ] Route those lines to an alert, and alert when a report is unarchived for >7d.
-- [ ] Consider an attempt counter / dead-letter so a permanently-failing report is visible rather
-      than silently retried forever.
+- [ ] Consider a report-level dead-letter so a permanently-failing report is visible rather than
+      silently retried forever. Failed file reads are already counted per file in
+      `details.readFailures`; this is for the other causes (a non-zero NCMEC status, missing credentials).
 
 In `remove-blocked-images`, the legal hold (`src/server/utils/legal-hold.ts`) keeps a user's blocked
 media while any report naming them is unsent, unarchived, or sent within the last year, with no

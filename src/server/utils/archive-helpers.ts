@@ -240,8 +240,8 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
  * that converts "memory grows with the number of files" into "memory is constant".
  *
  * ⚠️ It is NOT the whole peak, and reading it as "8 image-sizes" understates the constant by
- * roughly 5×. At the CSAM generated-images call site the appender runs behind a `p-limit(10)`, and each of
- * those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
+ * roughly 5×. At the CSAM generated-images call site the appender runs behind a `p-limit(10)`,
+ * and each of those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
  * parked inside `append()` waiting for a slot here. So the realistic peak is about
  * `8 + 3 × 10 = 38` image-sizes, not 8.
  *
