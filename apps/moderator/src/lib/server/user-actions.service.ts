@@ -5,6 +5,7 @@ import {
   LEGAL_HOLD_STOPPED,
   type DeleteHold,
 } from '$lib/legal-hold';
+import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
@@ -26,7 +27,7 @@ import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './it
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
-import { restErrorReason } from './rest-error-reason';
+import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, alwaysRemovesMedia, type ProfileField } from '$lib/enforcement';
 import type { HeldSummary } from './removal-hold';
@@ -1504,11 +1505,10 @@ export async function purgeAllContent(input: {
       return { ok: false, error: LEGAL_HOLD_STOPPED };
     }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
-    // lost answer is reported as started, never as failed: a failure invites a second purge.
-    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-      return { ok: false, error: PURGE_MAY_BE_RUNNING };
-    if (result.status !== undefined || result.requestNeverSent)
-      return { ok: false, error: result.error };
+    // lost answer is reported as started, never as failed: a failure invites a second purge. It is
+    // recorded as sent, not as a purge, since it may not have run.
+    if (!responseMayHaveLanded(result)) return { ok: false, error: result.error };
+    await logAction(PURGE_UNCONFIRMED_ACTIVITY, input.userId, input.moderatorId);
     return { ok: false, error: PURGE_MAY_BE_RUNNING };
   }
 

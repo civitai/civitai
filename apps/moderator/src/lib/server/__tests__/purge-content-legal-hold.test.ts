@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { activityBadge, activityLabel, PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import {
   deleteButtonState,
   holdButtonView,
@@ -141,22 +145,50 @@ describe('purgeAllContent with a lost answer', () => {
       'our own timeout',
       () => Promise.reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })),
     ],
-  ])('reports %s as a purge that may still be running', async (_, response) => {
+  ])('reports %s as a purge that may still be running, recorded as sent', async (_, response) => {
     purge = response;
     expect(await run()).toEqual({ ok: false, error: PURGE_MAY_BE_RUNNING });
+    // Never as a purge: it may not have run.
+    expect(recordModActivity.mock.calls).toEqual([
+      [{ userId: 9, entityType: 'user', entityId: TARGET, activity: PURGE_UNCONFIRMED_ACTIVITY }],
+    ]);
   });
 
-  it('reports a request that never left as a failure', async () => {
+  it('reports a request that never left as a failure, recording nothing', async () => {
     purge = () =>
       Promise.reject(
         Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
       );
     expect(await run()).toEqual({ ok: false, error: 'Purge failed.' });
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   it('passes a refusal the endpoint wrote through to the operator', async () => {
     purge = () => json({ message: 'Invalid userId' }, 400);
     expect(await run()).toEqual({ ok: false, error: 'Purge: Invalid userId' });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('an unconfirmed purge in the activity panel', () => {
+  it('reads as sent, not confirmed, never as a purge', () => {
+    expect(activityBadge(PURGE_UNCONFIRMED_ACTIVITY)).toBe('Purge sent, not confirmed');
+    expect(activityLabel(PURGE_UNCONFIRMED_ACTIVITY)).toBe('Purge sent, not confirmed');
+    // Control: a confirmed purge keeps its own name.
+    expect(activityBadge('purgeAllContent')).toBe('purgeAllContent');
+  });
+
+  // A tripwire on text, not a render: this app has no Svelte test tier (see
+  // feedback-panel-tripwires.test.ts). It catches the panel going back to the raw name.
+  it('is how the user lookup panel labels each row', () => {
+    const panel = readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../../routes/retool/user-lookup/ModActivityPanel.svelte'
+      ),
+      'utf8'
+    );
+    expect(panel).toMatch(/<Badge variant="secondary">\{activityBadge\(row\.activity\)\}<\/Badge>/);
   });
 });
 
