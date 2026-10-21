@@ -40,7 +40,8 @@ import {
   EXTRA_PARAM_FIELDS,
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
-  isRetiredBaseAir,
+  isUnofferedBaseAir,
+  isUnofferedEcosystem,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -350,9 +351,11 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   // trains on the official base.
   if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
     fail(`${field}.customModel`, 'is not supported for this model.');
-  // A restored selection or sweep row can still name a retired card's base.
-  if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
-    fail(`${field}.model`, 'is no longer offered for training.');
+  // A restored selection or sweep row can still name a retired card's or unavailable version's base.
+  if (isNonEmptyString(run.model) && isUnofferedBaseAir(run.model))
+    fail(`${field}.model`, 'is not offered for training.');
+  if (isUnofferedEcosystem(run.ecosystem))
+    fail(`${field}.ecosystem`, 'is not offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -495,6 +498,8 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
+  if (isUnofferedEcosystem(ecosystem))
+    throw new Error('keep training: this base model is not offered for training right now');
   const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;

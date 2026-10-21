@@ -74,6 +74,9 @@ export interface ModelVersionInfo {
    * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
   version?: string;
   isNew?: boolean;
+  /** Why this version is not offered right now. Like a card's `retired`, it stays in the catalog so past
+   *  runs still resolve, but no offer surface lists it and a submit naming it is refused. */
+  unavailable?: string;
 }
 
 /** One base-model card (a family group). */
@@ -604,6 +607,8 @@ export const MODEL_CARDS: ModelCard[] = [
         baseModel: 'LTXV 2.5',
         ecosystem: 'ltx25',
         isNew: true,
+        unavailable:
+          'Every ai-toolkit LTX 2.5 run has failed since 2026-09-29 ("An error occurred while sending the request"); offer it again once a run trains.',
       },
       {
         key: 'ltx23',
@@ -835,15 +840,33 @@ export const catalogFlagKeys = (): string[] => [
   ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
 ];
 
+/** The versions a card offers, newest first — its catalog versions minus any `unavailable` one. */
+export const offeredVersions = (card: ModelCard): ModelVersionInfo[] =>
+  card.versions.filter((v) => !v.unavailable);
+
 /** Cards for a media, minus any gated card the viewer can't see. `enabledFlags` omitted → no gating applied
  *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). */
 export const cardsForMedia = (media: Media, enabledFlags?: ReadonlySet<string>): ModelCard[] =>
   MODEL_CARDS.filter(
-    (c) => c.media === media && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
+    (c) =>
+      c.media === media &&
+      !c.retired &&
+      offeredVersions(c).length > 0 &&
+      (!enabledFlags || isCardVisible(c, enabledFlags))
   );
 
-/** True when this AIR is the base of a retired card. */
-export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
+/** True when this AIR is the base of a retired card or an unavailable version. */
+export const isUnofferedBaseAir = (air: string): boolean => {
+  const match = findByAir(air);
+  return !!match && (!!match.card.retired || !!match.version.unavailable);
+};
+
+/** True when every catalog version training this ecosystem is unavailable — catches a run that names
+ *  no base AIR (a main-app run being continued), which `isUnofferedBaseAir` can't see. */
+export const isUnofferedEcosystem = (ecosystem: string): boolean => {
+  const versions = MODEL_CARDS.flatMap((c) => c.versions).filter((v) => v.ecosystem === ecosystem);
+  return versions.length > 0 && versions.every((v) => v.unavailable);
+};
 
 /**
  * The version label to show beside a card's name, blank when it only repeats it. A single-version card
@@ -1468,7 +1491,7 @@ export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
 /** A Custom run resolves to the card's primary version (`runVersion`), so that version's ecosystem
  *  decides: the same ecosystem the submit check sees. */
 export const allowsCustomBase = (card: ModelCard): boolean =>
-  ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
+  ecosystemAllowsCustomBase((offeredVersions(card)[0] ?? card.versions[0]!).ecosystem);
 
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =

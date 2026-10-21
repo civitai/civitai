@@ -1,7 +1,7 @@
 // Client-safe "from"-price sweep: one whatif per catalog card against a provided client. The shell
 // wraps it in a global redis cache (lib/server/pricing.ts); the web-component backend runs it
 // browser-side, uncached.
-import { MODEL_CARDS, type FromPrices } from '$lib/data/trainingModels';
+import { MODEL_CARDS, offeredVersions, type FromPrices } from '$lib/data/trainingModels';
 import { pool } from '$lib/pool';
 import { trainingWhatIf, type OrchestratorClient } from './orchestrator-core';
 
@@ -15,7 +15,7 @@ export async function computeFromPrices(client: OrchestratorClient): Promise<Fro
   const prices: FromPrices = {};
   const unpriced: string[] = [];
   await pool(MODEL_CARDS, WHATIF_CONCURRENCY, async (card) => {
-    const version = card.versions[0];
+    const version = offeredVersions(card)[0];
     if (!version) return;
     try {
       const cost = await trainingWhatIf(client, {

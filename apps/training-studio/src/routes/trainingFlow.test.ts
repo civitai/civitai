@@ -16,6 +16,7 @@ import {
   startLabelPass,
   withTrigger,
   versionOptions,
+  runVersion,
   CUSTOM_VERSION_KEY,
   type Img,
   type Run,
@@ -318,5 +319,18 @@ describe('retired cards', () => {
 
   it('still resolves a past Hunyuan run to its card', () => {
     expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
+  });
+});
+
+describe('unavailable versions', () => {
+  const ltx = cardByType('ltx')!;
+
+  it('leaves LTX 2.5 off the LTX card and starts a new run on 2.3', () => {
+    expect(versionOptions(ltx).map((v) => v.key)).toEqual(['ltx23', 'ltx2']);
+    expect(newRun(ltx).versionKey).toBe('ltx23');
+  });
+
+  it('trains a restored LTX 2.5 selection on the default version instead', () => {
+    expect(runVersion({ id: 1, cardType: 'ltx', versionKey: 'ltx25' }).key).toBe('ltx23');
   });
 });

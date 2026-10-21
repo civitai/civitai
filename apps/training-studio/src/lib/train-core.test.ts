@@ -314,6 +314,39 @@ describe('retired base', () => {
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
+  it('refuses an LTX 2.5 run while that version is unavailable', async () => {
+    const ltx25 = cardByType('ltx')!.versions.find((v) => v.key === 'ltx25')!;
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), ecosystem: 'ltx25', model: ltx25.air }], {
+        checkText,
+      })
+    ).rejects.toThrow(/runs\[0\]\.model/);
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), ecosystem: 'ltx25' }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.ecosystem/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses to keep training an LTX 2.5 run', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'ltx25', epochs: 10, steps: 3000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      continueTraining(client, { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 }, { checkText })
+    ).rejects.toThrow(/not offered/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
   it('still submits a Wan 2.1 run', async () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
     await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });

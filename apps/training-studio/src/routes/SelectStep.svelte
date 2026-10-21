@@ -19,6 +19,7 @@
   import {
     MEDIA_OPTIONS,
     cardsForMedia,
+    offeredVersions,
     releasedLabel,
     typesForMedia,
     type Media,
@@ -439,7 +440,7 @@
             aria-label={`${card.name}. ${card.description} ${
               cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
             } ${card.flag ? `${card.flag}. ` : ''}${
-              card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
+              offeredVersions(card).length > 1 ? `${offeredVersions(card).length} versions. ` : ''
             }${disabled ? `Unavailable — uses ${labelNoun(card)}, your sweep uses ${labelModeNoun}.` : ''}`}
             title={disabled
               ? `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`
@@ -487,14 +488,14 @@
               {#if releasedLabel(card.released)}
                 <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
               {/if}
-              {#if card.versions.length > 1}
+              {#if offeredVersions(card).length > 1}
                 <span
                   aria-hidden="true"
-                  title={`${card.versions.length} versions`}
+                  title={`${offeredVersions(card).length} versions`}
                   class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
                 >
                   <IconStack2 size={10} stroke={2} />
-                  {card.versions.length}
+                  {offeredVersions(card).length}
                 </span>
               {/if}
             </div>

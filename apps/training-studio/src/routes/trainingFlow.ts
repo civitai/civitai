@@ -9,6 +9,7 @@ import {
   extraParamDefaults,
   paramsForVersion,
   cardsForMedia,
+  offeredVersions,
   versionStepDefault,
   versionSuffix,
   type ExtraParamField,
@@ -120,26 +121,27 @@ export function isCustom(run: Run): boolean {
  *  picker filters against one ecosystem while the submit trains against another. */
 export function runVersion(run: Run): ModelVersionInfo {
   const card = runCard(run);
-  return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+  const offered = offeredVersions(card);
+  return offered.find((v) => v.key === run.versionKey) ?? offered[0] ?? card.versions[0]!;
 }
 
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
-  const v = card.versions.find((x) => x.key === run.versionKey);
+  const v = offeredVersions(card).find((x) => x.key === run.versionKey);
   return versionSuffix(card.name, v?.label);
 }
 
 /** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
 export function versionOptions(card: ModelCard): { key: string; label: string }[] {
   return [
-    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...offeredVersions(card).map((v) => ({ key: v.key, label: v.label })),
     ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
   ];
 }
 
 export function newRun(card: ModelCard): Run {
-  const first = card.versions[0];
+  const first = offeredVersions(card)[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
