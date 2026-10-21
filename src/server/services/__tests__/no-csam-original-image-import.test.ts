@@ -7,14 +7,34 @@ import path from 'path';
  * browsing level, moderation). It exists for CSAM evidence only: the report archive and the
  * NCMEC upload, both in `csam.service-new.ts`. This fails when any other module reaches it, so it
  * cannot quietly become a general "serve the original" helper.
+ *
+ * A convention guard, not a boundary: a computed specifier gets past it.
  */
 
 const REPO = path.resolve(__dirname, '../../../..');
-const ROOTS = ['src', 'scripts'].map((dir) => path.join(REPO, dir));
+const ROOTS = ['src', 'scripts', 'apps', 'packages'].map((dir) => path.join(REPO, dir));
 const MODULE = 'csam-original-image';
 
-const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
-const SKIP_DIRS = new Set(['node_modules', '__screenshots__']);
+const CODE_EXTENSIONS = new Set([
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mts',
+  '.cts',
+  '.mjs',
+  '.cjs',
+  '.svelte',
+]);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '__screenshots__',
+  '.svelte-kit',
+  '.next',
+  'build',
+  'dist',
+  '.turbo',
+]);
 
 /** Every module allowed to reference it. Production callers first; then the tests that drive them. */
 const ALLOWED = [
@@ -32,10 +52,11 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const stripComments = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-
-/** A quoted specifier ending in the module: static, dynamic, `require`, `vi.mock`, re-export. */
+/**
+ * A quoted specifier ending in the module: static, dynamic, `require`, `vi.mock`, re-export.
+ * Matched against raw text, comments included: stripping comments is fooled by a `'/*'` inside a
+ * string, and a quoted path in a comment is only a false positive.
+ */
 const reference = new RegExp(String.raw`['"\`][^'"\`\n]*/${MODULE}(?:\.[cm]?[jt]sx?)?['"\`]`);
 
 const files = ROOTS.flatMap((root) => walk(root));
@@ -54,19 +75,21 @@ describe(`🔴 ${MODULE} is reachable only from the CSAM evidence paths`, () => 
     [`const m = require('../services/${MODULE}.ts');`],
     [`vi.mock('~/server/services/${MODULE}', () => ({}));`],
   ])('the matcher sees %s', (source) => {
-    expect(reference.test(stripComments(source))).toBe(true);
+    expect(reference.test(source)).toBe(true);
   });
 
-  it.each([
-    [`import x from '~/server/services/${MODULE}-helpers';`],
-    [`// import { readOriginalImage } from '~/server/services/${MODULE}';`],
-  ])('the matcher ignores %s', (source) => {
-    expect(reference.test(stripComments(source))).toBe(false);
+  it('the matcher ignores a module whose name only starts the same', () => {
+    expect(reference.test(`import x from '~/server/services/${MODULE}-helpers';`)).toBe(false);
+  });
+
+  it('a block-comment opener in a string does not hide a later import', () => {
+    const source = `const route = '/api/*'; await import('../${MODULE}'); /** doc */`;
+    expect(reference.test(source)).toBe(true);
   });
 
   it('only the allowed modules reference it', () => {
     const referencing = files
-      .filter((file) => reference.test(stripComments(readFileSync(file, 'utf8'))))
+      .filter((file) => reference.test(readFileSync(file, 'utf8')))
       .map(toRepoPath)
       .sort();
 
@@ -75,5 +98,12 @@ describe(`🔴 ${MODULE} is reachable only from the CSAM evidence paths`, () => 
       `Only the CSAM archive and NCMEC paths may read stored originals. A new caller needs its ` +
         `own review, not a line added to ALLOWED.`
     ).toEqual([...ALLOWED].sort());
+  });
+
+  it('the CSAM service does not hand the reader on to its own importers', () => {
+    const service = readFileSync(path.join(REPO, ALLOWED[0]), 'utf8');
+    expect(service).not.toMatch(/export\s*\*\s*from\s*['"][^'"]*csam-original-image/);
+    expect(service).not.toMatch(/export\s*\{[^}]*\breadOriginalImage\b[^}]*\}/);
+    expect(service).not.toMatch(/export\s+(?:const|function|async\s+function)\s+\w*[Oo]riginal/);
   });
 });

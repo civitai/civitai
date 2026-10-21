@@ -628,7 +628,8 @@ async function reportImages(report: CsamReportProps) {
         }
 
         const original = await readOriginalImage(image);
-        if (original.source === 'missing') return;
+        // Recorded rather than skipped, so the sent report shows the gap.
+        if (original.source === 'missing') return { ...imageReportInfo, source: original.source };
         const file = blobToFile(new Blob([original.data], { type: original.contentType }));
 
         const {
@@ -673,11 +674,15 @@ async function reportImages(report: CsamReportProps) {
     await cybertipClient.finishReport({ id: reportId });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
+    // The report stays unsent and is retried next run; its id and age show one stuck retrying.
     logToAxiom({
       name: 'csam-report',
       type: 'error',
       subType: 'archive-data',
       message: e.message,
+      reportId: report.id,
+      stage: 'send',
+      hoursSinceCreated: Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000),
     });
   }
 }
@@ -1889,6 +1894,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             );
           }
         } catch (e) {
+          // Stop the page's queued reads too; otherwise each still opens a read after the failure.
+          limit.clearQueue();
           budget.abort(e);
           throw e;
         }

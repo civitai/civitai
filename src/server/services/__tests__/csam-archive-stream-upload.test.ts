@@ -334,7 +334,7 @@ async function zipInventory(bytes: Buffer): Promise<InventoryEntry[]> {
   const out: InventoryEntry[] = [];
   for (const name of Object.keys(zip.files).sort()) {
     const file = zip.files[name];
-    if (file.dir) continue;
+    if (file.dir || name === 'manifest.json') continue;
     const content = await file.async('nodebuffer');
     out.push({
       name,
@@ -347,30 +347,17 @@ async function zipInventory(bytes: Buffer): Promise<InventoryEntry[]> {
 
 /** What the inventory MUST be, derived from the fixture rather than from either code path. */
 function expectedInventory(): InventoryEntry[] {
-  const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
-  const manifest = Buffer.from(
-    JSON.stringify(
-      {
-        images: Array.from({ length: ENTRY_COUNT }, (_, i) => ({
-          imageId: i + 1,
-          source: 'original',
-          sha256: sha256(entryBytes(i)),
-          bytes: ENTRY_BYTES,
-          contentType: 'image/jpeg',
-        })),
-      },
-      null,
-      2
-    )
-  );
-  return [
-    ...Array.from({ length: ENTRY_COUNT }, (_, i) => ({
-      name: entryNameForIndex(i),
-      size: ENTRY_BYTES,
-      sha256: sha256(entryBytes(i)),
-    })),
-    { name: 'manifest.json', size: manifest.length, sha256: sha256(manifest) },
-  ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+    name: entryNameForIndex(i),
+    size: ENTRY_BYTES,
+    sha256: createHash('sha256').update(entryBytes(i)).digest('hex'),
+  })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** The manifest, parsed: compared by content so a serialisation change cannot redden it. */
+async function zipManifest(bytes: Buffer) {
+  const zip = await JSZip.loadAsync(bytes);
+  return JSON.parse(await zip.file('manifest.json')!.async('string'));
 }
 
 const report = {
@@ -462,6 +449,8 @@ beforeEach(() => {
   storedObjects.clear();
   pendingUploads.clear();
   recordedArchiveCalls = [];
+  // A regression to the edge copy must fail here, not reach the network.
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {
     const match = /image-uuid-(\d+)/.exec(String(url));
     if (!match) return null;
@@ -535,6 +524,9 @@ describe('csam archive streaming upload', () => {
 
     // ---- The equivalence claim itself.
     expect(streamedInventory).toEqual(diskInventory);
+    const streamedManifest = await zipManifest(streamed.stored!.body);
+    expect(streamedManifest.images).toHaveLength(ENTRY_COUNT);
+    expect(streamedManifest).toEqual(await zipManifest(disk.stored!.body));
   });
 
   it('never opens a local write stream for the archive when streaming', async () => {

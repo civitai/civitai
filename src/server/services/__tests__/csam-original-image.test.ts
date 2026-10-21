@@ -2,14 +2,21 @@ import { createHash } from 'crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
-import { extensionForContentType, readOriginalImage } from '~/server/services/csam-original-image';
+import {
+  extensionForContentType,
+  MAX_EDGE_FALLBACK_BYTES,
+  readOriginalImage,
+} from '~/server/services/csam-original-image';
 
 const BUCKET = 'test-images';
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
 function storedObject(data: Buffer, contentType = 'image/png') {
   return {
-    Body: { transformToByteArray: vi.fn(async () => new Uint8Array(data)) },
+    Body: {
+      transformToByteArray: vi.fn(async () => new Uint8Array(data)),
+      destroy: vi.fn(),
+    },
     ContentType: contentType,
     ContentLength: data.length,
   };
@@ -20,16 +27,16 @@ function backendReturning(send: (command: GetObjectCommand) => Promise<unknown>)
   return { s3, backend: { s3: s3 as unknown as S3Client, bucket: BUCKET } };
 }
 
-const missingKey = () => Promise.reject(Object.assign(new Error('missing'), { name: 'NoSuchKey' }));
+const storageError = (name: string, httpStatusCode: number) => () =>
+  Promise.reject(Object.assign(new Error(name), { name, $metadata: { httpStatusCode } }));
+const missingKey = storageError('NoSuchKey', 404);
 
-function edgeResponding(status: number, body = Buffer.alloc(0), contentType = 'image/jpeg') {
-  return vi.fn(
-    async () =>
-      new Response(status === 204 ? null : new Uint8Array(body), {
-        status,
-        headers: { 'content-type': contentType },
-      })
-  );
+function edgeResponding(
+  status: number,
+  body = Buffer.alloc(0),
+  headers: Record<string, string> = { 'content-type': 'image/jpeg' }
+) {
+  return vi.fn(async () => new Response(new Uint8Array(body), { status, headers }));
 }
 
 const image = { url: 'stored-key-uuid', type: 'image' as const, mimeType: 'image/png' };
@@ -56,7 +63,7 @@ describe('readOriginalImage', () => {
   it('falls back to the uncapped edge copy only when the object does not exist', async () => {
     const data = Buffer.from('edge bytes');
     const { backend } = backendReturning(missingKey);
-    const fetchImpl = edgeResponding(200, data, 'image/jpeg');
+    const fetchImpl = edgeResponding(200, data);
 
     const read = await readOriginalImage(image, { backend, fetchImpl });
 
@@ -69,58 +76,89 @@ describe('readOriginalImage', () => {
     expect(url).not.toMatch(/width=/);
   });
 
-  it('treats a 404 status without the NoSuchKey name as missing too', async () => {
-    const { backend } = backendReturning(() =>
-      Promise.reject(Object.assign(new Error('not found'), { $metadata: { httpStatusCode: 404 } }))
-    );
+  it.each([
+    ['a wrong bucket', storageError('NoSuchBucket', 404)],
+    ['denied access', storageError('AccessDenied', 403)],
+    ['a server error', storageError('InternalError', 500)],
+    ['throttling', storageError('SlowDown', 503)],
+  ])('throws on %s instead of downgrading to an edge copy', async (_, send) => {
+    const { backend } = backendReturning(send);
     const fetchImpl = edgeResponding(200, Buffer.from('x'));
 
-    await expect(readOriginalImage(image, { backend, fetchImpl })).resolves.toMatchObject({
-      source: 'edge-fallback',
-    });
-  });
-
-  it('throws on any other storage error instead of downgrading to an edge copy', async () => {
-    const { backend } = backendReturning(() =>
-      Promise.reject(Object.assign(new Error('throttled'), { name: 'SlowDown' }))
-    );
-    const fetchImpl = edgeResponding(200, Buffer.from('x'));
-
-    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow('throttled');
+    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('reports missing when the edge has no copy either, and throws on an edge server error', async () => {
+  it('reports missing when the edge has no copy, and never stores an edge error body', async () => {
     const { backend } = backendReturning(missingKey);
 
     await expect(
       readOriginalImage(image, { backend, fetchImpl: edgeResponding(404) })
     ).resolves.toEqual({ source: 'missing' });
     await expect(
-      readOriginalImage(image, { backend, fetchImpl: edgeResponding(503) })
-    ).rejects.toThrow('503');
+      readOriginalImage(image, {
+        backend,
+        fetchImpl: edgeResponding(403, Buffer.from('<html>forbidden</html>'), {
+          'content-type': 'text/html',
+        }),
+      })
+    ).resolves.toEqual({ source: 'missing' });
   });
 
-  it('never archives an edge error body as an image', async () => {
+  it.each([408, 429, 500, 503])('throws on an edge %i so the run is retried', async (status) => {
     const { backend } = backendReturning(missingKey);
-    const read = await readOriginalImage(image, {
-      backend,
-      fetchImpl: edgeResponding(403, Buffer.from('<html>forbidden</html>'), 'text/html'),
-    });
-    expect(read).toEqual({ source: 'missing' });
+    await expect(
+      readOriginalImage(image, { backend, fetchImpl: edgeResponding(status) })
+    ).rejects.toThrow(String(status));
   });
 
-  it('goes straight to the URL for a row that stores a full URL rather than a key', async () => {
+  it('does not put the requested URL in an edge request error', async () => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      throw new TypeError(`Failed to parse URL from ${String(url)}`);
+    });
+
+    const error = await readOriginalImage(image, { backend, fetchImpl }).catch((e: Error) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(image.url);
+  });
+
+  it('fetches an allowed stored full URL without following redirects, skipping storage', async () => {
     const { s3, backend } = backendReturning(async () => storedObject(Buffer.from('x')));
     const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+    const url = 'https://image.civitai.com/legacy/path/legacy.png';
 
-    const read = await readOriginalImage(
-      { url: 'https://example.invalid/legacy.png', type: 'image' },
-      { backend, fetchImpl }
-    );
+    const read = await readOriginalImage({ url, type: 'image' }, { backend, fetchImpl });
 
     expect(s3.send).not.toHaveBeenCalled();
     expect(read.source).toBe('edge-fallback');
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+  });
+
+  it.each([
+    ['a foreign host', 'https://example.invalid/legacy.png'],
+    ['a scheme-relative form', 'http:/127.0.0.1:6379/x'],
+    ['an empty url', ''],
+  ])('never fetches a stored full URL with %s', async (_, url) => {
+    const { s3, backend } = backendReturning(async () => storedObject(Buffer.from('x')));
+    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+
+    await expect(
+      readOriginalImage({ url, type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({ source: 'missing' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(s3.send).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edge response larger than the cap before reading it', async () => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('small'), {
+      'content-type': 'image/jpeg',
+      'content-length': String(MAX_EDGE_FALLBACK_BYTES + 1),
+    });
+
+    await expect(readOriginalImage(image, { backend, fetchImpl })).rejects.toThrow(/size cap/);
   });
 
   it('reserves the object size before reading the body, and hands back the release', async () => {
@@ -142,7 +180,21 @@ describe('readOriginalImage', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it('gives the reservation back when the body read fails', async () => {
+  it('reserves an edge copy by its declared size before reading it', async () => {
+    const { backend } = backendReturning(missingKey);
+    const data = Buffer.from('edge bytes');
+    const fetchImpl = edgeResponding(200, data, {
+      'content-type': 'image/jpeg',
+      'content-length': String(data.length),
+    });
+    const reserve = vi.fn(async () => () => undefined);
+
+    await readOriginalImage(image, { backend, fetchImpl, reserve });
+
+    expect(reserve).toHaveBeenCalledWith(data.length);
+  });
+
+  it('gives the reservation back and frees the socket when the body read fails', async () => {
     const object = storedObject(Buffer.alloc(10));
     object.Body.transformToByteArray.mockRejectedValue(new Error('socket reset'));
     const { backend } = backendReturning(async () => object);
@@ -152,17 +204,35 @@ describe('readOriginalImage', () => {
       readOriginalImage(image, { backend, reserve: async () => release })
     ).rejects.toThrow('socket reset');
     expect(release).toHaveBeenCalledTimes(1);
+    expect(object.Body.destroy).toHaveBeenCalled();
   });
 
-  it('takes the content type from the stored row when the object only says octet-stream', async () => {
-    const { backend } = backendReturning(async () =>
+  it('frees the socket when the reservation is refused', async () => {
+    const object = storedObject(Buffer.alloc(10));
+    const { backend } = backendReturning(async () => object);
+
+    await expect(
+      readOriginalImage(image, {
+        backend,
+        reserve: () => Promise.reject(new Error('archive failed')),
+      })
+    ).rejects.toThrow('archive failed');
+    expect(object.Body.transformToByteArray).not.toHaveBeenCalled();
+    expect(object.Body.destroy).toHaveBeenCalled();
+  });
+
+  it('prefers the stored object content type over the row, and the row over octet-stream', async () => {
+    const disagreeing = backendReturning(async () => storedObject(Buffer.from('v'), 'image/webp'));
+    await expect(
+      readOriginalImage({ url: 'k', type: 'image', mimeType: 'image/png' }, disagreeing)
+    ).resolves.toMatchObject({ contentType: 'image/webp' });
+
+    const octet = backendReturning(async () =>
       storedObject(Buffer.from('v'), 'application/octet-stream')
     );
-    const read = await readOriginalImage(
-      { url: 'k', type: 'video', mimeType: 'video/mp4' },
-      { backend }
-    );
-    expect(read).toMatchObject({ contentType: 'video/mp4' });
+    await expect(
+      readOriginalImage({ url: 'k', type: 'video', mimeType: 'video/mp4' }, octet)
+    ).resolves.toMatchObject({ contentType: 'video/mp4' });
   });
 });
 
@@ -171,11 +241,13 @@ describe('extensionForContentType', () => {
     ['image/jpeg', 'jpeg'],
     ['image/png', 'png'],
     ['video/mp4', 'mp4'],
-    ['image/svg+xml', 'svg+xml'],
+    ['video/quicktime', 'mov'],
     ['application/octet-stream', 'bin'],
+    ['application/hta', 'bin'],
+    ['application/js', 'bin'],
+    ['text/html', 'bin'],
+    ['image/svg+xml', 'bin'],
     ['image/../../etc', 'bin'],
-    ['image/a b', 'bin'],
-    ['nonsense', 'bin'],
   ])('%s -> %s', (contentType, extension) => {
     expect(extensionForContentType(contentType)).toBe(extension);
   });

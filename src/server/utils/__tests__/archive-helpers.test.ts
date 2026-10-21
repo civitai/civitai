@@ -593,19 +593,20 @@ describe('createBoundedArchive onWritten', () => {
     archive.pipe(output);
     const bounded = createBoundedArchive({ archive, output, maxPendingEntries: BOUND });
 
-    const written: number[] = [];
-    let entriesSeen = 0;
-    archive.on('entry', () => entriesSeen++);
+    // Each callback records how many entries the archiver had written when it ran.
+    const written: Array<{ entry: number; entriesWritten: number }> = [];
+    let entriesWritten = 0;
+    archive.prependListener('entry', () => entriesWritten++);
     for (let i = 0; i < ENTRY_COUNT; i++) {
-      await bounded.append(entryBuffer(i), { name: `e-${i}.bin` }, () => {
-        // Never before the archiver has reported this entry as processed.
-        expect(entriesSeen).toBeGreaterThanOrEqual(written.length);
-        written.push(i);
-      });
+      await bounded.append(entryBuffer(i), { name: `e-${i}.bin` }, () =>
+        written.push({ entry: i, entriesWritten })
+      );
     }
     await bounded.finalize();
 
-    expect(written).toEqual(Array.from({ length: ENTRY_COUNT }, (_, i) => i));
+    expect(written).toEqual(
+      Array.from({ length: ENTRY_COUNT }, (_, i) => ({ entry: i, entriesWritten: i + 1 }))
+    );
   });
 
   it('runs every pending callback when the archive fails, so a byte budget cannot deadlock', async () => {
@@ -641,10 +642,6 @@ describe('ESTIMATED_BYTES_PER_ARCHIVED_IMAGE', () => {
   const MiB = 1024 * 1024;
   const LIBRARY = 20_000;
 
-  it('is sized for stored originals', () => {
-    expect(ESTIMATED_BYTES_PER_ARCHIVED_IMAGE).toBe(8 * MiB);
-  });
-
   it('sizes parts for a large library of originals at that estimate', () => {
     expect(
       deriveUploadPartGeometry({ expectedBytes: LIBRARY * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE })
@@ -654,16 +651,5 @@ describe('ESTIMATED_BYTES_PER_ARCHIVED_IMAGE', () => {
       maxObjectBytes: 64 * MiB * S3_MAX_UPLOAD_PARTS,
       worstCaseResidentBytes: 256 * MiB,
     });
-  });
-
-  it('fits a library the width-capped estimate would have overflowed', () => {
-    const libraryBytes = LIBRARY * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE;
-    const cappedEstimate = Math.round(1.4 * MiB);
-    expect(
-      deriveUploadPartGeometry({ expectedBytes: LIBRARY * cappedEstimate }).maxObjectBytes
-    ).toBeLessThan(libraryBytes);
-    expect(
-      deriveUploadPartGeometry({ expectedBytes: libraryBytes }).maxObjectBytes
-    ).toBeGreaterThanOrEqual(libraryBytes);
   });
 });

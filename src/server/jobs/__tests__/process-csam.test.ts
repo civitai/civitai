@@ -103,7 +103,8 @@ describe('archive-csam-reports batch isolation', () => {
   });
 
   it('names the report and how long it has waited, so one stuck retrying is visible', async () => {
-    const sentAt = new Date(Date.now() - 50 * 3_600_000 - 60_000);
+    // 50 h 40 min: whole hours elapsed, not rounded.
+    const sentAt = new Date(Date.now() - 50 * 3_600_000 - 40 * 60_000);
     mocks.getCsamsToArchive.mockResolvedValue([{ id: 8804, reportSentAt: sentAt }]);
     mocks.archiveCsamDataForReport.mockRejectedValueOnce(new Error('synthetic archive failure'));
 
