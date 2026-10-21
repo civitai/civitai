@@ -3,6 +3,7 @@ import { MantineProvider, Menu } from '@mantine/core';
 import { IconBox } from '@tabler/icons-react';
 import { act, createElement, forwardRef } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
 import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
@@ -81,6 +82,7 @@ async function hover(el: HTMLElement, from: HTMLElement | null) {
     el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: from }));
   });
 }
+let root: Root;
 const wait = (ms: number) => act(async () => void vi.advanceTimersByTime(ms));
 
 beforeEach(async () => {
@@ -89,7 +91,8 @@ beforeEach(async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   await act(async () => {
-    createRoot(container).render(
+    root = createRoot(container);
+    root.render(
       createElement(
         MantineProvider,
         null,
@@ -108,6 +111,7 @@ beforeEach(async () => {
   });
 });
 afterEach(() => {
+  act(() => root.unmount());
   vi.useRealTimers();
   document.body.innerHTML = '';
 });
@@ -124,20 +128,32 @@ describe('desktop group flyouts', () => {
     await hover(tools, stuff);
     await wait(100);
     expect(expanded()).toEqual(['Creator tools']);
+
+    // The old row's close timer fires about 100ms after the new flyout opened.
+    await wait(300);
+    expect(expanded()).toEqual(['Creator tools']);
   });
 
-  it('keeps the flyout through the grace period of a move toward it', async () => {
+  it('keeps the flyout while the pointer crosses from its row into it, and closes it after leaving', async () => {
     const stuff = groupRow('Your stuff');
     await hover(stuff, null);
     await wait(100);
+    const flyout = document.querySelectorAll<HTMLElement>('[data-menu-dropdown]')[1];
+
     await act(async () => {
-      stuff.dispatchEvent(
+      stuff.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: flyout }));
+      flyout.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: stuff }));
+    });
+    await wait(300);
+    expect(expanded()).toEqual(['Your stuff']);
+
+    await act(async () => {
+      flyout.dispatchEvent(
         new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })
       );
     });
     await wait(100);
     expect(expanded()).toEqual(['Your stuff']);
-
     await wait(100);
     expect(expanded()).toEqual([]);
   });
