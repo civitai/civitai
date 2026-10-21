@@ -5,8 +5,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const clickhouse = vi.hoisted(() => ({ $query: vi.fn() }));
 
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse }));
 vi.mock('~/server/db/pgDb', () => {
   const query = async (sql: string, params?: unknown[]) => holder.db.query(sql, params);
   const cancellableQuery = async (sql: string) => ({
@@ -38,7 +39,11 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { leaderboardJobs, populateLeaderboard } from '../prepare-leaderboard';
+import {
+  clickhouseLeaderboardPopulation,
+  leaderboardJobs,
+  populateLeaderboard,
+} from '../prepare-leaderboard';
 
 const PLAIN = 1;
 const MODERATOR = 2;
@@ -144,6 +149,21 @@ describe('moderators are kept off public leaderboards without the exclusion flag
       { userId: PLAIN, position: 1 },
       { userId: PLAIN_LOW, position: 2 },
     ]);
+  });
+
+  it('ClickHouse boards: neither the moderator nor the flagged account is ranked', async () => {
+    clickhouse.$query.mockResolvedValue(
+      (await q(`SELECT "userId", score, '{}' metrics FROM "Score" ORDER BY score DESC`)).rows
+    );
+
+    await clickhouseLeaderboardPopulation({
+      ...base,
+      id: 'generators',
+      includesCTE: true,
+      query: 'WITH clickhouse_x AS (SELECT 1) SELECT 1',
+    });
+
+    expect((await board('generators')).map((r) => r.userId)).toEqual([PLAIN, PLAIN_LOW]);
   });
 
   it('Legends board: drops the moderator from public boards, keeps them on non-public ones', async () => {
