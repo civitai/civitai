@@ -648,6 +648,11 @@ describe('getScheduledPosts', () => {
       ],
       [3, null, null],
     ]);
+    expect(result.posts.map((post) => post.model)).toEqual([
+      null,
+      { name: 'Model', versionName: 'v2' },
+      { name: 'Other', versionName: 'v1' },
+    ]);
     expect(result.posts[0].publishedAt).toBe(scheduledAt.toISOString());
   });
 

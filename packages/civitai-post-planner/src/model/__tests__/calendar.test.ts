@@ -28,6 +28,7 @@ const post = (iso: string, id = 1): PlannerPost => ({
   imageCount: 1,
   cover: null,
   release: null,
+  model: null,
 });
 
 describe('monthGrid', () => {
