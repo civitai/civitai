@@ -29,6 +29,8 @@ const isJsonPathFilter = (value: unknown): value is JsonPathFilter =>
 function matches(row: Row, where: Record<string, unknown>) {
   return Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
+    // As Prisma does, an undefined `equals` constrains nothing.
+    if (isJsonPathFilter(value) && value.equals === undefined) return true;
     if (isJsonPathFilter(value)) {
       const list = value.path.reduce<unknown>(
         (node, part) => (node as Record<string, unknown> | null)?.[part],
@@ -366,11 +368,35 @@ describe('a second report folded into an unsent one', () => {
     expect(rows.find((r) => r.id === both.id)?.details).toEqual({ modelVersionIds: [7, 8] });
   });
 
-  it('keeps a stored generated-images entry it cannot merge', async () => {
+  it('folds training data naming no version into a report that names none', async () => {
+    const none = seed({ userId: 101, type: 'TrainingData', details: { modelVersionIds: [] } });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'TrainingData',
+      details: { minorDepiction: 'real' },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows.find((r) => r.id === none.id)?.details).toEqual({
+      modelVersionIds: [],
+      minorDepiction: 'real',
+    });
+  });
+
+  it('keeps stored generated-images entries it cannot merge, and does not fail on them', async () => {
     const first = seed({
       userId: 101,
       type: 'GeneratedImage',
-      details: { generatedImages: [{ jobId: 'job-a', blobs: 'corrupt' }, { blobs: [] }] },
+      details: {
+        generatedImages: [
+          { jobId: 'job-a', blobs: [{ url: 'a' }] },
+          { jobId: 'job-a', blobs: 'corrupt' },
+          { blobs: [{ url: 'x' }] },
+          { blobs: [{ url: 'y' }] },
+        ],
+      },
     });
 
     await createCsamReport({
@@ -381,7 +407,11 @@ describe('a second report folded into an unsent one', () => {
     });
 
     expect(rows.find((r) => r.id === first.id)?.details).toEqual({
-      generatedImages: [{ jobId: 'job-a', blobs: [{ url: 'a' }] }, { blobs: [] }],
+      generatedImages: [
+        { jobId: 'job-a', blobs: [{ url: 'a' }] },
+        { blobs: [{ url: 'x' }] },
+        { blobs: [{ url: 'y' }] },
+      ],
     });
   });
 });
