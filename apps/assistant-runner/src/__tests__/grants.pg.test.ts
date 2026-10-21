@@ -123,7 +123,11 @@ describePg('run grants and conversation locks in the runner’s database', () =>
     await logged.markEndPending('lost-end', 1, { messages: [], status: 'done' });
     await logged.save('plain-expired', grant('g-plain', hours(-1), 'u-lost', 'c-lost'));
     await logged.sweep();
-    expect(warnings).toEqual([{ object: { runId: 'lost-end' }, message: expect.any(String) }]);
+    // Rows earlier tests left expired may be swept here too: judge this test's two rows only.
+    const mine = warnings.filter(({ object }) =>
+      ['lost-end', 'plain-expired'].includes((object as { runId?: string }).runId ?? '')
+    );
+    expect(mine).toEqual([{ object: { runId: 'lost-end' }, message: expect.any(String) }]);
     expect(JSON.stringify(warnings)).not.toContain('g-lost');
   });
 
