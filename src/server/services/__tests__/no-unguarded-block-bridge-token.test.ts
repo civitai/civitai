@@ -1368,7 +1368,7 @@ function findDefinitionText(file: string, ident: string): string | null {
  * on unrelated changes, the fix is to teach `resolveModule` to reach those specifiers, or to
  * delete the mechanism and keep the narrowed docstrings — NOT to grow the ledger.
  *
- * THE SINGLE LIVE ENTRY, and why it is unreadable — stated exactly, because a looser reading
+ * THE FIRST LIVE ENTRY, and why it is unreadable — stated exactly, because a looser reading
  * of it is wrong in the reassuring direction. `block-scope.constants.ts` does
  * `import { TokenScope } from './token-scope.constants'`, and `resolveModule` resolves `~/`
  * specifiers ONLY, so the relative one is refused by design. Following it would not help
@@ -1384,9 +1384,17 @@ function findDefinitionText(file: string, ident: string): string | null {
  * no occurrence of `blockToken`. What the ledger contributes is not that assurance — it is
  * that the discard path is EXERCISED against the real corpus, so the limit is a measured fact
  * instead of a paragraph.
+ *
+ * THE SECOND LIVE ENTRY: `publish-request.schema.ts`'s `SLUG_REGEX` is `BLOCK_SLUG`, imported from
+ * the workspace package `@civitai/app-assistant` (one slug rule for blocks and App Assistant's app
+ * keys), which `resolveModule` does not read (it resolves `~/` specifiers only). The HUMAN judgement,
+ * read at the declaration (`packages/civitai-app-assistant/src/app-key.ts`): it is
+ * `export const BLOCK_SLUG = /^[a-z][a-z0-9-]*[a-z0-9]$/`, a RegExp literal, not a zod schema, with no
+ * occurrence of `blockToken`.
  */
 const NESTED_UNREADABLE_LEDGER = [
   `${BLOCK_SCOPE_CONSTANTS}#BLOCK_SCOPE_TO_OAUTH_BIT -> #TokenScope`,
+  'src/server/schema/blocks/publish-request.schema.ts#SLUG_REGEX -> #BLOCK_SLUG',
 ].sort();
 
 /**

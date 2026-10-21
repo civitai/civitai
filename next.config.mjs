@@ -225,6 +225,7 @@ export default defineNextConfig(
       '@civitai/notifications',
       '@civitai/moderation',
       '@civitai/mod-utils',
+      '@civitai/app-assistant',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

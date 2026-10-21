@@ -16,7 +16,7 @@ export interface OrchestrationModelOptions {
 
 /**
  * The reply's model: orchestration's chat completions, built by the chat package's own
- * `createAssistantModel` and `freeTierFetch` (`@civitai/components-chat` 0.21.0), as the browser's
+ * `createAssistantModel` and `freeTierFetch` (`@civitai/components-chat` 0.22.1), as the browser's
  * App Assistant builds it: the same OpenAI-compatible provider under the same provider name (so
  * `AgentCore`'s provider options reach the request), the same 401 retry, the viewer's own `chat`
  * token on every request (minted inside it), so orchestration bills the viewer under the App

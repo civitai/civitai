@@ -1,6 +1,7 @@
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
 import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
 import { RunCredentials } from './credentials';
@@ -15,6 +16,9 @@ import { createTokenVerifier, viewerAuthenticator } from './tokens';
 import { noTools, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
 
 const config = loadConfig();
+/** Why a start is refused when the runner has no sandbox service (`SANDBOX_URL`). */
+const TOOLS_NOT_SET_UP =
+  'Replies on the server are not set up yet (App Assistant’s tools are missing there), so this reply could not start.';
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
 const log: Logger = {
@@ -71,8 +75,14 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
-  // TODO(B2): the sandbox MCP tools and the App Assistant gate. Until then a reply is words only.
-  tools = noTools;
+  // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
+  tools = civitai.sandboxUrl
+    ? new AppAssistantTools({
+        sandboxUrl: civitai.sandboxUrl,
+        tokens: (runId) => credentials.forRun(runId),
+        log,
+      })
+    : noTools;
 }
 
 const runner = new Runner({
@@ -83,6 +93,8 @@ const runner = new Runner({
   log,
   wallClockMs: config.wallClockMs,
   stopGraceMs: config.stopGraceMs,
+  // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
+  ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the
@@ -108,7 +120,12 @@ async function main(): Promise<void> {
   runner.startMaintenance({ retentionMs: config.retentionMs, intervalMs: MAINTENANCE_INTERVAL_MS });
   await app.listen({ port: config.port, host: config.host });
   app.log.info(
-    { executorId: config.executorId, basePath: config.basePath, serving: Boolean(civitai) },
+    {
+      executorId: config.executorId,
+      basePath: config.basePath,
+      serving: Boolean(civitai),
+      tools: Boolean(civitai?.sandboxUrl),
+    },
     'assistant-runner ready'
   );
 }

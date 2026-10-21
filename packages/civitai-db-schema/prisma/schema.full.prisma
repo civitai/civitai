@@ -6531,6 +6531,43 @@ model CsamReport {
   // modelVersionIds  Int[]     @default([])
 }
 
+/// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
+model CsamReportAudit {
+  id              Int       @id @default(autoincrement())
+  csamReportId    Int
+  op              String
+  oldUserId       Int?
+  oldReportId     Int?
+  oldType         String?
+  oldSecondaryUserId Int?
+  oldImageCount   Int?
+  /// A keyed fingerprint of the details for tamper detection, never their content.
+  oldDetailsFingerprint String?
+  oldReportSentAt DateTime?
+  changedAt       DateTime  @default(now())
+  changedBy       String    @default(dbgenerated("SESSION_USER"))
+
+  @@index([csamReportId])
+}
+
+/// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
+model CsamReportArchiveObject {
+  id            Int      @id @default(autoincrement())
+  csamReportId  Int
+  /// base | images | generatedImages | trainingData
+  kind          String
+  key           String
+  etag          String?
+  /// Entries appended to a zip archive.
+  entries       Int?
+  /// Items the report names that this archive was expected to hold, and how many it lacks.
+  namedExpected Int?
+  namedMissing  Int?
+  uploadedAt    DateTime @default(now())
+
+  @@index([csamReportId])
+}
+
 model Link {
   id         Int      @id @default(autoincrement())
   url        String

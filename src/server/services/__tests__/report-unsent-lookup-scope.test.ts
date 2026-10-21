@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createCsamReport } from '~/server/services/csam.service';
@@ -56,8 +57,13 @@ beforeEach(() => {
   );
   table.update.mockImplementation(
     async ({ where, data }: { where: { id: number }; data: Partial<Row> }) => {
-      const row = rows.find((r) => r.id === where.id);
-      if (!row) throw new Error(`no row ${where.id}`);
+      const row = rows.find((r) => matches(r, where));
+      if (!row) {
+        throw new Prisma.PrismaClientKnownRequestError('record not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      }
       Object.assign(row, data);
       return row;
     }
@@ -119,6 +125,22 @@ describe('unsent-report lookup', () => {
     expect(rows.find((r) => r.id === other.id)).toEqual(other);
     expect(rows.find((r) => r.id === unsent.id)).toMatchObject({ images: [{ id: 4 }] });
     expect(rows).toHaveLength(3);
+  });
+
+  it('a report sent after the lookup is left alone, and the new report filed on its own', async () => {
+    const raced = seed({ userId: 101, images: [{ id: 1 }] });
+    // The lookup still sees the report unsent; it is sent before the update runs.
+    dbMock.dbWrite.csamReport.findFirst.mockImplementationOnce(async () => {
+      const row = rows.find((r) => r.id === raced.id)!;
+      row.reportSentAt = OLD;
+      return { id: row.id };
+    });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows.find((r) => r.id === raced.id)).toMatchObject({ images: [{ id: 1 }] });
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ userId: 101, images: [{ id: 4 }] });
   });
 
   it('an account’s report of one type leaves its unsent report of another type untouched', async () => {

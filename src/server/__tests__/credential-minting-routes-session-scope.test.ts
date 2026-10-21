@@ -34,7 +34,12 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsLazy: vi.fn(() => ({ trainingStudioUi: true })),
-  getFeatureFlagsAsync: vi.fn(async () => ({ appBlocks: true, appAssistant: true })),
+  // `appAssistantRemoteRunner`: the run-grant route also needs the server runner on for the user.
+  getFeatureFlagsAsync: vi.fn(async () => ({
+    appBlocks: true,
+    appAssistant: true,
+    appAssistantRemoteRunner: true,
+  })),
   computeUserFeatureFlagsOverlay: vi.fn(() => ({})),
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));

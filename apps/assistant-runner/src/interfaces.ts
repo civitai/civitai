@@ -1,8 +1,13 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
-import type { RunPageState, RunSettings } from '@civitai/components-chat/runner-protocol';
-import type { LanguageModel, ToolSet } from 'ai';
+import type {
+  ChatToolResult,
+  RunPageState,
+  RunSettings,
+  RunSubagentProgress,
+} from '@civitai/components-chat/runner-protocol';
+import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
 
 import type { EndedReply } from './head';
 
@@ -43,15 +48,41 @@ export interface ToolContext {
   userId: string;
   runId: string;
   conversationId: string;
+  /** What the page said about itself as the reply started, unvalidated: the provider validates it. */
   page?: RunPageState;
   /** Aborted when the run stops or ends. */
   signal: AbortSignal;
+  /**
+   * What the conversation already did, for a gate that decides on it: the messages of its earlier
+   * replies, and those of this reply's saved steps when it carries on.
+   */
+  history?: { earlier: ModelMessage[]; current: ModelMessage[] };
+  /** civitai's grant says the viewer may start read-only subagents. */
+  subagents?: boolean;
+  /** The reply's own model (subagents ask it too), and the most one step may write. */
+  model?(): LanguageModel;
+  maxOutputTokens?: number;
+  /** Tells the page a call finished, as its gate saw it: journaled as `tool-reported`. */
+  report?(result: ChatToolResult): void;
+  /**
+   * Ends the reply now as interrupted, with these words: Continue carries on from its saved steps.
+   * For a tool that cannot go on (its app was paused by the user opening another).
+   */
+  endReply?(message: string): void;
+  /** Tells the page how a subagent is doing: journaled as `subagent-progress`. */
+  subagentProgress?(toolCallId: string, progress: RunSubagentProgress | null): void;
 }
 
 export interface OpenTools {
   tools: ToolSet;
   /** Closes every transport the tools hold; the only way to reach a call still running on a tool server. */
   close(): Promise<void>;
+  /** The system prompt's rules, given the chat's defaults (as `<civitai-chat>`'s `systemPrompt`). */
+  rules?(defaults: string): string;
+  /** The reply's per-turn instructions, in place of the page's own (`settings.hostInstructions`). */
+  instructions?: string;
+  /** The tools the system prompt names as the embedding app's own. */
+  hostTools?: string[];
 }
 
 /** Opens a reply's tools, closed by the runner on Stop or when the reply ends. */

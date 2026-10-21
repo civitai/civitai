@@ -2901,6 +2901,43 @@ export type CsamReport = {
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
 };
+export type CsamReportArchiveObject = {
+  id: Generated<number>;
+  csamReportId: number;
+  /**
+   * base | images | generatedImages | trainingData
+   */
+  kind: string;
+  key: string;
+  etag: string | null;
+  /**
+   * Entries appended to a zip archive.
+   */
+  entries: number | null;
+  /**
+   * Items the report names that this archive was expected to hold, and how many it lacks.
+   */
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Generated<Timestamp>;
+};
+export type CsamReportAudit = {
+  id: Generated<number>;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  /**
+   * A keyed fingerprint of the details for tamper detection, never their content.
+   */
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Timestamp | null;
+  changedAt: Generated<Timestamp>;
+  changedBy: Generated<string>;
+};
 export type CustomerSubscription = {
   id: string;
   userId: number;
@@ -6099,6 +6136,8 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamReport: CsamReport;
+  CsamReportArchiveObject: CsamReportArchiveObject;
+  CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
   Donation: Donation;
   DonationGoal: DonationGoal;

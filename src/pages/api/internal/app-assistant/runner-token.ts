@@ -15,14 +15,17 @@ import { isConfiguredSecret } from '~/server/utils/configured-secret';
 /**
  * POST /api/internal/app-assistant/runner-token
  *
- * App Assistant's server runner trades a run grant for a short-lived App Assistant `chat` token
- * here, every few minutes while a reply runs, so a reply keeps going after its page closed. Called
- * only by the runner, with its own secret; body `{ grant, purpose: 'chat' }`. The token is the
- * user's, as the browser's is: the grant decides whose, not which conversation it may touch.
+ * App Assistant's server runner trades a run grant for a short-lived App Assistant token here,
+ * every few minutes while a reply runs, so a reply keeps going after its page closed. Called only by
+ * the runner, with its own secret; body `{ grant, purpose }`, `purpose` `chat` (the model and the
+ * conversation store) or `sandbox` (the hosted sandbox service and its tools), as the browser's token
+ * route mints them. The token is the user's, as the browser's is: the grant decides whose, not which
+ * conversation it may touch.
  *
- * Every mint runs the same gates as `/api/apps/assistant/token` (ban, onboarding, mute, email
- * verification, the App Assistant feature flag), on the user as the database has them now, and then
- * the consent check.
+ * Every mint, of either purpose, runs the same gates as `/api/apps/assistant/token` (ban,
+ * onboarding, mute, email verification, the App Assistant feature flag) plus the server runner's own
+ * flag (`appAssistantRemoteRunner`), on the user as the database has them now, and then the consent
+ * check.
  *
  *   200 `{ token, expiresAt }`
  *   401 the runner's secret is missing or wrong, or the grant is not a current run grant
@@ -34,7 +37,7 @@ import { isConfiguredSecret } from '~/server/utils/configured-secret';
  */
 const body = z.object({
   grant: z.string().min(1).max(4096),
-  purpose: z.literal('chat'),
+  purpose: z.enum(['chat', 'sandbox']),
 });
 
 function digest(value: string): Buffer {
@@ -66,7 +69,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const { purpose } = parsed.data;
 
   try {
-    const refusal = await getAppAssistantRefusalForUserId(grant.userId);
+    // The runner's own flag too: turning it off ends runs already holding a grant at their next mint.
+    const refusal = await getAppAssistantRefusalForUserId(grant.userId, { remoteRunner: true });
     // Not judged (the session hub or Flipt is down): a passing fault, which the runner retries.
     if (refusal && 'unavailable' in refusal)
       return res.status(503).json({ error: refusal.error, code: 'unavailable' });
@@ -75,6 +79,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         type: 'app-assistant.runner-token.refused',
         message: `App Assistant runner token refused for user ${grant.userId}`,
         userId: grant.userId,
+        purpose,
         grantId: grant.grantId,
         reason: refusal.error,
       }).catch(() => undefined);

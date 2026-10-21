@@ -116,6 +116,17 @@ describe('run grants', () => {
     expect(grant!.expiresAt.getTime() - Date.now()).toBeGreaterThan(7700 * 1000);
   });
 
+  it('reads subagents only from civitai’s claim, exactly `true`', async () => {
+    const on = await verifier.grant(await signGrant(keys, grantFields, 7800, { subagents: true }));
+    expect(on?.subagents).toBe(true);
+    const off = await verifier.grant(await signGrant(keys, grantFields, 7800));
+    expect(off?.subagents).toBe(false);
+    const loose = await verifier.grant(
+      await signGrant(keys, grantFields, 7800, { subagents: 'true' })
+    );
+    expect(loose?.subagents).toBe(false);
+  });
+
   it('refuses a viewer token presented as a grant (aud confusion)', async () => {
     expect(await verifier.grant(await signViewer(keys, '42'))).toBeNull();
   });

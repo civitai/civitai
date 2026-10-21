@@ -12,6 +12,8 @@ type AppAssistantPageProps = {
   sandboxUrl: string | null;
   /** The assistant may start read-only subagents. */
   subagents: boolean;
+  /** Replies run on the server runner (`appAssistantRemoteRunner`, the runner and the sandbox service configured). */
+  remoteRunner: boolean;
 };
 
 export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
@@ -32,6 +34,9 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
     const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
 
     const { env } = await import('~/env/server');
+    const { isAssistantRunnerConfigured } = await import(
+      '~/server/services/app-assistant/assistant-runner-tokens'
+    );
     // No route CSP: a header CSP persists across the tab's client-side navigations and would block
     // payment and captcha frames on later pages.
     return {
@@ -39,6 +44,11 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
         canPreview,
         sandboxUrl: env.APP_ASSISTANT_SANDBOX_URL ?? null,
         subagents: !!features?.appAssistantSubagents,
+        // The runner refuses to start without its sandbox service; the page needs one too.
+        remoteRunner:
+          !!features?.appAssistantRemoteRunner &&
+          isAssistantRunnerConfigured() &&
+          !!env.APP_ASSISTANT_SANDBOX_URL,
       },
     };
   },
@@ -48,6 +58,7 @@ export default function AppAssistantPage({
   canPreview,
   sandboxUrl,
   subagents,
+  remoteRunner,
 }: AppAssistantPageProps) {
   return (
     <>
@@ -60,6 +71,7 @@ export default function AppAssistantPage({
           canPreview={canPreview}
           sandboxUrl={sandboxUrl}
           subagents={subagents}
+          remoteRunner={remoteRunner}
         />
       </AppsPageLayout>
     </>

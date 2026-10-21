@@ -13,9 +13,10 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app';
+import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
 import { RunGrants } from '../grants';
-import type { ModelProvider } from '../interfaces';
+import type { ModelProvider, ToolContext } from '../interfaces';
 import { TokenMinter } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
@@ -29,6 +30,7 @@ import {
   type RunnerDeps,
 } from '../runner';
 import { createTokenVerifier } from '../tokens';
+import { FakeSandboxService } from '../test-support/fake-sandbox';
 import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
 import { signGrant, testKeys } from '../test-support/keys';
 import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
@@ -88,6 +90,44 @@ describePg('assistant-runner on DBOS + Postgres', () => {
           return { fail: new Error('the model broke') };
         }
         return { text: 'Recovered.' };
+      }),
+    // App Assistant on the runner: a command that runs until the reply stops.
+    'sandbox-hang': () =>
+      scriptedModel((prompt) =>
+        toolResults(prompt) === 0
+          ? {
+              text: 'Installing. ',
+              calls: [{ toolName: 'sandbox__run_command', input: { command: 'hang' } }],
+            }
+          : { text: 'Done.' }
+      ),
+    // A read (meanwhile the user opens another app), then a write the paused app refuses.
+    'sandbox-pause': () =>
+      scriptedModel((prompt) => {
+        if (toolResults(prompt) === 0)
+          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 1)
+          return {
+            calls: [
+              { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'y' } },
+            ],
+          };
+        return { text: 'Written.' };
+      }),
+    // A file written, then the model fails once: the retry carries on after the write.
+    'sandbox-flaky': () =>
+      scriptedModel((prompt) => {
+        if (toolResults(prompt) === 0)
+          return {
+            calls: [
+              { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'x' } },
+            ],
+          };
+        if (flaky.failNext) {
+          flaky.failNext = false;
+          return { fail: new Error('the model broke') };
+        }
+        return { text: 'Written.' };
       }),
   };
   /** What the `mint` model minted with, per request: the grant it found and the token it got. */
@@ -229,8 +269,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     content?: string;
     key?: string;
     tier?: 'auto' | 'free' | 'paid';
+    page?: StartRunRequest['page'];
   }): StartRunRequest {
     return {
+      ...(overrides.page ? { page: overrides.page } : {}),
       v: 1,
       idempotencyKey: overrides.key ?? randomUUID(),
       conversationId: overrides.conversationId,
@@ -1189,6 +1231,150 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     } finally {
       deps.store = real;
     }
+  });
+
+  describe('App Assistant’s sandbox tools', () => {
+    let sandbox: FakeSandboxService;
+    const real = deps.tools;
+    /** What the runner handed the provider as each reply opened its tools. */
+    const opened: ToolContext[] = [];
+    beforeAll(async () => {
+      sandbox = new FakeSandboxService();
+      await sandbox.start();
+      sandbox.add('my-app');
+      const provider = new AppAssistantTools({
+        sandboxUrl: sandbox.url,
+        // TEST-ONLY stand-in for a minted sandbox token.
+        tokens: () => async (purpose) => `test-token-${purpose}`,
+        log: deps.log,
+      });
+      deps.tools = {
+        open: (context) => {
+          opened.push(context);
+          return provider.open(context);
+        },
+      };
+    });
+    afterAll(async () => {
+      deps.tools = real;
+      await sandbox?.stop();
+    });
+    const page = { app: 'my-app' };
+
+    it('Stop closes the sandbox connection, ending a command still running there', async () => {
+      const user = 'u-sandbox-stop';
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-stop', model: 'sandbox-hang', page })
+      );
+      const runId = start.body!.runId as string;
+      const upToCall = await events(runId, user, {
+        stopWhen: ({ event }) => event.type === 'tool-call',
+      });
+      await expect.poll(() => sandbox.callsTo('run_command'), { timeout: 10_000 }).toBe(1);
+      expect(sandbox.abandoned).toEqual([]);
+
+      expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+      const rest = await events(runId, user, { lastEventId: upToCall.at(-1)!.id });
+      expect(ended(rest).status).toBe('stopped');
+      // The sandbox saw the call's connection close: closing the transport is what reaches it.
+      await expect.poll(() => sandbox.abandoned.length, { timeout: 10_000 }).toBe(1);
+    });
+
+    it('carrying a reply on never runs a finished sandbox call again, and reports each call', async () => {
+      const user = 'u-sandbox-retry';
+      flaky.failNext = true;
+      const first = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-retry', model: 'sandbox-flaky', page })
+      );
+      const failed = await events(first.body!.runId as string, user);
+      expect(ended(failed)).toMatchObject({ status: 'error', resumable: true });
+      expect(sandbox.callsTo('write_file')).toBe(1);
+      const reported = failed.flatMap(({ event }) =>
+        event.type === 'tool-reported' ? [event.result] : []
+      );
+      expect(reported).toMatchObject([
+        { name: 'sandbox__write_file', output: 'wrote 1 bytes', isError: false },
+      ]);
+
+      const retry = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-retry', model: 'sandbox-flaky', retry: true, page })
+      );
+      const entries = await events(retry.body!.runId as string, user);
+      expect(ended(entries).status).toBe('done');
+      expect(sandbox.callsTo('write_file')).toBe(1);
+      expect(rebuild(entries).at(-1)).toEqual({ kind: 'text', text: 'Written.' });
+      // The gate of the carried-on reply started from its saved steps: the write counts against it.
+      const carried = opened.at(-1)!;
+      expect(carried.conversationId).toBe('c-sandbox-retry');
+      expect(carried.history?.earlier).toEqual([]);
+      expect(JSON.stringify(carried.history?.current)).toContain(
+        '"toolName":"sandbox__write_file"'
+      );
+      expect(carried.history?.current.some((m) => m.role === 'tool')).toBe(true);
+    });
+
+    it('the user opening another app mid-reply keeps it running and ends the reply to be continued', async () => {
+      const user = 'u-sandbox-pause';
+      const writesBefore = sandbox.callsTo('write_file');
+      const readFile = sandbox.tools.get('read_file')!;
+      // As the read runs, the user opens another app from the page: the service pauses this one.
+      sandbox.tools.set('read_file', (args, signal) => {
+        sandbox.userOpens('other-app');
+        return readFile(args, signal);
+      });
+      try {
+        const start = await post(
+          '/runs',
+          as(user),
+          startBody({ conversationId: 'c-sandbox-pause', model: 'sandbox-pause', page })
+        );
+        const entries = await events(start.body!.runId as string, user);
+        expect(ended(entries)).toMatchObject({ status: 'error', resumable: true });
+        expect(
+          entries.some(
+            ({ event }) => event.type === 'error' && /you opened another app/.test(event.message)
+          )
+        ).toBe(true);
+        // Nothing woke this app, which would have paused the user's; the write never ran.
+        expect(sandbox.sandboxes.find((s) => s.app === 'other-app')?.state).toBe('running');
+        expect(sandbox.sandboxes.find((s) => s.app === 'my-app')?.state).toBe('suspended');
+        expect(sandbox.callsTo('write_file')).toBe(writesBefore);
+        const head = await store.load(user, 'c-sandbox-pause');
+        expect(head!.turns[0]!.assistant).toMatchObject({
+          status: 'error',
+          errorKind: 'interrupted',
+        });
+      } finally {
+        sandbox.tools.set('read_file', readFile);
+        sandbox.userOpens('my-app');
+      }
+    });
+
+    it('gives a reply subagents only when civitai’s grant says so', async () => {
+      const user = 'u-sandbox-subagents';
+      const body = startBody({ conversationId: 'c-subagents', model: 'long', page });
+      const grant = await signGrant(
+        keys,
+        { userId: user, conversationId: body.conversationId, idempotencyKey: body.idempotencyKey },
+        7800,
+        { subagents: true }
+      );
+      const on = await post('/runs', { ...as(user), 'x-run-grant': grant }, body);
+      expect(ended(await events(on.body!.runId as string, user)).status).toBe('done');
+      expect(opened.at(-1)).toMatchObject({ subagents: true, model: expect.any(Function) });
+
+      // Control: the same start without the claim.
+      const next = startBody({ conversationId: 'c-subagents-off', model: 'long', page });
+      const off = await post('/runs', as(user), next);
+      expect(ended(await events(off.body!.runId as string, user)).status).toBe('done');
+      expect(opened.at(-1)).toMatchObject({ subagents: false });
+    });
   });
 
   it('keeps no grant for a start it refuses', async () => {

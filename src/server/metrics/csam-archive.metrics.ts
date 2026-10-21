@@ -48,7 +48,7 @@
 // this runs on the jobs pool where prom-client retains every distinct label set
 // in the Node heap for the process lifetime, and the per-report detail belongs in
 // the log line the service already emits beside this.
-import client, { type Counter, type Registry } from 'prom-client';
+import client, { type Counter, type Gauge, type Registry } from 'prom-client';
 
 import type { CsamReportType } from '~/shared/utils/prisma/models';
 
@@ -226,5 +226,57 @@ export function recordCsamArchive(
     csamArchiveTotal.inc({ path, type, outcome });
   } catch {
     /* instrument-only — never let a metrics error touch the CSAM archive path */
+  }
+}
+
+export const CSAM_ARCHIVE_INCOMPLETE_REASONS = [
+  'skipped',
+  'stale',
+  'images_missing',
+  'object_missing',
+  'entries_mismatch',
+  'unverifiable',
+  'check_error',
+] as const;
+export type CsamArchiveIncompleteReason = (typeof CSAM_ARCHIVE_INCOMPLETE_REASONS)[number];
+
+function getOrCreateGauge(reg: Registry, name: string, help: string, labelNames: string[] = []) {
+  const existing = reg.getSingleMetric(name) as Gauge<string> | undefined;
+  if (existing) return existing;
+  return new client.Gauge({ name, help, labelNames, registers: [reg] });
+}
+
+export function ensureRegisterCsamArchiveEvidenceMetrics(reg: Registry = client.register) {
+  return {
+    incomplete: getOrCreateGauge(
+      reg,
+      'civitai_csam_archive_incomplete',
+      'Sent CSAM reports whose evidence archive is not complete and verified, by reason, as of the last evidence check. ' +
+        'skipped = the archive recorded archiveSkipped; stale = not archived some hours after sending; ' +
+        'images_missing = the archive could not store an item the report names; object_missing = a stored object is absent or changed; ' +
+        'entries_mismatch = a stored zip does not hold the entries the archive wrote; unverifiable = nothing to verify against; ' +
+        'check_error = the check itself failed. Set by the archive job, so read it with max() across pods.',
+      ['reason']
+    ),
+    lastRun: getOrCreateGauge(
+      reg,
+      'civitai_csam_archive_check_last_run_timestamp_seconds',
+      'Unix time the CSAM evidence check last completed. The incomplete gauge cannot report its own absence.'
+    ),
+  };
+}
+
+/** Fail-soft, like `recordCsamArchive`. */
+export function setCsamArchiveIncomplete(
+  counts: Record<CsamArchiveIncompleteReason, number>,
+  at: Date
+): void {
+  try {
+    const { incomplete, lastRun } = ensureRegisterCsamArchiveEvidenceMetrics();
+    for (const reason of CSAM_ARCHIVE_INCOMPLETE_REASONS)
+      incomplete.set({ reason }, counts[reason]);
+    lastRun.set(Math.floor(at.getTime() / 1000));
+  } catch {
+    /* instrument-only */
   }
 }

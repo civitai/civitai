@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import type {
   BeforeSendDetail,
   ChatMcpServer,
+  ChatToolResult,
   CivitaiChat,
   QueuedMessage,
   ReplyResumeDetail,
@@ -26,7 +27,11 @@ import type {
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
-import { NO_APP_REFUSAL, createAppTools } from '~/components/Apps/AppAssistant/appTools';
+import {
+  CREATE_APP,
+  NO_APP_REFUSAL,
+  createAppTools,
+} from '~/components/Apps/AppAssistant/appTools';
 import {
   BUILD_IT_MESSAGE,
   SANDBOX_SERVER_ID,
@@ -42,6 +47,7 @@ import {
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
+import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   createSandboxClient,
@@ -180,12 +186,18 @@ export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
   subagents = false,
+  remoteRunner = false,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
   /** The assistant may start read-only subagents. */
   subagents?: boolean;
+  /**
+   * Replies run on the server runner (`appAssistantRemoteRunner`), so they keep going while the user
+   * is away. Off, they run in the browser exactly as before.
+   */
+  remoteRunner?: boolean;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -334,8 +346,33 @@ export function AppAssistantWorkspace({
         apps: (live.current.apps ?? []).map((s) => s.app),
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
+        ...(remoteRunner ? { runner: 'remote' as const } : {}),
       }),
-    []
+    [remoteRunner]
+  );
+
+  // The server runner holds the tools and the gate; the page tells it which app is open, and signs
+  // each request (a viewer token) and each start (a run grant). Read once, as the chat starts.
+  const runner = useMemo(
+    () =>
+      appAssistantRemoteRunnerFor(remoteRunner, () => ({
+        app: live.current.active?.app ?? null,
+      })),
+    [remoteRunner]
+  );
+  // On the runner, create_app opens an app the page did not: it follows, once its list has it.
+  const onToolResult = useCallback(
+    (result: ChatToolResult) => {
+      gate.onToolResult(result);
+      if (!remoteRunner || result.name !== CREATE_APP || result.isError) return;
+      const app = (result.output as { app?: unknown } | null)?.app;
+      if (typeof app !== 'string') return;
+      void refetchRef.current().then(({ data }) => {
+        const opened = data?.find((s) => s.app === app);
+        if (opened) setActiveName(opened.name);
+      });
+    },
+    [gate, remoteRunner]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
@@ -825,12 +862,13 @@ export function AppAssistantWorkspace({
             mcpServers={mcpServers}
             holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
             beforeToolCall={gate.beforeToolCall}
-            onToolResult={gate.onToolResult}
+            onToolResult={onToolResult}
             chatRef={chatRef}
             onBeforeSend={onSend}
             onReplyResume={onReplyResume}
             onChatChange={onChatOpened}
             subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
+            remoteRunner={runner}
           />
         </Paper>
         {session && (
