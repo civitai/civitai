@@ -14,7 +14,11 @@ const MIN_HIDDEN = 500;
  */
 export function foldPrompt(
   text: string,
-  { threshold, head, keepThrough = 0 }: { threshold: number; head: number; keepThrough?: number | null }
+  {
+    threshold,
+    head,
+    keepThrough = 0,
+  }: { threshold: number; head: number; keepThrough?: number | null }
 ): Fold {
   const total = text.length;
   if (keepThrough === null) return { folded: false, head: text, total };
@@ -30,15 +34,24 @@ export function foldPrompt(
   return { folded: true, head: text.slice(0, at).trimEnd(), total };
 }
 
+/**
+ * End of the last case-insensitive occurrence of `needle` in `text`, or -1. Searched in place rather
+ * than on a lowercased copy: lowercasing can change the length ('İ' → 2 code units) and shift indices.
+ */
+function lastEndOf(text: string, needle: string): number {
+  const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+  let end = -1;
+  for (const m of text.matchAll(pattern)) end = m.index + m[0].length;
+  return end;
+}
+
 /** Where the last occurrence of any highlight needle ends, matched case-insensitively; 0 for none. */
 export function lastMatchEnd(text: string, needles: string[]): number {
-  const haystack = text.toLowerCase();
   let end = 0;
   for (const raw of needles) {
-    const needle = raw.trim().toLowerCase();
+    const needle = raw.trim();
     if (!needle) continue;
-    const at = haystack.lastIndexOf(needle);
-    if (at !== -1) end = Math.max(end, at + needle.length);
+    end = Math.max(end, lastEndOf(text, needle));
   }
   return end;
 }
@@ -61,7 +74,6 @@ export function keepThroughFor(
   box: FoldBox,
   matches: FoldEvidence[]
 ): number | null {
-  const haystack = shown.toLowerCase();
   let end = 0;
   let applicable = false;
   let located = false;
@@ -70,18 +82,20 @@ export function keepThroughFor(
     const explicit = box !== 'text' && m.field === box;
     const literals: { needle: string; explicit: boolean }[] = [];
     if (m.text?.trim() && forBox) literals.push({ needle: m.text, explicit });
-    if (m.gateWord?.trim() && box !== 'negativePrompt') literals.push({ needle: m.gateWord, explicit: false });
+    if (m.gateWord?.trim() && box !== 'negativePrompt')
+      literals.push({ needle: m.gateWord, explicit: false });
 
-    if (!literals.length && m.regex && forBox) return null;
+    // A gate word locates only itself; the regex hit it gated can sit anywhere.
+    if (m.regex && !m.text?.trim() && forBox) return null;
     for (const l of literals) {
       applicable = true;
-      const at = haystack.lastIndexOf(l.needle.trim().toLowerCase());
+      const at = lastEndOf(shown, l.needle.trim());
       if (at === -1) {
         if (l.explicit) return null;
         continue;
       }
       located = true;
-      end = Math.max(end, at + l.needle.trim().length);
+      end = Math.max(end, at);
     }
   }
   return applicable && !located ? null : end;

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { cutSegments, foldPrompt, keepThroughFor, lastMatchEnd, lastSegmentEnd } from '../prompt-fold';
+import {
+  cutSegments,
+  foldPrompt,
+  keepThroughFor,
+  lastMatchEnd,
+  lastSegmentEnd,
+} from '../prompt-fold';
 
 const OPTS = { threshold: 2500, head: 1100 };
 
@@ -74,6 +80,10 @@ describe('keepThroughFor', () => {
     expect(keepThroughFor(text, 'text', [{ regex: 'd.g', field: 'negativePrompt' }])).toBeNull();
   });
 
+  it('refuses to fold when a regex match also carries a gate word', () => {
+    expect(keepThroughFor(text, 'prompt', [{ regex: 'd.g', gateWord: 'cat' }])).toBeNull();
+  });
+
   it('ignores evidence that belongs to the other box', () => {
     expect(keepThroughFor(text, 'prompt', [{ regex: 'd.g', field: 'negativePrompt' }])).toBe(0);
   });
@@ -102,6 +112,13 @@ describe('keepThroughFor', () => {
 describe('lastMatchEnd', () => {
   it('finds where the last highlighted needle ends, case-insensitively', () => {
     expect(lastMatchEnd('a Cat, a dog, a cat', ['cat', 'dog'])).toBe(19);
+  });
+
+  it('reports positions in the original text when lowercasing would change its length', () => {
+    // 'İ' lowercases to two code units, which would shift every later index.
+    const text = 'İİİİ a cat';
+    expect(lastMatchEnd(text, ['cat'])).toBe(text.length);
+    expect(keepThroughFor(text, 'prompt', [{ text: 'CAT' }])).toBe(text.length);
   });
 
   it('ignores blank needles and reports 0 without a match', () => {
