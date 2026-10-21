@@ -4029,6 +4029,21 @@ export interface CsamReport {
   type: CsamReportType;
 }
 
+export interface CsamReportAudit {
+  id: number;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Date | null;
+  changedAt: Date;
+  changedBy: string;
+}
+
 export interface Link {
   id: number;
   url: string;
