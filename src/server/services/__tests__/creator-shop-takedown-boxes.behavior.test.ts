@@ -458,7 +458,8 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     const result = await takedown();
 
     expect([result.boxOpeningsRefunded, result.failures]).toEqual([1, []]);
-    expect(refundedPrefixes()).toEqual([sourceKey]);
+    // Asked twice (the plain refund, then the finishing helper's own attempt), and nothing more.
+    expect(new Set(refundedPrefixes())).toEqual(new Set([sourceKey]));
     expect(buzz.refundTransaction).not.toHaveBeenCalled();
   });
 
@@ -799,6 +800,49 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     );
   });
 
+  it('leaves a shelf purchase owed when a leg is still unreversed after finishing it', async () => {
+    await seedBox();
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'a',
+        externalTransactionId: 'shelf-1:a',
+        accountType: 'yellow',
+        accountId: 104,
+        amount: 300,
+      },
+      {
+        transactionId: 'b',
+        externalTransactionId: 'shelf-1:b',
+        accountType: 'yellow',
+        accountId: 104,
+        amount: 200,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
+      id === 'refund-a' ? { transactionId: id } : null) as never);
+    // Counted done by the helper on a 409, though no refund of `b` is on the ledger.
+    buzz.refundTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    dbMock.dbWrite.userCosmeticShopPurchases.update.mockClear();
+
+    const result = await takedown();
+
+    expect([result.refunded, result.failures]).toEqual([
+      0,
+      [expect.objectContaining({ stage: 'refund', userId: 104 })],
+    ]);
+    expect(dbMock.dbWrite.userCosmeticShopPurchases.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' } })
+    );
+  });
+
   // Flagged refunded, a leg still charged would never be retried.
   it('leaves a shelf purchase owed when its refund cannot be read back as complete', async () => {
     await seedBox();
@@ -839,16 +883,79 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
         payouts: [{ userId: CREATOR, amount: 560, color: 'yellow', transactionId: 'payout-1' }],
       },
     });
-    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      { transactionId: 'charge-1', amount: 800 },
-      { transactionId: 'payout-1', amount: 560 },
-    ]);
-    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-x' });
+    // The payout is keyed under the purchase prefix, so the prefix refund reversed it too.
+    buzz.refundMultiAccountTransaction.mockResolvedValue({
+      ...refunded800,
+      refundedTransactions: [
+        ...refunded800.refundedTransactions,
+        {
+          originalTransactionId: 'payout-1',
+          refundTransactionId: 'refund-payout-1',
+          accountType: 'yellow',
+          amount: 560,
+          originalExternalTransactionId: 'e',
+        },
+      ],
+    });
 
     const result = await takedown();
 
     expect(buzz.refundTransaction).not.toHaveBeenCalled();
     expect(result.clawedBack).toBe(560);
+  });
+
+  // Buzz answering a refund with no legs reversed is not the buyer paid back.
+  it('keeps a box refund owed when Buzz reverses nothing under it', async () => {
+    const boxId = await seedBox();
+    await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockResolvedValue({
+      ...refunded800,
+      refundedTransactions: [],
+    });
+
+    const result = await takedown();
+
+    expect([result.boxOpeningsRefunded, result.failures]).toEqual([
+      0,
+      [expect.objectContaining({ stage: 'refund', userId: BUYER })],
+    ]);
+  });
+
+  // A single leg answering 409 is counted done by the prefix helper, refund on the ledger or not.
+  it('keeps a box refund owed when a leg is still unreversed after finishing it', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'a',
+        externalTransactionId: `${sourceKey}-a`,
+        accountType: 'yellow',
+        accountId: BUYER,
+        amount: 500,
+      },
+      {
+        transactionId: 'b',
+        externalTransactionId: `${sourceKey}-b`,
+        accountType: 'yellow',
+        accountId: BUYER,
+        amount: 300,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
+      id === 'refund-a' ? { transactionId: id } : null) as never);
+    buzz.refundTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+
+    const first = await takedown();
+    const retried = await takedown();
+
+    expect(first.failures).toEqual([expect.objectContaining({ stage: 'refund', userId: BUYER })]);
+    // Still owed, so the retry asks again.
+    expect(retried.failures).toEqual([expect.objectContaining({ stage: 'refund', userId: BUYER })]);
   });
 });
 

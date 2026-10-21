@@ -2360,17 +2360,21 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
 /**
- * A shelf purchase's refund, finished when an earlier attempt reversed part of it: a lost response,
- * or a run that died before flagging it, makes the prefix refund answer 409 and reverse nothing, so
+ * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
+ * run that died before recording it, makes the prefix refund answer 409 and reverse nothing, so
  * every retry would read a refunded buyer as owed. Reports every leg now reversed, as the plain
- * refund does, for the payout reversal that follows.
+ * refund does, for the payout reversal that follows. Throws rather than report none: a purchase row
+ * exists only once its charge did.
  */
-async function refundShelfPurchase(input: {
+async function refundPurchasePrefix(input: {
   externalTransactionIdPrefix: string;
   description: string;
 }) {
   try {
-    return await refundMultiAccountTransaction(input);
+    const refund = await refundMultiAccountTransaction(input);
+    if (!refund.refundedTransactions.length)
+      throw new Error(`Buzz lists no charge under ${input.externalTransactionIdPrefix}`);
+    return refund;
   } catch (error) {
     if (getBuzzApiStatus(error) !== 409) throw error;
   }
@@ -2621,7 +2625,7 @@ export const takedownCosmeticShopItem = async ({
       let refund: PrefixRefund;
       try {
         refund = await takedownMoneyMove(() =>
-          refundShelfPurchase({
+          refundPurchasePrefix({
             externalTransactionIdPrefix: purchase.buzzTransactionId,
             description: `Cosmetic removed - ${item.title}`,
           })
@@ -2777,20 +2781,15 @@ export const takedownCosmeticShopItem = async ({
       });
     }
     for (const purchase of owed) {
+      let refund: PrefixRefund | undefined;
       try {
-        // Not the raw prefix refund: once any leg is reversed it refuses the rest, so a retry after
-        // a lost response, or a re-run, would read a refunded buyer as owed.
         if (purchase.unitAmount > 0)
-          await takedownMoneyMove(async () => {
-            const refund = await refundAllLegsByPrefix({
+          refund = await takedownMoneyMove(() =>
+            refundPurchasePrefix({
               externalTransactionIdPrefix: purchase.buzzTransactionId,
               description: `Cosmetic removed - ${item.title}`,
-            });
-            // A 404 reads as zeros there, but this purchase row exists only once its charge did:
-            // Buzz not seeing it yet is not the buyer paid back.
-            if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
-              throw new Error(`Buzz lists no charge under ${purchase.buzzTransactionId}`);
-          });
+            })
+          );
       } catch (error) {
         // Still owed: "Retry takedown" pays it. Paying it by hand instead must also set
         // meta.takedownRefund.paidAt on the purchase, or a later retry pays it again.
@@ -2818,18 +2817,16 @@ export const takedownCosmeticShopItem = async ({
           error: errorMessage(error),
         })
       );
-      if (purchase.unitAmount === 0) continue;
+      if (!refund) continue;
       boxRefundedUserIds.push(purchase.userId);
       boxRefundedValue += purchase.unitAmount;
 
       const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
-      if (recordedPayouts?.length) {
-        // Payouts keyed under the purchase prefix were reversed with it.
-        const { reversed } = await getPrefixRefundState(purchase.buzzTransactionId).catch(() => ({
-          reversed: [],
-        }));
-        reverseRecordedPayouts(recordedPayouts, new Set(reversed.map((leg) => leg.transactionId)));
-      }
+      if (recordedPayouts?.length)
+        reverseRecordedPayouts(
+          recordedPayouts,
+          new Set(refund.refundedTransactions.map((t) => t.originalTransactionId))
+        );
       // A platform box paid only the bank. A creator's box paid its creator, in a split only the
       // record knows, so like a pack it is left to a moderator.
       else if (!recordedPayouts && purchase.sellerId !== null)
