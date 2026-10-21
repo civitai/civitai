@@ -364,10 +364,20 @@ export async function reblockBountyEntryFileCheck({
   // Guarded on the exact clear the moderator saw: a newer clear by someone else is not this one.
   const readOverride = JSON.stringify(meta.checkOverride);
   await dbWrite.$transaction(async (tx) => {
-    const count = await tx.$executeRaw`
+    // A `replaced` that is itself a valid clear was planted, not written over by a clear: putting it
+    // back would leave the file cleared. VALID_OVERRIDE_SQL reads `f`, so it judges `replaced` here
+    // through a row of that shape.
+    const rows = await tx.$queryRaw<{ metadata: unknown }[]>`
       UPDATE "File" f
       SET metadata = CASE
         WHEN f.metadata->'checkOverride'->'replaced' IS NOT NULL
+          AND NOT COALESCE((
+            SELECT ${VALID_OVERRIDE_SQL}
+            FROM (
+              SELECT jsonb_build_object('checkOverride', f.metadata->'checkOverride'->'replaced')
+                AS metadata
+            ) f
+          ), false)
           THEN jsonb_set(f.metadata, '{checkOverride}', f.metadata->'checkOverride'->'replaced')
         ELSE f.metadata - 'checkOverride'
       END
@@ -377,8 +387,10 @@ export async function reblockBountyEntryFileCheck({
         AND f.metadata->>'blockedReason' IS NOT NULL
         AND ${VALID_OVERRIDE_SQL}
         AND f.metadata->'checkOverride' = ${readOverride}::jsonb
+      RETURNING f.metadata
     `;
-    if (count !== 1)
+    // A re-block that leaves the file unblocked must not be recorded as one; throwing rolls it back.
+    if (rows.length !== 1 || fileCheckState(rows[0].metadata) !== 'blocked')
       throw throwBadRequestError(
         'This file changed while you were reviewing it. Reload and try again.'
       );

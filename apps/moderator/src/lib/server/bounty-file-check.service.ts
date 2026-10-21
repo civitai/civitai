@@ -21,6 +21,8 @@ export type BlockedEntryFile = EntryFile & {
   matchModelId: number | null;
   matchModelName: string | null;
   matchOwner: string | null;
+  bountyComplete: boolean;
+  bountyRefunded: boolean;
 };
 
 export type StuckEntryFile = EntryFile & {
@@ -63,11 +65,15 @@ const entryFileColumns = sql`
   be."userId" AS "entrantId", u.username AS entrant, b.id AS "bountyId", b.name AS "bountyName"
 `;
 
-/** Entry files of open model bounties the check refused and no moderator has cleared, oldest first. */
+/**
+ * Entry files the check refused and no moderator has cleared, oldest first: on open model bounties,
+ * and on settled ones when a moderator re-blocked the file, so it can be cleared again.
+ */
 export async function getBlockedEntryFiles(limit: number) {
   const { rows } = await sql<BlockedEntryFile>`
     SELECT ${entryFileColumns}, f.metadata->>'hashCheckedAt' AS "checkedAt",
-           m.id AS "matchModelId", m.name AS "matchModelName", mu.username AS "matchOwner"
+           m.id AS "matchModelId", m.name AS "matchModelName", mu.username AS "matchOwner",
+           b.complete AS "bountyComplete", b.refunded AS "bountyRefunded"
     FROM "Bounty" b
     JOIN "BountyEntry" be ON be."bountyId" = b.id
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -85,8 +91,14 @@ export async function getBlockedEntryFiles(limit: number) {
     ) m ON true
     LEFT JOIN "User" mu ON mu.id = m."userId"
     WHERE b.type::text = ANY(${CHECKED_TYPES})
-      AND NOT b.complete
-      AND NOT b.refunded
+      AND (
+        (NOT b.complete AND NOT b.refunded)
+        OR EXISTS (
+          SELECT 1 FROM "ModActivity" ma
+          WHERE ma."entityType" = 'bountyEntry' AND ma."entityId" = be.id
+            AND ma.activity LIKE ('reblockFileCheck:{"fileId":' || f.id || ',%')
+        )
+      )
       AND f.metadata->>'blockedReason' IS NOT NULL
       AND NOT COALESCE(${validOverride}, false)
     ORDER BY f.metadata->>'hashCheckedAt', f.id

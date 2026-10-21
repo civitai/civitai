@@ -19,6 +19,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import handler from '~/pages/api/mod/bounty-entry-file/reblock-check';
 
 /**
@@ -49,9 +50,11 @@ function call(body: Record<string, unknown>) {
   return handler(req, res).then(() => statusCode);
 }
 
-const tx = { $executeRaw: vi.fn() };
+const tx = { $executeRaw: vi.fn(), $queryRaw: vi.fn() };
 const anyWrite = () =>
-  tx.$executeRaw.mock.calls.length + dbMock.dbWrite.$executeRaw.mock.calls.length;
+  tx.$executeRaw.mock.calls.length +
+  tx.$queryRaw.mock.calls.length +
+  dbMock.dbWrite.$executeRaw.mock.calls.length;
 
 loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
 
@@ -72,6 +75,7 @@ beforeEach(() => {
     metadata: CLEARED,
   } as never);
   tx.$executeRaw.mockResolvedValue(1);
+  tx.$queryRaw.mockResolvedValue([{ metadata: { ...CLEARED, checkOverride: undefined } }]);
   dbMock.dbWrite.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) =>
     fn(tx)) as never);
 });
@@ -91,6 +95,13 @@ describe('bountyEntryFile.reblockCheck', () => {
       })}`,
       [ENTRY_ID],
     ]);
+  });
+
+  it('refuses a caller who is not signed in, and changes nothing', async () => {
+    vi.mocked(getServerAuthSession).mockResolvedValueOnce(null);
+    expect(await call({ fileId: FILE_ID, reason: 'the alt claim did not hold up' })).toBe(401);
+    expect(dbMock.dbWrite.file.findUnique).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
   });
 
   it('refuses a caller who is not a moderator, and changes nothing', async () => {

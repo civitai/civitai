@@ -120,18 +120,22 @@ beforeEach(async () => {
     return rows[0] ?? null;
   }) as never);
   dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
-    db.transaction(async (t) =>
-      fn({
-        $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-          const sql = Prisma.sql(strings, ...values);
-          statements.push(sql.sql.replace(/\s+/g, ' ').trim());
-          // Prisma sends a JS number array as int[]; PGlite would leave it untyped, and
-          // trackModActivity's UNNEST cannot resolve an untyped parameter.
-          const paramTypes = sql.values.map((v) => (Array.isArray(v) ? INT4_ARRAY_OID : 0));
-          return (await t.query(sql.text, sql.values, { paramTypes })).affectedRows ?? 0;
-        },
-      })
-    )) as never);
+    db.transaction(async (t) => {
+      const run = (strings: TemplateStringsArray, values: unknown[]) => {
+        const sql = Prisma.sql(strings, ...values);
+        statements.push(sql.sql.replace(/\s+/g, ' ').trim());
+        // Prisma sends a JS number array as int[]; PGlite would leave it untyped, and
+        // trackModActivity's UNNEST cannot resolve an untyped parameter.
+        const paramTypes = sql.values.map((v) => (Array.isArray(v) ? INT4_ARRAY_OID : 0));
+        return t.query(sql.text, sql.values, { paramTypes });
+      };
+      return fn({
+        $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          (await run(strings, values)).affectedRows ?? 0,
+        $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          (await run(strings, values)).rows,
+      });
+    })) as never);
 });
 
 afterEach(async () => {
@@ -209,6 +213,62 @@ describe('clear then re-block', () => {
     expect(fileCheckState(await metadata())).toBe('clean');
     await reblock(MOD_B, 'fourth look');
     expect(await fileRow()).toBe(before);
+  });
+
+  // The moderator page lists such a file under Blocked again, with a Clear form.
+  it.each([
+    ['complete', 'complete = true, refunded = false'],
+    ['refunded', 'complete = false, refunded = true'],
+  ])('can clear a file re-blocked on a %s bounty', async (_, settled) => {
+    await db.exec(`UPDATE "Bounty" SET ${settled}`);
+    await seed(BLOCKED);
+    await clear(MOD_A, 'first look');
+    await reblock(MOD_A, 'second look');
+    expect(fileCheckState(await metadata())).toBe('blocked');
+
+    await clear(MOD_B, 'third look');
+    expect(fileCheckState(await metadata())).toBe('clean');
+  });
+});
+
+describe('re-block of a planted clear', () => {
+  // A clear only writes over a value that is not a valid clear, so a valid `replaced` was planted:
+  // restoring it would leave the file cleared while recording a re-block.
+  it('removes the clear when the value it replaced is itself a valid clear', async () => {
+    const inner = { by: 1, at: '2026-10-19T00:00:00Z', reason: 'planted inner' };
+    await seed({
+      ...BLOCKED,
+      checkOverride: { by: 2, at: '2026-10-20T00:00:00Z', reason: 'planted', replaced: inner },
+    });
+
+    await reblock(MOD_A, 'undo the planted clear');
+
+    expect(await metadata()).toEqual(BLOCKED);
+    expect(fileCheckState(await metadata())).toBe('blocked');
+    expect((await activities()).map((a) => a.activity.split(':')[0])).toEqual(['reblockFileCheck']);
+  });
+
+  it('refuses, and writes nothing, when the write would leave the file unblocked', async () => {
+    await seed(BLOCKED);
+    await clear(MOD_A, 'their own alt account');
+    const read = dbMock.dbWrite.file.findUnique.getMockImplementation()!;
+    let raced: string | undefined;
+    dbMock.dbWrite.file.findUnique.mockImplementationOnce((async (args: never) => {
+      const seen = await read(args);
+      // Still present to the write's guard, but no longer a block.
+      await db.query(
+        `UPDATE "File" SET metadata = jsonb_set(metadata, '{blockedReason}', 'false'::jsonb)`
+      );
+      raced = await fileRow();
+      return seen;
+    }) as never);
+
+    await expect(reblock(MOD_A, 'stale page')).rejects.toThrow(
+      'This file changed while you were reviewing it.'
+    );
+    expect(raced).toContain('"checkOverride"');
+    expect(await fileRow()).toBe(raced);
+    expect((await activities()).map((a) => a.activity.split(':')[0])).toEqual(['clearFileCheck']);
   });
 });
 

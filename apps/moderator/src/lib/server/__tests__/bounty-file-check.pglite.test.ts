@@ -65,12 +65,13 @@ async function file(id: number, metadata: object) {
   );
 }
 
-async function logClear(fileId: number) {
+async function logActivity(kind: 'clearFileCheck' | 'reblockFileCheck', fileId: number) {
   await db.query(
     `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId") VALUES (1, $1, 'bountyEntry', $2)`,
-    [`clearFileCheck:${JSON.stringify({ fileId, reason: CLEAR.reason })}`, ENTRY]
+    [`${kind}:${JSON.stringify({ fileId, reason: CLEAR.reason })}`, ENTRY]
   );
 }
+const logClear = (fileId: number) => logActivity('clearFileCheck', fileId);
 
 beforeEach(async () => {
   db = await freshPglite();
@@ -97,6 +98,29 @@ describe('the Blocked list', () => {
 
     const { items } = await getBlockedEntryFiles(10);
     expect(items.map((f) => f.fileId)).toEqual([1, 3]);
+  });
+
+  // A re-block is allowed after the bounty settles; the file must stay reachable to clear again.
+  it.each([
+    ['complete', 'complete = true'],
+    ['refunded', 'refunded = true'],
+  ])('lists a file re-blocked on a %s bounty, with the bounty state', async (_, settled) => {
+    await db.exec(`UPDATE "Bounty" SET ${settled}`);
+    await file(1, BLOCKED);
+    await file(2, BLOCKED);
+    // File 2's clear, and a re-block of file 21 of the same entry, are not a re-block of file 2.
+    await logActivity('reblockFileCheck', 1);
+    await logActivity('clearFileCheck', 2);
+    await logActivity('reblockFileCheck', 21);
+
+    const { items } = await getBlockedEntryFiles(10);
+    expect(items).toEqual([
+      expect.objectContaining({
+        fileId: 1,
+        bountyComplete: settled === 'complete = true',
+        bountyRefunded: settled === 'refunded = true',
+      }),
+    ]);
   });
 });
 

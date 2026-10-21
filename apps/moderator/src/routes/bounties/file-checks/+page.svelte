@@ -93,8 +93,9 @@
 <section class="mb-8">
   <h2 class="mb-1 text-lg font-semibold">Blocked</h2>
   <p class="mb-3 text-sm text-dark-2">
-    Files on open model bounties that match another user's model. A blocked file can't be awarded
-    or downloaded. Clearing it lifts both, for this upload only.
+    Files on open model bounties that match another user's model, and files re-blocked after their
+    bounty settled. A blocked file can't be awarded or downloaded. Clearing it lifts both, for this
+    upload only.
   </p>
   {#if data.blocked.hasMore}
     <p class="mb-2 text-xs text-dark-2">Showing the oldest {data.limit}.</p>
@@ -126,6 +127,11 @@
             {/if}
             {#if row.checkedAt}Checked {dateTime(row.checkedAt)}.{/if}
           </p>
+          {#if row.bountyRefunded}
+            <Badge variant="outline" class="mt-2">bounty refunded</Badge>
+          {:else if row.bountyComplete}
+            <Badge variant="outline" class="mt-2">bounty complete</Badge>
+          {/if}
           {#if done}
             <p class="mt-3 text-sm text-dark-2">Cleared</p>
           {:else}
