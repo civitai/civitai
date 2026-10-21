@@ -30,6 +30,23 @@
 --
 -- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 
+-- Verify, AFTER applying (metadata-only, returns immediately):
+--
+--   SHOW CREATE TABLE default.actions;
+--     -- must show 'UserMenu_Click' = 28, and every value 1..27 unchanged.
+--
+-- Positive control once the tracker is RESTARTED and the app deployed: open an item from the
+-- user menu (v2 flag on), wait for the batch to flush (3s, or leave the page), then:
+--
+--   SELECT countIf(type = 'UserMenu_Click') AS menu,
+--          countIf(type = 'Generator_Submit') AS control
+--   FROM default.actions WHERE time > now() - INTERVAL 1 HOUR;
+--     -- menu must be non-zero. A zero beside a non-zero control after a real click means the
+--     -- emitter or the tracker restart is missing; a zero on both means the window is empty.
+
+-- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
+-- multi-statement query otherwise, so it can be run as-is.
+--
 ALTER TABLE default.actions
   MODIFY COLUMN `type` Enum16(
     'AddToBounty_Click' = 1,
@@ -60,18 +77,4 @@ ALTER TABLE default.actions
     'App_Open' = 26,
     'AppsBuild_Action' = 27,
     'UserMenu_Click' = 28
-  );
-
--- Verify, AFTER applying (metadata-only, returns immediately):
---
---   SHOW CREATE TABLE default.actions;
---     -- must show 'UserMenu_Click' = 28, and every value 1..27 unchanged.
---
--- Positive control once the tracker is RESTARTED and the app deployed: open an item from the
--- user menu (v2 flag on), wait for the batch to flush (3s, or leave the page), then:
---
---   SELECT countIf(type = 'UserMenu_Click') AS menu,
---          countIf(type = 'Generator_Submit') AS control
---   FROM default.actions WHERE time > now() - INTERVAL 1 HOUR;
---     -- menu must be non-zero. A zero beside a non-zero control after a real click means the
---     -- emitter or the tracker restart is missing; a zero on both means the window is empty.
+  )
