@@ -4044,6 +4044,18 @@ export interface CsamReportAudit {
   changedBy: string;
 }
 
+export interface CsamReportArchiveObject {
+  id: number;
+  csamReportId: number;
+  kind: string;
+  key: string;
+  etag: string | null;
+  entries: number | null;
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Date;
+}
+
 export interface Link {
   id: number;
   url: string;

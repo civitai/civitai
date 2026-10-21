@@ -8,6 +8,7 @@ import {
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
+import { checkCsamArchiveEvidence } from '~/server/services/csam-archive-evidence.service';
 
 /**
  * Reads a message off an unknown thrown value without assuming it has one.
@@ -127,6 +128,17 @@ const archiveCsamReportDataJob = createJob(
           message: errorMessage(e),
         });
       }
+    }
+
+    try {
+      await checkCsamArchiveEvidence();
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-evidence-check',
+        message: errorMessage(e),
+      });
     }
   },
   // `keepLockOnDisconnect` is load-bearing, not a refinement: without it the close handler releases

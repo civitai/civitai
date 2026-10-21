@@ -509,6 +509,34 @@ describe('archiveCsamDataForReport (Image report)', () => {
     );
   });
 
+  it('records each stored object, and how many of the images the report names it holds', async () => {
+    seedDb();
+    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`.
+    const unfetchable = `image-uuid-${IMAGE_COUNT - 1}`;
+    mockFetchBlob = async (url: unknown) =>
+      String(url).includes(unfetchable) ? null : fakeBlob(8);
+
+    await archiveCsamDataForReport({
+      ...report,
+      images: [{ id: 1 }, { id: IMAGE_COUNT }],
+    } as never);
+
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toEqual([
+      expect.objectContaining({ csamReportId: report.id, kind: 'base' }),
+      expect.objectContaining({
+        csamReportId: report.id,
+        kind: 'images',
+        entries: IMAGE_COUNT - 1,
+        namedExpected: 2,
+        namedMissing: 1,
+      }),
+    ]);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
+    );
+  });
+
   it('does not stamp archivedAt when the archive fails', async () => {
     seedDb();
     mockFetchBlob = async () => {
