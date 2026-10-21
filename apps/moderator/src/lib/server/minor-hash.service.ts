@@ -1,6 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
 import {
@@ -836,11 +836,7 @@ const flaggedPageSql = <R>(
          pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
          -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
          -- a ruling while the model has a Pending appeal.
-         EXISTS (
-           SELECT 1 FROM "Appeal" a
-           WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
-             AND a.status::text = 'Pending' AND a.category IS NULL
-         ) AS "hasPendingAppeal",
+         ${pendingModelAppealExists(sql`pg."modelId"`)} AS "hasPendingAppeal",
          v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
          COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
          COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
@@ -1197,6 +1193,54 @@ export async function getModelMinor(modelId: number) {
     SELECT m.minor FROM "Model" m WHERE m.id = ${modelId}
   `.execute(dbRead);
   return result.rows[0]?.minor ?? false;
+}
+
+/** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal
+ *  carries a category and is not one. */
+const pendingModelAppealExists = (modelId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "Appeal" a
+  WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
+    AND a.status::text = 'Pending' AND a.category IS NULL
+)`;
+
+const textScanEntryView = (label: 'minor' | 'poi') => sql`jsonb_build_object(
+  'textHash', m.meta->'textScanFlags'->${sql.lit(label)}->>'textHash',
+  'redetectedTextHash', m.meta->'textScanFlags'->${sql.lit(label)}->'redetected'->>'textHash'
+)`;
+
+type TextScanEntryView = { textHash: string | null; redetectedTextHash: string | null };
+
+/** What an Auto-flagged ruling decides from, read from the primary: a replica lagging behind a
+ *  just-resolved appeal would send it down the wrong path. `minor` and `poi` count as flagged by the
+ *  appeal resolver's rule (`resolveMinorFlagAppeal`): `poi` only with an open text-scan flag, since
+ *  owners set it by hand. `textScan` is what the main app's `ruleModelTextScanFlag` checks a ruling's
+ *  text hash against. */
+export async function getModelAppealState(modelId: number) {
+  const result = await sql<{
+    pendingAppeal: boolean;
+    minor: boolean;
+    poi: boolean;
+    textScan: Record<'minor' | 'poi', TextScanEntryView>;
+  }>`
+    SELECT ${pendingModelAppealExists(sql`m.id`)} AS "pendingAppeal",
+           m.minor,
+           (m.poi
+             AND COALESCE(m.meta->'textScanFlags'->'poi'->>'workflowId', '') <> ''
+             AND m.meta->'textScanFlags'->'poi'->>'appealGranted' IS NULL) AS poi,
+           jsonb_build_object('minor', ${textScanEntryView('minor')}, 'poi', ${textScanEntryView(
+    'poi'
+  )}) AS "textScan"
+    FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbWrite);
+  const none = { textHash: null, redetectedTextHash: null };
+  return (
+    result.rows[0] ?? {
+      pendingAppeal: false,
+      minor: false,
+      poi: false,
+      textScan: { minor: none, poi: none },
+    }
+  );
 }
 
 /** Models with a held detection: the detections part of the Needs review badge. Rides
