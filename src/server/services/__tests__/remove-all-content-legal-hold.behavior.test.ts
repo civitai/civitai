@@ -121,6 +121,7 @@ const BYSTANDER = 9;
 const COLLECTION = 300;
 const ARTICLE = 500;
 const MODEL = 700;
+const BOUNTY = 900;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -189,6 +190,7 @@ beforeEach(async () => {
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
     ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
+    ALTER SEQUENCE "Bounty_id_seq" RESTART ${BOUNTY};
     INSERT INTO "Collection" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Image" (id, "userId", "postId") VALUES
@@ -240,22 +242,30 @@ beforeEach(async () => {
       await holder.db.query(`DELETE FROM "Collection" WHERE "userId" = $1`, [args.where.userId])
     ).affectedRows,
   })) as never);
+  // The account's bounties, less any kept; no payout is pending here.
+  vi.mocked(dbMock.dbWrite.bounty.findMany).mockImplementation((async (args: {
+    where: { userId: number; payoutRecordedAt?: unknown; id?: { notIn: number[] } };
+  }) => {
+    if ('payoutRecordedAt' in args.where) return [];
+    const kept = args.where.id?.notIn ?? [];
+    return (
+      await holder.db.query(
+        `SELECT id FROM "Bounty" WHERE "userId" = $1 AND id <> ALL($2::int[])`,
+        [args.where.userId, kept]
+      )
+    ).rows;
+  }) as never);
 });
 
-/**
- * The ids each search index was asked to drop. The bounty index is left out: its list is read from
- * the wrong table today, which is fixed separately.
- */
+/** The ids each search index was asked to drop. */
 function dropped() {
   return Object.fromEntries(
-    Object.entries(indexes)
-      .filter(([name]) => name !== 'bounties')
-      .map(([name, index]) => [
-        name,
-        index.queueUpdate.mock.calls.flatMap(([rows]) =>
-          rows.map((r) => (r.action === 'Delete' ? r.id : `${r.action} ${r.id}`))
-        ),
-      ])
+    Object.entries(indexes).map(([name, index]) => [
+      name,
+      index.queueUpdate.mock.calls.flatMap(([rows]) =>
+        rows.map((r) => (r.action === 'Delete' ? r.id : `${r.action} ${r.id}`))
+      ),
+    ])
   );
 }
 const NONE = {
@@ -264,6 +274,7 @@ const NONE = {
   imagesMetrics: [],
   articles: [],
   collections: [],
+  bounties: [],
   users: [],
 };
 
@@ -306,6 +317,7 @@ describe('removeAllContent', () => {
       imagesMetrics: [CLEAN * 100, CLEAN * 100 + 1],
       articles: [ARTICLE],
       collections: [COLLECTION],
+      bounties: [BOUNTY],
       users: [CLEAN],
     });
     expect(metrics.user.queueUpdate).toHaveBeenCalledWith(CLEAN);
@@ -357,6 +369,8 @@ describe('removeAllContent', () => {
     // elsewhere.
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalled();
     expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
+    expect(metrics.user.queueUpdate).not.toHaveBeenCalled();
+    expect(metrics.article.queueUpdate).not.toHaveBeenCalled();
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
   });
 
@@ -407,6 +421,7 @@ describe('removeAllContent', () => {
       models: [MODEL],
       articles: [ARTICLE],
       collections: [COLLECTION],
+      bounties: [BOUNTY],
     });
   });
 
@@ -438,6 +453,16 @@ describe('removeAllContent', () => {
       await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
+    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+  });
+
+  it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {
+    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+      failLookups = true;
+    });
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(deleteBidsForModel).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
   });
 
@@ -448,6 +473,7 @@ describe('removeAllContent', () => {
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    expect(metrics.user.queueUpdate).not.toHaveBeenCalled();
   });
 
   it('drops from the search index only what a stopped wipe really deleted', async () => {
@@ -458,7 +484,12 @@ describe('removeAllContent', () => {
 
     // The article went before the hold landed; the model did not.
     expect((await remaining(CLEAN)).Model).toBe(1);
-    expect(dropped()).toEqual({ ...NONE, articles: [ARTICLE], collections: [COLLECTION] });
+    expect(dropped()).toEqual({
+      ...NONE,
+      articles: [ARTICLE],
+      collections: [COLLECTION],
+      bounties: [BOUNTY],
+    });
   });
 
   it('keeps a bounty entry that won an award', async () => {
