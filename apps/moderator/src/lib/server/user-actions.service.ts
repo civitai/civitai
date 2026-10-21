@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DeleteHold } from '$lib/legal-hold';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -266,6 +267,7 @@ export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
   | 'creator-services/disputes'
+  | 'user/legal-hold'
   | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
@@ -1586,6 +1588,16 @@ export async function revokeCreatorScoreGrant(input: {
   const { total } = result.body;
   if (typeof total !== 'number') return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
   return { ok: true, total };
+}
+
+/** Whether a legal hold blocks deleting the account. Only `held: false` is `clear`; the endpoint
+ *  refuses a held account regardless. */
+export async function deleteAccountHold(userId: number): Promise<DeleteHold> {
+  // Short: the Admin tab waits on this, and a slow answer blocks deletion anyway.
+  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
+  if (!result.ok) return 'unknown';
+  if (result.body.held === false) return 'clear';
+  return result.body.held === true ? 'held' : 'unknown';
 }
 
 export async function deleteAccount(input: {

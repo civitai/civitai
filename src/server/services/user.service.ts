@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -1040,6 +1041,8 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     select: { id: true, meta: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
+  // Here rather than in each caller, so every caller of `deleteUser` is held to it.
+  await assertAccountNotUnderLegalHold(user.id);
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }

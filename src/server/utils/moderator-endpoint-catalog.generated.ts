@@ -67,6 +67,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
+  '/api/mod/user/legal-hold': () => import('~/pages/api/mod/user/legal-hold'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),
   '/api/mod/user/membership-code-revoke': () =>
     import('~/pages/api/mod/user/membership-code-revoke'),

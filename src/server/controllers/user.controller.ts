@@ -14,6 +14,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
@@ -779,6 +780,8 @@ export const updateUserHandler = async ({
   }
 };
 
+export const SELF_DELETE_RESTRICTED_MESSAGE = `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`;
+
 export const deleteUserHandler = async ({
   ctx,
   input,
@@ -798,10 +801,7 @@ export const deleteUserHandler = async ({
   // Erasure stays available through support, which deletes via `/api/mod/user/delete`.
   const self = await dbWrite.user.findUnique({ where: { id }, select: { muted: true } });
   if (self?.muted)
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`,
-    });
+    throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
     const user = await deleteUser(input);
@@ -814,6 +814,9 @@ export const deleteUserHandler = async ({
 
     return user;
   } catch (error) {
+    // The same refusal as a restricted account, so the two cannot be told apart.
+    if (error instanceof LegalHoldError)
+      throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }

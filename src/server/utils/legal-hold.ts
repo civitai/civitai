@@ -4,10 +4,25 @@ import { Prisma } from '@prisma/client';
 const PLACEHOLDER_OWNER_ID = -1;
 
 /**
- * Whether the owner of a model version is under a legal hold: named on a report that is still
- * pending, not yet archived, or sent within the last year. The hold is user-level, so any report
- * naming the owner (as its subject or its secondary user) holds every one of their files, not only
- * the files the report is about.
+ * Whether a user is named on a report that is still pending, not yet archived, or sent within the
+ * last year, as its subject or its secondary user. `userId` is an expression: a bound id or a column.
+ */
+export function userNamedOnHoldingReportSql(userId: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM "CsamReport" hc
+    WHERE (hc."userId" = ${userId} OR hc.details ->> 'secondaryUserId' = (${userId})::text)
+      AND (
+        hc."reportSentAt" IS NULL
+        OR hc."archivedAt" IS NULL
+        OR hc."reportSentAt" > now() - interval '1 year'
+      )
+  )`;
+}
+
+/**
+ * Whether the owner of a model version is under a legal hold. The hold is user-level, so any report
+ * naming the owner holds every one of their files, not only the files the report is about.
  *
  * A model whose owner deleted their account and kept it public belongs to the placeholder owner, so
  * who uploaded it is no longer known; its files are held too.
@@ -23,16 +38,7 @@ export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
     WHERE hmv.id = ${modelVersionId}
       AND (
         hm."userId" = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
-        OR EXISTS (
-          SELECT 1
-          FROM "CsamReport" hc
-          WHERE (hc."userId" = hm."userId" OR hc.details ->> 'secondaryUserId' = hm."userId"::text)
-            AND (
-              hc."reportSentAt" IS NULL
-              OR hc."archivedAt" IS NULL
-              OR hc."reportSentAt" > now() - interval '1 year'
-            )
-        )
+        OR ${userNamedOnHoldingReportSql(Prisma.sql`hm."userId"`)}
       )
   )`;
 }

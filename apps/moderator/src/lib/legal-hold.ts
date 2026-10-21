@@ -1,0 +1,40 @@
+/** Shown on the disabled Delete account button. Never says which hold applies. */
+export const LEGAL_HOLD_BUTTON_TEXT = 'Account under legal hold. Contact Legal.';
+
+/** A refused deletion; the same text the main app's endpoint answers with. */
+export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
+
+export const HOLD_UNKNOWN_BUTTON_TEXT = "Couldn't check legal hold status. Try again.";
+export const HOLD_UNKNOWN_REFUSAL = "Couldn't check legal hold status; try again.";
+
+/** `unknown` is any answer other than a plain yes or no, and blocks deletion like a hold. */
+export type DeleteHold = 'clear' | 'held' | 'unknown';
+
+export type DeleteButtonState = 'absent' | 'enabled' | 'held' | 'unknown';
+
+/** Anything but `clear` disables the button rather than removing it. */
+export function deleteButtonState(input: {
+  canDelete: boolean;
+  deleted: boolean;
+  hold: DeleteHold | null;
+}): DeleteButtonState {
+  if (!input.canDelete || input.deleted) return 'absent';
+  if (input.hold === 'clear') return 'enabled';
+  return input.hold === 'held' ? 'held' : 'unknown';
+}
+
+/** What the button shows; `null` renders nothing. Only `enabled` can be pressed. */
+export function deleteButtonView(
+  state: DeleteButtonState
+): { label: string; disabled: boolean } | null {
+  switch (state) {
+    case 'absent':
+      return null;
+    case 'enabled':
+      return { label: 'Delete account', disabled: false };
+    case 'held':
+      return { label: LEGAL_HOLD_BUTTON_TEXT, disabled: true };
+    default:
+      return { label: HOLD_UNKNOWN_BUTTON_TEXT, disabled: true };
+  }
+}
