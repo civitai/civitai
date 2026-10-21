@@ -419,6 +419,39 @@ describe('the storyline continuation loop', () => {
 
   // While the title scan holds a storyline as about a minor, its chapters are held to
   // `storylineCeiling` whatever the owner set, at submission, at approval and when read.
+  // Hold and mark, decided for the takedown: it can lift (an appeal, a clean rescan), so a
+  // continuation in a taken-down storyline is kept, not refunded early, and the owner's queue shows
+  // it as not answerable until the takedown lifts. Its own deadline still refunds it.
+  describe('in a storyline that is taken down', () => {
+    const setTakenDown = (tosViolation: boolean) =>
+      db.update('storyline', { id: STORYLINE }, { tosViolation });
+    const queueMarks = async () =>
+      (
+        await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })
+      ).items.map((item) => [item.id, item.storyline.takenDown]);
+
+    it('stays in the queue marked, refused and unrefunded, and is answerable once the takedown lifts', async () => {
+      charge(100);
+      const { id } = await submit(STRANGER, STRANGER_POST, 100);
+      expect(await queueMarks()).toEqual([[id, false]]);
+
+      setTakenDown(true);
+      expect(await queueMarks()).toEqual([[id, true]]);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+      ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      await expect(settleOrphanedContinuations()).resolves.toMatchObject({ settled: 0 });
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+      expect(moneyCalls().refunds).toEqual([]);
+
+      setTakenDown(false);
+      expect(await queueMarks()).toEqual([[id, false]]);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })
+      ).resolves.toEqual({ settled: true, status: 'approved' });
+    });
+  });
+
   describe('a storyline the title scan holds as about a minor', () => {
     const PG13 = 2;
     const R = 4;
