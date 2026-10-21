@@ -13,6 +13,10 @@ import {
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
+import {
+  claimBoxRefundsForCosmetic,
+  pullCosmeticFromBoxes,
+} from '~/server/services/mystery-box-takedown.service';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { constants } from '~/server/common/constants';
@@ -2327,9 +2331,12 @@ export const reviewCreatorShopItem = async ({
 };
 
 type TakedownFailure = {
-  stage: 'refund' | 'clawback';
+  /** `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. */
+  stage: 'refund' | 'clawback' | 'box';
+  /** 0 for a box that could not be pulled: it is no one's to refund. */
   userId: number;
   amount?: number;
+  boxId?: number;
   error: string;
 };
 
@@ -2468,8 +2475,17 @@ export const takedownCosmeticShopItem = async ({
   const leftToWithdrawnRefund: string[] = [];
   const refundedUserIds: number[] = [];
 
+  let boxesPulled: Awaited<ReturnType<typeof pullCosmeticFromBoxes>> = { pulled: [], failed: [] };
+
   const archiveAndRefundBuyers = async () => {
     updated = await archive();
+    // Boxes stop drawing it too, before anything is refunded: openers are found after this, so none
+    // can draw it in between and keep it unrefunded.
+    if (item.cosmeticId != null)
+      boxesPulled = await pullCosmeticFromBoxes({
+        cosmeticId: item.cosmeticId,
+        userId: moderatorId,
+      });
     // Primary, not the replica: a sale made seconds ago may not have replicated
     // yet, and missing it would strip that buyer's cosmetic without refunding it.
     purchases = await dbWrite.userCosmeticShopPurchases.findMany({
@@ -2496,6 +2512,26 @@ export const takedownCosmeticShopItem = async ({
     await archiveAndRefundBuyers();
   }
   if (!updated) throw throwNotFoundError('Shop item not found');
+
+  function reverseRecordedPayouts(
+    recordedPayouts: NonNullable<CosmeticPurchaseMeta['payouts']>,
+    refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>
+  ) {
+    // Payouts are keyed under the purchase prefix, so the refund may have reversed them.
+    const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
+    for (const payout of recordedPayouts) {
+      if (payout.amount <= 0) continue;
+      if (payout.transactionId && reversed.has(payout.transactionId))
+        reversedWithPurchase += payout.amount;
+      else if (payout.transactionId)
+        refundablePayouts.push({
+          userId: payout.userId,
+          amount: payout.amount,
+          transactionId: payout.transactionId,
+        });
+      else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
+    }
+  }
 
   async function refundTakedownPurchases() {
     // Checked above; a hoisted declaration does not keep that narrowing.
@@ -2573,20 +2609,7 @@ export const takedownCosmeticShopItem = async ({
       // paid nothing, and must not be charged back a re-derived share.
       const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
       if (recordedPayouts) {
-        // Payouts are keyed under the purchase prefix, so the refund above may have reversed them.
-        const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
-        for (const payout of recordedPayouts) {
-          if (payout.amount <= 0) continue;
-          if (payout.transactionId && reversed.has(payout.transactionId))
-            reversedWithPurchase += payout.amount;
-          else if (payout.transactionId)
-            refundablePayouts.push({
-              userId: payout.userId,
-              amount: payout.amount,
-              transactionId: payout.transactionId,
-            });
-          else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
-        }
+        reverseRecordedPayouts(recordedPayouts, refund);
         continue;
       }
 
@@ -2650,6 +2673,85 @@ export const takedownCosmeticShopItem = async ({
         addClawback(recipient.userId, domainColor, recipient.amount - blue);
       }
     }
+  }
+
+  for (const { boxId, error } of boxesPulled.failed) {
+    failures.push({ stage: 'box', userId: 0, boxId, error: `Box still holds it: ${error}` });
+    await logTakedown('error', 'Box pull failed', { shopItemId: id, boxId, error });
+  }
+
+  // Openers lose what they drew with everyone else below, so each is paid back the box's price
+  // (Justin, 2026-10-21). A box no one paid for is marked refunded and returns nothing.
+  const boxRefundedUserIds: number[] = [];
+  let boxRefundedValue = 0;
+  const boxClaims =
+    item.cosmeticId != null
+      ? await claimBoxRefundsForCosmetic({ cosmeticId: item.cosmeticId })
+      : { claimed: [], failed: [] };
+  for (const { userId, boxItemId, error } of boxClaims.failed) {
+    failures.push({
+      stage: 'box',
+      userId,
+      error: `Opening ${boxItemId} left unrefunded: ${error}`,
+    });
+    await logTakedown('error', 'Box opening refund claim failed', {
+      shopItemId: id,
+      userId,
+      boxItemId,
+      error,
+    });
+  }
+  // Each claim already flagged its purchase refunded, so a run that dies past here leaves only this
+  // record of the Buzz still owed.
+  if (boxClaims.claimed.length)
+    await logTakedown('info', 'Box openings claimed for refund', {
+      shopItemId: id,
+      claimed: boxClaims.claimed,
+    });
+  for (const claim of boxClaims.claimed) {
+    const { purchase } = claim;
+    if (!purchase || purchase.unitAmount === 0) continue;
+    let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+    try {
+      refund = await takedownMoneyMove(() =>
+        refundMultiAccountTransaction({
+          externalTransactionIdPrefix: purchase.buzzTransactionId,
+          description: `Cosmetic removed - ${item.title}`,
+        })
+      );
+    } catch (error) {
+      failures.push({
+        stage: 'refund',
+        userId: claim.userId,
+        amount: purchase.unitAmount,
+        boxId: claim.boxDefinitionId,
+        error: errorMessage(error),
+      });
+      await logTakedown('error', 'Box buyer refund failed', {
+        shopItemId: id,
+        userId: claim.userId,
+        boxItemId: claim.boxItemId,
+        buzzTransactionId: purchase.buzzTransactionId,
+        amount: purchase.unitAmount,
+        error: errorMessage(error),
+      });
+      continue;
+    }
+    boxRefundedUserIds.push(claim.userId);
+    boxRefundedValue += purchase.unitAmount;
+
+    const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
+    if (recordedPayouts) reverseRecordedPayouts(recordedPayouts, refund);
+    // A platform box paid only the bank. A creator's box paid its creator, in a split only the
+    // record knows, so like a pack it is left to a moderator.
+    else if (claim.sellerId !== null)
+      failures.push({
+        stage: 'clawback',
+        userId: claim.sellerId,
+        amount: purchase.unitAmount,
+        boxId: claim.boxDefinitionId,
+        error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
+      });
   }
 
   let clawedBack = reversedWithPurchase;
@@ -2858,7 +2960,7 @@ export const takedownCosmeticShopItem = async ({
       details: { title: item.title, reason },
     });
   }
-  for (const userId of new Set(refundedUserIds)) {
+  for (const userId of new Set([...refundedUserIds, ...boxRefundedUserIds])) {
     await createNotification({
       type: 'cosmetic-shop-item-taken-down',
       userId,
@@ -2887,6 +2989,9 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredPackPool,
     revokedFrom: revoked,
     placementsRemoved,
+    boxesPulled: boxesPulled.pulled,
+    boxOpeningsRefunded: boxRefundedUserIds.length,
+    boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
   });
@@ -2906,6 +3011,10 @@ export const takedownCosmeticShopItem = async ({
     unrecoveredPackPool,
     revokedFrom: revoked,
     placementsRemoved,
+    boxesPulled: boxesPulled.pulled.length,
+    // Openers paid back the price of the box that drew it; not counted in `refunded`.
+    boxOpeningsRefunded: boxRefundedUserIds.length,
+    boxRefundedValue,
     failures,
   };
 };
