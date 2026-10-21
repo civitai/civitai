@@ -7,14 +7,17 @@ import { deleteImages } from '~/server/services/image.service';
 import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
+  isLegalHoldAbort,
   LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
   LegalHoldError,
+  LegalHoldStoppedError,
 } from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
-  batchSize: z.coerce.number().default(100),
+  batchSize: z.coerce.number().int().min(1).default(100),
 });
 
 export default ModEndpoint(
@@ -23,7 +26,8 @@ export default ModEndpoint(
       const { userId, batchSize } = schema.parse(req.query);
       const { markerView } = await assertAccountNotUnderLegalHold(userId);
       // Repeated in each delete, so a hold that lands mid-run stops the rest.
-      const unlessHeld = Prisma.sql`NOT ${accountHoldSql(Prisma.sql`${userId}::int`, markerView)}`;
+      const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);
+      const unlessHeld = Prisma.sql`NOT ${held}`;
 
       const images = await dbRead.image.findMany({
         where: { userId },
@@ -52,8 +56,14 @@ export default ModEndpoint(
         `;
       }
 
+      // A hold that landed mid-run stopped the deletes above without an error.
+      const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+      if (after?.held !== false) throw new LegalHoldStoppedError();
+
       return res.status(200).json({ deletedImages, deletedPosts });
     } catch (e) {
+      if (e instanceof LegalHoldStoppedError || isLegalHoldAbort(e))
+        return res.status(409).json({ error: LEGAL_HOLD_STOPPED });
       if (e instanceof LegalHoldError) return res.status(403).json({ error: LEGAL_HOLD_REFUSAL });
       return handleEndpointError(res, e);
     }

@@ -6,6 +6,7 @@ import {
   HOLD_UNKNOWN_REFUSAL,
   LEGAL_HOLD_BUTTON_TEXT,
   LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
 } from '$lib/legal-hold';
 
 /**
@@ -24,6 +25,10 @@ vi.mock('$lib/server/db', async () => {
     dbWrite: capturingDb([], [{ id: 8675309 }]),
   };
 });
+const { recordModActivity } = vi.hoisted(() => ({
+  recordModActivity: vi.fn(async (_row: unknown) => undefined),
+}));
+vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('$env/dynamic/private', () => ({
   env: { CIVITAI_APP_URL: 'https://civitai.com', WEBHOOK_TOKEN: 'shared-secret' },
 }));
@@ -45,6 +50,7 @@ let purge: () => Response | Promise<Response>;
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  recordModActivity.mockClear();
   purgeUrls = [];
   hold = () => json({ userId: TARGET, held: false });
   purge = () => json({ userId: TARGET });
@@ -83,6 +89,23 @@ describe('purgeAllContent and a legal hold', () => {
   it('shows the hold refusal when the endpoint refuses the purge', async () => {
     purge = () => json({ error: LEGAL_HOLD_REFUSAL }, 403);
     expect(await run()).toEqual({ ok: false, error: LEGAL_HOLD_REFUSAL });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('shows any other 403 as the endpoint wrote it, not as a hold', async () => {
+    purge = () => json({ message: 'Forbidden' }, 403);
+    expect(await run()).toEqual({ ok: false, error: 'Purge: Forbidden' });
+  });
+
+  it('records a purge a hold stopped part-way, and says it stopped', async () => {
+    purge = () => json({ error: LEGAL_HOLD_STOPPED }, 409);
+    expect(await run()).toEqual({ ok: false, error: LEGAL_HOLD_STOPPED });
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: 9,
+      entityType: 'user',
+      entityId: TARGET,
+      activity: 'purgeAllContent',
+    });
   });
 });
 
@@ -110,9 +133,7 @@ describe('purgeAllContent with a lost answer', () => {
 
   it('passes a refusal the endpoint wrote through to the operator', async () => {
     purge = () => json({ message: 'Invalid userId' }, 400);
-    const result = await run();
-    expect(result.ok).toBe(false);
-    expect(result).not.toEqual({ ok: false, error: PURGE_MAY_BE_RUNNING });
+    expect(await run()).toEqual({ ok: false, error: 'Purge: Invalid userId' });
   });
 });
 

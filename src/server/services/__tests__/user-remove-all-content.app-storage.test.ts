@@ -449,11 +449,15 @@ describe('removeAllContent — bounties with a payout in flight', () => {
       })
     );
     expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
-    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
-      where: { userId: TARGET, id: { notIn: [4] } },
-    });
+    const calls = dbMock.dbWrite.$executeRaw.mock.calls as [string[], ...unknown[]][];
+    const bountyDelete = calls.findIndex(([strings]) =>
+      strings.join('?').includes('DELETE FROM "Bounty"\n')
+    );
+    expect(bountyDelete).toBeGreaterThanOrEqual(0);
+    const [, ...values] = calls[bountyDelete];
+    expect(values.slice(0, 2)).toEqual([TARGET, [4]]);
     expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
-      dbMock.dbWrite.bounty.deleteMany.mock.invocationCallOrder[0]
+      dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[bountyDelete]
     );
   });
 });

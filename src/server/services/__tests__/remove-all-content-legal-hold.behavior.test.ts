@@ -11,15 +11,28 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, indexes, session } = vi.hoisted(() => ({
+const { holder, indexes, session, pictures, tracked } = vi.hoisted(() => ({
   holder: {
     db: null as unknown as PGlite,
     /** Runs just before the first image delete: a hold landing mid-run. */
     beforeImages: null as (() => Promise<unknown>) | null,
   },
-  indexes: { queueUpdate: vi.fn(async () => undefined) },
+  indexes: { queueUpdate: vi.fn<(rows: unknown) => Promise<undefined>>(async () => undefined) },
   session: {
     user: { id: 9, isModerator: true, bannedAt: null } as Record<string, unknown> | null,
+  },
+  pictures: { refresh: vi.fn<(ids: unknown) => Promise<undefined>>(async () => undefined) },
+  tracked: vi.fn<(activity: unknown) => undefined>(() => undefined),
+}));
+
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  profilePictureCache: pictures,
+}));
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  Tracker: class {
+    userActivity = tracked;
   },
 }));
 
@@ -80,7 +93,11 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: async () => session,
 }));
 
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import {
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
@@ -89,10 +106,25 @@ const CLEAN = 1;
 const HELD = 2; // named on a pending report
 const MARKED = 3; // held by the marker view
 const BYSTANDER = 9;
-const EVIDENCE = ['CommentV2', 'Comment', 'Article', 'Post', 'Model', 'ChatMessage', 'ChatMember'];
+const EVIDENCE = [
+  'BountyEntry',
+  'Bounty',
+  'Answer',
+  'Question',
+  'ResourceReview',
+  'CommentV2',
+  'Comment',
+  'Article',
+  'Post',
+  'Model',
+  'ChatMessage',
+  'ChatMember',
+];
 
-/** Runs just before the first guarded delete: a hold landing after the check. */
+/** Runs just before the delete from `landsBefore`: a hold landing after the check. */
 let beforeEvidence: (() => Promise<unknown>) | null = null;
+/** The first guarded delete, unless a test lands the hold later. */
+let landsBefore = EVIDENCE[0];
 let failLookups = false;
 /** Replaces what the wipe's re-check after its evidence deletes reads back. */
 let afterHeld: unknown = undefined;
@@ -116,12 +148,19 @@ beforeAll(async () => {
     ${EVIDENCE.map(
       (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
     ).join('\n')}
+    CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
+    -- A review's comment thread, and the comments on it, go with the review.
+    CREATE TABLE "Thread" (
+      id serial PRIMARY KEY, "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE
+    );
+    ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
   `);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   beforeEvidence = null;
+  landsBefore = EVIDENCE[0];
   holder.beforeImages = null;
   failLookups = false;
   afterHeld = undefined;
@@ -129,7 +168,8 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
+    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread",
+      ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (${CLEAN * 100}, ${CLEAN}, 1), (${CLEAN * 100 + 1}, ${CLEAN}, 1),
@@ -156,20 +196,22 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     const sql = asSql(first, values);
-    if (beforeEvidence && sql.text.includes('DELETE FROM "CommentV2"')) {
+    if (beforeEvidence && sql.text.includes(`DELETE FROM "${landsBefore}"`)) {
       await beforeEvidence();
       beforeEvidence = null;
     }
     return (await run(sql)).affectedRows ?? 0;
   }) as never);
-  vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(
+  const rowsOf = (table: string, columns: string) =>
     (async (args: { where: { userId: number } }) =>
       (
-        await holder.db.query(`SELECT id, "postId" FROM "Image" WHERE "userId" = $1`, [
+        await holder.db.query(`SELECT ${columns} FROM "${table}" WHERE "userId" = $1`, [
           args.where.userId,
         ])
-      ).rows) as never
-  );
+      ).rows) as never;
+  vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
+  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(rowsOf('Model', 'id'));
+  vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
 });
 
 async function createMarkerView() {
@@ -215,7 +257,9 @@ describe('removeAllContent', () => {
     await setup();
     const before = await remaining(userId);
 
-    await expect(removeAllContent({ id: userId })).rejects.toBeInstanceOf(LegalHoldError);
+    const refused = await removeAllContent({ id: userId }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(LegalHoldError);
+    expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
@@ -224,7 +268,9 @@ describe('removeAllContent', () => {
 
   it('refuses when the hold cannot be checked', async () => {
     failLookups = true;
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(LegalHoldError);
+    expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
   });
@@ -234,7 +280,7 @@ describe('removeAllContent', () => {
   it('keeps every piece of evidence when a hold lands mid-wipe, and says so', async () => {
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
 
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     // The low-impact rows before the evidence go; nothing is reindexed or purged elsewhere.
@@ -244,7 +290,7 @@ describe('removeAllContent', () => {
 
   it('keeps evidence when the marker appears mid-wipe after a check that found none', async () => {
     beforeEvidence = () => holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int NOT NULL)`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
   });
 
@@ -257,7 +303,7 @@ describe('removeAllContent', () => {
   it('keeps evidence when a marker lands mid-wipe', async () => {
     await createMarkerView();
     beforeEvidence = () => holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
   });
 
@@ -276,14 +322,68 @@ describe('removeAllContent', () => {
     ],
   ])('keeps evidence when %s lands mid-wipe', async (_, landing) => {
     beforeEvidence = () => holder.db.exec(landing);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
   });
 
   it('reports a hold when its re-check cannot be read', async () => {
     afterHeld = null;
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldError);
-    expect(indexes.queueUpdate).not.toHaveBeenCalled();
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    // Everything went, so only the model and the article leave the index; the account stays in it.
+    expect(indexes.queueUpdate.mock.calls).toEqual([
+      [[{ id: 1, action: 'Delete' }]],
+      [[{ id: 1, action: 'Delete' }]],
+    ]);
+  });
+
+  it('keeps another user’s comment on a review of theirs when a hold lands mid-wipe', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" ("reviewId")
+        SELECT id FROM "ResourceReview" WHERE "userId" = ${CLEAN};
+      INSERT INTO "CommentV2" ("userId", "threadId") SELECT ${BYSTANDER}, id FROM "Thread";
+    `);
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    expect((await remaining(BYSTANDER)).CommentV2).toBe(2);
+  });
+
+  it('stops, keeping the evidence, when the marker view is dropped mid-wipe', async () => {
+    await createMarkerView();
+    beforeEvidence = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+  });
+
+  it('drops from the search index only what a stopped wipe really deleted', async () => {
+    const [article] = (
+      await holder.db.query<{ id: number }>(`SELECT id FROM "Article" WHERE "userId" = ${CLEAN}`)
+    ).rows;
+    landsBefore = 'Model';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    // The article went before the hold landed; the model did not.
+    expect((await remaining(CLEAN)).Model).toBe(1);
+    expect(indexes.queueUpdate.mock.calls).toEqual([[[{ id: article.id, action: 'Delete' }]]]);
+  });
+
+  it('keeps a bounty entry that won an award', async () => {
+    await holder.db.exec(`
+      INSERT INTO "BountyEntry" ("userId") VALUES (${CLEAN});
+      INSERT INTO "BountyBenefactor" ("awardedToId") SELECT max(id) FROM "BountyEntry";
+    `);
+    await removeAllContent({ id: CLEAN });
+    expect(await remaining(CLEAN)).toEqual({ ...all(0), BountyEntry: 1 });
+  });
+
+  it('refreshes the account’s cached profile picture after deleting its images', async () => {
+    await removeAllContent({ id: CLEAN });
+    expect(pictures.refresh).toHaveBeenCalledWith([CLEAN]);
   });
 });
 
@@ -330,26 +430,28 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ error: 'Account under legal hold; contact Legal.' });
     expect(await remaining(HELD)).toEqual(seeded(HELD));
+    expect(tracked).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 and records the activity when a hold stops the wipe part-way', async () => {
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
   });
 });
 
 describe('/api/mod/delete-user-images', () => {
-  const call = async (userId: number) => {
-    const res = {
-      statusCode: 0,
-      body: undefined as unknown,
-      setHeader: vi.fn(),
-      status: (code: number) => {
-        res.statusCode = code;
-        return res;
-      },
-      json: (body: unknown) => {
-        res.body = body;
-        return res;
-      },
-    };
+  const call = async (userId: number, extra: Record<string, string> = {}) => {
+    const res = fakeRes();
     await deleteUserImages(
-      { method: 'GET', query: { userId: String(userId) }, headers: {}, cookies: {} } as never,
+      {
+        method: 'GET',
+        query: { userId: String(userId), ...extra },
+        headers: {},
+        cookies: {},
+      } as never,
       res as never
     );
     return res;
@@ -378,13 +480,28 @@ describe('/api/mod/delete-user-images', () => {
     expect((await remaining(HELD)).Image).toBe(1);
   });
 
-  it('keeps the images and posts when a hold lands mid-run', async () => {
+  it('keeps the images and posts when a hold lands mid-run, and says it stopped', async () => {
     holder.beforeImages = () =>
       holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
     const res = await call(CLEAN);
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ deletedImages: 0, deletedPosts: 0 });
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
     expect((await remaining(CLEAN)).Image).toBe(2);
     expect((await remaining(CLEAN)).Post).toBe(1);
+  });
+
+  it('says it stopped, naming nothing, when the marker view is dropped mid-run', async () => {
+    await createMarkerView();
+    holder.beforeImages = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect((await remaining(CLEAN)).Image).toBe(2);
+  });
+
+  it('refuses a batch size of zero, deleting nothing', async () => {
+    const res = await call(CLEAN, { batchSize: '0' });
+    expect(res.statusCode).not.toBe(200);
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
   });
 });

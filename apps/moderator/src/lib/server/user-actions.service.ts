@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
+import {
+  HOLD_UNKNOWN_REFUSAL,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  type DeleteHold,
+} from '$lib/legal-hold';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -1488,7 +1493,13 @@ export async function purgeAllContent(input: {
     timeoutMs: 15_000,
   });
   if (!result.ok) {
-    if (result.status === 403) return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
+      return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    // A hold stopped it part-way, after some of the account was deleted: that is recorded.
+    if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
+      await logAction('purgeAllContent', input.userId, input.moderatorId);
+      return { ok: false, error: LEGAL_HOLD_STOPPED };
+    }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
     // lost answer is reported as started, never as failed: a failure invites a second purge.
     if (result.status !== undefined && (result.status >= 500 || result.status === 408))

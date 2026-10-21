@@ -29,7 +29,12 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 import { userRouter } from '~/server/routers/user.router';
-import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
+import {
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 
 const MOD_ID = 9;
 const TARGET_ID = 42;
@@ -117,5 +122,30 @@ describe('user.removeAllContent — a legal hold', () => {
       message: LEGAL_HOLD_REFUSAL,
     });
     expect(track.userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records the activity of a wipe a hold stopped part-way, and says it stopped', async () => {
+    mockRemoveAllContent.mockRejectedValue(new LegalHoldStoppedError());
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: LEGAL_HOLD_STOPPED,
+    });
+    expect(track.userActivity).toHaveBeenCalledWith({
+      type: 'RemoveContent',
+      targetUserId: TARGET_ID,
+    });
   });
 });

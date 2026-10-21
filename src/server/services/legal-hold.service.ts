@@ -21,6 +21,17 @@ export class LegalHoldError extends Error {
   }
 }
 
+/** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
+export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
+
+/** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
+export class LegalHoldStoppedError extends LegalHoldError {
+  constructor() {
+    super();
+    this.name = 'LegalHoldStoppedError';
+  }
+}
+
 export type AccountHoldLeg =
   | 'report'
   | 'hold-marker'

@@ -1,5 +1,10 @@
 import { TRPCError } from '@trpc/server';
-import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
+import {
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
   claimCosmeticHandler,
@@ -309,15 +314,22 @@ export const userRouter = router({
     // records WHO ordered the wipe. The other caller of `removeAllContent`
     // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
     // identity and correctly passes none.
+    const track = () =>
+      ctx.track.userActivity({
+        type: 'RemoveContent',
+        targetUserId: input.id,
+      });
     await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch((e: unknown) => {
+      // Part of the account was deleted, so it is recorded like a wipe that finished.
+      if (e instanceof LegalHoldStoppedError) {
+        track();
+        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_STOPPED });
+      }
       if (e instanceof LegalHoldError)
         throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
       throw e;
     });
-    ctx.track.userActivity({
-      type: 'RemoveContent',
-      targetUserId: input.id,
-    });
+    track();
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

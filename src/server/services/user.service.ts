@@ -5,6 +5,7 @@ import {
   guardedAccountScrubSql,
   isLegalHoldAbort,
   LegalHoldError,
+  LegalHoldStoppedError,
 } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
@@ -1384,6 +1385,28 @@ export const updateAccountScope = async ({
   }
 };
 
+/** Queues a search-index Delete for each listed row that no longer exists. */
+async function unindexDeleted(
+  lists: [
+    { queueUpdate: typeof modelsSearchIndex.queueUpdate },
+    'Model' | 'Article' | 'Collection' | 'Bounty',
+    { id: number }[]
+  ][]
+) {
+  for (const [index, table, rows] of lists) {
+    if (!rows.length) continue;
+    const ids = rows.map((r) => r.id);
+    const left = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
+    const kept = new Set(left.map((r) => r.id));
+    const gone = ids.filter((i) => !kept.has(i));
+    if (gone.length)
+      await index.queueUpdate(
+        gone.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  }
+}
+
 /**
  * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
  * above, which soft-deletes and has a live inverse in `restoreUser`.
@@ -1422,9 +1445,6 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  await dbWrite.bountyEntry.deleteMany({
-    where: { userId: id, benefactors: { none: {} } },
-  });
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
   const unsettled = await dbWrite.bounty.findMany({
     // `isPayoutPending` as a query; keep the two in step.
@@ -1449,45 +1469,77 @@ export const removeAllContent = async ({
       }).catch(() => undefined);
   }
   // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
-  const bountyWhere = { userId: id, id: { notIn: keptBountyIds } };
-  const bounties = await dbWrite.bounty.findMany({ where: bountyWhere, select: { id: true } });
-  await dbWrite.bounty.deleteMany({ where: bountyWhere });
-  await dbWrite.answer.deleteMany({ where: { userId: id } });
-  await dbWrite.question.deleteMany({ where: { userId: id } });
+  const bounties = await dbWrite.bounty.findMany({
+    where: { userId: id, id: { notIn: keptBountyIds } },
+    select: { id: true },
+  });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
   await dbWrite.userProfile.deleteMany({ where: { userId: id } });
-  await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
 
   // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
-  // here. The rows above stay deleted in that case; they are not evidence.
+  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
+  // answers, questions and reviews are here because each cascades its comment thread.
   const unlessHeld = Prisma.sql`NOT ${held}`;
-  await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
-  // Rows, storage objects and caches; then any image uploaded since the list was read.
-  await deleteImages(
-    images.map((i) => i.id),
-    true,
-    { onlyWhere: unlessHeld }
-  );
-  await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+  let stopped: boolean;
+  try {
+    await dbWrite.$executeRaw`
+      DELETE FROM "BountyEntry" be
+      WHERE be."userId" = ${id}
+        AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
+        AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      DELETE FROM "Bounty"
+      WHERE "userId" = ${id} AND id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // Rows, storage objects and caches; then any image uploaded since the list was read.
+    await deleteImages(
+      images.map((i) => i.id),
+      true,
+      { onlyWhere: unlessHeld }
+    );
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await refreshProfilePicturesForUsers([id]);
 
-  // A hold that landed mid-wipe stopped the deletes above without an error: report it, and leave the
-  // indexes and the apps store alone.
-  const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
-  if (after?.held !== false) {
+    // A hold that landed mid-wipe stopped the deletes above without an error.
+    const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+    stopped = after?.held !== false;
+  } catch (e) {
+    if (!isLegalHoldAbort(e)) throw e;
+    stopped = true;
+  }
+
+  // Report it, drop from the indexes only what really went, and leave the apps store alone.
+  if (stopped) {
     logToAxiom({
       name: 'remove-all-content',
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
     }).catch(() => undefined);
-    throw new LegalHoldError();
+    await unindexDeleted([
+      [modelsSearchIndex, 'Model', models],
+      [articlesSearchIndex, 'Article', articles],
+      [collectionsSearchIndex, 'Collection', collections],
+      [bountiesSearchIndex, 'Bounty', bounties],
+    ]).catch((e: unknown) =>
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
+        userId: id,
+      }).catch(() => undefined)
+    );
+    throw new LegalHoldStoppedError();
   }
 
   await modelsSearchIndex.queueUpdate(

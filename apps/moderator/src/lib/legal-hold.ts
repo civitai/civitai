@@ -4,6 +4,9 @@ export const LEGAL_HOLD_BUTTON_TEXT = 'Account under legal hold. Contact Legal.'
 /** A refused deletion; the same text the main app's endpoint answers with. */
 export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
 
+/** A purge a hold stopped part-way; the same text the main app's endpoint answers with. */
+export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
+
 export const HOLD_UNKNOWN_BUTTON_TEXT = "Couldn't check legal hold status. Try again.";
 export const HOLD_UNKNOWN_REFUSAL = "Couldn't check legal hold status; try again.";
 
