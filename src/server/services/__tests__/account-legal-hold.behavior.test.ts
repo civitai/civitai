@@ -16,6 +16,7 @@ import {
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
+  isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
 import { deleteUser } from '~/server/services/user.service';
@@ -39,7 +40,10 @@ const NEW_IMAGE_AFTER_OLD_REPORT = 14;
 const SENT_LONG_AGO_NOT_ARCHIVED = 15;
 const IMAGE_ON_INTERNAL_REPORT = 16; // their image is listed on a report naming someone else
 const ALREADY_DELETED = 17;
-const ALL_USERS = Array.from({ length: 17 }, (_, i) => i + 1);
+const IMAGE_ON_OLD_REPORT = 18; // their image is listed on an archived report sent over a year ago
+const IMAGE_PAST_INT_RANGE = 19; // a pending report lists their image, whose id is past int range
+const BIG_IMAGE_ID = 10_000_000_019;
+const ALL_USERS = Array.from({ length: 19 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -60,8 +64,9 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+    -- bigint, unlike prod's int today, so a report can list an id past int range.
     CREATE TABLE "Image" (
-      id serial PRIMARY KEY,
+      id bigint PRIMARY KEY,
       "userId" int NOT NULL,
       "needsReview" text,
       "blockedFor" text
@@ -154,7 +159,12 @@ beforeEach(async () => {
       -- Sent and naming the unreported owner, but listing none of their images.
       (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', now(), '{}', '[{"id": 1}]'),
       -- Pending, naming the placeholder owner, listing another user's image.
-      (-1, NULL, NULL, '{}', '[{"id": ${IMAGE_ON_INTERNAL_REPORT * 100}, "fileId": "f3"}]');
+      (-1, NULL, NULL, '{}', '[{"id": ${IMAGE_ON_INTERNAL_REPORT * 100}, "fileId": "f3"}]'),
+      (NULL, now() - interval '400 days', now(), '{}', '[{"id": ${IMAGE_ON_OLD_REPORT * 100}}]'),
+      -- Pending, naming nobody, with image lists no job writes. Every lookup reads past them.
+      (NULL, NULL, NULL, '{}', '{}'),
+      (NULL, NULL, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 99999999999}]'),
+      (NULL, NULL, NULL, '{}', '[{"id": ${BIG_IMAGE_ID}}]');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
       (${CLEAN * 100}, ${CLEAN}, 'minor', 'AiNotVerified'),
       (${IMAGE_IN_REVIEW * 100}, ${IMAGE_IN_REVIEW}, 'csam', NULL),
@@ -165,7 +175,9 @@ beforeEach(async () => {
       }, ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
       (${NEW_IMAGE_AFTER_OLD_REPORT * 100}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM'),
       (${NEW_IMAGE_AFTER_OLD_REPORT * 100 + 1}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM'),
-      (${IMAGE_ON_INTERNAL_REPORT * 100}, ${IMAGE_ON_INTERNAL_REPORT}, NULL, NULL);
+      (${IMAGE_ON_INTERNAL_REPORT * 100}, ${IMAGE_ON_INTERNAL_REPORT}, NULL, NULL),
+      (${IMAGE_ON_OLD_REPORT * 100}, ${IMAGE_ON_OLD_REPORT}, NULL, NULL),
+      (${BIG_IMAGE_ID}, ${IMAGE_PAST_INT_RANGE}, NULL, NULL);
   `);
 });
 
@@ -191,6 +203,7 @@ describe('getAccountLegalHoldLegs', () => {
       IMAGE_ON_INTERNAL_REPORT,
       ['reported-image'],
     ],
+    ['a listed image whose id is past int range', IMAGE_PAST_INT_RANGE, ['reported-image']],
   ])('holds an account with %s', async (_, userId, legs) => {
     expect(await getAccountLegalHoldLegs(userId)).toEqual(legs);
   });
@@ -203,6 +216,7 @@ describe('getAccountLegalHoldLegs', () => {
       'a blocked image and a sent report naming them as secondary',
       SECONDARY_BLOCKED_REPORTED_LONG_AGO,
     ],
+    ['an image listed only on an archived report sent over a year ago', IMAGE_ON_OLD_REPORT],
   ])('does not hold an account with %s', async (_, userId) => {
     expect(await getAccountLegalHoldLegs(userId)).toEqual([]);
   });
@@ -313,6 +327,8 @@ describe('deleteUser under a legal hold', () => {
     });
   });
 
+  // PGlite runs one connection, so these land the hold strictly between the check and the scrub;
+  // they show the scrub re-reads every hold, not how it behaves under true concurrency.
   it('stops the scrub when a hold lands after the check, and leaves the account as it was', async () => {
     const before = await userRow(CLEAN);
     beforeScrub = () =>
@@ -331,6 +347,23 @@ describe('deleteUser under a legal hold', () => {
     expect(await userRow(CLEAN)).toEqual(before);
   });
 
+  it('refuses every account when the marker table exists without its view', async () => {
+    await holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int NOT NULL)`);
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses, without naming the view, when the view is dropped after the check', async () => {
+    await createMarkerView();
+    const before = await userRow(CLEAN);
+    beforeScrub = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
+
+    const error = await run(CLEAN).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(LegalHoldError);
+    expect((error as Error).message).not.toContain('EvidenceHeldUser');
+    expect(await userRow(CLEAN)).toEqual(before);
+  });
+
   it('still scrubs an account already marked deleted, as before', async () => {
     await run(ALREADY_DELETED);
     expect(await userRow(ALREADY_DELETED)).toMatchObject({ email: null, username: null });
@@ -345,6 +378,34 @@ describe('deleteUser under a legal hold', () => {
         details: { userId: IMAGE_IN_REVIEW, legs: ['image-review'] },
       })
     );
+  });
+});
+
+describe('isLegalHoldAbort', () => {
+  const viewMissing = 'relation "EvidenceHeldUser" does not exist';
+  it.each<[string, unknown]>([
+    ['Prisma’s raw-query error', { code: 'P2010', meta: { code: 'LH001', message: 'x' } }],
+    ['the driver’s error', { code: 'LH001', message: 'x' }],
+    ['only the message', new Error('Raw query failed. Code: `LH001`. Message: `x`')],
+    [
+      'the marker view gone, from Prisma',
+      { code: 'P2010', meta: { code: '42P01', message: viewMissing } },
+    ],
+    ['the marker view gone, from the driver', { code: '42P01', message: viewMissing }],
+  ])('counts %s as held', (_, e) => {
+    expect(isLegalHoldAbort(e)).toBe(true);
+  });
+
+  it.each<[string, unknown]>([
+    ['nothing', null],
+    ['a connection failure', new Error('connection reset')],
+    ['another raw-query failure', { code: 'P2010', meta: { code: '23505', message: 'duplicate' } }],
+    [
+      'another missing relation',
+      { code: 'P2010', meta: { code: '42P01', message: 'relation "Other" does not exist' } },
+    ],
+  ])('does not count %s as held', (_, e) => {
+    expect(isLegalHoldAbort(e)).toBe(false);
   });
 });
 

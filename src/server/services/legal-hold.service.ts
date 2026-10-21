@@ -51,7 +51,7 @@ function holdLegsSql(id: Prisma.Sql) {
     )`,
     // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
     // reports' image lists rather than the user's images: the lists are short, an account's images
-    // are not.
+    // are not. Compared as bigint so an id past int range still matches rather than being skipped.
     'reported-image': Prisma.sql`EXISTS (
       SELECT 1
       FROM "CsamReport" rr
@@ -59,7 +59,7 @@ function holdLegsSql(id: Prisma.Sql) {
         CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
       ) re
       JOIN "Image" ri
-        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,9}$' THEN (re ->> 'id')::int END
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
       WHERE ri."userId" = ${id} AND ${reportHolds('rr')}
     )`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
@@ -180,7 +180,7 @@ BEGIN
   WHERE id = ${id} AND NOT (${Prisma.join(holds, ' OR ')});
   GET DIAGNOSTICS scrubbed = ROW_COUNT;
   IF scrubbed = 0 THEN
-    RAISE EXCEPTION USING ERRCODE = ${abortCode}, MESSAGE = 'account under legal hold';
+    RAISE EXCEPTION USING ERRCODE = ${abortCode}, MESSAGE = 'account scrub changed no row';
   END IF;
 END
 $guard$`;
@@ -189,9 +189,18 @@ $guard$`;
   return statement;
 }
 
-/** Whether a failed transaction was stopped by the guarded scrub. */
+/**
+ * Whether a failed transaction was stopped by the guarded scrub, or failed on the marker view it
+ * names (dropped between the check and the scrub). Both count as held, and neither error may reach
+ * the user: the second names the view.
+ */
 export function isLegalHoldAbort(e: unknown): boolean {
-  const err = e as { code?: unknown; meta?: { code?: unknown }; message?: unknown } | null;
+  const err = e as {
+    code?: unknown;
+    meta?: { code?: unknown; message?: unknown };
+    message?: unknown;
+  } | null;
   if (err?.meta?.code === HOLD_ABORT_CODE || err?.code === HOLD_ABORT_CODE) return true;
-  return typeof err?.message === 'string' && err.message.includes(HOLD_ABORT_CODE);
+  const text = [err?.message, err?.meta?.message].filter((m) => typeof m === 'string').join('\n');
+  return text.includes(HOLD_ABORT_CODE) || text.includes(`"${HOLD_MARKER_VIEW}"`);
 }

@@ -138,6 +138,35 @@ describe('deleteUser — what the soft delete scrubs', () => {
   });
 });
 
+describe('deleteUser — the account it acts on', () => {
+  it('writes the meta inside the transaction, keeping what was there', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: { kept: 1 } });
+    await deleteUser();
+
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: { meta: { kept: 1, imageRemoval: 'immediate' } },
+    });
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(dbMock.dbWrite.user.update.mock.results[0].value);
+  });
+
+  it('scrubs the account the lookup found, not the id it was given', async () => {
+    const FOUND = USER_ID + 1;
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: FOUND, meta: {} });
+    await deleteUser();
+
+    const [statement] = dbMock.dbWrite.$executeRaw.mock.calls[scrubIndex()] as [{ text: string }];
+    expect(statement.text).toBe(guardedAccountScrubSql(FOUND, false).text);
+    expect(dbMock.dbWrite.model.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: FOUND } })
+    );
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: FOUND } })
+    );
+  });
+});
+
 describe('deleteUser — payment-provider ids', () => {
   it('nulls paddleCustomerId inside the transaction, as part of the soft delete', async () => {
     await deleteUser();

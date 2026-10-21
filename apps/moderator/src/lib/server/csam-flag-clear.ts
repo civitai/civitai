@@ -36,8 +36,8 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
     csamReport: sql<boolean>`EXISTS (SELECT 1 FROM "CsamReport" c WHERE c."userId" = ${userId})`,
     csamReportSecondary: sql<boolean>`EXISTS (
       SELECT 1 FROM "CsamReport" c
-      WHERE CASE WHEN (c."details" ->> 'secondaryUserId') ~ '^[0-9]{1,9}$'
-                 THEN (c."details" ->> 'secondaryUserId')::int END = ${userId}
+      WHERE CASE WHEN (c."details" ->> 'secondaryUserId') ~ '^[0-9]{1,18}$'
+                 THEN (c."details" ->> 'secondaryUserId')::bigint END = ${userId}
     )`,
     ban: sql<boolean>`EXISTS (
       SELECT 1 FROM "User" u
@@ -50,10 +50,17 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
                 u.meta #>> '{banDetails,detailsExternal}') ~* ${banNotesPattern()})
         )
     )`,
-    // Any image the clear would touch that a report lists, whoever the report names.
+    // Any image the clear would touch that a report lists, whoever the report names, sent or
+    // archived or not. Walks the reports' image lists rather than the user's images: the lists are
+    // short, an account's images are not. Compared as bigint so an id past int range still matches.
     reportedImage: sql<boolean>`EXISTS (
-      SELECT 1 FROM "Image" ri
-      JOIN "CsamReport" rc ON rc."images" @> jsonb_build_array(jsonb_build_object('id', ri.id))
+      SELECT 1
+      FROM "CsamReport" rc
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rc."images") = 'array' THEN rc."images" ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
       WHERE ri."userId" = ${userId}
         AND ri."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}
         AND ri."ingestion" = 'Blocked'

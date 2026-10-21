@@ -54,4 +54,16 @@ describe('the hold marker the bulk clear checks', () => {
   it('CONTROL: the migration scan finds a table it knows exists', () => {
     expect(created('TABLE', 'CsamReport')).toContain('CsamReport');
   });
+
+  it('CONTROL: the migration scan finds a view it knows exists', () => {
+    expect(created('VIEW', 'ModelReportStat')).toContain('ModelReportStat');
+  });
+
+  // The two pins above pass on an empty scan. Once a migration names the marker, the scan must see
+  // what it creates, or a CREATE written another way would switch them off.
+  it('sees the marker in any migration that names it', () => {
+    if (!migrationsSql().includes('EvidenceHold')) return;
+    expect(created('VIEW', 'EvidenceHeld').length).toBeGreaterThan(0);
+    expect(created('TABLE', 'EvidenceHold').length).toBeGreaterThan(0);
+  });
 });

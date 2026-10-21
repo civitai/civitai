@@ -62,6 +62,7 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   heldReleased: { id: 131 },
   mismatch: { id: 140 },
   reportedImage: { id: 150 },
+  otherImageReported: { id: 151 },
   notedByDeployedPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
   driftProbe: { id: 170 },
 };
@@ -111,6 +112,12 @@ beforeAll(async () => {
     -- Names nobody this suite owns, and lists one of 150's removed images.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "details", "images") VALUES
       (-1, NULL, '{}', '[{"id": 1501, "fileId": "f1"}]');
+    -- 151's only listed image is one the clear does not touch. The rest are shapes no job writes,
+    -- ids past int range among them, which every lookup must read past.
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "details", "images") VALUES
+      (-1, NULL, '{}', '[{"id": 1513}]'),
+      (-1, NULL, '{"secondaryUserId": "99999999999"}', '{}'),
+      (-1, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 99999999999}]');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -157,6 +164,14 @@ describe('clearing one user’s CSAM flags', () => {
 
     expect(await flagged(id)).toHaveLength(3);
     expect(await activityFor([id * 10 + 1, id * 10 + 2])).toEqual([]);
+  });
+
+  it('clears a user whose only listed image is one the clear does not touch', async () => {
+    expect(await clear(USERS.otherImageReported.id)).toEqual({
+      ok: true,
+      cleared: 2,
+      remaining: 1,
+    });
   });
 
   it.each(['otherBanPlain', 'harassmentBan'])(
