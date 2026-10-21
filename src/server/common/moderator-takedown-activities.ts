@@ -12,15 +12,10 @@
  *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
  *                     (moderator app), `/api/mod/unblock-images`. Every one of them writes one row
  *                     per NAMED image id — several of them take a list, but none of them stands in
- *                     for a set it was never handed. Three of the six are the un-block direction,
- *                     which is why the timestamp comparison at the call site is load-bearing and
- *                     not decoration — and it is worth being exact about what that comparison
- *                     does, because the obvious reading of it is wrong. It compares the activity
- *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
- *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
- *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
- *                     after it reads as a takedown. Every un-block writer therefore drops the
- *                     queue row (see the note in `image-ingestion.ts`).
+ *                     for a set it was never handed. Three of the six are un-blocks. The activity
+ *                     is compared against the image's delete-queue row, so every un-block that
+ *                     writes a `review` row drops that queue row (see the note in
+ *                     `image-ingestion.ts`).
  *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block

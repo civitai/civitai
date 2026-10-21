@@ -728,8 +728,8 @@ export const removeBlockedImages = createJob(
     //       takedown. Its `trackModActivity` call was added alongside this split; it is a
     //       moderator-gated per-image decision that previously left no row in the mod audit log
     //       at all.
-    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
-    //   object is left alone:
+    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only its public
+    //   copies are not deleted:
     //     • the scan pipeline's three block outcomes — the orchestrator content rating
     //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
     //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
@@ -751,26 +751,11 @@ export const removeBlockedImages = createJob(
     //     • anything else that lands in the queue, now or later, including a writer added after
     //       this comment was written. That is the property being bought.
     //
-    // ── WHERE THIS IS DELIBERATELY IMPRECISE, BOTH DIRECTIONS ────────────────────────────────
-    // Toward KEEPING the bytes (a takedown that does not retract):
-    //   • `recordModActivity` in the moderator app is best-effort and swallows its own failures,
-    //     and `trackModActivity` is `ON CONFLICT DO NOTHING`. A block whose activity row failed
-    //     to land is deleted without retraction.
-    //     🔴 That second clause is a claim about a database that still carries ModActivity's
-    //     (activity, entityType, entityId) unique index, and PRODUCTION no longer does — the
-    //     `20260805120000_mod_activity_append_only` migration has been applied there, so the
-    //     targetless `ON CONFLICT DO NOTHING` suppresses nothing and a repeat takedown always
-    //     gets its own row. `containers/db/docker-init/02_all_dll.sql` still CREATES that index,
-    //     so a database built from the local dump diverges from production on exactly this
-    //     behaviour: reproducing a "the second takedown did not retract" report locally can show
-    //     a suppression that cannot happen in production. The comment on `trackModActivity` in
-    //     `src/server/services/moderator.service.ts` says the same thing about the clause itself.
-    //   • Rows queued before this shipped keep their old queue `createdAt`. For anything the
-    //     2026-08-06 completeness migration backfilled, that timestamp is the migration's own and
-    //     is therefore later than any moderator activity on those images, so none of them retract.
-    // Toward RETRACTING: every un-block writer drops the image's queue row. A new one that writes a
-    //   `review` row and keeps the queue row would make its un-block read as a takedown of the
-    //   next automated block.
+    // ── WHAT RETRACTION KEYS ON ──────────────────────────────────────────────────────────────
+    // A `MODERATOR_TAKEDOWN_ACTIVITIES` row on the image dated at or after its queue row's
+    // `createdAt`; without one the image is still deleted, but not retracted. Every un-block that
+    // writes a `review` row drops the image's queue row, so that row is never compared against a
+    // later block. A new one has to do the same.
     //
     // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
     // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
