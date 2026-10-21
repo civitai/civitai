@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -23,6 +25,14 @@ export function strongestAccess(values: CdnAccess[]): CdnAccess {
   return values.reduce<CdnAccess>((a, b) => (STRENGTH[b] > STRENGTH[a] ? b : a), 'allow');
 }
 
+/** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
+export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
+/**
+ * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until the
+ * owner's report has verified evidence.
+ */
+export const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
+
 export type PostAccessFacts = {
   ownerId: number;
   unpublished: boolean;
@@ -37,23 +47,29 @@ export type PostAccessFacts = {
 };
 
 export type ImageAccessFacts = {
+  ownerId: number;
   ingestion: string;
   blockedFor: string | null;
   /** When the image entered Blocked: its `BlockedImageDelete` queue row. */
   blockedAt: Date | null;
   /** Latest `MODERATOR_TAKEDOWN_ACTIVITIES` row on this image. */
   lastTakedownActivityAt: Date | null;
-  /** A CSAM review flag or an evidence hold on the owner. Caps its url at `deny`. */
+  /** A CSAM review flag or an evidence hold. Caps its url at `deny`. */
   held: boolean;
   post: PostAccessFacts | null;
 };
 
+/** A moderator-app hard delete of an image on the url; its row is gone. Always a takedown. */
+export type ModeratorDeleteFacts = { ownerId: number | null; held: boolean };
+
+export type UrlAccessFacts = { images: ImageAccessFacts[]; deletes: ModeratorDeleteFacts[] };
+
 function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   if (!post || !post.unpublished || !post.stamped) return 'allow';
-  if (post.moderatorReason) return 'retract';
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
-  // marks the model as a violation.
+  // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
+  if (post.moderatorReason) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
   if (
     post.versionStatus === ModelStatus.UnpublishedViolation ||
@@ -84,19 +100,19 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
 
 /**
  * The state for a url shared by several image rows: the strongest any of them asks for, so a
- * takedown wins over a live copy. A hold on any of them caps it at `deny`: a held image is evidence,
- * so it stops serving and nothing destructive runs until the hold ends.
+ * takedown wins over a live copy. It is capped at `deny` when any of them is held (a held image is
+ * evidence: it stops serving and nothing destructive runs until the hold ends), and when the rows
+ * belong to more than one owner, since a retraction deletes what every owner of the url serves.
  */
-export function desiredUrlAccess(
-  images: ImageAccessFacts[],
-  { moderatorDelete = false, deletedHeld = false } = {}
-): CdnAccess {
+export function desiredUrlAccess({ images, deletes }: UrlAccessFacts): CdnAccess {
   const access = strongestAccess([
     ...images.map(desiredImageAccess),
-    moderatorDelete ? 'retract' : 'allow',
+    ...deletes.map((): CdnAccess => 'retract'),
   ]);
-  if (access === 'retract' && (deletedHeld || images.some((x) => x.held))) return 'deny';
-  return access;
+  if (access !== 'retract') return access;
+  const held = images.some((x) => x.held) || deletes.some((x) => x.held);
+  const owners = new Set([...images.map((x) => x.ownerId), ...deletes.map((x) => x.ownerId)]);
+  return held || owners.size > 1 ? 'deny' : 'retract';
 }
 
 // ── image server calls ──────────────────────────────────────────────────────────────────────────
@@ -139,9 +155,9 @@ function cdnCallRequest(url: string, call: CdnCall) {
 /** Throws unless the image server accepted the call, after `CALL_ATTEMPTS` tries. */
 export async function callCdnAccess(url: string, call: CdnCall) {
   if (!env.IMAGE_CACHER_URL) throw new Error('IMAGE_CACHER_URL is not set');
+  if (!env.IMAGE_CACHER_ADMIN_SECRET) throw new Error('IMAGE_CACHER_ADMIN_SECRET is not set');
   const { method, path } = cdnCallRequest(url, call);
-  const headers: Record<string, string> = {};
-  if (env.IMAGE_CACHER_ADMIN_SECRET) headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
+  const headers = { 'X-Admin-Secret': env.IMAGE_CACHER_ADMIN_SECRET };
 
   let lastError: unknown;
   for (let attempt = 0; attempt < CALL_ATTEMPTS; attempt++) {
@@ -163,7 +179,7 @@ export async function callCdnAccess(url: string, call: CdnCall) {
   throw lastError;
 }
 
-// ── queue drain ─────────────────────────────────────────────────────────────────────────────────
+// ── state ───────────────────────────────────────────────────────────────────────────────────────
 
 type StateRow = { url: string; state: 'Denied' | 'Retracted'; lastAssertedAt: Date };
 
@@ -182,51 +198,78 @@ type FactsRow = {
   postStamped: boolean | null;
   postUnpublishedBy: string | null;
   postModeratorReason: boolean | null;
+  postCsamHoldRemoved: boolean | null;
+  matureUnderageUnpublish: boolean | null;
   versionStatus: string | null;
   modelStatus: string | null;
 };
 
-/** Every image row on these urls, with what `desiredImageAccess` needs. Reads the primary. */
+type DeleteRow = { url: string; userId: number | null; csamReview: boolean };
+
+/** Every image row and moderator delete on these urls, with what `desiredUrlAccess` needs. Reads the primary. */
 async function loadFacts(urls: string[]) {
-  if (!urls.length) return new Map<string, ImageAccessFacts[]>();
-  const rows = await dbWrite.$queryRaw<FactsRow[]>`
-    SELECT
-      i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
-      i."needsReview" IS NOT DISTINCT FROM 'csam' AS "csamReview",
-      q."createdAt" AS "blockedAt",
-      ma."lastActedAt" AS "lastTakedownActivityAt",
-      p.id AS "postId",
-      p."userId" AS "postOwnerId",
-      p."publishedAt" IS NULL AS "postUnpublished",
-      p.metadata ? 'unpublishedAt' AS "postStamped",
-      p.metadata->>'unpublishedBy' AS "postUnpublishedBy",
-      p.metadata ? 'unpublishedReason' AS "postModeratorReason",
-      mv.status::text AS "versionStatus",
-      mo.status::text AS "modelStatus"
-    FROM "Image" i
-    LEFT JOIN "JobQueue" q
-      ON q."entityType" = 'Image' AND q."entityId" = i.id
-      AND q.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
-    LEFT JOIN LATERAL (
-      SELECT MAX(m."createdAt") AS "lastActedAt"
-      FROM "ModActivity" m
-      WHERE m."entityType" = 'image' AND m."entityId" = i.id
-        AND m.activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
-    ) ma ON true
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    LEFT JOIN "Model" mo ON mo.id = mv."modelId"
-    WHERE i.url = ANY(${urls})
-  `;
-  const ownerHeld = await heldOwners(rows.map((r) => r.userId));
-  const byUrl = new Map<string, ImageAccessFacts[]>();
+  const byUrl = new Map<string, UrlAccessFacts>();
+  if (!urls.length) return byUrl;
+  const [rows, deleteRows] = await Promise.all([
+    dbWrite.$queryRaw<FactsRow[]>`
+      SELECT
+        i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
+        i."needsReview" IS NOT DISTINCT FROM 'csam' AS "csamReview",
+        q."createdAt" AS "blockedAt",
+        ma."lastActedAt" AS "lastTakedownActivityAt",
+        p.id AS "postId",
+        p."userId" AS "postOwnerId",
+        p."publishedAt" IS NULL AS "postUnpublished",
+        p.metadata ? 'unpublishedAt' AS "postStamped",
+        p.metadata->>'unpublishedBy' AS "postUnpublishedBy",
+        p.metadata ? 'unpublishedReason' AS "postModeratorReason",
+        p.metadata->>'unpublishedReason' = ${CSAM_HOLD_POST_UNPUBLISH_REASON} AS "postCsamHoldRemoved",
+        (mv.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}
+          OR mo.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}) AS "matureUnderageUnpublish",
+        mv.status::text AS "versionStatus",
+        mo.status::text AS "modelStatus"
+      FROM "Image" i
+      LEFT JOIN "JobQueue" q
+        ON q."entityType" = 'Image' AND q."entityId" = i.id
+        AND q.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      LEFT JOIN LATERAL (
+        SELECT MAX(m."createdAt") AS "lastActedAt"
+        FROM "ModActivity" m
+        WHERE m."entityType" = 'image' AND m."entityId" = i.id
+          AND m.activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      ) ma ON true
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+      LEFT JOIN "Model" mo ON mo.id = mv."modelId"
+      WHERE i.url = ANY(${urls})
+    `,
+    dbWrite.$queryRaw<DeleteRow[]>`
+      SELECT url, "userId", "csamReview" FROM "ImageCdnModeratorDelete" WHERE url = ANY(${urls})
+    `,
+  ]);
+  const holds = await ownerHolds([
+    ...rows.flatMap((r) => (r.postOwnerId === null ? [r.userId] : [r.userId, r.postOwnerId])),
+    ...deleteRows.flatMap((r) => (r.userId === null ? [] : [r.userId])),
+  ]);
+  const entry = (url: string) => {
+    let facts = byUrl.get(url);
+    if (!facts) byUrl.set(url, (facts = { images: [], deletes: [] }));
+    return facts;
+  };
   for (const row of rows) {
-    const facts: ImageAccessFacts = {
+    const postOwner = row.postOwnerId ?? row.userId;
+    entry(row.url).images.push({
+      ownerId: row.userId,
       ingestion: row.ingestion,
       blockedFor: row.blockedFor,
       blockedAt: row.blockedAt,
       lastTakedownActivityAt: row.lastTakedownActivityAt,
-      held: row.csamReview || ownerHeld(row.userId),
+      held:
+        row.csamReview ||
+        holds.held(row.userId) ||
+        // A csam-hold removal waits for the report it may lead to; then the evidence rule applies.
+        (!!row.postCsamHoldRemoved && !holds.reported(postOwner)) ||
+        (!!row.matureUnderageUnpublish && !holds.verified(postOwner)),
       post:
         row.postId === null
           ? null
@@ -239,11 +282,14 @@ async function loadFacts(urls: string[]) {
               versionStatus: row.versionStatus,
               modelStatus: row.modelStatus,
             },
-    };
-    const list = byUrl.get(row.url) ?? [];
-    list.push(facts);
-    byUrl.set(row.url, list);
+    });
   }
+  for (const row of deleteRows)
+    entry(row.url).deletes.push({
+      ownerId: row.userId,
+      // A delete that does not say whose image it was cannot be checked for a hold.
+      held: row.csamReview || row.userId === null || holds.held(row.userId),
+    });
   return byUrl;
 }
 
@@ -266,32 +312,49 @@ function evidenceVerifiedSql(c: Prisma.Sql) {
   return Prisma.sql`COALESCE((${c}.details->>${EVIDENCE_VERIFIED_KEY}) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T', false)`;
 }
 
-/**
- * SQL: user `userId` is under an evidence hold — named on a CSAM report, as its subject or its
- * secondary user, that is unsent, or sent without a verified evidence copy.
- */
-function evidenceHoldSql(userId: Prisma.Sql) {
-  return Prisma.sql`EXISTS (
-    SELECT 1 FROM "CsamReport" c
-    WHERE (c."userId" = ${userId} OR c.details->>'secondaryUserId' = (${userId})::text)
-      AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
-  )`;
+/** SQL: report `c` names user `userId`, as its subject or its secondary user. */
+function reportNamesSql(userId: Prisma.Sql) {
+  return Prisma.sql`(c."userId" = ${userId} OR c.details->>'secondaryUserId' = (${userId})::text)`;
 }
 
+type OwnerHolds = {
+  /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
+  held: (userId: number) => boolean;
+  /** Named on any CSAM report. */
+  reported: (userId: number) => boolean;
+  /** Named on a sent CSAM report with a verified evidence copy. */
+  verified: (userId: number) => boolean;
+};
+
 /**
- * Which of these users are under an evidence hold. A failed lookup holds everyone: a hold only ever
- * caps a retraction at a deny, so failing closed costs nothing that cannot be redone.
+ * The CSAM report standing of these users. A failed lookup holds everyone and releases no one: a
+ * hold only ever caps a retraction at a deny, so failing closed costs nothing that cannot be redone.
  */
-async function heldOwners(userIds: number[]): Promise<(userId: number) => boolean> {
+async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
-  if (!ids.length) return () => false;
+  const none = () => false;
+  if (!ids.length) return { held: none, reported: none, verified: none };
   try {
-    const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT u.id FROM unnest(${ids}::int[]) AS u(id)
-      WHERE ${evidenceHoldSql(Prisma.sql`u.id`)}
+    const rows = await dbWrite.$queryRaw<
+      { id: number; held: boolean; reported: boolean; verified: boolean }[]
+    >`
+      SELECT u.id,
+        EXISTS (
+          SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
+            AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
+        ) AS held,
+        EXISTS (SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}) AS reported,
+        EXISTS (
+          SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
+            AND c."reportSentAt" IS NOT NULL AND ${evidenceVerifiedSql(Prisma.sql`c`)}
+        ) AS verified
+      FROM unnest(${ids}::int[]) AS u(id)
     `;
-    const held = new Set(rows.map((r) => r.id));
-    return (userId) => held.has(userId);
+    const set = (key: 'held' | 'reported' | 'verified') => {
+      const s = new Set(rows.filter((r) => r[key]).map((r) => r.id));
+      return (userId: number) => s.has(userId);
+    };
+    return { held: set('held'), reported: set('reported'), verified: set('verified') };
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -299,7 +362,7 @@ async function heldOwners(userIds: number[]): Promise<(userId: number) => boolea
       message: 'evidence hold lookup failed; treating every owner as held',
       error: safeError(error),
     }).catch(() => undefined);
-    return () => true;
+    return { held: () => true, reported: none, verified: none };
   }
 }
 
@@ -311,6 +374,17 @@ export function plannedCall(
   if (desired === 'retract') return current === 'Retracted' ? null : 'retract';
   if (desired === 'deny') return current ? null : 'deny';
   return current ? 'allow' : null;
+}
+
+/**
+ * The call a url needs, or null. A url with no image rows and no moderator delete was deleted
+ * through the normal path, which invalidates on its own; whatever was asserted earlier stays until
+ * the reconciler drops it.
+ */
+function callFor(url: string, facts: UrlAccessFacts | undefined, current: StateRow | undefined) {
+  if (!cdnImageKey(url)) return null;
+  if (!facts || (!facts.images.length && !facts.deletes.length)) return null;
+  return plannedCall(desiredUrlAccess(facts), current?.state);
 }
 
 async function applyCall(url: string, call: CdnCall) {
@@ -330,11 +404,40 @@ async function applyCall(url: string, call: CdnCall) {
   `;
 }
 
+/**
+ * One writer per url at a time: a slower run must not apply a stale plan over a newer one, on the
+ * image server or in the state table. Returns `{ claimed: false }` when another run holds it.
+ */
+async function withUrlClaim<T>(
+  url: string,
+  fn: () => Promise<T>
+): Promise<{ claimed: false } | { claimed: true; value: T }> {
+  const token = randomUUID();
+  // Must outlast callCdnAccess's worst case (CALL_ATTEMPTS x RETRACT_TIMEOUT_MS plus backoff).
+  const claimed = await dbWrite.$executeRaw`
+    INSERT INTO "ImageCdnAccessClaim" (url, token, "claimedUntil")
+    VALUES (${url}, ${token}, now() + interval '5 minutes')
+    ON CONFLICT (url) DO UPDATE
+      SET token = EXCLUDED.token, "claimedUntil" = EXCLUDED."claimedUntil"
+      WHERE "ImageCdnAccessClaim"."claimedUntil" < now()
+  `;
+  if (!claimed) return { claimed: false };
+  try {
+    return { claimed: true, value: await fn() };
+  } finally {
+    await dbWrite.$executeRaw`
+      DELETE FROM "ImageCdnAccessClaim" WHERE url = ${url} AND token = ${token}
+    `;
+  }
+}
+
+// ── queue drain ─────────────────────────────────────────────────────────────────────────────────
+
 type QueueRow = {
   entityType: 'Image' | 'Post';
   entityId: number;
   createdAt: Date;
-  data: { url?: string; moderatorDelete?: boolean; userId?: number } | null;
+  data: { url?: string; moderatorDelete?: boolean; userId?: number; csamReview?: boolean } | null;
 };
 
 export const CDN_ACCESS_SYNC_BATCH = 500;
@@ -368,64 +471,66 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     : [];
   const urlByImage = new Map(imageRows.map((r) => [r.id, r.url]));
 
-  // A moderator delete arrives after its row is gone, so its url and owner travel in the queue row.
-  const deletedUrls = new Map<string, { userId?: number }>();
   const urlsFor = (q: QueueRow): string[] => {
     if (q.entityType === 'Post')
       return postImageRows.filter((r) => r.postId === q.entityId).map((r) => r.url);
     const url = urlByImage.get(q.entityId);
     if (url) return [url];
-    if (q.data?.moderatorDelete && q.data.url) {
-      deletedUrls.set(q.data.url, { userId: q.data.userId });
-      return [q.data.url];
-    }
+    if (q.data?.moderatorDelete && q.data.url) return [q.data.url];
     return [];
   };
   const urlsByRow = queue.map(urlsFor);
   const urls = [...new Set(urlsByRow.flat())];
 
-  const [facts, state, held] = await Promise.all([
-    loadFacts(urls),
-    loadState(urls),
-    heldOwners([...deletedUrls.values()].map((d) => d.userId).filter((x): x is number => !!x)),
-  ]);
+  // A moderator delete arrives after its row is gone, so its url and owner travel in the queue row.
+  // Recorded before any call, so every later look at the url still sees the takedown.
+  for (const q of queue) {
+    if (q.entityType !== 'Image' || urlByImage.has(q.entityId)) continue;
+    if (!q.data?.moderatorDelete || !q.data.url) continue;
+    await dbWrite.$executeRaw`
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+      VALUES (${q.entityId}::int, ${q.data.url}, ${q.data.userId ?? null}::int,
+              ${q.data.csamReview !== false})
+      ON CONFLICT ("imageId") DO NOTHING
+    `;
+  }
 
-  const failed = new Set<string>();
+  const [facts, state] = await Promise.all([loadFacts(urls), loadState(urls)]);
+
+  const pending = new Set<string>();
   let calls = 0;
+  let failed = 0;
   await limitConcurrency(
-    urls.map((url) => async () => {
-      const images = facts.get(url) ?? [];
-      const deleted = deletedUrls.get(url);
-      // No rows and no moderator delete: the image was deleted through the normal path, which
-      // invalidates on its own. Whatever was asserted earlier stays until the reconciler drops it.
-      if (!images.length && !deleted) return;
-      // Nothing the image server serves, so nothing to tell it.
-      if (!cdnImageKey(url)) return;
-      const desired = desiredUrlAccess(images, {
-        moderatorDelete: !!deleted,
-        deletedHeld: !!deleted && (!deleted.userId || held(deleted.userId)),
-      });
-      const call = plannedCall(desired, state.get(url)?.state);
-      if (!call) return;
-      calls++;
-      try {
-        await applyCall(url, call);
-      } catch (error) {
-        failed.add(url);
-        logToAxiom({
-          type: 'error',
-          name: 'cdn-access-sync',
-          message: 'image server call failed; will retry',
-          imageKey: url,
-          call,
-          error: safeError(error),
-        }).catch(() => undefined);
-      }
-    }),
+    urls
+      .filter((url) => callFor(url, facts.get(url), state.get(url)))
+      .map((url) => async () => {
+        let call: CdnCall | null = null;
+        try {
+          const result = await withUrlClaim(url, async () => {
+            const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
+            call = callFor(url, fresh.get(url), freshState.get(url));
+            if (!call) return;
+            calls++;
+            await applyCall(url, call);
+          });
+          if (!result.claimed) pending.add(url);
+        } catch (error) {
+          pending.add(url);
+          failed++;
+          logToAxiom({
+            type: 'error',
+            name: 'cdn-access-sync',
+            message: 'image server call failed; will retry',
+            imageKey: url,
+            call,
+            error: safeError(error),
+          }).catch(() => undefined);
+        }
+      }),
     CALL_CONCURRENCY
   );
 
-  const done = queue.filter((_, i) => urlsByRow[i].every((url) => !failed.has(url)));
+  const done = queue.filter((_, i) => urlsByRow[i].every((url) => !pending.has(url)));
   for (const q of done) {
     // Matched on `data` too: a trigger that fired again mid-run rewrote it, and that row must stay.
     await dbWrite.$executeRaw`
@@ -438,16 +543,16 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   }
 
   const oldest = queue[0].createdAt;
-  if (failed.size && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
+  if (failed && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
       type: 'error',
       name: 'cdn-access-sync-stale',
       message: 'takedown CDN queue has rows older than 15 minutes',
       oldest: oldest.toISOString(),
-      failed: failed.size,
+      failed,
     }).catch(() => undefined);
 
-  return { queued: queue.length, calls, failed: failed.size, removed: done.length };
+  return { queued: queue.length, calls, failed, removed: done.length };
 }
 
 // ── reconciler ──────────────────────────────────────────────────────────────────────────────────
@@ -462,10 +567,13 @@ export const REASSERT_AFTER_DAYS = 20;
 export const REASSERT_CAP_PER_RUN = 25_000;
 const RECONCILE_PAGE = 1000;
 
+type ReconcileStep = CdnCall | 'reassert';
+
 /**
  * Daily pass over every url this path has denied: re-asserts a deny before it can expire, upgrades a
  * deny to a retraction once a hold is released or a late activity row lands, lifts a deny the queue
- * missed, and forgets urls with no image rows left (their deletion invalidated on its own).
+ * missed, and forgets urls with no image rows and no moderator delete left (their deletion
+ * invalidated on its own).
  */
 export async function reconcileCdnAccess({
   now = new Date(),
@@ -473,7 +581,23 @@ export async function reconcileCdnAccess({
 } = {}) {
   let reassertBudget = reassertCap;
   const reassertBefore = new Date(now.getTime() - REASSERT_AFTER_DAYS * 24 * 60 * 60 * 1000);
-  const totals = { checked: 0, reasserted: 0, upgraded: 0, lifted: 0, dropped: 0, failed: 0 };
+  const totals = {
+    checked: 0,
+    reasserted: 0,
+    upgraded: 0,
+    lifted: 0,
+    dropped: 0,
+    busy: 0,
+    failed: 0,
+  };
+  const stepFor = (
+    row: StateRow,
+    facts: UrlAccessFacts | undefined,
+    canReassert: boolean
+  ): ReconcileStep | null =>
+    callFor(row.url, facts, row) ??
+    (row.lastAssertedAt < reassertBefore && canReassert ? 'reassert' : null);
+
   let after = '';
   for (;;) {
     const page = await dbWrite.$queryRaw<StateRow[]>`
@@ -487,28 +611,44 @@ export async function reconcileCdnAccess({
 
     await limitConcurrency(
       page.map((row) => async () => {
-        const images = facts.get(row.url);
-        if (!images?.length) {
-          await dbWrite.$executeRaw`DELETE FROM "ImageCdnAccess" WHERE url = ${row.url}`;
-          totals.dropped++;
+        if (!facts.has(row.url)) {
+          // Re-checked in the statement: a moderator delete recorded since the read keeps the row.
+          totals.dropped += await dbWrite.$executeRaw`
+            DELETE FROM "ImageCdnAccess" a
+            WHERE a.url = ${row.url}
+              AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.url = a.url)
+              AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" d WHERE d.url = a.url)
+          `;
           return;
         }
-        let call = plannedCall(desiredUrlAccess(images), row.state);
-        if (!call && row.lastAssertedAt < reassertBefore && reassertBudget > 0) {
-          reassertBudget--;
-          call = 'deny';
-        }
-        if (!call) return;
+        const planned = stepFor(row, facts.get(row.url), reassertBudget > 0);
+        if (!planned) return;
+        if (planned === 'reassert') reassertBudget--;
+
+        let attempted: ReconcileStep | null = null;
         try {
-          if (call === 'deny' && row.state === 'Retracted') {
-            // Re-assert only; the retraction does not need repeating.
-            await callCdnAccess(row.url, 'deny');
-            await dbWrite.$executeRaw`
-              UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() WHERE url = ${row.url}`;
-          } else await applyCall(row.url, call);
-          if (call === 'allow') totals.lifted++;
-          else if (call === 'retract') totals.upgraded++;
-          else totals.reasserted++;
+          const result = await withUrlClaim(row.url, async () => {
+            const [fresh, freshState] = await Promise.all([
+              loadFacts([row.url]),
+              loadState([row.url]),
+            ]);
+            const current = freshState.get(row.url);
+            // Lifted by the drain since the page was read.
+            if (!current) return null;
+            const step = stepFor(current, fresh.get(row.url), planned === 'reassert');
+            attempted = step;
+            if (step === 'reassert') {
+              // Re-assert only; a retraction does not need repeating.
+              await callCdnAccess(row.url, 'deny');
+              await dbWrite.$executeRaw`
+                UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() WHERE url = ${row.url}`;
+            } else if (step) await applyCall(row.url, step);
+            return step;
+          });
+          if (!result.claimed) totals.busy++;
+          else if (result.value === 'allow') totals.lifted++;
+          else if (result.value === 'retract') totals.upgraded++;
+          else if (result.value) totals.reasserted++;
         } catch (error) {
           totals.failed++;
           logToAxiom({
@@ -516,7 +656,7 @@ export async function reconcileCdnAccess({
             name: 'cdn-access-reconcile',
             message: 'image server call failed',
             imageKey: row.url,
-            call,
+            call: attempted,
             error: safeError(error),
           }).catch(() => undefined);
         }

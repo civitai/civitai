@@ -3895,7 +3895,7 @@ export const publishModelById = async ({
                                   THEN (p."metadata" ->> 'prevPublishedAt')::timestamptz
                                 ELSE mv."publishedAt"
             END,
-              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           WHERE mv.id = p."modelVersionId"
             AND mv."modelId" = ${id}
@@ -5954,7 +5954,7 @@ export const publishPrivateModel = async (
             THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${now}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;

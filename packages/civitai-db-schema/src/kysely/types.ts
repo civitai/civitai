@@ -3266,6 +3266,18 @@ export type ImageCdnAccess = {
   retractedAt: Timestamp | null;
   lastAssertedAt: Generated<Timestamp>;
 };
+export type ImageCdnAccessClaim = {
+  url: string;
+  token: string;
+  claimedUntil: Timestamp;
+};
+export type ImageCdnModeratorDelete = {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: Generated<boolean>;
+  deletedAt: Generated<Timestamp>;
+};
 export type ImageConnection = {
   imageId: number;
   entityId: number;
@@ -6114,6 +6126,8 @@ export type DB = {
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
   ImageCdnAccess: ImageCdnAccess;
+  ImageCdnAccessClaim: ImageCdnAccessClaim;
+  ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;

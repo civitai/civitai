@@ -79,6 +79,7 @@ CREATE TABLE "Image" (
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,

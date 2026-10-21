@@ -7010,6 +7010,25 @@ model ImageCdnAccess {
   lastAssertedAt DateTime  @default(now())
 }
 
+/// A moderator-app hard delete, kept after its Image row is gone so the cdn-access-sync jobs keep
+/// the url taken down. Written only by those jobs.
+model ImageCdnModeratorDelete {
+  imageId    Int      @id
+  url        String
+  userId     Int?
+  csamReview Boolean  @default(true)
+  deletedAt  DateTime @default(now())
+
+  @@index([url])
+}
+
+/// A short lease on one url while a cdn-access-sync run calls the image server about it.
+model ImageCdnAccessClaim {
+  url          String   @id
+  token        String
+  claimedUntil DateTime
+}
+
 model JobQueue {
   type       JobQueueType
   entityType EntityType
