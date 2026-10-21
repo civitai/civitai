@@ -36,9 +36,23 @@ const SERVER_TOOL_FAILED_NOTE =
   'This tool failed. Tell the user in plain words; do not call it again this turn unless they ask.';
 const LOST_NOTE =
   'Check its effect (for example by listing or reading the files it would change) before running it again.';
-/** What the assistant (and the user) reads when the app cannot be found or started again. */
+/** What the assistant (and the user) reads when the app is gone. */
 export const SANDBOX_GONE =
-  'Your app stopped and could not be started again. Tell the user to open it from the app switcher, then ask again.';
+  'Your app is gone: it was deleted while the assistant worked. Tell the user to open or create it from the app switcher, then ask again.';
+/** How a reply ends when the user opened another app, which paused this one: Continue picks it up. */
+export const PAUSED_BY_OTHER_APP =
+  'Paused: you opened another app. Continue here to start this one again and pick up where it left off.';
+/** How a reply ends when its app paused by itself (30 idle minutes, or its 8-hour cap). */
+export const PAUSED_IDLE =
+  'Paused: your app went to sleep while the assistant worked. Continue to start it again and pick up where it left off.';
+
+/** The app the page named is gone (deleted, or made again empty): the reply ends with this. */
+export class AppGoneError extends Error {
+  override name = 'AppGoneError';
+  constructor() {
+    super(SANDBOX_GONE);
+  }
+}
 
 export interface AppSandboxDeps {
   client: SandboxClient;
@@ -50,17 +64,20 @@ export interface AppSandboxDeps {
   signal: AbortSignal;
   log: Logger;
   runId: string;
+  /** Ends the reply now, as interrupted (Continue carries on from its saved steps), with these words. */
+  endReply?(message: string): void;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
   wakePollMs?: number;
 }
 
 /**
- * The reply's sandbox: the app open in the page, found (and woken, when it is paused or starting) at
- * the reply's start, and its MCP connection. When a call cannot reach it (the sandbox was paused after
- * 30 idle minutes, or stopped at its 8-hour cap, while the reply only talked to the model), it is found
- * and woken again and the call is made there, once. `close()` closes the connection: a Stop or the
- * reply's end, and the only way a `run_command` still running in the sandbox is reached.
+ * The reply's sandbox: the app open in the page, found (and woken, when it is paused or starting) as
+ * the reply starts, and its MCP connection. That is the only wake. A call refused later (its sandbox
+ * paused: the user opened another app, or it slept after 30 idle minutes or its 8-hour cap) is never
+ * made again and never wakes it, which would pause the app the user is on: the reply ends as
+ * interrupted with words saying why, and Continue picks it up. `close()` closes the connection: a
+ * Stop or the reply's end, and the only way a `run_command` still running in the sandbox is reached.
  */
 export class AppSandbox {
   readonly #deps: AppSandboxDeps;
@@ -68,14 +85,8 @@ export class AppSandbox {
   #active: Sandbox | null = null;
   #connection: McpConnection | null = null;
   #closed = false;
-  /** The sandbox found again for the calls that failed together, so they wake it once. */
-  #resolving: Promise<Found> | null = null;
-  /**
-   * Connections replaced by finding the sandbox again, and why. Not closed until the reply ends: a
-   * call still running on one is left to finish, and one that fails on it later is judged by why it
-   * was replaced (the sandbox it reached had to be woken, so the call cannot have run).
-   */
-  readonly #replaced = new Map<McpConnection, Exclude<Found, 'gone'>>();
+  /** The one look at the user's apps after a refused call, shared by the calls refused together. */
+  #checking: Promise<'gone' | 'paused' | 'running'> | null = null;
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
@@ -86,14 +97,10 @@ export class AppSandbox {
     return this.#active;
   }
 
-  /** Whether its tools can be used now: it runs, at an address of the sandbox service. */
-  get connected(): boolean {
-    return this.#connection !== null;
-  }
-
   /**
-   * Finds `app`'s sandbox among `apps` and, when it is not running, wakes it and waits for it to run.
-   * Leaves no sandbox open when `app` is none of them or it would not run.
+   * Finds `app`'s sandbox among `apps` and, when it is not running, wakes it and waits for it to run
+   * (what the page does before it sends a message). Opens nothing when `app` is none of them. Throws
+   * `AppGoneError` when waking it made a new, empty app instead (it was deleted meanwhile).
    */
   async open(app: string | null, apps: Sandbox[]): Promise<void> {
     this.#app = app;
@@ -111,7 +118,6 @@ export class AppSandbox {
    * fails rather than being sent on to the new app.
    */
   opened(sandbox: Sandbox): void {
-    // Kept, closed, so a later call refuses (it is not "unreachable", which would find the new app).
     if (sandbox.app !== this.#app) void this.#connection?.close();
     this.#app = sandbox.app;
     this.#active = sandbox;
@@ -149,17 +155,20 @@ export class AppSandbox {
 
   async close(): Promise<void> {
     this.#closed = true;
-    const connections = [this.#connection, ...this.#replaced.keys()];
+    const connection = this.#connection;
     this.#connection = null;
-    this.#replaced.clear();
-    await Promise.all(connections.map((connection) => connection?.close()));
+    await connection?.close();
   }
 
   async #call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     let result: CallToolResult;
-    const used = this.#connection;
     try {
-      result = await this.#callOnce(used, tool, args, signal);
+      const connection = this.#connection;
+      if (!connection) throw new McpUnreachableError(null);
+      result = await connection.callTool(tool, args, {
+        ...(signal ? { signal } : {}),
+        timeoutMs: SANDBOX_TOOL_TIMEOUT_MS,
+      });
     } catch (error) {
       if (signal?.aborted || this.#closed) throw error;
       if (replyLost(error))
@@ -170,81 +179,74 @@ export class AppSandbox {
           note: LOST_NOTE,
         };
       if (!refused(error)) throw error;
-      // The sandbox may have paused or moved: found again (and woken, if it no longer runs), unless
-      // another call that failed on the same connection already did.
-      const found = (used && this.#replaced.get(used)) ?? (await this.#resolveAgain(used));
-      if (found === 'gone') throw new Error(SANDBOX_GONE);
-      // Made again only when it cannot have run: the connection never opened, or the sandbox had to be
-      // woken. An error status from a sandbox that still runs (a proxy's 502, a pod restart) may have
-      // come after the call ran, so it is reported as maybe finished instead of run twice.
-      if (!(error instanceof McpUnreachableError) && found !== 'woken')
-        return {
-          error: `Your app did not answer the ${tool} call; it may have finished.`,
-          retryable: true,
-          note: LOST_NOTE,
-        };
-      result = await this.#callOnce(this.#connection, tool, args, signal);
+      const state = await this.#check();
+      if (state === 'gone') throw new AppGoneError();
+      // Never made again here: it may have run before the refusal came back.
+      return {
+        error:
+          state === 'paused'
+            ? `Your app was paused, so the ${tool} call may not have finished.`
+            : `Your app did not answer the ${tool} call; it may have finished.`,
+        retryable: true,
+        note: LOST_NOTE,
+      };
     }
     const text = keepEnds(resultText(result), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
     return result.isError ? { error: text, note: SERVER_TOOL_FAILED_NOTE } : text;
   }
 
-  #callOnce(
-    connection: McpConnection | null,
-    tool: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal
-  ) {
-    if (!connection) return Promise.reject(new McpUnreachableError(null));
-    return connection.callTool(tool, args, {
-      ...(signal ? { signal } : {}),
-      timeoutMs: SANDBOX_TOOL_TIMEOUT_MS,
-    });
-  }
-
   /**
-   * Finds the reply's app again and connects to it: `woken` when it had stopped running and was
-   * woken, `running` when it still ran, `gone` when it is deleted or would not run. Calls that fail
-   * together share one search, so the sandbox is woken once.
+   * After a refused call, one look at the user's apps (shared by the calls refused together): the app
+   * is gone, still running (the refusal was a proxy's or a restart's), or paused. A paused app ends the
+   * reply as interrupted, saying whether the user opened another app; it is never woken from here.
    */
-  #resolveAgain(stale: McpConnection | null): Promise<Found> {
-    this.#resolving ??= (async (): Promise<Found> => {
+  #check(): Promise<'gone' | 'paused' | 'running'> {
+    this.#checking ??= (async (): Promise<'gone' | 'paused' | 'running'> => {
       const app = this.#app;
-      if (!app || this.#closed) return 'gone';
+      if (!app) return 'gone';
+      let listed: Sandbox[];
       try {
-        const listed = await this.#deps.client.list();
-        const found = listed.find((sandbox) => sandbox.app === app);
-        // Deleted meanwhile: a new, empty one is not made in its place behind the user's back.
-        if (!found) return 'gone';
-        const woken = found.state !== 'running';
-        const running = woken ? await this.#wake(app) : found;
-        if (!running || this.#closed) return 'gone';
-        this.#active = running;
-        const current = this.#connection;
-        this.#connect(running);
-        if (this.#connection === current) return 'gone';
-        const why = woken ? 'woken' : 'running';
-        if (stale) this.#replaced.set(stale, why);
-        if (current && current !== stale) this.#replaced.set(current, why);
-        return why;
+        listed = await this.#deps.client.list();
       } catch (error) {
         this.#deps.log.warn(
           { err: (error as Error)?.name, runId: this.#deps.runId },
-          'finding the sandbox again failed'
+          'looking at the user’s apps after a refused call failed'
         );
-        return 'gone';
+        return 'running';
       }
+      const found = listed.find((sandbox) => sandbox.app === app);
+      if (!found) return 'gone';
+      if (found.state === 'running') return 'running';
+      this.#active = found;
+      const other = listed.some((sandbox) => sandbox.app !== app && sandbox.state !== 'suspended');
+      this.#deps.endReply?.(other ? PAUSED_BY_OTHER_APP : PAUSED_IDLE);
+      return 'paused';
     })().finally(() => {
-      this.#resolving = null;
+      this.#checking = null;
     });
-    return this.#resolving;
+    return this.#checking;
   }
 
-  /** Resumes `app`'s sandbox (pausing another only if the service runs one at a time) and waits for it to run. */
+  /**
+   * Resumes `app`'s sandbox (pausing another only if the service runs one at a time) and waits for it
+   * to run; `null` when it would not run in time. Only as the reply starts.
+   */
   async #wake(app: string): Promise<Sandbox | null> {
     const { client, signal } = this.#deps;
+    let opened: { sandbox: Sandbox; created: boolean };
     try {
-      let { sandbox } = await openApp(client, app);
+      opened = await openApp(client, app);
+    } catch (error) {
+      this.#deps.log.warn(
+        { err: (error as Error)?.name, runId: this.#deps.runId },
+        'waking the sandbox failed'
+      );
+      return null;
+    }
+    // Deleted after the page listed it: the service made a new, empty one. Nothing runs on it.
+    if (opened.created) throw new AppGoneError();
+    let { sandbox } = opened;
+    try {
       const deadline = Date.now() + (this.#deps.wakeTimeoutMs ?? WAKE_TIMEOUT_MS);
       while (sandbox.state !== 'running') {
         if (signal.aborted || this.#closed || Date.now() >= deadline) return null;
@@ -255,7 +257,7 @@ export class AppSandbox {
     } catch (error) {
       this.#deps.log.warn(
         { err: (error as Error)?.name, runId: this.#deps.runId },
-        'waking the sandbox failed'
+        'waiting for the sandbox to start failed'
       );
       return null;
     }
@@ -278,9 +280,6 @@ export class AppSandbox {
     });
   }
 }
-
-/** How finding the sandbox again went: woken from paused, still running, or deleted or would not run. */
-type Found = 'woken' | 'running' | 'gone';
 
 /** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
 const PAGE_ONLY_TOOL = /^tunnel_/;

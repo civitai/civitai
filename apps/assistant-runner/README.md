@@ -8,8 +8,9 @@ any tab or device, and stops it.
 **Status:** sign-in (civitai viewer tokens), run grants, the orchestration model, the
 orchestration-backed conversation store, and App Assistant's tools and gate (the sandbox MCP tools,
 `create_app`, `set_checklist`, `report_ready`, read-only subagents) are real. App Assistant's page uses
-it for moderators behind `appAssistantRemoteRunner`. Without civitai's public key configured the
-service refuses every run-API request (401); without `SANDBOX_URL` a reply has no tools (words only).
+it behind `appAssistantRemoteRunner` (dark until its Flipt flag turns it on). Without civitai's public
+key configured the service refuses every run-API request (401); with it but without `SANDBOX_URL` it
+refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
 See [Not built yet](#not-built-yet).
 
 ## How it works
@@ -51,9 +52,12 @@ See [Not built yet](#not-built-yet).
   the journal. Each model or store request trades the grant, with the runner's own secret, at
   civitai's internal mint endpoint for a 5-minute App Assistant token of the purpose it needs
   (`chat` for the model and the store, `sandbox` for the sandbox service and its MCP server), inside
-  that request's own fetch, and keeps it in memory until a minute before it expires; a Stop stops waiting for a mint at once. On every mint civitai runs the same gates as the
+  that request's own fetch, and uses one token for a minute at most (and never in its last minute);
+  a Stop stops waiting for a mint at once. On every mint civitai runs the same gates as the
   browser's token route (ban, onboarding, mute, email verification, the App Assistant flag), plus the runner's own
-  flag `appAssistantRemoteRunner` (so turning it off ends runs already under way), on the
+  flag `appAssistantRemoteRunner` (so turning it off ends runs already under way at their next
+  model, store or sandbox request, within about a minute; a command already running in the sandbox
+  is not stopped by it), on the
   user as its database has them now, then the consent check, so any of them going off ends a reply at
   its next request with a refusal that is never retried. A grant is deleted on every end the runner
   writes to the head, and when its workflow throws; an end it could not save after retries is kept
@@ -71,15 +75,18 @@ See [Not built yet](#not-built-yet).
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
     call may go 610 s without progress, as the chat's added-server tools.
-  - **Paused mid-reply.** When a call is refused (the connection cannot be opened, or the MCP
-    address answers with an error status: the sandbox paused after 30 idle minutes or stopped at its
-    8-hour cap while the reply only talked to the model), the runner finds the sandbox again, waking
-    it if it no longer runs. The call is made again only when it cannot have run: the connection never
-    opened, or the sandbox had to be woken. An error status from a sandbox that still runs (a proxy's
-    502, a pod restart) may have come after the call ran, so the assistant is told it may have
-    finished instead. Calls that fail together wake the sandbox once. A sandbox deleted meanwhile is
-    not recreated: the call fails with words telling the user to open the app again. A call whose
-    reply was lost (no progress for 610 s) is not made again either.
+  - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
+    (the connection cannot be opened, or the MCP address answers with an error status), the runner
+    looks at the user's apps once and never makes the call again (it may have run before the refusal
+    came back), never wakes the app, and so never pauses the one the user is on:
+    - app paused, another app running (the user opened it): the reply ends as interrupted, "Paused:
+      you opened another app", and the page offers Continue (which starts the app again);
+    - app paused, nothing else running (30 idle minutes, the 8-hour cap): the same, saying it slept;
+    - app still running (a proxy's 502, a pod restart): the assistant is told the call may have finished;
+    - app deleted: the call fails, telling the user to open it again.
+    A reply ended this way keeps its saved steps, every call in them answered. Waking at the start makes
+    no new app: if the service's open made a new, empty one (deleted meanwhile), the reply ends with an
+    error. A call whose reply was lost (no progress for 610 s) is not made again either.
   - **The tunnel tools** (`tunnel_*`) are not offered: they serve only the page's live preview.
   - **Stop and the end of a reply close the MCP transport**, which aborts every request in flight:
     the only way to reach a `sandbox__run_command` still running in the sandbox.
@@ -89,15 +96,18 @@ See [Not built yet](#not-built-yet).
   - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 150
     parent calls per reply (a subagent's are not counted), then the reply ends with Continue;
     `report_ready` refused until, since the last file change or other command, the parent's
-    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done (a
-    subagent's checks never count; its file changes and commands undo the parent's); `set_checklist` and
-    `create_app` as on the page. A reply carried on from saved steps starts its count and checks from
-    those steps; a new reply keeps the conversation's checklist but checks the app again (the page,
-    unlike the runner, also keeps checks across the replies of one page load). Every finished call is
-    journaled as `tool-reported`, so the page's own views (the checklist card, Build it, the ready card)
-    follow it.
-  - **The prompt is App Assistant's** (`buildAssistantSystemPrompt`, its per-reply instructions built
-    by the runner from the sandbox it found, in place of the page's `hostInstructions`).
+    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done;
+    `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
+    app: `create_app` opening another app starts both over, as the page does, and each checklist the
+    runner shows records its app, so a later reply carries over only the open app's. A reply carried on
+    from saved steps starts its count and checks from those steps; a new reply keeps the app's checklist
+    but checks the app again (the page, unlike the runner, also keeps checks across the replies of one
+    page load). Every finished call is journaled as `tool-reported` with what the page's own views read
+    (a command, a result's first 200 characters, a page tool's result), never a file's contents.
+  - **The prompt is App Assistant's**, the runner's variant from the same builders
+    (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
+    only tools the runner has (the setup guide read with `sandbox__run_command`, no tunnel, no guide tool
+    for subagents), built from the sandbox it found, in place of the page's `hostInstructions`.
   - **Page-only:** the live preview (`start_preview`, `stop_preview`) needs the page's iframe, which may
     be closed. The runner does not offer them, and the instructions tell the assistant the preview is not
     available in this mode. The `page` state is not used to relay them.
@@ -204,7 +214,7 @@ See [`.env.example`](./.env.example).
 | `RUNNER_SECRET`             |                           | The runner's own secret for civitai's mint endpoint (civitai's `ASSISTANT_RUNNER_SECRET`).                                               |
 | `CIVITAI_URL`               |                           | civitai's base URL, where grants are traded for tokens.                                                                                  |
 | `ORCHESTRATION_URL`         |                           | Orchestration's base URL: the model and the conversation store.                                                                          |
-| `SANDBOX_URL`               | (unset)                   | The hosted sandbox service (civitai's `APP_ASSISTANT_SANDBOX_URL`): App Assistant's tools. Unset: replies have no tools.                 |
+| `SANDBOX_URL`               | (unset)                   | The hosted sandbox service (civitai's `APP_ASSISTANT_SANDBOX_URL`): App Assistant's tools. Unset (with civitai configured): starts are refused. |
 | `RUN_MAX_STEPS`             | `1000`                    | The most model requests one reply takes.                                                                                                 |
 | `RUN_CONTEXT_BUDGET_TOKENS` | `64000`                   | About how many tokens of earlier conversation a reply sends.                                                                             |
 | `PORT`, `HOST`, `LOG_LEVEL` | `3000`, `0.0.0.0`, `info` |                                                                                                                                          |

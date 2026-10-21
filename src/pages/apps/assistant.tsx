@@ -12,7 +12,7 @@ type AppAssistantPageProps = {
   sandboxUrl: string | null;
   /** The assistant may start read-only subagents. */
   subagents: boolean;
-  /** Replies run on the server runner (`appAssistantRemoteRunner`, and the runner is configured). */
+  /** Replies run on the server runner (`appAssistantRemoteRunner`, the runner and the sandbox service configured). */
   remoteRunner: boolean;
 };
 
@@ -44,7 +44,11 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
         canPreview,
         sandboxUrl: env.APP_ASSISTANT_SANDBOX_URL ?? null,
         subagents: !!features?.appAssistantSubagents,
-        remoteRunner: !!features?.appAssistantRemoteRunner && isAssistantRunnerConfigured(),
+        // The runner refuses to start without its sandbox service; the page needs one too.
+        remoteRunner:
+          !!features?.appAssistantRemoteRunner &&
+          isAssistantRunnerConfigured() &&
+          !!env.APP_ASSISTANT_SANDBOX_URL,
       },
     };
   },

@@ -1,10 +1,9 @@
 import {
-  APP_ASSISTANT_SUBAGENTS,
   NO_APP_REFUSAL,
   SET_CHECKLIST,
+  appAssistantSubagents,
+  assistantSystemPrompt,
   buildAssistantInstructions,
-  buildAssistantSystemPrompt,
-  buildAssistantSystemPromptWithSubagents,
   createAppTools,
   createGateCore,
   createSandboxClient,
@@ -24,7 +23,7 @@ import {
   type GateDeps,
   type SubagentProgress,
 } from '@civitai/components-chat/core';
-import type { RunPageState } from '@civitai/components-chat/runner-protocol';
+import type { ChatToolResult, RunPageState } from '@civitai/components-chat/runner-protocol';
 import { dynamicTool, jsonSchema, type ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../interfaces';
@@ -34,20 +33,47 @@ import { AppSandbox } from './sandbox';
 
 /**
  * What App Assistant's page says about itself as a reply starts (`remoteRunner.pageState`): the key
- * of the app open in it, or `null`. Only that: the runner looks the app up among the user's own
- * sandboxes with the user's own token, so a key it does not have opens nothing.
+ * of the app open in it, or `null`. Only that, and never trusted: the runner looks the key up among
+ * the user's own sandboxes with the user's own token, so a key the user has no sandbox for (or any
+ * other value) opens nothing.
  */
 export interface AppAssistantPageState {
   app: string | null;
 }
 
-const APP_KEY = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-/** The page's state as the runner reads it; anything else is no app open. */
+/** The page's state as the runner reads it; anything but a string is no app open. */
 export function readPageState(page: RunPageState | undefined): AppAssistantPageState {
   const app = page?.app;
-  return { app: typeof app === 'string' && APP_KEY.test(app) ? app : null };
+  return { app: typeof app === 'string' && app.length > 0 && app.length <= 200 ? app : null };
 }
+
+/**
+ * A finished call as the page is told of it (`tool-reported`): what its own gate and views read (the
+ * name, whether it failed or was refused, a command's text and a result's first lines, a page tool's
+ * result), not a file's contents, which the reply's parts already carry.
+ */
+export function reportOf(result: ChatToolResult): ChatToolResult {
+  if (!result.name.startsWith('sandbox__')) return result;
+  const input = result.input as { command?: unknown } | null;
+  return {
+    ...result,
+    input: typeof input?.command === 'string' ? { command: input.command.slice(0, 500) } : {},
+    output:
+      typeof result.output === 'string'
+        ? result.output.slice(0, REPORTED_OUTPUT_CHARS)
+        : result.output !== null && typeof result.output === 'object' && 'error' in result.output
+        ? {
+            error: String((result.output as { error: unknown }).error).slice(
+              0,
+              REPORTED_OUTPUT_CHARS
+            ),
+          }
+        : null,
+  };
+}
+
+/** Enough of a sandbox result for the page's gate: `exit_code:` and `render:` come first. */
+const REPORTED_OUTPUT_CHARS = 200;
 
 /** The tools the page offers the assistant that the runner offers too; the preview tools stay page-only. */
 const RUNNER_PAGE_TOOLS = ['create_app', 'set_checklist', 'report_ready'] as const;
@@ -100,6 +126,7 @@ export class AppAssistantTools implements ToolProvider {
       signal,
       log,
       runId,
+      ...(context.endReply ? { endReply: context.endReply } : {}),
       ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
       ...(this.#options.wakeTimeoutMs !== undefined
         ? { wakeTimeoutMs: this.#options.wakeTimeoutMs }
@@ -116,16 +143,21 @@ export class AppAssistantTools implements ToolProvider {
       log.warn({ err: (error as Error)?.name, runId }, 'listing the user’s apps failed');
     }
     try {
-      await sandbox.open(readPageState(context.page).app, apps ?? []);
+      const pageApp = readPageState(context.page).app;
+      await sandbox.open(pageApp, apps ?? []);
       const sandboxTools = await sandbox.tools();
 
       const appTools = createAppTools({
         apps: () => apps,
         current: () => sandbox.active,
         open: async (app) => {
+          const before = sandbox.active?.name ?? null;
           const opened = await openApp(client, app);
           sandbox.opened(opened.sandbox);
           apps = [...(apps ?? []).filter((s) => s.name !== opened.sandbox.name), opened.sandbox];
+          // What was verified belongs to the sandbox it was verified in, and so does a checklist,
+          // as the page resets its gate when another app opens.
+          if (opened.sandbox.name !== before) core.reset();
           return opened;
         },
       });
@@ -135,11 +167,14 @@ export class AppAssistantTools implements ToolProvider {
           name === SET_CHECKLIST && !sandbox.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
         currentApp: () => sandbox.active?.name ?? null,
+        // Each checklist says which app it was for, so a later reply carries only this app's.
+        checklistApp: () => sandbox.active?.app ?? null,
       });
       core.restore({
         conversationId,
         earlier: toolResultsOf(context.history?.earlier ?? []),
         current: toolResultsOf(context.history?.current ?? []),
+        app: sandbox.active?.app ?? null,
       });
 
       const page = pageToolSet({ ...appTools.tools, ...core.tools }, signal);
@@ -151,14 +186,14 @@ export class AppAssistantTools implements ToolProvider {
         gate: core.beforeToolCall,
         onResult: (result) => {
           core.onToolResult(result);
-          context.report?.(result);
+          context.report?.(reportOf(result));
         },
         reply: nextReply(),
         onEnded: () => replyEnded.abort(),
       };
 
       const subagents = context.subagents === true;
-      const resolved = subagents ? resolveSubagents(APP_ASSISTANT_SUBAGENTS) : undefined;
+      const resolved = subagents ? resolveSubagents(appAssistantSubagents('remote')) : undefined;
       const model = context.model;
       if (resolved && model && subagentToolNames(resolved.tools, tools).length > 0) {
         tools[DISPATCH_AGENT] = dispatchAgentTool({
@@ -177,7 +212,8 @@ export class AppAssistantTools implements ToolProvider {
       return {
         tools: gateToolSet(tools, gate),
         close: () => sandbox.close(),
-        rules: subagents ? buildAssistantSystemPromptWithSubagents : buildAssistantSystemPrompt,
+        // The runner's variant names only tools it has (no web or guide tool, no tunnel).
+        rules: assistantSystemPrompt('remote', subagents),
         instructions: buildAssistantInstructions({
           sandbox: sandbox.active,
           apps: (apps ?? []).map((s) => s.app),

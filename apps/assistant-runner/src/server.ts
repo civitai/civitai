@@ -16,6 +16,9 @@ import { createTokenVerifier, viewerAuthenticator } from './tokens';
 import { noTools, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
 
 const config = loadConfig();
+/** Why a start is refused when the runner has no sandbox service (`SANDBOX_URL`). */
+const TOOLS_NOT_SET_UP =
+  'Replies on the server are not set up yet (App Assistant’s tools are missing there), so this reply could not start.';
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
 
 const log: Logger = {
@@ -72,7 +75,7 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
-  // App Assistant's tools and gate. Without the sandbox service a reply is words only.
+  // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
@@ -90,6 +93,8 @@ const runner = new Runner({
   log,
   wallClockMs: config.wallClockMs,
   stopGraceMs: config.stopGraceMs,
+  // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
+  ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the

@@ -1,7 +1,6 @@
 /**
- * The rule a block slug follows: civitai's `SLUG_REGEX` (`src/server/schema/blocks/publish-request.schema.ts`),
- * which submit and the dev tunnel enforce. This package cannot import civitai's server code, so a
- * civitai test pins the two equal (`src/components/Apps/AppAssistant/__tests__/app-assistant-package.test.ts`).
+ * The rule a block slug follows, which submit and the dev tunnel enforce: civitai's `SLUG_REGEX`
+ * (`src/server/schema/blocks/publish-request.schema.ts`) is this one.
  */
 export const BLOCK_SLUG = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 

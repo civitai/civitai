@@ -52,6 +52,11 @@ export class ProgressWriter {
     });
   }
 
+  /** Resolves once every save asked for so far has landed or failed. */
+  async idle(): Promise<void> {
+    while (this.#running) await this.#running;
+  }
+
   /**
    * Saves how the reply ended, asking again (`END_RETRY_DELAYS_MS`) when a save fails. Resolves
    * `true` once the head holds an end (this one, or one written before it), `false` when every

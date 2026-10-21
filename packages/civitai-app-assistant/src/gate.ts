@@ -128,6 +128,12 @@ export interface GateCoreOptions {
   currentApp?: () => string | null;
   /** Ids the checklists this gate shows are named by; per gate, so one from elsewhere never matches. */
   checklistPrefix?: string;
+  /**
+   * The key of the app open now, written into every `set_checklist` result (`app`) so a later reply
+   * carries a checklist over only for the app it was made for (`restore`). The server runner sets it;
+   * the page does not, and its results stay as they were.
+   */
+  checklistApp?: () => string | null;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -137,9 +143,16 @@ export interface GateRestore {
   earlier: readonly ToolResult[];
   /**
    * The calls the reply being carried on already made, in order: they count against its call limit
-   * and decide what is verified, as they did when they ran.
+   * and decide what is verified, as they did when they ran. A `create_app` among them that opened
+   * another app than `app` starts the checks and the checklist over, as the page does when another
+   * app opens.
    */
   current: readonly ToolResult[];
+  /**
+   * The key of the app open now. With `checklistApp` set, only checklists made for this app carry
+   * over; one without an app (made in the browser) does not.
+   */
+  app?: string | null;
 }
 
 export interface GateCore {
@@ -167,6 +180,7 @@ export function createGateCore({
   onReply,
   currentApp,
   checklistPrefix = Math.random().toString(36).slice(2, 10),
+  checklistApp,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
   // The chat numbers every reply, Continue and Retry included.
@@ -254,18 +268,8 @@ export function createGateCore({
     return { allow: true };
   };
 
-  /**
-   * What a finished call says about the checks; the checklist is set by `set_checklist` itself. A
-   * subagent's file change or other command clears them as the parent's does, but its own preview
-   * check, test run or typecheck never counts as one: `report_ready` takes only the parent's word.
-   */
-  const verify = ({ name, input, output, isError, subagent }: ToolResult) => {
-    if (
-      subagent !== undefined &&
-      (name === PREVIEW_CHECK ||
-        (name === RUN_COMMAND && checkKindOf((input as { command?: unknown } | null)?.command)))
-    )
-      return;
+  /** What a finished call says about the checks; the checklist is set by `set_checklist` itself. */
+  const verify = ({ name, input, output, isError }: ToolResult) => {
     if (name === PREVIEW_CHECK)
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
     else if (name === RUN_COMMAND) {
@@ -334,6 +338,7 @@ export function createGateCore({
         checklist.length !== items.length ||
         checklist.some((item, i) => item.label !== items[i].label);
       checklist = items;
+      const tag = checklistApp ? { app: checklistApp() } : {};
       if (changed) {
         awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
         return {
@@ -341,9 +346,10 @@ export function createGateCore({
           awaitsUser: true,
           checklist: awaiting.id,
           note: 'The user now sees this list with a Build it button. Your reply ends here: wait for them to press it or say what to change.',
+          ...tag,
         };
       }
-      return { updated: true, open: items.filter((item) => !item.done).length };
+      return { updated: true, open: items.filter((item) => !item.done).length, ...tag };
     },
   };
 
@@ -377,15 +383,39 @@ export function createGateCore({
     clearAwaiting: () => {
       awaiting = null;
     },
-    restore({ conversationId: id, earlier, current }) {
+    restore({ conversationId: id, earlier, current, app = null }) {
       conversationId = id;
       reset();
-      for (const result of earlier) checklist = checklistOf(result) ?? checklist;
+      // Without app tags (the page), every checklist counts, as it did before.
+      const forThisApp = (result: ToolResult) =>
+        !checklistApp || (result.output as { app?: unknown } | null)?.app === app;
+      for (const result of earlier)
+        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
       for (const result of current) {
-        checklist = checklistOf(result) ?? checklist;
+        if (opensOtherApp(result, app)) {
+          reset();
+          continue;
+        }
+        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
         if (result.refused === undefined && !result.stopped) verify(result);
       }
       carriedCalls = current.filter((result) => result.subagent === undefined).length;
     },
   };
+}
+
+/** A `create_app` call that opened an app other than `app`: the checks start over. */
+function opensOtherApp(
+  { name, output, isError, refused, stopped }: ToolResult,
+  app: string | null
+): boolean {
+  const opened = (output as { app?: unknown } | null)?.app;
+  return (
+    name === 'create_app' &&
+    !isError &&
+    refused === undefined &&
+    !stopped &&
+    typeof opened === 'string' &&
+    opened !== app
+  );
 }

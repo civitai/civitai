@@ -126,10 +126,10 @@ const APP_ASSISTANT_FLAGS = ['appBlocks', 'appAssistant'] as const;
  * When the session hub misses or Flipt is undecided, the answer is `unavailable` (the runner asks
  * again), never a refusal: only a definite answer on that complete context refuses.
  *
- * `remoteRunner` also requires `appAssistantRemoteRunner`, so turning the runner off stops every mint
- * of runs already holding a grant, not only new grants. It is not held to `isFliptDecisive`: while its
- * Flipt flag does not exist its static rule (`['mod']`) decides, on `isModerator` read from the
- * database row above, the same answer the run-grant route gave.
+ * `remoteRunner` also requires `appAssistantRemoteRunner`, decided by Flipt the same way (its static
+ * rule is off for everyone), so turning the runner off stops every mint of runs already holding a
+ * grant, at their next mint, not only new grants; while Flipt cannot decide it the mint answers
+ * `unavailable` and the runner asks again.
  */
 export async function getAppAssistantRefusalForUserId(
   userId: number,
@@ -160,7 +160,10 @@ export async function getAppAssistantRefusalForUserId(
   const cached = await sessionClient.getSessionUserById(userId).catch(() => null);
   if (!cached) return unavailable;
   const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
-  if (!(await isFliptDecisive([...APP_ASSISTANT_FLAGS], user))) return unavailable;
+  const flags = remoteRunner
+    ? [...APP_ASSISTANT_FLAGS, 'appAssistantRemoteRunner' as const]
+    : [...APP_ASSISTANT_FLAGS];
+  if (!(await isFliptDecisive(flags, user))) return unavailable;
   return featureRefusal({ user }, { remoteRunner });
 }
 

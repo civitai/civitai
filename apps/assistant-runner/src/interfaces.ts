@@ -64,6 +64,11 @@ export interface ToolContext {
   maxOutputTokens?: number;
   /** Tells the page a call finished, as its gate saw it: journaled as `tool-reported`. */
   report?(result: ChatToolResult): void;
+  /**
+   * Ends the reply now as interrupted, with these words: Continue carries on from its saved steps.
+   * For a tool that cannot go on (its app was paused by the user opening another).
+   */
+  endReply?(message: string): void;
   /** Tells the page how a subagent is doing: journaled as `subagent-progress`. */
   subagentProgress?(toolCallId: string, progress: RunSubagentProgress | null): void;
 }
