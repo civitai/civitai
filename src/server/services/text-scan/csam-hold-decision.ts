@@ -9,7 +9,10 @@ import { unpublishArticleById } from '~/server/services/article.service';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
-import { CSAM_HOLD_POST_UNPUBLISH_REASON } from '~/server/services/cdn-access.service';
+import {
+  CSAM_HOLD_POST_UNPUBLISH_REASON,
+  MATURE_UNDERAGE_REASON,
+} from '~/server/services/cdn-access.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishPostAsModerator } from '~/server/services/post.service';
 import { createStrike } from '~/server/services/strike.service';
@@ -57,7 +60,7 @@ const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[numb
 const STRIKE_DESCRIPTION = 'Content you posted violated our Terms of Service.';
 const STRIKE_POINTS = 1;
 const POST_UNPUBLISH_REASON = CSAM_HOLD_POST_UNPUBLISH_REASON;
-const MODEL_UNPUBLISH_REASON = 'mature-underage';
+const MODEL_UNPUBLISH_REASON = MATURE_UNDERAGE_REASON;
 const ARTICLE_UNPUBLISH_REASON = 'csam-text-hold';
 
 /** The moderator-app grants a decision needs beyond `csam.report.file`: the ones the ban and strike actions carry elsewhere. */

@@ -28,10 +28,10 @@ export function strongestAccess(values: CdnAccess[]): CdnAccess {
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
 export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 /**
- * The model unpublish reason a csam-hold removal of a model writes. Ordinary moderation uses it too,
- * and the two cannot be told apart, so every such unpublish is held.
+ * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until the
+ * owner's report has verified evidence.
  */
-const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
+export const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
 
 export type PostAccessFacts = {
   ownerId: number;
@@ -405,16 +405,15 @@ async function applyCall(url: string, call: CdnCall) {
 }
 
 /**
- * Runs `fn` while holding this url's claim, or returns `{ claimed: false }` when another run holds
- * it. Both jobs plan from rows read before any call, so without it a slower run can apply a stale
- * plan over a newer one, on the image server and in the state table.
+ * One writer per url at a time: a slower run must not apply a stale plan over a newer one, on the
+ * image server or in the state table. Returns `{ claimed: false }` when another run holds it.
  */
 async function withUrlClaim<T>(
   url: string,
   fn: () => Promise<T>
 ): Promise<{ claimed: false } | { claimed: true; value: T }> {
   const token = randomUUID();
-  // Longer than one url's worst case: three retract attempts at 60s plus backoff.
+  // Must outlast callCdnAccess's worst case (CALL_ATTEMPTS x RETRACT_TIMEOUT_MS plus backoff).
   const claimed = await dbWrite.$executeRaw`
     INSERT INTO "ImageCdnAccessClaim" (url, token, "claimedUntil")
     VALUES (${url}, ${token}, now() + interval '5 minutes')

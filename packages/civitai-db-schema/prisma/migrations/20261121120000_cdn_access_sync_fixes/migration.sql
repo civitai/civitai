@@ -1,5 +1,4 @@
 -- Takedown CDN sync, second step. Apply by hand AFTER 20261111120000_cdn_access_sync.
--- New tables only: no change to hot tables, no triggers, no backfill.
 
 -- A moderator-app hard delete, kept after its Image row is gone so the url stays taken down through
 -- every later re-check, and so a held owner's takedown can be upgraded once the hold ends.

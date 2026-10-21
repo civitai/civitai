@@ -769,17 +769,9 @@ export const removeBlockedImages = createJob(
     //   • Rows queued before this shipped keep their old queue `createdAt`. For anything the
     //     2026-08-06 completeness migration backfilled, that timestamp is the migration's own and
     //     is therefore later than any moderator activity on those images, so none of them retract.
-    // Toward RETRACTING (a non-takedown that does): an image blocked by automation, unblocked by
-    //   a moderator (a `review` row), then re-blocked by automation — the surviving queue row
-    //   still carries the FIRST block's timestamp, so the moderator's unblock dates after it and
-    //   reads as a takedown. It needs a queue row to survive the un-block, which narrows it twice.
-    //   By WRITER: the moderator un-block paths all drop the row (`dropBlockedImageDeleteQueue`
-    //   here, and its twin in the moderator app's image-moderation service), and a dropped row
-    //   cannot be compared against. And by TIME: for any other un-block, both it and the re-block
-    //   have to land between two consecutive runs of this job, because any run in between takes
-    //   the un-blocked image into `staleIds` and deletes its queue row below.
-    //   Closing it properly needs `review` split into distinct block/unblock activities, which is
-    //   a change to the mod audit vocabulary the account-history panel buckets on; not done here.
+    // Toward RETRACTING: every un-block writer drops the image's queue row. A new one that writes a
+    //   `review` row and keeps the queue row would make its un-block read as a takedown of the
+    //   next automated block.
     //
     // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
     // own picture, a replaced image being reaped, an account being drained in `immediate` mode and

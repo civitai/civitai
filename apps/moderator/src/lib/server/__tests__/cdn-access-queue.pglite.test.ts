@@ -7,11 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/**
- * What this app hands the main app's takedown CDN sync, on the committed queue function and
- * triggers: a delete carries what the sync needs once the row is gone, and an un-block leaves no
- * pending-delete row behind for the next block to be dated by.
- */
+/** What this app hands the main app's takedown CDN sync, on the committed queue function. */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 

@@ -19,12 +19,8 @@
  *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
  *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
  *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
- *                     after it reads as a takedown. What closes that is the un-block writers
- *                     dropping the queue row: `handleUnblockImages` and `/api/mod/unblock-images`
- *                     call `dropBlockedImageDeleteQueue`, and the moderator app's `acceptImage`
- *                     and appeal approval drop it the same way, leaving nothing to compare
- *                     against. See the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note in
- *                     `image-ingestion.ts` for what remains.
+ *                     after it reads as a takedown. Every un-block writer therefore drops the
+ *                     queue row (see the note in `image-ingestion.ts`).
  *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block

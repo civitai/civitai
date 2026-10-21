@@ -25,9 +25,8 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 const BLOCKED_REASON_MODERATED = 'moderated';
 
 /**
- * Every un-block drops the image's pending-delete queue row, as the main app's
- * `dropBlockedImageDeleteQueue` does. The row's age is read as the block time, so one left behind
- * makes this un-block's own review row look like a takedown of the next block.
+ * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
+ * so this un-block's `review` activity would read as a takedown of the next block.
  */
 async function dropBlockedImageDeleteQueue(imageId: number) {
   await dbWrite
