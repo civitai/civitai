@@ -615,6 +615,24 @@ describe('getHoldCoverImages', () => {
   });
 });
 
+describe('author filter', () => {
+  it('lists only the holds written by that user, where q also matches a content id', async () => {
+    await seed([{ id: 12, createdAt: '2026-10-05', userId: 40 }]);
+    const byQ = await listCsamHolds({ ...OLDEST_PENDING, status: 'all', search: { id: 40 } });
+    expect(byQ.items.map((item) => item.id)).toEqual([4, 12]);
+    const byAuthor = await listCsamHolds({ ...OLDEST_PENDING, status: 'all', author: 40 });
+    expect(byAuthor.items.map((item) => item.id)).toEqual([12]);
+  });
+
+  it('narrows the type counts too', async () => {
+    expect(await countCsamHoldsByType({ status: 'all', author: 10 })).toEqual({
+      Post: 2,
+      ChatMessage: 1,
+      Model: 1,
+    });
+  });
+});
+
 describe('same-author and same-chat counts', () => {
   const countsOf = async (query: Partial<CsamHoldQuery> = {}) =>
     new Map(
@@ -685,11 +703,35 @@ describe('getHoldAuthorHolds', () => {
     expect((await getHoldAuthorHolds(1))!.others.map((hold) => hold.id)).not.toContain(8);
   });
 
-  it('caps the list but not the total', async () => {
-    await seed(Array.from({ length: 52 }, (_, i) => ({ id: 100 + i, createdAt: '2026-10-06' })));
+  it('caps the decided holds but not the total', async () => {
+    await seed(
+      Array.from({ length: 52 }, (_, i) => ({
+        id: 100 + i,
+        createdAt: '2026-10-06',
+        status: 'Dismissed',
+        meta: { decision: 'dismiss' },
+      }))
+    );
     const author = await getHoldAuthorHolds(1);
     expect(author!.total).toBe(55);
-    expect(author!.others).toHaveLength(50);
+    expect(author!.others.filter((hold) => hold.status !== 'Pending')).toHaveLength(50);
+  });
+
+  it('lists every pending hold however many newer decided ones there are', async () => {
+    await seed([
+      { id: 200, createdAt: '2026-01-01' },
+      ...Array.from({ length: 55 }, (_, i) => ({
+        id: 300 + i,
+        createdAt: '2026-10-06',
+        status: 'Dismissed',
+        meta: { decision: 'dismiss' },
+      })),
+    ]);
+    const author = await getHoldAuthorHolds(1);
+    expect(author!.pendingTotal).toBe(2);
+    expect(
+      author!.others.filter((hold) => hold.status === 'Pending').map((hold) => hold.id)
+    ).toEqual([2, 200]);
   });
 
   it('is null for a hold without an author, another label or no hold at all', async () => {

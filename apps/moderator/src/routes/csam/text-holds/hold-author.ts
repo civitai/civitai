@@ -10,8 +10,10 @@ export type HoldAuthor = {
   counts: Jsonified<UserCounts> | null;
   reportedContent: ReportedContent[] | null;
   holds: {
-    /** Every other hold of the author, counting those past `others`. */
+    /** Every other hold of the author, counting the decided ones past `others`. */
     total: number;
+    /** All the author's other pending holds, which `others` lists in full. */
+    pendingTotal: number;
     others: Jsonified<AuthorHoldSummary>[];
   };
 };
@@ -40,6 +42,9 @@ export function fetchHoldAuthor(holdId: number): Promise<HoldAuthor> {
 export const forgetHoldAuthors = () => loaded.clear();
 
 type OtherHold = Pick<Jsonified<AuthorHoldSummary>, 'id' | 'entityType' | 'status' | 'textHash'>;
+
+/** One decision applies to at most this many other holds, the form's and the main app's batch limit. */
+export const ALSO_MAX = 50;
 
 /** The author's other pending holds that `decision` can cover for this type. */
 export function alsoDecidable(

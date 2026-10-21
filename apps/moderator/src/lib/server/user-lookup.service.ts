@@ -90,6 +90,9 @@ export type ProfileMedia = {
   url: string;
   type: string | null;
   nsfwLevel: number | null;
+  /** The image scan's minor tags, for a moderator checking an avatar or cover. */
+  minor?: boolean;
+  acceptableMinor?: boolean;
 };
 
 export type UserProfileText = {
@@ -549,10 +552,14 @@ export async function getProfiles(userIds: number[]): Promise<Map<number, UserPr
       'ci.url as coverUrl',
       sql<string | null>`ci.type::text`.as('coverType'),
       'ci.nsfwLevel as coverNsfwLevel',
+      'ci.minor as coverMinor',
+      'ci.acceptableMinor as coverAcceptableMinor',
       'si.id as sfwCoverId',
       'si.url as sfwCoverUrl',
       sql<string | null>`si.type::text`.as('sfwCoverType'),
       'si.nsfwLevel as sfwCoverNsfwLevel',
+      'si.minor as sfwCoverMinor',
+      'si.acceptableMinor as sfwCoverAcceptableMinor',
     ])
     .where('up.userId', 'in', userIds)
     .execute();
@@ -571,6 +578,8 @@ export async function getProfiles(userIds: number[]): Promise<Map<number, UserPr
               url: row.coverUrl,
               type: row.coverType,
               nsfwLevel: row.coverNsfwLevel,
+              minor: row.coverMinor ?? false,
+              acceptableMinor: row.coverAcceptableMinor ?? false,
             }
           : null,
         sfwCoverImage: row.sfwCoverUrl
@@ -579,6 +588,8 @@ export async function getProfiles(userIds: number[]): Promise<Map<number, UserPr
               url: row.sfwCoverUrl,
               type: row.sfwCoverType,
               nsfwLevel: row.sfwCoverNsfwLevel,
+              minor: row.sfwCoverMinor ?? false,
+              acceptableMinor: row.sfwCoverAcceptableMinor ?? false,
             }
           : null,
       },
@@ -599,6 +610,8 @@ export async function getProfilePictures(userIds: number[]): Promise<Map<number,
       'i.url',
       sql<string>`i.type::text`.as('type'),
       'i.nsfwLevel',
+      'i.minor',
+      'i.acceptableMinor',
     ])
     .where('u.id', 'in', userIds)
     .execute();

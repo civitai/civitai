@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { fetchHoldChat } from '$lib/csam-holds/hold-chat';
   import { chatAuditChatUrl, userLookupUrl } from '$lib/entity-url';
@@ -20,14 +21,19 @@
   {:then loaded}
     {@const judged = new Set(loaded.judgedIds)}
     <p class="m-0 mb-2 text-[11px] text-dark-2">
-      {plural(judged.size, 'judged message')} highlighted, with the messages around
-      {judged.size === 1 ? 'it' : 'them'}. System messages are left out.
-      <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>Open in chat audit</a>
+      {#if loaded.fullConversation}
+        {plural(judged.size, 'judged message')} highlighted, with the messages around
+        {judged.size === 1 ? 'it' : 'them'}. System messages are left out.
+        <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>Open in chat audit</a>
+      {:else}
+        Full conversation needs Chat Audit access. Only the sender's judged
+        {judged.size === 1 ? 'message is' : 'messages are'} shown.
+      {/if}
     </p>
     {#if loaded.omitted}
-      <p class="m-0 mb-2 text-[11px] text-amber-400" role="status">
-        {plural(loaded.omitted, 'message')} not shown —
-        <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>open in chat audit</a>
+      <p class="m-0 mb-2 flex flex-wrap items-center gap-x-2 text-[11px] text-dark-2" role="status">
+        <MetaChip tone="amber">{plural(loaded.omitted, 'message')} not shown</MetaChip>
+        <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>Open in chat audit</a>
       </p>
     {/if}
     <!-- Focusable so a keyboard user can scroll the conversation (WCAG 2.1.1). -->
@@ -57,9 +63,9 @@
             </a>
             {#if fromSender}<span>sender</span>{/if}
             <span>{dateTime(message.createdAt)}</span>
-            {#if isJudged}<span class="font-semibold text-red-400">judged</span>{/if}
+            {#if isJudged}<MetaChip tone="red">judged</MetaChip>{/if}
             {#if message.edited}<span>edited</span>{/if}
-            {#if message.deleted}<span class="font-semibold text-amber-400">deleted</span>{/if}
+            {#if message.deleted}<MetaChip tone="amber">deleted</MetaChip>{/if}
           </div>
           <p class="m-0 mt-0.5 break-words whitespace-pre-wrap text-dark-0">{message.content}</p>
         </li>

@@ -65,16 +65,18 @@
     formActionHref(action, {
       ...csamHoldFilterParams(data.holdFilters, data.entityType),
       q: data.q || undefined,
+      author: data.author ?? undefined,
       page: data.page > 1 ? data.page : undefined,
       limit: page.url.searchParams.get('limit') ?? undefined,
     });
 
   const clearFiltersHref = $derived(
-    urlWith(page.url, { status: null, entityType: null, sort: null, q: null, page: null, hold: null })
+    urlWith(page.url, { status: null, entityType: null, sort: null, q: null, author: null, page: null, hold: null })
   );
   const filtersActive = $derived(
     data.entityType !== null ||
       data.q !== '' ||
+    data.author !== null ||
       Object.keys(csamHoldFilterParams(data.holdFilters)).length > 0
   );
   const grants = $derived({ canDecide, canStrike, canBan });
@@ -90,7 +92,11 @@
     void data.items;
     alsoDecided.clear();
   });
-  const queueView = $derived(urlWith(page.url, { hold: null }));
+  // Filters, search and page only: advancing to the next hold changes the URL too, and the summary of
+  // the decision just made has to outlive that.
+  const queueView = $derived(
+    JSON.stringify([csamHoldFilterParams(data.holdFilters, data.entityType), data.q, data.author, data.page])
+  );
   $effect(() => {
     void queueView;
     alsoSummary = null;
@@ -107,7 +113,8 @@
 
   const authorHref = (userId: number, chat = false) =>
     urlWith(page.url, {
-      q: userId,
+      q: null,
+      author: userId,
       status: 'pending',
       entityType: chat ? 'ChatMessage' : null,
       page: null,
@@ -127,7 +134,7 @@
   <div class="p-5 text-sm text-dark-0">
     <p class="m-0">
       No {statusLabel}{data.entityType ? `${entityLabel(data.entityType).toLowerCase()} ` : ''}CSAM text
-      holds{data.q ? ' match that search' : ''}.
+      holds{data.q || data.author !== null ? ' match that search' : ''}.
     </p>
     {#if filtersActive}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
@@ -136,6 +143,12 @@
 {/snippet}
 
 {#snippet notice()}
+  {#if data.author !== null}
+    <p class="mx-6 mt-3 mb-0 text-[13px] text-dark-0" role="status">
+      Showing the holds written by user #{data.author}.
+      <a href={urlWith(page.url, { author: null, page: null, hold: null })} class={LINK_CLASS}>Show all</a>
+    </p>
+  {/if}
   {#if alsoSummary}
     <div class="mx-6 mt-3 flex items-start justify-between gap-3 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2.5 text-[13px] text-dark-0" role="status">
       <div class="min-w-0">
@@ -145,9 +158,9 @@
             : '.'}
         </p>
         {#if alsoSummary.failed.length}
-          <ul class="m-0 mt-1 list-none space-y-0.5 p-0 text-red-300">
+          <ul class="m-0 mt-1 list-none space-y-0.5 p-0 text-dark-0">
             {#each alsoSummary.failed as f (f.holdId)}
-              <li>Hold #{f.holdId}: {f.error}</li>
+              <li><MetaChip tone="red">failed</MetaChip> Hold #{f.holdId}: {f.error}</li>
             {/each}
           </ul>
         {/if}

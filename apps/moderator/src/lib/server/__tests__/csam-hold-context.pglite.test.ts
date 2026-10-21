@@ -95,6 +95,17 @@ describe('getHoldContexts: profiles', () => {
     ]);
   });
 
+  it('carries the image scan minor flags onto the avatar and cover tiles', async () => {
+    await db.exec(`UPDATE "Image" SET "minor" = true WHERE id = 2;
+      UPDATE "Image" SET "acceptableMinor" = true WHERE id = 1;`);
+    const profile = (await getHoldContexts([hold(1, 'UserProfile', 10)])).get(1)?.profile;
+    expect(profile?.images.map((i) => [i.caption, i.minor, i.acceptableMinor])).toEqual([
+      ['Avatar', false, true],
+      ['Cover', true, false],
+      ['Cover (SFW)', false, false],
+    ]);
+  });
+
   it('shows one tile when the SFW cover is the cover', async () => {
     const profile = (await getHoldContexts([hold(1, 'UserProfile', 12)])).get(1)?.profile;
     expect(profile?.images.map((i) => i.caption)).toEqual(['Cover']);

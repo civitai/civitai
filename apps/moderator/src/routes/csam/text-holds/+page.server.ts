@@ -19,6 +19,7 @@ import {
 } from '$lib/server/csam-holds.service';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
+import { ALSO_MAX } from './hold-author';
 import type { HoldContext } from './hold-context';
 import { getHoldContexts } from './hold-context.server';
 import {
@@ -35,19 +36,20 @@ const querySchema = z.object({
   status: z.enum(CSAM_HOLD_STATUSES).catch(DEFAULT_CSAM_HOLD_FILTERS.status),
   sort: z.enum(CSAM_HOLD_SORTS).catch(DEFAULT_CSAM_HOLD_FILTERS.sort),
   q: z.string().trim().max(100).catch(''),
+  author: int4Id.optional().catch(undefined),
 });
 
 // The page grant only decides who sees the nav entry and badge; the held text is for csam filers.
 export const load: PageServerLoad = async ({ url, locals }) => {
   if (!locals.grants['csam.report.file']) error(403, denied('csam.report.file'));
-  const { limit, page, entityType, status, sort, q } = parseQuery(url, querySchema);
+  const { limit, page, entityType, status, sort, q, author } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
   const search = csamHoldSearch(q);
   const holdFilters: CsamHoldFilters = { status, sort };
   const [queue, byType, pendingCount] = await Promise.all([
-    listCsamHolds({ limit, offset, entityType, status, sort, search }),
+    listCsamHolds({ limit, offset, entityType, status, sort, search, author }),
     // The chip counts and the footer's "of N" are decoration; a failure here must not take the list down with it.
-    countCsamHoldsByType({ status, search }).catch((err) => {
+    countCsamHoldsByType({ status, search, author }).catch((err) => {
       console.error('CSAM hold counts failed', err);
       return null;
     }),
@@ -84,6 +86,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     page,
     offset,
     q,
+    author: author ?? null,
     entityType: entityType ?? null,
     holdFilters,
     typeCounts,
@@ -96,7 +99,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   };
 };
 
-const ALSO_MAX = 50;
 const alsoSchema = z
   .array(z.object({ holdId: int4Id, textHash: z.string().min(1).max(200) }))
   .max(ALSO_MAX);

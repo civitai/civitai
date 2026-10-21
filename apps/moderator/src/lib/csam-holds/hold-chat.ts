@@ -16,6 +16,8 @@ export type HoldChat = {
   senderId: number | null;
   /** Messages between the first judged one and the first shown that the window leaves out. */
   omitted: number;
+  /** False when the moderator lacks Chat Audit access: only the sender's judged messages are in `messages`. */
+  fullConversation: boolean;
   messages: HoldChatMessage[];
 };
 

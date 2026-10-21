@@ -5,7 +5,8 @@ vi.mock('$lib/server/clickhouse', () => ({ getClickhouse: () => ({}) }));
 const getChatHold = vi.fn();
 vi.mock('$lib/server/csam-holds.queries', () => ({ getChatHold }));
 const getChatWindow = vi.fn();
-vi.mock('$lib/server/chat-audit.service', () => ({ getChatWindow }));
+const getJudgedMessages = vi.fn();
+vi.mock('$lib/server/chat-audit.service', () => ({ getChatWindow, getJudgedMessages }));
 const canAccess = vi.fn((_user: unknown, _path: string) => true);
 vi.mock('$lib/server/access', () => ({ canAccess }));
 
@@ -43,6 +44,7 @@ describe('/api/csam-hold-chat', () => {
       judgedIds: [11],
       senderId: 3,
       omitted: 4,
+      fullConversation: true,
       messages: [
         {
           id: 11,
@@ -55,6 +57,33 @@ describe('/api/csam-hold-chat', () => {
         },
       ],
     });
+  });
+
+  it('gives a moderator without Chat Audit access only the sender judged messages', async () => {
+    canAccess.mockImplementation((_user, path) => path !== '/retool/chat-audit');
+    getJudgedMessages.mockResolvedValue([
+      {
+        id: 11,
+        createdAt: new Date('2026-10-01T10:00:00Z'),
+        userId: 3,
+        username: 'sender',
+        content: 'text',
+        editedAt: null,
+        deletedAt: null,
+      },
+    ]);
+    const body = await (await call('7')).json();
+    expect(getChatWindow).not.toHaveBeenCalled();
+    expect(getJudgedMessages).toHaveBeenCalledWith(5, [11], 3);
+    expect(body.fullConversation).toBe(false);
+    expect(body.omitted).toBe(0);
+    expect(body.messages.map((m: { userId: number }) => m.userId)).toEqual([3]);
+  });
+
+  it('flags the full conversation for a moderator with Chat Audit access', async () => {
+    const body = await (await call('7')).json();
+    expect(getJudgedMessages).not.toHaveBeenCalled();
+    expect(body.fullConversation).toBe(true);
   });
 
   it('refuses a moderator without the csam filing grant before reading anything', async () => {

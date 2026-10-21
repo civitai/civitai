@@ -125,6 +125,21 @@ describe('csam text holds load', () => {
     );
   });
 
+  it('filters on the author apart from the search, which also matches content ids', async () => {
+    const data = await loadAt('?author=42');
+    expect(listCsamHolds).toHaveBeenCalledWith(
+      expect.objectContaining({ author: 42, search: undefined })
+    );
+    expect(countCsamHoldsByType).toHaveBeenCalledWith(expect.objectContaining({ author: 42 }));
+    expect(data.author).toBe(42);
+  });
+
+  it('ignores an author that is not an id', async () => {
+    const data = await loadAt('?author=abc');
+    expect(listCsamHolds).toHaveBeenCalledWith(expect.objectContaining({ author: undefined }));
+    expect(data.author).toBeNull();
+  });
+
   it.each(['?entityType=Image', '?entityType=ResourceReview'])(
     'ignores %s instead of filtering on it',
     async (query) => {

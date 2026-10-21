@@ -20,6 +20,8 @@ const toTile = (media: ProfileMedia, caption: string): AppealCoverImage | null =
         url: media.url,
         type: media.type ?? undefined,
         nsfwLevel: media.nsfwLevel ?? 0,
+        minor: media.minor ?? false,
+        acceptableMinor: media.acceptableMinor ?? false,
         caption,
       };
 

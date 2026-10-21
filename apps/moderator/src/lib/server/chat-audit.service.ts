@@ -494,6 +494,35 @@ export async function getChatWindow(
   return { rows: [...earlier.reverse(), ...span.reverse(), ...later], omitted };
 }
 
+/** The held sender's judged messages alone, for a moderator who may not read the rest of the chat. */
+export async function getJudgedMessages(
+  chatId: number,
+  ids: number[],
+  senderId: number | null
+): Promise<ChatMessageRow[]> {
+  const requested = ids.filter(isInt4Id);
+  if (!isInt4Id(chatId) || senderId === null || !isInt4Id(senderId) || !requested.length) return [];
+
+  return dbRead
+    .selectFrom('ChatMessage as cm')
+    .leftJoin('User as u', 'u.id', 'cm.userId')
+    .select([
+      'cm.id',
+      'cm.createdAt',
+      'cm.userId',
+      'cm.content',
+      'cm.editedAt',
+      'cm.deletedAt',
+      'u.username',
+      'u.bannedAt',
+    ])
+    .where('cm.chatId', '=', chatId)
+    .where('cm.userId', '=', senderId)
+    .where('cm.id', 'in', requested)
+    .orderBy('cm.id', 'asc')
+    .execute();
+}
+
 /**
  * The text a message had BEFORE it was edited, from the `chatAuditEvents` ClickHouse log — Postgres
  * keeps only the current version. Best-effort: the log being down must not take the transcript with it.

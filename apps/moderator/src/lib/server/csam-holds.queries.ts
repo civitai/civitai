@@ -65,6 +65,8 @@ export type CsamHoldQuery = {
   offset: number;
   entityType?: string;
   search?: CsamHoldSearch;
+  /** Only the holds written by this user, which `search` by id would mix with holds on a content id. */
+  author?: number;
 };
 
 const STATUS_COLUMN = { pending: 'Pending', removed: 'Confirmed', dismissed: 'Dismissed' } as const;
@@ -72,15 +74,18 @@ const STATUS_COLUMN = { pending: 'Pending', removed: 'Confirmed', dismissed: 'Di
 const csamHolds = ({
   status,
   search,
+  author,
 }: {
   status: CsamHoldStatusFilter;
   search?: CsamHoldSearch;
+  author?: number;
 }) => {
   let query = dbRead
     .selectFrom('TextScanHold as h')
     .leftJoin('User as u', 'u.id', 'h.userId')
     .where('h.label', '=', 'csam');
   if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
+  if (author !== undefined) query = query.where('h.userId', '=', author);
   if (search && 'id' in search)
     query = query.where((eb) =>
       eb.or([eb('h.entityId', '=', search.id), eb('h.userId', '=', search.id)])
@@ -141,8 +146,9 @@ export async function listCsamHolds({
   status,
   sort,
   search,
+  author,
 }: CsamHoldQuery): Promise<{ items: CsamHoldRow[]; hasMore: boolean }> {
-  let query = csamHolds({ status, search })
+  let query = csamHolds({ status, search, author })
     .leftJoin('User as d', 'd.id', 'h.decidedById')
     // The `~` guard keeps a malformed id from failing the whole list on the cast.
     .leftJoin('TextScanHold as ph', (join) =>
@@ -256,8 +262,11 @@ export type AuthorHoldSummary = {
 
 export type HoldAuthorHolds = {
   userId: number;
-  /** Every other hold of the author, counting those beyond `others`. */
+  /** Every other hold of the author, counting the decided ones beyond `others`. */
   total: number;
+  /** All the author's other pending holds; every one is in `others`. */
+  pendingTotal: number;
+  /** Every pending hold and the newest `AUTHOR_HOLDS_LIMIT` decided ones, newest first. */
   others: AuthorHoldSummary[];
 };
 
@@ -284,7 +293,7 @@ export async function getHoldAuthorHolds(holdId: number): Promise<HoldAuthorHold
       .where('h.label', '=', 'csam')
       .where('h.id', '<>', holdId)
       .where(notSuperseded);
-  const [rows, count] = await Promise.all([
+  const summary = () =>
     others()
       .select([
         'h.id',
@@ -298,14 +307,25 @@ export async function getHoldAuthorHolds(holdId: number): Promise<HoldAuthorHold
         sql<string | null>`case when h.status = 'Pending' then h."textHash" end`.as('textHash'),
       ])
       .orderBy('h.createdAt', 'desc')
-      .orderBy('h.id', 'desc')
-      .limit(AUTHOR_HOLDS_LIMIT)
-      .execute(),
+      .orderBy('h.id', 'desc');
+  // Pending holds are read apart from the decided ones: a cap on the newest of all statuses would leave
+  // older pending holds out of the counts and out of "also apply".
+  const [pending, decided, decidedCount] = await Promise.all([
+    summary().where('h.status', '=', 'Pending').execute(),
+    summary().where('h.status', '<>', 'Pending').limit(AUTHOR_HOLDS_LIMIT).execute(),
     others()
+      .where('h.status', '<>', 'Pending')
       .select((eb) => eb.fn.countAll<string>().as('count'))
       .executeTakeFirst(),
   ]);
-  return { userId, total: Number(count?.count ?? 0), others: rows };
+  const byNewest = (a: AuthorHoldSummary, b: AuthorHoldSummary) =>
+    b.createdAt.getTime() - a.createdAt.getTime() || b.id - a.id;
+  return {
+    userId,
+    total: pending.length + Number(decidedCount?.count ?? 0),
+    pendingTotal: pending.length,
+    others: [...pending, ...decided].sort(byNewest),
+  };
 }
 
 /** Of `ids`, the pending holds with the same author as `holdId`. */
@@ -330,6 +350,7 @@ export async function filterAuthorPendingHolds(
 export async function countCsamHoldsByType(args: {
   status: CsamHoldStatusFilter;
   search?: CsamHoldSearch;
+  author?: number;
 }): Promise<Record<string, number>> {
   const rows = await csamHolds(args)
     .select(['h.entityType', (eb) => eb.fn.countAll<string>().as('count')])

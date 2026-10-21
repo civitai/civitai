@@ -22,7 +22,10 @@ and the other member's are styled apart, deleted and edited messages are labelle
 messages are left out. The text is rendered as plain text, is not blurred, and links to the chat in
 Chat Audit. It is fetched when a hold is selected (`/api/csam-hold-chat/[holdId]`, which needs the
 page and `csam.report.file`), not with the page, and only while the hold still has its meta (the
-retention job clears it for old dismissed holds).
+retention job clears it for old dismissed holds). The surrounding messages, including the other
+member's, are Chat Audit's, so they also need access to that page (`/retool/chat-audit`); without it
+the card shows only the held sender's judged messages and says the full conversation needs Chat Audit
+access, with no link to it.
 
 A profile hold shows a "Profile" card: avatar, cover and SFW cover as captioned tiles (blurred like
 every other image) and the bio, message, their SFW variants and location as plain text. A comment
@@ -131,14 +134,17 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   confirmation is open, decision keys, J/K and V do nothing. K/J move to the next/previous hold, and
   V toggles image reveal.
 - Author context. A selected hold with a recorded author shows a card from
-  `/api/csam-hold-author/[holdId]`: the author's other holds (newest 50, with the total), each
+  `/api/csam-hold-author/[holdId]`: the author's other holds (every pending one, the newest 50 decided ones, and the total), each
   linking to it. The history needs the page and `csam.report.file`; the account card, content counts
   and reported content are User Lookup's, so only a moderator who can open that page gets them.
   A "same author" chip on a pending row filters the queue to that author's pending holds, and a "same
-  chat" chip to their pending chat holds.
+  chat" chip to their pending chat holds. The filter is the `author` query parameter (a user id),
+  which matches only the holds the user wrote; the header search `q` stays as it was and also matches
+  content ids, so an id typed there can list holds by someone else.
 - Also apply. Deciding the hold on screen with remove or dismiss can cover the author's other pending
   holds that qualify, by checkbox. They go in one batch call (see above), each against the `textHash` the
-  moderator saw; strike and ban apply to the hold on screen only.
+  moderator saw; strike and ban apply to the hold on screen only. A batch is at most 50 holds: when more
+  qualify, the confirmation says it covers the first 50 of N and the rest stay pending for the next decision.
 - Hiding content while a hold waits is not built: holds stay non-hiding.
 
 ## Access

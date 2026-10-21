@@ -10,40 +10,36 @@
   import { decisionLabel, entityLabel } from './hold-entity';
 
   let {
-    author,
-    failed,
+    request,
     holdId,
     onretry,
   }: {
-    /** Null while it loads. */
-    author: HoldAuthor | null;
-    failed: boolean;
+    request: Promise<HoldAuthor>;
     holdId: number;
     onretry: () => void;
   } = $props();
 
   const SHOWN = 6;
 
-  const holdHref = (id: number) =>
-    urlWith(page.url, { hold: id, status: 'all', entityType: null, q: author?.userId, page: null });
-
-  const counts = $derived(author?.counts?.filter((c) => c.count > 0) ?? []);
-  const reported = $derived(author?.reportedContent?.filter((c) => c.count > 0) ?? []);
-  const others = $derived(author?.holds.others.slice(0, SHOWN) ?? []);
-  const pendingTotal = $derived(
-    author?.holds.others.filter((hold) => hold.status === 'Pending').length ?? 0
-  );
+  const authorHref = (userId: number, extra: Record<string, number | null> = {}) =>
+    urlWith(page.url, {
+      status: 'all',
+      entityType: null,
+      q: null,
+      author: userId,
+      page: null,
+      ...extra,
+    });
 </script>
 
 <TriageCard dense title="Author">
-  {#if failed}
-    <p class="m-0 text-sm text-dark-0" role="alert">
-      Could not load the author.
-      <button type="button" class={LINK_CLASS} onclick={onretry}>Try again</button>
-    </p>
-  {:else if !author}
+  {#await request}
     <p class="m-0 text-dark-2" role="status">Loading the author…</p>
-  {:else}
+  {:then author}
+    {@const counts = author.counts?.filter((c) => c.count > 0) ?? []}
+    {@const reported = author.reportedContent?.filter((c) => c.count > 0) ?? []}
+    {@const others = author.holds.others.slice(0, SHOWN)}
+    {@const pendingTotal = author.holds.pendingTotal}
     <div class="space-y-3">
       {#if author.card}
         <UserCard card={author.card} compact lookupLink />
@@ -88,7 +84,7 @@
               : ''}.
             {#if author.holds.total > others.length}
               <a
-                href={urlWith(page.url, { status: 'all', entityType: null, q: author.userId, hold: holdId, page: null })}
+                href={authorHref(author.userId, { hold: holdId })}
                 class={LINK_CLASS}>See all</a
               >
             {/if}
@@ -98,7 +94,7 @@
           <ul class="m-0 list-none space-y-1 p-0">
             {#each others as other (other.id)}
               <li class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dark-0">
-                <a href={holdHref(other.id)} class={LINK_CLASS}>
+                <a href={authorHref(author.userId, { hold: other.id })} class={LINK_CLASS}>
                   {entityLabel(other.entityType)} #{other.entityId}
                 </a>
                 {#if other.status === 'Pending'}
@@ -117,5 +113,10 @@
         {/if}
       </div>
     </div>
-  {/if}
+  {:catch}
+    <p class="m-0 text-sm text-dark-0" role="alert">
+      Could not load the author.
+      <button type="button" class={LINK_CLASS} onclick={onretry}>Try again</button>
+    </p>
+  {/await}
 </TriageCard>

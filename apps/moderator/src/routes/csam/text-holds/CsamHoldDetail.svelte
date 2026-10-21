@@ -34,6 +34,7 @@
   import HoldProfileCard from './HoldProfileCard.svelte';
   import {
     alsoDecidable,
+    ALSO_MAX,
     fetchHoldAuthor,
     forgetHoldAuthors,
     type AlsoResult,
@@ -100,6 +101,7 @@
       status: 'all',
       entityType: row.entityType,
       q: row.entityId,
+      author: null,
       page: null,
     });
   const priorHref = $derived(row.priorHoldId === null ? null : holdHref(row.priorHoldId));
@@ -109,56 +111,59 @@
   let confirming = $state<CsamHoldDecision | null>(null);
   let confirmOpen = $state(false);
 
-  // Also says which other holds a decision can cover.
-  let author = $state<HoldAuthor | null>(null);
-  let authorFailed = $state(false);
+  // Which other holds a decision can cover. The shell remounts this component per hold, so the request
+  // and the checkbox start fresh; the counts are read from the settled request when a button is pressed.
   let authorAttempt = $state(0);
-  let applyToAuthor = $state(false);
-  $effect(() => {
-    const holdId = row.id;
+  const authorRequest = $derived.by(() => {
     void authorAttempt;
-    author = null;
-    authorFailed = false;
-    applyToAuthor = false;
-    let current = true;
-    fetchHoldAuthor(holdId)
-      .then((loaded) => {
-        if (current) author = loaded;
-      })
-      .catch(() => {
-        if (current) authorFailed = true;
-      });
-    return () => {
-      current = false;
-    };
+    return fetchHoldAuthor(row.id);
   });
+  let applyToAuthor = $state(false);
 
-  const otherPending = $derived(author?.holds.others.filter((h) => h.status === 'Pending') ?? []);
-  const coverable = (next: CsamHoldDecision) => alsoDecidable(otherPending, next, canRemoveHeld);
-  const alsoFor = (next: CsamHoldDecision) => (applyToAuthor ? coverable(next) : []);
-  // Every removal takes the same holds, so two counts cover the five decisions.
-  const dismissCount = $derived(coverable('dismiss').length);
-  const removeCount = $derived(coverable('remove').length);
-  const coversNone = (next: CsamHoldDecision) =>
-    applyToAuthor && otherPending.length > 0 && !alsoFor(next).length;
+  type Coverage = {
+    /** What the decision is applied to: the first `ALSO_MAX` of `eligible`. */
+    also: { holdId: number; textHash: string }[];
+    eligible: number;
+    pending: number;
+  };
+  const NO_COVERAGE: Coverage = { also: [], eligible: 0, pending: 0 };
+  const pendingOf = (loaded: HoldAuthor) => loaded.holds.others.filter((h) => h.status === 'Pending');
+  const eligibleFor = (loaded: HoldAuthor, next: CsamHoldDecision) =>
+    alsoDecidable(pendingOf(loaded), next, canRemoveHeld);
+  const coverageFor = async (next: CsamHoldDecision): Promise<Coverage> => {
+    if (!applyToAuthor) return NO_COVERAGE;
+    const loaded = await authorRequest.catch(() => null);
+    if (!loaded) return NO_COVERAGE;
+    const eligible = eligibleFor(loaded, next);
+    return {
+      also: eligible.slice(0, ALSO_MAX),
+      eligible: eligible.length,
+      pending: pendingOf(loaded).length,
+    };
+  };
+  const coversNone = (coverage: Coverage) =>
+    applyToAuthor && coverage.pending > 0 && !coverage.also.length;
   let also = $state<{ holdId: number; textHash: string }[]>([]);
+  let coverage = $state<Coverage>(NO_COVERAGE);
 
   // One form and one note for every action; the hidden field carries which button was pressed.
-  async function decide(next: CsamHoldDecision) {
+  async function decide(next: CsamHoldDecision, covered: Coverage) {
     decision = next;
-    also = alsoFor(next);
+    also = covered.also;
     await tick();
     formEl?.requestSubmit();
   }
 
-  const press = (next: CsamHoldDecision) => {
-    if (CSAM_HOLD_CONFIRMS[next] || alsoFor(next).length || coversNone(next)) {
+  const press = async (next: CsamHoldDecision) => {
+    const covered = await coverageFor(next);
+    if (CSAM_HOLD_CONFIRMS[next] || covered.also.length || coversNone(covered)) {
+      coverage = covered;
       confirming = next;
       confirmOpen = true;
-    } else void decide(next);
+    } else void decide(next, covered);
   };
 
-  const confirmAsk = (next: CsamHoldDecision) => {
+  const confirmAsk = (next: CsamHoldDecision, covered: Coverage) => {
     const base = CSAM_HOLD_CONFIRMS[next] ?? {
       label: next === 'dismiss' ? 'Dismiss all' : 'Remove all',
       title: next === 'dismiss' ? 'Dismiss these holds?' : 'Remove the content of these holds?',
@@ -167,20 +172,25 @@
           ? 'The hold is closed and nothing changes on the content or the account.'
           : 'The content is taken down.',
     };
-    const covered = alsoFor(next).length;
-    if (coversNone(next))
+    const count = covered.also.length;
+    if (coversNone(covered))
       return {
         ...(CSAM_HOLD_CONFIRMS[next] ?? { label: 'Continue', title: 'Decide only this hold?' }),
         description: `${base.description} None of the author’s other pending holds can take this decision, so they stay pending.`,
       };
-    if (!covered) return base;
-    const skipped = otherPending.length - covered;
+    if (!count) return base;
+    const skipped = covered.pending - covered.eligible;
+    const capped = covered.eligible - count;
     const alone = next === 'remove_strike' || next === 'remove_ban' || next === 'remove_ban_report';
     return {
       ...base,
-      description: `${base.description} The same is applied to ${plural(covered, 'other pending hold')} by this author, each against the text you saw${
+      description: `${base.description} The same is applied to ${
+        capped ? `the first ${count} of ${covered.eligible} other pending holds` : plural(count, 'other pending hold')
+      } by this author, each against the text you saw${
         alone ? ', but the strike or ban is applied once, with this hold' : ''
-      }.${skipped ? ` ${plural(skipped, 'hold')} cannot be removed from here and stay pending.` : ''}`,
+      }.${capped ? ` The other ${capped} stay pending: decide again for the next batch.` : ''}${
+        skipped ? ` ${plural(skipped, 'hold')} cannot be removed from here and stay pending.` : ''
+      }`,
     };
   };
 
@@ -374,12 +384,7 @@
     {/if}
 
     {#if row.userId !== null}
-      <HoldAuthorCard
-        {author}
-        failed={authorFailed}
-        holdId={row.id}
-        onretry={() => authorAttempt++}
-      />
+      <HoldAuthorCard request={authorRequest} holdId={row.id} onretry={() => authorAttempt++} />
     {/if}
 
     <TriageCard dense title="Details">
@@ -429,20 +434,29 @@
             {/each}
           {/snippet}
           {#snippet fields()}
-            {#if otherPending.length}
-              <label class="flex shrink-0 items-center gap-2 text-[13px] text-dark-0">
-                <Checkbox
-                  bind:checked={applyToAuthor}
-                  disabled={!dismissCount && !removeCount}
-                  aria-label="Also apply to the author's other pending holds"
-                />
-                {#if dismissCount || removeCount}
-                  Also apply to this author’s other pending holds (dismiss: {dismissCount}, remove: {removeCount})
-                {:else}
-                  None of this author’s {plural(otherPending.length, 'other pending hold')} can take a decision from here
-                {/if}
-              </label>
-            {/if}
+            {#await authorRequest then loaded}
+              {@const pending = pendingOf(loaded)}
+              {#if pending.length}
+                {@const dismissCount = eligibleFor(loaded, 'dismiss').length}
+                {@const removeCount = eligibleFor(loaded, 'remove').length}
+                <div class="flex shrink-0 items-center gap-2 text-[13px] text-dark-0">
+                  <Checkbox
+                    id="apply-to-author"
+                    bind:checked={applyToAuthor}
+                    disabled={!dismissCount && !removeCount}
+                  />
+                  <label for="apply-to-author">
+                    {#if dismissCount || removeCount}
+                      Also apply to this author’s other pending holds (dismiss: {dismissCount}, remove: {removeCount}{dismissCount > ALSO_MAX || removeCount > ALSO_MAX
+                        ? `; ${ALSO_MAX} at a time`
+                        : ''})
+                    {:else}
+                      None of this author’s {plural(pending.length, 'other pending hold')} can take a decision from here
+                    {/if}
+                  </label>
+                </div>
+              {/if}
+            {/await}
             <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
             <Input
               name="note"
@@ -460,7 +474,7 @@
       <AlertDialog.Root bind:open={confirmOpen}>
         <AlertDialog.Content>
           {#if confirming}
-            {@const ask = confirmAsk(confirming)}
+            {@const ask = confirmAsk(confirming, coverage)}
             <AlertDialog.Header>
               <AlertDialog.Title>{ask.title}</AlertDialog.Title>
               <AlertDialog.Description>{ask.description}</AlertDialog.Description>
@@ -471,7 +485,7 @@
                 variant="destructive"
                 onclick={() => {
                   confirmOpen = false;
-                  void decide(confirming!);
+                  void decide(confirming!, coverage);
                 }}>{ask.label}</AlertDialog.Action
               >
             </AlertDialog.Footer>

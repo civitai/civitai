@@ -34,6 +34,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     card,
     counts,
     reportedContent,
-    holds: { total: holds.total, others: holds.others },
+    holds: { total: holds.total, pendingTotal: holds.pendingTotal, others: holds.others },
   });
 };
