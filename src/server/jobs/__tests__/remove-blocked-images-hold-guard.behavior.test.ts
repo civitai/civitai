@@ -34,6 +34,7 @@ vi.mock('~/server/search-index', () => ({
 
 import * as imageService from '~/server/services/image.service';
 import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
+import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -43,9 +44,14 @@ const NO_COPY = { holdForTrainingCopy: false };
 
 const PLAIN_USER = 1;
 const OPEN_REPORT_USER = 2;
-const EXPIRED_REPORT_USER = 3;
-const CLOSED_REPORT_USER = 4;
+const SENT_UNARCHIVED_USER = 3; // sent over a year ago, never archived
+const RECENTLY_CLOSED_USER = 4; // sent and archived within the year
 const UNSENT_ARCHIVED_USER = 5;
+const LONG_CLOSED_USER = 6; // sent and archived over a year ago
+const SECONDARY_USER = 7; // the secondary user on a report sent within the year
+const LONG_CLOSED_SECONDARY_USER = 8; // the secondary user on LONG_CLOSED_USER's report
+const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_USER
+const PLACEHOLDER_OWNER = -1;
 
 // Image ids, named for the case each one pins.
 const PLAIN = 10; // blocked, no hold -> deleted
@@ -53,11 +59,31 @@ const APPEALED = 11; // flagged for appeal mid-run -> kept
 const FLAGGED = 12; // moderator-only review flag set mid-run -> kept
 const UNBLOCKED = 13; // unblocked mid-run -> kept
 const REPORTED = 14; // owner's report filed mid-run -> kept
-const EXPIRED = 15; // owner's open report already judged past the ceiling -> deleted
-const CLOSED = 16; // owner's report sent and archived -> deleted
+const SENT_UNARCHIVED = 15; // kept, however old the report
+const RECENTLY_CLOSED = 16; // kept for a year after the report was sent
 const OTHER_FLAG = 17; // a review flag that is not a hold -> deleted
 const UNSENT = 18; // owner's report archived but never sent -> kept
-const ALL = [PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, CLOSED, OTHER_FLAG, UNSENT];
+const LONG_CLOSED = 19; // the year is up -> deleted
+const SECONDARY = 20; // kept: the hold covers the report's secondary user too
+const PLACEHOLDER = 21; // owned by the placeholder owner -> kept
+const LONG_CLOSED_SECONDARY = 22; // the year is up for the secondary user too -> deleted
+const ALL = [
+  PLAIN,
+  APPEALED,
+  FLAGGED,
+  UNBLOCKED,
+  REPORTED,
+  SENT_UNARCHIVED,
+  RECENTLY_CLOSED,
+  OTHER_FLAG,
+  UNSENT,
+  LONG_CLOSED,
+  SECONDARY,
+  PLACEHOLDER,
+  LONG_CLOSED_SECONDARY,
+];
+const DELETED = [PLAIN, OTHER_FLAG, LONG_CLOSED, LONG_CLOSED_SECONDARY];
+const KEPT = ALL.filter((id) => !DELETED.includes(id));
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -79,7 +105,8 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      images jsonb NOT NULL DEFAULT '[]'
+      images jsonb NOT NULL DEFAULT '[]',
+      details jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "AppealDecisionRecord" (
       "imageId" int NOT NULL,
@@ -116,15 +143,23 @@ beforeEach(async () => {
       (${FLAGGED}, ${PLAIN_USER}, 'Blocked', 'csam'),
       (${UNBLOCKED}, ${PLAIN_USER}, 'Scanned', NULL),
       (${REPORTED}, ${OPEN_REPORT_USER}, 'Blocked', NULL),
-      (${EXPIRED}, ${EXPIRED_REPORT_USER}, 'Blocked', NULL),
-      (${CLOSED}, ${CLOSED_REPORT_USER}, 'Blocked', NULL),
+      (${SENT_UNARCHIVED}, ${SENT_UNARCHIVED_USER}, 'Blocked', NULL),
+      (${RECENTLY_CLOSED}, ${RECENTLY_CLOSED_USER}, 'Blocked', NULL),
       (${OTHER_FLAG}, ${PLAIN_USER}, 'Blocked', 'minor'),
-      (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL);
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
-      (${OPEN_REPORT_USER}, NULL, NULL),
-      (${EXPIRED_REPORT_USER}, now(), NULL),
-      (${CLOSED_REPORT_USER}, now(), now()),
-      (${UNSENT_ARCHIVED_USER}, NULL, now());
+      (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL),
+      (${LONG_CLOSED}, ${LONG_CLOSED_USER}, 'Blocked', NULL),
+      (${SECONDARY}, ${SECONDARY_USER}, 'Blocked', NULL),
+      (${PLACEHOLDER}, ${PLACEHOLDER_OWNER}, 'Blocked', NULL),
+      (${LONG_CLOSED_SECONDARY}, ${LONG_CLOSED_SECONDARY_USER}, 'Blocked', NULL);
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
+      (${OPEN_REPORT_USER}, NULL, NULL, '{}'),
+      (${SENT_UNARCHIVED_USER}, now() - interval '400 days', NULL, '{}'),
+      (${RECENTLY_CLOSED_USER}, now() - interval '30 days', now(), 'null'),
+      (${UNSENT_ARCHIVED_USER}, NULL, now(), '{}'),
+      (${LONG_CLOSED_USER}, now() - interval '400 days', now(),
+        '{"secondaryUserId": ${LONG_CLOSED_SECONDARY_USER}}'),
+      (${REPORT_SUBJECT}, now() - interval '30 days', now(), '{"secondaryUserId": ${SECONDARY_USER}}'),
+      (NULL, NULL, NULL, '{}');
   `);
 });
 
@@ -132,31 +167,38 @@ const remaining = async () =>
   (await holder.db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`)).rows.map(
     (r) => r.id
   );
+const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
+
+describe('legalHoldUserIdsSql', () => {
+  it('names the subject and secondary user of every report still inside the hold', async () => {
+    const { rows } = await holder.db.query<{ userId: string }>(
+      `SELECT DISTINCT held."userId" FROM (${legalHoldUserIdsSql.text}) held`
+    );
+
+    expect(rows.map((r) => Number(r.userId)).sort((a, b) => a - b)).toEqual([
+      OPEN_REPORT_USER,
+      SENT_UNARCHIVED_USER,
+      RECENTLY_CLOSED_USER,
+      UNSENT_ARCHIVED_USER,
+      SECONDARY_USER,
+      REPORT_SUBJECT,
+    ]);
+  });
+});
 
 describe('purgeHoldGuard on the delete', () => {
   it('deletes only images no hold covers at the moment of the delete', async () => {
     const deleted = await imageService.deleteImages(ALL, true, {
-      onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
+      onlyWhere: purgeHoldGuard(NO_COPY),
     });
 
-    expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([
-      PLAIN,
-      EXPIRED,
-      CLOSED,
-      OTHER_FLAG,
-    ]);
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+    expect(sorted(deleted.map((r) => r.id))).toEqual(DELETED);
+    expect(await remaining()).toEqual(KEPT);
     // A kept image's own side effects must not run: it is still live in the database.
     const deindexed = vi
       .mocked(imagesSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
-    expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, EXPIRED, CLOSED, OTHER_FLAG]);
-  });
-
-  it('holds an open report whose owner the run did not judge expired', async () => {
-    await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
-
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, UNSENT]);
+    expect(sorted(deindexed)).toEqual(DELETED);
   });
 
   it('applies the guard to every batch, not only the first', async () => {
@@ -168,7 +210,7 @@ describe('purgeHoldGuard on the delete', () => {
       FROM generate_series(${extra[0]}, ${lastFlagged}) g;
     `);
 
-    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
+    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
     expect((await remaining()).filter((id) => id >= extra[0])).toEqual([lastFlagged]);
   });
@@ -178,24 +220,22 @@ describe('purgeHoldGuard on the delete', () => {
       await holder.db.exec(`
         INSERT INTO "AppealDecisionRecord" ("imageId", decision, "removalLabel") VALUES
           (${PLAIN}, 'Rejected', 'spam'),
-          (${CLOSED}, 'Rejected', 'realisticMinorNsfw');
+          (${LONG_CLOSED}, 'Rejected', 'realisticMinorNsfw');
       `);
     });
 
     it('keeps a rejected image waiting for its copy when the copy job is configured', async () => {
       await imageService.deleteImages(ALL, true, {
-        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], { holdForTrainingCopy: true }),
+        onlyWhere: purgeHoldGuard({ holdForTrainingCopy: true }),
       });
 
-      expect(await remaining()).toEqual([PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+      expect(await remaining()).toEqual(sorted([PLAIN, ...KEPT]));
     });
 
     it('holds nothing for it when the copy job is not configured', async () => {
-      await imageService.deleteImages(ALL, true, {
-        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
-      });
+      await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
-      expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+      expect(await remaining()).toEqual(KEPT);
     });
   });
 

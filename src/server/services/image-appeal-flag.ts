@@ -38,26 +38,23 @@ export async function clearReviewFlagsOnBlock(imageIds: number[]): Promise<void>
 }
 
 /**
- * Ceiling on the purge hold an open report places on its owner's blocked images, measured from the
- * owner's oldest open report, not from the block: the send/archive pipeline has no retry limit, so
- * a report nobody finishes would otherwise hold them forever, and clocking it from the block would
- * shrink each report's budget by however old the block already was.
+ * Age of an owner's oldest open report past which a report filing no longer takes the moderator-only
+ * flag off their blocked images, measured from that report, not from the block.
  */
 export const CSAM_HOLD_MAX_DAYS = 30;
 
 /**
- * How much of that hold a report filing must still have left before it takes the moderator-only flag
- * off. Without it, a report filed against an owner whose oldest open report is near the ceiling would
- * drop the flag onto a hold that lapses within hours.
+ * How much younger than `CSAM_HOLD_MAX_DAYS` the owner's oldest open report must be for a report
+ * filing to take the moderator-only flag off.
  */
 export const REPORT_HOLD_RELEASE_MARGIN_DAYS = 7;
 
 /**
- * Once a report is filed, the purge hold keyed on the owner's open report takes over from the
- * moderator-only flag. Cleared only where that hold covers the image with at least
- * `REPORT_HOLD_RELEASE_MARGIN_DAYS` to spare, so a report that does not hold it (no owner on the
- * report, another account's image, an owner whose hold has run out or nearly has) leaves the flag on.
- * Mirrors the hold in `remove-blocked-images`.
+ * Once a report is filed, the legal hold on the owner takes over from the moderator-only flag.
+ * Cleared only where the owner has an open report younger than the margin above, so a report that
+ * does not name the image's owner (no owner on the report, another account's image) leaves the flag
+ * on. Narrower than the legal hold `remove-blocked-images` applies (`legal-hold.ts`), so an image
+ * released here is still held there.
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;

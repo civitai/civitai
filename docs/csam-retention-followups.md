@@ -47,9 +47,10 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
 - [ ] Consider an attempt counter / dead-letter so a permanently-failing report is visible rather
       than silently retried forever.
 
-This matters more now: the CSAM hold added in the retention work holds a user's blocked media while
-they have an open report, bounded by `CSAM_HOLD_MAX_DAYS` (30). A stranded report means evidence is
-purged at the ceiling with only an Axiom alert to show for it.
+The legal hold (`src/server/utils/legal-hold.ts`) keeps a user's blocked media while any report
+naming them is unsent, unarchived, or sent within the last year, with no ceiling. A stranded report
+therefore holds its owner's media indefinitely rather than losing it, and nothing reports that it
+is stranded.
 
 ## 3. `archivedAt` is doing double duty
 

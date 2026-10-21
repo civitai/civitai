@@ -11,7 +11,11 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
-import { CSAM_HOLD_MAX_DAYS } from '~/server/services/image-appeal-flag';
+import {
+  legalHoldUserIdsSql,
+  PLACEHOLDER_OWNER_ID,
+  userUnderLegalHoldSql,
+} from '~/server/utils/legal-hold';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -512,26 +516,15 @@ export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
- * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
- * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
- * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
+ * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
+ * on a statement over an unaliased "Image".
  */
-export function purgeHoldGuard(
-  reportHoldExpiredUserIds: number[],
-  { holdForTrainingCopy }: { holdForTrainingCopy: boolean }
-) {
+export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: boolean }) {
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND (
-      "Image"."userId" = ANY(${reportHoldExpiredUserIds}::int[])
-      OR NOT EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE c."userId" = "Image"."userId"
-          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-      )
-    )
+    AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -544,33 +537,63 @@ export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
-    // dbWrite because a report created within replica lag would otherwise be invisible here
-    // and its evidence purged in this same run.
-    const heldUsers = await dbWrite.$queryRaw<{ userId: number; oldestReport: Date }[]>`
-      SELECT "userId", MIN("createdAt") AS "oldestReport"
-      FROM "CsamReport"
-      WHERE "userId" IS NOT NULL
-        AND ("reportSentAt" IS NULL OR "archivedAt" IS NULL)
-      GROUP BY "userId"
-    `;
-    const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_MAX_DAYS, 'days');
-    const activeUserIds = heldUsers.filter((u) => u.oldestReport > holdCutoff).map((u) => u.userId);
-    const expiredUserIds = heldUsers
-      .filter((u) => u.oldestReport <= holdCutoff)
-      .map((u) => u.userId);
+    const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
 
-    // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
-    // in an oldest-first window they would occupy the whole batch every run, stalling deletion
-    // site-wide for every other user.
-    const heldActive = activeUserIds.length
-      ? (
-          await dbRead.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Image"
-        WHERE "userId" = ANY(${activeUserIds})
-          AND ingestion = 'Blocked'::"ImageIngestionStatus"
-      `
-        ).map((x) => x.id)
-      : [];
+    // Fails closed: a run that cannot read the legal holds deletes nothing.
+    let heldActive: number[];
+    try {
+      // dbWrite because a report created within replica lag would otherwise be invisible here
+      // and its evidence purged in this same run.
+      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>`
+        SELECT DISTINCT held."userId" FROM (${legalHoldUserIdsSql}) held
+      `;
+      const heldUserIds = [
+        PLACEHOLDER_OWNER_ID,
+        ...heldUsers.map((u) => Number(u.userId)).filter(Number.isSafeInteger),
+      ];
+
+      // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
+      // in an oldest-first window they would occupy the whole batch every run, stalling deletion
+      // site-wide for every other user.
+      heldActive = (
+        await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Image"
+          WHERE "userId" = ANY(${heldUserIds})
+            AND ingestion = 'Blocked'::"ImageIngestionStatus"
+        `
+      ).map((x) => x.id);
+
+      // The held images that are past retention, i.e. the ones this run would otherwise delete.
+      const wouldSkip = heldActive.length
+        ? await dbRead.jobQueue.findMany({
+            where: {
+              type: JobQueueType.BlockedImageDelete,
+              entityType: EntityType.Image,
+              entityId: { in: heldActive },
+              createdAt: { lte: cutoff },
+            },
+            select: { entityId: true },
+          })
+        : [];
+      if (wouldSkip.length) {
+        logToAxiom({
+          name: 'remove-blocked-images',
+          type: 'info',
+          message: 'Would skip',
+          reason: 'legal-hold',
+          imageIds: wouldSkip.map((x) => x.entityId),
+          count: wouldSkip.length,
+        });
+      }
+    } catch (e) {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'error',
+        message: 'Legal hold lookup failed; nothing deleted this run',
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { skipped: 'legal-hold-lookup-failed' };
+    }
 
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
     // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
@@ -616,7 +639,6 @@ export const removeBlockedImages = createJob(
     // Blocked, so its createdAt is the block time. Image.createdAt would start the clock at
     // upload, making anything blocked more than a week after upload deletable on the next run.
     const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
-    const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
     const images = await dbRead.$queryRaw<
       { id: number; userId: number; blockedFor: string | null }[]
     >`
@@ -651,17 +673,10 @@ export const removeBlockedImages = createJob(
       return true;
     });
 
-    // Only the images this run is about to delete, so the alert can't list an expired hold whose
-    // images fell outside the batch or turned out to be stale. The DELETE's own guard may still keep
-    // one; the returned count is of what was actually deleted.
-    const expiredUserIdSet = new Set(expiredUserIds);
-    const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
-
     console.log({
       imagesToDelete: imagesToDelete.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
       staleIds: staleIds.length,
@@ -670,20 +685,6 @@ export const removeBlockedImages = createJob(
     if (!isProd) return { imagesToDelete: imagesToDelete.length };
 
     if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
-
-    // Emitted immediately before the delete and never truncated: once these rows and their
-    // queue entries are gone this log is the only record that the evidence existed.
-    if (holdExpiredDeletions.length) {
-      logToAxiom({
-        name: 'remove-blocked-images',
-        type: 'error',
-        subType: 'csam-hold-expired',
-        message: `CSAM report older than ${CSAM_HOLD_MAX_DAYS} days; purging its evidence anyway`,
-        userIds: [...new Set(holdExpiredDeletions.map((x) => x.userId))],
-        imageIds: holdExpiredDeletions.map((x) => x.id),
-        count: holdExpiredDeletions.length,
-      });
-    }
 
     // Delete images that are past retention period.
     //
@@ -809,9 +810,7 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
-    const onlyWhere = purgeHoldGuard(expiredUserIds, {
-      holdForTrainingCopy: isAppealTrainingConfigured(),
-    });
+    const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
     const deleted: number[] = [];
     if (takedowns.length > 0) {
       const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
@@ -847,7 +846,6 @@ export const removeBlockedImages = createJob(
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.filter((x) => deletedSet.has(x.id)).length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
     };
