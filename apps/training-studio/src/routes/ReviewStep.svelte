@@ -130,6 +130,14 @@
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
   let openAdv = $state(-1);
 
+  // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
+  // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
+  const advancedAcknowledged = (i: number) =>
+    acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
+  const fieldLocked = (i: number, field: ParamField) =>
+    field !== 'epochs' && !advancedAcknowledged(i);
+
   const presetSeen = $derived(seenFor(presetType, selection.media));
   const GUIDANCE_HELP =
     'Sets only the "each image seen ~N×" target below — how much exposure this kind of LoRA usually needs. It does not change your type, base model or any training setting.';
@@ -424,6 +432,7 @@
   {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
+  {@const unacknowledged = fieldLocked(i, f.field)}
   <div
     class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
@@ -444,11 +453,13 @@
         <Checkbox
           aria-label={PARAM_LABELS[f.field]}
           bind:checked={() => Boolean(paramsAt(i)[f.field]), (v) => setField(i, f.field, v === true)}
+          disabled={unacknowledged}
         />
       </div>
     {:else if f.kind === 'select'}
       <Select.Root
         type="single"
+        disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
         <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
@@ -469,7 +480,7 @@
         aria-label={PARAM_LABELS[f.field]}
         bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
-        disabled={locked}
+        disabled={locked || unacknowledged}
         class="h-7 font-mono"
       />
     {/if}
@@ -603,6 +614,34 @@
                 <span class="font-mono text-xs text-dark-2">
                   seeded with {card.name}'s recommended values — hover (i) for what each does
                 </span>
+              </div>
+              <div class="mb-3 flex items-start gap-2.5 rounded-lg border border-buzz/30 bg-buzz/5 p-3">
+                <IconAlertTriangle size={16} stroke={2} class="mt-0.5 shrink-0 text-buzz" />
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-dark-0">
+                    Editing advanced parameters forfeits your refund
+                  </span>
+                  <span class="text-xs leading-snug text-dark-2">
+                    These defaults are tuned for your selected model. If you change them and the
+                    result is poor, the training is non-refundable. Steps and Checkpoints are not
+                    affected.
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <Checkbox
+                      id="acknowledge-advanced-{run.id}"
+                      bind:checked={
+                        () => advancedAcknowledged(i),
+                        (v) => (acknowledgedAdvanced[runParamsKey(run)] = v === true)
+                      }
+                    />
+                    <label
+                      for="acknowledge-advanced-{run.id}"
+                      class="cursor-pointer text-xs text-dark-1"
+                    >
+                      I understand and want to edit the advanced parameters
+                    </label>
+                  </div>
+                </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
                 {#each CORE_FIELDS as f, k (f.field)}
