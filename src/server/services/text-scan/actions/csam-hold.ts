@@ -27,6 +27,28 @@ function contentAtOf(meta: Record<string, unknown> | undefined) {
 type PendingHoldWrite = 'created' | 'updated' | 'unchanged' | 'skipped';
 
 /**
+ * Thrown when new csam text cannot replace a pending hold because a moderator is mid-decision on it. The
+ * detection is recorded nowhere else, so the callback must fail and let the retry cron's rescan redo it.
+ */
+export class CsamHoldBusyError extends Error {
+  constructor() {
+    super('csam hold is mid-decision; the detection must be retried');
+    this.name = 'CsamHoldBusyError';
+  }
+}
+
+/**
+ * The advisory lock the write below and a decision's final update both take, so a decision cannot land
+ * between the ruled-text check and the upsert. A pair key keeps it off the single-key article lock.
+ */
+export const lockCsamHold = (
+  tx: Pick<typeof dbWrite, '$executeRaw'>,
+  entityType: string,
+  entityId: number
+) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`csam-hold:${entityType}`}), ${entityId}::int)`;
+
+/**
  * One pending hold per entity, kept current. Rescans only happen when the scanned text changed, so a
  * second detection means new text: it replaces the pending hold's text in place instead of queueing
  * another row. Text a moderator already ruled on is not held again; changed text after a ruling is held
@@ -44,51 +66,66 @@ async function writePendingHold(hold: {
   contentAt: Date | null;
   meta: Record<string, unknown>;
 }): Promise<{ holdId: number | null; write: PendingHoldWrite; priorHoldId: number | null }> {
-  // A hold the migration superseded was never ruled on, so it neither blocks nor marks a re-detection.
-  const [decided] = await dbWrite.$queryRaw<
-    { latestId: number | null; sameText: boolean | null }[]
-  >`
-    SELECT max("id") AS "latestId", bool_or("textHash" = ${hold.textHash}) AS "sameText"
-    FROM "TextScanHold"
-    WHERE "entityType" = ${hold.entityType} AND "entityId" = ${hold.entityId} AND "label" = 'csam'
-      AND "status" <> 'Pending' AND "meta"->>'decision' IS DISTINCT FROM 'superseded'
-  `;
-  const priorHoldId = decided?.latestId ?? null;
-  if (decided?.sameText) return { holdId: null, write: 'skipped', priorHoldId };
+  return dbWrite.$transaction(async (tx) => {
+    await lockCsamHold(tx, hold.entityType, hold.entityId);
+    // A hold the migration superseded was never ruled on, so it neither blocks nor marks a re-detection.
+    const [decided] = await tx.$queryRaw<{ latestId: number | null; sameText: boolean | null }[]>`
+      SELECT max("id") AS "latestId", bool_or("textHash" = ${hold.textHash}) AS "sameText"
+      FROM "TextScanHold"
+      WHERE "entityType" = ${hold.entityType} AND "entityId" = ${hold.entityId} AND "label" = 'csam'
+        AND "status" <> 'Pending' AND "meta"->>'decision' IS DISTINCT FROM 'superseded'
+    `;
+    const priorHoldId = decided?.latestId ?? null;
+    if (decided?.sameText) return { holdId: null, write: 'skipped', priorHoldId };
 
-  const meta = JSON.stringify(
-    priorHoldId === null ? hold.meta : { ...hold.meta, kind: 'redetected', priorHoldId }
-  );
-  // The update leaves a hold mid-decision alone (a claim older than the decision's own 5 minute expiry is a
-  // crashed one): swapping the text under a moderator would apply their ruling to text they never saw.
-  const rows = await dbWrite.$queryRaw<{ id: number; inserted: boolean }[]>`
-    INSERT INTO "TextScanHold"
-      ("entityType", "entityId", "label", "textHash", "userId", "text", "reason", "workflowId",
-       "promptId", "contentAt", "meta", "updatedAt")
-    VALUES (${hold.entityType}, ${hold.entityId}, 'csam', ${hold.textHash}, ${hold.userId},
-      ${hold.text}, ${hold.reason}, ${hold.workflowId ?? null}, ${hold.promptId},
-      (${hold.contentAt?.toISOString() ?? null}::timestamptz AT TIME ZONE 'UTC'),
-      ${meta}::jsonb, now())
-    ON CONFLICT ("entityType", "entityId", "label")
-      WHERE "status" = 'Pending' AND "entityType" <> 'ChatMessage'
-    DO UPDATE SET
-      "textHash" = EXCLUDED."textHash",
-      "text" = EXCLUDED."text",
-      "reason" = EXCLUDED."reason",
-      "workflowId" = EXCLUDED."workflowId",
-      "promptId" = EXCLUDED."promptId",
-      "contentAt" = EXCLUDED."contentAt",
-      "meta" = (CASE WHEN jsonb_typeof("TextScanHold"."meta") = 'object'
-        THEN "TextScanHold"."meta" - 'decisionClaim' ELSE '{}'::jsonb END) || EXCLUDED."meta",
-      "updatedAt" = now()
-    WHERE "TextScanHold"."textHash" IS DISTINCT FROM EXCLUDED."textHash"
-      AND ("TextScanHold"."meta"->'decisionClaim' IS NULL
-        OR ("TextScanHold"."meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
-    RETURNING "id", (xmax = 0) AS "inserted"
-  `;
-  const row = rows[0];
-  if (!row) return { holdId: null, write: 'unchanged', priorHoldId };
-  return { holdId: row.id, write: row.inserted ? 'created' : 'updated', priorHoldId };
+    const meta = JSON.stringify(
+      priorHoldId === null ? hold.meta : { ...hold.meta, kind: 'redetected', priorHoldId }
+    );
+    // The update leaves a hold mid-decision alone: swapping the text under a moderator would apply their
+    // ruling to text they never saw. A claim counts as live for 30 minutes, far past the 5 a decision
+    // itself waits before treating one as crashed, so a slow decision still finishes.
+    const rows = await tx.$queryRaw<{ id: number; inserted: boolean }[]>`
+      INSERT INTO "TextScanHold"
+        ("entityType", "entityId", "label", "textHash", "userId", "text", "reason", "workflowId",
+         "promptId", "contentAt", "meta", "updatedAt")
+      VALUES (${hold.entityType}, ${hold.entityId}, 'csam', ${hold.textHash}, ${hold.userId},
+        ${hold.text}, ${hold.reason}, ${hold.workflowId ?? null}, ${hold.promptId},
+        (${hold.contentAt?.toISOString() ?? null}::timestamptz AT TIME ZONE 'UTC'),
+        ${meta}::jsonb, now())
+      ON CONFLICT ("entityType", "entityId", "label")
+        WHERE "status" = 'Pending' AND "entityType" <> 'ChatMessage'
+      DO UPDATE SET
+        "textHash" = EXCLUDED."textHash",
+        "text" = EXCLUDED."text",
+        "reason" = EXCLUDED."reason",
+        "workflowId" = EXCLUDED."workflowId",
+        "promptId" = EXCLUDED."promptId",
+        "contentAt" = EXCLUDED."contentAt",
+        "meta" = (CASE WHEN jsonb_typeof("TextScanHold"."meta") = 'object'
+          THEN "TextScanHold"."meta" - 'decisionClaim' ELSE '{}'::jsonb END) || EXCLUDED."meta",
+        "updatedAt" = now()
+      WHERE "TextScanHold"."textHash" IS DISTINCT FROM EXCLUDED."textHash"
+        AND ("TextScanHold"."meta"->'decisionClaim' IS NULL
+          OR ("TextScanHold"."meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '30 minutes')
+      RETURNING "id", (xmax = 0) AS "inserted"
+    `;
+    const row = rows[0];
+    if (row)
+      return {
+        holdId: row.id,
+        write: row.inserted ? 'created' : 'updated',
+        priorHoldId,
+      } as const;
+
+    // Nothing written: either the pending hold already has this text, or a live claim blocked the swap.
+    const [pending] = await tx.$queryRaw<{ textHash: string }[]>`
+      SELECT "textHash" FROM "TextScanHold"
+      WHERE "entityType" = ${hold.entityType} AND "entityId" = ${hold.entityId}
+        AND "label" = 'csam' AND "status" = 'Pending'
+    `;
+    if (pending && pending.textHash !== hold.textHash) throw new CsamHoldBusyError();
+    return { holdId: null, write: 'unchanged', priorHoldId } as const;
+  });
 }
 
 const messageIdsOf = (meta: unknown) => {

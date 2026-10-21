@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -74,8 +75,11 @@ export const CSAM_HOLD_DECISION_GRANTS: Partial<
 
 type DecideArgs = {
   holdId: number;
-  /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
-  textHash: string;
+  /**
+   * The text hash the moderator reviewed; a rescan may have replaced the held text since. Optional while a
+   * client built before the guard rolls out: without it the decision is guarded against the hash read here.
+   */
+  textHash?: string;
   decision: CsamHoldDecision;
   note?: string;
   actor: { id: number; ip?: string };
@@ -250,7 +254,9 @@ export async function decideCsamHold(args: DecideArgs) {
   });
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
-  if (hold.textHash !== textHash) throw throwConflictError(STALE_HOLD_MESSAGE);
+  if (textHash !== undefined && hold.textHash !== textHash)
+    throw throwConflictError(STALE_HOLD_MESSAGE);
+  const expectedHash = textHash ?? hold.textHash;
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(
@@ -264,7 +270,7 @@ export async function decideCsamHold(args: DecideArgs) {
     UPDATE "TextScanHold"
     SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
       || jsonb_build_object('decisionClaim', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
-    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${textHash}
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${expectedHash}
       AND ("meta"->'decisionClaim' IS NULL
         OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
     RETURNING "meta"->'decisionClaim'->>'at' AS "at"
@@ -281,8 +287,10 @@ export async function decideCsamHold(args: DecideArgs) {
     const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
     const decidedAt = new Date();
     await dbWrite.$transaction(async (tx) => {
+      // The lock a new detection takes before it checks for rulings, so the two never interleave.
+      if (hold.entityType !== 'ChatMessage') await lockCsamHold(tx, hold.entityType, hold.entityId);
       const { count } = await tx.textScanHold.updateMany({
-        where: { id: holdId, label: 'csam', status: 'Pending', textHash },
+        where: { id: holdId, label: 'csam', status: 'Pending', textHash: expectedHash },
         data: {
           status,
           decidedAt,

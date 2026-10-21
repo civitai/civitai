@@ -48,7 +48,11 @@ upsert:
 
 - A Pending hold exists: it is updated in place (text, reason, text hash, workflow, prompt, content
   time, meta) and keeps its queue position. A hold with a decision in progress (`meta.decisionClaim`
-  younger than 5 minutes) is left alone; the next scan after that decision holds the new text.
+  younger than 30 minutes) is left alone, and the write throws so the callback fails and the
+  retry cron's rescan records the new text later (the claim of a decision that crashed is retaken
+  by another decision after 5 minutes, but a new detection only after 30). The check for earlier
+  rulings and the upsert run in one transaction under a per-entity advisory lock, which a decision's
+  final update takes too, so a ruling cannot land between them.
 - The same text hash is already decided (dismissed or removed): nothing is written, because a
   moderator ruled on that exact text.
 - Changed text after a decision, with nothing Pending: a new hold is inserted with
@@ -60,10 +64,15 @@ upsert:
 
 The moderator app sends the hold's `textHash` with every decision. The main app refuses (409) a
 decision whose hash no longer matches, and the moderator is told to reload, so a ruling never applies
-to text the moderator did not see. Migration `20261112120000_text_scan_hold_one_pending` closes
+to text the moderator did not see. The field is optional on the endpoint for the rollout: without it
+the decision is guarded against the hash read at the start of the decision. Migration `20261112120000_text_scan_hold_one_pending` closes
 existing duplicate Pending holds as `Dismissed` with `meta.decision = 'superseded'` (shown as
 "Superseded by a newer scan"; not a ruling, so it neither blocks nor marks a re-detection). It is
-applied by hand before the main app that relies on the new index is deployed.
+applied by hand. Roll out in this order: migration, then main app release, then moderator release.
+Main app code from before this change swallows the new index's unique violation for edited text, so
+keep the gap between the migration and the main release short. The moderator ships last because the
+old moderator app does not send `textHash`, which the new endpoint accepts but then guards less
+strictly.
 
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
@@ -77,13 +86,13 @@ A moderator picks one of five actions on a Pending hold, with an optional modera
 500 characters). The main app's `/api/mod/text-scan/csam-hold/resolve` owns the write, and the
 rules below live in `csam-hold-decision.ts` beside the text-scan actions.
 
-| Action | What runs | Hold becomes |
-|---|---|---|
-| Remove content | the entity's existing moderator removal | `Confirmed` |
-| Remove content + strike | removal, then a strike on the author | `Confirmed` |
-| Remove content + ban | removal, then a ban on the author | `Confirmed` |
-| Remove content + ban + NCMEC report | removal and ban; the moderator then completes the existing CSAM report form for the author | `Confirmed` |
-| Do nothing | nothing on the content or the account | `Dismissed` |
+| Action                              | What runs                                                                                  | Hold becomes |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ | ------------ |
+| Remove content                      | the entity's existing moderator removal                                                    | `Confirmed`  |
+| Remove content + strike             | removal, then a strike on the author                                                       | `Confirmed`  |
+| Remove content + ban                | removal, then a ban on the author                                                          | `Confirmed`  |
+| Remove content + ban + NCMEC report | removal and ban; the moderator then completes the existing CSAM report form for the author | `Confirmed`  |
+| Do nothing                          | nothing on the content or the account                                                      | `Dismissed`  |
 
 - Removal reuses what a moderator already uses for each type, and keeps the content: a ToS-violation
   flag for `Comment` and `CommentV2`, a profile-field clear for `UserProfile`, an

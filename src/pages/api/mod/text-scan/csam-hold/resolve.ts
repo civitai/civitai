@@ -20,7 +20,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
     '`remove_ban_report` does not file anything: the moderator completes the existing CSAM report form for the returned `userId`. No Report row is created by any decision.',
     'A removal decision is refused with BAD_REQUEST for a type with no removal path; the hold stays pending.',
     'The decision and its label-store record are one transaction. If a removal, strike or ban fails the hold stays pending and the call can be repeated.',
-    'Refuses with CONFLICT when the hold is missing, not a csam hold, no longer Pending, or its text changed since `textHash` was read (a rescan of edited content updates the pending hold in place).',
+    'Refuses with CONFLICT when the hold is missing, not a csam hold, no longer Pending, or its text changed since `textHash` was read (when given) (a rescan of edited content updates the pending hold in place).',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
   input: z.object({
@@ -29,8 +29,9 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       .string()
       .min(1)
       .max(200)
+      .optional()
       .describe(
-        'The text hash of the hold as the moderator saw it; a hold whose text changed since is refused.'
+        'The text hash of the hold as the moderator saw it; a hold whose text changed since is refused. Omitted only by clients that predate the guard, which then decide against the text as stored now.'
       ),
     decision: z.enum(CSAM_HOLD_DECISIONS),
     note: z

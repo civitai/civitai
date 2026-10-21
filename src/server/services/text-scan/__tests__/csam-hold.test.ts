@@ -42,7 +42,7 @@ vi.mock('~/server/services/article.service', async (importOriginal) => ({
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyCsamHold, CSAM_HOLD_TEXT_CHARS } = await import(
+const { applyCsamHold, CSAM_HOLD_TEXT_CHARS, CsamHoldBusyError } = await import(
   '~/server/services/text-scan/actions/csam-hold'
 );
 const { composeUserText } = await import('~/server/services/text-scan/segment');
@@ -100,6 +100,10 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(
     async (strings: TemplateStringsArray, ...values) =>
       (await db.pg.query(asRawSql(strings, values), values)).rows
+  );
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    async (strings: TemplateStringsArray, ...values) =>
+      (await db.pg.query(asRawSql(strings, values), values)).affectedRows ?? 0
   );
   // Only ChatMessage still goes through Prisma's create.
   dbMock.dbWrite.textScanHold.create.mockImplementation(
@@ -373,22 +377,61 @@ describe('one pending hold per entity', () => {
     expect(held[1]).toMatchObject({ status: 'Pending', textHash: 'hash-2' });
   });
 
-  it('leaves a hold mid-decision alone, so a ruling never lands on unseen text', async () => {
+  const claimAt = (age: string) =>
+    db.pg.exec(`UPDATE "TextScanHold" SET "meta" = "meta" ||
+      jsonb_build_object('decisionClaim', jsonb_build_object('by', 7, 'at', now() - interval '${age}'))`);
+
+  it('refuses to swap text under a decision, and fails so the retry rescan records it', async () => {
     await scan(edited(1));
-    await db.pg.exec(`UPDATE "TextScanHold" SET "meta" = "meta" ||
-      jsonb_build_object('decisionClaim', jsonb_build_object('by', 7, 'at', now()))`);
-    await scan(edited(2));
+    await claimAt('0 minutes');
+    await expect(scan(edited(2))).rejects.toThrow(CsamHoldBusyError);
     expect(await rows()).toMatchObject([{ id: 1, textHash: 'hash-1', status: 'Pending' }]);
+    // The claim is released (decision failed or finished); the retried detection then lands.
+    await db.pg.exec(`UPDATE "TextScanHold" SET "meta" = "meta" - 'decisionClaim'`);
+    await scan(edited(2));
+    expect(await rows()).toMatchObject([{ id: 1, textHash: 'hash-2', status: 'Pending' }]);
+  });
+
+  it('does not act on the entity when a claim blocks the hold, so the retry redoes both', async () => {
+    await scan(edited(1));
+    await claimAt('0 minutes');
+    await expect(
+      getModerationAdapter('Model')!.applyTextScan!(args(edited(2)) as never)
+    ).rejects.toThrow(CsamHoldBusyError);
+    expect(applyModelPoiMinor).not.toHaveBeenCalled();
+  });
+
+  it('keeps honouring a claim well past the five minutes a decision waits before reclaiming it', async () => {
+    await scan(edited(1));
+    await claimAt('10 minutes');
+    await expect(scan(edited(2))).rejects.toThrow(CsamHoldBusyError);
+    expect(await rows()).toMatchObject([{ textHash: 'hash-1' }]);
+  });
+
+  it('does not fail a rescan of the text the pending hold already has while it is claimed', async () => {
+    await scan(edited(1));
+    await claimAt('0 minutes');
+    await expect(scan(edited(1))).resolves.toBeUndefined();
   });
 
   it('takes the text over from a claim whose holder is long gone', async () => {
     await scan(edited(1));
-    await db.pg.exec(`UPDATE "TextScanHold" SET "meta" = "meta" ||
-      jsonb_build_object('decisionClaim', jsonb_build_object('by', 7, 'at', now() - interval '10 minutes'))`);
+    await claimAt('40 minutes');
     await scan(edited(2));
     const [held] = await rows();
     expect(held).toMatchObject({ textHash: 'hash-2' });
     expect(held.meta).not.toHaveProperty('decisionClaim');
+  });
+
+  it('takes the per-entity lock before it looks for rulings', async () => {
+    await scan(edited(1));
+    const lock = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
+      String(strings).includes('pg_advisory_xact_lock')
+    );
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[lock]).toBeLessThan(
+      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]
+    );
   });
 
   it('ignores a superseded hold when deciding whether text was ruled on', async () => {
