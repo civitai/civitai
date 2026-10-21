@@ -38,23 +38,22 @@ export async function clearReviewFlagsOnBlock(imageIds: number[]): Promise<void>
 }
 
 /**
- * Age of an owner's oldest open report past which a report filing no longer takes the moderator-only
- * flag off their blocked images, measured from that report, not from the block.
+ * With `REPORT_HOLD_RELEASE_MARGIN_DAYS`, sets how old an owner's oldest open report may be for a
+ * report filing to take the moderator-only flag off their blocked images: younger than
+ * `CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS`, measured from that report, not the block.
  */
 export const CSAM_HOLD_MAX_DAYS = 30;
 
-/**
- * How much younger than `CSAM_HOLD_MAX_DAYS` the owner's oldest open report must be for a report
- * filing to take the moderator-only flag off.
- */
+/** See `CSAM_HOLD_MAX_DAYS`. */
 export const REPORT_HOLD_RELEASE_MARGIN_DAYS = 7;
 
 /**
  * Once a report is filed, the legal hold on the owner takes over from the moderator-only flag.
- * Cleared only where the owner has an open report younger than the margin above, so a report that
- * does not name the image's owner (no owner on the report, another account's image) leaves the flag
- * on. Narrower than the legal hold `remove-blocked-images` applies (`legal-hold.ts`), so an image
- * released here is still held there.
+ * Cleared only where the owner has an open report and their oldest open report is younger than
+ * `CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS`, so a report that does not name the image's
+ * owner (no owner on the report, another account's image) leaves the flag on. Narrower than the legal
+ * hold `remove-blocked-images` applies (`legal-hold.ts`), so an image released here is still held
+ * there.
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;

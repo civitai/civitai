@@ -117,8 +117,10 @@ const {
     });
     return { sql, strings, values: out };
   };
-  const queryRaw = async (strings: TemplateStringsArray, ...rawValues: unknown[]) => {
-    const { sql, values } = flatten(strings, rawValues);
+  const queryRaw = async (first: TemplateStringsArray | SqlLike, ...rawValues: unknown[]) => {
+    const { sql, values } = isSql(first)
+      ? flatten(first.strings, first.values)
+      : flatten(first, rawValues);
     sqlLog.push(sql);
     if (sql.includes('FROM "CsamReport"')) {
       if (holdLookup.error) throw holdLookup.error;
@@ -245,6 +247,16 @@ function queuePruneIds() {
   const call = execLog.find((c) => c.sql.includes('DELETE FROM "JobQueue"'));
   return (call?.values.find(Array.isArray) as number[] | undefined) ?? [];
 }
+/** A query's text, whether it was called as a tagged template or with a `Prisma.sql` value. */
+function sqlText(first: unknown) {
+  const strings = (first as { strings?: readonly string[] }).strings ?? (first as string[]);
+  return strings.join('?');
+}
+function wouldSkipLogs() {
+  return mockLogToAxiom.mock.calls
+    .map((c) => c[0] as Record<string, unknown>)
+    .filter((a) => a.message === 'Would skip');
+}
 function batchWhere() {
   // The last findMany is the batch fetch; earlier ones (if any) are hold lookups.
   return queueWhereLog[queueWhereLog.length - 1];
@@ -321,13 +333,27 @@ describe('remove-blocked-images retention clock', () => {
     expect(queuePruneIds()).not.toContain(5);
   });
 
-  // Which users the hold covers is pinned against Postgres in the hold-guard behavior test; this
-  // pins that the job reads that definition rather than a copy of it.
-  it('reads the held users from the shared legal hold', async () => {
+  // Which users the hold covers is pinned against Postgres in the hold-guard behavior test, which runs
+  // the same query; this pins that the job runs exactly that query, on the primary.
+  it('reads the held users from the shared legal hold, on the primary', async () => {
     await runJob();
 
-    const holdSql = sqlLog.find((s) => s.includes('FROM "CsamReport"'));
-    expect(holdSql).toContain(legalHoldUserIdsSql.strings.join('?'));
+    const holdCalls = (calls: unknown[][]) =>
+      calls.filter((c) => sqlText(c[0]).includes('FROM "CsamReport"'));
+    expect(holdCalls(mockDbRead.$queryRaw.mock.calls)).toEqual([]);
+    expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([[legalHoldUserIdsSql]]);
+  });
+
+  // An id that is not a number names no user, so it is dropped rather than failing every run.
+  it('ignores a held user id that is not a number', async () => {
+    heldUsers.push({ userId: 'not-a-number' });
+    await runJob();
+
+    const heldImageLookup = mockDbRead.$queryRaw.mock.calls.find((c) =>
+      sqlText(c[0]).includes('"userId" = ANY')
+    );
+    expect(heldImageLookup?.[1]).toEqual([PLACEHOLDER_OWNER, HELD_USER, LONG_HELD_USER]);
+    expect(deletedIds()).toContain(1);
   });
 
   it('excludes held media from the batch instead of filtering it afterwards', async () => {
@@ -362,12 +388,15 @@ describe('remove-blocked-images retention clock', () => {
   it('logs the held images past retention as ones it would otherwise delete', async () => {
     await runJob();
 
-    const skips = mockLogToAxiom.mock.calls
-      .map((c) => c[0] as Record<string, unknown>)
-      .filter((a) => a.message === 'Would skip');
+    const skips = wouldSkipLogs();
     expect(skips).toHaveLength(1);
     // 10 is held but still inside retention, so this run would not have deleted it anyway.
     expect(skips[0]).toMatchObject({ reason: 'legal-hold', imageIds: [5, 6], count: 2 });
+    // Read from this job's own queue, or another queue's rows could be counted.
+    expect(queueWhereLog.find((w) => w?.entityId?.in)).toMatchObject({
+      type: 'BlockedImageDelete',
+      entityType: 'Image',
+    });
   });
 
   it('deletes nothing when the legal hold cannot be read', async () => {
@@ -390,6 +419,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.csamHeld).toBe(0);
     // id 5 is now an ordinary expired block.
     expect(deletedIds()).toContain(5);
+    expect(wouldSkipLogs()).toEqual([]);
   });
 
   it('sweeps AiNotVerified and no-longer-blocked rows without deleting them', async () => {
@@ -452,8 +482,7 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     const isHoldSql = (s: string) => s.includes('"needsReview" IN');
-    const sqlOf = (calls: unknown[][]) =>
-      calls.map((c) => (c[0] as TemplateStringsArray).join('?'));
+    const sqlOf = (calls: unknown[][]) => calls.map((c) => sqlText(c[0]));
     const onWrite = sqlOf(mockDbWrite.$queryRaw.mock.calls).filter(isHoldSql);
     const onRead = sqlOf(mockDbRead.$queryRaw.mock.calls).filter(isHoldSql);
 

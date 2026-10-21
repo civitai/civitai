@@ -544,9 +544,7 @@ export const removeBlockedImages = createJob(
     try {
       // dbWrite because a report created within replica lag would otherwise be invisible here
       // and its evidence purged in this same run.
-      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>`
-        SELECT DISTINCT held."userId" FROM (${legalHoldUserIdsSql}) held
-      `;
+      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql);
       const heldUserIds = [
         PLACEHOLDER_OWNER_ID,
         ...heldUsers.map((u) => Number(u.userId)).filter(Number.isSafeInteger),

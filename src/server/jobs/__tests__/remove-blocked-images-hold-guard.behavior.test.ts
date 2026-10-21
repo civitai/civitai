@@ -171,8 +171,10 @@ const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
 describe('legalHoldUserIdsSql', () => {
   it('names the subject and secondary user of every report still inside the hold', async () => {
+    // The query the job runs, as it runs it.
     const { rows } = await holder.db.query<{ userId: string }>(
-      `SELECT DISTINCT held."userId" FROM (${legalHoldUserIdsSql.text}) held`
+      legalHoldUserIdsSql.text,
+      legalHoldUserIdsSql.values
     );
 
     expect(rows.map((r) => Number(r.userId)).sort((a, b) => a - b)).toEqual([
