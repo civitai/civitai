@@ -381,7 +381,8 @@ describe('deleting a report the send finds nothing to send for', () => {
       await processCsamReport(runStart);
 
       expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-      expect(submitReport).toHaveBeenCalledTimes(1);
+      // Past the delete branch: the CyberTip was opened, or (training data) the download was tried.
+      expect(submitReport.mock.calls.length + getFileForModelVersion.mock.calls.length).toBe(1);
     }
   );
 
@@ -518,10 +519,23 @@ describe('a stored CyberTip id NCMEC answers for', () => {
 });
 
 describe('a report that may have a CyberTip at NCMEC', () => {
+  it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
+    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+
+    await processCsamReport(report);
+
+    expect(cancelReport).toHaveBeenCalledWith({ id: 77 });
+    expect(order(cancelReport)).toBeLessThan(
+      dbMock.dbWrite.csamReport.deleteMany.mock.invocationCallOrder[0]
+    );
+    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
-    ['a stored CyberTip id', { reportId: 77 }],
+    ['a stored CyberTip NCMEC says is finished', { reportId: 77 }],
     ['a possible duplicate noted', { details: { possibleDuplicateReportIds: [6] } }],
   ])('is not deleted when it has %s and nothing to send', async (_, held) => {
+    cancelReport.mockResolvedValue(answering(5102));
     primaryRow = { ...report, images: [{ id: 601 }], ...held } as unknown as CsamReportProps;
 
     await processCsamReport(report);
@@ -601,18 +615,20 @@ describe('sending each type of report', () => {
     );
   });
 
-  it('finishes no generated-image CyberTip with no file in it', async () => {
+  it.each([
+    ['no job', []],
+    ['jobs with no blob', [{ jobId: 'job-1', blobs: [] }]],
+  ])('opens no CyberTip for a generated-image report naming %s', async (_, jobs) => {
     primaryRow = {
       ...report,
       type: 'GeneratedImage',
-      details: { generatedImages: [] },
+      details: { generatedImages: jobs },
     } as unknown as CsamReportProps;
 
     await processCsamReport(primaryRow);
 
-    expect(finishReport).not.toHaveBeenCalled();
-    expect(cancelReport).toHaveBeenCalledWith({ id: 99 });
-    expect(stamps()).toEqual([]);
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
   });
 
   describe('training data', () => {
@@ -660,14 +676,52 @@ describe('sending each type of report', () => {
       });
     });
 
-    it('finishes no CyberTip for a zip with no image in it', async () => {
+    it('downloads its own copy even when one is already on disk', async () => {
+      await serveZip(['a.png']);
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(getFileForModelVersion).toHaveBeenCalledTimes(1);
+      expect(fsAsync.writeFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens no CyberTip for a zip with no image in it', async () => {
       await serveZip(['notes.txt']);
       primaryRow = trainingReport;
 
       await processCsamReport(trainingReport);
 
-      expect(finishReport).not.toHaveBeenCalled();
-      expect(stamps()).toEqual([]);
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(lines('send-no-files')).toEqual([
+        expect.objectContaining({ type: 'error', reportId: 1 }),
+      ]);
+    });
+
+    it('opens no CyberTip when the training data cannot be downloaded', async () => {
+      await serveZip(['a.png']);
+      getFileForModelVersion.mockResolvedValue({ status: 'not-found' });
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(submitReport).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['after a send', () => undefined],
+      ['after a failed send', () => finishReport.mockRejectedValue(new Error('synthetic failure'))],
+      ['when the send throws', () => submitReport.mockRejectedValue(new Error('synthetic outage'))],
+    ])('removes its scratch copy %s', async (_, arrange) => {
+      await serveZip(['a.png']);
+      arrange();
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport).catch(() => undefined);
+
+      expect(fs.rmSync).toHaveBeenCalledWith(expect.stringMatching(/training-data\/1$/), {
+        recursive: true,
+      });
     });
   });
 
@@ -694,5 +748,44 @@ describe('the note to NCMEC on what a CyberTip omits', () => {
     expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
       '1 file(s) named in this report are no longer stored and are not included.'
     );
+  });
+});
+
+describe('a cancel NCMEC refuses with an error naming its answer', () => {
+  const refused = (name: string) =>
+    new Error(`Request failed with http status 409 - ${name} (Request-ID: test)`);
+
+  it("marks this run's CyberTip sent when the refusal says it was already finished", async () => {
+    finishReport.mockRejectedValue(new Error('synthetic finish timeout'));
+    cancelReport.mockRejectedValue(refused('ReportAlreadyFinished'));
+
+    await processCsamReport(report);
+
+    expect(lines('send-cancel-already-finished')).toHaveLength(1);
+    expect(stamps().map(({ data }) => data.reportId)).toEqual([99]);
+  });
+
+  it.each([
+    ['ReportAlreadyFinished', { possibleDuplicateReportIds: [77] }],
+    ['ReportAlreadyRetracted', { cancelledReportIds: [77] }],
+  ])('notes a stored CyberTip refused as %s', async (name, noted) => {
+    primaryRow = { ...report, reportId: 77 } as CsamReportProps;
+    cancelReport.mockRejectedValueOnce(refused(name));
+
+    await processCsamReport(report);
+
+    expect(writesWith('details')[0].data.details).toEqual(noted);
+  });
+});
+
+describe('a finish NCMEC answers was retracted', () => {
+  it('is not taken as finished: the report is not marked sent', async () => {
+    finishReport.mockResolvedValue(answering(5101));
+    cancelReport.mockResolvedValue(answering(5101));
+
+    await processCsamReport(report);
+
+    expect(stamps()).toEqual([]);
+    expect(writesWith('details').at(-1)?.data.details).toEqual({ cancelledReportIds: [99] });
   });
 });

@@ -786,16 +786,18 @@ const appendId =
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
 async function deleteUnderClaim(claim: SendClaim, reason: string) {
-  // A CyberTip for it may be with NCMEC: the row is its only record here, so a human decides.
-  const { reportId: storedId, details } = claim.report;
-  const possibleDuplicates = details?.possibleDuplicateReportIds ?? [];
-  if (storedId != null || possibleDuplicates.length > 0)
+  // A CyberTip left open for it is cancelled first. One that may be with NCMEC keeps the row, its
+  // only record here, for a human to decide on.
+  const stored = await cancelStoredCyberTip(claim);
+  if (stored === 'lost') return;
+  const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
+  if (stored === 'held' || possibleDuplicates.length > 0)
     return logSendLine(
       claim,
       'send-delete-held',
       {
         message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
-        ncmecReportId: storedId ?? undefined,
+        ncmecReportId: claim.report.reportId ?? undefined,
         possibleDuplicateReportIds: possibleDuplicates,
       },
       'error'
@@ -828,7 +830,13 @@ async function releaseClaim(claim: SendClaim) {
     );
 }
 
-/** The client resolves, rather than throws, for a CyberTip already finished or already retracted. */
+const ANSWERED_ALREADY_FINISHED = ` - ${ResponseCode[ResponseCode.ReportAlreadyFinished]} `;
+const ANSWERED_ALREADY_RETRACTED = ` - ${ResponseCode[ResponseCode.ReportAlreadyRetracted]} `;
+
+/**
+ * NCMEC answers the cancel of a CyberTip already finished or already retracted with a response code
+ * the client either resolves with or names in the error it throws, depending on the HTTP status.
+ */
 async function cancelCyberTip(id: number) {
   try {
     const { data } = await cybertipClient.cancelReport({ id });
@@ -838,7 +846,12 @@ async function cancelCyberTip(id: number) {
       return { outcome: 'retracted' as const };
     return { outcome: 'cancelled' as const };
   } catch (e) {
-    return { outcome: 'failed' as const, message: (e as Error | undefined)?.message };
+    const message = (e as Error | undefined)?.message;
+    if (message?.includes(ANSWERED_ALREADY_FINISHED))
+      return { outcome: 'finished' as const, message };
+    if (message?.includes(ANSWERED_ALREADY_RETRACTED))
+      return { outcome: 'retracted' as const, message };
+    return { outcome: 'failed' as const, message };
   }
 }
 
@@ -847,10 +860,13 @@ async function cancelCyberTip(id: number) {
  * It is cancelled before another is opened; one that is finished, or cannot be cancelled, may be with
  * NCMEC, and a duplicate beats a missed report, so the report is sent again and the row notes which.
  */
-async function cancelStoredCyberTip(claim: SendClaim) {
+async function cancelStoredCyberTip(
+  claim: SendClaim
+): Promise<'none' | 'cancelled' | 'held' | 'lost'> {
   const stored = claim.report.reportId;
+  if (stored == null) return 'none';
   // Outside production the stored ids are not this environment's CyberTips.
-  if (stored == null || !isProd) return true;
+  if (!isProd) return 'held';
   const { outcome, message } = await cancelCyberTip(stored);
   const delivered = outcome === 'finished' || outcome === 'failed';
   if (delivered)
@@ -864,12 +880,14 @@ async function cancelStoredCyberTip(claim: SendClaim) {
     logSendLine(claim, outcome === 'retracted' ? 'send-cancel-already-retracted' : 'send-cancel', {
       ncmecReportId: stored,
     });
-  return await updateUnderClaim(
+  const recorded = await updateUnderClaim(
     claim,
     'cancel-stored',
     { reportId: null },
     appendId(delivered ? 'possibleDuplicateReportIds' : 'cancelledReportIds', stored)
   );
+  if (!recorded) return 'lost';
+  return delivered ? 'held' : 'cancelled';
 }
 
 async function uploadToCyberTip(claim: SendClaim, file: File) {
@@ -902,7 +920,7 @@ async function sendCyberTip(
     failureSubType?: string;
   }
 ) {
-  if (!(await cancelStoredCyberTip(claim))) return false;
+  if ((await cancelStoredCyberTip(claim)) === 'lost') return false;
 
   const {
     data: { reportId: ncmecReportId },
@@ -915,7 +933,10 @@ async function sendCyberTip(
     if (isProd && !(await updateUnderClaim(claim, 'open', { reportId: ncmecReportId })))
       throw new Error('send claim lost');
     details = await sendFiles(ncmecReportId);
-    await cybertipClient.finishReport({ id: ncmecReportId });
+    const finish = await cybertipClient.finishReport({ id: ncmecReportId });
+    // The client resolves a finish of a retracted CyberTip as it does a finished one.
+    if (finish?.data?.responseCode === ResponseCode.ReportAlreadyRetracted)
+      throw new Error('the CyberTip was retracted before it was finished');
     logSendLine(claim, 'send-finish');
   } catch (e) {
     logSendFailure(claim.report, e, failureSubType, ncmecReportId);
@@ -1209,7 +1230,8 @@ async function reportGenerationData(claim: SendClaim) {
   if (!initialReport) return;
 
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
-  if (!generatedImages) return await deleteUnderClaim(claim, 'no generated image of the report');
+  if (!generatedImages?.length)
+    return await deleteUnderClaim(claim, 'no generated image of the report');
 
   await sendCyberTip(claim, initialReport, {
     sendFiles: async (reportId) => {
@@ -1258,7 +1280,6 @@ async function reportGenerationData(claim: SendClaim) {
           return arr;
         }
       );
-      if (uploads.length === 0) throw new Error('no file of the report could be sent');
       return { generatedImageUploads: uploads };
     },
   });
@@ -1280,44 +1301,57 @@ async function reportTrainingData(claim: SendClaim) {
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
 
   createDir(dir);
-
-  await sendCyberTip(claim, initialReport, {
-    sendFiles: async (reportId) => {
+  try {
+    // Downloaded and read before the CyberTip is opened, so a report that cannot be sent opens none.
+    let files: { imgBlob: Blob; filename: string }[];
+    try {
       const zipStream = await getTrainingDataZipStream({
         reportedById: report.reportedById,
         versionId: version.id,
       });
-
       await fsAsync.writeFile(outPath, zipStream);
-
-      const limit = plimit(2);
-
-      const zipReader = new JSZip();
       const zData = await new Promise<Buffer>((resolve, reject) => {
         fs.readFile(outPath, function (err, data) {
           if (err) reject(err);
           else resolve(data);
         });
-      }).then((data) => zipReader.loadAsync(new Uint8Array(data)));
-
-      const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
-        limit(async () => {
-          const file = blobToFile(imgBlob, filename);
-          const {
-            data: { fileId, hash },
-          } = await uploadToCyberTip(claim, file);
-
-          await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
-
-          return { filename, fileId, hash };
-        })
+      }).then((data) => new JSZip().loadAsync(new Uint8Array(data)));
+      files = await unzipTrainingData(zData, ({ imgBlob, filename }) => ({ imgBlob, filename }));
+    } catch (e) {
+      return logSendFailure(report, e, 'archive-data');
+    }
+    if (!files.length)
+      return logSendLine(
+        claim,
+        'send-no-files',
+        { message: `report ${report.id} training data holds no image` },
+        'error'
       );
-      if (results.length === 0) throw new Error('no file of the report could be sent');
-      return { trainingData: results };
-    },
-  });
-  // Sent or not, the next run downloads it again.
-  if (fs.existsSync(dir)) removeDir(dir);
+
+    const limit = plimit(2);
+    await sendCyberTip(claim, initialReport, {
+      sendFiles: async (reportId) => ({
+        trainingData: await Promise.all(
+          files.map(({ imgBlob, filename }) =>
+            limit(async () => {
+              const {
+                data: { fileId, hash },
+              } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
+              await cybertipClient.submitFileDetails({
+                reportId,
+                fileId,
+                originalFileName: filename,
+              });
+              return { filename, fileId, hash };
+            })
+          )
+        ),
+      }),
+    });
+  } finally {
+    // A scratch copy of the stored training data: every run downloads its own.
+    if (fs.existsSync(dir)) removeDir(dir);
+  }
 }
 
 async function reportExternalLink(claim: SendClaim) {
