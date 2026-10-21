@@ -98,23 +98,48 @@ function foldImages(stored: unknown, added: { id: number }[]) {
   return unionLists(stored, added, (image) => image.id) ?? [];
 }
 
-/** The new form's answers win; what each report named is kept from both. */
+type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
+
+/** One entry per job; a job named by both reports keeps the blobs of both. */
+function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | undefined) {
+  if (!Array.isArray(stored) && !added) return undefined;
+  const byJob = new Map<unknown, Record<string, unknown>>();
+  const loose: unknown[] = [];
+  for (const entry of [...(Array.isArray(stored) ? stored : []), ...(added ?? [])]) {
+    if (!isRecord(entry)) {
+      loose.push(entry);
+      continue;
+    }
+    const kept = byJob.get(entry.jobId);
+    if (!kept) byJob.set(entry.jobId, entry);
+    else kept.blobs = unionLists<{ url: string }>(kept.blobs, entry.blobs as never, (b) => b?.url);
+  }
+  return [...byJob.values(), ...loose];
+}
+
+/** The new form's answers win, except that a real-minor depiction is never downgraded. */
 function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
   const prior = isRecord(stored) ? stored : {};
-  const next = added ?? {};
+  const next = Object.fromEntries(
+    Object.entries(added ?? {}).filter(([, value]) => value !== undefined)
+  ) as CsamReportFormOutput;
   const folded: Record<string, unknown> = { ...prior, ...next };
+  if (prior.minorDepiction === 'real') folded.minorDepiction = 'real';
   for (const key of ['modelVersionIds', 'capabilities', 'contents'] as const) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
-  const generatedImages = unionLists(
-    prior.generatedImages,
-    next.generatedImages,
-    (entry) => entry.jobId
-  );
+  const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   return folded as Prisma.InputJsonObject;
 }
+
+// A training-data report sends and archives one version's data, so a filing on another version is
+// a report of its own.
+const trainingVersionFilter = (type: CsamReportType, details?: CsamReportFormOutput) =>
+  type === CsamReportType.TrainingData
+    ? { details: { path: ['modelVersionIds'], array_contains: details?.modelVersionIds ?? [] } }
+    : {};
 
 export async function createCsamReport({
   reportedById,
@@ -139,13 +164,13 @@ export async function createCsamReport({
     ? await dbWrite.csamReport.create({ data })
     : await dbWrite.$transaction(async (tx) => {
         const unsent = await tx.csamReport.findFirst({
-          where: { userId, type, reportSentAt: null },
+          where: { userId, type, reportSentAt: null, ...trainingVersionFilter(type, details) },
           select: { id: true },
         });
         if (!unsent) return tx.csamReport.create({ data });
 
-        // Locked and re-read, so a concurrent filing on the same report folds in after this one
-        // rather than overwriting it. A report sent since the lookup gets a new report instead.
+        // Locked and re-read, so two filings on the same report both land. A report sent since the
+        // lookup gets a new report instead.
         const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
           SELECT images, details FROM "CsamReport"
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
