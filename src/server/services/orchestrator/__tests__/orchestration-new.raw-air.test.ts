@@ -516,3 +516,72 @@ describe('createWorkflowStepsFromGraph — workflow key', () => {
     expect(workflowMetadata).toMatchObject({ params: { workflow: 'img2img:avatar' } });
   });
 });
+
+describe('read path: formatGenerationResponse2 weights the hydrated resources', () => {
+  const lora = (id: number, strengthDefault: number) =>
+    ({
+      id,
+      name: `lora-${id}`,
+      baseModel: 'SDXL 1.0',
+      canGenerate: true,
+      hasAccess: true,
+      trainedWords: [],
+      settings: { strength: { min: -1, max: 2, default: strengthDefault } },
+      model: { id: id * 10, name: `M${id}`, type: 'LORA' },
+      air: `urn:air:sdxl:lora:civitai:${id * 10}@${id}`,
+    } as never);
+
+  it('keeps the stored weight and falls back to the version default', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([lora(701, 0.9), lora(702, 0.6)]);
+    const [formatted] = await formatGenerationResponse2([
+      {
+        id: 'wf-read-2',
+        status: 'succeeded',
+        createdAt: new Date().toISOString(),
+        metadata: {
+          params: { prompt: 'test', ecosystem: 'SDXL', workflow: 'txt2img' },
+          resources: [
+            { id: 701, model: { type: 'LORA' }, strength: 0.4 },
+            { id: 702, model: { type: 'LORA' } },
+          ],
+        },
+        steps: [],
+      } as never,
+    ]);
+    const weights = Object.fromEntries(
+      (formatted.metadata?.resources ?? []).map((r) => [r.id, r.strength])
+    );
+    expect(weights).toEqual({ 701: 0.4, 702: 0.6 });
+  });
+  it('weights resources stored on the step the same way', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([lora(701, 0.9), lora(702, 0.6)]);
+    const [formatted] = await formatGenerationResponse2([
+      {
+        id: 'wf-read-3',
+        status: 'succeeded',
+        createdAt: new Date().toISOString(),
+        metadata: {},
+        steps: [
+          {
+            $type: 'textToImage',
+            name: '$0',
+            status: 'succeeded',
+            input: {},
+            output: {},
+            metadata: {
+              params: { prompt: 'test', ecosystem: 'SDXL', workflow: 'txt2img' },
+              resources: [
+                { id: 701, model: { type: 'LORA' }, strength: 0.4 },
+                { id: 702, model: { type: 'LORA' } },
+              ],
+            },
+          },
+        ],
+      } as never,
+    ]);
+    const weights = Object.fromEntries(
+      (formatted.steps[0]?.metadata?.resources ?? []).map((r) => [r.id, r.strength])
+    );
+    expect(weights).toEqual({ 701: 0.4, 702: 0.6 });
+  });
+});

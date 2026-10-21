@@ -4,11 +4,11 @@ import type { ReactNode } from 'react';
 import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
 import type { GetAllAuctionsReturn } from '~/server/services/auction.service';
 import { MY_BIDS } from '~/shared/constants/auction.constants';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 
 type AuctionState = {
   selectedAuction: GetAllAuctionsReturn[number] | undefined;
-  selectedModel: GenerationResource | undefined;
+  selectedModel: GenerationResourceValue | undefined;
   validAuction: boolean;
   justBid: { auctionId: number; entityId: number } | undefined;
   viewing: { [p: number]: number };

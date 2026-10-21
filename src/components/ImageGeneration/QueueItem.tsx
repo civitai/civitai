@@ -46,7 +46,7 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import {
   orchestratorCompletedStatuses,
@@ -484,7 +484,7 @@ function ResourceRow({
   resource,
   download,
 }: {
-  resource: GenerationResource;
+  resource: GenerationResourceValue;
   download?: DownloadRow;
 }) {
   const { unstableResources } = useGenerationConfig();

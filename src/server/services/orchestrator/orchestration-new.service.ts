@@ -66,7 +66,7 @@ import {
   type PersistedModelSubstitution,
 } from '~/shared/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import {
   redis,
   REDIS_KEYS,
@@ -123,7 +123,7 @@ import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { toStepMetadata } from '~/shared/utils/resource.utils';
+import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
@@ -2353,7 +2353,7 @@ export interface NormalizedStepMetadata {
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
    */
-  resources?: GenerationResource[];
+  resources?: GenerationResourceValue[];
   /** Remix reference (legacy — new writes put this on workflow.metadata) */
   remixOfId?: number;
   /**
@@ -2430,7 +2430,7 @@ export interface NormalizedWorkflowMetadata {
   /** The generation form params (prompt, steps, model settings, etc.) */
   params: Record<string, unknown>;
   /** The generation form resources (model, LoRAs, VAE, etc.) — enriched */
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
   /** Remix reference */
   remixOfId?: number;
   /** Whether the generation was private */
@@ -2552,7 +2552,7 @@ function getResourceRefsFromStep(
 function getResourcesFromStep(
   step: WorkflowStep,
   allResources: GenerationResource[]
-): GenerationResource[] {
+): GenerationResourceValue[] {
   const refs = getResourceRefsFromStep(step);
   return refs
     .map((ref) => {
@@ -2564,8 +2564,7 @@ function getResourcesFromStep(
         ) ?? allResources.find((r) => r.id === ref.id);
       if (!enriched) return null;
       return {
-        ...enriched,
-        strength: ref.strength ?? enriched.strength,
+        ...asResourceValue(enriched, ref.strength),
         epochDetails: enriched.epochDetails
           ? enriched.epochDetails
           : ref.epochNumber
@@ -2987,7 +2986,7 @@ function formatStep(
   // Resolve step-level params/resources based on format.
   // Legacy formats always populate step params. New format only has step params for enhancements.
   let resolvedParams: Record<string, unknown> | undefined;
-  let resolvedResources: GenerationResource[] | undefined;
+  let resolvedResources: GenerationResourceValue[] | undefined;
   let remixOfId: number | undefined;
   let fromSourceLineage = false;
 
@@ -3015,9 +3014,9 @@ function formatStep(
               if (!id) return null;
               const enriched = allResources.find((ar) => ar.id === id);
               if (!enriched) return null;
-              return { ...enriched, strength: (r.strength as number) ?? enriched.strength };
+              return asResourceValue(enriched, r.strength as number | undefined);
             })
-            .filter((r): r is GenerationResource => r !== null)
+            .filter((r): r is GenerationResourceValue => r !== null)
         : stepResources;
   } else if (hasStepParams) {
     // Step has its own params (legacy standard gen, or enhancement with params at root).
@@ -3240,7 +3239,7 @@ export async function formatGenerationResponse2(
     if (hasWfMeta) {
       const wfParams = (rawWfMeta.params ?? {}) as Record<string, unknown>;
       const wfRawResources = rawWfMeta.resources as ResourceData[] | undefined;
-      const wfResources: GenerationResource[] = [];
+      const wfResources: GenerationResourceValue[] = [];
       for (const r of wfRawResources ?? []) {
         if (isRawAirResource(r)) {
           wfResources.push(rawAirGenerationResource(r));
@@ -3248,7 +3247,7 @@ export async function formatGenerationResponse2(
         }
         const enriched = enrichedResources.find((ar) => ar.id === r.id);
         if (enriched) {
-          wfResources.push({ ...enriched, strength: r.strength ?? enriched.strength });
+          wfResources.push(asResourceValue(enriched, r.strength));
         }
       }
 
@@ -3282,11 +3281,11 @@ export async function formatGenerationResponse2(
         // Legacy enhancement: last transformation is the workflow metadata
         const lastTransform = transformations[transformations.length - 1];
         const tParams = (lastTransform.params ?? {}) as Record<string, unknown>;
-        const tResources: GenerationResource[] = [];
+        const tResources: GenerationResourceValue[] = [];
         for (const r of (lastTransform.resources ?? []) as ResourceData[]) {
           const enriched = enrichedResources.find((ar) => ar.id === r.id);
           if (enriched) {
-            tResources.push({ ...enriched, strength: r.strength ?? enriched.strength });
+            tResources.push(asResourceValue(enriched, r.strength));
           }
         }
         const mapped = mapDataToGraphInput(tParams, tResources);

@@ -1,6 +1,16 @@
 import type { ModelVersionTerms } from '@civitai/buzz';
-import type { TurboSettings } from '~/shared/constants/basemodel.constants';
+import type { Range } from '~/shared/constants/basemodel.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+
+export type ResourceSettings = {
+  strength: Range;
+  clipSkip?: number;
+  /** A checkpoint's companion turbo LoRA; `strength` overrides the LoRA's own default. */
+  turboLora?: { id: number; strength?: number };
+};
+
+/** Advisory bands inside the generator's own range, which the user may leave. */
+export type RecommendedSettings = { steps?: Range; cfgScale?: Range };
 
 type NodeRef = [string, number];
 export type ComfyNode = {
@@ -14,7 +24,6 @@ export type GenerationResourceBase = {
   id: number;
   name: string;
   trainedWords: string[];
-  vaeId?: number;
   baseModel: string;
   paidAccess?: { endsAt: Date | null; terms: ModelVersionTerms } | null;
   canGenerate: boolean;
@@ -23,15 +32,10 @@ export type GenerationResourceBase = {
   additionalResourceCost?: boolean;
   availability?: Availability;
   epochNumber?: number;
-  // settings
-  clipSkip?: number;
-  minStrength: number;
-  maxStrength: number;
-  strength: number;
-  /** Present on a turbo variant LoRA: the steps and CFG it runs at, with their advisory bands. */
-  turbo?: TurboSettings;
-  /** A checkpoint's own default turbo LoRA, over the family's; its strength over the LoRA's own. */
-  turboLora?: { id: number; strength?: number };
+  settings: ResourceSettings;
+  /** A distilled variant; the band it runs at is in `recommendedSettings`. */
+  turbo?: boolean;
+  recommendedSettings?: RecommendedSettings;
   /** Whether the current user owns the model this resource belongs to (computed by server) */
   isOwnedByUser?: boolean;
   /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
@@ -57,6 +61,9 @@ export type GenerationResourceBase = {
   aliasId?: number | null;
 };
 
+/** A resource as the form holds it and the request carries it: the data plus the chosen weight. */
+export type GenerationResourceValue = GenerationResource & { strength: number };
+
 export type GenerationResource = GenerationResourceBase & {
   model: {
     id: number;
@@ -74,7 +81,7 @@ export type GenerationResource = GenerationResourceBase & {
     epochNumber: number;
     isExpired: boolean;
   };
-  substitute?: GenerationResourceBase;
+  substitute?: GenerationResourceBase & { strength?: number };
   image?: {
     id: number;
     url: string;

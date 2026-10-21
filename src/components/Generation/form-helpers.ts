@@ -9,7 +9,7 @@ import {
   getEcosystemGroup,
 } from '~/shared/constants/basemodel.constants';
 import { isRawAirResource } from '~/shared/utils/air';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 
 const STORAGE_KEY = 'generation-graph';
 /**
@@ -52,10 +52,10 @@ export function getLastUsedCheckpointIdForEcosystem(ecosystemKey: string): numbe
   }
 }
 
-/** Convert GenerationResource to the form-graph ResourceData.
+/** Convert a GenerationResourceValue to the form-graph ResourceData.
  * Resources arriving from the cross-domain handoff or storage may be partially
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
-export function toResourceData(r: GenerationResource): ResourceData {
+export function toResourceData(r: GenerationResourceValue): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
   if (isRawAirResource(r)) return r; // Raw-AIR resources are self-contained (no ModelVersion row) — pass through whole so air/workflowId survive to submission
   return {
@@ -65,8 +65,9 @@ export function toResourceData(r: GenerationResource): ResourceData {
     // behaviour off the model, e.g. MOSS Image's turbo LoRA defaults
     model: { id: r.model?.id, type: r.model?.type } as ResourceData['model'],
     strength: r.strength,
-    ...(r.turbo && { turbo: r.turbo }),
-    ...(r.turboLora && { turboLora: r.turboLora }),
+    ...(r.turbo && { turbo: true }),
+    ...(r.recommendedSettings && { recommendedSettings: r.recommendedSettings }),
+    ...(r.settings?.turboLora && { settings: { turboLora: r.settings.turboLora } }),
     trainedWords: r.trainedWords && r.trainedWords.length > 0 ? r.trainedWords : undefined,
   };
 }

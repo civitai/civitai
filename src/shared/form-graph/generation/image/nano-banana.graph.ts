@@ -40,7 +40,8 @@ const nanoBananaModeVersionOptions = [
   { label: 'V2.1', value: nanoBananaVersionIds.v21 },
 ];
 
-const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
+/** The 1K sizes. */
+export const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
   { label: '21:9', value: '21:9', width: 2520, height: 1080 },
   { label: '16:9', value: '16:9', width: 1920, height: 1080 },
   { label: '3:2', value: '3:2', width: 1620, height: 1080 },

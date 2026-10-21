@@ -6,6 +6,7 @@ import {
   useGenerationConfig,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
@@ -143,7 +144,7 @@ function useModelWriteBack(store: GenerationStore) {
       const model = state.model as PartialResourceValue | undefined;
       if (!model?.id || !needsHydration(model)) return;
       const data = getResourceData(model.id);
-      if (data) store.set({ model: data });
+      if (data) store.set({ model: asResourceValue(data) });
     }
     writeBack();
     return store.subscribe(writeBack);
