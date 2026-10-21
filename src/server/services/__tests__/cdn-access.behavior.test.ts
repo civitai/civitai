@@ -667,6 +667,29 @@ describe('report coverage', () => {
     expect(callsFor(u(2))).toEqual(['deny']);
   });
 
+  it('a covering report that is unsent or unverified covers nothing on its own', async () => {
+    await image(1);
+    await image(2);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", images)
+              VALUES (${OWNER}, now(), '[{"id": 1}]'::jsonb)`;
+    await sql`INSERT INTO "CsamReport" ("userId", details, images)
+              VALUES (${OWNER}, jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'),
+                      '[{"id": 2}]'::jsonb)`;
+    await moderatorBlock(1);
+    await moderatorBlock(2);
+    // The owner's evidence hold is read as lifted, so only coverage decides.
+    const queryRaw = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: unknown[]) => {
+      const rows = await queryRaw?.(...(a as Parameters<NonNullable<typeof queryRaw>>));
+      return (a[0] as readonly string[]).join('').includes('AS reported')
+        ? (rows as { held: boolean }[]).map((r) => ({ ...r, held: false }))
+        : rows;
+    }) as never);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
   it('a failed coverage lookup releases nothing', async () => {
     await image(1);
     await verifiedReport([1]);
