@@ -207,6 +207,8 @@ export type AppealCoverImage = {
   type?: string;
   minor?: boolean;
   acceptableMinor?: boolean;
+  /** Names what the tile is when the set is not one entity's gallery, e.g. a profile's avatar. */
+  caption?: string;
 };
 
 export type MinorFlagAppealRow = {

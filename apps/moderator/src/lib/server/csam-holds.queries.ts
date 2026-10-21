@@ -26,6 +26,8 @@ export type CsamHoldRow = {
   /** A chat hold's judged messages, and who sent them; empty and null for other types. */
   messageIds: number[];
   senderId: number | null;
+  /** The model a legacy `Comment` hold was posted on. */
+  commentModelId: number | null;
   title: string | null;
   live: boolean | null;
   status: string;
@@ -131,6 +133,9 @@ export async function listCsamHolds({
     .leftJoin('Model as m', (join) =>
       join.onRef('m.id', '=', 'h.entityId').on('h.entityType', '=', 'Model')
     )
+    .leftJoin('Comment as lc', (join) =>
+      join.onRef('lc.id', '=', 'h.entityId').on('h.entityType', '=', 'Comment')
+    )
     .select([
       'h.id',
       'h.entityType',
@@ -152,6 +157,7 @@ export async function listCsamHolds({
       'ph.status as priorStatus',
       'ph.decidedAt as priorDecidedAt',
       'pd.username as priorDecidedByUsername',
+      'lc.modelId as commentModelId',
       sql<string | null>`coalesce(p.title, m.name)`.as('title'),
       sql<
         boolean | null
@@ -190,6 +196,7 @@ export async function listCsamHolds({
       chatId: typeof chatId === 'number' ? chatId : null,
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
+      commentModelId: row.commentModelId ?? null,
       decision: typeof decision === 'string' ? decision : null,
     };
   });
@@ -285,11 +292,13 @@ async function getModelCovers(modelIds: number[]): Promise<Map<number, CsamHoldC
   return toCovers(rows);
 }
 
-export async function getHoldCoverImages(
-  holds: { id: number; entityType: string; entityId: number }[]
-): Promise<Map<number, CsamHoldCovers>> {
+/** Cover media for `Post` and `Model` references, keyed `Type:id`; any other type is skipped. One read
+ *  per type, whatever the number of references. */
+export async function getEntityCovers(
+  refs: { type: string; id: number }[]
+): Promise<Map<string, CsamHoldCovers>> {
   const idsOf = (type: string) => [
-    ...new Set(holds.filter((h) => h.entityType === type).map((h) => h.entityId)),
+    ...new Set(refs.filter((r) => r.type === type).map((r) => r.id)),
   ];
   const postIds = idsOf('Post');
   const modelIds = idsOf('Model');
@@ -297,12 +306,20 @@ export async function getHoldCoverImages(
     postIds.length ? getPostCovers(postIds) : new Map<number, CsamHoldCovers>(),
     modelIds.length ? getModelCovers(modelIds) : new Map<number, CsamHoldCovers>(),
   ]);
+  const covers = new Map<string, CsamHoldCovers>();
+  for (const [id, found] of posts) covers.set(`Post:${id}`, found);
+  for (const [id, found] of models) covers.set(`Model:${id}`, found);
+  return covers;
+}
+
+export async function getHoldCoverImages(
+  holds: { id: number; entityType: string; entityId: number }[]
+): Promise<Map<number, CsamHoldCovers>> {
+  const found = await getEntityCovers(holds.map((h) => ({ type: h.entityType, id: h.entityId })));
   const covers = new Map<number, CsamHoldCovers>();
   for (const h of holds) {
-    const found = (h.entityType === 'Post' ? posts : h.entityType === 'Model' ? models : null)?.get(
-      h.entityId
-    );
-    if (found) covers.set(h.id, found);
+    const entry = found.get(`${h.entityType}:${h.entityId}`);
+    if (entry) covers.set(h.id, entry);
   }
   return covers;
 }

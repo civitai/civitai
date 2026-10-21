@@ -103,6 +103,7 @@ beforeEach(async () => {
       "userId" INTEGER, "modelVersionId" INTEGER);
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL,
       "userId" INTEGER);
+    CREATE TABLE "Comment" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
     CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
       "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
@@ -208,6 +209,14 @@ describe('listCsamHolds', () => {
     });
     expect(items.find((h) => h.id === 2)).toMatchObject({ messageIds: [], senderId: null });
     expect(items.find((h) => h.id === 1)?.messageIds).toEqual([]);
+  });
+
+  it('carries the model of a held legacy comment, and nothing for other types', async () => {
+    await db.exec(`INSERT INTO "Comment" VALUES (300, 70)`);
+    await seed([{ id: 30, createdAt: '2026-10-08', entityType: 'Comment' }]);
+    const { items } = await listCsamHolds(OLDEST_PENDING);
+    expect(items.find((h) => h.id === 30)?.commentModelId).toBe(70);
+    expect(items.find((h) => h.id === 1)?.commentModelId).toBeNull();
   });
 
   it('carries the chat id of a held chat message', async () => {

@@ -1,5 +1,12 @@
 import { shortAge } from '$lib/format';
-import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+import {
+  chatAuditChatUrl,
+  commentV2Url,
+  entityUrl,
+  modelCommentUrl,
+  userLookupUrl,
+  userUrl,
+} from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -208,14 +215,18 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
+  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment`: its deep link needs the model id,
- *  which the hold does not record. */
+/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'Comment':
+      return hold.commentModelId
+        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
+        : null;
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

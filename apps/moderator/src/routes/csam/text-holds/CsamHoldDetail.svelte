@@ -23,12 +23,14 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
-  import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import { csamReportUrl, entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, shortAge } from '$lib/format';
-  import type { CsamHoldItem } from '$lib/server/csam-holds.service';
-  import type { Outcome } from '$lib/triage/queue';
+    import type { Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import HoldConversation from './HoldConversation.svelte';
+  import HoldParentCard from './HoldParentCard.svelte';
+  import HoldProfileCard from './HoldProfileCard.svelte';
+  import { parentUrlType, type CsamHoldView } from './hold-context';
   import {
     CSAM_HOLD_CONFIRMS,
     CSAM_HOLD_KEY_ORDER,
@@ -55,7 +57,7 @@
     submit,
     actionHref,
   }: {
-    row: CsamHoldItem;
+    row: CsamHoldView;
     civitaiUrl: string;
     /** Holds `csam.report.file`: the page itself is closed to anyone else. */
     canDecide: boolean;
@@ -70,6 +72,9 @@
   } = $props();
 
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
+  const parentHref = $derived(
+    row.parent ? entityUrl(civitaiUrl, parentUrlType(row.parent.type), row.parent.id) : null
+  );
   const canRemove = $derived(canRemoveHeld(row.entityType));
   const decidedRow = $derived(row.status !== 'Pending');
   const dismissedRow = $derived(row.status === 'Dismissed');
@@ -253,6 +258,14 @@
         </div>
       </TriageCard>
     </div>
+
+    {#if row.profile}
+      <HoldProfileCard profile={row.profile} blurred={!imageReveal.on} />
+    {/if}
+
+    {#if row.parent}
+      <HoldParentCard parent={row.parent} href={parentHref} blurred={!imageReveal.on} />
+    {/if}
 
     {#if row.chatId !== null}
       <HoldConversation holdId={row.id} chatId={row.chatId} />

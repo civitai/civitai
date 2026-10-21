@@ -6,8 +6,10 @@ const {
   countPendingCsamHolds,
   decideCsamHold,
   getHoldCoverImages,
+  getHoldContexts,
 } = vi.hoisted(() => ({
   getHoldCoverImages: vi.fn(),
+  getHoldContexts: vi.fn(),
   listCsamHolds: vi.fn(),
   countCsamHoldsByType: vi.fn(),
   countPendingCsamHolds: vi.fn(),
@@ -15,6 +17,7 @@ const {
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+vi.mock('../hold-context.server', () => ({ getHoldContexts }));
 vi.mock('$lib/server/csam-holds.service', async () => ({
   // The real search parser: what a `q` becomes is part of what the load hands the query.
   csamHoldSearch: (
@@ -34,6 +37,7 @@ const {
   canRemoveHeld,
   decisionLabel,
   holdDecisionEnabled,
+  holdEntityHref,
   holdMeta,
   holdTitle,
   quotedPhrases,
@@ -69,6 +73,7 @@ beforeEach(() => {
   countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
   getHoldCoverImages.mockResolvedValue(new Map());
+  getHoldContexts.mockResolvedValue(new Map());
 });
 
 describe('csam text holds load', () => {
@@ -179,6 +184,38 @@ describe('csam text holds load', () => {
     getHoldCoverImages.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
     expect(data.items).toMatchObject([{ id: 1, coverImages: [], imageTotal: 0 }]);
+  });
+
+  it('hands each row its profile or comment parent from one batched read of the page', async () => {
+    listCsamHolds.mockResolvedValue({
+      items: [
+        { id: 1, entityType: 'UserProfile', entityId: 10 },
+        { id: 2, entityType: 'CommentV2', entityId: 20 },
+        { id: 3, entityType: 'Post', entityId: 30 },
+      ],
+      hasMore: false,
+    });
+    const profile = { bio: 'x', images: [] };
+    const parent = { type: 'post', id: 9, title: 't', images: [], imageTotal: 0 };
+    getHoldContexts.mockResolvedValue(
+      new Map([
+        [1, { profile, parent: null }],
+        [2, { profile: null, parent }],
+      ])
+    );
+    const data = await loadAt('');
+    expect(getHoldContexts).toHaveBeenCalledTimes(1);
+    expect(data.items).toMatchObject([
+      { id: 1, profile, parent: null },
+      { id: 2, profile: null, parent },
+      { id: 3, profile: null, parent: null },
+    ]);
+  });
+
+  it('still lists the queue when the context fails', async () => {
+    getHoldContexts.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data.items).toMatchObject([{ id: 1, profile: null, parent: null }]);
   });
 
   it('still lists the queue when the counts fail', async () => {
@@ -415,6 +452,22 @@ describe('csam hold row text', () => {
     expect(
       holdMeta({ status: 'Confirmed', createdAt, decidedAt: new Date('2026-10-20T10:00:00Z') }, now)
     ).toBe('decided 2h');
+  });
+});
+
+describe('holdEntityHref', () => {
+  const ref = { entityId: 5, userId: null, username: null, chatId: null };
+
+  it('opens a legacy comment on its model, highlighting the comment', () => {
+    expect(
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: 70 })
+    ).toBe('https://site.test/models/70?dialog=commentThread&highlight=5');
+  });
+
+  it('has no link for a legacy comment whose model is unknown', () => {
+    expect(
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: null })
+    ).toBeNull();
   });
 });
 

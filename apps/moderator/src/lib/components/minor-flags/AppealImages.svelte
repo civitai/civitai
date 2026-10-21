@@ -41,6 +41,13 @@
             ? 'size-full scale-110 object-cover object-top blur-xl'
             : 'size-full object-cover object-top'}
         />
+        {#if image.caption}
+          <span
+            class="absolute top-2 left-2 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-white"
+          >
+            {image.caption}
+          </span>
+        {/if}
         <span class="absolute bottom-2 left-2 flex flex-wrap gap-1 text-[10px] font-semibold text-white">
           <span class="rounded bg-black/60 px-1.5 py-px">
             {getBrowsingLevelLabel(image.nsfwLevel)}
