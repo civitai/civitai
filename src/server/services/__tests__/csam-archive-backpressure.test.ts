@@ -547,17 +547,21 @@ describe('archiveCsamDataForReport (Image report)', () => {
 
   it('records each stored object, and how many of the images the report names it holds', async () => {
     seedDb();
-    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`.
-    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`. One named image
-    // cannot be fetched and another comes back as something other than an image.
+    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`. Two named images
+    // are gone from storage: one is gone from the edge too, and the edge serves the other as
+    // something other than an image.
     const unfetchable = `image-uuid-${IMAGE_COUNT - 1}`;
     const notAnImage = `image-uuid-${IMAGE_COUNT - 2}`;
-    mockFetchBlob = async (url: unknown) =>
-      String(url).includes(unfetchable)
-        ? null
-        : String(url).includes(notAnImage)
-        ? { ...fakeBlob(8), type: 'text/html' }
-        : fakeBlob(8);
+    mockGetObject = async (key) => {
+      if (key === unfetchable || key === notAnImage)
+        throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+      return fakeObject(8);
+    };
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+      String(input).includes(notAnImage)
+        ? new Response('<html></html>', { headers: { 'content-type': 'text/html' } })
+        : new Response('not found', { status: 404 })
+    );
     uploadedKeys.length = 0;
 
     await archiveCsamDataForReport({
@@ -578,7 +582,8 @@ describe('archiveCsamDataForReport (Image report)', () => {
         kind: 'images',
         key: uploadedKeys.find((k) => k.endsWith('images.zip')),
         etag: expect.stringMatching(/^"etag-\d+"$/),
-        entries: IMAGE_COUNT - 1,
+        // Every image but the missing one, plus the manifest.
+        entries: IMAGE_COUNT,
         namedExpected: 3,
         namedMissing: 2,
       },
