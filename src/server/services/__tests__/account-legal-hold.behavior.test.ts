@@ -14,6 +14,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 import {
   getAccountLegalHoldLegs,
+  guardedAccountScrubSql,
   isAccountUnderLegalHold,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
@@ -36,12 +37,17 @@ const SECONDARY_BLOCKED_REPORTED_LONG_AGO = 12;
 const OLD_REPORT_SUBJECT = 13; // owns nothing; names SECONDARY_BLOCKED_REPORTED_LONG_AGO
 const NEW_IMAGE_AFTER_OLD_REPORT = 14;
 const SENT_LONG_AGO_NOT_ARCHIVED = 15;
+const IMAGE_ON_INTERNAL_REPORT = 16; // their image is listed on a report naming someone else
+const ALREADY_DELETED = 17;
+const ALL_USERS = Array.from({ length: 17 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
 type Row = Record<string, unknown>;
 /** Replaces what one statement answers, picked out by its text. */
 let answer: ((sql: string, rows: Row[]) => Row[]) | null = null;
+/** Runs just before the guarded scrub executes: a hold landing after the check. */
+let beforeScrub: (() => Promise<unknown>) | null = null;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -60,8 +66,23 @@ beforeAll(async () => {
       "needsReview" text,
       "blockedFor" text
     );
+    CREATE TABLE "User" (
+      id int PRIMARY KEY,
+      "deletedAt" timestamp(3),
+      email text,
+      username text,
+      name text,
+      "paddleCustomerId" text,
+      "customerId" text,
+      image text,
+      "profilePictureId" int,
+      "subscriptionId" text
+    );
   `);
 });
+
+const userRow = async (id: number) =>
+  (await holder.db.query<Row>(`SELECT * FROM "User" WHERE id = $1`, [id])).rows[0];
 
 async function createMarkerView() {
   await holder.db.exec(`
@@ -77,6 +98,13 @@ beforeEach(async () => {
   failQueries = false;
   unreadable = false;
   answer = null;
+  beforeScrub = null;
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (sql: Prisma.Sql) => {
+    if (beforeScrub) await beforeScrub();
+    // A DO block takes no parameters; the guarded scrub is built to carry none.
+    await holder.db.exec(sql.text);
+    return 1;
+  }) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
@@ -96,7 +124,13 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image";
+    TRUNCATE "CsamReport", "Image", "User";
+    INSERT INTO "User" (id, email, username, name, "paddleCustomerId", "customerId", image,
+        "profilePictureId", "subscriptionId")
+      SELECT u, 'u' || u || '@example.invalid', 'user' || u, 'Name ' || u, 'pad' || u, 'cus' || u,
+        'img' || u, u, 'sub' || u
+      FROM unnest(ARRAY[${ALL_USERS}]) u;
+    UPDATE "User" SET "deletedAt" = now() - interval '1 day' WHERE id = ${ALREADY_DELETED};
     -- Image ids are the owner's id times 100, plus one for a second image. A sent report's images
     -- carry the upload's keys beside the id, as the sending job writes them.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details, images) VALUES
@@ -118,7 +152,9 @@ beforeEach(async () => {
       (${NEW_IMAGE_AFTER_OLD_REPORT}, now() - interval '400 days', now(), '{}',
         '[{"id": ${NEW_IMAGE_AFTER_OLD_REPORT * 100}}]'),
       -- Sent and naming the unreported owner, but listing none of their images.
-      (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', now(), '{}', '[{"id": 1}]');
+      (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', now(), '{}', '[{"id": 1}]'),
+      -- Pending, naming the placeholder owner, listing another user's image.
+      (-1, NULL, NULL, '{}', '[{"id": ${IMAGE_ON_INTERNAL_REPORT * 100}, "fileId": "f3"}]');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
       (${CLEAN * 100}, ${CLEAN}, 'minor', 'AiNotVerified'),
       (${IMAGE_IN_REVIEW * 100}, ${IMAGE_IN_REVIEW}, 'csam', NULL),
@@ -128,7 +164,8 @@ beforeEach(async () => {
         SECONDARY_BLOCKED_REPORTED_LONG_AGO * 100
       }, ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
       (${NEW_IMAGE_AFTER_OLD_REPORT * 100}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM'),
-      (${NEW_IMAGE_AFTER_OLD_REPORT * 100 + 1}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM');
+      (${NEW_IMAGE_AFTER_OLD_REPORT * 100 + 1}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM'),
+      (${IMAGE_ON_INTERNAL_REPORT * 100}, ${IMAGE_ON_INTERNAL_REPORT}, NULL, NULL);
   `);
 });
 
@@ -148,6 +185,11 @@ describe('getAccountLegalHoldLegs', () => {
       'a new blocked image beside one an old sent report lists',
       NEW_IMAGE_AFTER_OLD_REPORT,
       ['image-blocked'],
+    ],
+    [
+      'an image listed on a report that names someone else',
+      IMAGE_ON_INTERNAL_REPORT,
+      ['reported-image'],
     ],
   ])('holds an account with %s', async (_, userId, legs) => {
     expect(await getAccountLegalHoldLegs(userId)).toEqual(legs);
@@ -174,13 +216,18 @@ describe('getAccountLegalHoldLegs', () => {
     expect(await getAccountLegalHoldLegs(RELEASED_MARKER)).toEqual([]);
     expect(await getAccountLegalHoldLegs(CLEAN)).toEqual([]);
   });
+
+  it('holds every account when the marker table exists without its view', async () => {
+    await holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int NOT NULL)`);
+    expect(await getAccountLegalHoldLegs(CLEAN)).toEqual(['hold-marker']);
+  });
 });
 
 describe('an answer that is not a boolean', () => {
   it('counts every unreadable column as a hold', async () => {
     unreadable = true;
     expect((await getAccountLegalHoldLegs(CLEAN)).sort()).toEqual(
-      ['hold-marker', 'image-blocked', 'image-review', 'report'].sort()
+      ['hold-marker', 'image-blocked', 'image-review', 'report', 'reported-image'].sort()
     );
   });
 });
@@ -198,7 +245,7 @@ describe('an answer that is missing', () => {
   });
 
   it('refuses when the lookup returns no row at all', async () => {
-    answer = (sql, rows) => (sql.includes('markerViewExists') ? [] : rows);
+    answer = (sql, rows) => (sql.includes('"markerTable"') ? [] : rows);
     expect(await isAccountUnderLegalHold(CLEAN)).toBeNull();
   });
 });
@@ -219,7 +266,9 @@ describe('deleteUser under a legal hold', () => {
       id: args.where.id,
       meta: {},
     })) as never);
-    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown) => ops) as never);
+    // Like Prisma's array form: a failing statement fails the transaction.
+    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown[]) =>
+      Promise.all(ops)) as never);
   });
 
   it.each([PENDING_REPORT, SECONDARY_ON_REPORT, IMAGE_IN_REVIEW, IMAGE_BLOCKED_UNREPORTED])(
@@ -242,9 +291,49 @@ describe('deleteUser under a legal hold', () => {
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('deletes an account no hold covers', async () => {
+  it('deletes an account no hold covers, end to end', async () => {
     await run(CLEAN);
+
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.model.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: CLEAN } })
+    );
+    const row = await userRow(CLEAN);
+    expect(row.deletedAt).not.toBeNull();
+    expect(row).toMatchObject({
+      email: null,
+      username: null,
+      name: null,
+      paddleCustomerId: null,
+      image: null,
+      profilePictureId: null,
+      subscriptionId: null,
+      // Kept on purpose: see delete-user-pii-scrub.test.ts.
+      customerId: `cus${CLEAN}`,
+    });
+  });
+
+  it('stops the scrub when a hold lands after the check, and leaves the account as it was', async () => {
+    const before = await userRow(CLEAN);
+    beforeScrub = () =>
+      holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
+
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await userRow(CLEAN)).toEqual(before);
+  });
+
+  it('stops the scrub for a marker that lands after the check', async () => {
+    await createMarkerView();
+    const before = await userRow(CLEAN);
+    beforeScrub = () => holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
+
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await userRow(CLEAN)).toEqual(before);
+  });
+
+  it('still scrubs an account already marked deleted, as before', async () => {
+    await run(ALREADY_DELETED);
+    expect(await userRow(ALREADY_DELETED)).toMatchObject({ email: null, username: null });
   });
 
   it('logs which hold applied, and the refusal carries none of it', async () => {
@@ -256,5 +345,20 @@ describe('deleteUser under a legal hold', () => {
         details: { userId: IMAGE_IN_REVIEW, legs: ['image-review'] },
       })
     );
+  });
+});
+
+describe('guardedAccountScrubSql', () => {
+  it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+    'refuses to build a statement for id %s',
+    (id) => {
+      expect(() => guardedAccountScrubSql(id, false)).toThrow();
+    }
+  );
+
+  it('carries no parameters, and names the marker view only when asked', () => {
+    expect(guardedAccountScrubSql(CLEAN, false).values).toEqual([]);
+    expect(guardedAccountScrubSql(CLEAN, false).text).not.toContain('EvidenceHeldUser');
+    expect(guardedAccountScrubSql(CLEAN, true).text).toContain('"EvidenceHeldUser"');
   });
 });

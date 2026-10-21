@@ -20,9 +20,8 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, EVIDENCE_HOLD_TABLE } = await import(
-  '../csam-flag-clear'
-);
+const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, HOLD_MARKER_TABLE, HOLD_MARKER_VIEW } =
+  await import('../csam-flag-clear');
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
@@ -33,7 +32,10 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB);
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
+  "images" JSONB NOT NULL DEFAULT '[]'
+);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, "activity" TEXT
 );
@@ -59,6 +61,9 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   held: { id: 130 },
   heldReleased: { id: 131 },
   mismatch: { id: 140 },
+  reportedImage: { id: 150 },
+  notedByDeployedPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
+  driftProbe: { id: 170 },
 };
 
 let db: PGlite;
@@ -103,6 +108,9 @@ beforeAll(async () => {
       (110, '2026-01-01', '{}'),
       (111, NULL, '{}'),
       (999, '2026-01-01', '{"secondaryUserId": "112"}');
+    -- Names nobody this suite owns, and lists one of 150's removed images.
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "details", "images") VALUES
+      (-1, NULL, '{}', '[{"id": 1501, "fileId": "f1"}]');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -167,6 +175,7 @@ const HELD = [
   'minorTrainingBan',
   'noReasonBan',
   'otherBanNoted',
+  'reportedImage',
 ];
 
 describe('a held user', () => {
@@ -182,37 +191,69 @@ describe('a held user', () => {
   // The pre-check and the UPDATE each carry the hold; this pins the UPDATE's on its own.
   it.each(HELD)('is skipped by the update itself (%s)', async (key) => {
     const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, false)).toEqual([]);
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, 'none')).toEqual([]);
     expect(await flagged(USERS[key].id)).toHaveLength(3);
   });
 });
 
-describe('an evidence hold', () => {
+describe('the ban-notes pattern', () => {
+  afterAll(() => {
+    delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+  });
+
+  it('is read from the deployment, not only the default', async () => {
+    const id = USERS.notedByDeployedPattern.id;
+    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzfixture';
+
+    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
+    expect(await flagged(id)).toHaveLength(3);
+
+    // The same notes clear under the default pattern.
+    delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+    expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
+  });
+});
+
+describe('a hold marker', () => {
   beforeAll(async () => {
     await db.exec(`
-      CREATE TABLE "${EVIDENCE_HOLD_TABLE}" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "releasedAt" TIMESTAMP(3));
-      INSERT INTO "${EVIDENCE_HOLD_TABLE}" ("userId", "releasedAt") VALUES (130, NULL), (131, '2026-01-01');
+      CREATE TABLE "${HOLD_MARKER_TABLE}" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "releasedAt" TIMESTAMP(3));
+      CREATE VIEW "${HOLD_MARKER_VIEW}" AS
+        SELECT "userId" FROM "${HOLD_MARKER_TABLE}" WHERE "releasedAt" IS NULL GROUP BY "userId";
+      INSERT INTO "${HOLD_MARKER_TABLE}" ("userId", "releasedAt") VALUES (130, NULL), (131, '2026-01-01');
     `);
   });
 
   afterAll(async () => {
-    await db.exec(`DROP TABLE "${EVIDENCE_HOLD_TABLE}"`);
+    await db.exec(`DROP VIEW IF EXISTS "${HOLD_MARKER_VIEW}"; DROP TABLE "${HOLD_MARKER_TABLE}"`);
   });
 
-  it.each(['held', 'heldReleased'])('refuses its user once the table exists (%s)', async (key) => {
-    const id = USERS[key].id;
+  it('refuses a user the marker view holds', async () => {
+    const id = USERS.held.id;
 
     expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-
     expect(await flagged(id)).toHaveLength(3);
   });
 
-  it.each(['held', 'heldReleased'])('is skipped by the update itself (%s)', async (key) => {
+  it('is skipped by the update itself', async () => {
     const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, true)).toEqual([]);
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS.held.id, 'view')).toEqual([]);
+  });
+
+  // A released marker is how Legal lets a user go; the view is the one definition of held.
+  it('clears a user whose marker was released', async () => {
+    expect(await clear(USERS.heldReleased.id)).toMatchObject({ ok: true, cleared: 2 });
   });
 
   it('still clears a user with no hold', async () => {
     expect(await clear(USERS.otherClean.id)).toMatchObject({ ok: true, cleared: 2 });
+  });
+
+  it('refuses everyone while the table exists without its view', async () => {
+    await db.exec(`DROP VIEW "${HOLD_MARKER_VIEW}"`);
+    const id = USERS.driftProbe.id;
+
+    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
+    expect(await flagged(id)).toHaveLength(3);
   });
 });
