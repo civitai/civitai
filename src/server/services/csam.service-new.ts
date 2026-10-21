@@ -767,14 +767,14 @@ async function reportImages(report: CsamReportProps) {
         fileAnnotations.physicalHarm = true;
       }
 
-      const check = checks.get(image.id) ?? {};
-      if ('failed' in check)
+      const check = checks.get(image.id);
+      if (check && 'failed' in check)
         return {
           ...imageReportInfo,
           source: 'missing',
           reason: SEND_SHORT_REASON,
         } satisfies CsamReportImage;
-      if ('absent' in check)
+      if (check && 'absent' in check)
         return {
           ...imageReportInfo,
           source: 'missing',
