@@ -42,8 +42,26 @@ const PENDING_REPORT = 2;
 const RECENTLY_SENT = 3;
 const SENT_OVER_A_YEAR_AGO = 4;
 const SECONDARY_ON_REPORT = 5;
+const SENT_JUST_UNDER_A_YEAR_AGO = 6;
+const SENT_JUST_OVER_A_YEAR_AGO = 7;
+const OLD_REPORT_NOT_ARCHIVED = 8;
+const OLD_AND_PENDING_REPORTS = 11;
+const MODEL_KEPT_AFTER_ACCOUNT_DELETION = 12; // the model now belongs to the placeholder owner
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_ON_REPORT
-const OWNERS = [UNHELD, PENDING_REPORT, RECENTLY_SENT, SENT_OVER_A_YEAR_AGO, SECONDARY_ON_REPORT];
+const OWNERS = [
+  UNHELD,
+  PENDING_REPORT,
+  RECENTLY_SENT,
+  SENT_OVER_A_YEAR_AGO,
+  SECONDARY_ON_REPORT,
+  SENT_JUST_UNDER_A_YEAR_AGO,
+  SENT_JUST_OVER_A_YEAR_AGO,
+  OLD_REPORT_NOT_ARCHIVED,
+  OLD_AND_PENDING_REPORTS,
+  MODEL_KEPT_AFTER_ACCOUNT_DELETION,
+];
+const ELIGIBLE = [UNHELD, SENT_OVER_A_YEAR_AGO, SENT_JUST_OVER_A_YEAR_AGO];
+const HELD = OWNERS.filter((owner) => !ELIGIBLE.includes(owner));
 
 const trainingFileUrl = (owner: number) => `https://example.invalid/training-${owner}`;
 const replacedFileUrl = (owner: number) => `https://example.invalid/replaced-${owner}`;
@@ -72,6 +90,7 @@ beforeAll(async () => {
       id serial PRIMARY KEY,
       "userId" int,
       "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}'
     );
   `);
@@ -110,11 +129,17 @@ beforeEach(async () => {
       SELECT u * 1000 + 1, u * 100, 'Model', 'https://example.invalid/replaced-' || u,
         now() - interval '60 days'
       FROM unnest(ARRAY[${OWNERS}]) u;
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", details) VALUES
-      (${PENDING_REPORT}, NULL, '{}'),
-      (${RECENTLY_SENT}, now() - interval '30 days', 'null'),
-      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', '{}'),
-      (${REPORT_SUBJECT}, now() - interval '30 days', '{"secondaryUserId": ${SECONDARY_ON_REPORT}}');
+    UPDATE "Model" SET "userId" = -1 WHERE id = ${MODEL_KEPT_AFTER_ACCOUNT_DELETION * 10};
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
+      (${PENDING_REPORT}, NULL, NULL, '{}'),
+      (${RECENTLY_SENT}, now() - interval '30 days', now(), 'null'),
+      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', now(), '{}'),
+      (${REPORT_SUBJECT}, now() - interval '30 days', now(), '{"secondaryUserId": ${SECONDARY_ON_REPORT}}'),
+      (${SENT_JUST_UNDER_A_YEAR_AGO}, now() - interval '360 days', now(), '{}'),
+      (${SENT_JUST_OVER_A_YEAR_AGO}, now() - interval '370 days', now(), '{}'),
+      (${OLD_REPORT_NOT_ARCHIVED}, now() - interval '400 days', NULL, '{}'),
+      (${OLD_AND_PENDING_REPORTS}, now() - interval '400 days', now(), '{}'),
+      (${OLD_AND_PENDING_REPORTS}, NULL, NULL, '{}');
   `);
 });
 
@@ -132,12 +157,10 @@ describe('delete-old-training-data under a legal hold', () => {
   it('deletes only the training data of owners no hold covers', async () => {
     await deleteOldTrainingData.run({}).result;
 
-    expect(deletedUrls()).toEqual([UNHELD, SENT_OVER_A_YEAR_AGO].map(trainingFileUrl).sort());
-    expect(skipReasons()).toEqual({
-      [PENDING_REPORT * 1000]: 'legal-hold',
-      [RECENTLY_SENT * 1000]: 'legal-hold',
-      [SECONDARY_ON_REPORT * 1000]: 'legal-hold',
-    });
+    expect(deletedUrls()).toEqual(ELIGIBLE.map(trainingFileUrl).sort());
+    expect(skipReasons()).toEqual(
+      Object.fromEntries(HELD.map((owner) => [owner * 1000, 'legal-hold']))
+    );
   });
 
   it('reports held files as would-skip in a dry run', async () => {
@@ -147,12 +170,13 @@ describe('delete-old-training-data under a legal hold', () => {
 
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
     const wouldSkip = loggingMock.logToAxiom.mock.calls
-      .map(([entry]) => entry as { message?: string; data?: { modelFileId?: number } })
+      .map(
+        ([entry]) => entry as { message?: string; data?: { modelFileId?: number; reason?: string } }
+      )
       .filter((entry) => entry.message === 'Dry run, would skip')
-      .map((entry) => entry.data!.modelFileId)
-      .sort();
-    expect(wouldSkip).toEqual(
-      [PENDING_REPORT, RECENTLY_SENT, SECONDARY_ON_REPORT].map((u) => u * 1000)
+      .map((entry) => [entry.data!.modelFileId, entry.data!.reason]);
+    expect(Object.fromEntries(wouldSkip)).toEqual(
+      Object.fromEntries(HELD.map((owner) => [owner * 1000, 'legal-hold']))
     );
   });
 
@@ -170,12 +194,10 @@ describe('purge-replaced-files under a legal hold', () => {
   it('purges only the replaced files of owners no hold covers', async () => {
     await purgeReplacedFilesJob.run({}).result;
 
-    expect(deletedUrls()).toEqual([UNHELD, SENT_OVER_A_YEAR_AGO].map(replacedFileUrl).sort());
-    expect(skipReasons()).toEqual({
-      [PENDING_REPORT * 1000 + 1]: 'legal-hold',
-      [RECENTLY_SENT * 1000 + 1]: 'legal-hold',
-      [SECONDARY_ON_REPORT * 1000 + 1]: 'legal-hold',
-    });
+    expect(deletedUrls()).toEqual(ELIGIBLE.map(replacedFileUrl).sort());
+    expect(skipReasons()).toEqual(
+      Object.fromEntries(HELD.map((owner) => [owner * 1000 + 1, 'legal-hold']))
+    );
   });
 
   it('skips a row whose hold status is unknown', async () => {
