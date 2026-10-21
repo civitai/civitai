@@ -136,10 +136,16 @@ describe('model page path — the version comes from the page, not modelVersion.
     expect(result.modelVersion).toBe(pageVersion);
   });
 
-  it('reads ownership from the page model, so the owner can still download', () => {
-    state.currentUser = { id: OWNER_ID };
+  it('reads ownership from the page model: only the owner may download a non-Download version', () => {
+    // The fixture's usageControl is InternalGeneration, so ownership alone decides isDownloadable.
+    // OWNER_ID, VIEWER_ID and the model id are pairwise distinct, so reading the wrong id (or
+    // ignoring ownership, or falling back to the no-version default of `true`) flips one of the two.
     state.entityAccess = [];
 
+    state.currentUser = { id: VIEWER_ID };
+    expect(useFromPage().isDownloadable).toBe(false);
+
+    state.currentUser = { id: OWNER_ID };
     expect(useFromPage().isDownloadable).toBe(true);
   });
 

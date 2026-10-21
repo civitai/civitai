@@ -5,18 +5,18 @@ import { sourceFiles } from '../../../../test/source-scan';
 import { stripComments } from '../../../../test/strip-comments';
 
 /**
- * RELATIONSHIP GUARD for where `useModelVersionPermission` gets its version from.
+ * POPULATION GUARD for `useModelVersionPermission`: the set of production callers is closed.
  *
- * Without a `modelVersion` argument the hook fetches `modelVersion.getById` itself. On the model page
- * that is a second request for a version the page already holds from `model.getById`, so every call
- * site there must hand the page's copy in. The behavioural half — that a hook fed page data issues no
- * request and still answers correctly — is pinned in `model-version-permission-page-data.test.ts`;
- * this file pins the POPULATION: the set of callers is closed, and each one either forwards page data
- * or is a component that can be opened without it (and then forwards an optional prop its model-page
- * parent fills).
+ * Without a `modelVersion` argument the hook fetches `modelVersion.getById` itself, so a new caller
+ * on the model page is a new request for data the page already holds. This ledger makes adding (or
+ * removing) a caller a deliberate edit: it fails on GROWTH and on SHRINK.
  *
- * Fails on GROWTH (a new caller that silently refetches) and on SHRINK (a renamed or removed caller
- * whose entry here went stale).
+ * It deliberately does NOT check that each caller passes `modelVersion`: a source match on the key is
+ * satisfied by `modelVersion: undefined` and is automatically true for the two callers that only
+ * forward an optional prop, so it would read as coverage while providing none. What the hook does
+ * with page data (no `modelVersion.getById` request, correct permissions) is pinned behaviourally in
+ * `model-version-permission-page-data.test.ts`; that the page actually hands the data in is not
+ * pinned by any test.
  */
 
 const ROOT = process.cwd();
@@ -38,72 +38,20 @@ const CODE = new Map(
   FILES.map((f) => [f, stripComments(readFileSync(join(ROOT, f), 'utf8'))] as const)
 );
 const HOME = 'src/components/Model/ModelVersions/model-version.utils.ts';
-const CALL_RE = /\buseModelVersionPermission\s*\(/g;
-const CALLERS = FILES.filter(
-  (f) => f !== HOME && new RegExp(CALL_RE.source).test(CODE.get(f)!)
-).sort();
-
-/** The argument text of every `useModelVersionPermission(...)` call in `src`. */
-function callArgs(src: string): string[] {
-  const out: string[] = [];
-  for (const match of src.matchAll(CALL_RE)) {
-    let depth = 1;
-    let i = match.index! + match[0].length;
-    const start = i;
-    for (; i < src.length && depth > 0; i++) {
-      if (src[i] === '(') depth++;
-      else if (src[i] === ')') depth--;
-    }
-    out.push(src.slice(start, i - 1));
-  }
-  return out;
-}
-
-/** `modelVersion` passed as a key (`modelVersion: x`) or shorthand (`{ modelVersion }`). */
-const PASSES_MODEL_VERSION = /\bmodelVersion\b\s*[:,}]/;
+const CALL_RE = /\buseModelVersionPermission\s*\(/;
+const CALLERS = FILES.filter((f) => f !== HOME && CALL_RE.test(CODE.get(f)!)).sort();
 
 describe('useModelVersionPermission call-site ledger', () => {
   it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
     expect(FILES.length).toBeGreaterThan(500);
     expect(FILES).toContain(HOME);
     expect(CALLERS.length).toBeGreaterThan(0);
-    // The argument matcher can tell a call with page data from one without it.
-    expect(PASSES_MODEL_VERSION.test(callArgs('useModelVersionPermission({ id: 1 })')[0])).toBe(
-      false
-    );
-    expect(
-      PASSES_MODEL_VERSION.test(
-        callArgs('useModelVersionPermission({ modelVersionId: f(1), modelVersion })')[0]
-      )
-    ).toBe(true);
+    // …and that it can go RED: a definitely-absent identifier matches nothing.
+    const bogus = FILES.filter((f) => /\buseModelVersionPermissionNoSuch\s*\(/.test(CODE.get(f)!));
+    expect(bogus).toEqual([]);
   });
 
   it('the set of production callers EXACTLY equals the ledger', () => {
     expect(CALLERS).toEqual(Object.keys(CALL_SITE_LEDGER).sort());
-  });
-
-  it('every call passes a modelVersion, so no model-page caller refetches by default', () => {
-    for (const file of Object.keys(CALL_SITE_LEDGER)) {
-      const args = callArgs(CODE.get(file) ?? '');
-      expect(args.length, `${file} calls the hook`).toBeGreaterThan(0);
-      for (const arg of args)
-        expect(PASSES_MODEL_VERSION.test(arg), `${file}: useModelVersionPermission(${arg})`).toBe(
-          true
-        );
-    }
-  });
-
-  it('ModelVersionDetails fills the forwarded prop of both children it opens on the model page', () => {
-    const details = CODE.get('src/components/Model/ModelVersions/ModelVersionDetails.tsx') ?? '';
-
-    const donationGoal = details.match(/<ModelVersionDonationGoal\b[^>]*>/)?.[0] ?? '';
-    expect(donationGoal, 'renders ModelVersionDonationGoal').not.toBe('');
-    expect(donationGoal).toMatch(/\bmodelVersion=/);
-
-    const purchaseTrigger =
-      details.match(/component:\s*ModelVersionEarlyAccessPurchase,\s*props:\s*\{[^}]*\}/)?.[0] ??
-      '';
-    expect(purchaseTrigger, 'opens ModelVersionEarlyAccessPurchase').not.toBe('');
-    expect(purchaseTrigger).toMatch(PASSES_MODEL_VERSION);
   });
 });
