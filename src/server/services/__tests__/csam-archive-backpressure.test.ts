@@ -123,7 +123,6 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
-// The image archive reads each stored original from the upload bucket.
 const getObjectKeys: string[] = [];
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -1119,7 +1118,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(getObjectKeys.length).toBeGreaterThan(1);
-    expect(getObjectKeys.length).toBeLessThan(ROWS);
+    expect(getObjectKeys.length).toBeLessThanOrEqual(10);
   });
 });
 

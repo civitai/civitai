@@ -565,6 +565,18 @@ describe('createByteBudget', () => {
     expect(budget.reservedBytes).toBe(90);
   });
 
+  it('takes the whole budget for a size that is not a number, and gives it all back', async () => {
+    const budget = createByteBudget(100);
+    const release = await budget.reserve(NaN);
+    expect(budget.reservedBytes).toBe(100);
+
+    const next = budget.reserve(1);
+    expect(await settled(next)).toBe('parked');
+    release();
+    expect(await settled(next)).toBe('granted');
+    expect(budget.reservedBytes).toBe(1);
+  });
+
   it('gives bytes back once, however many times release is called', async () => {
     const budget = createByteBudget(100);
     const release = await budget.reserve(70);
@@ -593,7 +605,6 @@ describe('createBoundedArchive onWritten', () => {
     archive.pipe(output);
     const bounded = createBoundedArchive({ archive, output, maxPendingEntries: BOUND });
 
-    // Each callback records how many entries the archiver had written when it ran.
     const written: Array<{ entry: number; entriesWritten: number }> = [];
     let entriesWritten = 0;
     archive.prependListener('entry', () => entriesWritten++);

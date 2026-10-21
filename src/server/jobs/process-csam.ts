@@ -5,6 +5,7 @@ import {
   getCsamsToArchive,
   getCsamsToRemoveContent,
   getCsamsToReport,
+  logBlockedCsamReports,
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
@@ -30,6 +31,9 @@ function errorMessage(e: unknown): string {
   }
 }
 
+/** How long `send-csam-reports` may hold its run lock; matches the archive job's. */
+export const CSAM_SEND_JOB_LOCK_SECONDS = 4 * 60 * 60;
+
 const sendCsamReportsJob = createJob(
   'send-csam-reports',
   '0 */1 * * *',
@@ -49,8 +53,25 @@ const sendCsamReportsJob = createJob(
         });
       }
     }
+
+    try {
+      await logBlockedCsamReports(reports.map((report) => report.id));
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-blocked-check',
+        message: errorMessage(e),
+      });
+    }
   },
-  { dedicated: true }
+  // Two overlapping runs would each open a CyberTip for the same report, and one report's file
+  // reads can outlast the default lock. Same mechanism as the archive job below.
+  {
+    dedicated: true,
+    lockExpiration: CSAM_SEND_JOB_LOCK_SECONDS,
+    keepLockOnDisconnect: true,
+  }
 );
 
 /**
@@ -121,7 +142,6 @@ const archiveCsamReportDataJob = createJob(
       try {
         await archiveCsamDataForReport(report);
       } catch (e) {
-        // A failed archive is retried next hour; the age is what shows one stuck retrying.
         logToAxiom({
           name: 'csam-report',
           type: 'error',

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getCsamsToReport: vi.fn(),
   archiveCsamDataForReport: vi.fn(),
   processCsamReport: vi.fn(),
+  logBlockedCsamReports: vi.fn(),
   getCsamsToRemoveContent: vi.fn(async () => []),
 }));
 
@@ -28,6 +29,7 @@ vi.mock('~/server/services/csam-archive-evidence.service', () => evidence);
 import {
   CSAM_ARCHIVE_JOB_LOCK_SECONDS,
   CSAM_ARCHIVE_MEASURED_PASS_SECONDS,
+  CSAM_SEND_JOB_LOCK_SECONDS,
   csamJobs,
 } from '~/server/jobs/process-csam';
 import { createDisconnectHandler, createJob } from '~/server/jobs/job';
@@ -44,6 +46,7 @@ beforeEach(() => {
   mocks.getCsamsToReport.mockResolvedValue(reports);
   mocks.archiveCsamDataForReport.mockResolvedValue(undefined);
   mocks.processCsamReport.mockResolvedValue(undefined);
+  mocks.logBlockedCsamReports.mockResolvedValue(undefined);
   evidence.checkCsamArchiveEvidence.mockResolvedValue(undefined);
 });
 
@@ -233,12 +236,22 @@ describe('the archive job’s lock survives the caller hanging up', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: the sibling job, which does not opt in, still releases on a disconnect', async () => {
-    // Same handler, same harness, a real un-opted job — so a green above is a fact about the
-    // opt-in and not about the harness. This is also the default-unchanged claim, checked against
-    // a job that ships today rather than a fixture.
-    expect(sendJob!.options.keepLockOnDisconnect).toBeUndefined();
-    const { cancel, release, handler } = harness(sendJob!.options);
+  it('the send job keeps its lock on a disconnect too, and holds it as long', async () => {
+    const { release, handler } = harness(sendJob!.options);
+
+    await handler();
+
+    expect(release).not.toHaveBeenCalled();
+    expect(sendJob!.options.lockExpiration).toBe(CSAM_SEND_JOB_LOCK_SECONDS);
+    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBe(CSAM_ARCHIVE_JOB_LOCK_SECONDS);
+  });
+
+  it('CONTROL: a job that does not opt in still releases on a disconnect', async () => {
+    // Same handler, same harness, an un-opted job: a green above is a fact about the opt-in and
+    // not about the harness.
+    const unopted = createJob('probe', '0 */1 * * *', async () => undefined);
+    expect(unopted.options.keepLockOnDisconnect).toBeUndefined();
+    const { cancel, release, handler } = harness(unopted.options);
 
     await handler();
 
@@ -261,5 +274,25 @@ describe('send-csam-reports batch isolation', () => {
       .filter((arg) => arg?.subType === 'send-report');
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toBe('undefined');
+  });
+});
+
+describe('send-csam-reports blocked-report alert', () => {
+  it('checks every fetched report after the batch, even when one failed', async () => {
+    mocks.processCsamReport.mockRejectedValueOnce(new Error('synthetic send failure'));
+
+    await sendJob!.run({}).result;
+
+    expect(mocks.logBlockedCsamReports).toHaveBeenCalledTimes(1);
+    expect(mocks.logBlockedCsamReports).toHaveBeenCalledWith([8801, 8802, 8803]);
+    expect(mocks.logBlockedCsamReports.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.processCsamReport.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('finishes the job when the check fails', async () => {
+    mocks.logBlockedCsamReports.mockRejectedValueOnce(new Error('synthetic check failure'));
+
+    await expect(sendJob!.run({}).result).resolves.not.toThrow();
   });
 });

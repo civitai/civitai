@@ -121,6 +121,8 @@ type CsamReportDetails = CsamReportFormOutput & {
   generatedImages?: CsamReportGeneratedImages[];
   /** Why the archive stored less than the report's evidence. */
   archiveSkipped?: string;
+  /** Failed reads of each image's file across send runs, by image id. */
+  readFailures?: Record<string, number>;
 };
 
 type StoredObject = { key: string; etag: string | null };
@@ -576,35 +578,47 @@ async function getInitialReportData(report: CsamReportProps) {
   } satisfies Report;
 }
 
-/** A report unsent for this long after it was filed is reported as blocked, for alerting. */
+/** Hours after filing at which an unsent report is logged as `send-blocked`. */
 export const CSAM_SEND_BLOCKED_AFTER_HOURS = 6;
 
 /**
- * After this long, a file that still cannot be read no longer holds the report back: it is sent
- * without that file, recorded as missing. Holding a report longer is a code change.
+ * Hours after filing at which a report is sent without a file that still cannot be read, once
+ * reads of that file have failed CSAM_SEND_SHORT_MIN_READ_FAILURES times.
  */
 export const CSAM_SEND_SHORT_AFTER_HOURS = 24;
+export const CSAM_SEND_SHORT_MIN_READ_FAILURES = 2;
+
+/** Hours after filing at which a report none of whose files can be read needs a human decision. */
+export const CSAM_SEND_DECISION_AFTER_HOURS = 48;
 
 export const SEND_SHORT_REASON = 'storage read failed after retries';
 
-const hoursSinceFiled = (report: CsamReportProps) =>
+const hoursSinceFiled = (report: { createdAt: Date }) =>
   Math.floor((Date.now() - report.createdAt.getTime()) / 3_600_000);
 
-/**
- * An unsent report is retried every run. The id and age make one stuck retrying traceable, and
- * the separate `send-blocked` line is what an alert keys on.
- */
+/** An unsent report is retried every run; the id and age make one stuck retrying traceable. */
 function logSendFailure(report: CsamReportProps, e: unknown, subType: string) {
-  const hoursPending = hoursSinceFiled(report);
   logToAxiom({
     name: 'csam-report',
     type: 'error',
     subType,
     message: (e as Error | undefined)?.message,
     reportId: report.id,
-    hoursPending,
+    hoursPending: hoursSinceFiled(report),
   });
-  if (hoursPending >= CSAM_SEND_BLOCKED_AFTER_HOURS)
+}
+
+/** Logs `send-blocked` for each of these reports still unsent this long after filing, whatever held it. */
+export async function logBlockedCsamReports(reportIds: number[]) {
+  if (!reportIds.length) return;
+  // The primary: a replica may not have this run's sends yet.
+  const unsent = await dbWrite.csamReport.findMany({
+    where: { id: { in: reportIds }, reportSentAt: null },
+    select: { id: true, createdAt: true },
+  });
+  for (const report of unsent) {
+    const hoursPending = hoursSinceFiled(report);
+    if (hoursPending < CSAM_SEND_BLOCKED_AFTER_HOURS) continue;
     logToAxiom({
       name: 'csam-report',
       type: 'error',
@@ -613,6 +627,16 @@ function logSendFailure(report: CsamReportProps, e: unknown, subType: string) {
       reportId: report.id,
       hoursPending,
     });
+  }
+}
+
+/** Only while the report is unsent: a sent report is append-only. */
+async function recordReadFailures(report: CsamReportProps, readFailures: Record<string, number>) {
+  if (!isProd) return;
+  await dbWrite.csamReport.updateMany({
+    where: { id: report.id, reportSentAt: null },
+    data: { details: { ...report.details, readFailures } },
+  });
 }
 
 async function reportImages(report: CsamReportProps) {
@@ -634,7 +658,9 @@ async function reportImages(report: CsamReportProps) {
     ...initialReport,
   });
 
-  let sentShort = 0;
+  const readFailures = { ...report.details.readFailures };
+  const failedReads: number[] = [];
+  let uploaded = 0;
   try {
     const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
       images,
@@ -672,16 +698,15 @@ async function reportImages(report: CsamReportProps) {
         let original: OriginalImageRead;
         try {
           original = await readOriginalImage(image);
-        } catch (e) {
-          if (hoursSinceFiled(report) < CSAM_SEND_SHORT_AFTER_HOURS) throw e;
-          sentShort++;
+        } catch {
+          readFailures[image.id] = (readFailures[image.id] ?? 0) + 1;
+          failedReads.push(image.id);
           return {
             ...imageReportInfo,
             source: 'missing',
             reason: SEND_SHORT_REASON,
           } satisfies CsamReportImage;
         }
-        // Recorded rather than skipped, so the sent report shows the gap.
         if (original.source === 'missing')
           return { ...imageReportInfo, source: original.source } satisfies CsamReportImage;
         // A Buffer read from storage is backed by a plain ArrayBuffer.
@@ -701,7 +726,7 @@ async function reportImages(report: CsamReportProps) {
           fileAnnotations,
         });
 
-        // Written by the same update that sets `reportSentAt`, so a sent report always has them.
+        uploaded++;
         return {
           ...imageReportInfo,
           fileAnnotations,
@@ -715,6 +740,35 @@ async function reportImages(report: CsamReportProps) {
       }
     );
 
+    if (failedReads.length > 0) {
+      await recordReadFailures(report, readFailures);
+      const hoursPending = hoursSinceFiled(report);
+      if (uploaded === 0) {
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          subType: 'send-all-unreadable',
+          message: `report ${report.id} has no readable file`,
+          reportId: report.id,
+          hoursPending,
+        });
+        if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
+          logToAxiom({
+            name: 'csam-report',
+            type: 'error',
+            subType: 'send-decision-needed',
+            message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
+            reportId: report.id,
+            hoursPending,
+          });
+        throw new Error('no file of the report could be read');
+      }
+      const sendShort =
+        hoursPending >= CSAM_SEND_SHORT_AFTER_HOURS &&
+        failedReads.every((id) => readFailures[id] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
+      if (!sendShort) throw new Error(`${failedReads.length} file(s) could not be read`);
+    }
+
     if (isProd) {
       await dbWrite.csamReport.update({
         where: { id: report.id },
@@ -722,20 +776,24 @@ async function reportImages(report: CsamReportProps) {
           ...report,
           reportId,
           reportSentAt: new Date(),
-          details: { ...report.details, images: uploadResult.filter(isDefined) },
+          details: {
+            ...report.details,
+            ...(failedReads.length > 0 && { readFailures }),
+            images: uploadResult.filter(isDefined),
+          },
         },
       });
     }
 
     await cybertipClient.finishReport({ id: reportId });
-    if (sentShort > 0)
+    if (failedReads.length > 0)
       logToAxiom({
         name: 'csam-report',
         type: 'error',
         subType: 'send-short',
-        message: `report ${report.id} sent without ${sentShort} unreadable file(s)`,
+        message: `report ${report.id} sent without ${failedReads.length} unreadable file(s)`,
         reportId: report.id,
-        filesMissing: sentShort,
+        filesMissing: failedReads.length,
       });
   } catch (e: any) {
     await cybertipClient.cancelReport({ id: reportId });
@@ -1894,49 +1952,53 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         imageCount !== undefined ? imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE : undefined,
       append: async (boundedArchive) => {
         const limit = plimit(10);
-        // Originals range up to hundreds of MiB, so what is held is bounded in bytes: a
-        // reservation lasts from the object's headers until the archiver has written it.
+        // Bounded in bytes, not count: originals run to hundreds of MiB.
         const budget = createByteBudget();
         const manifest: ({ imageId: number } & EvidenceFileRecord)[] = [];
+        const archiveImage = async (
+          image: Parameters<typeof readOriginalImage>[0] & { id: number }
+        ) => {
+          const original = await readOriginalImage(image, { reserve: budget.reserve });
+          if (original.source === 'missing') {
+            manifest.push({ imageId: image.id, source: 'missing' });
+            return;
+          }
+          // Named by id: Image.name is user input.
+          const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          try {
+            await boundedArchive.append(original.data, { name }, original.release);
+          } catch (e) {
+            original.release();
+            throw e;
+          }
+          entries += 1;
+          // A stored object is the upload itself; an edge copy counts only as media.
+          if (original.source === 'original' || /^(image|video)\//.test(original.contentType))
+            appendedIds.add(image.id);
+          manifest.push({
+            imageId: image.id,
+            source: original.source,
+            sha256: original.sha256,
+            bytes: original.data.length,
+            contentType: original.contentType,
+          });
+        };
         try {
-          // Paged rather than `images.map(...)` over one array of every row the user owns: the
-          // row set is unbounded. Pages are processed in order.
+          // Paged: a user's row set is unbounded.
           for await (const page of scanUserImages()) {
             await Promise.all(
               page.map((image) =>
-                limit(async () => {
-                  const original = await readOriginalImage(image, { reserve: budget.reserve });
-                  if (original.source === 'missing') {
-                    manifest.push({ imageId: image.id, source: 'missing' });
-                    return;
-                  }
-                  // Named by id, never by `Image.name`: that is user input, and `data.json`
-                  // already carries it.
-                  const name = `${image.id}.${extensionForContentType(original.contentType)}`;
-                  try {
-                    await boundedArchive.append(original.data, { name }, original.release);
-                  } catch (e) {
-                    original.release();
+                limit(() =>
+                  archiveImage(image).catch((e) => {
+                    // Before this slot frees: queued reads would otherwise still open.
+                    limit.clearQueue();
                     throw e;
-                  }
-                  entries += 1;
-                  // A stored object is the upload itself; an edge copy counts only as media.
-                  if (original.source === 'original' || /^(image|video)\//.test(original.contentType))
-                    appendedIds.add(image.id);
-                  manifest.push({
-                    imageId: image.id,
-                    source: original.source,
-                    sha256: original.sha256,
-                    bytes: original.data.length,
-                    contentType: original.contentType,
-                  });
-                })
+                  })
+                )
               )
             );
           }
         } catch (e) {
-          // Stop the page's queued reads too; otherwise each still opens a read after the failure.
-          limit.clearQueue();
           budget.abort(e);
           throw e;
         }

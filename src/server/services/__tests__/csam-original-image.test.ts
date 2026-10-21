@@ -194,6 +194,33 @@ describe('readOriginalImage', () => {
     expect(reserve).toHaveBeenCalledWith(data.length);
   });
 
+  it.each([
+    ['no declared size', undefined],
+    ['an empty declared size', ''],
+    ['a non-numeric declared size', 'abc'],
+  ])('reserves the size cap for an edge copy with %s', async (_, contentLength) => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('edge bytes'), {
+      'content-type': 'image/jpeg',
+      ...(contentLength !== undefined && { 'content-length': contentLength }),
+    });
+    const reserve = vi.fn(async () => () => undefined);
+
+    await readOriginalImage(image, { backend, fetchImpl, reserve });
+
+    expect(reserve).toHaveBeenCalledWith(MAX_EDGE_FALLBACK_BYTES);
+  });
+
+  it('never fetches the edge for a stored key the URL allowlist refuses', async () => {
+    const { backend } = backendReturning(missingKey);
+    const fetchImpl = edgeResponding(200, Buffer.from('remote'));
+
+    await expect(
+      readOriginalImage({ url: '\\evil.example/x.png', type: 'image' }, { backend, fetchImpl })
+    ).resolves.toEqual({ source: 'missing' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('gives the reservation back and frees the socket when the body read fails', async () => {
     const object = storedObject(Buffer.alloc(10));
     object.Body.transformToByteArray.mockRejectedValue(new Error('socket reset'));

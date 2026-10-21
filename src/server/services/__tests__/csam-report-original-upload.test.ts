@@ -58,7 +58,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import {
   CSAM_SEND_BLOCKED_AFTER_HOURS,
+  CSAM_SEND_DECISION_AFTER_HOURS,
   CSAM_SEND_SHORT_AFTER_HOURS,
+  logBlockedCsamReports,
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
@@ -71,7 +73,6 @@ const report = {
   userId: 20,
   reportedById: 10,
   type: 'Image',
-  // Recent: an old report is sent without an unreadable file instead of retried.
   createdAt: new Date(Date.now() - 3_600_000),
   reportSentAt: null,
   images: [{ id: 501 }],
@@ -113,6 +114,7 @@ describe('NCMEC image upload', () => {
     ]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.csamReport.updateMany.mockReset().mockResolvedValue({ count: 1 });
   });
 
   it('uploads the stored original bytes', async () => {
@@ -159,87 +161,161 @@ describe('NCMEC image upload', () => {
     expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
   });
 
-  describe('a send that keeps failing', () => {
-    const failingReport = (hoursAgo: number) =>
-      ({
-        ...report,
-        createdAt: new Date(Date.now() - hoursAgo * 3_600_000 - 60_000),
-      } as CsamReportProps);
-    const loggedLines = () =>
-      vi.mocked(logToAxiom).mock.calls.map(([payload]) => payload as Record<string, unknown>);
+  describe('a report still unsent after the send run', () => {
+    const filedHoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000 - 60_000);
 
     beforeEach(() => {
       vi.mocked(logToAxiom).mockClear();
-      getObject.mockRejectedValue(
-        Object.assign(new Error('synthetic storage outage'), {
-          name: 'InternalError',
-          $metadata: { httpStatusCode: 500 },
-        })
-      );
     });
 
-    it('names the report and how long it has been pending', async () => {
-      await processCsamReport(failingReport(2));
-
-      expect(loggedLines()).toEqual([
-        expect.objectContaining({ type: 'error', reportId: report.id, hoursPending: 2 }),
+    it('raises a blocked line for each one pending past the threshold, read from the primary', async () => {
+      dbMock.dbWrite.csamReport.findMany.mockResolvedValue([
+        { id: 1, createdAt: filedHoursAgo(CSAM_SEND_BLOCKED_AFTER_HOURS - 1) },
+        { id: 2, createdAt: filedHoursAgo(CSAM_SEND_BLOCKED_AFTER_HOURS) },
       ]);
-    });
 
-    it('raises a distinct blocked line once it has been pending past the threshold', async () => {
-      await processCsamReport(failingReport(CSAM_SEND_BLOCKED_AFTER_HOURS - 1));
-      expect(loggedLines().some((line) => line.subType === 'send-blocked')).toBe(false);
+      await logBlockedCsamReports([1, 2, 3]);
 
-      await processCsamReport(failingReport(CSAM_SEND_BLOCKED_AFTER_HOURS));
-      expect(loggedLines().filter((line) => line.subType === 'send-blocked')).toEqual([
-        expect.objectContaining({
-          reportId: report.id,
-          hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS,
-        }),
+      expect(dbMock.dbWrite.csamReport.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: [1, 2, 3] }, reportSentAt: null } })
+      );
+      const blocked = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+        .filter((line) => line.subType === 'send-blocked');
+      expect(blocked).toEqual([
+        expect.objectContaining({ reportId: 2, hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS }),
       ]);
     });
   });
 
   describe('a file that stays unreadable', () => {
-    const filedHoursAgo = (hours: number) =>
+    const storageOutage = () =>
+      Object.assign(new Error('synthetic storage outage'), {
+        name: 'InternalError',
+        $metadata: { httpStatusCode: 500 },
+      });
+    const filed = (hours: number, readFailures?: Record<string, number>) =>
       ({
         ...report,
+        images: [{ id: 501 }, { id: 502 }],
         createdAt: new Date(Date.now() - hours * 3_600_000 - 60_000),
+        details: readFailures ? { readFailures } : {},
       } as CsamReportProps);
+    const lines = (subType: string) =>
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+        .filter((line) => line.subType === subType);
+    const recordedFailures = () =>
+      dbMock.dbWrite.csamReport.updateMany.mock.calls.map(([args]) => args);
 
     beforeEach(() => {
       vi.mocked(logToAxiom).mockClear();
-      getObject.mockRejectedValue(
-        Object.assign(new Error('synthetic storage outage'), {
-          name: 'InternalError',
-          $metadata: { httpStatusCode: 500 },
-        })
+      dbMock.dbRead.image.findMany.mockResolvedValue(
+        [501, 502].map((id) => ({
+          id,
+          url: `stored-key-${id}`,
+          name: 'upload.png',
+          type: 'image',
+          mimeType: 'image/png',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          meta: {},
+          post: null,
+          tags: [],
+        }))
       );
+      getObject.mockImplementation(async (key: string) => {
+        if (key === 'stored-key-502') throw storageOutage();
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      });
     });
 
-    it('still holds the report back just before the limit', async () => {
-      await processCsamReport(filedHoursAgo(CSAM_SEND_SHORT_AFTER_HOURS - 1));
+    it('counts each failed read on the unsent report', async () => {
+      await processCsamReport(filed(1, { 502: 3 }));
+
+      expect(recordedFailures()).toEqual([
+        {
+          where: { id: report.id, reportSentAt: null },
+          data: { details: { readFailures: { 502: 4 } } },
+        },
+      ]);
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('holds the report back before the limit, however often the file failed', async () => {
+      await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS - 1, { 502: 5 }));
 
       expect(cancelReport).toHaveBeenCalledTimes(1);
       expect(finishReport).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
     });
 
-    it('sends the report without it at the limit, recorded as missing with the reason', async () => {
-      await processCsamReport(filedHoursAgo(CSAM_SEND_SHORT_AFTER_HOURS));
+    it('holds the report back at the limit on the first failed read of that file, as after an outage', async () => {
+      await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS));
 
-      expect(uploadFile).not.toHaveBeenCalled();
+      expect(cancelReport).toHaveBeenCalledTimes(1);
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+
+    it('sends without it at the limit on its second failed read, keeping the readable file', async () => {
+      await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS, { 502: 1 }));
+
       expect(cancelReport).not.toHaveBeenCalled();
       expect(finishReport).toHaveBeenCalledTimes(1);
+      expect(uploadFile).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
       expect(sentUpdate().reportSentAt).toBeInstanceOf(Date);
+      expect(sentUpdate().details.readFailures).toEqual({ 502: 2 });
       expect(sentUpdate().details.images).toEqual([
-        { id: 501, source: 'missing', reason: 'storage read failed after retries' },
+        expect.objectContaining({
+          id: 501,
+          fileId: 'file-1',
+          source: 'original',
+          sha256: sha256(stored),
+        }),
+        { id: 502, source: 'missing', reason: 'storage read failed after retries' },
       ]);
-      const alerts = vi
-        .mocked(logToAxiom)
-        .mock.calls.map(([payload]) => payload as Record<string, unknown>)
-        .filter((line) => line.subType === 'send-short');
-      expect(alerts).toEqual([expect.objectContaining({ reportId: report.id, filesMissing: 1 })]);
+      expect(lines('send-short')).toEqual([
+        expect.objectContaining({ reportId: report.id, filesMissing: 1 }),
+      ]);
+    });
+
+    describe('when no file of the report can be read', () => {
+      beforeEach(() => {
+        getObject.mockRejectedValue(storageOutage());
+      });
+
+      it('alerts on the first run and never sends it short', async () => {
+        await processCsamReport(filed(1));
+        expect(lines('send-all-unreadable')).toEqual([
+          expect.objectContaining({ reportId: report.id, hoursPending: 1 }),
+        ]);
+
+        await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS + 1, { 501: 9, 502: 9 }));
+        expect(finishReport).not.toHaveBeenCalled();
+        expect(cancelReport).toHaveBeenCalledTimes(2);
+        expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      });
+
+      it('asks for a decision once it has been blocked past the decision limit', async () => {
+        await processCsamReport(filed(CSAM_SEND_DECISION_AFTER_HOURS - 1, { 501: 9, 502: 9 }));
+        expect(lines('send-decision-needed')).toEqual([]);
+
+        await processCsamReport(filed(CSAM_SEND_DECISION_AFTER_HOURS, { 501: 9, 502: 9 }));
+        expect(lines('send-decision-needed')).toEqual([
+          expect.objectContaining({
+            reportId: report.id,
+            hoursPending: CSAM_SEND_DECISION_AFTER_HOURS,
+          }),
+        ]);
+      });
     });
   });
 

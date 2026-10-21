@@ -38,6 +38,9 @@ export const MAX_EDGE_FALLBACK_BYTES = 1024 * 1024 * 1024;
 
 const OCTET_STREAM = 'application/octet-stream';
 
+/** Reserved for a body of undeclared length: the cap, which a byte budget clamps to all of it. */
+const UNKNOWN_SIZE = MAX_EDGE_FALLBACK_BYTES;
+
 /**
  * Zip entry extensions for the media types we store. The stored content type is whatever the
  * uploading client declared, so anything else is archived as `.bin` rather than under an
@@ -63,7 +66,6 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
   'audio/flac': 'flac',
 };
 
-/** Edge statuses that say "try again", not "this does not exist". */
 const TRANSIENT_CLIENT_STATUSES = new Set([408, 425, 429]);
 
 // Only NoSuchKey: a plain 404 is also what a wrong bucket returns, and that must not quietly turn
@@ -78,7 +80,6 @@ function pickContentType(...candidates: (string | null | undefined)[]) {
   return OCTET_STREAM;
 }
 
-/** Zip entry extension from a content type; never from a user-supplied file name. */
 export function extensionForContentType(contentType: string) {
   return MEDIA_EXTENSIONS[contentType] ?? 'bin';
 }
@@ -98,7 +99,7 @@ async function readCapped(body: AsyncIterable<Uint8Array>, capBytes: number) {
 
 /**
  * The stored object under `Image.url`, falling back to the uncapped edge copy only when the
- * object does not exist. Any other storage error throws, so a transient failure can never
+ * object does not exist; a full URL goes straight to the edge. Any other storage error throws, so a transient failure can never
  * quietly downgrade evidence to an edge copy; the caller retries.
  *
  * `reserve` is called with the object's size before its body is read, so a caller can bound how
@@ -135,7 +136,7 @@ export async function readOriginalImage(
       if (!body) throw new Error('original image response has no body');
       let release: () => void = noReservation;
       try {
-        if (reserve) release = await reserve(response.ContentLength ?? 0);
+        if (reserve) release = await reserve(response.ContentLength ?? UNKNOWN_SIZE);
         const data = Buffer.from(await body.transformToByteArray());
         return {
           source: 'original',
@@ -151,14 +152,13 @@ export async function readOriginalImage(
         throw e;
       }
     }
-  } else if (!isAllowedImageScanUrl(image.url)) {
-    return { source: 'missing' };
   }
+  if (!isAllowedImageScanUrl(image.url)) return { source: 'missing' };
 
   let response: Response;
   try {
-    // No width: the edge's own original, the copy the NCMEC upload used before originals were
-    // read. A stored full URL is fetched as is, so it may not redirect somewhere we did not vet.
+    // No width: a width would ask for a resized copy. A stored full URL is fetched as is, so it
+    // must not redirect somewhere we did not vet.
     response = await fetchImpl(getEdgeUrl(image.url, { type: image.type }), {
       signal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
       redirect: passthrough ? 'error' : 'follow',
@@ -171,7 +171,9 @@ export async function readOriginalImage(
     throw new Error(`edge fallback failed: ${response.status}`);
   if (!response.ok || !response.body) return { source: 'missing' };
 
-  const declared = Number(response.headers.get('content-length') ?? 0);
+  const header = response.headers.get('content-length');
+  const length = Number(header || NaN);
+  const declared = Number.isFinite(length) && length >= 0 ? length : UNKNOWN_SIZE;
   if (declared > MAX_EDGE_FALLBACK_BYTES) {
     await response.body.cancel();
     throw new Error('edge fallback response exceeds the size cap');
@@ -192,7 +194,6 @@ export async function readOriginalImage(
       release,
     };
   } catch (e) {
-    // Rejects harmlessly when the read loop has already released the stream.
     await body.cancel().catch(() => undefined);
     release();
     throw e;

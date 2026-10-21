@@ -167,16 +167,14 @@ export function deriveUploadPartGeometry({
  * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
  * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
  * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
- * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals, so a
- * library that is mostly video still fits, not for the width-capped copies it once estimated.
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals, not
+ * width-capped copies.
  */
 export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
 
 /**
  * Ceiling on source bytes one archive holds at once, from a reader's reservation until the
- * archiver has written that entry. It replaces a count bound for stored originals, whose sizes
- * span three orders of magnitude (a video original can be hundreds of MiB). One object larger
- * than the budget still runs, alone.
+ * archiver has written that entry. An object larger than the budget runs alone.
  */
 export const MAX_ARCHIVE_SOURCE_BYTES = 256 * 1024 * 1024;
 
@@ -193,8 +191,8 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
   let reserved = 0;
   let aborted: Error | undefined;
   const queue: Array<{ want: number; grant: () => void; fail: (e: Error) => void }> = [];
-  // `reserved === 0` admits an oversize reservation, alone.
 
+  // `reserved === 0` admits an oversize reservation, alone.
   const fits = (want: number) => reserved === 0 || reserved + want <= limitBytes;
   const drain = () => {
     while (queue.length > 0 && fits(queue[0].want)) queue.shift()?.grant();
@@ -206,7 +204,8 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
     },
     async reserve(bytes) {
       if (aborted) throw aborted;
-      const want = Math.min(Math.max(0, bytes), limitBytes);
+      // An unknown size takes the whole budget.
+      const want = Number.isFinite(bytes) ? Math.min(Math.max(0, bytes), limitBytes) : limitBytes;
       // Counted at grant time, not on resume: `drain` grants several in one loop, and each must
       // see the bytes the previous one took.
       if (queue.length === 0 && fits(want)) reserved += want;
@@ -242,13 +241,16 @@ export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBud
  * that converts "memory grows with the number of files" into "memory is constant".
  *
  * ⚠️ It is NOT the whole peak, and reading it as "8 image-sizes" understates the constant by
- * roughly 5×. At the CSAM call sites the appender runs behind a `p-limit(10)`, and each of
+ * roughly 5×. At the CSAM generated-images call site the appender runs behind a `p-limit(10)`, and each of
  * those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
  * parked inside `append()` waiting for a slot here. So the realistic peak is about
  * `8 + 3 × 10 = 38` image-sizes, not 8.
  *
  * That is the point regardless: 38 is a CONSTANT, set by the two concurrency caps. The defect
  * being fixed is that the peak previously scaled with how many images the account had.
+ *
+ * The images archive holds stored originals and is bounded in bytes by
+ * `MAX_ARCHIVE_SOURCE_BYTES` instead.
  */
 export const MAX_PENDING_ARCHIVE_ENTRIES = 8;
 

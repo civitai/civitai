@@ -32,7 +32,9 @@ and the moderator dashboard column that reads it (`src/pages/moderator/csam/inde
 ## 2. Alerting on a stranded CSAM report
 
 The send/archive pipeline has **no retry limit, no backoff, and no dead-letter**. Every failure
-leaves `reportSentAt` NULL and retries hourly forever:
+leaves `reportSentAt` NULL and retries hourly. The one exception is an image file whose read keeps
+failing: once the report is 24h old and that file's read has failed on two runs, the report is sent
+without it. A report with no readable file is never sent that way.
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.
@@ -43,7 +45,10 @@ leaves `reportSentAt` NULL and retries hourly forever:
 Historical latency (n=458): median 0.58h to send, but max 645h (27 days); median 1.3h to archive,
 max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
 
-- [ ] Alert when any `CsamReport` is unsent for >24h or unarchived for >7d.
+- [x] Log unsent reports. After each run the send job logs `send-blocked` for every report it fetched
+      that is still unsent 6h after filing, whatever held it. A report with no readable file logs
+      `send-all-unreadable` on every run and `send-decision-needed` from 48h.
+- [ ] Route those lines to an alert, and alert when a report is unarchived for >7d.
 - [ ] Consider an attempt counter / dead-letter so a permanently-failing report is visible rather
       than silently retried forever.
 

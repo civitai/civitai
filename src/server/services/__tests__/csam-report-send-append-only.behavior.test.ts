@@ -9,8 +9,8 @@ import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * The NCMEC send flow's write is accepted by the sent-report append-only trigger, and the sha256
- * of each uploaded file is on the row from the moment it is marked sent. Runs the trigger's own
+ * The sha256 of each uploaded file is on the row from the moment it is marked sent, and the
+ * archive's later write to the sent row passes the append-only trigger. Runs the trigger's own
  * migration against a Postgres stand-in. All ids and bytes below are invented.
  */
 
@@ -66,11 +66,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import {
-  CSAM_SEND_SHORT_AFTER_HOURS,
-  processCsamReport,
-  SEND_SHORT_REASON,
-} from '~/server/services/csam.service-new';
+import { archiveCsamDataForReport, processCsamReport } from '~/server/services/csam.service-new';
 
 const stored = Buffer.from('the bytes the user uploaded');
 
@@ -156,16 +152,16 @@ beforeEach(() => {
     },
   ]);
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
-  dbMock.dbWrite.csamReport.update.mockImplementation(applyUpdate as never);
+  dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
 });
 
-async function sendNewReport(filedHoursAgo = 1) {
+async function sendNewReport() {
   const { rows } = await db.pg.query<{ id: number }>(
-    `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details", "createdAt")
-     VALUES (20, 10, '[{"id":501}]', '{}', now() - make_interval(hours => $1::int)) RETURNING id`,
-    [filedHoursAgo]
+    `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
+     VALUES (20, 10, '[{"id":501}]', '{}') RETURNING id`
   );
-  const report = await readRow(rows[0].id);
+  // Set here, not by SQL: a zone-less timestamp read back is shifted by the local offset.
+  const report = { ...(await readRow(rows[0].id)), createdAt: new Date(Date.now() - 3_600_000) };
   await processCsamReport(report);
   return rows[0].id;
 }
@@ -178,11 +174,12 @@ describe('sending a report under the append-only trigger', () => {
     ).rejects.toThrow(/may only gain keys/);
   });
 
-  it('accepts the send and records each file sha256 in the row it marks sent', async () => {
+  it('records each file sha256 in the write that marks the row sent', async () => {
     const id = await sendNewReport();
 
     expect(cancelReport).not.toHaveBeenCalled();
     expect(finishReport).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
     const row = await readRow(id);
     expect(row.reportSentAt).not.toBeNull();
     expect(row.details.images).toEqual([
@@ -195,20 +192,17 @@ describe('sending a report under the append-only trigger', () => {
     ]);
   });
 
-  it('accepts a report sent without an unreadable file once it is old enough', async () => {
-    getObject.mockRejectedValue(
-      Object.assign(new Error('synthetic storage outage'), {
-        name: 'InternalError',
-        $metadata: { httpStatusCode: 500 },
-      })
-    );
+  it("passes the archive's later write to the sent row", async () => {
+    const id = await sendNewReport();
+    const sent = await readRow(id);
 
-    const id = await sendNewReport(CSAM_SEND_SHORT_AFTER_HOURS + 1);
+    // No user: the archive's shortest path, which stamps the row and adds a details key.
+    await archiveCsamDataForReport({ ...sent, userId: null });
 
-    expect(cancelReport).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(2);
     const row = await readRow(id);
-    expect(row.reportSentAt).not.toBeNull();
-    expect(row.details.images).toEqual([{ id: 501, source: 'missing', reason: SEND_SHORT_REASON }]);
+    expect(row.archivedAt).not.toBeNull();
+    expect(row.details).toEqual({ ...sent.details, archiveSkipped: 'no reported user' });
   });
 
   it('refuses a later rewrite of a recorded sha256', async () => {
