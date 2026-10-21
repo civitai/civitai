@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { boxOddsSnapshotSchema, snapshotOfLiveBox } from '@civitai/shared/box-odds-snapshot';
 import {
   BOX_OPENING_REWARD_STATUS,
@@ -162,11 +162,6 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
   });
 }
 
-const boxesHoldingSql = (cosmeticId: number) => Prisma.sql`
-  SELECT bc."boxDefinitionId" FROM "BoxContent" bc
-  JOIN "ItemDefinition" d ON d.id = bc."rewardDefinitionId"
-  WHERE d."cosmeticId" = ${cosmeticId} AND d.type = ${ITEM_TYPE.cosmetic}`;
-
 /**
  * Every opening that drew this cosmetic and still holds it, claimed for a refund one by one. Read
  * after `pullCosmeticFromBoxes`, so no open drawing it can commit after this read. Best-effort per
@@ -218,7 +213,8 @@ export type OwedBoxRefund = {
 /**
  * Box purchases this takedown flagged refunded and has not paid back yet, including any an earlier
  * run of it claimed and died before paying. Read from the stamp, not from this run's claims, so
- * running the takedown again finishes them.
+ * running the takedown again finishes them; found through the refunded openings, which are never
+ * deleted, where a box's content row can be.
  */
 export function listOwedBoxRefunds({
   cosmeticId,
@@ -229,11 +225,15 @@ export function listOwedBoxRefunds({
 }) {
   return dbWrite.$queryRaw<OwedBoxRefund[]>`
     SELECT p."buzzTransactionId", p."userId", p."unitAmount", p.meta,
-      s."itemDefinitionId" AS "boxDefinitionId", b."sellerId"
-    FROM "CosmeticShopItem" s
-    JOIN "ItemDefinition" b ON b.id = s."itemDefinitionId"
-    JOIN "UserCosmeticShopPurchases" p ON p."shopItemId" = s.id
-    WHERE s."itemDefinitionId" IN (${boxesHoldingSql(cosmeticId)})
+      o."boxDefinitionId", b."sellerId"
+    FROM "BoxOpening" o
+    JOIN "ItemDefinition" d ON d.id = o."rewardDefinitionId"
+    JOIN "ItemDefinition" b ON b.id = o."boxDefinitionId"
+    JOIN "UserCosmeticShopPurchases" p
+      ON p."buzzTransactionId" = o."boxSourceKey" AND p."userId" = o."userId"
+    JOIN "CosmeticShopItem" s ON s.id = p."shopItemId" AND s."itemDefinitionId" = o."boxDefinitionId"
+    WHERE d."cosmeticId" = ${cosmeticId} AND d.type = ${ITEM_TYPE.cosmetic}
+      AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
       AND p.refunded
       AND (p.meta->'takedownRefund'->>'shopItemId')::int = ${shopItemId}
       AND p.meta->'takedownRefund'->>'paidAt' IS NULL

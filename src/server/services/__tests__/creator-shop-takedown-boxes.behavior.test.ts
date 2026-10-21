@@ -275,7 +275,15 @@ const moderatorRefundSql = (sourceKey: string) => [
 ];
 
 const refunded800 = {
-  refundedTransactions: [],
+  refundedTransactions: [
+    {
+      originalTransactionId: 'charge-1',
+      refundTransactionId: 'refund-1',
+      accountType: 'yellow',
+      amount: 800,
+      originalExternalTransactionId: 'e',
+    },
+  ],
   totalRefunded: 800,
   externalTransactionIdPrefix: 'p',
 };
@@ -591,5 +599,222 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId }),
     ]);
+  });
+});
+
+/** Runs `fail` for every top-level raw statement containing `marker`, else the real statement. */
+const failTopLevel = (method: '$queryRaw' | '$executeRaw', marker: string) => {
+  const real = pgliteRaw(holder.db)[method === '$queryRaw' ? 'queryRaw' : 'executeRaw'];
+  dbMock.dbWrite[method].mockImplementation(((
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) =>
+    strings.join('?').includes(marker)
+      ? Promise.reject(new Error(`${marker} failed`))
+      : real(strings, ...values)) as never);
+  return () =>
+    dbMock.dbWrite[method].mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      pgliteRaw(holder.db)[method === '$queryRaw' ? 'queryRaw' : 'executeRaw'](
+        strings,
+        ...values
+      )) as never);
+};
+
+describe('takedownCosmeticShopItem paying box refunds still owed', () => {
+  it('pays a box refund still owed, though the box no longer lists the content', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz is down'));
+    await takedown();
+    // A builder save that drops the disabled content deletes its row.
+    await q(`DELETE FROM "BoxContent" WHERE NOT enabled`);
+    buzz.refundMultiAccountTransaction.mockReset().mockResolvedValue(refunded800);
+
+    const retried = await takedown();
+
+    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect(retried.boxOpeningsRefunded).toBe(1);
+  });
+
+  // A 404 reads as zeros in the prefix refund; a recorded purchase means its charge happened.
+  it('keeps a box refund owed when Buzz lists no charge under it', async () => {
+    const boxId = await seedBox();
+    await seedOpening(boxId);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'NOT_FOUND', message: 'none', cause: new BuzzApiError(404, 'x') })
+    );
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 800 }),
+    ]);
+    expect(result.boxOpeningsRefunded).toBe(0);
+    buzz.refundMultiAccountTransaction.mockReset().mockResolvedValue(refunded800);
+    expect((await takedown()).boxOpeningsRefunded).toBe(1);
+  });
+
+  it('finishes the takedown, and pays nothing twice, when a paid refund cannot be marked', async () => {
+    const boxId = await seedBox();
+    const first = await seedOpening(boxId);
+    const second = await seedOpening(boxId, { userId: 103 });
+    const restore = failTopLevel('$executeRaw', 'jsonb_set');
+
+    const result = await takedown();
+    restore();
+
+    expect(refundedPrefixes()).toEqual([first.sourceKey, second.sourceKey]);
+    expect([result.boxOpeningsRefunded, result.failures]).toEqual([2, []]);
+    // The retry asks the prefix again; Buzz answers that it is already refunded.
+    buzz.refundMultiAccountTransaction
+      .mockReset()
+      .mockRejectedValue(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'conflict',
+          cause: new BuzzApiError(409, 'x'),
+        })
+      );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'charge-1', amount: 800 },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-charge-1' });
+    await takedown();
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('still refunds the shelf buyers when the owed box refunds cannot be read', async () => {
+    const boxId = await seedBox();
+    await seedOpening(boxId);
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
+    const restore = failTopLevel('$queryRaw', 'o."boxSourceKey" AND p."userId"');
+
+    const result = await takedown();
+    restore();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({ stage: 'box', error: expect.stringContaining('not read') }),
+    ]);
+    expect(refundedPrefixes()).toEqual(['shelf-1']);
+  });
+
+  // The source key is a string; only the purchase of that box, by that opener, is the box's sale.
+  it('leaves alone a purchase that shares the source key but is not the box sale', async () => {
+    const boxId = await seedBox();
+    const otherBox = await seedBox();
+    const { sourceKey } = await seedOpening(boxId, { purchased: false });
+    const [{ id: otherListing }] = await q<{ id: number }>(
+      `INSERT INTO "CosmeticShopItem" ("unitAmount", title, "itemDefinitionId", listed)
+       VALUES (800, 'Other box', $1, false) RETURNING id`,
+      [otherBox]
+    );
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "shopItemId", "unitAmount", refunded)
+       VALUES ($1, $2, $3, 800, false)`,
+      [sourceKey, BUYER, otherListing]
+    );
+
+    await takedown();
+
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(await purchaseRefunded(sourceKey)).toBe(false);
+  });
+
+  it('does not take back a payout the purchase refund already reversed', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    await seedOpening(boxId, {
+      meta: {
+        payouts: [{ userId: CREATOR, amount: 560, color: 'yellow', transactionId: 'payout-1' }],
+      },
+    });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'charge-1', amount: 800 },
+      { transactionId: 'payout-1', amount: 560 },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-x' });
+
+    const result = await takedown();
+
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+    expect(result.clawedBack).toBe(560);
+  });
+});
+
+describe('Retry takedown on an item already taken down', () => {
+  const original = { reason: 'Infringing', moderatorId: 7, at: '2026-10-01T00:00:00.000Z' };
+
+  /** Shelf purchases the takedown's own reads and writes keep, as the table would. */
+  const shelfTable = (rows: { userId: number; buzzTransactionId: string }[]) => {
+    const table = rows.map((row) => ({
+      ...row,
+      unitAmount: 500,
+      meta: { payouts: [] },
+      refunded: false,
+    }));
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { refunded?: boolean };
+    }) =>
+      table.filter(
+        (row) => where.refunded === undefined || row.refunded === where.refunded
+      )) as never);
+    dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((async ({
+      where,
+    }: {
+      where: { buzzTransactionId: string };
+    }) => {
+      table.find((row) => row.buzzTransactionId === where.buzzTransactionId)!.refunded = true;
+    }) as never);
+  };
+
+  it('pays a failed box refund exactly once, and no shelf buyer already refunded', async () => {
+    const boxId = await seedBox();
+    const { sourceKey } = await seedOpening(boxId);
+    shelfTable([{ userId: 104, buzzTransactionId: 'shelf-1' }]);
+    // The box refund fails; the shelf refund goes through.
+    buzz.refundMultiAccountTransaction.mockImplementation((async ({
+      externalTransactionIdPrefix,
+    }: {
+      externalTransactionIdPrefix: string;
+    }) => {
+      if (externalTransactionIdPrefix === sourceKey) throw new Error('buzz is down');
+      return refunded800;
+    }) as never);
+    await takedown();
+    expect(refundedPrefixes()[0]).toBe('shelf-1');
+
+    // The retry button, after the first run archived it.
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({ meta: { takedown: original } });
+    buzz.refundMultiAccountTransaction.mockReset().mockResolvedValue(refunded800);
+    const retry = await takedown();
+    const again = await takedown();
+
+    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect([retry.boxOpeningsRefunded, retry.refunded, again.boxOpeningsRefunded]).toEqual([
+      1, 0, 0,
+    ]);
+  });
+
+  it('keeps the first takedown record and archive date, and does not tell the creator again', async () => {
+    await seedBox();
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({ meta: { takedown: original } });
+
+    await takedown();
+
+    const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls.at(-1)![0] as {
+      data: { archivedAt?: Date; meta: { takedown: unknown; history: { note: string }[] } };
+    };
+    expect(data.meta.takedown).toEqual(original);
+    expect(data.archivedAt).toBeUndefined();
+    expect(data.meta.history.at(-1)!.note).toBe('Retried: Infringing');
+    expect(notifications.createNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'creator-shop-item-taken-down' })
+    );
   });
 });

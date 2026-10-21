@@ -2397,6 +2397,7 @@ export const takedownCosmeticShopItem = async ({
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
 
+  let retried = false;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
     // Read again from the primary: the refund this waited on appends its own history entry, and
@@ -2405,23 +2406,26 @@ export const takedownCosmeticShopItem = async ({
       where: { id },
       select: { meta: true },
     });
+    const currentMeta = (current?.meta ?? meta) as CosmeticShopItemMeta;
+    // A retry finishes the first takedown: its record and archive date stand.
+    retried = !!currentMeta.takedown;
     const updated = await dbWrite.cosmeticShopItem.update({
       where: { id },
       data: {
         status: CosmeticShopItemStatus.Archived,
         listed: false,
-        archivedAt: now,
+        ...(retried ? {} : { archivedAt: now }),
         meta: appendItemHistory(
           {
-            ...((current?.meta ?? meta) as CosmeticShopItemMeta),
-            takedown: { reason, moderatorId, at: now.toISOString() },
+            ...currentMeta,
+            takedown: currentMeta.takedown ?? { reason, moderatorId, at: now.toISOString() },
           },
           {
             at: now.toISOString(),
             userId: moderatorId,
             kind: 'takedown',
             status: CosmeticShopItemStatus.Archived,
-            note: reason,
+            note: retried ? `Retried: ${reason}` : reason,
           }
         ) as Prisma.InputJsonValue,
       },
@@ -2736,13 +2740,19 @@ export const takedownCosmeticShopItem = async ({
         // Not the raw prefix refund: once any leg is reversed it refuses the rest, so a retry after
         // a lost response, or a re-run, would read a refunded buyer as owed.
         if (purchase.unitAmount > 0)
-          await takedownMoneyMove(() =>
-            refundAllLegsByPrefix({
+          await takedownMoneyMove(async () => {
+            const refund = await refundAllLegsByPrefix({
               externalTransactionIdPrefix: purchase.buzzTransactionId,
               description: `Cosmetic removed - ${item.title}`,
-            })
-          );
+            });
+            // A 404 reads as zeros there, but this purchase row exists only once its charge did:
+            // Buzz not seeing it yet is not the buyer paid back.
+            if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+              throw new Error(`Buzz lists no charge under ${purchase.buzzTransactionId}`);
+          });
       } catch (error) {
+        // Still owed: "Retry takedown" pays it. Paying it by hand instead must also set
+        // meta.takedownRefund.paidAt on the purchase, or a later retry pays it again.
         failures.push({
           stage: 'refund',
           userId: purchase.userId,
@@ -2989,7 +2999,7 @@ export const takedownCosmeticShopItem = async ({
       ...placementsRemoved,
     });
 
-  if (creatorId) {
+  if (creatorId && !retried) {
     await createNotification({
       type: 'creator-shop-item-taken-down',
       userId: creatorId,
