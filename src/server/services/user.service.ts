@@ -1410,10 +1410,6 @@ export const removeAllContent = async ({
     where: { userId: id },
     select: { id: true },
   });
-  const bounties = await dbRead.collection.findMany({
-    where: { userId: id },
-    select: { id: true },
-  });
 
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
@@ -1446,7 +1442,10 @@ export const removeAllContent = async ({
         bountyIds: keptBountyIds,
       }).catch(() => undefined);
   }
-  await dbWrite.bounty.deleteMany({ where: { userId: id, id: { notIn: keptBountyIds } } });
+  // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
+  const bountyWhere = { userId: id, id: { notIn: keptBountyIds } };
+  const bounties = await dbWrite.bounty.findMany({ where: bountyWhere, select: { id: true } });
+  await dbWrite.bounty.deleteMany({ where: bountyWhere });
   await dbWrite.answer.deleteMany({ where: { userId: id } });
   await dbWrite.question.deleteMany({ where: { userId: id } });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
@@ -1485,7 +1484,7 @@ export const removeAllContent = async ({
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await bountiesSearchIndex.queueUpdate(
-    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+    bounties.map((b) => ({ id: b.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
