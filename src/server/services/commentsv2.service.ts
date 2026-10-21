@@ -30,6 +30,11 @@ import type {
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
+  accountHoldSql,
+  holdMarkerViewExists,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
+import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
   throwIfBlockedByEntityOwner,
@@ -695,14 +700,30 @@ export const deleteComment = async ({ id }: { id: number }) => {
 };
 
 export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Read before the delete, for the event points removal; a failed read only skips that.
-  const removed = await dbWrite.commentV2
-    .findMany({ where: { id: { in: ids } }, select: { userId: true, threadId: true } })
-    .catch(() => []);
-  const result = await dbWrite.commentV2.deleteMany({ where: { id: { in: ids } } });
-  void onCommentsRemoved(removed);
-  return { count: result.count };
+  if (ids.length === 0) return { count: 0, retainedHidden: 0 };
+  // As `bulkDeleteComments`: a held author's comments are kept and taken off the page.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
+      DELETE FROM "CommentV2" c
+      WHERE c.id = ANY(${ids}::int[])
+        AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      RETURNING c."userId", c."threadId"
+    `;
+    const retained = await tx.$queryRaw<{ userId: number }[]>`
+      UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+      WHERE id = ANY(${ids}::int[])
+      RETURNING "userId"
+    `;
+    return { deleted, retained };
+  });
+  if (retained.length)
+    await logHoldRetained(
+      'commentV2.bulkDelete',
+      retained.map((r) => r.userId)
+    );
+  void onCommentsRemoved(deleted);
+  return { count: deleted.length, retainedHidden: retained.length };
 }
 
 /**

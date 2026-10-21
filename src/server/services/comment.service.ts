@@ -6,6 +6,11 @@ import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
+import {
+  accountHoldSql,
+  holdMarkerViewExists,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -433,27 +438,42 @@ export async function bulkSetCommentTosViolation({
 }
 
 export async function bulkDeleteComments({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Capture affected models/users before delete so we can queue metric updates.
-  const affected = await dbWrite.comment.findMany({
-    where: { id: { in: ids } },
-    select: { modelId: true, model: { select: { userId: true } } },
+  if (ids.length === 0) return { count: 0, retainedHidden: 0 };
+  // A held author's comments are kept, and taken off the page. The hold is in the DELETE itself, so
+  // one that lands after this read still counts; what the DELETE left of `ids` is what it kept.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.$queryRaw<{ modelId: number }[]>`
+      DELETE FROM "Comment" c
+      WHERE c.id = ANY(${ids}::int[])
+        AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      RETURNING c."modelId"
+    `;
+    const retained = await tx.$queryRaw<{ userId: number }[]>`
+      UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      WHERE id = ANY(${ids}::int[])
+      RETURNING "userId"
+    `;
+    return { deleted, retained };
   });
-  const result = await dbWrite.comment.deleteMany({ where: { id: { in: ids } } });
+  if (retained.length)
+    await logHoldRetained(
+      'comment.bulkDelete',
+      retained.map((r) => r.userId)
+    );
 
-  const modelIds = Array.from(
-    new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v))
-  );
-  const userIds = Array.from(
-    new Set(affected.map((c) => c.model?.userId).filter((v): v is number => !!v))
-  );
+  const modelIds = Array.from(new Set(deleted.map((c) => c.modelId)));
+  const owners = modelIds.length
+    ? await dbWrite.model.findMany({ where: { id: { in: modelIds } }, select: { userId: true } })
+    : [];
+  const userIds = Array.from(new Set(owners.map((m) => m.userId)));
   await Promise.all([
     ...modelIds.map((id) => preventReplicationLag('commentModel', id)),
     ...modelIds.map((id) => modelMetrics.queueUpdate(id)),
     ...userIds.map((id) => userMetrics.queueUpdate(id)),
   ]);
 
-  return { count: result.count };
+  return { count: deleted.length, retainedHidden: retained.length };
 }
 
 /**
