@@ -37,6 +37,16 @@ describe('setCrucibleEventTags', () => {
     ]);
   });
 
+  // The save has committed before the bust runs; reporting failure would leave the moderator's
+  // panel showing the old tags while the database holds the new ones.
+  it('still reports the saved tags when clearing the cache fails', async () => {
+    homeBlockCacheBustMock.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(setCrucibleEventTags({ id: 1, eventTags: ['halloween'] })).resolves.toEqual([
+      'halloween',
+    ]);
+  });
+
   it('refuses a crucible that does not exist, and clears nothing', async () => {
     dbMock.dbWrite.crucible.findUnique.mockResolvedValue(null);
 

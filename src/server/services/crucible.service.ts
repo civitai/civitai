@@ -1600,7 +1600,18 @@ export const setCrucibleEventTags = async ({ id, eventTags }: SetCrucibleEventTa
     data: { eventTags },
     select: { eventTags: true },
   });
-  await bustCrucibleFeedBlocks();
+  // The tags are saved by now, so a failed bust must not report the save as failed; the block's
+  // own TTL clears it.
+  try {
+    await bustCrucibleFeedBlocks();
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-event-tags-bust-failed',
+      message: e instanceof Error ? e.message : String(e),
+      crucibleId: id,
+    });
+  }
   return updated.eventTags;
 };
 
