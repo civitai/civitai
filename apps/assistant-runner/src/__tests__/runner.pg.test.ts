@@ -1254,6 +1254,53 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     }
   });
 
+  it('a cancel landing after an end was kept for repair never writes over it; the repair lands it', async () => {
+    const user = 'u-end-pending-cancel';
+    const conversationId = 'c-end-pending-cancel';
+    const real = deps.store;
+    // The reply's end fails every attempt (its retries included), then the store comes back.
+    let refuseEnds = true;
+    deps.store = {
+      load: (userId, id) => real.load(userId, id),
+      update: (userId, id, change) =>
+        real.update(userId, id, (current) => {
+          const next = change(current);
+          const reply = next?.turns.find((turn) => turn.seq === 1)?.assistant;
+          if (userId === user && reply && reply.status !== 'running' && refuseEnds)
+            throw new Error('orchestration is down');
+          return next;
+        }),
+    };
+    // Once the end is kept for repair, the store is back and a hard cancel lands (its next DBOS
+    // write finds the workflow no longer its own).
+    const markEndPending = grants.markEndPending.bind(grants);
+    grants.markEndPending = async (runId, seq, reply) => {
+      await markEndPending(runId, seq, reply);
+      refuseEnds = false;
+      await DBOS.cancelWorkflow(runId);
+    };
+    try {
+      const start = await post('/runs', as(user), startBody({ conversationId, model: 'tools' }));
+      const runId = start.body!.runId as string;
+      const deadline = Date.now() + 45_000;
+      while ((await DBOS.getWorkflowStatus(runId))?.status !== 'CANCELLED' && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      expect((await DBOS.getWorkflowStatus(runId))?.status).toBe('CANCELLED');
+      // Long enough for the workflow's catch to have run.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // Nothing wrote over the turn: the kept end is still waiting for its repair.
+      expect((await store.load(user, conversationId))!.turns[0]!.assistant?.status).toBe('running');
+
+      await runner.repairPendingEnds();
+      const reply = (await store.load(user, conversationId))!.turns[0]!.assistant;
+      expect(reply).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(reply)).toContain('Recorded.');
+    } finally {
+      grants.markEndPending = markEndPending;
+      deps.store = real;
+    }
+  });
+
   it('forgets the grant of a run whose workflow threw', async () => {
     const user = 'u-threw';
     const real = deps.store;
