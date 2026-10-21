@@ -651,17 +651,33 @@ export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findMany({ where: { id: { in: ids } }, select });
 };
 
+/** On a CSAM path, the reported account and an image's owner are not rewarded for its reports. */
+export function csamReportRewardExclusions(
+  reportedUserId: number | undefined,
+  imageReports: { reportId: number; image: { userId: number } }[]
+) {
+  const owners = new Map(imageReports.map((report) => [report.reportId, report.image.userId]));
+  return (reportId: number) =>
+    [reportedUserId, owners.get(reportId)].filter((id): id is number => id !== undefined);
+}
+
 export async function bulkSetReportStatus({
   ids,
   status,
   userId,
   ip,
+  noRewardFor = () => [],
+  rewardRemovedReporters = true,
 }: {
   ids: number[];
   status: ReportStatus;
   userId: number;
   ip?: string;
+  /** Reporters of a report who get no reward for it; the report is still actioned. */
+  noRewardFor?: (reportId: number) => readonly number[];
+  rewardRemovedReporters?: boolean;
 }) {
+  if (!ids.length) return;
   const statusSetAt = new Date();
 
   const reports = await dbRead.report.findMany({
@@ -691,10 +707,27 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
-    const prepReports = reports.map((report) => ({
-      id: report.id,
-      userIds: [report.userId, ...report.alsoReportedBy],
-    }));
+    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+    // The primary: a ban from moments ago may not have reached a replica.
+    const removed = rewardRemovedReporters
+      ? []
+      : await dbWrite.user.findMany({
+          where: {
+            id: { in: reporterIds },
+            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+          },
+          select: { id: true },
+        });
+    const removedIds = new Set(removed.map((user) => user.id));
+    const prepReports = reports.map((report) => {
+      const excluded = noRewardFor(report.id);
+      return {
+        id: report.id,
+        userIds: [report.userId, ...report.alsoReportedBy].filter(
+          (id) => !removedIds.has(id) && !excluded.includes(id)
+        ),
+      };
+    });
 
     await Promise.allSettled(
       prepReports.flatMap((report) =>

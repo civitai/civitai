@@ -568,7 +568,8 @@ export function MenuItemLink({
   );
 }
 
-export function BuzzMenuItem() {
+/** `onOpen` runs when the row itself is opened, not when Buy Buzz is pressed. */
+export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
@@ -583,6 +584,10 @@ export function BuzzMenuItem() {
     <MenuItemLink
       href="/user/buzz-dashboard"
       className="-mx-1 my-1 flex items-center justify-between bg-gray-2 dark:bg-dark-4"
+      onClick={() => {
+        onOpen?.();
+        handleClose();
+      }}
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
         <UserBuzz
