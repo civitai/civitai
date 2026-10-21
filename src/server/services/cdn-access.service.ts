@@ -28,8 +28,8 @@ export function strongestAccess(values: CdnAccess[]): CdnAccess {
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
 export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 /**
- * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until the
- * owner's report has verified evidence.
+ * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until a
+ * verified report covers the image.
  */
 export const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
 
@@ -204,7 +204,7 @@ type FactsRow = {
   modelStatus: string | null;
 };
 
-type DeleteRow = { url: string; userId: number | null; csamReview: boolean };
+type DeleteRow = { imageId: number; url: string; userId: number | null; csamReview: boolean };
 
 /** Every image row and moderator delete on these urls, with what `desiredUrlAccess` needs. Reads the primary. */
 async function loadFacts(urls: string[]) {
@@ -244,12 +244,21 @@ async function loadFacts(urls: string[]) {
       WHERE i.url = ANY(${urls})
     `,
     dbWrite.$queryRaw<DeleteRow[]>`
-      SELECT url, "userId", "csamReview" FROM "ImageCdnModeratorDelete" WHERE url = ANY(${urls})
+      SELECT "imageId", url, "userId", "csamReview"
+      FROM "ImageCdnModeratorDelete" WHERE url = ANY(${urls})
     `,
   ]);
-  const holds = await ownerHolds([
-    ...rows.flatMap((r) => (r.postOwnerId === null ? [r.userId] : [r.userId, r.postOwnerId])),
-    ...deleteRows.flatMap((r) => (r.userId === null ? [] : [r.userId])),
+  const [holds, covered] = await Promise.all([
+    ownerHolds([
+      ...rows.map((r) => r.userId),
+      ...deleteRows.flatMap((r) => (r.userId === null ? [] : [r.userId])),
+    ]),
+    reportCoverage([
+      ...rows.map((r) => ({ imageId: r.id, userId: r.userId })),
+      ...deleteRows.flatMap((r) =>
+        r.userId === null ? [] : [{ imageId: r.imageId, userId: r.userId }]
+      ),
+    ]),
   ]);
   const entry = (url: string) => {
     let facts = byUrl.get(url);
@@ -257,7 +266,6 @@ async function loadFacts(urls: string[]) {
     return facts;
   };
   for (const row of rows) {
-    const postOwner = row.postOwnerId ?? row.userId;
     entry(row.url).images.push({
       ownerId: row.userId,
       ingestion: row.ingestion,
@@ -267,9 +275,10 @@ async function loadFacts(urls: string[]) {
       held:
         row.csamReview ||
         holds.held(row.userId) ||
-        // A csam-hold removal waits for the report it may lead to; then the evidence rule applies.
-        (!!row.postCsamHoldRemoved && !holds.reported(postOwner)) ||
-        (!!row.matureUnderageUnpublish && !holds.verified(postOwner)),
+        (!covered(row.id, row.userId) &&
+          (holds.reported(row.userId) ||
+            !!row.postCsamHoldRemoved ||
+            !!row.matureUnderageUnpublish)),
       post:
         row.postId === null
           ? null
@@ -288,7 +297,10 @@ async function loadFacts(urls: string[]) {
     entry(row.url).deletes.push({
       ownerId: row.userId,
       // A delete that does not say whose image it was cannot be checked for a hold.
-      held: row.csamReview || row.userId === null || holds.held(row.userId),
+      held:
+        row.userId === null ||
+        holds.held(row.userId) ||
+        (!covered(row.imageId, row.userId) && (row.csamReview || holds.reported(row.userId))),
     });
   return byUrl;
 }
@@ -317,13 +329,46 @@ function reportNamesSql(userId: Prisma.Sql) {
   return Prisma.sql`(c."userId" = ${userId} OR c.details->>'secondaryUserId' = (${userId})::text)`;
 }
 
+/**
+ * Which images a sent report with a verified evidence copy covers: it names the image's owner and
+ * lists the image's id. A report releases only the images it covers, one with no image list covers
+ * nothing, and a failed lookup covers nothing.
+ */
+async function reportCoverage(
+  images: { imageId: number; userId: number }[]
+): Promise<(imageId: number, userId: number) => boolean> {
+  const none = () => false;
+  if (!images.length) return none;
+  try {
+    const rows = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
+      SELECT x."imageId", x."userId"
+      FROM unnest(${images.map((x) => x.imageId)}::int[], ${images.map((x) => x.userId)}::int[])
+        AS x("imageId", "userId")
+      WHERE EXISTS (
+        SELECT 1 FROM "CsamReport" c
+        WHERE ${reportNamesSql(Prisma.sql`x."userId"`)}
+          AND c."reportSentAt" IS NOT NULL AND ${evidenceVerifiedSql(Prisma.sql`c`)}
+          AND c.images @> jsonb_build_array(jsonb_build_object('id', x."imageId"))
+      )
+    `;
+    const keys = new Set(rows.map((r) => `${r.imageId}:${r.userId}`));
+    return (imageId, userId) => keys.has(`${imageId}:${userId}`);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-coverage-lookup',
+      message: 'report coverage lookup failed; treating every image as uncovered',
+      error: safeError(error),
+    }).catch(() => undefined);
+    return none;
+  }
+}
+
 type OwnerHolds = {
   /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
-  /** Named on a sent CSAM report with a verified evidence copy. */
-  verified: (userId: number) => boolean;
 };
 
 /**
@@ -333,28 +378,22 @@ type OwnerHolds = {
 async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
   const none = () => false;
-  if (!ids.length) return { held: none, reported: none, verified: none };
+  if (!ids.length) return { held: none, reported: none };
   try {
-    const rows = await dbWrite.$queryRaw<
-      { id: number; held: boolean; reported: boolean; verified: boolean }[]
-    >`
+    const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; reported: boolean }[]>`
       SELECT u.id,
         EXISTS (
           SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
             AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
         ) AS held,
-        EXISTS (SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}) AS reported,
-        EXISTS (
-          SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
-            AND c."reportSentAt" IS NOT NULL AND ${evidenceVerifiedSql(Prisma.sql`c`)}
-        ) AS verified
+        EXISTS (SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}) AS reported
       FROM unnest(${ids}::int[]) AS u(id)
     `;
-    const set = (key: 'held' | 'reported' | 'verified') => {
+    const set = (key: 'held' | 'reported') => {
       const s = new Set(rows.filter((r) => r[key]).map((r) => r.id));
       return (userId: number) => s.has(userId);
     };
-    return { held: set('held'), reported: set('reported'), verified: set('verified') };
+    return { held: set('held'), reported: set('reported') };
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -362,7 +401,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
       message: 'evidence hold lookup failed; treating every owner as held',
       error: safeError(error),
     }).catch(() => undefined);
-    return { held: () => true, reported: none, verified: none };
+    return { held: () => true, reported: () => true };
   }
 }
 
@@ -500,35 +539,52 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   const pending = new Set<string>();
   let calls = 0;
   let failed = 0;
+  const planned = urls.filter((url) => callFor(url, facts.get(url), state.get(url)));
   await limitConcurrency(
-    urls
-      .filter((url) => callFor(url, facts.get(url), state.get(url)))
-      .map((url) => async () => {
-        let call: CdnCall | null = null;
-        try {
-          const result = await withUrlClaim(url, async () => {
-            const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-            call = callFor(url, fresh.get(url), freshState.get(url));
-            if (!call) return;
-            calls++;
-            await applyCall(url, call);
-          });
-          if (!result.claimed) pending.add(url);
-        } catch (error) {
-          pending.add(url);
-          failed++;
-          logToAxiom({
-            type: 'error',
-            name: 'cdn-access-sync',
-            message: 'image server call failed; will retry',
-            imageKey: url,
-            call,
-            error: safeError(error),
-          }).catch(() => undefined);
-        }
-      }),
+    planned.map((url) => async () => {
+      let call: CdnCall | null = null;
+      try {
+        const result = await withUrlClaim(url, async () => {
+          const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
+          call = callFor(url, fresh.get(url), freshState.get(url));
+          if (!call) return;
+          calls++;
+          await applyCall(url, call);
+        });
+        if (!result.claimed) pending.add(url);
+      } catch (error) {
+        pending.add(url);
+        failed++;
+        logToAxiom({
+          type: 'error',
+          name: 'cdn-access-sync',
+          message: 'image server call failed; will retry',
+          imageKey: url,
+          call,
+          error: safeError(error),
+        }).catch(() => undefined);
+      }
+    }),
     CALL_CONCURRENCY
   );
+
+  // A url planned from a read taken while another run was mid-call may have moved since; its queue
+  // row stays so the next run plans it again under a claim.
+  const plannedSet = new Set(planned);
+  const quiet = urls.filter((url) => !plannedSet.has(url));
+  if (quiet.length) {
+    const now = await dbWrite.$queryRaw<{ url: string; state: string | null; claimed: boolean }[]>`
+      SELECT u.url, s.state,
+        EXISTS (
+          SELECT 1 FROM "ImageCdnAccessClaim" k WHERE k.url = u.url AND k."claimedUntil" > now()
+        ) AS claimed
+      FROM unnest(${quiet}::text[]) AS u(url)
+      LEFT JOIN "ImageCdnAccess" s ON s.url = u.url
+    `;
+    for (const row of now)
+      if (row.claimed || (row.state ?? undefined) !== state.get(row.url)?.state)
+        pending.add(row.url);
+  }
 
   const done = queue.filter((_, i) => urlsByRow[i].every((url) => !pending.has(url)));
   for (const q of done) {
