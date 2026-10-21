@@ -1,5 +1,12 @@
 import { Prisma } from '@prisma/client';
-import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  assertAccountNotUnderLegalHold,
+  guardedAccountScrubSql,
+  isLegalHoldAbort,
+  LegalHoldError,
+  LegalHoldStoppedError,
+} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -68,6 +75,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -88,7 +96,7 @@ import {
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
-import { deleteImageById } from '~/server/services/image.service';
+import { deleteImages } from '~/server/services/image.service';
 import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
@@ -1041,8 +1049,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     select: { id: true, meta: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
-  // Here rather than in each caller, so every caller of `deleteUser` is held to it.
-  await assertAccountNotUnderLegalHold(user.id);
+  // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
+  // checks again in the same statement as its write.
+  const { markerView } = await assertAccountNotUnderLegalHold(user.id);
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }
@@ -1050,51 +1059,43 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
 
   const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
 
-  const result = await dbWrite.$transaction([
-    dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
-    dbWrite.account.deleteMany({ where: { userId: user.id } }),
-    dbWrite.session.deleteMany({ where: { userId: user.id } }),
-    // Two OR elements, not one carrying two fields — that is a single ANDed
-    // predicate (`userId = X AND targetUserId = X`), which matches only a
-    // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
-    // row, so no FK cascade covers for it: every follow and hide of a deleted account
-    // survived and kept being counted by `getUserList`.
-    //
-    // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
-    // brings the account back and restores nothing here — so clearing a Block would
-    // silently switch off a safety control that someone else set, with no event
-    // telling them. A Follow or a Hide is list noise; a Block is not.
-    dbWrite.userEngagement.deleteMany({
-      where: {
-        OR: [{ userId: user.id }, { targetUserId: user.id }],
-        type: { not: UserEngagementType.Block },
-      },
-    }),
-    // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
-    // miss. The FK cascade never fires for either of these because this is a SOFT delete.
-    dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
-    dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
-    dbWrite.user.update({
-      where: { id: user.id },
-      data: {
-        deletedAt: new Date(),
-        email: null,
-        username: null,
-        name: null,
-        // customerId is deliberately absent: see the webhook test in
-        // __tests__/delete-user-pii-scrub.test.ts before adding it.
-        paddleCustomerId: null,
-        image: null,
-        profilePictureId: null,
-        meta,
-      },
-    }),
-    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
-    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
-    // subscription -> customer -> charges, whose receipt_email and billing_details.name
-    // still identify the person.
-    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
-  ]);
+  const result = await dbWrite
+    .$transaction([
+      // A hold that landed after the check above fails this statement, and with it the whole
+      // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
+      // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
+      dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
+      dbWrite.account.deleteMany({ where: { userId: user.id } }),
+      dbWrite.session.deleteMany({ where: { userId: user.id } }),
+      // Two OR elements, not one carrying two fields — that is a single ANDed
+      // predicate (`userId = X AND targetUserId = X`), which matches only a
+      // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
+      // row, so no FK cascade covers for it: every follow and hide of a deleted account
+      // survived and kept being counted by `getUserList`.
+      //
+      // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
+      // brings the account back and restores nothing here — so clearing a Block would
+      // silently switch off a safety control that someone else set, with no event
+      // telling them. A Follow or a Hide is list noise; a Block is not.
+      dbWrite.userEngagement.deleteMany({
+        where: {
+          OR: [{ userId: user.id }, { targetUserId: user.id }],
+          type: { not: UserEngagementType.Block },
+        },
+      }),
+      // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+      // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+      dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+      dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
+      // The rest of the scrub is in `guardedAccountScrubSql`; meta is here because it carries the
+      // account's own data, which the guarded statement cannot take as a parameter.
+      dbWrite.user.update({ where: { id: user.id }, data: { meta } }),
+    ])
+    .catch((e) => {
+      if (isLegalHoldAbort(e)) throw new LegalHoldError();
+      throw e;
+    });
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
   void syncOwnerEventHats(user.id);
@@ -1385,6 +1386,28 @@ export const updateAccountScope = async ({
   }
 };
 
+/** Queues a search-index Delete for each listed row that no longer exists. */
+async function unindexDeleted(
+  lists: [
+    { queueUpdate: typeof modelsSearchIndex.queueUpdate },
+    'Model' | 'Article' | 'Collection' | 'Bounty',
+    { id: number }[]
+  ][]
+) {
+  for (const [index, table, rows] of lists) {
+    if (!rows.length) continue;
+    const ids = rows.map((r) => r.id);
+    const left = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM ${Prisma.raw(`"${table}"`)} WHERE id = ANY(${ids}::int[])`;
+    const kept = new Set(left.map((r) => r.id));
+    const gone = ids.filter((i) => !kept.has(i));
+    if (gone.length)
+      await index.queueUpdate(
+        gone.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  }
+}
+
 /**
  * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
  * above, which soft-deletes and has a live inverse in `restoreUser`.
@@ -1402,6 +1425,11 @@ export const removeAllContent = async ({
   id: number;
   actorUserId?: number | null;
 }) => {
+  // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
+  // held to it. The deletes that destroy evidence check again in their own statements.
+  const { markerView } = await assertAccountNotUnderLegalHold(id);
+  const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
+
   const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
   const images = await dbRead.image.findMany({
     where: { userId: id },
@@ -1412,19 +1440,12 @@ export const removeAllContent = async ({
     where: { userId: id },
     select: { id: true },
   });
-  const bounties = await dbRead.collection.findMany({
-    where: { userId: id },
-    select: { id: true },
-  });
 
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  await dbWrite.bountyEntry.deleteMany({
-    where: { userId: id, benefactors: { none: {} } },
-  });
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
   const unsettled = await dbWrite.bounty.findMany({
     // `isPayoutPending` as a query; keep the two in step.
@@ -1448,28 +1469,79 @@ export const removeAllContent = async ({
         bountyIds: keptBountyIds,
       }).catch(() => undefined);
   }
-  await dbWrite.bounty.deleteMany({ where: { userId: id, id: { notIn: keptBountyIds } } });
-  await dbWrite.answer.deleteMany({ where: { userId: id } });
-  await dbWrite.question.deleteMany({ where: { userId: id } });
+  // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
+  const bounties = await dbWrite.bounty.findMany({
+    where: { userId: id, id: { notIn: keptBountyIds } },
+    select: { id: true },
+  });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
   await dbWrite.userProfile.deleteMany({ where: { userId: id } });
-  await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2.deleteMany({ where: { userId: id } });
-  await dbWrite.comment.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
-  await dbWrite.article.deleteMany({ where: { userId: id } });
-  await dbWrite.post.deleteMany({ where: { userId: id } });
-  await dbWrite.model.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMessage.deleteMany({ where: { userId: id } });
-  await dbWrite.chatMember.deleteMany({ where: { userId: id } });
 
-  // remove images from s3 buckets before deleting them
+  // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
+  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
+  // answers, questions and reviews are here because each cascades its comment thread.
+  const unlessHeld = Prisma.sql`NOT ${held}`;
+  let stopped: boolean;
   try {
-    for (const image of images) {
-      await deleteImageById({ id: image.id });
-    }
-  } catch (e) {}
-  await dbWrite.image.deleteMany({ where: { userId: id } });
+    await dbWrite.$executeRaw`
+      DELETE FROM "BountyEntry" be
+      WHERE be."userId" = ${id}
+        AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
+        AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      DELETE FROM "Bounty"
+      WHERE "userId" = ${id} AND id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "Model" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // Rows, storage objects and caches; then any image uploaded since the list was read.
+    await deleteImages(
+      images.map((i) => i.id),
+      true,
+      { onlyWhere: unlessHeld }
+    );
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await refreshProfilePicturesForUsers([id]);
+
+    // A hold that landed mid-wipe stopped the deletes above without an error.
+    const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+    stopped = after?.held !== false;
+  } catch (e) {
+    if (!isLegalHoldAbort(e)) throw e;
+    stopped = true;
+  }
+
+  // Report it, drop from the indexes only what really went, and leave the apps store alone.
+  if (stopped) {
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: 'Stopped by a legal hold placed during the wipe',
+      userId: id,
+    }).catch(() => undefined);
+    await unindexDeleted([
+      [modelsSearchIndex, 'Model', models],
+      [articlesSearchIndex, 'Article', articles],
+      [collectionsSearchIndex, 'Collection', collections],
+      [bountiesSearchIndex, 'Bounty', bounties],
+    ]).catch((e: unknown) =>
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
+        userId: id,
+      }).catch(() => undefined)
+    );
+    throw new LegalHoldStoppedError();
+  }
 
   await modelsSearchIndex.queueUpdate(
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
@@ -1487,7 +1559,7 @@ export const removeAllContent = async ({
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await bountiesSearchIndex.queueUpdate(
-    bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+    bounties.map((b) => ({ id: b.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1497,6 +1569,18 @@ export const removeAllContent = async ({
   for (const m of models) {
     await deleteBidsForModel({ modelId: m.id });
   }
+
+  // The two stores below are separate databases, so no statement there can carry the hold: check
+  // again before either.
+  await assertAccountNotUnderLegalHold(id).catch(() => {
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: 'Stopped by a legal hold before the App Blocks stores',
+      userId: id,
+    }).catch(() => undefined);
+    throw new LegalHoldStoppedError();
+  });
 
   // ── App Blocks per-user storage (W4) ────────────────────────────────────────
   // Everything above lives in the MAIN db (plus S3 + the search indexes). A
@@ -3093,6 +3177,7 @@ export async function equipCosmetic({
 
   // Clear cache
   await deleteUserCosmeticCache(userId);
+  await queueWornCosmeticsUpdate([userId]);
 }
 
 export async function unequipCosmeticByType({
@@ -3107,6 +3192,7 @@ export async function unequipCosmeticByType({
     data: { equippedAt: null },
   });
   await deleteUserCosmeticCache(userId);
+  await queueWornCosmeticsUpdate([userId]);
 }
 
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {

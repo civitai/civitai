@@ -7,6 +7,19 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
+// New Chat shows the first badge and nameplate in the list, so an owned-but-unequipped one
+// (a profile user carries every owned cosmetic) would stand in for the worn one. Lists that
+// are already equipped-only have no equippedAt and pass through.
+function withEquippedCosmetics(user: Partial<UserWithCosmetics>): Partial<UserWithCosmetics> {
+  if (!user.cosmetics) return user;
+  return {
+    ...user,
+    cosmetics: user.cosmetics.filter(
+      (c) => (c as { equippedAt?: Date | null }).equippedAt !== null
+    ),
+  };
+}
+
 export function ChatUserButton({
   user,
   label,
@@ -26,7 +39,7 @@ export function ChatUserButton({
       isCreating: true,
       isSettingsOpen: false,
       existingChatId: undefined,
-      selectedUsers: [user],
+      selectedUsers: [withEquippedCosmetics(user)],
     }));
   };
 

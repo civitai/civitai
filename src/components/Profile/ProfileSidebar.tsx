@@ -243,7 +243,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const ChatBtn = ({ label }: { label?: string }) => (
     <ChatUserButton
-      user={user}
+      user={{ ...user, cosmetics: equippedCosmetics }}
       label={label}
       size={sizeOpts.button}
       color="success.9"

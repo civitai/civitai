@@ -6,7 +6,12 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
-  import { deleteButtonState, deleteButtonView, type DeleteHold } from '$lib/legal-hold';
+  import {
+    deleteButtonState,
+    deleteButtonView,
+    holdButtonView,
+    type DeleteHold,
+  } from '$lib/legal-hold';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -42,7 +47,7 @@
     canBan: boolean;
     canPurge: boolean;
     canDelete: boolean;
-    /** Anything but `clear` disables Delete account: a hold, or a status that could not be read. */
+    /** Anything but `clear` disables Delete account and Purge: a hold, or a status that could not be read. */
     deleteHold: DeleteHold | null;
   } =
     $props();
@@ -63,6 +68,13 @@
     deleteButtonState({ canDelete, deleted: !!identity.deletedAt, hold: deleteHold })
   );
   const deleteView = $derived(deleteButtonView(deleteButton));
+  // A deleted account can still be purged, so `deleted` does not hide this one.
+  const purgeView = $derived(
+    holdButtonView(
+      deleteButtonState({ canDelete: canPurge, deleted: false, hold: deleteHold }),
+      'Purge content'
+    )
+  );
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
   // in the main app refuses it, which is what this panel posts through. Without this the panel offered
@@ -191,9 +203,14 @@
         {/if}
       {/if}
 
-      {#if canPurge}
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
-          Purge content
+      {#if purgeView}
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={purgeView.disabled}
+          onclick={() => (confirming = 'purge')}
+        >
+          {purgeView.label}
         </Button>
       {/if}
 
@@ -250,7 +267,7 @@
       </div>
     {/if}
 
-    {#if confirming === 'purge'}
+    {#if confirming === 'purge' && purgeView && !purgeView.disabled}
       <form method="POST" action="?/purgeContent" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">

@@ -6,25 +6,31 @@ import {
 } from '~/components/UserSettings/hooks';
 import {
   DEFAULT_USER_MENU_PINS,
-  USER_MENU_ITEM_IDS,
+  isUserMenuItemId,
   type UserMenuItemId,
 } from '~/shared/constants/user-menu.constants';
 import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 import { movePin, togglePin } from './resolveUserMenu';
 
 export const PIN_SAVE_DELAY_MS = 1000;
 
-const KNOWN_IDS: ReadonlySet<string> = new Set(USER_MENU_ITEM_IDS);
-
 /**
  * Edits show at once and save after `PIN_SAVE_DELAY_MS` of quiet; `flush` saves now (menu close).
  * Edits are refused until settings resolve: an earlier one would start from the defaults and
- * overwrite the viewer's real pins.
+ * overwrite the viewer's real pins. A viewer with no saved pins also waits for the default pins,
+ * so a first edit starts from what the database says rather than from the fallback.
  */
 export function useUserMenuPins() {
-  const { settings, isResolved } = useCurrentUserSettingsState();
+  const { settings, isResolved: settingsResolved } = useCurrentUserSettingsState();
+  const saved = settings?.userMenu?.pinned;
+  const defaults = trpc.system.getUserMenuDefaultPins.useQuery(undefined, {
+    enabled: settingsResolved && !saved,
+  });
+  // A failed read settles on the fallback rather than leaving the menu uneditable.
+  const isResolved = settingsResolved && (!!saved || defaults.isSuccess || defaults.isError);
   const [local, setLocal] = useState<UserMenuItemId[] | null>(null);
-  const pins = local ?? settings?.userMenu?.pinned ?? DEFAULT_USER_MENU_PINS;
+  const pins = local ?? saved ?? defaults.data ?? DEFAULT_USER_MENU_PINS;
 
   // A failed save falls back to the saved pins rather than showing ones that never landed.
   const { mutate } = useMutateUserSettings({
@@ -35,8 +41,7 @@ export function useUserMenuPins() {
   });
   const save = useDebouncedCallback(
     // A saved id that has since left `USER_MENU_ITEM_IDS` would fail the write schema for good.
-    (pinned: UserMenuItemId[]) =>
-      mutate({ userMenu: { pinned: pinned.filter((id) => KNOWN_IDS.has(id)) } }),
+    (pinned: UserMenuItemId[]) => mutate({ userMenu: { pinned: pinned.filter(isUserMenuItemId) } }),
     { delay: PIN_SAVE_DELAY_MS, flushOnUnmount: true }
   );
 

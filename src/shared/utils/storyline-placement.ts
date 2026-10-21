@@ -40,6 +40,27 @@ export type StorylineContinuationStatus =
   | 'expired'
   | 'removed';
 
+/**
+ * A continuation's parent chapter is defined two ways, on purpose:
+ *
+ * - **Present**: not removed (`removedAt` null, and a chapter still holds the post). A continuation
+ *   whose parent is not present can never be accepted, so it is refunded
+ *   (`settleOrphanedContinuations`) and leaves the owner's queue.
+ * - **Answerable**: present, and its storyline is not taken down. Only then may the owner accept or
+ *   decline it.
+ *
+ * A takedown can be lifted (a title appeal, a clean rescan), so the orphan sweep does not refund a
+ * continuation in a taken-down storyline: it stays in the queue marked as not answerable until the
+ * takedown lifts. Its deadline refunds it, and so does the placer-block cascade, which uses the
+ * answerable rule.
+ */
+export function isAnswerableParentChapter(chapter: {
+  removedAt: Date | null;
+  storyline: { tosViolation: boolean };
+}) {
+  return chapter.removedAt == null && !chapter.storyline.tosViolation;
+}
+
 type PostSummary = {
   id: number;
   title: string | null;
@@ -58,8 +79,12 @@ export type StorylineContinuationQueueItem = {
   post: PostSummary;
   /** The chapter it continues. */
   parentPost: PostSummary;
-  /** `maxNsfwLevel` is the storyline's rating ceiling, so a row can flag a post rated above it since. */
-  storyline: { id: number; title: string; maxNsfwLevel: number };
+  /**
+   * `maxNsfwLevel` is the storyline's rating ceiling, so a row can flag a post rated above it since.
+   * `takenDown`: the row is held, not answerable, until the takedown lifts
+   * (`isAnswerableParentChapter`).
+   */
+  storyline: { id: number; title: string; maxNsfwLevel: number; takenDown: boolean };
 };
 
 export type MyStorylineContinuation = {

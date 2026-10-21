@@ -244,7 +244,7 @@ const row = (id: number, placerId = 50) => ({
   placer: { id: placerId, username: `user${placerId}` },
   post: { id: 100 + id, title: `Continuation ${id}`, nsfwLevel: NsfwLevel.PG },
   parentPost: { id: 200, title: 'Chapter 4' },
-  storyline: { id: 7, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13 },
+  storyline: { id: 7, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13, takenDown: false },
 });
 
 describe('StorylineContinueForm post picker', () => {
@@ -536,6 +536,28 @@ describe('StorylineQueueList rows', () => {
     ).toBe('Preview not available on this site');
     expect(button(withheld, 'Accept').disabled).toBe(false);
     expect(button(withheld, 'Endorse').disabled).toBe(false);
+  });
+
+  it('marks a row in a taken-down storyline and offers no answer to it', () => {
+    const el = list([row(7), { ...row(8), storyline: { ...row(8).storyline, takenDown: true } }]);
+    const [open, held] = [7, 8].map(
+      (id) => el.querySelector(`[data-testid="storyline-queue-row-${id}"]`) as HTMLElement
+    );
+
+    expect(held.querySelector('[data-testid="storyline-queue-held-8"]')?.textContent).toContain(
+      'once the takedown is lifted'
+    );
+    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(held, name).disabled)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(open.querySelector('[data-testid="storyline-queue-held-7"]')).toBeNull();
+    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(open, name).disabled)).toEqual([
+      false,
+      false,
+      false,
+    ]);
   });
 
   it('puts no control inside the cover and does not wrap it in a link', () => {

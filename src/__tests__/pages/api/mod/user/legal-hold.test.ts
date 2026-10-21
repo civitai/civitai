@@ -51,7 +51,14 @@ vi.mock('~/server/services/moderator-grants', () => ({
 import handler from '~/pages/api/mod/user/legal-hold';
 
 const TARGET = 8675309;
-const CLEAR = { report: false, imageReview: false, imageBlocked: false, markerViewExists: false };
+const CLEAR = {
+  report: false,
+  'image-review': false,
+  'image-blocked': false,
+  'reported-image': false,
+  markerView: false,
+  markerTable: false,
+};
 
 function call(query: Record<string, unknown>) {
   const req = { method: 'GET', headers: {}, body: {}, query } as Parameters<typeof handler>[0];
@@ -76,6 +83,7 @@ function call(query: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hasModeratorGrant.mockImplementation(async () => true);
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -95,12 +103,13 @@ describe('user.legalHold', () => {
       TemplateStringsArray,
       ...never[]
     ];
-    expect(new Set(Prisma.sql(strings, ...values).values)).toEqual(new Set([TARGET]));
+    const ids = Prisma.sql(strings, ...values).values.filter((v) => typeof v === 'number');
+    expect(new Set(ids)).toEqual(new Set([TARGET]));
   });
 
   it('answers held: true for a held account, and nothing about why', async () => {
     vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([
-      { ...CLEAR, imageReview: true },
+      { ...CLEAR, 'image-review': true },
     ] as never);
 
     const { body } = await call({ userId: String(TARGET) });
@@ -117,14 +126,27 @@ describe('user.legalHold', () => {
     expect(body).toEqual({ userId: TARGET, held: null });
   });
 
-  it('refuses a moderator without user.deleteAccount, before looking anything up', async () => {
-    hasModeratorGrant.mockResolvedValueOnce(false);
+  it('refuses a moderator with neither grant, before looking anything up', async () => {
+    hasModeratorGrant.mockResolvedValue(false);
 
     const { status, body } = await call({ userId: String(TARGET) });
 
     expect(status).toBe(403);
     expect(JSON.stringify(body)).not.toContain('held');
     expect(hasModeratorGrant).toHaveBeenCalledWith(expect.anything(), 'user.deleteAccount');
+    expect(hasModeratorGrant).toHaveBeenCalledWith(expect.anything(), 'user.purge');
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
+
+  it.each(['user.deleteAccount', 'user.purge'])(
+    'answers a moderator who holds only %s',
+    async (grant) => {
+      hasModeratorGrant.mockImplementation(async (_actor, id) => id === grant);
+
+      const { status, body } = await call({ userId: String(TARGET) });
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ userId: TARGET, held: false });
+    }
+  );
 });

@@ -1,7 +1,8 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import type { RemovedUserCosmetic } from '~/server/redis/caches';
-import { refreshUserCosmeticCacheForRemoved } from '~/server/redis/caches';
+import { refreshUserCosmeticCacheForRemoved, wornUserIds } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 
 export async function deliverMembershipCosmetics({
   now,
@@ -124,6 +125,7 @@ export async function deliverMembershipCosmetics({
     RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
   `;
   await refreshUserCosmeticCacheForRemoved(revoked);
+  await queueWornCosmeticsUpdate(wornUserIds(revoked));
 }
 
 export const deliverPurchasedCosmetics = createJob(

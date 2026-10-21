@@ -92,6 +92,10 @@ const GATED_FUNNELS: [string, string][] = [
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
   ['pages/api/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],
+  [
+    'server/services/csam-original-image.ts',
+    'readOriginalImage → fetch() of a stored full URL (csam-original-image.test.ts)',
+  ],
 ];
 
 describe('media-fetch funnel ledger', () => {

@@ -192,11 +192,13 @@ export type RemovedUserCosmetic = {
   equippedToId: number | null;
 };
 
+/** Owners of the removed rows that were worn by the user themselves, not placed on content. */
+export const wornUserIds = (rows: RemovedUserCosmetic[]) =>
+  rows.filter((x) => x.equippedAt && x.equippedToId === null).map((x) => x.userId);
+
 /** `refreshUserCosmeticCache` for rows a bulk write deleted: only users who were wearing one. */
 export async function refreshUserCosmeticCacheForRemoved(rows: RemovedUserCosmetic[]) {
-  await refreshUserCosmeticCache(
-    rows.filter((x) => x.equippedAt && x.equippedToId === null).map((x) => x.userId)
-  );
+  await refreshUserCosmeticCache(wornUserIds(rows));
 }
 
 type UserOwnedStickerLookup = {

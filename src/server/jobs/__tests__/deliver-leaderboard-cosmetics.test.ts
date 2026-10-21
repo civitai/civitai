@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type * as LeaderboardService from '~/server/services/leaderboard.service';
 
 vi.mock('~/server/jobs/job', () => ({
@@ -101,5 +101,48 @@ describe('deliver-leaderboard-cosmetics: worn cosmetics cache', () => {
 
     const refreshed = refresh.mock.calls.flatMap(([ids]) => (Array.isArray(ids) ? ids : [ids]));
     expect(refreshed.sort()).toEqual([WEARER, NEXT_BEST].sort());
+  });
+});
+
+describe('deliver-leaderboard-cosmetics: users search index', () => {
+  const WEARER = 41;
+  const HOLDER = 42;
+  const PLACED = 43;
+  const NEXT_BEST = 44;
+  const LEGACY_WEARER = 45;
+  const LEGACY_HOLDER = 46;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('-- Equip next best')) return [{ userId: NEXT_BEST }];
+      if (sql.includes('-- Revoke leaderboard cosmetics'))
+        return [
+          { userId: WEARER, equippedAt: new Date(), equippedToId: null },
+          { userId: HOLDER, equippedAt: null, equippedToId: null },
+          { userId: PLACED, equippedAt: new Date(), equippedToId: 900 },
+        ];
+      if (sql.includes('-- Revoke leaderboard legend cosmetics'))
+        return [
+          { userId: LEGACY_WEARER, equippedAt: new Date(), equippedToId: null },
+          { userId: LEGACY_HOLDER, equippedAt: null, equippedToId: null },
+        ];
+      return [];
+    }) as never);
+  });
+
+  // Search results and user pickers render the cosmetics stored on each user's document, which
+  // the sync re-pulls only for queued ids: a badge the job equips or takes off must be queued.
+  it('queues the users whose worn cosmetics the job changed, and only them', async () => {
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await deliverLeaderboardCosmetics.run();
+
+    const queued = queue.mock.calls.flatMap(([items]) => items.map((x) => x.id));
+    expect(queued.sort()).toEqual([WEARER, NEXT_BEST, LEGACY_WEARER].sort());
   });
 });
