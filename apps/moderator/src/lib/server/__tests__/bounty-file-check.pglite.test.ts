@@ -141,7 +141,12 @@ describe('the Blocked list', () => {
         [`reblockFileCheck:${JSON.stringify({ fileId: 2, reason: 'why' })}`]
       );
 
+    // An open-bounty file re-blocked earlier comes from the open branch only.
+    await logActivity('reblockFileCheck', 1);
+
     const { items } = await getBlockedEntryFiles(10);
+    const ids = items.map((f) => f.fileId);
+    expect(new Set(ids).size, `a file listed twice: ${ids}`).toBe(ids.length);
     expect(items.map((f) => [f.fileId, f.bountyComplete])).toEqual([
       [2, true],
       [1, false],
