@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
@@ -10,9 +11,10 @@
 
   // Bumped by "Try again" to re-run the derived request; failures are not cached.
   let attempt = $state(0);
+  // Client only: a relative fetch during server rendering throws.
   const chat = $derived.by(() => {
     void attempt;
-    return fetchHoldChat(holdId);
+    return browser ? fetchHoldChat(holdId) : new Promise<never>(() => {});
   });
 </script>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -114,9 +115,10 @@
   // Which other holds a decision can cover. The shell remounts this component per hold, so the request
   // and the checkbox start fresh; the counts are read from the settled request when a button is pressed.
   let authorAttempt = $state(0);
+  // Client only: a relative fetch during server rendering throws, and the shell hydrates per hold anyway.
   const authorRequest = $derived.by(() => {
     void authorAttempt;
-    return fetchHoldAuthor(row.id);
+    return browser ? fetchHoldAuthor(row.id) : new Promise<never>(() => {});
   });
   let applyToAuthor = $state(false);
 
