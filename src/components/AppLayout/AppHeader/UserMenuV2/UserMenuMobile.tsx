@@ -226,7 +226,7 @@ function TopLevel({
   );
 }
 
-function MobilePinned({
+export function MobilePinned({
   pinned,
   pins,
   onToggle,

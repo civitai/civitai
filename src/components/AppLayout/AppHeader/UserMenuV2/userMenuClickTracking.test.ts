@@ -36,8 +36,8 @@ vi.mock('~/components/NextLink/NextLink', () => ({
   }),
 }));
 
-const { DesktopItem } = await import('./UserMenuDesktop');
-const { MobileItem } = await import('./UserMenuMobile');
+const { DesktopItem, PinnedList } = await import('./UserMenuDesktop');
+const { MobileItem, MobilePinned } = await import('./UserMenuMobile');
 const { useDragClickGuard } = await import('./UserMenuParts');
 const { UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { trackActionInputSchema } = await import('~/server/schema/track.schema');
@@ -77,21 +77,31 @@ const row = (label: string) =>
     (el) => el.textContent?.includes(label) && !el.getAttribute('aria-label')
   );
 
-const desktop = (props: Record<string, unknown>) =>
+const inMenu = (node: ReactNode) =>
   createElement(
     Menu,
     { opened: true, withinPortal: false },
     createElement(Menu.Target, null, createElement('button', null, 'open')),
-    createElement(Menu.Dropdown, null, createElement(DesktopItem, props as never))
+    createElement(Menu.Dropdown, null, node)
   );
+const desktop = (props: Record<string, unknown>) =>
+  inMenu(createElement(DesktopItem, props as never));
+
+const pins = { pins: ['inventory'], canEdit: true, toggle: vi.fn(), move: vi.fn() };
+const details = () => mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details);
+
+// Bubble phase on window, so after React: stops happy-dom following a link onto the network.
+const noNavigate = (event: MouseEvent) => event.preventDefault();
 
 beforeEach(() => {
+  window.addEventListener('click', noNavigate);
   mocks.actions = [];
   mocks.user = { id: 1, username: 'tester' };
   handleClose.mockClear();
   civitaiLink.onClick.mockClear();
 });
 afterEach(() => {
+  window.removeEventListener('click', noNavigate);
   document.body.innerHTML = '';
 });
 
@@ -151,6 +161,55 @@ describe('UserMenu_Click', () => {
     await click(document.querySelector('[title="Pin"]'));
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(mocks.actions).toEqual([]);
+  });
+
+  // The two Pinned lists are where `pinned: true` comes from, so they are rendered for real.
+  it('records an open from the desktop Pinned list as pinned', async () => {
+    await mount(
+      inMenu(
+        createElement(PinnedList, {
+          pinned: [inventory],
+          pins,
+          onToggle: vi.fn(),
+          announce: vi.fn(),
+        } as never)
+      )
+    );
+    await click(row('Inventory'));
+    expect(details()).toEqual([
+      { item: 'inventory', group: 'rewards', pinned: true, surface: 'desktop' },
+    ]);
+  });
+
+  it('records an open from the mobile Pinned list as pinned', async () => {
+    await mount(
+      createElement(MobilePinned, {
+        pinned: [inventory],
+        pins,
+        onToggle: vi.fn(),
+        announce: vi.fn(),
+      } as never)
+    );
+    await click(row('Inventory'));
+    expect(details()).toEqual([
+      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+    ]);
+  });
+
+  it('records an external link on mobile and closes the menu', async () => {
+    const faq = {
+      id: 'support-faq' as const,
+      label: 'FAQ',
+      icon: IconBox,
+      href: 'https://x.test',
+      external: true,
+    };
+    await mount(createElement(MobileItem, { item: faq }));
+    await click(row('FAQ'));
+    expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(details()).toEqual([
+      { item: 'support-faq', group: 'help', pinned: false, surface: 'mobile' },
+    ]);
   });
 
   it('gives a signed-out top-level item no group', async () => {

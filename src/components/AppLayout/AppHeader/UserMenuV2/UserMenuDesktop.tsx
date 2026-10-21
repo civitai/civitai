@@ -100,7 +100,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   );
 }
 
-function PinnedList({
+export function PinnedList({
   pinned,
   pins,
   onToggle,
