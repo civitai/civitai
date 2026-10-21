@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { DeleteHold } from '$lib/legal-hold';
+import {
+  HOLD_UNKNOWN_REFUSAL,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  type DeleteHold,
+} from '$lib/legal-hold';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -110,6 +115,8 @@ async function postJson(opts: {
   path: string;
   /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  /** Always sent in the query string, for endpoints that read their input from it. */
+  query?: Record<string, string>;
   method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
@@ -151,6 +158,9 @@ async function postJson(opts: {
       return { ok: false, error: 'WEBHOOK_TOKEN is not configured.', requestNeverSent: true };
     url += `?token=${encodeURIComponent(token)}`;
   }
+
+  if (opts.query)
+    url += `${url.includes('?') ? '&' : '?'}${new URLSearchParams(opts.query).toString()}`;
 
   const isGet = opts.method === 'GET';
   if (isGet) {
@@ -1452,9 +1462,14 @@ export async function setImageFlag(input: {
   return { ok: true };
 }
 
+/** A purge whose answer was lost, most often to the timeout below while it keeps running. */
+export const PURGE_MAY_BE_RUNNING =
+  'Purge started but not confirmed; it may still be running. Check the account in a few minutes before purging again.';
+
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
-// act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
+// act on an id that does not resolve, so a mistyped id cannot reach the endpoint, and on an account
+// under a legal hold. The endpoint refuses a held account too; this answers before anything is sent.
 export async function purgeAllContent(input: {
   userId: number;
   moderatorId: number;
@@ -1466,12 +1481,34 @@ export async function purgeAllContent(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'User not found.' };
 
-  const result = await callMainApp(
-    '/api/mod/remove-all-content',
-    { userId: String(input.userId) },
-    'Purge'
-  );
-  if (!result.ok) return result;
+  const hold = await deleteAccountHold(input.userId);
+  if (hold === 'held') return { ok: false, error: LEGAL_HOLD_REFUSAL };
+  if (hold !== 'clear') return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
+
+  const result = await postJson({
+    path: '/api/mod/remove-all-content',
+    body: {},
+    query: { userId: String(input.userId) },
+    label: 'Purge',
+    auth: 'webhook',
+    timeoutMs: 15_000,
+  });
+  if (!result.ok) {
+    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
+      return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    // A hold stopped it part-way, after some of the account was deleted: that is recorded.
+    if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
+      await logAction('purgeAllContent', input.userId, input.moderatorId);
+      return { ok: false, error: LEGAL_HOLD_STOPPED };
+    }
+    // The wipe runs to completion on the main app whether or not this side is still waiting, so a
+    // lost answer is reported as started, never as failed: a failure invites a second purge.
+    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+      return { ok: false, error: PURGE_MAY_BE_RUNNING };
+    if (result.status !== undefined || result.requestNeverSent)
+      return { ok: false, error: result.error };
+    return { ok: false, error: PURGE_MAY_BE_RUNNING };
+  }
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
   return { ok: true };

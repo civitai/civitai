@@ -4,6 +4,9 @@ export const LEGAL_HOLD_BUTTON_TEXT = 'Account under legal hold. Contact Legal.'
 /** A refused deletion; the same text the main app's endpoint answers with. */
 export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
 
+/** A purge a hold stopped part-way; the same text the main app's endpoint answers with. */
+export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
+
 export const HOLD_UNKNOWN_BUTTON_TEXT = "Couldn't check legal hold status. Try again.";
 export const HOLD_UNKNOWN_REFUSAL = "Couldn't check legal hold status; try again.";
 
@@ -23,18 +26,22 @@ export function deleteButtonState(input: {
   return input.hold === 'held' ? 'held' : 'unknown';
 }
 
-/** What the button shows; `null` renders nothing. Only `enabled` can be pressed. */
-export function deleteButtonView(
-  state: DeleteButtonState
+/** What a hold-gated button shows; `null` renders nothing. Only `enabled` can be pressed. */
+export function holdButtonView(
+  state: DeleteButtonState,
+  enabledLabel: string
 ): { label: string; disabled: boolean } | null {
   switch (state) {
     case 'absent':
       return null;
     case 'enabled':
-      return { label: 'Delete account', disabled: false };
+      return { label: enabledLabel, disabled: false };
     case 'held':
       return { label: LEGAL_HOLD_BUTTON_TEXT, disabled: true };
     default:
       return { label: HOLD_UNKNOWN_BUTTON_TEXT, disabled: true };
   }
 }
+
+export const deleteButtonView = (state: DeleteButtonState) =>
+  holdButtonView(state, 'Delete account');

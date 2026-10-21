@@ -26,8 +26,11 @@ export type StorylineQueueRow = {
     coverImage?: StorylineCoverImage | null;
   };
   parentPost: { id: number; title: string | null };
-  /** `maxNsfwLevel` marks a row whose rating moved above the ceiling after it was sent. */
-  storyline: { id: number; title: string; maxNsfwLevel?: number };
+  /**
+   * `maxNsfwLevel` marks a row whose rating moved above the ceiling after it was sent. `takenDown`
+   * holds the row: it cannot be answered until the storyline's takedown lifts.
+   */
+  storyline: { id: number; title: string; maxNsfwLevel?: number; takenDown?: boolean };
 };
 
 export type StorylineQueueAction = 'accept' | 'endorse' | 'decline';
@@ -81,6 +84,7 @@ export function StorylineQueueList({
             postLevel: row.post.nsfwLevel,
             maxNsfwLevel: ceiling,
           });
+        const held = !!row.storyline.takenDown;
         const isBusy = (action: StorylineQueueAction) =>
           busy?.id === row.id && busy.action === action;
 
@@ -157,6 +161,11 @@ export function StorylineQueueList({
                       </Badge>
                     )}
                   </Group>
+                  {held && (
+                    <Text size="xs" c="red" data-testid={`storyline-queue-held-${row.id}`}>
+                      This storyline is taken down. You can answer this once the takedown is lifted.
+                    </Text>
+                  )}
                   {overCeiling && (
                     <Text size="xs" c="red">
                       Rated above this storyline&apos;s maximum of {getBrowsingLevelLabel(ceiling)}.
@@ -175,7 +184,7 @@ export function StorylineQueueList({
                   fullWidth
                   leftSection={<IconCheck size={14} />}
                   loading={isBusy('accept')}
-                  disabled={!!busy || overCeiling}
+                  disabled={!!busy || held || overCeiling}
                   onClick={() => onAct(row, 'accept')}
                 >
                   Accept
@@ -186,7 +195,7 @@ export function StorylineQueueList({
                   variant="light"
                   leftSection={<IconStar size={14} />}
                   loading={isBusy('endorse')}
-                  disabled={!!busy || overCeiling || !row.placer}
+                  disabled={!!busy || held || overCeiling || !row.placer}
                   onClick={() => onAct(row, 'endorse')}
                 >
                   Endorse
@@ -197,7 +206,7 @@ export function StorylineQueueList({
                   variant="default"
                   leftSection={<IconX size={14} />}
                   loading={isBusy('decline')}
-                  disabled={!!busy}
+                  disabled={!!busy || held}
                   onClick={() => onAct(row, 'decline')}
                 >
                   Decline

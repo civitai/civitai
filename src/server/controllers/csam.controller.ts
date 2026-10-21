@@ -11,7 +11,7 @@ import { createCsamReport } from '~/server/services/csam.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import { BlockImageReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
@@ -35,10 +35,13 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
-    const affectedImages = await dbWrite.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { pHash: true },
-    });
+    const [affectedImages, imageReports] = await Promise.all([
+      dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }),
+      dbWrite.imageReport.findMany({
+        where: { imageId: { in: imageIds } },
+        select: { reportId: true, image: { select: { userId: true } } },
+      }),
+    ]);
 
     await Promise.all([
       bulkAddBlockedImages({
@@ -49,11 +52,24 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
             reason: BlockImageReason.CSAM,
           })),
       }),
+      // Bookkeeping only: a failure here must not stop the account being removed below.
       bulkSetReportStatus({
-        ids: imageIds,
+        ids: imageReports.map((report) => report.reportId),
         status: ReportStatus.Actioned,
         userId: reportedById,
-      }),
+        noRewardFor: csamReportRewardExclusions(userId, imageReports),
+        rewardRemovedReporters: false,
+      }).catch((e) =>
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          important: true,
+          message: 'actioning the reports on filed images failed',
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined)
+      ),
     ]);
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];

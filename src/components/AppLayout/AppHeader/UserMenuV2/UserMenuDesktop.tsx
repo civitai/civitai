@@ -27,6 +27,8 @@ import {
   pinMoveDirection,
   useDragClickGuard,
   usePinActions,
+  useTrackHeaderOpen,
+  useTrackMenuOpen,
 } from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
@@ -71,7 +73,6 @@ type Pins = UserMenuShellProps['pins'];
 
 function DesktopBody({ pins }: { pins: Pins }) {
   const currentUser = useCurrentUser();
-  const creator = useGetCreator();
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
     opened: true,
     pins: pins.pins,
@@ -81,12 +82,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   return (
     <div className="p-1">
       {region}
-      {currentUser && (
-        <Menu.Item component={NextLink} href={`/user/${currentUser.username}`}>
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </Menu.Item>
-      )}
-      {currentUser && <DesktopBuzzItem />}
+      {currentUser && <DesktopHeaderRows />}
       {events.map((item, i) => (
         <DesktopItem key={`event-${i}`} item={item} />
       ))}
@@ -99,7 +95,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   );
 }
 
-function PinnedList({
+export function PinnedList({
   pinned,
   pins,
   onToggle,
@@ -179,6 +175,7 @@ function SortablePinnedItem({
     <DesktopItem
       item={item}
       pinned
+      fromPins
       onToggle={onToggle}
       rowRef={setNodeRef}
       rowProps={{
@@ -338,15 +335,17 @@ function DesktopGroup({
   );
 }
 
-function DesktopItem({
+export function DesktopItem({
   item,
   pinned = false,
+  fromPins = false,
   onToggle,
   rowRef,
   rowProps,
 }: {
   item: Omit<ResolvedMenuItem, 'id'> & { id?: ResolvedMenuItem['id'] };
   pinned?: boolean;
+  fromPins?: boolean;
   onToggle?: (item: ResolvedMenuItem) => void;
   rowRef?: (node: HTMLElement | null) => void;
   rowProps?: Record<string, unknown> & {
@@ -355,6 +354,7 @@ function DesktopItem({
 }) {
   const { handleClose } = useContext(UserMenuCtx);
   const flyout = useContext(FlyoutCtx);
+  const trackOpen = useTrackMenuOpen('desktop');
   const id = item.id;
   const canPin = !!onToggle && !!id && isPinnable(id);
   const toggle = () => canPin && onToggle({ ...item, id });
@@ -393,6 +393,7 @@ function DesktopItem({
     // An item in a flyout closes only the flyout's own menu; close the whole thing.
     onClick: (event: React.MouseEvent) => {
       if (event.defaultPrevented) return;
+      trackOpen(id, fromPins);
       item.onClick?.();
       handleClose();
     },
@@ -416,7 +417,27 @@ function DesktopItem({
   return <Menu.Item {...common} />;
 }
 
-function DesktopBuzzItem() {
+export function DesktopHeaderRows() {
+  const currentUser = useCurrentUser();
+  const creator = useGetCreator();
+  const trackHeader = useTrackHeaderOpen('desktop');
+  if (!currentUser) return null;
+
+  return (
+    <>
+      <Menu.Item
+        component={NextLink}
+        href={`/user/${currentUser.username}`}
+        onClick={() => trackHeader('profile')}
+      >
+        <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
+      </Menu.Item>
+      <DesktopBuzzItem onOpen={() => trackHeader('buzz-dashboard')} />
+    </>
+  );
+}
+
+function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
   const features = useFeatureFlags();
   const onBuyBuzz = useBuyBuzz();
   const [mainBuzzColor] = useAvailableBuzz();
@@ -426,6 +447,8 @@ function DesktopBuzzItem() {
     <Menu.Item
       component={NextLink}
       href="/user/buzz-dashboard"
+      // Buy Buzz below stops its click, so it is not counted as an open.
+      onClick={onOpen}
       className="my-1 bg-gray-2 dark:bg-dark-4"
       rightSection={
         <Button

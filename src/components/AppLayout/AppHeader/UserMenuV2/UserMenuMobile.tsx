@@ -30,7 +30,14 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
-import { MenuItemLabel, PinGlyph, useDragClickGuard, usePinActions } from './UserMenuParts';
+import {
+  MenuItemLabel,
+  PinGlyph,
+  useDragClickGuard,
+  usePinActions,
+  useTrackHeaderOpen,
+  useTrackMenuOpen,
+} from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
 import classes from './UserMenuMobile.module.scss';
@@ -182,18 +189,12 @@ function TopLevel({
   announce: (text: string) => void;
 }) {
   const currentUser = useCurrentUser();
-  const creator = useGetCreator();
   const features = useFeatureFlags();
   const support = useSupportOption();
 
   return (
     <>
-      {currentUser && (
-        <MenuItemLink href={`/user/${currentUser.username}`} data-panel-row>
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </MenuItemLink>
-      )}
-      {currentUser && <BuzzMenuItem />}
+      {currentUser && <MobileHeaderRows />}
       {currentUser && features.buzzSpendPop && features.canWrite && (
         <MenuItemLink href={support.href}>
           <support.icon stroke={1.5} />
@@ -220,7 +221,31 @@ function TopLevel({
   );
 }
 
-function MobilePinned({
+export function MobileHeaderRows() {
+  const currentUser = useCurrentUser();
+  const creator = useGetCreator();
+  const { handleClose } = useContext(UserMenuCtx);
+  const trackHeader = useTrackHeaderOpen('mobile');
+  if (!currentUser) return null;
+
+  return (
+    <>
+      <MenuItemLink
+        href={`/user/${currentUser.username}`}
+        onClick={() => {
+          trackHeader('profile');
+          handleClose();
+        }}
+        data-panel-row
+      >
+        <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
+      </MenuItemLink>
+      <BuzzMenuItem onOpen={() => trackHeader('buzz-dashboard')} />
+    </>
+  );
+}
+
+export function MobilePinned({
   pinned,
   pins,
   onToggle,
@@ -297,7 +322,7 @@ function SortableMobileItem({
         touchAction: 'pan-y',
       }}
     >
-      <MobileItem item={item} pinned onToggle={onToggle} />
+      <MobileItem item={item} pinned fromPins onToggle={onToggle} />
     </div>
   );
 }
@@ -341,17 +366,25 @@ function MobileNodes({
   );
 }
 
-function MobileItem({
+export function MobileItem({
   item,
   pinned = false,
+  fromPins = false,
   onToggle,
 }: {
   item: UserMenuItem;
   pinned?: boolean;
+  fromPins?: boolean;
   onToggle?: (item: ResolvedMenuItem) => void;
 }) {
   const { handleClose } = useContext(UserMenuCtx);
+  const trackOpen = useTrackMenuOpen('mobile');
   const { id } = item;
+  // Replaces each row's own `handleClose` click handler, so it has to close the menu too.
+  const open = () => {
+    trackOpen(id, fromPins);
+    handleClose();
+  };
   const canPin = !!onToggle && !!id && isPinnable(id);
   const content = (
     <>
@@ -367,7 +400,7 @@ function MobileItem({
         target="_blank"
         rel="nofollow noreferrer"
         className={clsx(ROW, { ['flex-1']: canPin })}
-        onClick={handleClose}
+        onClick={open}
         data-panel-row
       >
         {content}
@@ -378,6 +411,7 @@ function MobileItem({
         as={item.as}
         rel={item.rel}
         className={clsx({ ['flex-1']: canPin })}
+        onClick={open}
         data-panel-row
       >
         {content}
@@ -386,7 +420,7 @@ function MobileItem({
   ) : (
     <MenuItemButton
       onClick={() => {
-        handleClose();
+        open();
         item.onClick?.();
       }}
       className={clsx({ ['flex-1']: canPin })}

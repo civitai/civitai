@@ -12,7 +12,7 @@ import type {
 } from '~/shared/utils/placement';
 import type { StickerMediaType } from '~/shared/utils/sticker-placement';
 import { stickerMediaTypeOf, stickerMediaTypes } from '~/shared/utils/sticker-placement';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
@@ -102,7 +102,7 @@ async function resolveChapterTarget(postId: number) {
   // A taken-down storyline or a removed chapter is not a target at all:
   // refusing here, where the space is resolved, keeps every read of it (the
   // contributor's price, the submit) from showing it as open.
-  if (!chapter || chapter.removedAt || chapter.storyline.tosViolation)
+  if (!chapter || !isAnswerableParentChapter(chapter))
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   return {

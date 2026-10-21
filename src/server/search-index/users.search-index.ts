@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { usersFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { usersSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { updateDocs } from '~/server/meilisearch/client';
+import { logToAxiom } from '~/server/logging/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import type {
@@ -320,3 +322,32 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     return;
   },
 });
+
+const WORN_COSMETICS_QUEUE_CHUNK = 1000;
+
+/**
+ * Queues users whose worn cosmetics changed. Their documents carry those cosmetics, and the
+ * incremental sync re-pulls an existing user only when its id is queued, so without this the
+ * search results and user pickers keep showing what they wore before.
+ *
+ * Call after the change has committed, never inside a transaction. A failed enqueue is logged and
+ * swallowed: the write it follows already happened, and a stale document is the smaller failure.
+ */
+export async function queueWornCosmeticsUpdate(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  for (let i = 0; i < ids.length; i += WORN_COSMETICS_QUEUE_CHUNK) {
+    await usersSearchIndex
+      .queueUpdate(
+        ids
+          .slice(i, i + WORN_COSMETICS_QUEUE_CHUNK)
+          .map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'worn-cosmetics-search-index',
+          message: (error as Error).message,
+        })
+      );
+  }
+}
