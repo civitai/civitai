@@ -9,14 +9,22 @@
 --    The survivor is the hold a moderator is mid-decision on (live claim, same 30 minutes the application
 --    honours), else the one holding the entity's last scanned text, else the newest. Run while nobody is
 --    deciding: a superseded hold with a claim makes that decision fail as already decided.
-WITH latest AS (
-  SELECT DISTINCT ON (regexp_replace("entityType", ':shadow$', ''), "entityId")
-         regexp_replace("entityType", ':shadow$', '') AS "entityType",
-         "entityId",
-         "result"->>'textHash' AS "textHash"
-  FROM "EntityModeration"
-  WHERE ("entityType" !~ ':' OR "entityType" ~ ':shadow$') AND "result"->>'textHash' IS NOT NULL
-  ORDER BY regexp_replace("entityType", ':shadow$', ''), "entityId", "updatedAt" DESC, "id" DESC
+--    Only entities with duplicates read EntityModeration, by exact key, so the table is never sorted whole.
+WITH dup AS (
+  SELECT DISTINCT "entityType", "entityId"
+  FROM "TextScanHold"
+  WHERE "status" = 'Pending' AND "entityType" <> 'ChatMessage'
+  GROUP BY "entityType", "entityId", "label"
+  HAVING count(*) > 1
+),
+latest AS (
+  SELECT DISTINCT ON (d."entityType", d."entityId")
+         d."entityType", d."entityId", em."result"->>'textHash' AS "textHash"
+  FROM dup d
+  JOIN "EntityModeration" em
+    ON em."entityId" = d."entityId" AND em."entityType" IN (d."entityType", d."entityType" || ':shadow')
+  WHERE em."result"->>'textHash' IS NOT NULL
+  ORDER BY d."entityType", d."entityId", em."updatedAt" DESC, em."id" DESC
 ),
 ranked AS (
   SELECT h."id",
