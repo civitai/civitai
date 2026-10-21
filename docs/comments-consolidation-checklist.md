@@ -224,11 +224,14 @@ backfill to race.
       see Phase 5, "Event-engine / metrics"; it lands before the first Phase 4 write flip. Under
       dual-write a handler would double-count every mirrored row, and a subscription without one
       streams every reaction's `reactionCount` update as a full-row event nothing reads
-- [ ] Mirror migration **applied manually** to prod (after the Phase 1 schema migration; nothing
+- [x] Mirror migration **applied manually** to prod 2026-10-21 (verified on the replica: eight
+      `commentv3_mirror` triggers, the deferred count trigger, the `ensure_topic` re-probe, definer
+      functions with `EXECUTE` revoked; the first comments since, v1 and v2, matched their old rows
+      with topics and reactions counted) (after the Phase 1 schema migration; nothing
       in it needs the client; apply as the same owner role, since it replaces a function and a
       trigger the schema migration created, that role is what every definer function runs as, and
       the mirror takes row locks on the old tables and all 13 entity tables, which needs `UPDATE`
-      on them). Both migrations applied to dev 2026-10-20: eight enabled mirror
+      on them). Both migrations applied to dev 2026-10-20 (the `commentv3_ensure_topic` re-probe committed 2026-10-21 was re-applied there the same day): eight enabled mirror
       triggers, the count trigger deferred, and a rolled-back reply under a real image comment
       copied its parent on demand with the right topic and path.
       One transaction with `SET LOCAL lock_timeout = '3s'`: trigger DDL
@@ -241,7 +244,8 @@ backfill to race.
       those callers chunk. Two such wipes on one entity committing in the same instant can
       deadlock at commit (plan, Phase 2); if `40P01` shows up on `removeAllContent` or the scam
       cleanup, add a retry there
-- [ ] After the apply, note the entity cascade order on prod (informational; nothing depends on
+- [x] After the apply, note the entity cascade order on prod (checked 2026-10-21: `Thread` first
+      on all 13 entity tables) (informational; nothing depends on
       it): for each entity table, whether the `Thread` FK's `RI_ConstraintTrigger_a_*` sorts
       before the `CommentTopic_*` partition FK's (Postgres fires them in name order, so by OID).
       True today by OID. The mirror does not rely on it: every copy takes `KEY SHARE` on the
@@ -255,7 +259,7 @@ backfill to race.
   WHERE t.tgname LIKE 'RI_ConstraintTrigger_a%'
     AND (c.conrelid = '"Thread"'::regclass OR c.conrelid::regclass::text LIKE '"CommentTopic_%')
   ORDER BY 1, 2;
-  `
+`
       Two more invariants the mirrored delete rests on, true until Phase 6 drops the triggers: no
       mirror trigger is renamed so that it sorts before `RI_ConstraintTrigger_*` (the RI
       `SET NULL` and cascade actions must fire first; `commentv3_mirror` sorts after them), and
@@ -289,36 +293,75 @@ moment to make `commentv3_replies_newest`/`commentv3_replies_reactions` partial 
 majority, add dead entries to both; Prisma cannot declare a partial index, so they would move to
 the undeclared set like `top_*`):
 
-- [ ] v2 comment copy job: `threadId → (entityType, entityId)` via root chain; `parentId` = thread's
-      `commentId`; **inserted in depth order** so the path trigger finds each parent (`rootId`/
+- [x] v2 comment copy job: `threadId → (entityType, entityId)` via root chain; `parentId` = thread's
+      `commentId`; ancestors copied before each row, so batch order does not matter (`rootId`/
       `depth` come from the trigger, not the backfill); rows deeper than 20 **clamped** to a
-      depth-20 sibling with `replyToId` set **(review)**; ids + timestamps preserved; nullable
+      depth-20 sibling with `replyToId` set; ids + timestamps preserved; nullable
       `hidden`/`locked` → false; idempotent + batched + resumable. Each batch reads its source
       rows `FOR KEY SHARE SKIP LOCKED` (a row a deleter holds is left for the next pass, so the
       batch never waits on a deleter the way the mirror never does; unlocked, the batch would
       commit a row for a comment that no longer exists, and a concurrent hide would be lost the
       same way). A delete that lands after the batch's lock waits, and its mirror tombstones or
-      removes the committed copy
-- [ ] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, new ids from the shared sequence
+      removes the committed copy — built 2026-10-21 as `comment-v3-backfill` step `v2`
+      (`src/pages/api/admin/temp/comment-v3-backfill.ts`), calling the mirror's own
+      `commentv3_mirror_v2` per row so a backfilled row is what the mirror would have written; each
+      pass also re-syncs a mirrored comment's lock from its reply Thread (an unlock that commits while
+      the comment's copy is uncommitted is dropped by the mirror); not yet run
+- [x] v1 comment copy job: `entityType='model'`, `legacyV1Id` set, new ids from the shared sequence
       for pre-existing rows; `createdAt` verbatim (the Newest sort reads it, not `id`); model
-      topics upserted first (most have no `Thread`; a missing model is skipped and counted)
-- [ ] Topic copy: one `CommentTopic` per entity-bearing Thread whose entity exists (missing
-      entity skipped and counted; `ON CONFLICT ("entityId", "entityType") DO NOTHING`; locked
-      carried, count recomputed from `CommentV2` rows, not copied from `Thread.commentCount`);
-      `ANALYZE "CommentTopic"` afterwards, since autovacuum never analyzes the partitioned parent
-- [ ] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;
-      `reactionCount` recomputed at end. Runs after the comment copies, so it also covers
-      reactions whose comment was unmirrored at the time (a `SKIP LOCKED` yield)
-- [ ] Report copy: `CommentV2Report` as-is, `CommentReport` via `legacyV1Id`; after the comment
-      copies, for the same reason
-- [ ] Mute copy: `ThreadMute` splits (the Phase 2 trigger already carries live changes, so
+      topics created on demand (most have no `Thread`; a missing model is skipped and counted) —
+      step `v1`, calling `commentv3_mirror_v1` per row; not yet run
+- [x] Topic copy: one `CommentTopic` per entity-bearing root Thread that carries a comment, a lock
+      or a mute, whose entity exists (missing entity skipped and counted;
+      `ON CONFLICT ("entityId", "entityType") DO NOTHING`; locked carried, and re-synced on a topic
+      whose lock drifted from its root thread; the count is maintained by the deferred trigger as
+      the comment copies insert, never copied from `Thread.commentCount`) — step `topics`, calling
+      `commentv3_ensure_topic` per qualifying root thread; the 3.6M empty, unlocked, unmuted root
+      threads get no topic (plan, Phase 3: readers already treat "no topic" as no comments); a
+      dead-parent child thread (`commentId` nulled, `parentThreadId` set) is not a root and is left
+      out; not yet run on prod. `ANALYZE "CommentTopic"` afterwards, since autovacuum never
+      analyzes the partitioned parent
+- [ ] Running it: `dryRun` defaults to true (GET; the range steps return pending counts, `mutes`
+      and `sweep` do nothing); a live run is a POST with `dryRun=false`; `unmirrored` and `parity`
+      always run. `concurrency=1` for `v2`, `v1` and the reaction steps (two batches that share an
+      ancestor chain, a topic or a comment deadlock each other and roll back; `topics` and the
+      report steps are safe at 2, `mutes` is a single pass); `DATABASE_REPLICA_LONG_URL` set where the `unmirrored`/`parity` reports
+      run, or they hit the primary with no statement timeout; `sweep` only after `topics` has
+      converged, i.e. its dry-run `pending` has stopped falling (an orphaned topic mute and one whose
+      topic is not made yet look the same); one more `v2` pass after the last copy, since its lock
+      re-sync is what catches an unlock that committed mid-copy; a raw hard-delete of a `User` (or, for the report steps, of a `Report`) during the load can
+      deadlock against a batch holding one of that user's comment or link rows (the batch takes the
+      `User`/`Report` row last, at the INSERT's FK check; no app path does either) and shows up as a
+      failed range to re-run; a batch
+      that fails is listed in the response's `failedRanges` and re-run with `start`/`end`. The
+      reaction links update `reactionCount` once per link, a non-HOT update of `CommentV3` each
+      (the column is indexed), so expect the table's heap to bloat until vacuum. Do not disable
+      the count trigger to avoid it (see the Phase 3 intro): live mirrored counts would be lost
+- [x] Reaction copy: `CommentV2Reaction` as-is, `CommentReaction` via `legacyV1Id`;
+      `reactionCount` maintained by the reaction-count trigger as the links insert. Runs after the
+      comment copies, so it also covers reactions whose comment was unmirrored at the time (a
+      `SKIP LOCKED` yield) — steps `v2Reactions`/`v1Reactions`; each batch locks the link row
+      (`FOR SHARE`, since a reaction change is a plain `UPDATE`), then the old comment, then the v3
+      one (key-share, `SKIP LOCKED`), so a link never waits on a deleter and an unlink waits for the
+      copy to commit and then removes it; rows whose comment is not mirrored or is held come back as
+      `unmirrored`; not yet run
+- [x] Report copy: `CommentV2Report` as-is, `CommentReport` via `legacyV1Id`; after the comment
+      copies, for the same reason, with the same lock order (`FOR KEY SHARE` on the link row) —
+      steps `v2Reports`/`v1Reports`; not yet run
+- [x] Mute copy: `ThreadMute` splits (the Phase 2 trigger already carries live changes, so
       `ON CONFLICT DO NOTHING` on the PK). Thread with `commentId` → `CommentMute` on that comment's
       id (v2 ids preserved; note the off-by-one — v2 mutes the comment's CHILD thread);
-      entity-bearing thread with no `commentId` → `CommentTopicMute`; orphaned → skipped and counted
-- [ ] Orphaned-thread comments (and their reactions/report links) skipped, counts logged —
+      entity-bearing thread with no `commentId` → `CommentTopicMute`; orphaned → skipped and
+      counted — step `mutes`, one pass; not yet run
+- [x] Orphaned-thread comments (and their reactions/report links) skipped, counts logged —
       entity-less root threads can no longer occur in prod (guard only); child threads with
       `commentId IS NULL` still can until V3 lands (load-bearing: a null `parentId` from one
-      would promote a reply to top level on a live entity)
+      would promote a reply to top level on a live entity) — step `unmirrored` reports them by
+      reason (`v2_no_thread`, `v2_dead_parent`, `v2_unresolved_entity`, `v2_no_topic`,
+      `v1_dead_parent`, `v1_no_topic`) with sample ids. Prod holds two such classes the FK cascades
+      predate: 8,531 v2 comments (ids 1857994–1868035, 2026-02-27 to 03-01) whose `Thread` row is
+      gone, with 4,409 reactions, and 2 v1 replies whose parent comment is gone; none of them can
+      render today, so they stay out and the parity counts leave them aside, plus every link whose comment is mirrored but whose link is not
 - [ ] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
       tables, spot checksums, `ThreadMute` count vs `CommentMute` + `CommentTopicMute` + skipped,
       locked state (`CommentTopic.locked` / `CommentV3.locked` vs `Thread.locked`),
@@ -326,13 +369,30 @@ the undeclared set like `top_*`):
       `updatedAt`/`deletedAt` comparison old vs new (count parity cannot see a stale edit or a
       resurrected delete), and live v3 rows whose old row is gone (v2 by id, v1 by
       `legacyV1Id`: the mirror's delete yields to an entity cascade holding the row, and a
-      cascade that later rolls back leaves it live) **(review)**
-- [ ] Two sweeps the mirror can leave behind, safe to run any time: tombstones with neither a
+      cascade that later rolls back leaves it live) — step `parity` reports these as a count plus
+      sample ids: live v3 rows with no old row (`v2_ghosts`, `v1_ghosts`), `resurrected` deletes,
+      per-Thread and per-model count mismatches against the live old rows (not
+      `Thread.commentCount`; a clamped reply answers its thread through `replyToId`),
+      `topic_count_mismatch` (against its own rows, because the trigger counts tombstones),
+      `reaction_count_mismatch`, link extras (`v2_reactions_extra`, `v1_reactions_extra`,
+      `reports_extra`, `mutes_extra`), `topic_lock_mismatch`/`comment_lock_mismatch`, full-row
+      `v2_column_drift`/`v1_column_drift` (replaces spot checksums and the `updatedAt`
+      comparison), `v1_parent_mismatch`, and `tombstones_childless`/`topic_mutes_orphaned`. Every
+      finding must be zero after `sweep` and a following `v2` pass; those last two are the accepted residue that `sweep`
+      clears. Mute totals are covered by `mutes_pending` (in `unmirrored`) plus `mutes_extra`, not
+      by a count. Not yet run against prod
+- [x] Two sweeps the mirror can leave behind (the tombstone one safe to run any time, the topic-mute
+      one only after `topics` has converged, since a mute whose topic is not made yet looks the
+      same as an orphan): tombstones with neither a
       reply nor an answerer (`DELETE FROM "CommentV3" t WHERE "deletedAt" IS NOT NULL AND NOT
   EXISTS (SELECT 1 FROM "CommentV3" WHERE "parentId" = t.id OR "replyToId" = t.id)`; two
       concurrent deletes can produce one), and `CommentTopicMute`
       rows whose entity is gone (no FK to the topic by design, and an entity delete cascades
-      `ThreadMute` after its `Thread` row is already gone, so the mirror cannot map them)
+      `ThreadMute` after its `Thread` row is already gone, so the mirror cannot map them) —
+      step `sweep`, repeated until a tombstone chain has collapsed; a tombstone whose old row
+      still exists (a raw `UPDATE` of `deletedAt`) is deleted by `sweep` if childless and then
+      re-copied by the next `v2` pass; one that still has children stays and is reported as
+      `resurrected`, to be fixed by hand
 - [ ] Continuous parity monitor (row-count diff old vs new per day) running
 - [ ] Reverse-copy script (CommentV3 → old tables, id-matched) written and tested — the Phase 4
       write-flip rollback tool
