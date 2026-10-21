@@ -783,6 +783,20 @@ describe('reconciler', () => {
     expect(calls.map(kind)).toEqual(['deny', 'deny', 'deny']);
   });
 
+  it('keeps a url a moderator delete was recorded for while it was deciding to forget it', async () => {
+    await sql`INSERT INTO "ImageCdnAccess" (url, state) VALUES (${GONE}, 'Denied')`;
+    const executeRaw = dbMock.dbWrite.$executeRaw.getMockImplementation();
+    dbMock.dbWrite.$executeRaw.mockImplementation((async (...a: unknown[]) => {
+      if ((a[0] as readonly string[]).join('').includes('DELETE FROM "ImageCdnAccess" a'))
+        // A drain records the delete after this run read the url as having nothing left.
+        await sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+                  VALUES (1, ${GONE}, ${OWNER}, false)`;
+      return executeRaw?.(...(a as Parameters<NonNullable<typeof executeRaw>>));
+    }) as never);
+    await reconcileCdnAccess();
+    expect(await stateOf(GONE)).toBe('Denied');
+  });
+
   it('re-asserts a retracted url with a deny, not another retraction', async () => {
     await image(1);
     await moderatorBlock(1);
