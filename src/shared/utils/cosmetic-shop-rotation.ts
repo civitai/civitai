@@ -42,7 +42,8 @@ type ShopBlockItem = {
 /**
  * What one viewer sees of a shop block. The block body is shared by every viewer, so the
  * per-viewer block filter the shop page applies on the server has to happen here: the same rule,
- * a cosmetic's creator or a pack's lister, either direction of the block.
+ * a cosmetic's creator or a pack's lister, either direction of the block. That rule also lives in
+ * `getShopSectionsWithItems`; a change to one belongs in the other.
  */
 export function visibleShopBlockItems<T extends ShopBlockItem>(
   items: T[],
