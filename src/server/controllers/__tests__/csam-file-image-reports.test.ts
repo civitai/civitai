@@ -19,14 +19,17 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-const { bulkSetReportStatus } = vi.hoisted(() => ({ bulkSetReportStatus: vi.fn() }));
+const { bulkSetReportStatus, softDeleteUser } = vi.hoisted(() => ({
+  bulkSetReportStatus: vi.fn(),
+  softDeleteUser: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
   createCsamReport: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
-  softDeleteUser: vi.fn(async () => undefined),
+  softDeleteUser,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -50,7 +53,8 @@ const IMAGE = 500;
 const OTHER_IMAGE = 501;
 
 beforeEach(() => {
-  bulkSetReportStatus.mockReset();
+  bulkSetReportStatus.mockReset().mockResolvedValue(undefined);
+  softDeleteUser.mockClear();
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.imageReport.findMany.mockImplementation((async ({
     where,
@@ -85,6 +89,15 @@ describe('fileCsamReport', () => {
 
     const { ids, noRewardFor } = bulkSetReportStatus.mock.calls[0][0];
     expect(ids).toEqual([7, 8, IMAGE]);
-    expect(new Set(noRewardFor)).toEqual(new Set([-1, OWNER, OTHER_OWNER]));
+    expect(noRewardFor(7)).toEqual([-1, OWNER]);
+    expect(noRewardFor(IMAGE)).toEqual([-1, OTHER_OWNER]);
+  });
+
+  it('still removes the account when actioning the reports fails', async () => {
+    bulkSetReportStatus.mockRejectedValueOnce(new Error('connection lost'));
+
+    await file(OWNER, [IMAGE]);
+
+    expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
   });
 });

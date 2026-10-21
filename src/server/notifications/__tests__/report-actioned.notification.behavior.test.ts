@@ -37,7 +37,7 @@ beforeAll(async () => {
       (${DELETED}, NULL, now()), (${OWNER}, NULL, NULL);
     INSERT INTO "Image" VALUES (500, ${OWNER});
     INSERT INTO "Report" (id, "userId", "alsoReportedBy", reason, status, "statusSetAt") VALUES
-      (7, ${REPORTER}, '{${ALSO},${BANNED},${DELETED}}', 'TOSViolation', 'Actioned', now()),
+      (7, ${REPORTER}, '{${ALSO},${BANNED},${DELETED},${OWNER}}', 'TOSViolation', 'Actioned', now()),
       (8, ${OWNER}, '{}', 'TOSViolation', 'Actioned', now());
     INSERT INTO "ImageReport" VALUES (500, 7), (500, 8);
   `);

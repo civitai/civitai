@@ -11,7 +11,7 @@ import { createCsamReport } from '~/server/services/csam.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import { BlockImageReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
@@ -52,14 +52,23 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
             reason: BlockImageReason.CSAM,
           })),
       }),
+      // Bookkeeping only: a failure here must not stop the account being removed below.
       bulkSetReportStatus({
         ids: imageReports.map((report) => report.reportId),
         status: ReportStatus.Actioned,
         userId: reportedById,
-        // The reported account and the images' owners are never rewarded for reporting them.
-        noRewardFor: [userId, ...imageReports.map((report) => report.image.userId)],
+        noRewardFor: csamReportRewardExclusions(userId, imageReports),
         rewardRemovedReporters: false,
-      }),
+      }).catch((e) =>
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          message: 'actioning the reports on filed images failed',
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined)
+      ),
     ]);
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];
