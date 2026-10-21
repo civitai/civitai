@@ -1489,7 +1489,7 @@ export async function purgeAllContent(input: {
   const result = await postJson({
     path: '/api/mod/remove-all-content',
     body: {},
-    query: { userId: String(input.userId) },
+    query: { userId: String(input.userId), moderatorId: String(input.moderatorId) },
     label: 'Purge',
     auth: 'webhook',
     timeoutMs: 15_000,

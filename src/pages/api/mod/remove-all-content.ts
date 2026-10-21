@@ -12,10 +12,12 @@ import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-he
 
 const schema = z.object({
   userId: z.coerce.number(),
+  /** Who ordered the wipe, for attribution only: the shared secret is the authorisation. */
+  moderatorId: z.coerce.number().int().positive().optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { userId } = schema.parse(req.query);
+  const { userId, moderatorId } = schema.parse(req.query);
 
   const track = () =>
     new Tracker(req, res).userActivity({
@@ -24,7 +26,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     });
   let incomplete: string[];
   try {
-    ({ incomplete } = await removeAllContent({ id: userId }));
+    ({ incomplete } = await removeAllContent({ id: userId, actorUserId: moderatorId ?? null }));
   } catch (e) {
     if (!(e instanceof LegalHoldError)) throw e;
     // Part of the account was deleted, so it is recorded like a wipe that finished.

@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The two account-wide content wipes refuse a held account, and a hold that lands mid-wipe stops
@@ -290,6 +291,13 @@ beforeEach(async () => {
   }) as never);
 });
 
+/** The alertable lines for bids a wipe could not refund. */
+const refundAlerts = () =>
+  vi
+    .mocked(loggingMock.logToAxiom)
+    .mock.calls.map(([line]) => line as Record<string, unknown>)
+    .filter((line) => line.name === 'bid-refund-failed');
+
 /** The ids each search index was asked to drop. */
 function dropped() {
   return Object.fromEntries(
@@ -519,7 +527,38 @@ describe('removeAllContent', () => {
       recurringBidsDeleted: [],
       refundFailed: ['tx-1'],
     });
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(await removeAllContent({ id: CLEAN, actorUserId: 9 })).toEqual({
+      incomplete: ['bid-refunds'],
+    });
+    expect(refundAlerts()).toEqual([
+      expect.objectContaining({
+        userId: CLEAN,
+        moderatorId: 9,
+        versionIds: [MODEL_VERSION(MODEL)],
+        transactionIds: ['tx-1'],
+      }),
+    ]);
+  });
+
+  it('raises a refund alert from a stopped wipe too', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-2'],
+    });
+    await expect(removeAllContent({ id: CLEAN, actorUserId: 9 })).rejects.toBeInstanceOf(
+      LegalHoldStoppedError
+    );
+    expect(refundAlerts()).toEqual([
+      expect.objectContaining({ moderatorId: 9, transactionIds: ['tx-2'] }),
+    ]);
+  });
+
+  it('raises no refund alert when every refund went through', async () => {
+    await removeAllContent({ id: CLEAN, actorUserId: 9 });
+    expect(refundAlerts()).toEqual([]);
   });
 
   it('names the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
@@ -707,12 +746,12 @@ function fakeRes() {
 }
 
 describe('/api/mod/remove-all-content', () => {
-  const call = async (userId: number) => {
+  const call = async (userId: number, extra: Record<string, string> = {}) => {
     const res = fakeRes();
     await removeAllContentWebhook(
       {
         method: 'POST',
-        query: { token: 'test-webhook-token', userId: String(userId) },
+        query: { token: 'test-webhook-token', userId: String(userId), ...extra },
         headers: {},
         cookies: {},
       } as never,
@@ -737,6 +776,16 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
     expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
+  });
+
+  it('names the moderator the caller sent on a refund alert', async () => {
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-3'],
+    });
+    await call(CLEAN, { moderatorId: '9' });
+    expect(refundAlerts()).toEqual([expect.objectContaining({ moderatorId: 9 })]);
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {

@@ -72,7 +72,7 @@ describe('purgeAllContent and a legal hold', () => {
   it('purges an account that is clear, naming it in the query the endpoint reads', async () => {
     expect(await run()).toEqual({ ok: true });
     expect(purgeUrls).toEqual([
-      `https://civitai.com/api/mod/remove-all-content?token=shared-secret&userId=${TARGET}`,
+      `https://civitai.com/api/mod/remove-all-content?token=shared-secret&userId=${TARGET}&moderatorId=9`,
     ]);
   });
 

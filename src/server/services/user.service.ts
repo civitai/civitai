@@ -1422,10 +1422,28 @@ type BidRefundFailure =
 
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
- * throws: a re-run of the wipe finds no models to refund, so each failure comes back with the ids a
- * manual refund needs.
+ * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
+ * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
  */
 async function refundBidsForDeletedModels(
+  models: { id: number; name: string; modelVersions: { id: number }[] }[],
+  wipe: { userId: number; actorUserId: number | null }
+): Promise<BidRefundFailure[]> {
+  const failures = await refundEachDeletedModel(models);
+  for (const failure of failures)
+    logToAxiom({
+      name: 'bid-refund-failed',
+      type: 'error',
+      message: 'A content wipe could not refund bids; refund them by hand',
+      source: 'remove-all-content',
+      userId: wipe.userId,
+      moderatorId: wipe.actorUserId,
+      ...failure,
+    }).catch(() => undefined);
+  return failures;
+}
+
+async function refundEachDeletedModel(
   models: { id: number; name: string; modelVersions: { id: number }[] }[]
 ): Promise<BidRefundFailure[]> {
   const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
@@ -1593,15 +1611,7 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    const refundFailures = await refundBidsForDeletedModels(models);
-    if (refundFailures.length)
-      logToAxiom({
-        name: 'remove-all-content',
-        type: 'error',
-        message: 'Refunding bids after a stopped wipe failed',
-        userId: id,
-        refunds: refundFailures,
-      }).catch(() => undefined);
+    await refundBidsForDeletedModels(models, { userId: id, actorUserId });
     throw new LegalHoldStoppedError();
   }
 
@@ -1644,9 +1654,8 @@ export const removeAllContent = async ({
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
-  const refundFailures = await refundBidsForDeletedModels(models);
-  if (refundFailures.length)
-    failed('bid-refunds', 'some bids were not refunded', { refunds: refundFailures });
+  const refundFailures = await refundBidsForDeletedModels(models, { userId: id, actorUserId });
+  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
