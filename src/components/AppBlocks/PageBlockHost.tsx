@@ -61,10 +61,10 @@ import {
   resolveSetEntityReactionRequest,
 } from './reactionGate';
 import { handleEstimateBatch } from './estimateBatchGate';
-import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
 import {
   buildTrainingConsentCopy,
   resolveRunTrainingRequest,
+  resolveTrainingConsentThumbnails,
   trainingSubmitReplyFromError,
   trainingSubmitReplyFromResult,
   type TrainingQuotePreview,
@@ -91,6 +91,8 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import type { TrainingDataUpload } from './trainingDataUpload';
+import { trainingBlobKeyIdentity } from '~/server/schema/blocks/training-dataset.schema';
 import {
   buildImagePickerReply,
   resolveImagePickerRequest,
@@ -203,6 +205,10 @@ const BlockGenerationSourceUploadModal = dynamic(
   () => import('./BlockGenerationSourceUploadModal'),
   { ssr: false }
 );
+
+const BlockTrainingDataUploadModal = dynamic(() => import('./BlockTrainingDataUploadModal'), {
+  ssr: false,
+});
 
 const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
 
@@ -3709,6 +3715,12 @@ export function PageBlockHost({
   // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
   // by requestId, so any reply to it would also settle — and misreport — the original request.
   const uploadBytesInFlightRef = useRef<Set<string>>(new Set());
+  // The training images THIS host uploaded for this block, by key identity → url. A
+  // training quote naming any other key is never shown or confirmed (RUN_TRAINING).
+  const trainingUploadsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    trainingUploadsRef.current = new Map();
+  }, [blockInstanceId]);
   // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
   const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
@@ -4178,6 +4190,37 @@ export function PageBlockHost({
             blockToken,
           },
         ]);
+        return;
+      }
+
+      if (purpose === 'trainingData') {
+        let resolvedImages: TrainingDataUpload[] | null = null;
+        dialogStore.trigger({
+          id: `block-training-data-upload-${requestId}`,
+          component: BlockTrainingDataUploadModal,
+          props: {
+            onResolved: (images: TrainingDataUpload[]) => {
+              resolvedImages = images;
+              for (const image of images) {
+                trainingUploadsRef.current.set(trainingBlobKeyIdentity(image.air), image.url);
+              }
+            },
+          },
+          options: {
+            onClose: () => {
+              const images = resolvedImages as TrainingDataUpload[] | null;
+              send(
+                'IMAGE_UPLOAD_RESULT',
+                images
+                  ? {
+                      requestId,
+                      selected: { images: images.map(({ url, air }) => ({ url, air })) },
+                    }
+                  : { requestId }
+              );
+            },
+          },
+        });
         return;
       }
 
@@ -4978,6 +5021,11 @@ export function PageBlockHost({
           settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
           return;
         }
+        const thumbnails = resolveTrainingConsentThumbnails(preview, trainingUploadsRef.current);
+        if (thumbnails === null) {
+          settlement.reply({ error: 'training data not uploaded here' });
+          return;
+        }
         const copy = buildTrainingConsentCopy({ appName, preview });
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
@@ -4995,7 +5043,14 @@ export function PageBlockHost({
           component: GuardedConfirmDialog,
           props: {
             title: copy.title,
-            message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
+            message: (
+              <TrainingConsentBody
+                copy={copy}
+                preview={preview}
+                thumbnails={thumbnails}
+                onBuyBuzz={openBuyBuzz}
+              />
+            ),
             labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
             confirmProps: { color: 'blue' },
             size: 'lg',
@@ -5216,24 +5271,16 @@ export function PageBlockHost({
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
-  // Step 1 of the training flow: the host calls `blocks.prepareTrainingDataset`
-  // with the page's block token, which the block's own origin cannot reach. No
-  // dialog — nothing is charged. Decision + reply live in `prepareTrainingDatasetGate.ts`.
+  // A bundle may still send this: answer at once rather than hang. Training images
+  // arrive via OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }.
   useEffect(() => {
     const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
-      void handlePrepareTrainingDataset({
-        raw,
-        ready: readGateStatus() === 'ready',
-        signedIn: viewer != null,
-        reviewNack,
-        token,
-        prepare: (input) => trpcUtils.client.blocks.prepareTrainingDataset.mutate(input),
-        send,
-        onNoToken: () => reportNoToken('PREPARE_TRAINING_DATASET'),
-      });
+      const requestId = (raw as { requestId?: unknown } | null | undefined)?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      send('TRAINING_DATASET_RESULT', { requestId, error: 'removed' });
     });
     return off;
-  }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
+  }, [onMessage, send]);
 
   // ── ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT ────────────────────────
   // The batch twin of ESTIMATE_WORKFLOW, for an app that prices one generation

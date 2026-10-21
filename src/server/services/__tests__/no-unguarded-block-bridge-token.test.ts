@@ -208,7 +208,6 @@ const GUARD_CALL_SITE_LEDGER = [
   'getImagesByIds',
   'listMyWorkflows',
   'pollWorkflow',
-  'prepareTrainingDataset',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',
@@ -250,10 +249,8 @@ const BRIDGE_INPUT_LEDGER = [
   // The server half of `OPEN_IMAGE_UPLOAD { bytes }` (persist with the app's stamp); reaches the
   // guard via `authorizeBlockPostRequest`.
   'persistAppUploadImage',
-  // The `kind:'training'` bridge procs: the dataset primitive reaches the guard
-  // directly; the two consent halves reach it via
+  // The `kind:'training'` consent halves reach the guard via
   // `authorizeQuotedGrantConsentRequest`, above.
-  'prepareTrainingDataset',
   'previewTrainingQuote',
   'consentTrainingQuote',
   // The generic consent pair for either quote kind, via

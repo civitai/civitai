@@ -202,7 +202,6 @@ const ALL_SCOPES = [
  */
 const PAGE_PROCS = new Set([
   'blocks.persistAppUploadImage',
-  'blocks.prepareTrainingDataset',
   'blocks.previewTrainingQuote',
   'blocks.consentTrainingQuote',
   'blocks.previewQuoteGrant',
@@ -274,7 +273,6 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.listMyWorkflows': {},
   'blocks.persistAppUploadImage': { url: '00000000-0000-4000-8000-000000000000' },
   'blocks.pollWorkflow': { workflowId: 'wf_1' },
-  'blocks.prepareTrainingDataset': { items: [{ imageId: 1, caption: 'c' }] },
   'blocks.previewPostFromApp': POST_PAYLOAD,
   'blocks.previewQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
   'blocks.previewTrainingQuote': { quoteId: QUOTE_ID },
@@ -1191,42 +1189,6 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     "session user is not the token subject (session user's run flag on)": PASSED(
       ['checkBlockPollRateLimit("bki_char", 42)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
-    ),
-  },
-  'blocks.prepareTrainingDataset': {
-    'valid token': PASSED(
-      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
-    ),
-    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
-    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
-    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
-    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
-    'anonymous subject': E(
-      'UNAUTHORIZED',
-      'training requires an authenticated viewer',
-      [],
-      ['bridge-auth:ok']
-    ),
-    'flag off': E(
-      'UNAUTHORIZED',
-      'Apps are not enabled',
-      [],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
-    ),
-    'rate limited': E(
-      'TOO_MANY_REQUESTS',
-      'Rate limit exceeded, please retry shortly.',
-      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
-    ),
-    "session user is not the token subject (session user's run flag off)": PASSED(
-      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
-    ),
-    "session user is not the token subject (session user's run flag on)": PASSED(
-      ['checkBlockTrainingDatasetRateLimit("bki_char", 42, 1)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
