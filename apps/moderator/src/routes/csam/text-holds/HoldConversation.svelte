@@ -24,6 +24,12 @@
       {judged.size === 1 ? 'it' : 'them'}. System messages are left out.
       <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>Open in chat audit</a>
     </p>
+    {#if loaded.omitted}
+      <p class="m-0 mb-2 text-[11px] text-amber-400" role="status">
+        {plural(loaded.omitted, 'message')} not shown —
+        <a href={chatAuditChatUrl(chatId)} class={LINK_CLASS}>open in chat audit</a>
+      </p>
+    {/if}
     <!-- Focusable so a keyboard user can scroll the conversation (WCAG 2.1.1). -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <ol

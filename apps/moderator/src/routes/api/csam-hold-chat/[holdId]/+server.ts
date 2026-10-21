@@ -15,11 +15,12 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const hold = await getChatHold(holdId);
   if (!hold) error(404, 'No chat on this hold.');
 
-  const rows = await getChatWindow(hold.chatId, hold.messageIds);
+  const { rows, omitted } = await getChatWindow(hold.chatId, hold.messageIds);
   const body: HoldChat = {
     chatId: hold.chatId,
     judgedIds: hold.messageIds,
     senderId: hold.senderId,
+    omitted,
     messages: rows.map((row) => ({
       id: row.id,
       createdAt: row.createdAt.toISOString(),

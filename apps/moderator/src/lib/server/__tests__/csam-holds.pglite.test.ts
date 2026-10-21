@@ -681,18 +681,25 @@ describe('filterAuthorPendingHolds', () => {
 });
 
 describe('decideAuthorHolds', () => {
+  // The main app answers a batch with one entry per hold it was given.
+  const answer =
+    (status: string) => async (_path: string, body: { holds: { holdId: number }[] }) => ({
+      ok: true,
+      body: { results: body.holds.map(({ holdId }) => ({ holdId, ok: true, status })) },
+    });
+
   beforeEach(async () => {
     await seed([
       { id: 8, createdAt: '2026-10-05', entityType: 'Model' },
       { id: 9, createdAt: '2026-10-05', userId: 11 },
     ]);
     callModEndpoint.mockReset();
-    callModEndpoint.mockResolvedValue({ ok: true, body: { status: 'Confirmed' } });
+    callModEndpoint.mockImplementation(answer('Confirmed'));
   });
 
   const sent = () => callModEndpoint.mock.calls.map(([, body]) => body);
 
-  it('decides each of the author’s other holds on its own text hash', async () => {
+  it('decides the author’s other holds in one call, each on its own text hash', async () => {
     const results = await decideAuthorHolds({
       holdId: 1,
       decision: 'remove',
@@ -707,8 +714,14 @@ describe('decideAuthorHolds', () => {
       { holdId: 8, ok: true },
     ]);
     expect(sent()).toEqual([
-      { holdId: 2, textHash: 'h-2', decision: 'remove', note: 'same author' },
-      { holdId: 8, textHash: 'h-8', decision: 'remove', note: 'same author' },
+      {
+        holds: [
+          { holdId: 2, textHash: 'h-2' },
+          { holdId: 8, textHash: 'h-8' },
+        ],
+        decision: 'remove',
+        note: 'same author',
+      },
     ]);
   });
 
@@ -716,24 +729,30 @@ describe('decideAuthorHolds', () => {
     'applies %s to the author once: the others are only removed',
     async (decision) => {
       await decideAuthorHolds({ holdId: 1, decision, also: [{ holdId: 2, textHash: 'h-2' }] });
-      expect(sent()).toEqual([{ holdId: 2, textHash: 'h-2', decision: 'remove' }]);
+      expect(sent()).toEqual([{ holds: [{ holdId: 2, textHash: 'h-2' }], decision: 'remove' }]);
     }
   );
 
   it('dismisses the others when the open hold is dismissed', async () => {
-    callModEndpoint.mockResolvedValue({ ok: true, body: { status: 'Dismissed' } });
+    callModEndpoint.mockImplementation(answer('Dismissed'));
     await decideAuthorHolds({
       holdId: 1,
       decision: 'dismiss',
       also: [{ holdId: 2, textHash: 'h-2' }],
     });
-    expect(sent()).toEqual([{ holdId: 2, textHash: 'h-2', decision: 'dismiss' }]);
+    expect(sent()).toEqual([{ holds: [{ holdId: 2, textHash: 'h-2' }], decision: 'dismiss' }]);
   });
 
   it('reports a hold that changed since it was seen and carries on with the rest', async () => {
-    callModEndpoint
-      .mockResolvedValueOnce({ ok: false, error: 'Decide hold: changed', status: 409 })
-      .mockResolvedValueOnce({ ok: true, body: { status: 'Confirmed' } });
+    callModEndpoint.mockResolvedValue({
+      ok: true,
+      body: {
+        results: [
+          { holdId: 2, ok: false, stale: true, error: 'changed' },
+          { holdId: 8, ok: true, status: 'Confirmed' },
+        ],
+      },
+    });
     const results = await decideAuthorHolds({
       holdId: 1,
       decision: 'remove',
@@ -743,9 +762,10 @@ describe('decideAuthorHolds', () => {
       ],
     });
     expect(results).toEqual([
-      { holdId: 2, ok: false, error: 'Decide hold: changed' },
+      { holdId: 2, ok: false, error: 'changed' },
       { holdId: 8, ok: true },
     ]);
+    expect(callModEndpoint).toHaveBeenCalledTimes(1);
   });
 
   it('never decides a hold of another author, a decided one, the open one or a duplicate', async () => {
@@ -765,6 +785,28 @@ describe('decideAuthorHolds', () => {
       [4, false],
       [2, true],
     ]);
-    expect(sent().map((body) => (body as { holdId: number }).holdId)).toEqual([2]);
+    expect(sent()).toEqual([{ holds: [{ holdId: 2, textHash: 'h-2' }], decision: 'remove' }]);
+  });
+
+  it('calls nothing when no hold qualifies', async () => {
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [{ holdId: 9, textHash: 'h-9' }],
+    });
+    expect(results).toEqual([
+      { holdId: 9, ok: false, error: 'Not a pending hold of the same author.' },
+    ]);
+    expect(callModEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('fails every hold of the batch when the main app cannot be reached', async () => {
+    callModEndpoint.mockResolvedValue({ ok: false, error: 'down', requestNeverSent: true });
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [{ holdId: 2, textHash: 'h-2' }],
+    });
+    expect(results).toEqual([{ holdId: 2, ok: false, error: 'down' }]);
   });
 });

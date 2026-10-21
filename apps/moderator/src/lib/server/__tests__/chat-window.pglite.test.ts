@@ -40,12 +40,13 @@ afterEach(async () => {
   await db.close();
 });
 
-const ids = (rows: { id: number }[]) => rows.map((r) => r.id);
+const ids = (window: { rows: { id: number }[] }) => window.rows.map((r) => r.id);
 
 describe('getChatWindow', () => {
   it('returns the held span plus the requested messages on each side, oldest first', async () => {
-    const rows = await getChatWindow(1, [112, 116, 120], 3, 2);
-    expect(ids(rows)).toEqual([
+    const window = await getChatWindow(1, [112, 116, 120], 3, 2);
+    const { rows } = window;
+    expect(ids(window)).toEqual([
       109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
     ]);
     expect(rows.find((r) => r.id === 112)).toMatchObject({ username: 'sender', content: 'm112' });
@@ -66,14 +67,47 @@ describe('getChatWindow', () => {
       UPDATE "ChatMessage" SET "userId" = -1 WHERE id = 111;
       UPDATE "ChatMessage" SET "deletedAt" = now() WHERE id = 113;
     `);
-    const rows = await getChatWindow(1, [110, 114], 0, 0);
-    expect(ids(rows)).toEqual([110, 112, 113, 114]);
-    expect(rows.find((r) => r.id === 113)?.deletedAt).toBeInstanceOf(Date);
+    const window = await getChatWindow(1, [110, 114], 0, 0);
+    expect(ids(window)).toEqual([110, 112, 113, 114]);
+    expect(window.rows.find((r) => r.id === 113)?.deletedAt).toBeInstanceOf(Date);
   });
 
   it('reads nothing for a bad chat id or no ids', async () => {
-    expect(await getChatWindow(0, [110])).toEqual([]);
-    expect(await getChatWindow(1, [])).toEqual([]);
-    expect(await getChatWindow(3, [110], 5, 5)).toEqual([]);
+    const none = { rows: [], omitted: 0 };
+    expect(await getChatWindow(0, [110])).toEqual(none);
+    expect(await getChatWindow(1, [])).toEqual(none);
+    expect(await getChatWindow(3, [110], 5, 5)).toEqual(none);
+  });
+
+  it('does not anchor on ids that are not in the chat', async () => {
+    // 131 is in chat 2 and 9999 is nowhere: neither may stretch the span or shift the context.
+    const window = await getChatWindow(1, [112, 131, 9999], 1, 1);
+    expect(ids(window)).toEqual([111, 112, 113]);
+    expect(window.omitted).toBe(0);
+    expect(await getChatWindow(1, [131, 9999])).toEqual({ rows: [], omitted: 0 });
+  });
+
+  describe('a span longer than the cap', () => {
+    beforeEach(async () => {
+      await db.exec(`
+        INSERT INTO "ChatMessage" ("id","chatId","userId","content")
+          SELECT g, 3, 11, 'long' || g FROM generate_series(1000, 1299) g;
+      `);
+    });
+
+    it('keeps the newest of the span, reads the earlier context from where it starts, and counts the rest', async () => {
+      const window = await getChatWindow(3, [1000, 1299], 3, 2);
+      const shown = ids(window);
+      expect(shown).toEqual(Array.from({ length: 203 }, (_, i) => 1097 + i));
+      // Contiguous: no message between neighbours is missing; the 97 before 1097 are the ones not shown.
+      expect(window.omitted).toBe(97);
+    });
+
+    it('reports nothing omitted when the context covers the cap overflow', async () => {
+      // 201 messages between the judged ones: only 1 falls off the span, and 3 are read back before it.
+      const window = await getChatWindow(3, [1000, 1200], 3, 0);
+      expect(ids(window)[0]).toBe(1000);
+      expect(window.omitted).toBe(0);
+    });
   });
 });

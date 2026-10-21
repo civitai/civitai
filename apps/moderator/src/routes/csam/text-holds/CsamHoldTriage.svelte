@@ -86,9 +86,15 @@
   let alsoSummary = $state<{ done: number; failed: { holdId: number; error: string }[] } | null>(
     null
   );
+  // A reload shows them decided, so the dimming is only needed until then. The summary outlives the reload
+  // it triggers and goes with the queue it was about: other filters, search or page.
   $effect(() => {
     void data.items;
     alsoDecided.clear();
+  });
+  const queueView = $derived(urlWith(page.url, { hold: null }));
+  $effect(() => {
+    void queueView;
     alsoSummary = null;
   });
   const onothers = (decision: string, results: AlsoResult[]) => {
@@ -171,6 +177,7 @@
   selectionParam="hold"
   queueLabel="CSAM text holds queue"
   itemLabel="Hold"
+  settled={(row) => row.status !== 'Pending' || alsoDecided.has(row.id)}
   decisionEnabled={(row) => (alsoDecided.has(row.id) ? [] : holdDecisionEnabled(row, grants))}
   {ondecision}
   pageNumber={data.page}

@@ -78,10 +78,15 @@ export type AlsoDecidedResult = { holdId: number; ok: boolean; error?: string };
 export const decisionForOtherHolds = (decision: CsamHoldDecision): CsamHoldDecision =>
   decision === 'dismiss' ? 'dismiss' : 'remove';
 
+/** Mirrors the main app's `CSAM_HOLD_BATCH_MAX`. */
+const BATCH_MAX = 50;
+/** The main app decides the holds one after another inside one request. */
+const BATCH_TIMEOUT_MS = 120_000;
+
 /**
- * Decides the author's other pending holds one by one, each against the text hash the moderator saw: a
- * hold that changed since is reported, never forced. Call it only after the hold on screen was decided,
- * so a refused strike or ban never leaves the others already removed.
+ * Decides the author's other pending holds in one main-app call, each against the text hash the moderator
+ * saw: a hold that changed since is reported, never forced. Call it only after the hold on screen was
+ * decided, so a refused strike or ban never leaves the others already removed.
  */
 export async function decideAuthorHolds({
   holdId,
@@ -105,27 +110,65 @@ export async function decideAuthorHolds({
       )
     ).map((hold) => hold.id)
   );
-  const results: AlsoDecidedResult[] = [];
-  for (const target of targets) {
-    if (!sameAuthor.has(target.holdId)) {
-      results.push({
+  const decidable = targets.filter((target) => sameAuthor.has(target.holdId));
+  const outcome = new Map<number, AlsoDecidedResult>();
+  for (const target of targets)
+    if (!sameAuthor.has(target.holdId))
+      outcome.set(target.holdId, {
         holdId: target.holdId,
         ok: false,
         error: 'Not a pending hold of the same author.',
       });
-      continue;
-    }
-    const result = await decideCsamHold({
+  for (const target of decidable.slice(BATCH_MAX))
+    outcome.set(target.holdId, {
       holdId: target.holdId,
-      textHash: target.textHash,
-      decision: decisionForOtherHolds(decision),
-      note,
+      ok: false,
+      error: 'Too many holds at once.',
     });
-    results.push(
-      result.ok
-        ? { holdId: target.holdId, ok: true }
-        : { holdId: target.holdId, ok: false, error: result.error }
-    );
+
+  const batch = decidable.slice(0, BATCH_MAX);
+  if (batch.length) {
+    for (const result of await decideBatch(batch, decision, note))
+      outcome.set(result.holdId, result);
   }
-  return results;
+  return targets.map((target) => outcome.get(target.holdId)!);
 }
+
+async function decideBatch(
+  batch: AlsoDecidedHold[],
+  decision: CsamHoldDecision,
+  note: string | undefined
+): Promise<AlsoDecidedResult[]> {
+  const other = decisionForOtherHolds(decision);
+  const expected = other === 'dismiss' ? 'Dismissed' : 'Confirmed';
+  const response = await callModEndpoint(
+    'text-scan/csam-hold/resolve',
+    { holds: batch, decision: other, ...(note ? { note } : {}) },
+    'Decide holds',
+    BATCH_TIMEOUT_MS
+  );
+  if (!response.ok) {
+    // Nobody answered, yet the request left: the main app may have applied some of it.
+    const error =
+      !response.requestNeverSent && response.status === undefined
+        ? MAY_HAVE_COMPLETED
+        : response.error;
+    return batch.map((hold) => ({ holdId: hold.holdId, ok: false, error }));
+  }
+
+  const reported = new Map(
+    (Array.isArray(response.body.results) ? (response.body.results as BatchEntry[]) : []).map(
+      (entry) => [entry.holdId, entry]
+    )
+  );
+  return batch.map(({ holdId }) => {
+    const entry = reported.get(holdId);
+    if (entry?.ok && entry.status === expected) return { holdId, ok: true };
+    const error = entry?.ok
+      ? `The main app did not report the hold as ${expected.toLowerCase()}.`
+      : entry?.error ?? 'The main app did not report this hold.';
+    return { holdId, ok: false, error };
+  });
+}
+
+type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };

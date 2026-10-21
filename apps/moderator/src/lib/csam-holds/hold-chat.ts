@@ -14,6 +14,8 @@ export type HoldChat = {
   /** The messages the scan judged; the rest of `messages` is context around them. */
   judgedIds: number[];
   senderId: number | null;
+  /** Messages between the first judged one and the first shown that the window leaves out. */
+  omitted: number;
   messages: HoldChatMessage[];
 };
 

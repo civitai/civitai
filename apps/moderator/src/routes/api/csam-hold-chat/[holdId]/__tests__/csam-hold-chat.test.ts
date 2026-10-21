@@ -18,17 +18,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockImplementation(() => true);
   getChatHold.mockResolvedValue({ chatId: 5, messageIds: [11], senderId: 3 });
-  getChatWindow.mockResolvedValue([
-    {
-      id: 11,
-      createdAt: new Date('2026-10-01T10:00:00Z'),
-      userId: 3,
-      username: 'sender',
-      content: 'text',
-      editedAt: null,
-      deletedAt: new Date('2026-10-01T11:00:00Z'),
-    },
-  ]);
+  getChatWindow.mockResolvedValue({
+    omitted: 4,
+    rows: [
+      {
+        id: 11,
+        createdAt: new Date('2026-10-01T10:00:00Z'),
+        userId: 3,
+        username: 'sender',
+        content: 'text',
+        editedAt: null,
+        deletedAt: new Date('2026-10-01T11:00:00Z'),
+      },
+    ],
+  });
 });
 
 describe('/api/csam-hold-chat', () => {
@@ -39,6 +42,7 @@ describe('/api/csam-hold-chat', () => {
       chatId: 5,
       judgedIds: [11],
       senderId: 3,
+      omitted: 4,
       messages: [
         {
           id: 11,

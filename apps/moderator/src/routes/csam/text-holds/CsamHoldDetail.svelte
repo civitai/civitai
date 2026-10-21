@@ -137,8 +137,14 @@
 
   const otherPending = $derived(author?.holds.others.filter((h) => h.status === 'Pending') ?? []);
   // What the toggle would add to `next`; the ones its type cannot take stay pending and are said so.
-  const alsoFor = (next: CsamHoldDecision) =>
-    applyToAuthor ? alsoDecidable(otherPending, next, canRemoveHeld) : [];
+  const qualifying = (next: CsamHoldDecision) => alsoDecidable(otherPending, next, canRemoveHeld);
+  const alsoFor = (next: CsamHoldDecision) => (applyToAuthor ? qualifying(next) : []);
+  // Every removal takes the same holds, so two counts cover the five decisions.
+  const dismissCount = $derived(qualifying('dismiss').length);
+  const removeCount = $derived(qualifying('remove').length);
+  // Ticked, yet nothing would be covered by this decision: said before it is taken, not skipped silently.
+  const coversNone = (next: CsamHoldDecision) =>
+    applyToAuthor && otherPending.length > 0 && !alsoFor(next).length;
   let also = $state<{ holdId: number; textHash: string }[]>([]);
 
   // One form and one note for every action; the hidden field carries which button was pressed.
@@ -150,7 +156,7 @@
   }
 
   const press = (next: CsamHoldDecision) => {
-    if (CSAM_HOLD_CONFIRMS[next] || alsoFor(next).length) {
+    if (CSAM_HOLD_CONFIRMS[next] || alsoFor(next).length || coversNone(next)) {
       confirming = next;
       confirmOpen = true;
     } else void decide(next);
@@ -166,6 +172,11 @@
           : 'The content is taken down.',
     };
     const covered = alsoFor(next).length;
+    if (coversNone(next))
+      return {
+        ...(CSAM_HOLD_CONFIRMS[next] ?? { label: 'Continue', title: 'Decide only this hold?' }),
+        description: `${base.description} None of the author’s other pending holds can take this decision, so they stay pending.`,
+      };
     if (!covered) return base;
     const skipped = otherPending.length - covered;
     const alone = next === 'remove_strike' || next === 'remove_ban' || next === 'remove_ban_report';
@@ -208,12 +219,14 @@
     const inner = submit(outcome)(input);
     return async (opts) => {
       const finish = await inner;
+      // Before the shell moves on, so it skips the holds this decision just closed.
+      if (opts.result.type === 'success') {
+        forgetHoldAuthors();
+        const others = (opts.result.data as { others?: AlsoResult[] } | undefined)?.others;
+        if (others) onothers(String(input.formData.get('decision')), others);
+      }
       await finish?.(opts);
-      if (opts.result.type !== 'success') return;
-      forgetHoldAuthors();
-      const others = (opts.result.data as { others?: AlsoResult[] } | undefined)?.others;
-      if (others) onothers(String(input.formData.get('decision')), others);
-      if (reportUserId !== null)
+      if (opts.result.type === 'success' && reportUserId !== null)
         window.open(csamReportUrl(civitaiUrl, reportUserId), '_blank', 'noopener');
     };
   };
@@ -397,8 +410,16 @@
           {#snippet fields()}
             {#if otherPending.length}
               <label class="flex shrink-0 items-center gap-2 text-[13px] text-dark-0">
-                <Checkbox bind:checked={applyToAuthor} aria-label="Also apply to the author's other pending holds" />
-                Also apply to {plural(otherPending.length, 'other pending hold')} by this author
+                <Checkbox
+                  bind:checked={applyToAuthor}
+                  disabled={!dismissCount && !removeCount}
+                  aria-label="Also apply to the author's other pending holds"
+                />
+                {#if dismissCount || removeCount}
+                  Also apply to this author’s other pending holds (dismiss: {dismissCount}, remove: {removeCount})
+                {:else}
+                  None of this author’s {plural(otherPending.length, 'other pending hold')} can take a decision from here
+                {/if}
               </label>
             {/if}
             <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
