@@ -122,7 +122,8 @@ const APP_ASSISTANT_FLAGS = ['appBlocks', 'appAssistant'] as const;
  * - the session hub returns the user, which supplies Flipt's targeting attributes the database row
  *   lacks (tier, membership, early adopter, granted permissions);
  * - Flipt decides both flags (`isFliptDecisive`), rather than `hasFeature` falling back to the
- *   static rules, which admit moderators only.
+ *   static rules, under which nobody passes (`appAssistant` is `availability: []`; `appBlocks`'s
+ *   `['mod']` alone admits no one past it).
  * When the session hub misses or Flipt is undecided, the answer is `unavailable` (the runner asks
  * again), never a refusal: only a definite answer on that complete context refuses.
  *

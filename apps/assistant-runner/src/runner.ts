@@ -35,6 +35,8 @@ import {
   acceptsTurn,
   endedEvent,
   hasEnded,
+  ownedBy,
+  writableBy,
   INTERRUPTED,
   interruptedResume,
   resumeOf,
@@ -181,6 +183,8 @@ export class Runner implements RunService {
   #marker: (() => Promise<boolean>) | undefined;
   #pool: pg.Pool | undefined;
   #ready = false;
+  /** Set while `shutdown` waits for runs in flight to finish. */
+  #draining = false;
   #executorId = '';
   #maintenance: ReturnType<typeof setInterval> | undefined;
   #repair: ReturnType<typeof setInterval> | undefined;
@@ -225,7 +229,7 @@ export class Runner implements RunService {
   #scheduleCancelCheck(): void {
     this.#cancelCheck = setTimeout(() => {
       void this.#checkCancelled().finally(() => {
-        if (this.#ready) this.#scheduleCancelCheck();
+        if (this.#ready || this.#draining) this.#scheduleCancelCheck();
       });
     }, CANCEL_CHECK_MS * (1 + Math.random() / 4));
     this.#cancelCheck.unref();
@@ -290,8 +294,15 @@ export class Runner implements RunService {
     this.#ready = false;
     if (this.#maintenance) clearInterval(this.#maintenance);
     if (this.#repair) clearInterval(this.#repair);
-    if (this.#cancelCheck) clearTimeout(this.#cancelCheck);
-    await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
+    // The cancel check keeps running through the drain: a run cancelled outright while it finishes
+    // still stops as a Stop does.
+    this.#draining = true;
+    try {
+      await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
+    } finally {
+      this.#draining = false;
+      if (this.#cancelCheck) clearTimeout(this.#cancelCheck);
+    }
     await this.#pool?.end();
     this.#pool = undefined;
   }
@@ -545,10 +556,10 @@ export class Runner implements RunService {
     try {
       return await this.#replyBody(input);
     } catch (error) {
-      // The reply's own code threw (a step failed), so the workflow ends ERROR and nothing else will
-      // end it. A DBOS error (a cancel, a recovery limit) or a throw while this process shuts down
-      // is not that: the run is ended elsewhere, or resumes in the next process, and keeps its grant.
-      if (this.#ready && !(error instanceof DBOSErrors.DBOSError)) await this.#failed(input);
+      // The workflow ends ERROR, which DBOS never recovers, so nothing else would end the reply: its
+      // end is written now, during a shutdown or before launch finished too. Only a cancel and the
+      // recovery limit are ended elsewhere (the stop path, or the first reader of the stream).
+      if (!endedElsewhere(error)) await this.#failed(input);
       throw error;
     }
   }
@@ -562,7 +573,7 @@ export class Runner implements RunService {
     try {
       await this.#deps.store.update(userId, conversationId, (current) => {
         const turn = savedTurn(current, seq);
-        if (!current || !turn || hasEnded(turn)) return null;
+        if (!current || !writableBy(turn, runId)) return null;
         return withEnd(
           current,
           seq,
@@ -642,7 +653,8 @@ export class Runner implements RunService {
       try {
         await this.#deps.store.update(pending.userId, pending.conversationId, (current) => {
           const turn = savedTurn(current, pending.seq);
-          if (!current || !turn || hasEnded(turn)) return null;
+          // Not onto a turn a newer run of it took over, nor over an end already saved.
+          if (!current || !writableBy(turn, pending.runId)) return null;
           return withEnd(current, pending.seq, pending.reply, new Date());
         });
         await this.#forgetGrant(pending.runId);
@@ -670,6 +682,8 @@ export class Runner implements RunService {
         user: input.user,
         now: new Date(),
         ...(from ? { from } : {}),
+        // This run owns the turn now: an older run of it writes to it no more.
+        runId: input.runId,
       })
     );
     const deadline = Math.min(
@@ -712,10 +726,18 @@ export class Runner implements RunService {
     const journal = await this.#readJournal(runId);
     const head = await store.load(userId, conversationId);
     const turn = savedTurn(head, seq);
+    // Where Continue carries on from if this run ended in error: the head's saved progress (a reply
+    // whose end could not be saved is still `running` there).
+    const headResume = turn ? resumeOf(turn) : undefined;
     // This pass already ended the reply and died before DBOS recorded it: the end is not run again.
     const last = journal.at(-1);
-    if (last?.type === 'run-ended') return { status: last.status, steps: last.steps };
-    if (journal.length > 0 && turn && hasEnded(turn)) {
+    if (last?.type === 'run-ended')
+      return {
+        status: last.status,
+        steps: last.steps,
+        ...(headResume ? { resume: headResume } : {}),
+      };
+    if (journal.length > 0 && ownedBy(turn, runId) && hasEnded(turn)) {
       const ended = endedEvent(turn);
       await DBOS.writeStream(JOURNAL, ended);
       return { status: ended.status, steps: ended.steps };
@@ -741,7 +763,7 @@ export class Runner implements RunService {
         parts: startParts,
       });
     }
-    const progress = new ProgressWriter(store, userId, conversationId, seq, log);
+    const progress = new ProgressWriter(store, userId, conversationId, seq, log, runId);
 
     const end = async (
       status: RunEndStatus,
@@ -777,6 +799,10 @@ export class Runner implements RunService {
     };
 
     const carried = from?.messages ?? [];
+    // A retry of the same turn took it over (this run was recovered late): it is that run's now, and
+    // this one ends without writing to it (its saves are refused).
+    if (turn && !ownedBy(turn, runId))
+      return end('stopped', { messages: carried, status: 'aborted' });
     if (begun.stoppedBeforeStart || stop.aborted) {
       return end(why.reason === 'ran_out' ? 'ran_out' : 'stopped', {
         messages: carried,
@@ -1094,12 +1120,16 @@ export class Runner implements RunService {
   ) {
     const { conversationId, seq } = runAttributes(run);
     if (!run.authenticatedUser) return undefined;
+    const runId = run.workflowID;
     const head = await this.#deps.store.update(run.authenticatedUser, conversationId, (current) => {
       const turn = savedTurn(current, seq);
-      if (!current || !turn || hasEnded(turn)) return null;
+      // Never onto a turn a newer run of it took over (a retry in another tab): that is its own.
+      if (!current || !writableBy(turn, runId)) return null;
       return withEnd(current, seq, end(turn), new Date());
     });
-    return savedTurn(head, seq);
+    const turn = savedTurn(head, seq);
+    // Another run's turn (and its end) is not this run's to report.
+    return ownedBy(turn, runId) ? turn : undefined;
   }
 
   async #liveRun(userId: string): Promise<WorkflowStatus | undefined> {
@@ -1133,6 +1163,17 @@ export class Runner implements RunService {
     if (!this.#marker) throw new Error('runner workflows are not registered');
     return this.#marker;
   }
+}
+
+/**
+ * Whether a workflow's error is one whose reply another path ends: a cancel (Stop's fallback, DBOS's
+ * timeout) or the recovery limit, which the first reader of the run's stream writes to the head.
+ */
+export function endedElsewhere(error: unknown): boolean {
+  return (
+    error instanceof DBOSErrors.DBOSWorkflowCancelledError ||
+    error instanceof DBOSErrors.DBOSMaxRecoveryAttemptsExceededError
+  );
 }
 
 function runActive(runId: string | undefined): StartOutcome {

@@ -84,7 +84,8 @@ See [Not built yet](#not-built-yet).
     - app paused, another app running (the user opened it): the reply ends as interrupted, "Paused:
       you opened another app", and the page offers Continue (which starts the app again);
     - app paused, nothing else running (30 idle minutes, the 8-hour cap): the same, saying it slept;
-    - app still running (a proxy's 502, a pod restart): the assistant is told the call may have finished;
+    - app still running (a proxy's 502), or starting again (a pod restart): the assistant is told the
+      call may have finished, and the reply goes on;
     - app deleted: the call fails, telling the user to open it again.
     A reply ended this way keeps its saved steps, every call in them answered. Waking at the start makes
     no new app: if the service's open made a new, empty one (deleted meanwhile), the reply ends with an
@@ -109,7 +110,9 @@ See [Not built yet](#not-built-yet).
   - **The prompt is App Assistant's**, the runner's variant from the same builders
     (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
     only tools the runner has (the setup guide read with `sandbox__run_command`, no tunnel, no guide tool
-    for subagents), built from the sandbox it found, in place of the page's `hostInstructions`.
+    for subagents, and none of the chat's own rules' sentences naming `ask_choice`, which waits for a
+    viewer who may not be there), built from the sandbox it found, in place of the page's
+    `hostInstructions`. A test checks every tool the whole system prompt names is offered.
   - **Page-only:** the live preview (`start_preview`, `stop_preview`) needs the page's iframe, which may
     be closed. The runner does not offer them, and the instructions tell the assistant the preview is not
     available in this mode. The `page` state is not used to relay them.
@@ -167,12 +170,19 @@ See [Not built yet](#not-built-yet).
   runs that ended more than `RUN_RETENTION_DAYS` ago (default 7), up to 500 at a time. DBOS 5.3 has
   no retention setting of its own; this uses its `listWorkflows` and `deleteWorkflows`.
 - **Shutdown.** On SIGTERM the runner stops taking requests, gives runs in flight up to
-  `RUN_SHUTDOWN_GRACE_MS` to finish, and exits; the rest resume when a process with the same
-  executor id starts.
+  `RUN_SHUTDOWN_GRACE_MS` to finish (the check for runs cancelled outright keeps running meanwhile),
+  and exits; the rest resume when a process with the same executor id starts. A workflow that throws
+  (in the shutdown window too) ends ERROR, which DBOS never recovers, so its end is written to the
+  head then; only a cancel and the recovery limit are left to their own paths.
 - **The head.** In remote mode the runner is the only writer of the saved conversation. It saves
   the user's turn as the run starts, the reply's progress as a v3 head (`running`) as each call
   starts and lands, and how the reply ended (v2) before `run-ended`, in the format the chat package
-  reads (`turnFrom`, `conversationMetadataOf`).
+  reads (`turnFrom`, `conversationMetadataOf`). The turn records the run that owns it (`runId`, a field
+  the chat's reader ignores): the latest run started for it, a retry included. Only its owner writes
+  its progress or its end, so a late end of an older run (written by a stale reader of its stream)
+  never lands on a newer retry of the turn, and a run recovered after a retry took its turn over ends
+  without writing to it. A turn with no owner (the browser's, or saved before owners were) is
+  written as before.
 - **Credentials.** DBOS persists every workflow input, step output and stream value. The runner
   hands its workflows and providers a user id and a run id only: no request header, grant, token or
   cookie goes into a workflow argument, a step output, the journal or the head, and tests scan the
