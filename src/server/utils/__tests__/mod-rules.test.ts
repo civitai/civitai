@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
-
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { evaluateRule, evaluateRules, ruleDefinitionSchema } from '~/server/utils/mod-rules';
 
@@ -161,7 +158,7 @@ describe('evaluateRule', () => {
     expect(
       (globalThis as { __modRuleConditionRan?: boolean }).__modRuleConditionRan
     ).toBeUndefined();
-    expect(logToAxiom).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'moderation-rule', type: 'error', ruleType: 'property' })
     );
   });
