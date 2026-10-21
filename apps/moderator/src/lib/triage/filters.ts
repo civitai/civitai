@@ -31,7 +31,7 @@ export function rowChips<G>(groups: readonly ChipRowGroup<G>[]) {
   return row;
 }
 
-const DROPPED_ON_SEARCH = ['q', 'page', 'item', 'appeal', 'model'];
+const DROPPED_ON_SEARCH = ['q', 'page', 'item', 'hold', 'appeal', 'model'];
 
 /** Params a search form carries over: the tab's filters and sort, not the search or the old result set. */
 export function carriedSearchParams(params: URLSearchParams): [string, string][] {

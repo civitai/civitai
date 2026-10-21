@@ -2,22 +2,42 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import {
+    IconExternalLink,
+    IconFileAlert,
+    IconLock,
+    IconShield,
+    IconUser,
+  } from '@tabler/icons-svelte';
+  import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import FactRow from '$lib/components/minor-flags/FactRow.svelte';
+  import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import HighlightedText from '$lib/components/restrictions/HighlightedText.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
+  import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
+  import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
+  import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { LINK_CLASS, dateTime } from '$lib/format';
-  import type { CsamHoldRow } from '$lib/server/csam-holds.service';
+  import { LINK_BUTTON, dateTime, shortAge } from '$lib/format';
+  import type { CsamHoldItem } from '$lib/server/csam-holds.service';
   import type { Outcome } from '$lib/triage/queue';
   import {
+    CSAM_HOLD_CONFIRMS,
+    CSAM_HOLD_KEY_ORDER,
     CSAM_HOLD_OUTCOMES,
     NOTE_MAX_LENGTH,
     canRemoveHeld,
+    decisionLabel,
     entityLabel,
+    holdDecisionEnabled,
     holdEntityHref,
+    holdTitle,
+    quotedPhrases,
     type CsamHoldDecision,
   } from './hold-entity';
 
@@ -32,7 +52,7 @@
     submit,
     actionHref,
   }: {
-    row: CsamHoldRow;
+    row: CsamHoldItem;
     civitaiUrl: string;
     /** Holds `csam.report.file`: the page itself is closed to anyone else. */
     canDecide: boolean;
@@ -48,10 +68,16 @@
 
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
   const canRemove = $derived(canRemoveHeld(row.entityType));
-  const hasAuthor = $derived(row.userId !== null);
+  const decidedRow = $derived(row.status !== 'Pending');
+  const dismissedRow = $derived(row.status === 'Dismissed');
+  const enabled = $derived(holdDecisionEnabled(row, { canDecide, canStrike, canBan }));
+  const phrases = $derived(quotedPhrases(row.reason));
+  const typeName = $derived(entityLabel(row.entityType));
 
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<CsamHoldDecision>('dismiss');
+  let confirming = $state<CsamHoldDecision | null>(null);
+  let confirmOpen = $state(false);
 
   // One form and one note for every action; the hidden field carries which button was pressed.
   async function decide(next: CsamHoldDecision) {
@@ -60,11 +86,39 @@
     formEl?.requestSubmit();
   }
 
+  const press = (next: CsamHoldDecision) => {
+    if (CSAM_HOLD_CONFIRMS[next]) {
+      confirming = next;
+      confirmOpen = true;
+    } else void decide(next);
+  };
+
+  type KeyTone = 'red' | 'dark-red' | 'darker-red' | 'red-outline';
+  const KEY_LOOK: Record<CsamHoldDecision, { label: string; tone?: KeyTone }> = {
+    dismiss: { label: 'Dismiss' },
+    remove: { label: 'Remove', tone: 'red' },
+    remove_strike: { label: 'Remove + strike', tone: 'dark-red' },
+    remove_ban: { label: 'Remove + ban', tone: 'darker-red' },
+    remove_ban_report: { label: 'Ban + file NCMEC report', tone: 'red-outline' },
+  };
+  const KEYS = CSAM_HOLD_KEY_ORDER.map((decision) => ({ decision, ...KEY_LOOK[decision] }));
+
+  const whyDisabled = (key: CsamHoldDecision) => {
+    if (!canRemove && key !== 'dismiss') return `A ${typeName.toLowerCase()} cannot be removed from here yet.`;
+    if (key === 'remove_strike' && !canStrike)
+      return 'Striking needs the “Strike or notify an account” permission.';
+    if ((key === 'remove_ban' || key === 'remove_ban_report') && !canBan)
+      return 'Banning needs the “Ban or unban an account” permission.';
+    if (row.userId === null && key !== 'dismiss' && key !== 'remove')
+      return 'The author of this hold is unknown.';
+    return undefined;
+  };
+
   const outcome = (data: FormData) =>
     CSAM_HOLD_OUTCOMES[data.get('decision') as CsamHoldDecision] ?? 'Decided';
 
   // The existing CSAM report form is where an NCMEC report is filed; open it for the author once the
-  // removal and ban have landed. A blocked pop-up leaves the "File CSAM report" link in the header.
+  // removal and ban have landed. A blocked pop-up leaves the "File CSAM report" button in the header.
   const decided: SubmitFunction = (input) => {
     const reportUserId = input.formData.get('decision') === 'remove_ban_report' ? row.userId : null;
     const inner = submit(outcome)(input);
@@ -79,127 +133,182 @@
 
 <TriageDetailFrame {verdict} {error}>
   {#snippet children()}
-    <header class="space-y-2">
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <Badge variant="secondary" class="h-6 px-2.5 text-sm">{entityLabel(row.entityType)}</Badge>
+    <TriageDetailHeader
+      title={holdTitle(row)}
+      reference={`${typeName} #${row.entityId}`}
+      linksBeside
+    >
+      {#snippet chips()}
+        <MetaChip>{typeName}</MetaChip>
+        <MetaChip>held {shortAge(row.createdAt)} ago</MetaChip>
+        {#if !decidedRow && row.live}
+          <MetaChip tone="amber">still live</MetaChip>
+        {:else if decidedRow}
+          <MetaChip tone={dismissedRow ? 'neutral' : 'red'}>
+            {dismissedRow ? 'dismissed' : 'removed'}
+            {row.decidedAt ? `${shortAge(row.decidedAt)} ago` : ''}
+          </MetaChip>
+        {/if}
+      {/snippet}
+      {#snippet links()}
         {#if entityHref}
-          <a href={entityHref} target="_blank" rel="noreferrer" class="text-lg font-semibold {LINK_CLASS}">
-            #{row.entityId} ↗<span class="sr-only"> (opens in new tab)</span>
-          </a>
-        {:else}
-          <code class="text-lg text-dark-0">#{row.entityId}</code>
+          <Button
+            variant="outline"
+            size="sm"
+            class={LINK_BUTTON}
+            href={entityHref}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <IconExternalLink aria-hidden="true" /> Open {typeName.toLowerCase()}
+          </Button>
         {/if}
-      </div>
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-dark-2">
-        <span>
-          by
-          {#if row.userId}
-            <a href={userLookupUrl(row.userId)} class={LINK_CLASS}>
-              {row.username ?? `user #${row.userId}`}
-            </a>
-          {:else}
-            an unknown author
-          {/if}
-        </span>
         {#if row.userId}
-          <a href={csamReportUrl(civitaiUrl, row.userId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-            File CSAM report ↗<span class="sr-only"> (opens in new tab)</span>
-          </a>
+          <Button variant="outline" size="sm" class={LINK_BUTTON} href={userLookupUrl(row.userId)}>
+            <IconUser aria-hidden="true" />
+            {row.username ? `Author: ${row.username}` : 'Author'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class={LINK_BUTTON}
+            href={csamReportUrl(civitaiUrl, row.userId)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <IconFileAlert aria-hidden="true" /> File CSAM report
+          </Button>
         {/if}
-      </div>
-    </header>
+      {/snippet}
+    </TriageDetailHeader>
 
-    <TriageCard title="Held text">
-      <!-- Focusable so a keyboard user can scroll the text (WCAG 2.1.1). -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <pre
-        tabindex="0"
-        role="region"
-        aria-label="Held text"
-        class="m-0 max-h-96 overflow-y-auto font-sans text-sm whitespace-pre-wrap break-words text-dark-2">{row.text}</pre>
-    </TriageCard>
+    {#if decidedRow}
+      <TriageCard dense title="Decision" accent={dismissedRow ? 'neutral' : 'red'}>
+        <dl class="m-0 space-y-1.5">
+          <FactRow label="Outcome">{decisionLabel(row)}</FactRow>
+          <FactRow label="By">{row.decidedByUsername ?? 'an unknown moderator'}</FactRow>
+          <FactRow label="When">{dateTime(row.decidedAt)}</FactRow>
+          <FactRow label="Note"
+            ><span class="whitespace-pre-wrap break-words">{row.decisionNote ?? '—'}</span></FactRow
+          >
+        </dl>
+      </TriageCard>
+    {/if}
 
-    <TriageCard title="Why it was held">
-      <p class="m-0 text-sm text-dark-0">{row.reason}</p>
-    </TriageCard>
+    {#if row.coverImages.length}
+      <TriageCard dense title={row.entityType === 'Model' ? 'Model images' : 'Post images'}>
+        <PreviewImagesCard
+          images={row.coverImages}
+          total={row.imageTotal}
+          blurred={!imageReveal.on}
+          allHref={entityHref ?? undefined}
+        />
+      </TriageCard>
+    {/if}
 
-    <TriageCard title="Details">
-      <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt class="text-dark-2">Held</dt>
-        <dd class="m-0 text-dark-0">{dateTime(row.createdAt)}</dd>
-        <dt class="text-dark-2">Content from</dt>
-        <dd class="m-0 text-dark-0">{dateTime(row.contentAt)}</dd>
-        <dt class="text-dark-2">Prompt</dt>
-        <dd class="m-0 text-dark-0">{row.promptId ?? '—'}</dd>
-        <dt class="text-dark-2">Workflow</dt>
-        <dd class="m-0 font-mono text-dark-0 break-all">{row.workflowId ?? '—'}</dd>
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <TriageCard dense title="Why it was held">
+        <p class="m-0 text-[15px] leading-normal text-white">{row.reason}</p>
+        {#if row.promptId !== null}
+          <p class="m-0 mt-2 text-[11px] text-dark-2">
+            csam prompt v{row.promptId} · {shortAge(row.createdAt)} ago
+          </p>
+        {/if}
+      </TriageCard>
+      <TriageCard dense title="Scanned text">
+        <!-- Focusable so a keyboard user can scroll the text (WCAG 2.1.1). -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div
+          tabindex="0"
+          role="region"
+          aria-label="Scanned text"
+          class="max-h-96 overflow-y-auto text-dark-0"
+        >
+          <HighlightedText text={row.text} highlight={phrases} />
+        </div>
+      </TriageCard>
+    </div>
+
+    <TriageCard dense title="Details">
+      <dl class="m-0 space-y-1.5">
+        <FactRow label="Held">{dateTime(row.createdAt)}</FactRow>
+        <FactRow label="Content from">{dateTime(row.contentAt)}</FactRow>
+        <FactRow label="Workflow"
+          ><span class="font-mono break-all">{row.workflowId ?? '—'}</span></FactRow
+        >
       </dl>
     </TriageCard>
   {/snippet}
   {#snippet actions()}
-    {#if canDecide}
+    {#if decidedRow}
+      <p class="m-0 flex items-center gap-1.5 text-sm text-dark-2">
+        <IconLock class="size-3.5" aria-hidden="true" /> This hold is already decided.
+      </p>
+    {:else if canDecide}
       <form
         bind:this={formEl}
         method="POST"
         action={actionHref('decide')}
         use:enhance={decided}
-        class="flex flex-1 flex-wrap items-end gap-3"
+        class="min-w-0 flex-1"
       >
         <input type="hidden" name="holdId" value={row.id} />
         <input type="hidden" name="decision" value={decision} />
-        <Textarea
-          name="note"
-          rows={1}
-          maxlength={NOTE_MAX_LENGTH}
-          placeholder="Note (optional)"
-          aria-label="Decision note"
-          class="min-w-60 flex-1"
-        />
-        <div class="flex flex-wrap items-center gap-2">
-          {#if canRemove}
-            <Button type="button" size="lg" onclick={() => decide('remove')}>Remove content</Button>
-            {#if canStrike && hasAuthor}
-              <ConfirmButton
-                size="lg"
-                label="Remove content + strike"
-                title="Remove the content and strike the author?"
-                description="The content is taken down and the author receives a strike and a notification."
-                onconfirm={() => decide('remove_strike')}
-              />
-            {/if}
-            {#if canBan && hasAuthor}
-              <ConfirmButton
-                size="lg"
-                label="Remove content + ban"
-                title="Remove the content and ban the author?"
-                description="The content is taken down and the account is banned, which also removes its other content."
-                onconfirm={() => decide('remove_ban')}
-              />
-              <ConfirmButton
-                size="lg"
-                label="Remove content + ban + NCMEC report"
-                title="Remove, ban and file an NCMEC report?"
-                description="The content is taken down and the account is banned. The CSAM report form then opens for the author so you can file the report."
-                onconfirm={() => decide('remove_ban_report')}
-              />
-            {/if}
-          {/if}
-          <Button type="button" size="lg" variant="outline" onclick={() => decide('dismiss')}>
-            Do nothing
-          </Button>
-        </div>
-        {#if !canRemove}
-          <p class="m-0 basis-full text-sm text-dark-2">
-            A {entityLabel(row.entityType).toLowerCase()} cannot be removed from here yet. Remove it by
-            hand, or choose "Do nothing".
-          </p>
-        {:else if !canStrike || !canBan}
-          <p class="m-0 basis-full text-sm text-dark-2">
-            {#if !canStrike}Striking needs the “Strike or notify an account” permission. {/if}
-            {#if !canBan}Banning needs the “Ban or unban an account” permission.{/if}
-          </p>
-        {/if}
+        <TriageDecisionBar
+          hint="Dismiss closes the hold and changes nothing. 5 bans the author and opens the CSAM report form for them. The next hold opens after each decision; J/K to move."
+        >
+          {#snippet buttons()}
+            {#each KEYS as k, i (k.decision)}
+              {#if i === KEYS.length - 1}<span class="flex-1"></span>{/if}
+              <TriageKeyButton
+                type="button"
+                key={i + 1}
+                tone={k.tone}
+                disabled={!enabled[i]}
+                title={enabled[i] ? undefined : whyDisabled(k.decision)}
+                onclick={() => press(k.decision)}
+              >
+                {#if k.tone === 'red-outline'}<IconShield class="size-3.5" aria-hidden="true" />{/if}
+                {k.label}
+              </TriageKeyButton>
+            {/each}
+          {/snippet}
+          {#snippet fields()}
+            <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
+            <Input
+              name="note"
+              maxlength={NOTE_MAX_LENGTH}
+              placeholder="Note for the record (optional)"
+              aria-label="Decision note"
+              class="h-8 min-w-0 flex-1 border-dark-4 bg-dark-7 text-[13px] dark:bg-dark-7"
+              onkeydown={(e: KeyboardEvent) => {
+                if (e.key === 'Enter') e.preventDefault();
+              }}
+            />
+          {/snippet}
+        </TriageDecisionBar>
       </form>
+      <AlertDialog.Root bind:open={confirmOpen}>
+        <AlertDialog.Content>
+          {#if confirming && CSAM_HOLD_CONFIRMS[confirming]}
+            {@const ask = CSAM_HOLD_CONFIRMS[confirming]!}
+            <AlertDialog.Header>
+              <AlertDialog.Title>{ask.title}</AlertDialog.Title>
+              <AlertDialog.Description>{ask.description}</AlertDialog.Description>
+            </AlertDialog.Header>
+            <AlertDialog.Footer>
+              <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+              <AlertDialog.Action
+                variant="destructive"
+                onclick={() => {
+                  confirmOpen = false;
+                  void decide(confirming!);
+                }}>{ask.label}</AlertDialog.Action
+              >
+            </AlertDialog.Footer>
+          {/if}
+        </AlertDialog.Content>
+      </AlertDialog.Root>
     {:else}
       <p class="m-0 text-sm text-dark-2">Deciding a hold needs the “File a CSAM report” permission.</p>
     {/if}
