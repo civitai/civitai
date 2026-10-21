@@ -44,7 +44,7 @@ import type {
   StorylineSpace,
   StorylineSpaceMode,
 } from '~/shared/utils/storyline-placement';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const SURFACE = 'storyline' as const;
 const TARGET_TYPE = 'post' as const;
@@ -444,11 +444,12 @@ export async function settleStorylineContinuation({
       // A malformed row is a bug, not a refusal: said as such before anything else.
       if (action === 'approve' && (!parentPostId || !postId))
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
-      // A parent that is no longer a live chapter (removed, its post deleted, never found, or in
-      // a taken-down storyline) can never take the continuation, so declining it would pay the
-      // owner a fee for something they could not accept. Refused for both answers; it is
-      // refunded in full instead, by `settleOrphanedContinuations` or at its deadline.
-      if (!parentPostId || !parent || parent.removedAt || parent.storyline.tosViolation)
+      // A parent that is not answerable (removed, its post deleted, never found, or in a
+      // taken-down storyline) cannot take the continuation now, so declining it would pay the
+      // owner a fee for something they could not accept. Refused for both answers. A removed one
+      // is refunded by `settleOrphanedContinuations`; a taken-down one is held until the
+      // takedown lifts or its deadline refunds it.
+      if (!parentPostId || !parent || !isAnswerableParentChapter(parent))
         throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
       if (action === 'decline') return;
@@ -858,9 +859,11 @@ const toPostSummary = (
 };
 
 /**
- * The storyline creator's review queue: pending continuations, oldest first. Rows the owner cannot
- * act on (still awaiting readiness, post gone, parent no longer a live chapter) are filtered in
- * SQL before paging, so a page is full of rows the queue can render.
+ * The storyline creator's review queue: pending continuations, oldest first. Rows the owner can
+ * never act on (still awaiting readiness, post gone, parent chapter not present) are filtered in
+ * SQL before paging, so a page is full of rows the queue can render. The parent must be present,
+ * not answerable (`isAnswerableParentChapter`): a row in a taken-down storyline stays, marked
+ * `takenDown`, and is answerable again once the takedown lifts.
  */
 export async function getPendingStorylineContinuations({
   ownerId,
@@ -928,16 +931,29 @@ export async function getPendingStorylineContinuations({
       where: { postId: { in: parentIds } },
       select: {
         postId: true,
-        storyline: { select: { id: true, title: true, maxNsfwLevel: true, minorByScan: true } },
+        storyline: {
+          select: {
+            id: true,
+            title: true,
+            maxNsfwLevel: true,
+            minorByScan: true,
+            tosViolation: true,
+          },
+        },
       },
     }),
   ]);
   const postById = new Map(posts.map((post) => [post.id, post]));
-  // The ceiling the queue marks a row against is the one approval holds it to.
+  // The ceiling the queue marks a row against is the one approval holds it to. A present chapter in
+  // a taken-down storyline is not answerable: shown, marked as held.
   const storylineByParent = new Map(
-    chapters.map(({ postId, storyline: { minorByScan, ...storyline } }) => [
+    chapters.map(({ postId, storyline: { minorByScan, tosViolation, ...storyline } }) => [
       postId,
-      { ...storyline, maxNsfwLevel: storylineCeiling({ ...storyline, minorByScan }) },
+      {
+        ...storyline,
+        maxNsfwLevel: storylineCeiling({ ...storyline, minorByScan }),
+        takenDown: tosViolation,
+      },
     ])
   );
 
@@ -1118,8 +1134,10 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
  * placer did nothing wrong, so whatever was taken is returned in full, and the owner, who can no
  * longer accept them, earns no fee.
  *
- * A parent stops being live when it is removed or its post is deleted (which empties the
- * chapter's `postId`); both match as "no live chapter holds the continuation's target post".
+ * A parent stops being present when it is removed or its post is deleted (which empties the
+ * chapter's `postId`); both match as "no live chapter holds the continuation's target post". A
+ * takedown does not make a parent absent, only not answerable (`isAnswerableParentChapter`): it can
+ * lift, so this sweep holds its continuations. Do not add the takedown here.
  *
  * Run right after a takedown with the ids it took down, and by a job for the rest, which finishes
  * what a failed run left. Neither is what keeps the owner from being paid: from the removal's
