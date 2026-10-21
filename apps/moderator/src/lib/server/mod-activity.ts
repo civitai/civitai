@@ -1,3 +1,5 @@
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -50,23 +52,37 @@ export async function recordModActivityBatch(input: {
   entityIds: readonly number[];
   activity: string;
 }): Promise<void> {
-  if (!input.entityIds.length) return;
   try {
-    await dbWrite
-      .insertInto('ModActivity')
-      .values(
-        input.entityIds.map((entityId) => ({
-          userId: input.userId,
-          entityType: input.entityType,
-          entityId,
-          activity: input.activity,
-        }))
-      )
-      .onConflict((oc) => oc.doNothing())
-      .execute();
+    await insertModActivityBatch(dbWrite, input);
   } catch (e) {
     console.error('[mod-activity] failed to record batch', { ...input, error: e });
   }
+}
+
+/** `recordModActivityBatch` on a caller's transaction, and throwing: a failed insert has already
+ *  aborted that transaction, so swallowing it would only move the error to the commit. */
+export async function insertModActivityBatch(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    entityType: string | null;
+    entityIds: readonly number[];
+    activity: string;
+  }
+): Promise<void> {
+  if (!input.entityIds.length) return;
+  await db
+    .insertInto('ModActivity')
+    .values(
+      input.entityIds.map((entityId) => ({
+        userId: input.userId,
+        entityType: input.entityType,
+        entityId,
+        activity: input.activity,
+      }))
+    )
+    .onConflict((oc) => oc.doNothing())
+    .execute();
 }
 
 export type ModActivityRow = {

@@ -39,6 +39,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -844,10 +845,10 @@ export const upsertArticle = async ({
   try {
     const officialTag = await getOfficialArticleTag();
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
-    await throwOnBlockedUserContent([data.title, data.content], {
-      isModerator,
-      surface: 'article',
-    });
+    await throwOnBlockedUserContent(
+      [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+      { isModerator, surface: 'article' }
+    );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level

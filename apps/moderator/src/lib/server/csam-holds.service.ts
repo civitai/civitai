@@ -1,10 +1,18 @@
+import type { CsamHoldImage, CsamHoldRow } from './csam-holds.queries';
 import { callModEndpoint } from './user-actions.service';
 
 export {
+  countCsamHoldsByType,
   countPendingCsamHolds,
-  listPendingCsamHolds,
+  csamHoldSearch,
+  getHoldCoverImages,
+  listCsamHolds,
+  type CsamHoldCovers,
+  type CsamHoldImage,
   type CsamHoldRow,
 } from './csam-holds.queries';
+
+export type CsamHoldItem = CsamHoldRow & { coverImages: CsamHoldImage[]; imageTotal: number };
 
 export type CsamHoldDecisionResult = { ok: true } | { ok: false; error: string };
 

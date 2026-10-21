@@ -110,6 +110,7 @@ import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -2971,10 +2972,17 @@ export const upsertModel = async (
     serverMeta?: Pick<ModelMeta, (typeof SERVER_OWNED_META_KEYS)[number]>;
   }
 ) => {
-  await throwOnBlockedUserContent([input.name, input.description], {
-    isModerator: input.isModerator,
-    surface: 'model',
-  });
+  await throwOnBlockedUserContent(
+    [
+      input.name,
+      input.description,
+      ...(await newTagNames(input.tagsOnModels?.map((tag) => tag.name))),
+    ],
+    {
+      isModerator: input.isModerator,
+      surface: 'model',
+    }
+  );
 
   const {
     id,

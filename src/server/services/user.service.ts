@@ -68,6 +68,7 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
@@ -1127,6 +1128,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
   );
@@ -1346,6 +1348,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
   // block's scope are the same set, which is what makes the wide form correct in this one place.
   await clearAccountDeletionImageMarkers({ userId: id });
+  await refreshProfilePicturesForUsers([id]);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1710,8 +1713,99 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
   return await profilePictureCache.fetch(userIds);
 }
 
+export type CachedUserCosmeticsAndProfilePicture = Pick<
+  UserWithCosmetics,
+  'profilePicture' | 'cosmetics'
+>;
+
+/**
+ * The `profilePicture` and `cosmetics` that `userWithCosmeticsSelect` nests, in that shape, from the
+ * user caches — one batch per cache for every id. Returns a lookup; a user with neither gets
+ * `{ profilePicture: null, cosmetics: [] }`, as the nested select gives.
+ */
+export async function getCosmeticsAndProfilePicturesForUsers(
+  userIds: number[]
+): Promise<(userId: number) => CachedUserCosmeticsAndProfilePicture> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return () => ({ profilePicture: null, cosmetics: [] });
+
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(ids),
+    getCosmeticsForUsers(ids),
+  ]);
+
+  return (userId) => ({
+    profilePicture: profilePictures[userId] ?? null,
+    cosmetics: (cosmetics[userId] ?? []).flatMap(({ data, cosmetic }) =>
+      cosmetic
+        ? [
+            {
+              data,
+              cosmetic: {
+                id: cosmetic.id,
+                data: cosmetic.data,
+                type: cosmetic.type,
+                source: cosmetic.source,
+                name: cosmetic.name,
+              },
+            },
+          ]
+        : []
+    ),
+  });
+}
+
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+}
+
+/** The users whose profile picture is one of `imageIds`, from the primary. */
+export async function getProfilePictureUserIds(imageIds: number[]) {
+  if (!imageIds.length) return [];
+  const users = await dbWrite.user.findMany({
+    where: { profilePictureId: { in: imageIds } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
+}
+
+function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
+  logToAxiom({
+    type: 'error',
+    name: 'profile-picture-cache-refresh',
+    message: (error as Error)?.message,
+    ...meta,
+  }).catch(() => undefined);
+}
+
+/**
+ * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
+ * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ */
+export async function refreshProfilePicturesForUsers(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  try {
+    await profilePictureCache.refresh(ids);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  }
+}
+
+/**
+ * For a write that changed images' rating or ingestion: refreshes the cached profile picture of
+ * every user whose picture is one of them, so the avatar gate applies the new rating now rather
+ * than at the cache TTL. Never throws, for the same reason as `refreshProfilePicturesForUsers`.
+ */
+export async function refreshProfilePicturesForImages(imageIds: number[]) {
+  let userIds: number[];
+  try {
+    userIds = await getProfilePictureUserIds(imageIds);
+  } catch (error) {
+    logProfilePictureRefreshError(error, { imageIds: imageIds.join(',') });
+    return;
+  }
+  await refreshProfilePicturesForUsers(userIds);
 }
 
 // #region [article engagement]
@@ -2292,6 +2386,7 @@ export const toggleBan = async ({
         // actually blocked rather than to the account: a ban outranks a grace block, so the
         // restore breadcrumbs come off the rows it hid.
         await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
+        await refreshProfilePicturesForUsers([id]);
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -3065,30 +3160,36 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
 export async function amIBlockedByUser({
   userId,
   targetUserId,
-  targetUsername,
+  confirmOnPrimary = false,
 }: {
   userId: number;
   targetUserId?: number;
-  targetUsername?: string;
+  /**
+   * Interaction gates (comment, reaction, tip) pass true: when the cache says "not
+   * blocked", confirm against the primary. A cache entry can miss a block that just
+   * landed (see the comment below), and a write path must not let a blocked user
+   * through for that window. Page views leave it off and stay cache-only.
+   */
+  confirmOnPrimary?: boolean;
 }) {
-  if (!(targetUserId || targetUsername)) return false;
-  if (!targetUserId && targetUsername)
-    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
-
-  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
-
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
-  const engagement = await dbRead.userEngagement.findFirst({
-    where: {
-      userId: targetUserId,
-      targetUserId: userId,
-      type: 'Block',
-    },
-  });
+  // For page views the cache is the answer. `BlockedByUsers` is invalidated for the blocked
+  // user by the only writer that creates a Block (`toggleBlockUser`), refills from the
+  // primary, and its hash carries a TTL as a backstop. There used to be a per-request
+  // `userEngagement` lookup here on every cache miss; it ran on every logged-in detail view
+  // and only caught a missed invalidation, which on a page view now persists until the
+  // hash TTL instead. The remaining window: a refill that read before the block committed
+  // and wrote after the invalidation.
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+  if (!confirmOnPrimary) return false;
 
+  const engagement = await dbWrite.userEngagement.findFirst({
+    where: { userId: targetUserId, targetUserId: userId, type: 'Block' },
+    select: { userId: true },
+  });
   return !!engagement;
 }
 

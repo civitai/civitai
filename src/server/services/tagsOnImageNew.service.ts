@@ -9,6 +9,14 @@ import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const imageService = () => import('~/server/services/image.service');
+// Lazy for the same reason: user.service imports image.service.
+const userService = () => import('~/server/services/user.service');
+
+/** Never throws: it follows a committed level write, and the helper itself already logs and swallows. */
+const refreshProfilePictures = (imageIds: number[]) =>
+  userService()
+    .then(({ refreshProfilePicturesForImages }) => refreshProfilePicturesForImages(imageIds))
+    .catch(() => undefined);
 
 type TagsOnImageNewArgs = {
   imageId: number;
@@ -126,7 +134,8 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
-    await refreshThumbnailCache(imageIds);
+    // An avatar is gated on its cached rating, so one re-rated here must be re-read too.
+    await Promise.all([refreshThumbnailCache(imageIds), refreshProfilePictures(imageIds)]);
   });
 
   const blockedTagIds = new Set(

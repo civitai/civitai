@@ -29,7 +29,7 @@ import { isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
-import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -395,7 +395,7 @@ async function constructReportPayload({
           email: reportingUser?.email,
         },
         contactPerson: {
-          email: 'report@civitai.com',
+          email: CYBERTIP_CONTACT_EMAIL,
         },
       },
       personOrUserReported: userId

@@ -5,6 +5,10 @@ import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  TURBO_VARIANT_MODEL_TYPES,
+} from '~/shared/constants/generation.constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
@@ -336,8 +340,18 @@ export const recommendedRangeSchema = z
 
 /** A checkpoint's generation settings. */
 export const recommendedGenerationSettingsSchema = z.object({
-  /** The LoRA the generator's Turbo picker starts on with this checkpoint, over the ecosystem default. */
-  turboLora: z.object({ id: z.number().int().positive() }).nullish(),
+  /** The LoRA the generator's Turbo toggle starts on with this checkpoint, over the family's default. */
+  turboLora: z
+    .object({
+      id: z.number().int().positive(),
+      /** Over the LoRA's own default strength. */
+      strength: z.coerce
+        .number()
+        .min(LORA_STRENGTH_BOUNDS.min)
+        .max(LORA_STRENGTH_BOUNDS.max)
+        .nullish(),
+    })
+    .nullish(),
 });
 
 /**
@@ -350,7 +364,7 @@ export const turboSettingsSchema = z.object({
 });
 
 /** The model types a turbo block may be saved on. */
-export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];
+export { TURBO_VARIANT_MODEL_TYPES };
 
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({

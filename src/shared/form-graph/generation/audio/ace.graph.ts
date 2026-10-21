@@ -182,7 +182,9 @@ export const ace = defineGraph<FamilyExt>({ scope: familyScope })
   // Switching models resets cfg/steps to the variant's defaults, so a base-range
   // value can't survive onto a turbo model's smaller range
   .effect({
-    model: (model: unknown) => {
+    model: (model: unknown, { state }: { state: { model?: unknown } }) => {
+      // A rewrite of the same checkpoint (hydration) is not a switch.
+      if (modelIdOf(model) === modelIdOf(state.model)) return;
       const isTurbo = resolveVariant(modelIdOf(model)) === 'turbo';
       return { cfgScale: isTurbo ? 1 : 4, steps: isTurbo ? 8 : 50 };
     },

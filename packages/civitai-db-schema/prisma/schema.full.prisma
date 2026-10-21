@@ -479,6 +479,10 @@ model User {
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
   threadMutes          ThreadMute[]
+  commentsV3           CommentV3[]
+  commentV3Reactions   CommentV3Reaction[]
+  commentMutes         CommentMute[]
+  commentTopicMutes    CommentTopicMute[]
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
@@ -1697,6 +1701,7 @@ model Report {
   model          ModelReport?
   comment        CommentReport?
   commentV2      CommentV2Report?
+  commentV3      CommentV3Report?
   image          ImageReport?
   resourceReview ResourceReviewReport?
   article        ArticleReport?
@@ -5023,6 +5028,127 @@ model ThreadMute {
   @@index([threadId])
 }
 
+// CommentV3 (docs/comments-consolidation.md). Declared for type generation only; access is via Kysely.
+// The partial indexes (top_*, legacy_v1, reply_to) and the GiST index exist only in the migration;
+// Prisma cannot express them.
+enum CommentEntityType {
+  model
+  image
+  post
+  article
+  review
+  bounty
+  bountyEntry
+  comicChapter
+  challenge
+  model3d
+  model3dReview
+  appListing
+  crucible
+}
+
+// Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
+// an entity table here: the drift gate would look for FKs the parent table does not carry.
+model CommentTopic {
+  entityType   CommentEntityType
+  entityId     Int
+  locked       Boolean           @default(false)
+  commentCount Int               @default(0)
+
+  comments CommentV3[]
+
+  @@id([entityId, entityType])
+}
+
+model CommentV3 {
+  id         Int               @id @default(dbgenerated("nextval('comment_shared_id_seq')"))
+  entityType CommentEntityType
+  entityId   Int
+  topic      CommentTopic      @relation(fields: [entityId, entityType], references: [entityId, entityType], onDelete: Cascade)
+  parentId   Int?
+  parent     CommentV3?        @relation("CommentV3Parent", fields: [parentId], references: [id], onDelete: Restrict)
+  replies    CommentV3[]       @relation("CommentV3Parent")
+  replyToId  Int?
+  replyTo    CommentV3?        @relation("CommentV3ReplyTo", fields: [replyToId], references: [id], onDelete: SetNull)
+  repliedBy  CommentV3[]       @relation("CommentV3ReplyTo")
+
+  // Trigger-set (commentv3_set_path); rootId and depth are GENERATED. Never write these.
+  path   Unsupported("ltree") @default(dbgenerated())
+  rootId Int                  @default(dbgenerated())
+  depth  Int                  @default(dbgenerated())
+
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content       String
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime? @db.Timestamptz(6)
+  tosViolation  Boolean   @default(false)
+  hidden        Boolean   @default(false)
+  locked        Boolean   @default(false)
+  pinnedAt      DateTime? @db.Timestamptz(6)
+  reactionCount Int       @default(0)
+  legacyV1Id    Int?
+
+  reactions CommentV3Reaction[]
+  reports   CommentV3Report[]
+  mutes     CommentMute[]
+
+  @@index([entityType, entityId], map: "commentv3_entity")
+  @@index([parentId, hidden, createdAt, id], map: "commentv3_replies_newest")
+  @@index([parentId, hidden, reactionCount(sort: Desc), id(sort: Desc)], map: "commentv3_replies_reactions")
+  @@index([rootId, depth], map: "commentv3_root_depth")
+  @@index([userId, id(sort: Desc)], map: "commentv3_user")
+}
+
+model CommentV3Reaction {
+  id        Int             @id @default(autoincrement())
+  commentId Int
+  comment   CommentV3       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([commentId, userId, reaction])
+  @@index([userId])
+}
+
+model CommentV3Report {
+  commentId Int
+  comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reportId  Int       @unique
+  report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentId])
+  @@index([commentId])
+}
+
+// One conversation: this comment and its whole subtree.
+model CommentMute {
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commentId Int
+  comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mutedAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([userId, commentId])
+  @@index([commentId])
+}
+
+// No relation to CommentTopic: a section can be muted before it has any comments.
+model CommentTopicMute {
+  userId     Int
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType CommentEntityType
+  entityId   Int
+  mutedAt    DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@id([userId, entityType, entityId])
+  @@index([entityType, entityId])
+}
+
 model QuestionReaction {
   id         Int             @id @default(autoincrement())
   question   Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
@@ -6850,6 +6976,7 @@ enum EntityType {
   Collection
   Comment
   CommentV2
+  CommentV3
   User
   UserProfile
   ResourceReview
@@ -6869,6 +6996,18 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  CdnAccessSync
+}
+
+/// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
+/// its public variants deleted). Written only by the cdn-access-sync jobs; a row is removed when
+/// the deny is lifted or no image row uses the url any more.
+model ImageCdnAccess {
+  url            String    @id
+  state          String
+  deniedAt       DateTime  @default(now())
+  retractedAt    DateTime?
+  lastAssertedAt DateTime  @default(now())
 }
 
 model JobQueue {

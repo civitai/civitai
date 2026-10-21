@@ -36,6 +36,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -457,6 +458,11 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'trainer', modelVersionId },
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.

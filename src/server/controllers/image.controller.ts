@@ -54,7 +54,7 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -273,6 +273,7 @@ export const setTosViolationHandler = async ({
     await clearReviewFlagsOnBlock([id]);
     await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
+    await refreshProfilePicturesForImages([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
     // would let a later account restore un-block what was just moderated.
@@ -284,8 +285,8 @@ export const setTosViolationHandler = async ({
     // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
     // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
     //
-    // It is also load-bearing now: `remove-blocked-images` retracts the SHARED, content-addressed
-    // stored object only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
+    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
+    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
     // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
     // bytes left in place — which is the safe direction, but not the intended one.
     await trackModActivity(user.id, {

@@ -2,7 +2,7 @@
  * Resource shaping and the last-used/prefetch version lookups for the generation form.
  */
 
-import type { ResourceData } from '~/shared/generation/values';
+import type { ResourceData } from '~/shared/form-graph/generation/defs';
 import {
   allEcosystemDefaultVersionIds,
   ecosystemByKey,
@@ -52,7 +52,7 @@ export function getLastUsedCheckpointIdForEcosystem(ecosystemKey: string): numbe
   }
 }
 
-/** Convert GenerationResource to ResourceData (matching `shared/generation/values`).
+/** Convert GenerationResource to the form-graph ResourceData.
  * Resources arriving from the cross-domain handoff or storage may be partially
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
 export function toResourceData(r: GenerationResource): ResourceData {
@@ -65,6 +65,8 @@ export function toResourceData(r: GenerationResource): ResourceData {
     // behaviour off the model, e.g. MOSS Image's turbo LoRA defaults
     model: { id: r.model?.id, type: r.model?.type } as ResourceData['model'],
     strength: r.strength,
+    ...(r.turbo && { turbo: r.turbo }),
+    ...(r.turboLora && { turboLora: r.turboLora }),
     trainedWords: r.trainedWords && r.trainedWords.length > 0 ? r.trainedWords : undefined,
   };
 }

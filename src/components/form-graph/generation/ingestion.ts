@@ -44,6 +44,11 @@ import {
   AVATAR_DEEP_LINK_PARAMS,
   avatarDeepLinkFields,
 } from '~/shared/generation/avatar-deep-link';
+import {
+  GENERATOR_DEEP_LINK_PARAMS,
+  generatorDeepLinkFields,
+  type GeneratorDeepLinkFields,
+} from '~/shared/generation/generator-deep-link';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
@@ -82,7 +87,7 @@ export function useGenerationIngestion(store: GenerationStore) {
   // purpose: model pages use the same param to pick a version, and the panel
   // mounts there too — without the guard, opening a model page would yank the
   // generator open. Yields to a `?gen=` handoff, which has already queued
-  // data by the time this runs.
+  // data by the time this runs. May also carry form fields (`&resolution=2k&thinkingMode=ultra`).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!window.location.pathname.startsWith('/generate')) return;
@@ -91,7 +96,10 @@ export function useGenerationIngestion(store: GenerationStore) {
     const raw = url.searchParams.get('modelVersionId');
     if (!raw) return;
 
+    const fields = generatorDeepLinkFields(url.searchParams);
+
     url.searchParams.delete('modelVersionId');
+    for (const param of GENERATOR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
     window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 
     if (useGenerationGraphStore.getState().data) return;
@@ -99,7 +107,16 @@ export function useGenerationIngestion(store: GenerationStore) {
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) return;
 
-    generationGraphPanel.open({ type: 'modelVersion', id });
+    if (!Object.keys(fields).length) {
+      generationGraphPanel.open({ type: 'modelVersion', id });
+      return;
+    }
+    void openWithDeepLinkFields(
+      store,
+      () => generationGraphPanel.open({ type: 'modelVersion', id }),
+      fields
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
   }, []);
 
   // `/generate?air=…&workflowId=…&name=…` deep link — the Training Studio's
@@ -183,6 +200,27 @@ export function useGenerationIngestion(store: GenerationStore) {
     // Subscribe to future changes
     return useGenerationGraphStore.subscribe(applyStoreData);
   }, [store]);
+}
+
+/**
+ * Opens the generator on a model, then sets the link's fields. Only once the model has landed, so
+ * a load that fails, or that another open replaces while in flight, leaves the form as it was.
+ */
+export async function openWithDeepLinkFields(
+  store: GenerationStore,
+  open: () => Promise<void>,
+  fields: GeneratorDeepLinkFields,
+  openSequence = () => useGenerationGraphStore.getState().openSequence
+) {
+  const pending = open();
+  const sequence = openSequence();
+  try {
+    await pending;
+  } catch {
+    return;
+  }
+  if (openSequence() !== sequence) return;
+  store.set(fields);
 }
 
 type GenerationData = NonNullable<ReturnType<typeof useGenerationGraphStore.getState>['data']>;

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, type JobContext } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -507,49 +508,7 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-/**
- * 🔴 The POSITIVE signal that a human moderator took THIS ONE IMAGE down. It is the only thing
- * that unlocks blob retraction in `remove-blocked-images` — see the long note at the split for why
- * the discriminator has to be positive rather than an opt-out.
- *
- * Both values are `ModActivity.activity` rows written against `entityType = 'image'`. Enumerated
- * over every `trackModActivity`/`recordModActivity` call in `src` and `apps` that carries
- * `entityType: 'image'`, the complete vocabulary is:
- *   'review'        — `handleUnblockImages` and `handleBlockImages` (image.service),
- *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
- *                     (moderator app), `/api/mod/unblock-images`. Every one of them writes one row
- *                     per NAMED image id — several of them take a list, but none of them stands in
- *                     for a set it was never handed. Three of the six are the un-block direction,
- *                     which is why the timestamp comparison at the call site is load-bearing and
- *                     not decoration — and it is worth being exact about what that comparison
- *                     does, because the obvious reading of it is wrong. It compares the activity
- *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
- *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
- *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
- *                     after it reads as a takedown. What actually closes that for most of the
- *                     un-block direction is the writers dropping the queue row —
- *                     `handleUnblockImages` and `/api/mod/unblock-images` both call
- *                     `dropBlockedImageDeleteQueue`, leaving nothing to compare against. The
- *                     moderator app's `acceptImage` does not — so an accept followed by an
- *                     automated re-block, BOTH landing between two consecutive runs of this
- *                     hourly job, is a real window in which an un-block licenses retraction. It
- *                     is bounded to that gap and no wider: any run in between evicts the queue
- *                     row as stale (`staleIds` takes everything no longer `ingestion = 'Blocked'`,
- *                     and the delete at the end of the job removes it), and the re-block then
- *                     writes a fresh row that post-dates the accept. Listed as accepted
- *                     imprecision in the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note below.
- *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
- *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
- *                     NO per-image row, by its own design; that is what keeps a library-wide block
- *                     out of this set.
- * DELIBERATELY EXCLUDED — the rest of that enumeration, every one of them moderator-written and
- * none of them a decision to destroy the bytes: 'bulkRestore', 'resolveAppeal', 'setNsfwLevel',
- * 'setNsfwLevelKono' and 'moderateTag', plus the flag activities the moderator app spells
- * dynamically as `poi:<bool>` / `minor:<bool>`.
- *
- * Adding a value here widens a cross-account destructive capability. Say why, in the same commit.
- */
-export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
+export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
@@ -728,20 +687,11 @@ export const removeBlockedImages = createJob(
 
     // Delete images that are past retention period.
     //
-    // 🔴 THE ONE FLOW THAT RETRACTS — but NOT every image it deletes. `retractPublicBlobs` asks
-    // the image-cache service to destroy the shared stored object, not just this image's derived
-    // variants: the full-resolution original stops existing.
-    //
-    // 🔴 KNOWN AND ACCEPTED COLLATERAL, documented here because it is not discoverable later.
-    // The stored object is content-addressed, so it is shared by every BYTE-IDENTICAL image of
-    // EVERY owner. Retracting it removes their original too, while their database rows survive
-    // and go on serving a broken image — the orphaned-row symptom, deliberately reintroduced.
-    // Accepted because a bit-identical copy of content that must not exist is the same content,
-    // and a takedown that leaves copies serving is not a takedown. It is NOT fixed here: the app
-    // stores no content-hash key per image, and `pHash` is a PERCEPTUAL hash — a similarity
-    // signal, not a byte-identity key — so those rows cannot be enumerated from this codebase at
-    // all. Building that fan-out is separate work; do not infer from this comment that it exists.
-    // The `image-blob-retraction-requested` log line in `deleteImageFromS3` is the only trail.
+    // 🔴 RETRACTS — but NOT every image it deletes. `retractPublicBlobs` asks the image-cache
+    // service to also delete the image's public copies and purge them from the CDN, so a redirect
+    // cached before the delete stops resolving. Those copies are named from the image's own
+    // storage key, so this reaches only this url (see `PurgeResizeCacheRetraction`). The
+    // `cdn-access-sync` job asks for the same thing at takedown time, under the same rule.
     //
     // ── WHY THE DISCRIMINATOR IS POSITIVE ────────────────────────────────────────────────────
     // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not
@@ -761,8 +711,7 @@ export const removeBlockedImages = createJob(
     // `Image.metadata` is a `z.record(z.string(), z.any())` that `createImage` spreads verbatim
     // into the row, so a marker stored there is writable by the image's own uploader, in EITHER
     // polarity. Under a positive discriminator the forgeable direction would be worse than the
-    // one this replaces: it would let an uploader destroy the shared object behind any
-    // byte-identical image by getting their own copy blocked.
+    // one this replaces: it would let an uploader trigger a retraction by forging the marker.
     //
     // The activity kinds counted are `MODERATOR_TAKEDOWN_ACTIVITIES`, and the row must be dated
     // at or after the queue row (i.e. at or after the block). Both halves matter — see the
@@ -890,7 +839,7 @@ export const removeBlockedImages = createJob(
       deleted: deleted.length,
       heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
-      // second number is deletions that deliberately left the shared stored object alone. It is
+      // second number is deletions that deliberately left the public copies to expire. It is
       // NOT "account deletions" — it is everything with no moderator takedown on record, which is
       // account deletions plus every automated block plus every whole-library block.
       retracted: takedowns.filter((id) => deletedSet.has(id)).length,

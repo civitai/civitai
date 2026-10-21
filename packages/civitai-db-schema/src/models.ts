@@ -108,6 +108,8 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
 
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible";
+
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
@@ -180,9 +182,9 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -589,6 +591,10 @@ export interface User {
   answerReactions?: AnswerReaction[];
   commentV2Reactions?: CommentV2Reaction[];
   threadMutes?: ThreadMute[];
+  commentsV3?: CommentV3[];
+  commentV3Reactions?: CommentV3Reaction[];
+  commentMutes?: CommentMute[];
+  commentTopicMutes?: CommentTopicMute[];
   answerVotes?: AnswerVote[];
   tagsEngaged?: TagEngagement[];
   imageReactions?: ImageReaction[];
@@ -1364,6 +1370,7 @@ export interface Report {
   model?: ModelReport | null;
   comment?: CommentReport | null;
   commentV2?: CommentV2Report | null;
+  commentV3?: CommentV3Report | null;
   image?: ImageReport | null;
   resourceReview?: ResourceReviewReport | null;
   article?: ArticleReport | null;
@@ -3045,6 +3052,78 @@ export interface ThreadMute {
   mutedAt: Date;
 }
 
+export interface CommentTopic {
+  entityType: CommentEntityType;
+  entityId: number;
+  locked: boolean;
+  commentCount: number;
+  comments?: CommentV3[];
+}
+
+export interface CommentV3 {
+  id: number;
+  entityType: CommentEntityType;
+  entityId: number;
+  topic?: CommentTopic;
+  parentId: number | null;
+  parent?: CommentV3 | null;
+  replies?: CommentV3[];
+  replyToId: number | null;
+  replyTo?: CommentV3 | null;
+  repliedBy?: CommentV3[];
+  rootId: number;
+  depth: number;
+  userId: number;
+  user?: User;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
+  tosViolation: boolean;
+  hidden: boolean;
+  locked: boolean;
+  pinnedAt: Date | null;
+  reactionCount: number;
+  legacyV1Id: number | null;
+  reactions?: CommentV3Reaction[];
+  reports?: CommentV3Report[];
+  mutes?: CommentMute[];
+}
+
+export interface CommentV3Reaction {
+  id: number;
+  commentId: number;
+  comment?: CommentV3;
+  userId: number;
+  user?: User;
+  reaction: ReviewReactions;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CommentV3Report {
+  commentId: number;
+  comment?: CommentV3;
+  reportId: number;
+  report?: Report;
+}
+
+export interface CommentMute {
+  userId: number;
+  user?: User;
+  commentId: number;
+  comment?: CommentV3;
+  mutedAt: Date;
+}
+
+export interface CommentTopicMute {
+  userId: number;
+  user?: User;
+  entityType: CommentEntityType;
+  entityId: number;
+  mutedAt: Date;
+}
+
 export interface QuestionReaction {
   id: number;
   question?: Question;
@@ -4263,6 +4342,14 @@ export interface UserPurchasedRewards {
   createdAt: Date;
   meta: JsonValue;
   code: string;
+}
+
+export interface ImageCdnAccess {
+  url: string;
+  state: string;
+  deniedAt: Date;
+  retractedAt: Date | null;
+  lastAssertedAt: Date;
 }
 
 export interface JobQueue {

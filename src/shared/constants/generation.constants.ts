@@ -963,3 +963,9 @@ function getUpperLowerLimits(value: number) {
 /** The generator's prompt cap. Here so the server's prompt comparison can bound its
  * input without importing the generation graph. */
 export const MAX_PROMPT_LENGTH = 6000;
+
+/** The strength a LoRA may be generated at when its version sets no narrower range. */
+export const LORA_STRENGTH_BOUNDS = { min: -1, max: 2 } as const;
+
+/** The model types a version may flag as a turbo variant. */
+export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];

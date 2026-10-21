@@ -6292,7 +6292,7 @@ export const blocksRouter = router({
    *
    * A block names the viewer's image ids and per-image captions; the server
    * admits only the viewer's OWN images that pass the gated-image predicate under
-   * the token's maturity ceiling, moderates the captions, imports the admitted
+   * the token's maturity ceiling, imports the admitted
    * images into orchestrator blobs under the viewer's orchestrator token, and
    * returns an opaque `datasetId` bound to this subject, app and install. The
    * training body names that handle — never images, blob references or a count.
@@ -6318,7 +6318,7 @@ export const blocksRouter = router({
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
-      const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
+      const { userId } = await assertTrainingRequestAllowed(claims, ctx);
       const rate = await checkBlockTrainingDatasetRateLimit(
         claims.blockInstanceId,
         userId,
@@ -6348,7 +6348,6 @@ export const blocksRouter = router({
         },
         items: input.items,
         token,
-        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
       });
     }),
 
@@ -14269,7 +14268,7 @@ const CONFIRMED_STEP_TRAINING_TYPE_MESSAGE =
  *
  * A confirmed quote is what lets a job cost more than the per-call budget. For training
  * that grant belongs to `kind:'training'`, which is what binds the server-prepared
- * dataset to the viewer, audits the captions and prompts, resolves the run against the
+ * dataset to the viewer, checks the trigger word and audits the sample prompts, resolves the run against the
  * training service's own gates and checks the training flag. A training `$type` granted
  * a STEP quote would run above the budget, under the step flag, with none of that.
  *
@@ -14598,8 +14597,11 @@ async function estimateTrainingWorkflow(opts: {
     isModerator: !!user.isModerator,
   });
 
-  // App-supplied text that drives sample generation — moderated like a prompt.
-  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+  // The sample prompts drive sample generation, so they are moderated as prompts.
+  await Promise.all([
+    checkBlockTriggerWord(claims, userId, body.triggerWord),
+    auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
+  ]);
 
   const step = { ...run.step, name: BLOCK_STEP_NAME };
   const token = await getOrchestratorToken(userId, ctx);
@@ -14650,9 +14652,8 @@ async function estimateTrainingWorkflow(opts: {
 }
 
 /**
- * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
- * body's trigger word + sample prompts. Not a generation submit, so it joins the
- * `other` moderation-source population.
+ * The prompt-moderation pass for a `kind:'training'` body's sample prompts. Not a generation
+ * submit, so it joins the `other` moderation-source population.
  */
 async function auditBlockTrainingText(opts: {
   claims: BlockClaims;
@@ -14666,9 +14667,20 @@ async function auditBlockTrainingText(opts: {
   await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
 }
 
-/** A training body's own free text, joined for one audit. */
+/** The training trigger word check, the same on every training path. */
+async function checkBlockTriggerWord(claims: BlockClaims, userId: number, triggerWord: string) {
+  const { assertTrainingTriggerWordAllowed } = await import(
+    '~/server/services/orchestrator/training/training-trigger-word-check'
+  );
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
+  });
+}
+
+/** A training body's sample prompts, joined for one audit. */
 function trainingBodyAuditText(body: BlockTrainingBody): string {
-  return [body.triggerWord, ...body.samplePrompts]
+  return body.samplePrompts
     .map((t) => t.trim())
     .filter((t) => t.length > 0)
     .join('\n');
@@ -14736,7 +14748,10 @@ async function submitTrainingWorkflow(opts: {
           features,
           isModerator: !!user.isModerator,
         });
-        await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+        await Promise.all([
+          checkBlockTriggerWord(claims, userId, body.triggerWord),
+          auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) }),
+        ]);
         // `name` is what the snapshot/publish extractors key on.
         const step = { ...run.step, name: BLOCK_STEP_NAME };
         return {

@@ -14,7 +14,12 @@ import {
   maskLinkedAddresses,
   type LinkedAccounts,
 } from '../ip-links.service';
-import { getInflationActors, getSharedIps, type SharedIpAccount } from '../reactor-lookup.service';
+import {
+  getInflationActors,
+  getSharedIpCoverage,
+  isClickhouseTimeout,
+  type SharedIpAccount,
+} from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import {
   getReportsOnUser,
@@ -26,7 +31,13 @@ import { getAbuseFindingsForUser } from '../abuse-detection.service';
 import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
-import { getAccounts, getOpenUserReports, MAX_ACCOUNTS, searchAccounts } from './reads';
+import {
+  getAccounts,
+  getOpenUserReports,
+  HUMAN_REPORT_REASONS,
+  MAX_ACCOUNTS,
+  searchAccounts,
+} from './reads';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
 
 // The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
@@ -187,13 +198,15 @@ function reportRow(r: UserReportRow) {
  *
  * `addresses` is capped per account, so a link can sit past the cap. A group with a member whose list
  * was cut is not `complete` (a narrower link may be hidden), and two accounts `peers` links that no
- * listed address does come back as `unmeasuredLinks` rather than vanishing.
+ * listed address does come back as `unmeasuredLinks` rather than vanishing. `scanCapped` (the address
+ * scan hit its row budget) makes every group incomplete, since a link may sit past the budget.
  */
 export function reactorClusters(
   shared: Pick<
     SharedIpAccount,
     'userId' | 'username' | 'withTarget' | 'addresses' | 'addressCount' | 'peers'
-  >[]
+  >[],
+  { scanCapped = false }: { scanCapped?: boolean } = {}
 ): {
   clusters: {
     size: number;
@@ -238,7 +251,7 @@ export function reactorClusters(
       size: g.length,
       linkedToCreator: g.some((s) => s.withTarget),
       widestLink: widest.get(r) ?? 0,
-      complete: g.every((s) => s.addressCount <= s.addresses.length),
+      complete: !scanCapped && g.every((s) => s.addressCount <= s.addresses.length),
       members: g.map((s) => ({ userId: s.userId, username: s.username })),
     }))
     .sort((a, b) => b.size - a.size || a.widestLink - b.widestLink);
@@ -250,6 +263,18 @@ export function reactorClusters(
         unmeasuredLinks.push([s.userId, p.userId]);
   return { clusters, unmeasuredLinks };
 }
+
+/**
+ * reactors_of checks shared addresses on this many top reactors, not only the few it lists: a ring
+ * rarely sits at the top by concentration, and checking the top 30 missed every cluster the Reactor
+ * Lookup page showed for the same creator.
+ */
+const ADDRESS_CHECK = 300;
+/** Past this the address check reports itself unfinished rather than empty. */
+const ADDRESS_TIMEOUT_SECONDS = 15;
+const SHOWN_ACTORS = 20;
+/** Narrowest first, so these are the identifying ones. */
+const ADDRESSES_SHOWN = 3;
 
 export const TOOLS = [
   tool({
@@ -394,7 +419,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` has a member with more shared addresses than were checked, so a narrower link may exist; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), and which of them share addresses. `clusters` comes first: groups of reactors that share addresses with EACH OTHER, whether or not with the creator, each member with its rank and concentration. When asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` may hide a narrower link; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. `addressesChecked` says how many of the over-floor reactors were checked for shared addresses and whether that check is `complete`. Say a creator's reactors have no clusters only when it is complete, and then say how many were checked out of how many; when it timed out or the scan was cut short (`scanCapped`), say the check did not finish, never that there are no clusters. `actors` is only the top reactors by concentration. Use days 3 for who is boosting the creator now, 30 or 90 for a slow farm. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -403,19 +428,54 @@ export const TOOLS = [
     requires: [REACTOR_LOOKUP, LOOKUP],
     run: async ({ userId: id, days, minCount }, ctx) => {
       const [report, breadth] = await Promise.all([
-        getInflationActors(id, { category: 'reactions', days, minCount, limit: 50 }),
+        getInflationActors(id, { category: 'reactions', days, minCount, limit: ADDRESS_CHECK }),
         getReactionBreadth(id, days),
       ]);
-      const top = report.actors.slice(0, 30).map((a) => a.userId);
-      const shared = top.length ? await getSharedIps(top, { targetId: id }) : [];
+      const checked = report.actors.map((a) => a.userId);
+      let shared: SharedIpAccount[] = [];
+      let scanCapped = false;
+      let timedOut = false;
+      if (checked.length)
+        try {
+          ({ accounts: shared, scanCapped } = await getSharedIpCoverage(checked, {
+            targetId: id,
+            timeoutSeconds: ADDRESS_TIMEOUT_SECONDS,
+          }));
+        } catch (e) {
+          // A timeout checked nobody; it must not read as "no shared addresses".
+          if (!isClickhouseTimeout(e)) throw e;
+          timedOut = true;
+        }
+      const { clusters, unmeasuredLinks } = reactorClusters(shared, { scanCapped });
+      const byId = new Map(report.actors.map((a, i) => [a.userId, { a, rank: i + 1 }]));
+      const inCluster = new Set(clusters.flatMap((c) => c.members.map((m) => m.userId)));
+      const shown = report.actors.slice(0, SHOWN_ACTORS);
+      // Only accounts in a finding: with 300 checked, every sharer would swamp the answer.
+      const findings = shared.filter((s) => s.withTarget || inCluster.has(s.userId));
       const label = shownAddress(ctx);
       return {
         data: {
-          ...reactorClusters(shared),
+          addressesChecked: {
+            reactors: timedOut ? 0 : checked.length,
+            overFloor: report.total,
+            scanCapped,
+            timedOut,
+            complete: !scanCapped && !timedOut,
+          },
+          clusters: clusters.map((c) => ({
+            ...c,
+            members: c.members.map((m) => ({
+              ...m,
+              rank: byId.get(m.userId)?.rank ?? null,
+              concentration: byId.get(m.userId)?.a.concentration ?? null,
+              reactions: byId.get(m.userId)?.a.count ?? null,
+            })),
+          })),
+          unmeasuredLinks,
           breadth,
           overFloor: report.total,
           belowFloor: report.belowFloor,
-          actors: report.actors.map((a) => ({
+          actors: shown.map((a) => ({
             userId: a.userId,
             username: a.username,
             reactions: a.count,
@@ -427,20 +487,24 @@ export const TOOLS = [
             createdAt: day(a.createdAt),
             instantVerify: a.instantVerify,
           })),
-          sharedAddresses: shared.map((s) => ({
+          sharedAddresses: findings.map((s) => ({
             userId: s.userId,
             username: s.username,
             withCreator: s.withTarget,
             addressCount: s.addressCount,
-            addresses: s.addresses.map((a) => ({ ...a, cluster: label(a.cluster) })),
-            peers: s.peers.map((p) => p.userId),
+            addresses: s.addresses
+              .slice(0, ADDRESSES_SHOWN)
+              .map((a) => ({ ...a, cluster: label(a.cluster) })),
           })),
         },
-        rows: report.actors.length,
-        truncated: report.total > report.actors.length,
+        rows: shown.length,
+        truncated: report.total > checked.length || scanCapped || timedOut,
         sources: [
           userSource(id),
-          ...report.actors.map((a) => userSource(a.userId, a.username)),
+          ...shown.map((a) => userSource(a.userId, a.username)),
+          // Every account a finding names, so a citation of one past the top rows still verifies.
+          ...findings.map((s) => userSource(s.userId, s.username)),
+          ...unmeasuredLinks.flat().map((u) => userSource(u, byId.get(u)?.a.username)),
           ...breadth.top.map((t) => userSource(t.userId)),
         ],
       };
@@ -516,14 +580,26 @@ export const TOOLS = [
   tool({
     name: 'open_user_reports',
     description:
-      "The open user-report queue, oldest first, human-filed only: report id, reported account, reporter, reason and the reporter's comment (quoted user text). Page with afterReportId.",
+      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor, passing the same order and filters.",
     input: z.object({
       limit: z.number().int().min(1).max(100).default(50),
-      afterReportId: z.number().int().positive().optional(),
+      order: z.enum(['newest', 'oldest']).default('newest'),
+      cursor: z.number().int().positive().max(MAX_INT4).optional(),
+      statuses: z
+        .array(z.enum(['Pending', 'Processing']))
+        .min(1)
+        .max(2)
+        .optional(),
+      reasons: z
+        .array(z.enum(HUMAN_REPORT_REASONS as [string, ...string[]]))
+        .min(1)
+        .max(HUMAN_REPORT_REASONS.length)
+        .optional(),
     }),
     requires: [USER_REPORTS],
-    run: async ({ limit, afterReportId }) => {
-      const rows = await getOpenUserReports(limit, afterReportId);
+    run: async (query) => {
+      const { limit } = query;
+      const rows = await getOpenUserReports(query);
       return {
         data: {
           reports: rows.map((r) => ({
@@ -531,6 +607,7 @@ export const TOOLS = [
             createdAt: day(r.createdAt),
             comment: quoted(r.comment),
           })),
+          nextCursor: rows.length >= limit ? rows.at(-1)!.reportId : null,
         },
         rows: rows.length,
         truncated: rows.length >= limit,
