@@ -1463,12 +1463,19 @@ export const upsertCollection = async ({
       // Only restores posts the collection itself hid: the `unpublishedByCollection` marker, or a
       // bare `prevPublishedAt` (what this hide wrote before the marker existed). Every other
       // unpublish stamps one of the excluded keys and is undone by its own republish path. A
-      // collection-hidden post cannot be unpublished again, so a moderator action taken while it
-      // was hidden lands on the owner, the images or a hold; those keep the post down too.
+      // collection-hidden post cannot be unpublished again (every unpublish skips posts that are
+      // already down), so an action taken while it was hidden lands only on the owner, the images,
+      // a hold, or the post's model or version; any of those keeps the post down.
       // One statement, so a failed lookup restores nothing.
       await dbWrite.$executeRaw`
+        WITH reported AS (
+          SELECT "userId"::bigint AS id FROM "CsamReport" WHERE "userId" IS NOT NULL
+          UNION
+          SELECT ("details"->>'secondaryUserId')::bigint FROM "CsamReport"
+          WHERE "details"->>'secondaryUserId' ~ '^[0-9]{1,18}$'
+        )
         UPDATE "Post" p SET
-          "publishedAt" = (p."metadata"->>'prevPublishedAt')::timestamptz,
+          "publishedAt" = (p."metadata"->>'prevPublishedAt')::timestamp,
           "metadata" = p."metadata" - 'prevPublishedAt' - 'unpublishedByCollection'
         WHERE p."collectionId" = ${updated.id}
           AND p."publishedAt" IS NULL
@@ -1489,9 +1496,14 @@ export const upsertCollection = async ({
             SELECT 1 FROM "TextScanHold" h
             WHERE h."entityType" = 'Post' AND h."entityId" = p.id AND h.status = 'Confirmed'
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM "CsamReport" c
-            WHERE c."userId" = p."userId" OR c."details"->>'secondaryUserId' = p."userId"::text
+          AND NOT EXISTS (SELECT 1 FROM reported r WHERE r.id = p."userId")
+          AND (
+            p."modelVersionId" IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = p."modelVersionId" AND mv.status = 'Published' AND m.status = 'Published'
+            )
           )
       `;
     } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {

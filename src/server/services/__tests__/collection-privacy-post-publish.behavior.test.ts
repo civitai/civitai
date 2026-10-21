@@ -43,11 +43,19 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "TextScanHoldStatus" AS ENUM ('Pending', 'Dismissed', 'Confirmed');
+    CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation', 'GatherInterest', 'Deleted');
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "Model" (id int PRIMARY KEY, status "ModelStatus" NOT NULL);
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY,
+      "modelId" int NOT NULL REFERENCES "Model"(id),
+      status "ModelStatus" NOT NULL
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL REFERENCES "User"(id),
       "collectionId" int,
+      "modelVersionId" int REFERENCES "ModelVersion"(id),
       "publishedAt" timestamp(3),
       metadata jsonb
     );
@@ -82,9 +90,13 @@ const routeRaw = (async (strings: TemplateStringsArray, ...values: unknown[]) =>
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(`
-    TRUNCATE "Image", "TextScanHold", "CsamReport", "Post", "User" RESTART IDENTITY CASCADE;
+    TRUNCATE "Image", "TextScanHold", "CsamReport", "Post", "ModelVersion", "Model", "User" RESTART IDENTITY CASCADE;
     INSERT INTO "User" (id, "bannedAt") VALUES
       (${OWNER}, NULL), (${OTHER}, NULL), (${BANNED}, NULL), (${REPORTED}, NULL), (${SECONDARY_REPORTED}, NULL);
+    INSERT INTO "Model" (id, status) VALUES (1, 'Published'), (2, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1, 1, 'Published'), (2, 2, 'Published');
+    -- Not a user id; must be ignored rather than break the lookup.
+    INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": "n/a"}');
   `);
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(routeRaw);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw);
@@ -137,11 +149,19 @@ async function insertPost(
     userId = OWNER,
     publishedAt = PUBLISHED_AT as string | null,
     metadata = {} as object | null,
+    modelVersionId = null as number | null,
   } = {}
 ) {
   await holder.db.query(
-    `INSERT INTO "Post" (id, "userId", "collectionId", "publishedAt", metadata) VALUES ($1, $2, $3, $4, $5)`,
-    [id, userId, COLLECTION_ID, publishedAt, metadata === null ? null : JSON.stringify(metadata)]
+    `INSERT INTO "Post" (id, "userId", "collectionId", "modelVersionId", "publishedAt", metadata) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      id,
+      userId,
+      COLLECTION_ID,
+      modelVersionId,
+      publishedAt,
+      metadata === null ? null : JSON.stringify(metadata),
+    ]
   );
 }
 
@@ -222,6 +242,29 @@ describe('collection privacy toggle and its posts', () => {
     expect(await post(2)).toEqual({ publishedAt: null, metadata: stamped });
   });
 
+  it('restores nothing that carries a repair stamp', async () => {
+    const repaired = { prevPublishedAt: '2025-03-04T05:06:07.123', repairStampAt: '2026-05-01' };
+    await insertPost(1, { publishedAt: null, metadata: repaired });
+    await insertPost(2, {
+      publishedAt: null,
+      metadata: { prevPublishedAt: '2025-03-04T05:06:07.123' },
+    });
+
+    await setRead('Private', 'Public');
+
+    expect(await post(1)).toEqual({ publishedAt: null, metadata: repaired });
+    expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
+  });
+
+  it('leaves a published post with a leftover stash alone', async () => {
+    const stash = { prevPublishedAt: '2020-01-01T00:00:00' };
+    await insertPost(1, { metadata: stash });
+
+    await setRead('Private', 'Public');
+
+    expect(await post(1)).toEqual({ publishedAt: PUBLISHED_AT, metadata: stash });
+  });
+
   it("does not restore a post carrying another collection's marker", async () => {
     const foreign = { prevPublishedAt: '2025-03-04T05:06:07.123', unpublishedByCollection: 11 };
     await insertPost(1, { publishedAt: null, metadata: foreign });
@@ -295,6 +338,61 @@ describe('collection privacy toggle and its posts', () => {
           unpublishedByCollection: COLLECTION_ID,
         },
       });
+      expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
+    });
+  });
+
+  describe('keeps a collection-hidden post down unless its model and version are both published', () => {
+    it('a takedown while hidden stamps nothing, and the public flip does not undo it', async () => {
+      await insertPost(1, { modelVersionId: 1 });
+      await insertPost(2, { modelVersionId: 2 }); // control: published model and version
+
+      await setRead('Public', 'Private');
+
+      // The post cascade of the model takedown (model.service.ts, unpublishModelById): it only
+      // reaches posts that are still published.
+      const cascade = await holder.db.query(
+        `UPDATE "Post"
+         SET "metadata" = "metadata" || jsonb_build_object(
+               'unpublishedAt', now()::text, 'unpublishedBy', 42, 'prevPublishedAt', "publishedAt"),
+             "publishedAt" = NULL
+         WHERE "publishedAt" IS NOT NULL AND "userId" = $1 AND "modelVersionId" IN (1)`,
+        [OWNER]
+      );
+      expect(cascade.affectedRows).toBe(0);
+      await holder.db.exec(`
+        UPDATE "Model" SET status = 'UnpublishedViolation' WHERE id = 1;
+        UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 1;
+      `);
+
+      await setRead('Private', 'Public');
+
+      expect(await post(1)).toEqual({
+        publishedAt: null,
+        metadata: {
+          prevPublishedAt: '2025-03-04T05:06:07.123',
+          unpublishedByCollection: COLLECTION_ID,
+        },
+      });
+      expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
+    });
+
+    it.each([
+      ['Model', 'Unpublished'],
+      ['Model', 'Deleted'],
+      ['Model', 'Scheduled'],
+      ['ModelVersion', 'Unpublished'],
+      ['ModelVersion', 'UnpublishedViolation'],
+      ['ModelVersion', 'Draft'],
+    ])('%s %s', async (table, status) => {
+      await insertPost(1, { modelVersionId: 1 });
+      await insertPost(2, { modelVersionId: 2 });
+
+      await setRead('Public', 'Private');
+      await holder.db.query(`UPDATE "${table}" SET status = $1 WHERE id = 1`, [status]);
+      await setRead('Private', 'Public');
+
+      expect((await post(1)).publishedAt).toBeNull();
       expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
     });
   });
