@@ -548,7 +548,7 @@ describe('/api/mod/remove-all-content', () => {
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Account under legal hold; contact Legal.' });
+    expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
     expect(await remaining(HELD)).toEqual(seeded(HELD));
     expect(tracked).not.toHaveBeenCalled();
   });
@@ -557,7 +557,7 @@ describe('/api/mod/remove-all-content', () => {
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
   });
 });
@@ -596,7 +596,7 @@ describe('/api/mod/delete-user-images', () => {
   it('refuses a held account with the hold refusal, deleting nothing', async () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Account under legal hold; contact Legal.' });
+    expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
     expect((await remaining(HELD)).Image).toBe(1);
   });
 
@@ -605,7 +605,7 @@ describe('/api/mod/delete-user-images', () => {
       holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
     expect((await remaining(CLEAN)).Image).toBe(2);
     expect((await remaining(CLEAN)).Post).toBe(1);
   });
@@ -615,7 +615,7 @@ describe('/api/mod/delete-user-images', () => {
     holder.beforeImages = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
     expect((await remaining(CLEAN)).Image).toBe(2);
   });
 
@@ -623,7 +623,7 @@ describe('/api/mod/delete-user-images', () => {
     afterHeld = null;
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
   });
 
   it('refuses a batch size of zero, deleting nothing', async () => {

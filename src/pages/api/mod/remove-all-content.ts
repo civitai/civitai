@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { TRPCError } from '@trpc/server';
 import { Tracker } from '~/server/clickhouse/client';
 import {
   LEGAL_HOLD_REFUSAL,
@@ -8,7 +9,7 @@ import {
   LegalHoldStoppedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
@@ -28,9 +29,16 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     // Part of the account was deleted, so it is recorded like a wipe that finished.
     if (e instanceof LegalHoldStoppedError) {
       track();
-      return res.status(409).json({ error: LEGAL_HOLD_STOPPED });
+      return handleEndpointError(
+        res,
+        new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
+      );
     }
-    if (e instanceof LegalHoldError) return res.status(403).json({ error: LEGAL_HOLD_REFUSAL });
+    if (e instanceof LegalHoldError)
+      return handleEndpointError(
+        res,
+        new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL })
+      );
     throw e;
   }
   track();

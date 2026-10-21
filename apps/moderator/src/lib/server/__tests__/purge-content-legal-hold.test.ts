@@ -87,7 +87,7 @@ describe('purgeAllContent and a legal hold', () => {
   });
 
   it('shows the hold refusal when the endpoint refuses the purge', async () => {
-    purge = () => json({ error: LEGAL_HOLD_REFUSAL }, 403);
+    purge = () => json({ message: LEGAL_HOLD_REFUSAL }, 403);
     expect(await run()).toEqual({ ok: false, error: LEGAL_HOLD_REFUSAL });
     expect(recordModActivity).not.toHaveBeenCalled();
   });
@@ -98,7 +98,7 @@ describe('purgeAllContent and a legal hold', () => {
   });
 
   it('records a purge a hold stopped part-way, and says it stopped', async () => {
-    purge = () => json({ error: LEGAL_HOLD_STOPPED }, 409);
+    purge = () => json({ message: LEGAL_HOLD_STOPPED }, 409);
     expect(await run()).toEqual({ ok: false, error: LEGAL_HOLD_STOPPED });
     expect(recordModActivity).toHaveBeenCalledWith({
       userId: 9,

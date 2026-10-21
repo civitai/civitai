@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
 import {
@@ -63,8 +64,15 @@ export default ModEndpoint(
       return res.status(200).json({ deletedImages, deletedPosts });
     } catch (e) {
       if (e instanceof LegalHoldStoppedError || isLegalHoldAbort(e))
-        return res.status(409).json({ error: LEGAL_HOLD_STOPPED });
-      if (e instanceof LegalHoldError) return res.status(403).json({ error: LEGAL_HOLD_REFUSAL });
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
+        );
+      if (e instanceof LegalHoldError)
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL })
+        );
       return handleEndpointError(res, e);
     }
   },
