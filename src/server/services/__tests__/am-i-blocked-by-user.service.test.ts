@@ -3,8 +3,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 // `amIBlockedByUser` runs on every logged-in detail view. Page views answer from the
-// `BlockedByUsers` cache alone. Interaction gates (comment, reaction, tip) pass
-// `confirmOnPrimary`, which confirms a cache "not blocked" against the primary.
+// `BlockedByUsers` cache alone. Write gates (comment and reaction via throwIfBlockedByOwners,
+// tip, challenge entry, the prompt-provenance mint) pass `confirmOnPrimary`, which confirms a
+// cache "not blocked" against the primary.
 
 const { getCached } = vi.hoisted(() => ({
   getCached: vi.fn(async (..._a: unknown[]): Promise<{ id: number; username: string }[]> => []),
