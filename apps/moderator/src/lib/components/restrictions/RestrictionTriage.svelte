@@ -17,12 +17,12 @@
     RESTRICTION_STATUSES,
     resolveRestrictionFilters,
     restrictionFilterParams,
-    SORT_LABELS,
-    SORT_ORDERS,
     type RestrictionFilters,
   } from '$lib/restriction-filters';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import {
+    SORT_LABELS,
+    SORT_ORDERS,
     unwiredRulingReason,
     type RestrictionType,
   } from '$lib/restriction-types';

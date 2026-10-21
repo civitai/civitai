@@ -6,7 +6,8 @@
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import PromptSegments from '$lib/components/PromptSegments.svelte';
   import { IconChevronDown } from '@tabler/icons-svelte';
-  import type { Snippet } from 'svelte';
+  import type { ComponentProps, Snippet } from 'svelte';
+  import { clipboardFeedback } from '$lib/clipboard.svelte';
   import { LINK_CLASS, dateTime, utcMs } from '$lib/format';
   import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import { normalisedDiffers, recheckCategories, type RecheckResult } from '$lib/restrictions/recheck';
@@ -21,7 +22,13 @@
     promptTesterHref,
     sourceLabel,
   } from '$lib/restrictions/trigger-evidence';
-  import { cutSegments, foldPrompt, lastMatchEnd, lastSegmentEnd } from '$lib/restrictions/prompt-fold';
+  import {
+    cutSegments,
+    foldPrompt,
+    keepThroughFor,
+    lastSegmentEnd,
+    type FoldBox,
+  } from '$lib/restrictions/prompt-fold';
   import { attemptTimes, formatSpan, repeatSpanMs } from '$lib/restrictions/trigger-groups';
   import type {
     RemixSource,
@@ -90,24 +97,25 @@
   // A diff is only offered when the match was not already settled as identical.
   const showDiff = $derived(canDiff && origin.match !== 'identical');
   const compared = $derived(origin.match === 'edited' || origin.match === 'unrelated');
-  // Keyed by source so a failure never carries over to a different source.
-  let failedSourceId = $state<number | null>(null);
-  const imageFailed = $derived(source !== undefined && failedSourceId === source.id);
+  // Keyed per tile (by its media identity) so a failure never carries over to a different tile.
+  let failedTiles = $state<Record<string, boolean>>({});
   // Prompts reach the 6,000-character cap; past the threshold only the start shows until expanded.
   const FOLD = { threshold: 2500, head: 1100 };
   let expanded = $state<Record<string, boolean>>({});
-  let copiedKey = $state<string | null>(null);
-  const copy = async (key: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      copiedKey = key;
-      setTimeout(() => {
-        if (copiedKey === key) copiedKey = null;
-      }, 1500);
-    } catch {
-      copiedKey = null;
-    }
-  };
+  const clipboard = clipboardFeedback();
+  // Keyed on content; the suffix only separates identical matches.
+  const matchRows = $derived.by(() => {
+    const seen = new Map<string, number>();
+    return matches.map((m) => {
+      const base = `${m.field}:${m.category}:${m.text ?? m.regex}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return { m, key: n ? `${base}#${n}` : base };
+    });
+  });
+  const scannedHighlight = $derived([
+    ...new Set(matches.flatMap((m) => [m.text, m.gateWord]).filter((t): t is string => !!t)),
+  ]);
 </script>
 
 {#snippet whyBlocked()}
@@ -116,7 +124,7 @@
     <Badge variant="destructive">{humanizeCategory(trigger.category)}</Badge>
   {/if}
 
-  {#each matches as m, i (i)}
+  {#each matchRows as { m, key } (key)}
     {#if m.category}
       <Badge variant="destructive">{humanizeCategory(m.category)}</Badge>
     {/if}
@@ -190,6 +198,7 @@
 
 {#snippet textBox(b: {
   key: string;
+  box: FoldBox;
   label: string;
   raw: string;
   segments?: RecheckResult['prompt'] | null;
@@ -205,10 +214,10 @@
   {@const shown = showSegments ? b.segments!.map((s) => s.text).join('') : b.raw}
   {@const fold = foldPrompt(shown, {
     ...FOLD,
-    keepThrough: showSegments ? lastSegmentEnd(b.segments!) : lastMatchEnd(shown, b.highlight),
+    keepThrough: showSegments ? lastSegmentEnd(b.segments!) : keepThroughFor(shown, b.box, matches),
   })}
   {@const collapsed = fold.folded && !expanded[b.key]}
-  <div class="rounded-md border border-dark-4 bg-dark-7">
+  <div class="rounded-md border border-dark-4 bg-dark-8">
     <div
       class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-dark-4 px-3 py-1.5 text-xs font-semibold tracking-wide text-dark-2 uppercase"
     >
@@ -219,7 +228,7 @@
       {#if showSegments}
         <PromptSegments segments={collapsed ? cutSegments(b.segments!, fold.head.length) : b.segments!} />
       {:else}
-        <HighlightedText text={collapsed ? fold.head : b.raw} highlight={b.highlight} />
+        <HighlightedText text={collapsed ? fold.head : shown} highlight={b.highlight} />
       {/if}
       {#if collapsed}
         <p class="m-0 mt-1 text-xs text-dark-2">
@@ -255,7 +264,7 @@
     <div
       class="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-dark-4 px-3 py-1.5 text-xs text-dark-2"
     >
-      <span class="tabular-nums">{b.raw.length.toLocaleString()} characters</span>
+      <span class="tabular-nums">{shown.length.toLocaleString()} characters</span>
       {#if b.segments}
         <span
           class="italic"
@@ -275,12 +284,51 @@
       <button
         type="button"
         class="ml-auto cursor-pointer {LINK_CLASS}"
-        onclick={() => copy(b.key, b.raw)}
+        onclick={() => clipboard.copy(b.raw, b.key)}
       >
-        {copiedKey === b.key ? 'Copied' : 'Copy'}
+        {clipboard.copied(b.key) ? 'Copied' : clipboard.failed(b.key) ? 'Copy failed' : 'Copy'}
       </button>
     </div>
   </div>
+{/snippet}
+
+{#snippet evidenceTile(t: {
+  key: string;
+  href: string;
+  label: string;
+  ariaLabel?: string;
+  kind: 'source' | 'image' | 'video';
+  src: string;
+  alt?: string;
+  mediaType?: ComponentProps<typeof EdgeMedia>['type'];
+  nsfwLevel?: number;
+})}
+  <a
+    href={t.href}
+    target="_blank"
+    rel="noreferrer"
+    aria-label={t.ariaLabel}
+    class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
+    onerrorcapture={() => (failedTiles[t.key] = true)}
+  >
+    {#if failedTiles[t.key]}
+      <span class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2">
+        {t.kind === 'video' ? 'Video unavailable' : 'Image unavailable'}
+      </span>
+    {:else if t.kind === 'source'}
+      <EdgeMedia src={t.src} type={t.mediaType} width={450} class="size-full object-cover object-top" />
+    {:else if t.kind === 'image'}
+      <img src={t.src} alt={t.alt} loading="lazy" class="size-full object-cover object-top" />
+    {:else}
+      <video src={t.src} muted preload="metadata" class="size-full object-cover object-top"></video>
+    {/if}
+    {@render mediaTile(t.label)}
+    {#if t.nsfwLevel !== undefined}
+      <Badge variant="secondary" class="absolute bottom-2 left-2">
+        {getBrowsingLevelLabel(t.nsfwLevel)}
+      </Badge>
+    {/if}
+  </a>
 {/snippet}
 
 {#snippet mediaTile(label: string)}
@@ -372,6 +420,7 @@
     {#if trigger.prompt}
       {@render textBox({
         key: 'prompt',
+        box: 'prompt',
         label: 'Prompt',
         raw: trigger.prompt,
         segments: recheck?.prompt,
@@ -386,11 +435,15 @@
         {@render whyBlocked()}
         {@render promptTesterLink()}
       </div>
+      {#if !trigger.text}
+        <p class="m-0 text-xs text-dark-2">No prompt recorded</p>
+      {/if}
     {/if}
 
     {#if trigger.negativePrompt}
       {@render textBox({
         key: 'negative',
+        box: 'negativePrompt',
         label: 'Negative',
         raw: trigger.negativePrompt,
         segments: recheck?.negativePrompt,
@@ -409,9 +462,10 @@
     {#if trigger.text}
       {@render textBox({
         key: 'scanned',
+        box: 'text',
         label: 'Scanned text',
         raw: trigger.text,
-        highlight: [],
+        highlight: scannedHighlight,
         original: false,
         toggle: () => {},
       })}
@@ -421,60 +475,36 @@
       {#if (isRemix && origin.imageId && source) || trigger.inputImages?.length || trigger.inputVideo}
         <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
           {#if isRemix && origin.imageId && source}
-            <a
-              href="{civitaiUrl}/images/{source.id}"
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Open the source image in a new tab"
-              class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
-              onerrorcapture={() => (failedSourceId = source?.id ?? null)}
-            >
-              {#if imageFailed}
-                <span
-                  class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2"
-                >
-                  Image unavailable
-                </span>
-              {:else}
-                <EdgeMedia
-                  src={source.url}
-                  type={source.type}
-                  width={450}
-                  class="size-full object-cover object-top"
-                />
-              {/if}
-              {@render mediaTile('Source')}
-              <Badge variant="secondary" class="absolute bottom-2 left-2">
-                {getBrowsingLevelLabel(source.nsfwLevel)}
-              </Badge>
-            </a>
+            {@render evidenceTile({
+              key: `source:${source.id}`,
+              href: `${civitaiUrl}/images/${source.id}`,
+              label: 'Source',
+              ariaLabel: 'Open the source image in a new tab',
+              kind: 'source',
+              src: source.url,
+              mediaType: source.type,
+              nsfwLevel: source.nsfwLevel,
+            })}
           {/if}
           {#each trigger.inputImages ?? [] as url, i (`${i}:${url}`)}
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
-            >
-              <img src={url} alt="Input" class="size-full object-cover object-top" />
-              {@render mediaTile('Input')}
-            </a>
+            {@render evidenceTile({
+              key: `image:${i}:${url}`,
+              href: url,
+              label: 'Input',
+              kind: 'image',
+              src: url,
+              alt: `Input image ${i + 1}`,
+            })}
           {/each}
           {#if trigger.inputVideo}
-            <a
-              href={trigger.inputVideo}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Open the input video in a new tab"
-              class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
-            >
-              <video
-                src={trigger.inputVideo}
-                muted
-                class="size-full object-cover object-top"
-              ></video>
-              {@render mediaTile('Input video')}
-            </a>
+            {@render evidenceTile({
+              key: `video:${trigger.inputVideo}`,
+              href: trigger.inputVideo,
+              label: 'Input video',
+              ariaLabel: 'Open the input video in a new tab',
+              kind: 'video',
+              src: trigger.inputVideo,
+            })}
           {/if}
         </div>
       {/if}

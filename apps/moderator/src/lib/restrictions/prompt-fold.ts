@@ -10,12 +10,14 @@ const MIN_HIDDEN = 500;
 /**
  * Long prompts show only their start; a prompt at or under the threshold is shown whole.
  * `keepThrough` is where the last highlighted match ends: the fold never hides evidence.
+ * `null` means evidence exists that cannot be located in the text, so nothing may be folded.
  */
 export function foldPrompt(
   text: string,
-  { threshold, head, keepThrough = 0 }: { threshold: number; head: number; keepThrough?: number }
+  { threshold, head, keepThrough = 0 }: { threshold: number; head: number; keepThrough?: number | null }
 ): Fold {
   const total = text.length;
+  if (keepThrough === null) return { folded: false, head: text, total };
   const target = Math.max(head, keepThrough > 0 ? keepThrough + MATCH_CONTEXT : 0);
   if (total <= threshold || total - target < MIN_HIDDEN)
     return { folded: false, head: text, total };
@@ -39,6 +41,50 @@ export function lastMatchEnd(text: string, needles: string[]): number {
     if (at !== -1) end = Math.max(end, at + needle.length);
   }
   return end;
+}
+
+export type FoldBox = 'prompt' | 'negativePrompt' | 'text';
+export type FoldEvidence = {
+  text?: string;
+  regex?: string;
+  gateWord?: string;
+  field?: 'prompt' | 'negativePrompt';
+};
+
+/**
+ * How far a box must stay visible to keep its recorded evidence in view, or null when some of that
+ * evidence cannot be located in `shown` (a regex-only match, or a literal that is not in the text).
+ * Scanned text has no field, so every match applies to it; a gate word never applies to the negative.
+ */
+export function keepThroughFor(
+  shown: string,
+  box: FoldBox,
+  matches: FoldEvidence[]
+): number | null {
+  const haystack = shown.toLowerCase();
+  let end = 0;
+  let applicable = false;
+  let located = false;
+  for (const m of matches) {
+    const forBox = box === 'text' || !m.field || m.field === box;
+    const explicit = box !== 'text' && m.field === box;
+    const literals: { needle: string; explicit: boolean }[] = [];
+    if (m.text?.trim() && forBox) literals.push({ needle: m.text, explicit });
+    if (m.gateWord?.trim() && box !== 'negativePrompt') literals.push({ needle: m.gateWord, explicit: false });
+
+    if (!literals.length && m.regex && forBox) return null;
+    for (const l of literals) {
+      applicable = true;
+      const at = haystack.lastIndexOf(l.needle.trim().toLowerCase());
+      if (at === -1) {
+        if (l.explicit) return null;
+        continue;
+      }
+      located = true;
+      end = Math.max(end, at + l.needle.trim().length);
+    }
+  }
+  return applicable && !located ? null : end;
 }
 
 /** Where the last categorised (highlighted) segment ends; 0 for none. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cutSegments, foldPrompt, lastMatchEnd, lastSegmentEnd } from '../prompt-fold';
+import { cutSegments, foldPrompt, keepThroughFor, lastMatchEnd, lastSegmentEnd } from '../prompt-fold';
 
 const OPTS = { threshold: 2500, head: 1100 };
 
@@ -42,6 +42,60 @@ describe('foldPrompt', () => {
     const text = 'word, '.repeat(1000);
     const r = foldPrompt(text, { ...OPTS, keepThrough: 5800 });
     expect(r).toEqual({ folded: false, head: text, total: text.length });
+  });
+});
+
+describe('foldPrompt without locatable evidence', () => {
+  it('never folds when told the evidence cannot be located', () => {
+    const text = 'word, '.repeat(1000);
+    expect(foldPrompt(text, { ...OPTS, keepThrough: null })).toEqual({
+      folded: false,
+      head: text,
+      total: text.length,
+    });
+  });
+});
+
+describe('keepThroughFor', () => {
+  const text = 'a cat, '.repeat(10) + 'a dog';
+
+  it('reports where the last literal match ends in the box it belongs to', () => {
+    expect(keepThroughFor(text, 'prompt', [{ text: 'dog', field: 'prompt' }])).toBe(text.length);
+  });
+
+  it('says nothing is to be kept when the trigger recorded no literal or regex evidence', () => {
+    expect(keepThroughFor(text, 'prompt', [])).toBe(0);
+    expect(keepThroughFor(text, 'prompt', [{}])).toBe(0);
+  });
+
+  it('refuses to fold a box a regex-only match applies to', () => {
+    expect(keepThroughFor(text, 'prompt', [{ regex: 'd.g' }])).toBeNull();
+    expect(keepThroughFor(text, 'prompt', [{ regex: 'd.g', field: 'prompt' }])).toBeNull();
+    expect(keepThroughFor(text, 'text', [{ regex: 'd.g', field: 'negativePrompt' }])).toBeNull();
+  });
+
+  it('ignores evidence that belongs to the other box', () => {
+    expect(keepThroughFor(text, 'prompt', [{ regex: 'd.g', field: 'negativePrompt' }])).toBe(0);
+  });
+
+  it('refuses to fold when a literal named for this box is not in it', () => {
+    expect(keepThroughFor(text, 'prompt', [{ text: 'zebra', field: 'prompt' }])).toBeNull();
+  });
+
+  it('refuses to fold when no applicable literal is found anywhere in the box', () => {
+    expect(keepThroughFor(text, 'prompt', [{ text: 'zebra' }])).toBeNull();
+  });
+
+  it('keeps through a field-less literal that is found, even if another is elsewhere', () => {
+    expect(keepThroughFor(text, 'prompt', [{ text: 'cat' }, { text: 'zebra' }])).toBe(
+      text.lastIndexOf('cat') + 3
+    );
+  });
+
+  it('counts a gate word for the prompt and scanned text but not the negative', () => {
+    expect(keepThroughFor(text, 'prompt', [{ gateWord: 'dog' }])).toBe(text.length);
+    expect(keepThroughFor(text, 'text', [{ gateWord: 'dog' }])).toBe(text.length);
+    expect(keepThroughFor(text, 'negativePrompt', [{ gateWord: 'zebra' }])).toBe(0);
   });
 });
 

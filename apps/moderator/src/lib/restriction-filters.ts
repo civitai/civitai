@@ -34,8 +34,6 @@ export const RESTRICTION_ORIGIN_LABELS: Record<RestrictionOriginFilter, string> 
   'unchanged-remix': 'Unchanged remix',
 };
 
-export { SORT_LABELS, SORT_ORDERS } from './restriction-types';
-
 /** The sort follows the status unless the URL names one. */
 export const resolveRestrictionFilters = (
   parsed: Partial<RestrictionFilters>
