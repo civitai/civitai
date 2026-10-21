@@ -3,6 +3,8 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserSettingsHooks from '~/components/UserSettings/hooks';
+import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 import {
   DEFAULT_USER_MENU_PINS,
   type UserMenuItemId,
@@ -38,8 +40,11 @@ vi.mock('~/components/UserSettings/hooks', async (importOriginal) => ({
   },
 }));
 
-vi.mock('~/utils/trpc', () => ({
-  trpc: { system: { getUserMenuDefaultPins: { useQuery: () => defaults.value } } },
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: makeTrpcProxy({
+    'system.getUserMenuDefaultPins': { useQuery: () => defaults.value },
+  }),
 }));
 
 const { useUserMenuPins, PIN_SAVE_DELAY_MS } = await import('./useUserMenuPins');
