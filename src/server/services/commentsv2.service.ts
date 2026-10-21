@@ -29,11 +29,7 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import {
-  accountHoldSql,
-  holdMarkerViewExists,
-  logHoldRetained,
-} from '~/server/services/legal-hold.service';
+import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -699,31 +695,41 @@ export const deleteComment = async ({ id }: { id: number }) => {
   return deleted;
 };
 
-export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, retainedHidden: 0 };
-  // As `bulkDeleteComments`: a held author's comments are kept and taken off the page.
-  const markerView = await holdMarkerViewExists();
-  const { deleted, retained } = await dbWrite.$transaction(async (tx) => {
-    const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
-      DELETE FROM "CommentV2" c
-      WHERE c.id = ANY(${ids}::int[])
-        AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      RETURNING c."userId", c."threadId"
-    `;
-    const retained = await tx.$queryRaw<{ userId: number }[]>`
-      UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
-      WHERE id = ANY(${ids}::int[])
-      RETURNING "userId"
-    `;
-    return { deleted, retained };
-  });
+/**
+ * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
+ * transaction. Deleting one leaves its replies: the reply thread's link is set null, not cascaded.
+ */
+export async function deleteCommentsV2UnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
+    DELETE FROM "CommentV2" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+    RETURNING c."userId", c."threadId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+/** What follows a committed `deleteCommentsV2UnlessHeld`. */
+export async function afterCommentsV2Deleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteCommentsV2UnlessHeld>>) {
   if (retained.length)
     await logHoldRetained(
       'commentV2.bulkDelete',
       retained.map((r) => r.userId)
     );
   void onCommentsRemoved(deleted);
-  return { count: deleted.length, retainedHidden: retained.length };
 }
 
 /**

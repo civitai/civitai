@@ -6,10 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * real endpoint through its real wrapper; the services are stubbed.
  */
 
-const { mockGetSession, v1, v2 } = vi.hoisted(() => ({
+const { mockGetSession, bulkDelete } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
-  v1: vi.fn(),
-  v2: vi.fn(),
+  bulkDelete: vi.fn(),
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
@@ -20,11 +19,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/services/comment.service', () => ({ bulkDeleteComments: v1 }));
-vi.mock('~/server/services/commentsv2.service', () => ({ bulkDeleteCommentsV2: v2 }));
+vi.mock('~/server/services/comment.service', () => ({ bulkDeleteComments: bulkDelete }));
 
 import handler from '~/pages/api/mod/comment/bulk-delete';
-import { LEGAL_HOLD_STOPPED } from '~/server/services/legal-hold.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -70,25 +67,36 @@ beforeEach(() => {
     subject: { type: 'apiKey', id: 1 },
     tokenScope: TokenScope.Full,
   });
-  v1.mockResolvedValue({ count: 1, retainedHidden: 1 });
-  v2.mockResolvedValue({ count: 0, retainedHidden: 1 });
+  bulkDelete.mockResolvedValue({ commentDeleted: 1, commentV2Deleted: 0, retainedHidden: 2 });
 });
 
 describe('comment.bulkDelete', () => {
-  it('returns what each table deleted and what both kept hidden', async () => {
+  it('passes both id lists to one call and returns its counts', async () => {
     const { status, body } = await call();
 
     expect(status).toBe(200);
+    expect(bulkDelete).toHaveBeenCalledTimes(1);
+    expect(bulkDelete).toHaveBeenCalledWith({ commentIds: [1, 2], commentV2Ids: [3] });
     expect(body).toMatchObject({ commentDeleted: 1, commentV2Deleted: 0, retainedHidden: 2 });
   });
 
-  it('answers a hold abort with the neutral stopped message', async () => {
-    v2.mockRejectedValue(new Error('relation "EvidenceHeldUser" does not exist'));
+  it('answers a hold abort with neutral wording', async () => {
+    bulkDelete.mockRejectedValue(new Error('relation "EvidenceHeldUser" does not exist'));
 
     const { status, body } = await call();
 
     expect(status).toBe(409);
-    expect(JSON.stringify(body)).toContain(LEGAL_HOLD_STOPPED);
-    expect(JSON.stringify(body)).not.toContain('EvidenceHeldUser');
+    const text = JSON.stringify(body);
+    expect(text).toContain('no comment was deleted');
+    expect(text).not.toMatch(/EvidenceHeldUser|hold|legal|purge/i);
+  });
+
+  it('does not dress any other failure up as that', async () => {
+    bulkDelete.mockRejectedValue(new Error('connection reset'));
+
+    const { status, body } = await call();
+
+    expect(status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('no comment was deleted');
   });
 });

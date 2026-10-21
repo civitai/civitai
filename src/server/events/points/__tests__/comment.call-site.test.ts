@@ -35,11 +35,8 @@ vi.mock('~/server/services/sticker.service', () => ({
 }));
 vi.mock('~/server/services/text-scan/scam-scan-queue', () => ({ queueScamScan: vi.fn() }));
 
-import {
-  bulkDeleteCommentsV2,
-  deleteComment,
-  upsertComment,
-} from '~/server/services/commentsv2.service';
+import { bulkDeleteComments } from '~/server/services/comment.service';
+import { deleteComment, upsertComment } from '~/server/services/commentsv2.service';
 
 const db = dbMock.dbWrite;
 const USER = 5;
@@ -112,12 +109,13 @@ describe('CommentV2 event points', () => {
             { userId: 6, threadId: 70 },
           ]
         : strings.join('').includes('UPDATE')
-        ? [{ userId: 8 }]
+        ? [{ userId: 8, threadId: 70 }]
         : []) as never);
     db.commentV2.count.mockResolvedValue(0);
 
-    await expect(bulkDeleteCommentsV2({ ids: [1, 2, 3] })).resolves.toEqual({
-      count: 2,
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 2,
       retainedHidden: 1,
     });
     await settle();

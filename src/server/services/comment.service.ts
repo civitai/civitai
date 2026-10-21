@@ -11,6 +11,10 @@ import {
   holdMarkerViewExists,
   logHoldRetained,
 } from '~/server/services/legal-hold.service';
+import {
+  afterCommentsV2Deleted,
+  deleteCommentsV2UnlessHeld,
+} from '~/server/services/commentsv2.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -437,25 +441,68 @@ export async function bulkSetCommentTosViolation({
   return { count, notified, rewardedReports };
 }
 
-export async function bulkDeleteComments({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, retainedHidden: 0 };
-  // A held author's comments are kept, and taken off the page. The hold is in the DELETE itself, so
-  // one that lands after this read still counts; what the DELETE left of `ids` is what it kept.
+/**
+ * The moderator bulk delete, over both comment tables in one transaction, so a hold abort in either
+ * undoes both and nothing is deleted that the moderator app does not record.
+ *
+ * A held author's comments are kept, and taken off the page. The hold is in each DELETE itself, so
+ * one that lands after this read still counts; what a DELETE left of its ids is what it kept.
+ */
+export async function bulkDeleteComments({
+  commentIds,
+  commentV2Ids,
+}: {
+  commentIds: number[];
+  commentV2Ids: number[];
+}) {
   const markerView = await holdMarkerViewExists();
-  const { deleted, retained } = await dbWrite.$transaction(async (tx) => {
-    const deleted = await tx.$queryRaw<{ modelId: number }[]>`
-      DELETE FROM "Comment" c
-      WHERE c.id = ANY(${ids}::int[])
-        AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      RETURNING c."modelId"
-    `;
-    const retained = await tx.$queryRaw<{ userId: number }[]>`
-      UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
-      WHERE id = ANY(${ids}::int[])
-      RETURNING "userId"
-    `;
-    return { deleted, retained };
-  });
+  const { v1, v2 } = await dbWrite.$transaction(async (tx) => ({
+    v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
+    v2: await deleteCommentsV2UnlessHeld(tx, commentV2Ids, markerView),
+  }));
+  await afterLegacyCommentsDeleted(v1);
+  await afterCommentsV2Deleted(v2);
+  return {
+    commentDeleted: v1.deleted.length,
+    commentV2Deleted: v2.deleted.length,
+    retainedHidden: v1.retained.length + v2.retained.length,
+  };
+}
+
+async function deleteLegacyCommentsUnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
+  // reply under it, at any depth, is held.
+  const deleted = await tx.$queryRaw<{ modelId: number }[]>`
+    DELETE FROM "Comment" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
+          UNION
+          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
+        )
+        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
+      )
+    RETURNING c."modelId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+async function afterLegacyCommentsDeleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteLegacyCommentsUnlessHeld>>) {
   if (retained.length)
     await logHoldRetained(
       'comment.bulkDelete',
@@ -472,8 +519,6 @@ export async function bulkDeleteComments({ ids }: { ids: number[] }) {
     ...modelIds.map((id) => modelMetrics.queueUpdate(id)),
     ...userIds.map((id) => userMetrics.queueUpdate(id)),
   ]);
-
-  return { count: deleted.length, retainedHidden: retained.length };
 }
 
 /**
