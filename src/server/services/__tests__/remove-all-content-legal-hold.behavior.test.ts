@@ -12,7 +12,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, indexes, metrics, session, pictures, tracked } = vi.hoisted(() => ({
+const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.hoisted(() => ({
   holder: {
     db: null as unknown as PGlite,
     /** Runs just before the first image delete: a hold landing mid-run. */
@@ -35,6 +35,9 @@ const { holder, indexes, metrics, session, pictures, tracked } = vi.hoisted(() =
   },
   pictures: { refresh: vi.fn<(ids: unknown) => Promise<undefined>>(async () => undefined) },
   tracked: vi.fn<(activity: unknown) => undefined>(() => undefined),
+  docStore: {
+    wipeAccount: vi.fn(async (_userId: number) => ({ namespaces: [], failures: [] })),
+  },
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -96,7 +99,7 @@ vi.mock('~/server/services/apps/user-storage-purge.service', async (importOrigin
   })),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
-  getDocStoreMaintenance: () => ({ wipeAccount: async () => ({ namespaces: [], failures: [] }) }),
+  getDocStoreMaintenance: () => docStore,
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: async () => session,
@@ -321,7 +324,7 @@ const seeded = (userId: number) => ({ ...all(1), Image: userId === CLEAN ? 2 : 1
 
 describe('removeAllContent', () => {
   it('wipes an account no hold covers, and no one else’s', async () => {
-    await removeAllContent({ id: CLEAN });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
@@ -495,6 +498,32 @@ describe('removeAllContent', () => {
     expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
   });
 
+  it('runs every later step when the bid refunds fail, and names the failed one', async () => {
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledTimes(1);
+    expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
+  });
+
+  it('still wipes the document store when the App Blocks purge fails, and names it', async () => {
+    vi.mocked(purgeUserAppStorageForAccountWipe).mockRejectedValueOnce(new Error('apps db down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['app-storage'] });
+    expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
+  });
+
+  it('runs the later index and metric steps when one index fails', async () => {
+    indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['index-models'] });
+    expect(dropped().users).toEqual([CLEAN]);
+    expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('names a document store wipe that failed', async () => {
+    docStore.wipeAccount.mockRejectedValueOnce(new Error('store down'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['doc-store'] });
+  });
+
   it('leaves the bids on a model a hold kept', async () => {
     landsBefore = 'Model';
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
@@ -563,18 +592,22 @@ const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
   LEGAL_HOLD_REFUSAL: string;
   LEGAL_HOLD_STOPPED: string;
+  purgeWarning: (body: unknown) => string | undefined;
 };
 beforeAll(async () => {
   const lib = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib');
-  const [reader, texts] = await Promise.all([
+  const [reader, texts, purge] = await Promise.all([
     import(/* @vite-ignore */ path.join(lib, 'server/rest-error-reason.ts')),
     import(/* @vite-ignore */ path.join(lib, 'legal-hold.ts')),
+    import(/* @vite-ignore */ path.join(lib, 'purge-result.ts')),
   ]);
   Object.assign(moderator, {
     restErrorReason: reader.restErrorReason,
     LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
+    purgeWarning: purge.purgeWarning,
   });
+  expect(typeof moderator.purgeWarning).toBe('function');
   expect(typeof moderator.restErrorReason).toBe('function');
   expect(moderator.restErrorReason({ nothingReadable: true }, 403)).toBeNull();
 });
@@ -615,8 +648,24 @@ describe('/api/mod/remove-all-content', () => {
   };
 
   it('wipes an unheld account', async () => {
-    expect((await call(CLEAN)).statusCode).toBe(200);
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: [] });
+    expect(moderatorReads(res)).toBeNull();
+    expect(moderator.purgeWarning(res.body)).toBeUndefined();
     expect(await remaining(CLEAN)).toEqual(all(0));
+  });
+
+  it('answers 200, records the activity and names the step when a cleanup step fails', async () => {
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
+    expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
+    // What the moderator app shows for this answer.
+    expect(moderator.purgeWarning(res.body)).toBe(
+      'Purge finished; some cleanup steps failed and will need a re-run.'
+    );
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {

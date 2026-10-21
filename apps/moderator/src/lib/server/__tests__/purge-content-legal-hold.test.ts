@@ -8,6 +8,7 @@ import {
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
 } from '$lib/legal-hold';
+import { PURGE_INCOMPLETE } from '$lib/purge-result';
 
 /**
  * Purge content asks the main app whether the account is held before it sends anything, and reports a
@@ -95,6 +96,22 @@ describe('purgeAllContent and a legal hold', () => {
   it('shows any other 403 as the endpoint wrote it, not as a hold', async () => {
     purge = () => json({ message: 'Forbidden' }, 403);
     expect(await run()).toEqual({ ok: false, error: 'Purge: Forbidden' });
+  });
+
+  it('records a purge that finished with failed cleanup steps, and warns', async () => {
+    purge = () => json({ userId: TARGET, incomplete: ['doc-store'] });
+    expect(await run()).toEqual({ ok: true, warning: PURGE_INCOMPLETE });
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: 9,
+      entityType: 'user',
+      entityId: TARGET,
+      activity: 'purgeAllContent',
+    });
+  });
+
+  it('does not warn when every cleanup step ran', async () => {
+    purge = () => json({ userId: TARGET, incomplete: [] });
+    expect(await run()).toEqual({ ok: true });
   });
 
   it('records a purge a hold stopped part-way, and says it stopped', async () => {

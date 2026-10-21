@@ -23,8 +23,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       type: 'RemoveContent',
       targetUserId: userId,
     });
+  let incomplete: string[];
   try {
-    await removeAllContent({ id: userId });
+    ({ incomplete } = await removeAllContent({ id: userId }));
   } catch (e) {
     // Part of the account was deleted, so it is recorded like a wipe that finished.
     if (e instanceof LegalHoldStoppedError) {
@@ -43,7 +44,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
   track();
 
+  // The wipe is done; `incomplete` names the cleanup steps after it that failed and need a re-run.
   return res.status(200).json({
     userId,
+    incomplete,
   });
 });

@@ -319,17 +319,20 @@ export const userRouter = router({
         type: 'RemoveContent',
         targetUserId: input.id,
       });
-    await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch((e: unknown) => {
-      // Part of the account was deleted, so it is recorded like a wipe that finished.
-      if (e instanceof LegalHoldStoppedError) {
-        track();
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_STOPPED });
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch(
+      (e: unknown) => {
+        // Part of the account was deleted, so it is recorded like a wipe that finished.
+        if (e instanceof LegalHoldStoppedError) {
+          track();
+          throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_STOPPED });
+        }
+        if (e instanceof LegalHoldError)
+          throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+        throw e;
       }
-      if (e instanceof LegalHoldError)
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
-      throw e;
-    });
+    );
     track();
+    return { incomplete: result.incomplete };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

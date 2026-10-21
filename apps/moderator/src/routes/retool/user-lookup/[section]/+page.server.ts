@@ -707,7 +707,7 @@ export const actions: Actions = {
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   }),
 
   // No confirmation check here: the endpoint owns it, and a second copy would drift from it.

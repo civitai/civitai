@@ -5,6 +5,7 @@ import {
   LEGAL_HOLD_STOPPED,
   type DeleteHold,
 } from '$lib/legal-hold';
+import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -1510,7 +1511,8 @@ export async function purgeAllContent(input: {
   }
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
-  return { ok: true };
+  const warning = purgeWarning(result.body);
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 /** One sentence for every way this call can fail without proving the deletion did not happen. The

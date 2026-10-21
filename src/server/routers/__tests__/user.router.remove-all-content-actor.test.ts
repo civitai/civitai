@@ -20,7 +20,7 @@ import type * as UserService from '~/server/services/user.service';
  */
 
 const { mockRemoveAllContent } = vi.hoisted(() => ({
-  mockRemoveAllContent: vi.fn(async () => undefined),
+  mockRemoveAllContent: vi.fn(async () => ({ incomplete: [] as string[] })),
 }));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
@@ -63,7 +63,33 @@ const moderator = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockRemoveAllContent.mockResolvedValue(undefined);
+  mockRemoveAllContent.mockResolvedValue({ incomplete: [] });
+});
+
+describe('user.removeAllContent — a finished wipe', () => {
+  it('records the activity and names the cleanup steps that failed', async () => {
+    mockRemoveAllContent.mockResolvedValue({ incomplete: ['doc-store'] });
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).resolves.toEqual({
+      incomplete: ['doc-store'],
+    });
+    expect(track.userActivity).toHaveBeenCalledWith({
+      type: 'RemoveContent',
+      targetUserId: TARGET_ID,
+    });
+  });
 });
 
 describe('user.removeAllContent — actor attribution', () => {
