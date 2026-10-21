@@ -100,7 +100,7 @@ describe('TokenMinter', () => {
     expect(civitai.calls).toHaveLength(2);
   });
 
-  it('tells a refused grant from a refused runner, a rate limit and an outage', async () => {
+  it('tells a refused grant from a refused runner, a refused user and an outage', async () => {
     for (const [answer, code] of [
       [() => Response.json({ code: 'invalid_grant' }, { status: 401 }), 'invalid_grant'],
       // No code: civitai refused the runner's secret, a deployment fault.

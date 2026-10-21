@@ -29,6 +29,7 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsAsync: vi.fn(async () => featuresMock()),
+  isFliptDecisive: vi.fn(async () => decisiveMock()),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksDevTunnelEnabled: devTunnelEnabledMock,
@@ -36,8 +37,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/blocks/dev-tunnel-frame.service', () => ({
   resolveDevTunnelFrame: resolveFrameMock,
 }));
-const { cachedSessionMock } = vi.hoisted(() => ({
+const { cachedSessionMock, decisiveMock } = vi.hoisted(() => ({
   cachedSessionMock: vi.fn<(id: number) => Promise<unknown>>(),
+  decisiveMock: vi.fn<() => boolean>(() => true),
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: cachedSessionMock },
@@ -136,6 +138,38 @@ describe('getAppAssistantRefusalForUserId (the runner’s mints)', () => {
   beforeEach(() => {
     // The session cache still holds the user as they were: clean, verified, onboarded.
     cachedSessionMock.mockResolvedValue(user({ tier: 'gold' } as Partial<SessionUser>));
+    decisiveMock.mockReturnValue(true);
+  });
+
+  it('answers unavailable, never a refusal, when the session hub misses the user', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    cachedSessionMock.mockResolvedValue(null);
+    // Even with the flags reading off on the bare row, as they would for a tier-segmented rollout.
+    featuresMock.mockReturnValue({ appBlocks: true, appAssistant: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+  });
+
+  it('answers unavailable when Flipt cannot decide the flags (the static fallback is not a refusal)', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    decisiveMock.mockReturnValue(false);
+    featuresMock.mockReturnValue({ appBlocks: false, appAssistant: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+  });
+
+  it('still refuses a banned user while the session hub or Flipt is down', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ bannedAt: new Date() }) as never);
+    cachedSessionMock.mockResolvedValue(null);
+    decisiveMock.mockReturnValue(false);
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 403,
+      error: expect.stringMatching(/banned/),
+    });
   });
 
   it('admits a user every gate admits', async () => {

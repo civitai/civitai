@@ -200,6 +200,21 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(mintMock).not.toHaveBeenCalled();
   });
 
+  it('answers 503 unavailable, not refused, when the gates cannot be judged just now', async () => {
+    userRefusalMock.mockResolvedValue({
+      status: 503,
+      error: 'App Assistant could not check this account just now',
+      unavailable: true,
+    });
+    const { status, json } = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(status).toBe(503);
+    expect(json).toMatchObject({ code: 'unavailable' });
+    expect(mintMock).not.toHaveBeenCalled();
+  });
+
   it('refuses the sandbox purpose, which B1 does not mint', async () => {
     const { status } = await call(mintRoute, {
       headers: asRunner,

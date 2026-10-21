@@ -114,6 +114,19 @@ describePg('run grants and conversation locks in the runner’s database', () =>
     ]);
   });
 
+  it('says so, by run id, when the sweep drops a grant whose end was never saved', async () => {
+    const warnings: { object: object; message?: string }[] = [];
+    const logged = new RunGrants(pool, {
+      warn: (object, message) => warnings.push({ object, message }),
+    });
+    await logged.save('lost-end', grant('g-lost', hours(-1), 'u-lost', 'c-lost'));
+    await logged.markEndPending('lost-end', 1, { messages: [], status: 'done' });
+    await logged.save('plain-expired', grant('g-plain', hours(-1), 'u-lost', 'c-lost'));
+    await logged.sweep();
+    expect(warnings).toEqual([{ object: { runId: 'lost-end' }, message: expect.any(String) }]);
+    expect(JSON.stringify(warnings)).not.toContain('g-lost');
+  });
+
   it('serialises two writers of one conversation across connections, so neither change is lost', async () => {
     const orchestration = new FakeOrchestration();
     // Every orchestration request takes a moment, so two writers' reads overlap.

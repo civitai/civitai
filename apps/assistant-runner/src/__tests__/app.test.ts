@@ -480,6 +480,32 @@ describe('a patch with nothing to write it with', () => {
   });
 });
 
+describe('a patch whose mint civitai refuses', () => {
+  it('answers 403 with the reason when the user is refused or turned the assistant off', async () => {
+    for (const code of ['refused', 'consent_required'] as const) {
+      const { service } = fakeService({
+        patch: async () => {
+          throw new MintRefusedError(code, `why: ${code}`, 403);
+        },
+      });
+      const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+      const response = await fetch(`${base}/conversations/c1/patch`, {
+        method: 'POST',
+        headers: { ...user1, 'content-type': 'application/json' },
+        body: JSON.stringify({ v: 1, title: 'New' }),
+      });
+      expect(response.status, code).toBe(403);
+      expect(await response.json(), code).toEqual({
+        v: 1,
+        error: 'refused',
+        message: `why: ${code}`,
+      });
+      await app?.close();
+      app = undefined;
+    }
+  });
+});
+
 describe('lastEventId', () => {
   it('reads a journal position, and nothing else', () => {
     expect(lastEventId('12')).toBe(12);

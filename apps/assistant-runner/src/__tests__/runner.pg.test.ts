@@ -1108,14 +1108,17 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const user = 'u-end-pending';
     const real = deps.store;
     let refuseEnds = true;
+    let refused = 0;
     deps.store = {
       load: (userId, conversationId) => real.load(userId, conversationId),
       update: (userId, conversationId, change) =>
         real.update(userId, conversationId, (current) => {
           const next = change(current);
           const reply = next?.turns.find((turn) => turn.seq === 1)?.assistant;
-          if (userId === user && reply && reply.status !== 'running' && refuseEnds)
+          if (userId === user && reply && reply.status !== 'running' && refuseEnds) {
+            refused++;
             throw new Error('orchestration is down');
+          }
           return next;
         }),
     };
@@ -1134,11 +1137,54 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       );
       expect(await grants.forRun(runId)).not.toBeNull();
 
+      // Repair runs on its own short cadence, not only with the hourly maintenance: it has to land
+      // the end while the grant is live. The first attempt (at start) still fails, then it is lifted.
+      const before = refused;
+      runner.startMaintenance({
+        retentionMs: 3_600_000,
+        intervalMs: 3_600_000,
+        repairIntervalMs: 200,
+      });
+      const failedOnce = Date.now() + 10_000;
+      while (refused === before && Date.now() < failedOnce)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(refused).toBeGreaterThan(before);
       refuseEnds = false;
-      expect(await runner.repairPendingEnds()).toBeGreaterThanOrEqual(1);
+      const deadline = Date.now() + 5_000;
+      while (
+        (await store.load(user, 'c-end-pending'))!.turns[0]!.assistant?.status === 'running' &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 100));
       expect((await store.load(user, 'c-end-pending'))!.turns[0]!.assistant).toMatchObject({
         status: 'done',
       });
+      expect(await grants.forRun(runId)).toBeNull();
+    } finally {
+      deps.store = real;
+    }
+  });
+
+  it('forgets the grant of a run whose workflow threw', async () => {
+    const user = 'u-threw';
+    const real = deps.store;
+    // The run's first write to the head fails, so its first step throws and the workflow ends ERROR.
+    deps.store = {
+      load: (userId, conversationId) => real.load(userId, conversationId),
+      update: (userId, conversationId, change) =>
+        userId === user
+          ? Promise.reject(new Error('orchestration refused the write'))
+          : real.update(userId, conversationId, change),
+    };
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-threw', model: 'tools' })
+      );
+      expect(start.status).toBe(201);
+      const runId = start.body!.runId as string;
+      await expect(DBOS.getResult(runId)).rejects.toThrow();
       expect(await grants.forRun(runId)).toBeNull();
     } finally {
       deps.store = real;
