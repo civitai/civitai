@@ -1414,26 +1414,44 @@ async function unindexDeleted(
   }
 }
 
+type BidRefundFailure = { versionIds: number[]; transactionIds?: string[]; error?: string };
+
 /**
- * Refunds the bids on each listed model the wipe really deleted. A model a hold kept keeps its bids.
- * By version id, since the model row is gone by now.
+ * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
+ * throws: a re-run of the wipe finds no models to refund, so each failure comes back with the ids a
+ * manual refund needs.
  */
 async function refundBidsForDeletedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[]
-) {
-  const gone = new Set(
-    await goneIds(
-      'Model',
-      models.map((m) => m.id)
-    )
-  );
-  for (const m of models)
-    if (gone.has(m.id))
-      await refundBidsForVersions({
-        versionIds: m.modelVersions.map((v) => v.id),
+): Promise<BidRefundFailure[]> {
+  const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
+  let gone: Set<number>;
+  try {
+    gone = new Set(
+      await goneIds(
+        'Model',
+        models.map((m) => m.id)
+      )
+    );
+  } catch (e) {
+    return [{ versionIds: models.flatMap(versionIdsOf), error: (e as Error).message }];
+  }
+  const failures: BidRefundFailure[] = [];
+  for (const m of models) {
+    if (!gone.has(m.id)) continue;
+    const versionIds = versionIdsOf(m);
+    try {
+      const { refundFailed } = await refundBidsForVersions({
+        versionIds,
         name: m.name,
         notificationKey: m.id,
       });
+      if (refundFailed.length) failures.push({ versionIds, transactionIds: refundFailed });
+    } catch (e) {
+      failures.push({ versionIds, error: (e as Error).message });
+    }
+  }
+  return failures;
 }
 
 /**
@@ -1571,21 +1589,22 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    await refundBidsForDeletedModels(models).catch((e: unknown) =>
+    const refundFailures = await refundBidsForDeletedModels(models);
+    if (refundFailures.length)
       logToAxiom({
         name: 'remove-all-content',
         type: 'error',
-        message: `Refunding bids after a stopped wipe failed: ${(e as Error).message}`,
+        message: 'Refunding bids after a stopped wipe failed',
         userId: id,
-      }).catch(() => undefined)
-    );
+        refunds: refundFailures,
+      }).catch(() => undefined);
     throw new LegalHoldStoppedError();
   }
 
-  // The main-database wipe is done. A failing step below is logged and named in `incomplete`; it
-  // never skips a later one, and never reads as a wipe that failed.
+  // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
+  // next step still runs; only the hold re-check below stops the rest.
   const incomplete: string[] = [];
-  const failed = (step: string, message: string) => {
+  const failed = (step: string, message: string, details?: Record<string, unknown>) => {
     incomplete.push(step);
     logToAxiom({
       name: 'remove-all-content',
@@ -1593,6 +1612,7 @@ export const removeAllContent = async ({
       message: `Step failed after the wipe: ${message}`,
       step,
       userId: id,
+      ...details,
     }).catch(() => undefined);
   };
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
@@ -1620,7 +1640,9 @@ export const removeAllContent = async ({
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
-  await runStep('bid-refunds', () => refundBidsForDeletedModels(models));
+  const refundFailures = await refundBidsForDeletedModels(models);
+  if (refundFailures.length)
+    failed('bid-refunds', 'some bids were not refunded', { refunds: refundFailures });
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
@@ -1642,14 +1664,10 @@ export const removeAllContent = async ({
   // behind in full — `user-storage-purge.service.ts` names that as the second of
   // the two gaps it exists to close, and closing it needs a caller.
   //
-  // 🔴 LAST, AND LOG-AND-CONTINUE. Same posture as the (3c) storage-provision
-  // block in `publish-request.service.ts`, for the same reason. The wipe is
-  // already complete by the time we get here, there is no transaction spanning
-  // the two databases, and a purge failure must NEVER abort or appear to undo it:
-  // a moderator's content wipe failing because an apps-DB schema was briefly
-  // unreachable would be a regression, not a safety feature. On ANY error we warn
-  // and return normally; the storage is recoverable via
-  // `apps.mod.userStorage.purgeAccount`, which is exactly this call by hand.
+  // 🔴 LAST, AND LOG-AND-CONTINUE: the main-database wipe is already complete and
+  // no transaction spans the two databases, so a failure here is logged and named
+  // in `incomplete`, never thrown. Recover by hand with
+  // `apps.mod.userStorage.purgeAccount`.
   //
   // Dynamic import, again mirroring (3c): this module is already enormous and the
   // purge service pulls in the apps-db pool, which nothing else on this path
@@ -1748,15 +1766,13 @@ export const removeAllContent = async ({
  * private documents, authored shared documents and marks deleted, usage released, in
  * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
  * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
- * wipe — a failure is logged, as the purge above logs its own.
+ * wipe: a failure is logged and returned for `incomplete`.
  *
  * RETRY: nothing retries it automatically. A wiped account leaves no state in the main database
  * that a sweep could find it by (the user row stays, with no flag), so the review-storage sweep's
  * pattern does not transfer. The wipe is idempotent, so the retry is re-running the content wipe
  * (`user.removeAllContent`, or the webhook) for that user: every step of it, this one included,
  * only removes what is still there. A namespace that failed rolled back in full.
- *
- * Returns what failed, or null when nothing did.
  */
 async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
   try {

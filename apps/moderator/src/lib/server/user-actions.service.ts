@@ -1505,8 +1505,7 @@ export async function purgeAllContent(input: {
       return { ok: false, error: LEGAL_HOLD_STOPPED };
     }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
-    // lost answer is reported as started, never as failed: a failure invites a second purge. It is
-    // recorded as sent, not as a purge, since it may not have run.
+    // lost answer is reported as started, never as failed: a failure invites a second purge.
     if (!responseMayHaveLanded(result)) return { ok: false, error: result.error };
     await logAction(PURGE_UNCONFIRMED_ACTIVITY, input.userId, input.moderatorId);
     return { ok: false, error: PURGE_MAY_BE_RUNNING };

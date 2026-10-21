@@ -1,9 +1,14 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { refundTransaction, refundMultiAccountTransaction } = vi.hoisted(() => ({
-  refundTransaction: vi.fn(async () => ({ transactionId: 'x' })),
-  refundMultiAccountTransaction: vi.fn(async () => ({})),
-}));
+const { refundTransaction, refundMultiAccountTransaction, getTransactionByExternalId } = vi.hoisted(
+  () => ({
+    refundTransaction: vi.fn(async (_id: string, _d?: string) => ({ transactionId: 'x' })),
+    refundMultiAccountTransaction: vi.fn(async (_input: unknown) => ({})),
+    getTransactionByExternalId: vi.fn(async (_id: string) => null as unknown),
+  })
+);
 
 // image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
 vi.mock('~/server/services/image.service', () => ({
@@ -16,7 +21,7 @@ vi.mock('~/utils/signal-client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   refundTransaction,
   refundMultiAccountTransaction,
-  getTransactionByExternalId: vi.fn(),
+  getTransactionByExternalId,
   createBuzzTransaction: vi.fn(),
   createMultiAccountBuzzTransaction: vi.fn(),
   getMultiAccountTransactionsByPrefix: vi.fn(),
@@ -119,7 +124,7 @@ describe('refundBidsForVersions', () => {
   it('refunds a plain bid once, and nothing on another version', async () => {
     const { bidsDeleted } = await run();
     expect(refundTransaction).toHaveBeenCalledTimes(1);
-    expect(refundTransaction).toHaveBeenCalledWith(PLAIN, expect.any(String));
+    expect(refundTransaction.mock.calls[0].slice(0, 2)).toEqual([PLAIN, expect.any(String)]);
     expect(bidsDeleted).toEqual([1, 2]);
     expect(bids.find((b) => b.id === 3)?.deleted).toBe(false);
   });
@@ -129,6 +134,26 @@ describe('refundBidsForVersions', () => {
     await run();
     expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(refundTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a refund that still failed, its bid already cancelled', async () => {
+    refundTransaction.mockRejectedValue(new Error('buzz down'));
+    const { refundFailed, bidsDeleted } = await run();
+    refundTransaction.mockReset().mockResolvedValue({ transactionId: 'x' });
+    expect(refundFailed).toEqual([PLAIN]);
+    expect(bidsDeleted).toEqual([1, 2]);
+  });
+
+  it('counts a plain refund already on the ledger as done', async () => {
+    refundTransaction.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === `refund-${PLAIN}` ? { externalTransactionId: id } : null
+    );
+    const { refundFailed } = await run();
+    getTransactionByExternalId.mockReset().mockResolvedValue(null);
+    expect(refundFailed).toEqual([]);
   });
 
   it('works with no model row to read', async () => {

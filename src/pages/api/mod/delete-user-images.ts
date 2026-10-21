@@ -8,13 +8,11 @@ import { deleteImages } from '~/server/services/image.service';
 import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
-  HOLD_UNCONFIRMED,
   isLegalHoldAbort,
-  LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
-  LegalHoldUnconfirmedError,
+  legalHoldMessage,
 } from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -70,15 +68,10 @@ export default ModEndpoint(
           res,
           new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
         );
-      if (e instanceof LegalHoldUnconfirmedError)
-        return handleEndpointError(
-          res,
-          new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED })
-        );
       if (e instanceof LegalHoldError)
         return handleEndpointError(
           res,
-          new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL })
+          new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) })
         );
       return handleEndpointError(res, e);
     }

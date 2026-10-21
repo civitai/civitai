@@ -27,7 +27,6 @@ import {
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -895,9 +894,9 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
 };
 
 /**
- * Cancels the live and recurring bids on these model versions and refunds each live bid once. Reads
- * no model row, so it still works once the model is gone. A bid already marked deleted is skipped, so
- * a second run refunds nothing again.
+ * Reads no model row, so it still works once the model is gone. A bid already marked deleted is
+ * skipped, so a second run refunds nothing again; which is also why a refund that fails here is
+ * returned in `refundFailed` rather than left for a re-run.
  */
 export const refundBidsForVersions = async ({
   versionIds,
@@ -912,9 +911,11 @@ export const refundBidsForVersions = async ({
   notificationKey: number;
   tx?: Prisma.TransactionClient;
 }) => {
-  if (!versionIds.length) return { bidsDeleted: [], recurringBidsDeleted: [] };
+  if (!versionIds.length) return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
   const db = tx ?? dbWrite;
   const now = new Date();
+  // Loaded here so the refund helper stays out of this service's import cycle.
+  const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
 
   const aData = await db.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
@@ -931,9 +932,9 @@ export const refundBidsForVersions = async ({
 
   let deletedIds: number[] = [];
   let deletedRecurringIds: number[] = [];
+  const refundFailed: string[] = [];
 
   if (aIds.length > 0) {
-    // we could reverse the logic here and refund first
     const deleted = await db.bid.updateManyAndReturn({
       where: { auctionId: { in: aIds }, entityId: { in: versionIds }, deleted: false },
       data: {
@@ -956,12 +957,13 @@ export const refundBidsForVersions = async ({
                 description: 'Deleted bid - model not available.',
               });
             } else {
-              await refundTransaction(transactionId, 'Deleted bid - model not available.');
+              await refundTransactionOnce(transactionId, 'Deleted bid - model not available.');
             }
 
             return;
           });
         } catch (e) {
+          refundFailed.push(transactionId);
           const error = e as Error;
           logToAxiom({
             name: 'handle-auctions',
@@ -1032,6 +1034,8 @@ export const refundBidsForVersions = async ({
   return {
     bidsDeleted: deletedIds,
     recurringBidsDeleted: deletedRecurringIds,
+    /** Transaction ids whose refund still failed after retries; their bids are already cancelled. */
+    refundFailed,
   };
 };
 

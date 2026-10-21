@@ -84,7 +84,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  refundBidsForVersions: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => ({
+    bidsDeleted: [] as number[],
+    recurringBidsDeleted: [] as number[],
+    refundFailed: [] as string[],
+  })),
 }));
 vi.mock('~/server/services/apps/user-storage-purge.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -238,19 +242,24 @@ beforeEach(async () => {
         ])
       ).rows) as never;
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
-  // Each model has one version, id MODEL_VERSION(model).
+  // Each model has one version, MODEL_VERSION(id). Only the selected fields come back, as from
+  // Prisma, so a select that drops one is visible.
   vi.mocked(dbMock.dbRead.model.findMany).mockImplementation((async (args: {
     where: { userId: number };
+    select: Record<string, unknown>;
   }) =>
     (
       await holder.db.query<{ id: number }>(`SELECT id FROM "Model" WHERE "userId" = $1`, [
         args.where.userId,
       ])
-    ).rows.map(({ id }) => ({
-      id,
-      name: 'zzfixture',
-      modelVersions: [{ id: MODEL_VERSION(id) }],
-    }))) as never);
+    ).rows.map(({ id }) => {
+      const row: Record<string, unknown> = {
+        id,
+        name: 'zzfixture',
+        modelVersions: [{ id: MODEL_VERSION(id) }],
+      };
+      return Object.fromEntries(Object.entries(row).filter(([k]) => args.select?.[k]));
+    })) as never);
   vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
   vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
   vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
@@ -470,21 +479,49 @@ describe('removeAllContent', () => {
   it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
     vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-      return { bidsDeleted: [], recurringBidsDeleted: [] };
+      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(docStore.wipeAccount).not.toHaveBeenCalled();
   });
 
   it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {
     vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
       failLookups = true;
-      return { bidsDeleted: [], recurringBidsDeleted: [] };
+      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
     });
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(docStore.wipeAccount).not.toHaveBeenCalled();
+  });
+
+  it('refunds nothing again, and is not refused, when the wipe is run a second time', async () => {
+    await removeAllContent({ id: CLEAN });
+    vi.mocked(refundBidsForVersions).mockClear();
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
+    expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('names the bid refunds when a refund failed after its bid was cancelled', async () => {
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-1'],
+    });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+  });
+
+  it('still refunds the next model when one model’s refund throws', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL + 50}, ${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('auction read failed'));
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(2);
+    expect(refundBidsForVersions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL + 50)] })
+    );
   });
 
   it('refunds the bids on its models by version, after the models are gone', async () => {
@@ -496,7 +533,6 @@ describe('removeAllContent', () => {
       notificationKey: MODEL,
     });
     expect((await remaining(CLEAN)).Model).toBe(0);
-    // The refund no longer needs the model row, which is what threw here before.
     expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
   });
 
@@ -606,6 +642,7 @@ const moderator = {} as {
   LEGAL_HOLD_STOPPED: string;
   HOLD_UNKNOWN_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
+  PURGE_INCOMPLETE: string;
 };
 beforeAll(async () => {
   const lib = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib');
@@ -620,6 +657,7 @@ beforeAll(async () => {
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
     HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
     purgeWarning: purge.purgeWarning,
+    PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
   });
   expect(typeof moderator.purgeWarning).toBe('function');
   expect(typeof moderator.restErrorReason).toBe('function');
@@ -676,10 +714,8 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
-    // What the moderator app shows for this answer.
-    expect(moderator.purgeWarning(res.body)).toBe(
-      'Purge finished; some cleanup steps failed and will need a re-run.'
-    );
+    expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
+    expect(moderator.PURGE_INCOMPLETE).toMatch(/^Purge finished/);
   });
 
   it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {

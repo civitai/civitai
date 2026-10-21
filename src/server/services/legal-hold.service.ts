@@ -43,6 +43,13 @@ export class LegalHoldUnconfirmedError extends LegalHoldError {
   }
 }
 
+/** What a moderator is told for a `LegalHoldError`; the most specific class wins. */
+export function legalHoldMessage(e: LegalHoldError) {
+  if (e instanceof LegalHoldStoppedError) return LEGAL_HOLD_STOPPED;
+  if (e instanceof LegalHoldUnconfirmedError) return HOLD_UNCONFIRMED;
+  return LEGAL_HOLD_REFUSAL;
+}
+
 export type AccountHoldLeg =
   | 'report'
   | 'hold-marker'
