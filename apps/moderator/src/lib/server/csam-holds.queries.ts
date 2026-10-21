@@ -41,6 +41,10 @@ export type CsamHoldRow = {
   priorStatus: string | null;
   priorDecidedAt: Date | null;
   priorDecidedByUsername: string | null;
+  /** Text a moderator ruled on before, put back on this pending hold by a later edit. */
+  ruledBefore: { holdId: number; status: string } | null;
+  /** Text this pending hold held before later edits replaced it, newest first; plain text, cut at `EARLIER_TEXT_CHARS`. */
+  earlierTexts: { text: string; at: string | null }[];
   /** Other pending holds by the same author, across the whole queue and not just this page. */
   otherPendingByAuthor: number;
   /** Other pending holds by the same author in the same chat; 0 for any hold that is not a chat message. */
@@ -87,6 +91,23 @@ const csamHolds = ({
       sql<boolean>`lower(u.username) like lower(${escapeLike(search.username) + '%'})`
     );
   return query;
+};
+
+export const EARLIER_TEXT_CHARS = 4000;
+
+const earlierTextsOf = (value: unknown): CsamHoldRow['earlierTexts'] =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const { text, at } = (entry ?? {}) as { text?: unknown; at?: unknown };
+        return typeof text === 'string'
+          ? [{ text: text.slice(0, EARLIER_TEXT_CHARS), at: typeof at === 'string' ? at : null }]
+          : [];
+      })
+    : [];
+
+const ruledBeforeOf = (value: unknown): CsamHoldRow['ruledBefore'] => {
+  const { holdId, status } = (value ?? {}) as { holdId?: unknown; status?: unknown };
+  return typeof holdId === 'number' && typeof status === 'string' ? { holdId, status } : null;
 };
 
 const chatMessageIds = (value: unknown): number[] =>
@@ -188,16 +209,21 @@ export async function listCsamHolds({
     .execute();
 
   const items = rows.slice(0, limit).map(({ meta, ...row }) => {
-    const { chatId, decision, kind, priorHoldId, messageIds, senderId } = (meta ?? {}) as {
-      chatId?: unknown;
-      messageIds?: unknown;
-      senderId?: unknown;
-      decision?: unknown;
-      kind?: unknown;
-      priorHoldId?: unknown;
-    };
+    const { chatId, decision, kind, priorHoldId, messageIds, senderId, previous, ruledBefore } =
+      (meta ?? {}) as {
+        previous?: unknown;
+        ruledBefore?: unknown;
+        chatId?: unknown;
+        messageIds?: unknown;
+        senderId?: unknown;
+        decision?: unknown;
+        kind?: unknown;
+        priorHoldId?: unknown;
+      };
     return {
       ...row,
+      earlierTexts: earlierTextsOf(previous),
+      ruledBefore: ruledBeforeOf(ruledBefore),
       redetected: kind === 'redetected' && typeof priorHoldId === 'number',
       priorHoldId: typeof priorHoldId === 'number' ? priorHoldId : null,
       priorStatus: row.priorStatus ?? null,

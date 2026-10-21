@@ -30,9 +30,8 @@ const {
   getHoldCoverImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
-const { filterAuthorPendingHolds, getChatHold, getHoldAuthorHolds } = await import(
-  '../csam-holds.queries'
-);
+const { EARLIER_TEXT_CHARS, filterAuthorPendingHolds, getChatHold, getHoldAuthorHolds } =
+  await import('../csam-holds.queries');
 
 const OLDEST_PENDING: CsamHoldQuery = {
   status: 'pending',
@@ -98,6 +97,9 @@ const seed = (rows: Seed[]) =>
 
 beforeEach(async () => {
   db = await freshPglite();
+  // The migration reads the last scanned text hash of each entity from it.
+  await db.exec(`CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL,
+    "entityId" INTEGER NOT NULL, "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
   for (const migration of MIGRATIONS) await db.exec(migration);
   await db.exec(`CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT)`);
   await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'author'), (11,'Mod_Person')`);
@@ -314,6 +316,34 @@ describe('re-detected holds', () => {
       priorStatus: null,
       priorDecidedByUsername: null,
     });
+  });
+
+  it('reads the earlier texts and the earlier ruling kept in meta, cutting long text and skipping junk', async () => {
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-10-06',
+        meta: {
+          previous: [
+            { text: 'x'.repeat(EARLIER_TEXT_CHARS + 10), at: '2026-10-05T00:00:00.000Z' },
+            { text: 'older' },
+            { text: 5 },
+            null,
+          ],
+          ruledBefore: { holdId: 4, status: 'Confirmed' },
+        },
+      },
+      { id: 9, createdAt: '2026-10-07', meta: { previous: 'x', ruledBefore: { holdId: 'x' } } },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'pending' });
+    const held = items.find((h) => h.id === 8)!;
+    expect(held.earlierTexts).toEqual([
+      { text: 'x'.repeat(EARLIER_TEXT_CHARS), at: '2026-10-05T00:00:00.000Z' },
+      { text: 'older', at: null },
+    ]);
+    expect(held.ruledBefore).toEqual({ holdId: 4, status: 'Confirmed' });
+    expect(items.find((h) => h.id === 9)).toMatchObject({ earlierTexts: [], ruledBefore: null });
+    expect(items.find((h) => h.id === 1)).toMatchObject({ earlierTexts: [], ruledBefore: null });
   });
 
   it('survives a prior id that points nowhere or is not a number', async () => {

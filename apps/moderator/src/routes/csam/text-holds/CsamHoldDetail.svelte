@@ -94,17 +94,15 @@
   const phrases = $derived(quotedPhrases(row.reason));
   const typeName = $derived(entityLabel(row.entityType));
   // Searching the entity id lists every hold it has had, so the earlier ruling is on the page the link opens.
-  const priorHref = $derived(
-    row.priorHoldId === null
-      ? null
-      : urlWith(page.url, {
-          hold: row.priorHoldId,
-          status: 'all',
-          entityType: row.entityType,
-          q: row.entityId,
-          page: null,
-        })
-  );
+  const holdHref = (holdId: number) =>
+    urlWith(page.url, {
+      hold: holdId,
+      status: 'all',
+      entityType: row.entityType,
+      q: row.entityId,
+      page: null,
+    });
+  const priorHref = $derived(row.priorHoldId === null ? null : holdHref(row.priorHoldId));
 
   let formEl: HTMLFormElement | undefined = $state();
   let decision = $state<CsamHoldDecision>('dismiss');
@@ -320,6 +318,14 @@
             <a href={priorHref} class={LINK_CLASS}>See that hold</a>
           </p>
         {/if}
+        {#if row.ruledBefore}
+          <p class="m-0 mt-2 text-[13px] text-dark-0">
+            This text was ruled on before: {row.ruledBefore.status === 'Confirmed'
+              ? 'removed'
+              : 'dismissed'}.
+            <a href={holdHref(row.ruledBefore.holdId)} class={LINK_CLASS}>See that hold</a>
+          </p>
+        {/if}
         {#if row.promptId !== null}
           <p class="m-0 mt-2 text-[11px] text-dark-2">
             csam prompt v{row.promptId} · {shortAge(row.createdAt)} ago
@@ -337,6 +343,23 @@
         >
           <HighlightedText text={row.text} highlight={phrases} />
         </div>
+        {#if row.earlierTexts.length}
+          <details class="mt-3 text-[13px] text-dark-0">
+            <summary class="cursor-pointer text-dark-1">
+              Earlier held text ({row.earlierTexts.length})
+            </summary>
+            {#each row.earlierTexts as earlier, i (i)}
+              <div class="mt-2 border-l border-dark-4 pl-3">
+                {#if earlier.at}<p class="m-0 text-[11px] text-dark-2">
+                    replaced {shortAge(earlier.at)} ago
+                  </p>{/if}
+                <p class="m-0 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+                  {earlier.text}
+                </p>
+              </div>
+            {/each}
+          </details>
+        {/if}
       </TriageCard>
     </div>
 

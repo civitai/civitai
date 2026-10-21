@@ -367,14 +367,56 @@ describe('one pending hold per entity', () => {
     expect(held[2].meta).toMatchObject({ kind: 'redetected', priorHoldId: 2, extra: 3 });
   });
 
-  it('skips old text restored while a newer one is pending, since a moderator ruled on it', async () => {
+  it('keeps the replaced text of an unreviewed pending hold, newest first', async () => {
+    await scan(edited(1));
+    await scan(edited(2));
+    await scan(edited(3));
+    const [held] = await rows();
+    const previous = (held.meta as { previous: Record<string, unknown>[] }).previous;
+    expect(previous).toHaveLength(2);
+    expect(previous[0]).toMatchObject({
+      textHash: 'hash-2',
+      reason: 'reason-2',
+      workflowId: 'wf-2',
+    });
+    expect(previous[0].text).toContain('edit 2');
+    expect(previous[1]).toMatchObject({ textHash: 'hash-1', reason: 'reason-1' });
+    expect(typeof previous[0].at).toBe('string');
+  });
+
+  it('keeps at most the five latest replaced texts', async () => {
+    for (let n = 1; n <= 8; n++) await scan(edited(n));
+    const [held] = await rows();
+    const previous = (held.meta as { previous: { textHash: string }[] }).previous;
+    expect(previous.map((p) => p.textHash)).toEqual([
+      'hash-7',
+      'hash-6',
+      'hash-5',
+      'hash-4',
+      'hash-3',
+    ]);
+  });
+
+  it('puts old text a moderator ruled on back on the pending hold, noting the earlier ruling', async () => {
     await scan(edited(1));
     await decideRow(1, 'Dismissed');
     await scan(edited(2));
     await scan(edited(1));
     const held = await rows();
     expect(held).toHaveLength(2);
-    expect(held[1]).toMatchObject({ status: 'Pending', textHash: 'hash-2' });
+    expect(held[1]).toMatchObject({ status: 'Pending', textHash: 'hash-1' });
+    expect(held[1].text).toContain('edit 1');
+    expect(held[1].meta).toMatchObject({ ruledBefore: { holdId: 1, status: 'Dismissed' } });
+    // Text nobody ruled on drops the note again.
+    await scan(edited(3));
+    expect((await rows())[1].meta).not.toHaveProperty('ruledBefore');
+  });
+
+  it('adds nothing for ruled text when no hold is pending', async () => {
+    await scan(edited(1));
+    await decideRow(1, 'Confirmed');
+    await scan(edited(1));
+    expect(await rows()).toHaveLength(1);
   });
 
   const claimAt = (age: string) =>
