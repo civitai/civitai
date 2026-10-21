@@ -286,6 +286,8 @@ export type HoldAuthorHolds = {
 };
 
 export const AUTHOR_HOLDS_LIMIT = 50;
+/** Bounds one selection's payload; "also apply" takes at most 50 a time anyway. */
+export const AUTHOR_PENDING_READ_MAX = 500;
 
 // The migration's superseded duplicates were never ruled on, so they are not history.
 const notSuperseded = sql<boolean>`h.meta->>'decision' is distinct from 'superseded'`;
@@ -324,21 +326,26 @@ export async function getHoldAuthorHolds(holdId: number): Promise<HoldAuthorHold
       .orderBy('h.createdAt', 'desc')
       .orderBy('h.id', 'desc');
   // Pending holds are read apart from the decided ones: a cap on the newest of all statuses would leave
-  // older pending holds out of the counts and out of "also apply".
-  const [pending, decided, decidedCount] = await Promise.all([
-    summary().where('h.status', '=', 'Pending').execute(),
-    summary().where('h.status', '<>', 'Pending').limit(AUTHOR_HOLDS_LIMIT).execute(),
+  // older pending holds out of the counts and out of "also apply". Counts come from the table, so the
+  // read caps can't make them lie.
+  const count = (pending: boolean) =>
     others()
-      .where('h.status', '<>', 'Pending')
+      .where('h.status', pending ? '=' : '<>', 'Pending')
       .select((eb) => eb.fn.countAll<string>().as('count'))
-      .executeTakeFirst(),
+      .executeTakeFirst()
+      .then((row) => Number(row?.count ?? 0));
+  const [pending, decided, pendingTotal, decidedTotal] = await Promise.all([
+    summary().where('h.status', '=', 'Pending').limit(AUTHOR_PENDING_READ_MAX).execute(),
+    summary().where('h.status', '<>', 'Pending').limit(AUTHOR_HOLDS_LIMIT).execute(),
+    count(true),
+    count(false),
   ]);
   const byNewest = (a: AuthorHoldSummary, b: AuthorHoldSummary) =>
     b.createdAt.getTime() - a.createdAt.getTime() || b.id - a.id;
   return {
     userId,
-    total: pending.length + Number(decidedCount?.count ?? 0),
-    pendingTotal: pending.length,
+    total: pendingTotal + decidedTotal,
+    pendingTotal,
     others: [...pending, ...decided].sort(byNewest),
   };
 }

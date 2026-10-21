@@ -14,7 +14,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
 
-const { getChatWindow } = await import('../chat-audit.service');
+const { getChatWindow, getJudgedMessages } = await import('../chat-audit.service');
 
 let db: PGlite;
 
@@ -109,5 +109,18 @@ describe('getChatWindow', () => {
       expect(ids(window)[0]).toBe(1000);
       expect(window.omitted).toBe(0);
     });
+  });
+});
+
+describe('getJudgedMessages', () => {
+  it("returns only the sender's judged messages, never another member's", async () => {
+    // 104 and 106 are the sender's; 105 is the other member's, asked for as if it were judged.
+    const rows = await getJudgedMessages(1, [104, 105, 106], 10);
+    expect(rows.map((r) => r.id)).toEqual([104, 106]);
+  });
+
+  it('ignores ids from another chat and returns nothing without a sender', async () => {
+    expect(await getJudgedMessages(1, [132], 11)).toEqual([]);
+    expect(await getJudgedMessages(1, [104], null)).toEqual([]);
   });
 });
