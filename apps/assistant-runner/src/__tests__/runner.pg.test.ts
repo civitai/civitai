@@ -13,6 +13,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app';
+import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
 import { RunGrants } from '../grants';
 import type { ModelProvider } from '../interfaces';
@@ -29,6 +30,7 @@ import {
   type RunnerDeps,
 } from '../runner';
 import { createTokenVerifier } from '../tokens';
+import { FakeSandboxService } from '../test-support/fake-sandbox';
 import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
 import { signGrant, testKeys } from '../test-support/keys';
 import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
@@ -88,6 +90,31 @@ describePg('assistant-runner on DBOS + Postgres', () => {
           return { fail: new Error('the model broke') };
         }
         return { text: 'Recovered.' };
+      }),
+    // App Assistant on the runner: a command that runs until the reply stops.
+    'sandbox-hang': () =>
+      scriptedModel((prompt) =>
+        toolResults(prompt) === 0
+          ? {
+              text: 'Installing. ',
+              calls: [{ toolName: 'sandbox__run_command', input: { command: 'hang' } }],
+            }
+          : { text: 'Done.' }
+      ),
+    // A file written, then the model fails once: the retry carries on after the write.
+    'sandbox-flaky': () =>
+      scriptedModel((prompt) => {
+        if (toolResults(prompt) === 0)
+          return {
+            calls: [
+              { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'x' } },
+            ],
+          };
+        if (flaky.failNext) {
+          flaky.failNext = false;
+          return { fail: new Error('the model broke') };
+        }
+        return { text: 'Written.' };
       }),
   };
   /** What the `mint` model minted with, per request: the grant it found and the token it got. */
@@ -229,8 +256,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     content?: string;
     key?: string;
     tier?: 'auto' | 'free' | 'paid';
+    page?: StartRunRequest['page'];
   }): StartRunRequest {
     return {
+      ...(overrides.page ? { page: overrides.page } : {}),
       v: 1,
       idempotencyKey: overrides.key ?? randomUUID(),
       conversationId: overrides.conversationId,
@@ -1189,6 +1218,77 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     } finally {
       deps.store = real;
     }
+  });
+
+  describe('App Assistant’s sandbox tools', () => {
+    let sandbox: FakeSandboxService;
+    const real = deps.tools;
+    beforeAll(async () => {
+      sandbox = new FakeSandboxService();
+      await sandbox.start();
+      sandbox.add('my-app');
+      deps.tools = new AppAssistantTools({
+        sandboxUrl: sandbox.url,
+        // TEST-ONLY stand-in for a minted sandbox token.
+        tokens: () => async (purpose) => `test-token-${purpose}`,
+        log: deps.log,
+      });
+    });
+    afterAll(async () => {
+      deps.tools = real;
+      await sandbox?.stop();
+    });
+    const page = { app: 'my-app' };
+
+    it('Stop closes the sandbox connection, ending a command still running there', async () => {
+      const user = 'u-sandbox-stop';
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-stop', model: 'sandbox-hang', page })
+      );
+      const runId = start.body!.runId as string;
+      const upToCall = await events(runId, user, {
+        stopWhen: ({ event }) => event.type === 'tool-call',
+      });
+      await expect.poll(() => sandbox.callsTo('run_command'), { timeout: 10_000 }).toBe(1);
+      expect(sandbox.abandoned).toEqual([]);
+
+      expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+      const rest = await events(runId, user, { lastEventId: upToCall.at(-1)!.id });
+      expect(ended(rest).status).toBe('stopped');
+      // The sandbox saw the call's connection close: closing the transport is what reaches it.
+      expect(sandbox.abandoned).toHaveLength(1);
+    });
+
+    it('carrying a reply on never runs a finished sandbox call again, and reports each call', async () => {
+      const user = 'u-sandbox-retry';
+      flaky.failNext = true;
+      const first = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-retry', model: 'sandbox-flaky', page })
+      );
+      const failed = await events(first.body!.runId as string, user);
+      expect(ended(failed)).toMatchObject({ status: 'error', resumable: true });
+      expect(sandbox.callsTo('write_file')).toBe(1);
+      const reported = failed.flatMap(({ event }) =>
+        event.type === 'tool-reported' ? [event.result] : []
+      );
+      expect(reported).toMatchObject([
+        { name: 'sandbox__write_file', output: 'wrote 1 bytes', isError: false },
+      ]);
+
+      const retry = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-sandbox-retry', model: 'sandbox-flaky', retry: true, page })
+      );
+      const entries = await events(retry.body!.runId as string, user);
+      expect(ended(entries).status).toBe('done');
+      expect(sandbox.callsTo('write_file')).toBe(1);
+      expect(rebuild(entries).at(-1)).toEqual({ kind: 'text', text: 'Written.' });
+    });
   });
 
   it('keeps no grant for a start it refuses', async () => {
