@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -507,6 +508,33 @@ describe('removeAllContent', () => {
   });
 });
 
+/**
+ * The moderator app's real body reader and refusal texts, loaded across the app boundary by path (both
+ * modules are import-free for this). It matches the reason against its own constants by equality, so
+ * a reworded constant on either side, or a body-shape drift, turns a refusal into a generic failure.
+ */
+const moderator = {} as {
+  restErrorReason: (body: unknown, status: number) => string | null;
+  LEGAL_HOLD_REFUSAL: string;
+  LEGAL_HOLD_STOPPED: string;
+};
+beforeAll(async () => {
+  const lib = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib');
+  const [reader, texts] = await Promise.all([
+    import(/* @vite-ignore */ path.join(lib, 'server/rest-error-reason.ts')),
+    import(/* @vite-ignore */ path.join(lib, 'legal-hold.ts')),
+  ]);
+  Object.assign(moderator, {
+    restErrorReason: reader.restErrorReason,
+    LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
+    LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
+  });
+  expect(typeof moderator.restErrorReason).toBe('function');
+  expect(moderator.restErrorReason({ nothingReadable: true }, 403)).toBeNull();
+});
+const moderatorReads = (res: { body: unknown; statusCode: number }) =>
+  moderator.restErrorReason(res.body, res.statusCode);
+
 /** A Next API response that records what the handler sent. */
 function fakeRes() {
   const res = {
@@ -549,6 +577,7 @@ describe('/api/mod/remove-all-content', () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
     expect(await remaining(HELD)).toEqual(seeded(HELD));
     expect(tracked).not.toHaveBeenCalled();
   });
@@ -558,6 +587,7 @@ describe('/api/mod/remove-all-content', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
   });
 });
@@ -597,6 +627,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(HELD);
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
     expect((await remaining(HELD)).Image).toBe(1);
   });
 
@@ -606,6 +637,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect((await remaining(CLEAN)).Image).toBe(2);
     expect((await remaining(CLEAN)).Post).toBe(1);
   });
@@ -616,6 +648,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect((await remaining(CLEAN)).Image).toBe(2);
   });
 
@@ -624,6 +657,7 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
   });
 
   it('refuses a batch size of zero, deleting nothing', async () => {
