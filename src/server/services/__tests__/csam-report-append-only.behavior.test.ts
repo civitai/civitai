@@ -73,6 +73,15 @@ const auditedSendTimes = async (id: number) =>
 
 const sentAt = new Map<number, string | null>();
 
+const auditIdentity = async (id: number) =>
+  (
+    await db.pg.query(
+      `SELECT "oldUserId", "oldReportId", "oldType", "oldImageCount"
+       FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+      [id]
+    )
+  ).rows;
+
 const exists = async (id: number) =>
   (await db.pg.query(`SELECT 1 FROM "CsamReport" WHERE id = $1`, [id])).rows.length === 1;
 
@@ -110,6 +119,9 @@ describe('an unsent report', () => {
 
     expect(await exists(id)).toBe(false);
     expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: null }]);
+    expect(await auditIdentity(id)).toEqual([
+      { oldUserId: SUBJECT, oldReportId: null, oldType: 'Image', oldImageCount: 1 },
+    ]);
   });
 
   it('can be sent, setting details in the same update', async () => {
@@ -188,6 +200,9 @@ describe('a sent report', () => {
     const id = await insertReport(30);
     await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
     expect(await auditedSendTimes(id)).toEqual([true]);
+    expect(await auditIdentity(id)).toEqual([
+      { oldUserId: SUBJECT, oldReportId: 900, oldType: 'Image', oldImageCount: 0 },
+    ]);
   });
 
   it('cannot be truncated', async () => {
