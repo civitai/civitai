@@ -1,5 +1,32 @@
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+
+export type LabelStoreTx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+
+const LABEL_STATEMENT_TIMEOUT_MS = 3_000;
+
+/** Runs label work under a savepoint with a statement timeout, so a refusing, missing or slow store rolls back to the savepoint and the caller's decision still commits. `SET LOCAL` outlives a released savepoint, so this must be the transaction's last step. Throws only when the savepoint itself fails: the transaction is then aborted and its COMMIT would silently drop the decision. */
+export async function recordUnderSavepoint(
+  tx: LabelStoreTx,
+  record: () => Promise<boolean>,
+  onError: (error: unknown) => void
+) {
+  await tx.$executeRaw`SAVEPOINT label_store_record`;
+  try {
+    // Above the store's 2s lock_timeout, so one lock wait completes.
+    await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(
+      String(LABEL_STATEMENT_TIMEOUT_MS)
+    )}`;
+    const recorded = await record();
+    await tx.$executeRaw`RELEASE SAVEPOINT label_store_record`;
+    return recorded;
+  } catch (error) {
+    await tx.$executeRaw`ROLLBACK TO SAVEPOINT label_store_record`;
+    onError(error);
+    return false;
+  }
+}
 
 /** The fields of `label_store.submit_prediction`, camelCased; see docs/features/label-store.md. */
 export type PredictionSubmission = {

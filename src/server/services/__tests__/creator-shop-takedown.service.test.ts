@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 const { mocks } = vi.hoisted(() => ({
@@ -80,6 +81,11 @@ vi.mock('~/server/services/creator-program.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
+}));
+// The label store's own behaviour is covered on real Postgres in creator-shop-labels.behavior.test.ts.
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopVerdict: vi.fn(async () => true),
 }));
 // Real retry semantics, no wall-clock wait — the service's 1s backoff would make
 // the failure cases take seconds each.
@@ -346,6 +352,32 @@ describe('takedownCosmeticShopItem', () => {
       revokedFrom: 3,
       failures: [],
     });
+  });
+
+  it('records the takedown as a label in the archive write, before the refunds', async () => {
+    const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
+    vi.mocked(recordShopVerdict).mockClear();
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
+    expect(recordShopVerdict).toHaveBeenCalledTimes(1);
+    expect(recordShopVerdict).toHaveBeenCalledWith(
+      dbMock.dbWrite,
+      42,
+      expect.objectContaining({
+        action: 'takedown',
+        moderatorId: 999,
+        at: archivedAt.toISOString(),
+        note: 'IP infringement',
+        statusAfter: 'Archived',
+      })
+    );
+    const [labelledAt] = vi.mocked(recordShopVerdict).mock.invocationCallOrder;
+    expect(labelledAt).toBeGreaterThan(mocks.shopItemUpdate.mock.invocationCallOrder[0]);
+    expect(labelledAt).toBeLessThan(
+      mocks.refundMultiAccountTransaction.mock.invocationCallOrder[0]
+    );
   });
 
   it('never refunds the creator submission fee', async () => {

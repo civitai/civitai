@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -13,12 +14,19 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(),
 }));
+// The label store's own behaviour is covered on real Postgres in creator-shop-labels.behavior.test.ts.
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopVerdict: vi.fn(async () => true),
+  excludeDeletedShopListing: vi.fn(async () => true),
+}));
 
 const { isListingDisplayable } = await import('~/server/services/creator-shop.data');
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
 const { CosmeticFlag } = await import('~/shared/constants/cosmetic-flags.constants');
+const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
 const {
   deleteCreatorShopItem,
   reviewCreatorShopItem,
@@ -326,6 +334,38 @@ describe('withholding takes the cosmetic off everyone', () => {
       expect(refreshFrames).toHaveBeenCalledWith([IMAGE]);
     }
   );
+
+  // The sweep reads the verdict from the database, so the verdict and its label commit before it runs.
+  it('records the label inside the verdict, and sweeps after both commit', async () => {
+    const order: string[] = [];
+    vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
+      order.push('label');
+      return true;
+    });
+    const write = dbMock.dbWrite.cosmeticShopItem.update.getMockImplementation()!;
+    dbMock.dbWrite.cosmeticShopItem.update.mockImplementationOnce(async (...args: never[]) => {
+      order.push('verdict');
+      return write(...args);
+    });
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
+      const result = await fn(dbMock.dbWrite);
+      order.push('commit');
+      return result;
+    });
+    dbMock.dbWrite.userCosmetic.updateMany.mockImplementationOnce(async () => {
+      order.push('sweep');
+      return { count: wearers.length };
+    });
+
+    await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
+
+    expect(order).toEqual(['verdict', 'label', 'commit', 'sweep']);
+    expect(recordShopVerdict).toHaveBeenCalledWith(
+      dbMock.dbWrite,
+      42,
+      expect.objectContaining({ action: 'request-changes', moderatorId: MOD })
+    );
+  });
 
   // The search document shows what the user wears, not what is placed on their content, and the
   // users index re-pulls an existing user only when their id is queued.
