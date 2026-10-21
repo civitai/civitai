@@ -7549,10 +7549,18 @@ export async function reportCsamImages({
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { reports: { select: { reportId: true } } },
+    select: { userId: true, reports: { select: { reportId: true } } },
   });
-  const reportIds = images.flatMap((x) => x.reports.map((x) => x.reportId));
-  await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
+  // Every owner in the batch is being reported, so none is rewarded for any report in it.
+  const owners = [...new Set(images.map((image) => image.userId))];
+  await bulkSetReportStatus({
+    ids: images.flatMap((image) => image.reports.map((report) => report.reportId)),
+    status: ReportStatus.Actioned,
+    userId: user.id,
+    ip,
+    noRewardFor: () => owners,
+    rewardRemovedReporters: false,
+  });
 }
 
 export async function updateImageNsfwLevel({
