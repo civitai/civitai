@@ -187,7 +187,7 @@ beforeEach(() => {
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   finishReport.mockReset();
-  cancelReport.mockReset();
+  cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
     where.id === 10
       ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }

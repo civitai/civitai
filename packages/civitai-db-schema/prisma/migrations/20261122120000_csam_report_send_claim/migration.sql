@@ -7,4 +7,7 @@
 
 ALTER TABLE "CsamReport"
   ADD COLUMN "sendClaimId" UUID,
-  ADD COLUMN "sendClaimedAt" TIMESTAMP(3);
+  ADD COLUMN "sendClaimedAt" TIMESTAMP(3),
+  -- A claim with no time would never expire.
+  ADD CONSTRAINT "CsamReport_sendClaim_check"
+    CHECK (("sendClaimId" IS NULL) = ("sendClaimedAt" IS NULL));

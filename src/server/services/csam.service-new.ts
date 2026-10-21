@@ -40,6 +40,7 @@ import {
   FileRelevance,
   IncidentType,
   IPEventName,
+  ResponseCode,
 } from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import type { BoundedArchive } from '~/server/utils/archive-helpers';
@@ -124,6 +125,8 @@ type CsamReportDetails = CsamReportFormOutput & {
   trainingData?: CsamReportTrainingData[];
   userActivity?: CsamReportUserActivity[];
   generatedImages?: CsamReportGeneratedImages[];
+  /** What NCMEC returned for each generated image sent; `generatedImages` stays as filed. */
+  generatedImageUploads?: CsamReportGeneratedImageData[];
   /** Why the archive stored less than the report's evidence. */
   archiveSkipped?: string;
   /** Failed reads of each image's file across send runs, by image id. */
@@ -647,21 +650,6 @@ export async function logBlockedCsamReports(reportIds: number[]) {
 }
 
 /**
- * Only while the report is unsent: a sent report is append-only. Merged into the stored details
- * rather than written from this run's copy, which may be stale.
- */
-async function recordReadFailures(report: CsamReportProps, readFailures: Record<string, number>) {
-  if (!isProd) return;
-  await dbWrite.$executeRaw`
-    UPDATE "CsamReport"
-    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('readFailures', ${JSON.stringify(
-      readFailures
-    )}::jsonb)
-    WHERE id = ${report.id} AND "reportSentAt" IS NULL
-  `;
-}
-
-/**
  * How long a send run's claim on a report holds. Longer than the send job's lock, so a run that
  * still holds the lock never loses its report to the next run.
  */
@@ -779,11 +767,39 @@ async function updateUnderClaim(
   return count > 0;
 }
 
+/** Merged into the stored details rather than written from this run's copy, which may be stale. */
+async function recordReadFailures(claim: SendClaim, readFailures: Record<string, number>) {
+  if (!isProd) return;
+  await dbWrite.$executeRaw`
+    UPDATE "CsamReport"
+    SET details = COALESCE(NULLIF(details, 'null'::jsonb), '{}'::jsonb) || jsonb_build_object('readFailures', ${JSON.stringify(
+      readFailures
+    )}::jsonb)
+    WHERE id = ${claim.report.id} AND "sendClaimId" = ${
+    claim.claimId
+  }::uuid AND "reportSentAt" IS NULL
+  `;
+}
+
 const appendId =
   (key: 'cancelledReportIds' | 'possibleDuplicateReportIds', id: number) =>
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
 async function deleteUnderClaim(claim: SendClaim, reason: string) {
+  // A CyberTip for it may be with NCMEC: the row is its only record here, so a human decides.
+  const { reportId: storedId, details } = claim.report;
+  const possibleDuplicates = details?.possibleDuplicateReportIds ?? [];
+  if (storedId != null || possibleDuplicates.length > 0)
+    return logSendLine(
+      claim,
+      'send-delete-held',
+      {
+        message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
+        ncmecReportId: storedId ?? undefined,
+        possibleDuplicateReportIds: possibleDuplicates,
+      },
+      'error'
+    );
   const { count } = await dbWrite.csamReport.deleteMany({ where: underClaim(claim) });
   claim.settled = true;
   if (count === 0)
@@ -812,28 +828,48 @@ async function releaseClaim(claim: SendClaim) {
     );
 }
 
+/** The client resolves, rather than throws, for a CyberTip already finished or already retracted. */
+async function cancelCyberTip(id: number) {
+  try {
+    const { data } = await cybertipClient.cancelReport({ id });
+    if (data.responseCode === ResponseCode.ReportAlreadyFinished)
+      return { outcome: 'finished' as const };
+    if (data.responseCode === ResponseCode.ReportAlreadyRetracted)
+      return { outcome: 'retracted' as const };
+    return { outcome: 'cancelled' as const };
+  } catch (e) {
+    return { outcome: 'failed' as const, message: (e as Error | undefined)?.message };
+  }
+}
+
 /**
  * A stored NCMEC id on an unsent report is a CyberTip an earlier run opened and never confirmed sent.
- * It is cancelled before another is opened; one that cannot be cancelled may have been finished, and a
- * duplicate beats a missed report, so the report is sent again either way and the row notes which.
+ * It is cancelled before another is opened; one that is finished, or cannot be cancelled, may be with
+ * NCMEC, and a duplicate beats a missed report, so the report is sent again and the row notes which.
  */
 async function cancelStoredCyberTip(claim: SendClaim) {
   const stored = claim.report.reportId;
-  if (stored == null) return true;
-  let key: 'cancelledReportIds' | 'possibleDuplicateReportIds' = 'cancelledReportIds';
-  try {
-    await cybertipClient.cancelReport({ id: stored });
-    logSendLine(claim, 'send-cancel', { ncmecReportId: stored });
-  } catch (e) {
-    key = 'possibleDuplicateReportIds';
+  // Outside production the stored ids are not this environment's CyberTips.
+  if (stored == null || !isProd) return true;
+  const { outcome, message } = await cancelCyberTip(stored);
+  const delivered = outcome === 'finished' || outcome === 'failed';
+  if (delivered)
     logSendLine(
       claim,
       'send-possible-duplicate',
-      { ncmecReportId: stored, message: (e as Error | undefined)?.message },
+      { ncmecReportId: stored, cancelOutcome: outcome, message },
       'error'
     );
-  }
-  return await updateUnderClaim(claim, 'cancel-stored', { reportId: null }, appendId(key, stored));
+  else
+    logSendLine(claim, outcome === 'retracted' ? 'send-cancel-already-retracted' : 'send-cancel', {
+      ncmecReportId: stored,
+    });
+  return await updateUnderClaim(
+    claim,
+    'cancel-stored',
+    { reportId: null },
+    appendId(delivered ? 'possibleDuplicateReportIds' : 'cancelledReportIds', stored)
+  );
 }
 
 async function uploadToCyberTip(claim: SendClaim, file: File) {
@@ -884,41 +920,57 @@ async function sendCyberTip(
   } catch (e) {
     logSendFailure(claim.report, e, failureSubType, ncmecReportId);
     await beforeCancel?.();
-    try {
-      await cybertipClient.cancelReport({ id: ncmecReportId });
-    } catch (cancelError) {
+    const { outcome, message } = await cancelCyberTip(ncmecReportId);
+    if (outcome === 'failed') {
       // Left stored: the next run cancels it before opening another.
-      logSendLine(
-        claim,
-        'send-cancel-failed',
-        { message: (cancelError as Error | undefined)?.message },
-        'error'
-      );
+      logSendLine(claim, 'send-cancel-failed', { message }, 'error');
       return false;
     }
-    logSendLine(claim, 'send-cancel');
-    if (isProd && !claim.settled)
-      await updateUnderClaim(
+    if (outcome === 'finished') {
+      // The finish reached NCMEC after every file had gone, so the report is sent, not sent again.
+      logSendLine(
         claim,
-        'cancel',
-        { reportId: null },
-        appendId('cancelledReportIds', ncmecReportId)
+        'send-cancel-already-finished',
+        {
+          message: `report ${claim.report.id} was finished at NCMEC though the finish failed here`,
+        },
+        'error'
       );
-    return false;
+    } else {
+      logSendLine(claim, outcome === 'retracted' ? 'send-cancel-already-retracted' : 'send-cancel');
+      if (isProd && !claim.settled)
+        await updateUnderClaim(
+          claim,
+          'cancel',
+          { reportId: null },
+          appendId('cancelledReportIds', ncmecReportId)
+        );
+      return false;
+    }
   }
 
   // Finished at NCMEC from here on: a lost stamp is alerted, and the next run sends a duplicate.
-  if (
-    isProd &&
-    (await updateUnderClaim(
-      claim,
-      'stamp',
-      { reportId: ncmecReportId, reportSentAt: new Date(), sendClaimId: null, sendClaimedAt: null },
-      (stored) => ({ ...stored, ...details }),
-      'send-stamp-lost'
-    ))
-  )
-    claim.settled = true;
+  if (!isProd) return true;
+  try {
+    if (
+      await updateUnderClaim(
+        claim,
+        'stamp',
+        {
+          reportId: ncmecReportId,
+          reportSentAt: new Date(),
+          sendClaimId: null,
+          sendClaimedAt: null,
+        },
+        (stored) => ({ ...stored, ...details }),
+        'send-stamp-lost'
+      )
+    )
+      claim.settled = true;
+  } catch (e) {
+    logSendLine(claim, 'send-stamp-lost', { message: (e as Error | undefined)?.message }, 'error');
+    throw e;
+  }
   return true;
 }
 
@@ -963,7 +1015,7 @@ async function reportImages(claim: SendClaim) {
   });
   const failed = images.filter((image) => 'failed' in (checks.get(image.id) ?? {}));
   const absent = images.filter((image) => 'absent' in (checks.get(image.id) ?? {}));
-  if (failed.length > 0) await recordReadFailures(report, readFailures);
+  if (failed.length > 0) await recordReadFailures(claim, readFailures);
 
   const hoursPending = hoursSinceFiled(report);
   if (failed.length + absent.length === images.length) {
@@ -999,11 +1051,14 @@ async function reportImages(claim: SendClaim) {
     );
 
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
+  const noLongerStored =
+    absent.length +
+    report.images.filter(({ id }) => !images.some((image) => image.id === id)).length;
   const omitted = [
     failed.length > 0 &&
       `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
-    absent.length > 0 &&
-      `${absent.length} file(s) named in this report are no longer stored and are not included.`,
+    noLongerStored > 0 &&
+      `${noLongerStored} file(s) named in this report are no longer stored and are not included.`,
   ].filter(Boolean);
 
   let uploaded = 0;
@@ -1128,7 +1183,7 @@ async function reportImages(claim: SendClaim) {
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
         await Promise.allSettled(started);
-        if (failedAfterOpen) await recordReadFailures(report, readFailures).catch(() => undefined);
+        if (failedAfterOpen) await recordReadFailures(claim, readFailures).catch(() => undefined);
       },
     }
   );
@@ -1157,8 +1212,8 @@ async function reportGenerationData(claim: SendClaim) {
   if (!generatedImages) return await deleteUnderClaim(claim, 'no generated image of the report');
 
   await sendCyberTip(claim, initialReport, {
-    sendFiles: async (reportId) => ({
-      generatedImages: await Limiter({ batchSize: 1, limit: 2 }).process(
+    sendFiles: async (reportId) => {
+      const uploads = await Limiter({ batchSize: 1, limit: 2 }).process(
         generatedImages,
         async ([{ blobs, prompt, negativePrompt, resources }]) => {
           const data = (
@@ -1202,8 +1257,10 @@ async function reportGenerationData(claim: SendClaim) {
 
           return arr;
         }
-      ),
-    }),
+      );
+      if (uploads.length === 0) throw new Error('no file of the report could be sent');
+      return { generatedImageUploads: uploads };
+    },
   });
 }
 
@@ -1224,7 +1281,7 @@ async function reportTrainingData(claim: SendClaim) {
 
   createDir(dir);
 
-  const finished = await sendCyberTip(claim, initialReport, {
+  await sendCyberTip(claim, initialReport, {
     sendFiles: async (reportId) => {
       const zipStream = await getTrainingDataZipStream({
         reportedById: report.reportedById,
@@ -1255,10 +1312,12 @@ async function reportTrainingData(claim: SendClaim) {
           return { filename, fileId, hash };
         })
       );
+      if (results.length === 0) throw new Error('no file of the report could be sent');
       return { trainingData: results };
     },
   });
-  if (finished) removeDir(dir);
+  // Sent or not, the next run downloads it again.
+  if (fs.existsSync(dir)) removeDir(dir);
 }
 
 async function reportExternalLink(claim: SendClaim) {

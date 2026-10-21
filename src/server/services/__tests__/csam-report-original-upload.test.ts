@@ -124,6 +124,7 @@ const stamps = () =>
     .map(([args]) => args.data)
     .filter((data) => data.reportSentAt);
 const sentUpdate = () => stamps()[0];
+const claimId = () => dbMock.dbWrite.csamReport.updateMany.mock.calls[0]?.[0]?.data.sendClaimId;
 const lines = (subType: string) =>
   vi
     .mocked(logToAxiom)
@@ -137,7 +138,7 @@ describe('NCMEC image upload', () => {
     uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
     submitFileDetails.mockReset().mockResolvedValue({});
     finishReport.mockReset();
-    cancelReport.mockReset();
+    cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
     // Stored as webp while the row says png: the stored bytes' own type wins.
     getObject.mockReset().mockImplementation(async () => ({
       Body: { transformToByteArray: async () => new Uint8Array(stored) },
@@ -224,6 +225,7 @@ describe('NCMEC image upload', () => {
       expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
         JSON.stringify({ 501: 1 }),
         report.id,
+        claimId(),
       ]);
     });
 
@@ -360,6 +362,7 @@ describe('NCMEC image upload', () => {
       expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
         JSON.stringify({ 501: 1, 502: 1 }),
         report.id,
+        claimId(),
       ]);
       expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
         cancelReport.mock.invocationCallOrder[0]
@@ -463,8 +466,10 @@ describe('NCMEC image upload', () => {
 
       expect(recordedFailures()).toEqual([
         {
-          sql: expect.stringMatching(/WHERE id = \? AND "reportSentAt" IS NULL/),
-          values: [JSON.stringify({ 502: 4 }), report.id],
+          sql: expect.stringMatching(
+            /WHERE id = \? AND "sendClaimId" = \?::uuid AND "reportSentAt" IS NULL/
+          ),
+          values: [JSON.stringify({ 502: 4 }), report.id, claimId()],
         },
       ]);
       expect(submitReport).not.toHaveBeenCalled();

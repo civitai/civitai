@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -116,7 +116,7 @@ beforeEach(() => {
   submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   finishReport.mockReset().mockResolvedValue({});
-  cancelReport.mockReset().mockResolvedValue({});
+  cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
   fetchBlobAsFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
   getObject.mockReset().mockImplementation(async () => ({
     Body: { transformToByteArray: async () => new Uint8Array(stored) },
@@ -146,6 +146,8 @@ beforeEach(() => {
   dbMock.dbWrite.csamReport.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   dbMock.dbWrite.$executeRaw.mockReset().mockResolvedValue(1);
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('marking a report sent', () => {
   it('marks it sent and releases the claim in one write, after NCMEC has the finished CyberTip', async () => {
@@ -355,7 +357,9 @@ describe('deleting a report the send finds nothing to send for', () => {
   ])(
     'deletes no %s report that evidence was folded into after the run read it',
     async (type, runCopy, primaryCopy) => {
+      // No training-data directory is made or removed on disk.
       vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
       const runStart = { ...report, type, ...runCopy } as unknown as CsamReportProps;
       primaryRow = { ...report, type, ...primaryCopy } as unknown as CsamReportProps;
 
