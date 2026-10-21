@@ -186,6 +186,17 @@ describe('TrainingData report', () => {
     expect(counts.object_missing).toBe(1);
   });
 
+  it('is not verified when the base bundle is not in storage', async () => {
+    const id = await addReport('TrainingData');
+    await addObject(id, 'base', { stored: false });
+    await addObject(id, 'trainingData');
+
+    const { counts } = await run();
+
+    expect(await verifiedAt(id)).toBeNull();
+    expect(counts.object_missing).toBe(1);
+  });
+
   it('is not verified when the base bundle was never recorded', async () => {
     const id = await addReport('TrainingData');
     await addObject(id, 'trainingData');
