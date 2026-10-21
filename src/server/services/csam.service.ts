@@ -141,13 +141,11 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
 }
 
 // A training-data report sends and archives one version's data, so a filing folds only into a
-// report on exactly its versions, and one naming none is a report of its own.
+// report on exactly its versions.
 const trainingVersionFilter = (type: CsamReportType, details?: CsamReportFormOutput) =>
   type === CsamReportType.TrainingData
     ? { details: { path: ['modelVersionIds'], equals: details?.modelVersionIds ?? [] } }
     : {};
-const foldable = (type: CsamReportType, details?: CsamReportFormOutput) =>
-  type !== CsamReportType.TrainingData || !!details?.modelVersionIds?.length;
 
 export async function createCsamReport({
   reportedById,
@@ -168,33 +166,32 @@ export async function createCsamReport({
 
   // Only fold into a report of the same account AND type: internal reports belong to no account, and
   // a different type is a different report.
-  const report =
-    isInternalReport || !foldable(type, details)
-      ? await dbWrite.csamReport.create({ data })
-      : await dbWrite.$transaction(async (tx) => {
-          const unsent = await tx.csamReport.findFirst({
-            where: { userId, type, reportSentAt: null, ...trainingVersionFilter(type, details) },
-            select: { id: true },
-          });
-          if (!unsent) return tx.csamReport.create({ data });
+  const report = isInternalReport
+    ? await dbWrite.csamReport.create({ data })
+    : await dbWrite.$transaction(async (tx) => {
+        const unsent = await tx.csamReport.findFirst({
+          where: { userId, type, reportSentAt: null, ...trainingVersionFilter(type, details) },
+          select: { id: true },
+        });
+        if (!unsent) return tx.csamReport.create({ data });
 
-          // Locked and re-read, so two filings on the same report both land. A report sent since the
-          // lookup gets a new report instead.
-          const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
+        // Locked and re-read, so two filings on the same report both land. A report sent since the
+        // lookup gets a new report instead.
+        const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
           SELECT images, details FROM "CsamReport"
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
           FOR UPDATE`;
-          if (!locked) return tx.csamReport.create({ data });
+        if (!locked) return tx.csamReport.create({ data });
 
-          return tx.csamReport.update({
-            where: { id: unsent.id },
-            data: {
-              ...data,
-              images: foldImages(locked.images, data.images),
-              details: foldDetails(locked.details, details),
-            },
-          });
+        return tx.csamReport.update({
+          where: { id: unsent.id },
+          data: {
+            ...data,
+            images: foldImages(locked.images, data.images),
+            details: foldDetails(locked.details, details),
+          },
         });
+      });
 
   if (imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
