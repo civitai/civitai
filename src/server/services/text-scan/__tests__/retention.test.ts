@@ -113,6 +113,8 @@ describe('cleanupTextScanRows', () => {
     expect(holds.updateMany).toHaveBeenCalledWith({
       where: {
         status: 'Dismissed',
+        // A migration-superseded duplicate has no decider and was never ruled on.
+        decidedById: { not: null },
         decidedAt: { lt: new Date('2026-09-01T00:00:00Z') },
         text: { not: '' },
       },

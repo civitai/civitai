@@ -50,7 +50,8 @@ CREATE TABLE "ModelFile" (
 CREATE TABLE "ModelMetric" ("modelId" INTEGER PRIMARY KEY, "downloadCount" INTEGER, "generationCount" INTEGER);
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER, "userId" INTEGER NOT NULL);
 CREATE TABLE "Image" (
-  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "type" TEXT NOT NULL DEFAULT 'image'
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "type" TEXT NOT NULL DEFAULT 'image',
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ModelReport" ("modelId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
