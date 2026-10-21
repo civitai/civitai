@@ -6,7 +6,12 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
-  import { LEGAL_HOLD_BUTTON_TEXT, deleteButtonState } from '$lib/legal-hold';
+  import {
+    HOLD_UNKNOWN_BUTTON_TEXT,
+    LEGAL_HOLD_BUTTON_TEXT,
+    deleteButtonState,
+    type DeleteHold,
+  } from '$lib/legal-hold';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -33,7 +38,7 @@
     canBan,
     canPurge,
     canDelete,
-    deleteHeld,
+    deleteHold,
   }: {
     identity: Identity;
     canAct: boolean;
@@ -42,8 +47,8 @@
     canBan: boolean;
     canPurge: boolean;
     canDelete: boolean;
-    /** Anything but `false` disables Delete account: a hold, or a status that could not be read. */
-    deleteHeld: boolean | null;
+    /** Anything but `clear` disables Delete account: a hold, or a status that could not be read. */
+    deleteHold: DeleteHold | null;
   } =
     $props();
 
@@ -60,7 +65,7 @@
   const support = $derived(browser ? fetchSupport(identity.id, version) : SSR_PENDING);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
   const deleteButton = $derived(
-    deleteButtonState({ canDelete, deleted: !!identity.deletedAt, held: deleteHeld })
+    deleteButtonState({ canDelete, deleted: !!identity.deletedAt, hold: deleteHold })
   );
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
@@ -200,8 +205,10 @@
         <Button size="sm" variant="destructive" onclick={() => (confirming = 'delete')}>
           Delete account
         </Button>
-      {:else if deleteButton === 'held'}
-        <Button size="sm" variant="destructive" disabled>{LEGAL_HOLD_BUTTON_TEXT}</Button>
+      {:else if deleteButton !== 'absent'}
+        <Button size="sm" variant="destructive" disabled>
+          {deleteButton === 'held' ? LEGAL_HOLD_BUTTON_TEXT : HOLD_UNKNOWN_BUTTON_TEXT}
+        </Button>
       {/if}
     </div>
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DeleteHold } from '$lib/legal-hold';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -1589,12 +1590,14 @@ export async function revokeCreatorScoreGrant(input: {
   return { ok: true, total };
 }
 
-/** Whether a legal hold blocks deleting the account. Anything but an explicit `held: false` reads as
- *  held, including a failed check: the endpoint refuses a held account regardless. */
-export async function deleteAccountHeld(userId: number): Promise<boolean> {
-  // Short: the Admin tab waits on this, and a slow answer reads as held anyway.
+/** Whether a legal hold blocks deleting the account. Only `held: false` is `clear`; the endpoint
+ *  refuses a held account regardless. */
+export async function deleteAccountHold(userId: number): Promise<DeleteHold> {
+  // Short: the Admin tab waits on this, and a slow answer blocks deletion anyway.
   const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
-  return !(result.ok && result.body.held === false);
+  if (!result.ok) return 'unknown';
+  if (result.body.held === false) return 'clear';
+  return result.body.held === true ? 'held' : 'unknown';
 }
 
 export async function deleteAccount(input: {

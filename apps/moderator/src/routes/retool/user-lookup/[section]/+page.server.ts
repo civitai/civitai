@@ -27,7 +27,7 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
-  deleteAccountHeld,
+  deleteAccountHold,
   countReactions,
   removeReactions,
   purgeAllContent,
@@ -58,7 +58,7 @@ import {
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
+import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -69,12 +69,12 @@ export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
   // Only where the Delete account button renders, and only for someone who may press it.
-  let deleteHeld: boolean | null = null;
+  let deleteHold: DeleteHold | null = null;
   if (params.section === 'admin' && locals.grants['user.deleteAccount']) {
     const { result } = await parent();
-    if (result) deleteHeld = await deleteAccountHeld(result.identity.id);
+    if (result) deleteHold = await deleteAccountHold(result.identity.id);
   }
-  return { section: params.section, deleteHeld };
+  return { section: params.section, deleteHold };
 };
 
 const NOTE_MAX = 5000;
@@ -719,7 +719,9 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return accountFail(input);
     // The endpoint refuses a held account too; this answers before anything is sent.
-    if (await deleteAccountHeld(input.userId)) return accountFail(LEGAL_HOLD_REFUSAL);
+    const hold = await deleteAccountHold(input.userId);
+    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
+    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({

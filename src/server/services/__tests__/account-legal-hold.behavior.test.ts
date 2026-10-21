@@ -34,6 +34,7 @@ const RELEASED_MARKER = 11;
 const REPORT_SUBJECT = 9;
 const SECONDARY_BLOCKED_REPORTED_LONG_AGO = 12;
 const OLD_REPORT_SUBJECT = 13; // owns nothing; names SECONDARY_BLOCKED_REPORTED_LONG_AGO
+const NEW_IMAGE_AFTER_OLD_REPORT = 14;
 
 let failQueries = false;
 let unreadable = false;
@@ -48,7 +49,8 @@ beforeAll(async () => {
       id serial PRIMARY KEY,
       "userId" int,
       "reportSentAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]'
     );
     CREATE TABLE "Image" (
       id serial PRIMARY KEY,
@@ -93,19 +95,31 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image";
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", details) VALUES
-      (${PENDING_REPORT}, NULL, '{}'),
-      (${RECENTLY_SENT}, now() - interval '30 days', 'null'),
-      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', '{}'),
-      (${REPORT_SUBJECT}, now() - interval '30 days', '{"secondaryUserId": ${SECONDARY_ON_REPORT}}'),
-      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', '{}'),
-      (${OLD_REPORT_SUBJECT}, now() - interval '400 days', '{"secondaryUserId": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}}');
-    INSERT INTO "Image" ("userId", "needsReview", "blockedFor") VALUES
-      (${CLEAN}, 'minor', 'AiNotVerified'),
-      (${IMAGE_IN_REVIEW}, 'csam', NULL),
-      (${IMAGE_BLOCKED_UNREPORTED}, NULL, 'CSAM'),
-      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
-      (${SECONDARY_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM');
+    -- Image ids are the owner's id times 100, plus one for a second image.
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images) VALUES
+      (${PENDING_REPORT}, NULL, '{}', '[]'),
+      (${RECENTLY_SENT}, now() - interval '30 days', 'null', '[]'),
+      (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', '{}', '[]'),
+      (${REPORT_SUBJECT}, now() - interval '30 days', '{"secondaryUserId": ${SECONDARY_ON_REPORT}}', '[]'),
+      (${IMAGE_BLOCKED_REPORTED_LONG_AGO}, now() - interval '400 days', '{}',
+        '[{"id": ${IMAGE_BLOCKED_REPORTED_LONG_AGO * 100}}]'),
+      (${OLD_REPORT_SUBJECT}, now() - interval '400 days',
+        '{"secondaryUserId": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}}',
+        '[{"id": ${SECONDARY_BLOCKED_REPORTED_LONG_AGO * 100}}]'),
+      (${NEW_IMAGE_AFTER_OLD_REPORT}, now() - interval '400 days', '{}',
+        '[{"id": ${NEW_IMAGE_AFTER_OLD_REPORT * 100}}]'),
+      -- Sent and naming the unreported owner, but listing none of their images.
+      (${IMAGE_BLOCKED_UNREPORTED}, now() - interval '400 days', '{}', '[{"id": 1}]');
+    INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
+      (${CLEAN * 100}, ${CLEAN}, 'minor', 'AiNotVerified'),
+      (${IMAGE_IN_REVIEW * 100}, ${IMAGE_IN_REVIEW}, 'csam', NULL),
+      (${IMAGE_BLOCKED_UNREPORTED * 100}, ${IMAGE_BLOCKED_UNREPORTED}, NULL, 'CSAM'),
+      (${IMAGE_BLOCKED_REPORTED_LONG_AGO * 100}, ${IMAGE_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
+      (${
+        SECONDARY_BLOCKED_REPORTED_LONG_AGO * 100
+      }, ${SECONDARY_BLOCKED_REPORTED_LONG_AGO}, NULL, 'CSAM'),
+      (${NEW_IMAGE_AFTER_OLD_REPORT * 100}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM'),
+      (${NEW_IMAGE_AFTER_OLD_REPORT * 100 + 1}, ${NEW_IMAGE_AFTER_OLD_REPORT}, NULL, 'CSAM');
   `);
 });
 
@@ -115,7 +129,16 @@ describe('getAccountLegalHoldLegs', () => {
     ['a report sent within the year', RECENTLY_SENT, ['report']],
     ['the secondary user on a report', SECONDARY_ON_REPORT, ['report']],
     ['an image awaiting that review', IMAGE_IN_REVIEW, ['image-review']],
-    ['an image blocked for it with no sent report', IMAGE_BLOCKED_UNREPORTED, ['image-blocked']],
+    [
+      'an image blocked for it that no sent report lists',
+      IMAGE_BLOCKED_UNREPORTED,
+      ['image-blocked'],
+    ],
+    [
+      'a new blocked image beside one an old sent report lists',
+      NEW_IMAGE_AFTER_OLD_REPORT,
+      ['image-blocked'],
+    ],
   ])('holds an account with %s', async (_, userId, legs) => {
     expect(await getAccountLegalHoldLegs(userId)).toEqual(legs);
   });
@@ -166,15 +189,15 @@ describe('an answer that is missing', () => {
 
   it('refuses when the lookup returns no row at all', async () => {
     answer = (sql, rows) => (sql.includes('markerViewExists') ? [] : rows);
-    expect(await isAccountUnderLegalHold(CLEAN)).toBe(true);
+    expect(await isAccountUnderLegalHold(CLEAN)).toBeNull();
   });
 });
 
 describe('isAccountUnderLegalHold', () => {
-  it('reads a failed lookup as held', async () => {
+  it('reads a failed lookup as unknown, never as clear', async () => {
     expect(await isAccountUnderLegalHold(CLEAN)).toBe(false);
     failQueries = true;
-    expect(await isAccountUnderLegalHold(CLEAN)).toBe(true);
+    expect(await isAccountUnderLegalHold(CLEAN)).toBeNull();
   });
 });
 

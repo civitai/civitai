@@ -8,14 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { deleteAccount, deleteAccountHeld } = vi.hoisted(() => ({
+const { deleteAccount, deleteAccountHold } = vi.hoisted(() => ({
   deleteAccount: vi.fn(async () => ({ ok: true as const })),
-  deleteAccountHeld: vi.fn(async () => false),
+  deleteAccountHold: vi.fn<() => Promise<'clear' | 'held' | 'unknown'>>(async () => 'clear'),
 }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
   deleteAccount,
-  deleteAccountHeld,
+  deleteAccountHold,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -33,7 +33,7 @@ const formEvent = (grants: Record<string, boolean>, fields: Record<string, strin
 
 beforeEach(() => {
   vi.clearAllMocks();
-  deleteAccountHeld.mockResolvedValue(false);
+  deleteAccountHold.mockResolvedValue('clear');
 });
 
 describe('deleteAccount action — bound to user.deleteAccount', () => {
@@ -71,16 +71,16 @@ describe('deleteAccount action — a legal hold', () => {
       { userId: String(TARGET), username: 'not_a_real_user' }
     );
 
-  it('refuses a held account without calling the deletion', async () => {
-    deleteAccountHeld.mockResolvedValue(true);
+  it.each([
+    ['held', 'Account under legal hold; contact Legal.'],
+    ['unknown', "Couldn't check legal hold status; try again."],
+  ] as const)('refuses a %s account without calling the deletion', async (hold, error) => {
+    deleteAccountHold.mockResolvedValue(hold);
 
     const result = await actions.deleteAccount(withGrant());
 
-    expect(result).toMatchObject({
-      status: 400,
-      data: { scope: 'account', error: 'Account under legal hold; contact Legal.' },
-    });
-    expect(deleteAccountHeld).toHaveBeenCalledWith(TARGET);
+    expect(result).toMatchObject({ status: 400, data: { scope: 'account', error } });
+    expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
     expect(deleteAccount).not.toHaveBeenCalled();
   });
 });
@@ -95,19 +95,19 @@ describe('load — the hold behind the Delete account button', () => {
     } as unknown as Parameters<typeof load>[0]);
 
   it('reads the hold on Admin for someone with the permission', async () => {
-    deleteAccountHeld.mockResolvedValue(true);
+    deleteAccountHold.mockResolvedValue('held');
     expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
       section: 'admin',
-      deleteHeld: true,
+      deleteHold: 'held',
     });
-    expect(deleteAccountHeld).toHaveBeenCalledWith(TARGET);
+    expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
   });
 
   it('does not ask without the permission or off Admin', async () => {
-    expect(await load(loadEvent('admin', {}))).toMatchObject({ deleteHeld: null });
+    expect(await load(loadEvent('admin', {}))).toMatchObject({ deleteHold: null });
     expect(await load(loadEvent('basic', { 'user.deleteAccount': true }))).toMatchObject({
-      deleteHeld: null,
+      deleteHold: null,
     });
-    expect(deleteAccountHeld).not.toHaveBeenCalled();
+    expect(deleteAccountHold).not.toHaveBeenCalled();
   });
 });

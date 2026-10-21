@@ -108,13 +108,13 @@ describe('user.legalHold', () => {
     expect(body).toEqual({ userId: TARGET, held: true });
   });
 
-  it('answers held: true when the lookup fails', async () => {
+  it('answers held: null, not false, when the lookup fails', async () => {
     vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValue(new Error('connection reset'));
 
     const { status, body } = await call({ userId: String(TARGET) });
 
     expect(status).toBe(200);
-    expect(body).toEqual({ userId: TARGET, held: true });
+    expect(body).toEqual({ userId: TARGET, held: null });
   });
 
   it('refuses a moderator without user.deleteAccount, before looking anything up', async () => {

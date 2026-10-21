@@ -30,12 +30,16 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
       EXISTS (
         SELECT 1 FROM "Image" WHERE "userId" = ${id} AND "needsReview" = 'csam'
       ) AS "imageReview",
+      -- A blocked image counts as reported only when a sent report naming them lists it.
       EXISTS (
-        SELECT 1 FROM "Image" WHERE "userId" = ${id} AND "blockedFor" = 'CSAM'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM "CsamReport" sc
-        WHERE (sc."userId" = ${id} OR sc.details ->> 'secondaryUserId' = (${id})::text)
-          AND sc."reportSentAt" IS NOT NULL
+        SELECT 1 FROM "Image" bi
+        WHERE bi."userId" = ${id} AND bi."blockedFor" = 'CSAM'
+          AND NOT EXISTS (
+            SELECT 1 FROM "CsamReport" sc
+            WHERE (sc."userId" = ${id} OR sc.details ->> 'secondaryUserId' = (${id})::text)
+              AND sc."reportSentAt" IS NOT NULL
+              AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
+          )
       ) AS "imageBlocked",
       to_regclass('"EvidenceHeldUser"') IS NOT NULL AS "markerViewExists"
   `;
@@ -76,10 +80,10 @@ export async function assertAccountNotUnderLegalHold(userId: number): Promise<vo
   throw new LegalHoldError();
 }
 
-/** For display. Fails closed: an account whose status cannot be read reads as held. */
-export async function isAccountUnderLegalHold(userId: number): Promise<boolean> {
+/** For display: `null` when the status cannot be read, which callers must treat as held. */
+export async function isAccountUnderLegalHold(userId: number): Promise<boolean | null> {
   const legs = await legsOrNull(userId);
-  return !legs || legs.length > 0;
+  return legs ? legs.length > 0 : null;
 }
 
 async function legsOrNull(userId: number): Promise<AccountHoldLeg[] | null> {

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deleteButtonState } from '$lib/legal-hold';
+import { deleteButtonState, type DeleteHold } from '$lib/legal-hold';
 
 /**
  * The spoke's read of a legal hold, which disables Delete account. Only an explicit `held: false`
- * from the main app enables it; every other answer, and no answer, reads as held.
+ * from the main app enables it; `held: true` is a hold, and every other answer is unknown.
  */
 
 vi.mock('$lib/server/db', async () => {
@@ -20,7 +20,7 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { deleteAccountHeld } = await import('../user-actions.service');
+const { deleteAccountHold } = await import('../user-actions.service');
 
 const TARGET = 8675309;
 let urls: string[];
@@ -37,35 +37,44 @@ beforeEach(() => {
   });
 });
 
-describe('deleteAccountHeld', () => {
+describe('deleteAccountHold', () => {
   it('is clear only on an explicit held: false, read from the hold endpoint', async () => {
     respond = () => json({ userId: TARGET, held: false });
-    expect(await deleteAccountHeld(TARGET)).toBe(false);
+    expect(await deleteAccountHold(TARGET)).toBe('clear');
     expect(urls).toEqual([`https://civitai.com/api/mod/user/legal-hold?userId=${TARGET}`]);
   });
 
+  it('is held on held: true', async () => {
+    respond = () => json({ userId: TARGET, held: true });
+    expect(await deleteAccountHold(TARGET)).toBe('held');
+  });
+
   it.each([
-    ['held', () => json({ userId: TARGET, held: true })],
+    ['a status that could not be read', () => json({ userId: TARGET, held: null })],
     ['an answer without the field', () => json({ userId: TARGET })],
     ['a non-boolean', () => json({ userId: TARGET, held: 'false' })],
     ['a refusal', () => json({ message: 'nope' }, 403)],
     ['a server error', () => json({ message: 'boom' }, 500)],
     ['no answer', () => Promise.reject(new TypeError('fetch failed'))],
-  ])('reads %s as held', async (_, response) => {
+  ])('reads %s as unknown', async (_, response) => {
     respond = response;
-    expect(await deleteAccountHeld(TARGET)).toBe(true);
+    expect(await deleteAccountHold(TARGET)).toBe('unknown');
   });
 });
 
 describe('deleteButtonState', () => {
-  it('disables, never removes, the button under a hold or an unknown status', () => {
-    expect(deleteButtonState({ canDelete: true, deleted: false, held: true })).toBe('held');
-    expect(deleteButtonState({ canDelete: true, deleted: false, held: null })).toBe('held');
-    expect(deleteButtonState({ canDelete: true, deleted: false, held: false })).toBe('enabled');
+  const state = (hold: DeleteHold | null) =>
+    deleteButtonState({ canDelete: true, deleted: false, hold });
+
+  it('disables, never removes, the button unless the account is clear', () => {
+    expect(state('held')).toBe('held');
+    expect(state('unknown')).toBe('unknown');
+    expect(state(null)).toBe('unknown');
+    expect(state('clear')).toBe('enabled');
   });
 
   it('shows nothing to someone without the permission, or for an account already deleted', () => {
-    expect(deleteButtonState({ canDelete: false, deleted: false, held: true })).toBe('absent');
-    expect(deleteButtonState({ canDelete: true, deleted: true, held: false })).toBe('absent');
+    expect(deleteButtonState({ canDelete: false, deleted: false, hold: 'held' })).toBe('absent');
+    expect(deleteButtonState({ canDelete: true, deleted: true, hold: 'clear' })).toBe('absent');
   });
 });
