@@ -11,13 +11,24 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, indexes, session, pictures, tracked } = vi.hoisted(() => ({
+const { holder, indexes, metrics, session, pictures, tracked } = vi.hoisted(() => ({
   holder: {
     db: null as unknown as PGlite,
     /** Runs just before the first image delete: a hold landing mid-run. */
     beforeImages: null as (() => Promise<unknown>) | null,
   },
-  indexes: { queueUpdate: vi.fn<(rows: unknown) => Promise<undefined>>(async () => undefined) },
+  indexes: Object.fromEntries(
+    ['models', 'images', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map(
+      (name) => [
+        name,
+        { queueUpdate: vi.fn<(rows: { id: number; action: string }[]) => Promise<undefined>>() },
+      ]
+    )
+  ),
+  metrics: {
+    user: { queueUpdate: vi.fn<(ids: unknown) => Promise<undefined>>() },
+    article: { queueUpdate: vi.fn<(ids: unknown) => Promise<undefined>>() },
+  },
   session: {
     user: { id: 9, isModerator: true, bannedAt: null } as Record<string, unknown> | null,
   },
@@ -38,22 +49,19 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  modelsSearchIndex: indexes,
-  imagesSearchIndex: indexes,
-  imagesMetricsSearchIndex: indexes,
-  articlesSearchIndex: indexes,
-  collectionsSearchIndex: indexes,
-  bountiesSearchIndex: indexes,
-  usersSearchIndex: indexes,
+  modelsSearchIndex: indexes.models,
+  imagesSearchIndex: indexes.images,
+  imagesMetricsSearchIndex: indexes.imagesMetrics,
+  articlesSearchIndex: indexes.articles,
+  collectionsSearchIndex: indexes.collections,
+  bountiesSearchIndex: indexes.bounties,
+  usersSearchIndex: indexes.users,
 }));
-vi.mock('~/server/metrics', async (importOriginal) => {
-  const m = { queueUpdate: vi.fn(async () => undefined) };
-  return {
-    ...((await importOriginal()) as Record<string, unknown>),
-    userMetrics: m,
-    articleMetrics: m,
-  };
-});
+vi.mock('~/server/metrics', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  userMetrics: metrics.user,
+  articleMetrics: metrics.article,
+}));
 // The DELETE `deleteImages` issues, with its `onlyWhere`; storage and caches are not under test.
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -99,6 +107,9 @@ import {
   LegalHoldStoppedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
+import { deleteImages } from '~/server/services/image.service';
+import { deleteBidsForModel } from '~/server/services/auction.service';
+import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
 
@@ -106,6 +117,10 @@ const CLEAN = 1;
 const HELD = 2; // named on a pending report
 const MARKED = 3; // held by the marker view
 const BYSTANDER = 9;
+// CLEAN's rows, seeded first; each table's ids start apart so an id names one table.
+const COLLECTION = 300;
+const ARTICLE = 500;
+const MODEL = 700;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -154,6 +169,7 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
+    CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
   `);
 });
 
@@ -168,8 +184,12 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread",
+    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection",
       ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
+    ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
+    ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
+    ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
+    INSERT INTO "Collection" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (${CLEAN * 100}, ${CLEAN}, 1), (${CLEAN * 100 + 1}, ${CLEAN}, 1),
@@ -212,7 +232,40 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
   vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(rowsOf('Model', 'id'));
   vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
+  vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
+  vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
+    where: { userId: number };
+  }) => ({
+    count: (
+      await holder.db.query(`DELETE FROM "Collection" WHERE "userId" = $1`, [args.where.userId])
+    ).affectedRows,
+  })) as never);
 });
+
+/**
+ * The ids each search index was asked to drop. The bounty index is left out: its list is read from
+ * the wrong table today, which is fixed separately.
+ */
+function dropped() {
+  return Object.fromEntries(
+    Object.entries(indexes)
+      .filter(([name]) => name !== 'bounties')
+      .map(([name, index]) => [
+        name,
+        index.queueUpdate.mock.calls.flatMap(([rows]) =>
+          rows.map((r) => (r.action === 'Delete' ? r.id : `${r.action} ${r.id}`))
+        ),
+      ])
+  );
+}
+const NONE = {
+  models: [],
+  images: [],
+  imagesMetrics: [],
+  articles: [],
+  collections: [],
+  users: [],
+};
 
 async function createMarkerView() {
   await holder.db.exec(`
@@ -247,7 +300,24 @@ describe('removeAllContent', () => {
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
-    expect(indexes.queueUpdate).toHaveBeenCalled();
+    expect(dropped()).toEqual({
+      models: [MODEL],
+      images: [CLEAN * 100, CLEAN * 100 + 1],
+      imagesMetrics: [CLEAN * 100, CLEAN * 100 + 1],
+      articles: [ARTICLE],
+      collections: [COLLECTION],
+      users: [CLEAN],
+    });
+    expect(metrics.user.queueUpdate).toHaveBeenCalledWith(CLEAN);
+    expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
+    // Rows, storage objects and caches, once, held to the hold.
+    expect(deleteImages).toHaveBeenCalledTimes(1);
+    expect(deleteImages).toHaveBeenCalledWith([CLEAN * 100, CLEAN * 100 + 1], true, {
+      onlyWhere: expect.anything(),
+    });
+    expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
+      expect.objectContaining({ targetUserId: CLEAN })
+    );
   });
 
   it.each([
@@ -283,9 +353,11 @@ describe('removeAllContent', () => {
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    // The low-impact rows before the evidence go; nothing is reindexed or purged elsewhere.
+    // The low-impact rows before the evidence go, and only those leave the index; nothing is purged
+    // elsewhere.
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalled();
-    expect(indexes.queueUpdate).not.toHaveBeenCalled();
+    expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
+    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
   });
 
   it('keeps evidence when the marker appears mid-wipe after a check that found none', async () => {
@@ -329,11 +401,13 @@ describe('removeAllContent', () => {
   it('reports a hold when its re-check cannot be read', async () => {
     afterHeld = null;
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    // Everything went, so only the model and the article leave the index; the account stays in it.
-    expect(indexes.queueUpdate.mock.calls).toEqual([
-      [[{ id: 1, action: 'Delete' }]],
-      [[{ id: 1, action: 'Delete' }]],
-    ]);
+    // Everything went, so all of it leaves the index; the account itself stays in it.
+    expect(dropped()).toEqual({
+      ...NONE,
+      models: [MODEL],
+      articles: [ARTICLE],
+      collections: [COLLECTION],
+    });
   });
 
   it('keeps another user’s comment on a review of theirs when a hold lands mid-wipe', async () => {
@@ -349,6 +423,24 @@ describe('removeAllContent', () => {
     expect((await remaining(BYSTANDER)).CommentV2).toBe(2);
   });
 
+  it('takes the comments on its reviews with it when no hold lands (control for the above)', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" ("reviewId")
+        SELECT id FROM "ResourceReview" WHERE "userId" = ${CLEAN};
+      INSERT INTO "CommentV2" ("userId", "threadId") SELECT ${BYSTANDER}, id FROM "Thread";
+    `);
+    await removeAllContent({ id: CLEAN });
+    expect((await remaining(BYSTANDER)).CommentV2).toBe(1);
+  });
+
+  it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
+    vi.mocked(deleteBidsForModel).mockImplementationOnce(async () => {
+      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    });
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+  });
+
   it('stops, keeping the evidence, when the marker view is dropped mid-wipe', async () => {
     await createMarkerView();
     beforeEvidence = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
@@ -359,9 +451,6 @@ describe('removeAllContent', () => {
   });
 
   it('drops from the search index only what a stopped wipe really deleted', async () => {
-    const [article] = (
-      await holder.db.query<{ id: number }>(`SELECT id FROM "Article" WHERE "userId" = ${CLEAN}`)
-    ).rows;
     landsBefore = 'Model';
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
 
@@ -369,7 +458,7 @@ describe('removeAllContent', () => {
 
     // The article went before the hold landed; the model did not.
     expect((await remaining(CLEAN)).Model).toBe(1);
-    expect(indexes.queueUpdate.mock.calls).toEqual([[[{ id: article.id, action: 'Delete' }]]]);
+    expect(dropped()).toEqual({ ...NONE, articles: [ARTICLE], collections: [COLLECTION] });
   });
 
   it('keeps a bounty entry that won an award', async () => {
@@ -497,6 +586,13 @@ describe('/api/mod/delete-user-images', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
     expect((await remaining(CLEAN)).Image).toBe(2);
+  });
+
+  it('says it stopped when its re-check cannot be read', async () => {
+    afterHeld = null;
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: LEGAL_HOLD_STOPPED });
   });
 
   it('refuses a batch size of zero, deleting nothing', async () => {

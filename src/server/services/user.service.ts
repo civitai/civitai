@@ -1569,6 +1569,18 @@ export const removeAllContent = async ({
     await deleteBidsForModel({ modelId: m.id });
   }
 
+  // The two stores below are separate databases, so no statement there can carry the hold: check
+  // again before either.
+  await assertAccountNotUnderLegalHold(id).catch(() => {
+    logToAxiom({
+      name: 'remove-all-content',
+      type: 'error',
+      message: 'Stopped by a legal hold before the App Blocks stores',
+      userId: id,
+    }).catch(() => undefined);
+    throw new LegalHoldStoppedError();
+  });
+
   // ── App Blocks per-user storage (W4) ────────────────────────────────────────
   // Everything above lives in the MAIN db (plus S3 + the search indexes). A
   // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in

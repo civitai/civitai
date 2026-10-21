@@ -77,7 +77,7 @@ vi.mock('~/server/metrics', async (importOriginal) => {
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
