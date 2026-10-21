@@ -51,7 +51,14 @@ vi.mock('~/server/services/moderator-grants', () => ({
 import handler from '~/pages/api/mod/user/legal-hold';
 
 const TARGET = 8675309;
-const CLEAR = { report: false, imageReview: false, imageBlocked: false, markerViewExists: false };
+const CLEAR = {
+  report: false,
+  'image-review': false,
+  'image-blocked': false,
+  'reported-image': false,
+  markerView: false,
+  markerTable: false,
+};
 
 function call(query: Record<string, unknown>) {
   const req = { method: 'GET', headers: {}, body: {}, query } as Parameters<typeof handler>[0];
@@ -95,12 +102,13 @@ describe('user.legalHold', () => {
       TemplateStringsArray,
       ...never[]
     ];
-    expect(new Set(Prisma.sql(strings, ...values).values)).toEqual(new Set([TARGET]));
+    const ids = Prisma.sql(strings, ...values).values.filter((v) => typeof v === 'number');
+    expect(new Set(ids)).toEqual(new Set([TARGET]));
   });
 
   it('answers held: true for a held account, and nothing about why', async () => {
     vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([
-      { ...CLEAR, imageReview: true },
+      { ...CLEAR, 'image-review': true },
     ] as never);
 
     const { body } = await call({ userId: String(TARGET) });
