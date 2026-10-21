@@ -1337,7 +1337,6 @@ export const upsertCollection = async ({
         write: true,
         availability: true,
         mode: true,
-        createdAt: true,
         metadata: true,
         image: { select: { id: true } },
       },
@@ -1461,20 +1460,51 @@ export const upsertCollection = async ({
     await userCollectionCountCache.refresh(updated.userId);
 
     if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
-      // Set publishedAt for all post belonging to this collection if changing privacy to public
-      await dbWrite.$queryRaw`
-        UPDATE "Post" SET
-          "publishedAt" = COALESCE(DATE("metadata"->>'prevPublishedAt'), ${currentCollection.createdAt}, NOW()),
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
-        WHERE "collectionId" = ${updated.id}
+      // Only restores posts the collection itself hid: the `unpublishedByCollection` marker, or a
+      // bare `prevPublishedAt` (what this hide wrote before the marker existed). Every other
+      // unpublish stamps one of the excluded keys and is undone by its own republish path. A
+      // collection-hidden post cannot be unpublished again, so a moderator action taken while it
+      // was hidden lands on the owner, the images or a hold; those keep the post down too.
+      // One statement, so a failed lookup restores nothing.
+      await dbWrite.$executeRaw`
+        UPDATE "Post" p SET
+          "publishedAt" = (p."metadata"->>'prevPublishedAt')::timestamptz,
+          "metadata" = p."metadata" - 'prevPublishedAt' - 'unpublishedByCollection'
+        WHERE p."collectionId" = ${updated.id}
+          AND p."publishedAt" IS NULL
+          AND p."metadata"->>'prevPublishedAt' IS NOT NULL
+          AND (
+            p."metadata"->>'unpublishedByCollection' = ${String(updated.id)}
+            OR NOT p."metadata" ? 'unpublishedByCollection'
+          )
+          AND NOT p."metadata" ?| array['unpublishedAt', 'unpublishedBy', 'unpublishedReason', 'repairStampAt']
+          AND NOT EXISTS (
+            SELECT 1 FROM "User" u WHERE u.id = p."userId" AND u."bannedAt" IS NOT NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" i
+            WHERE i."postId" = p.id AND (i.ingestion = 'Blocked' OR i."needsReview" = 'csam')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "TextScanHold" h
+            WHERE h."entityType" = 'Post' AND h."entityId" = p.id AND h.status = 'Confirmed'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "CsamReport" c
+            WHERE c."userId" = p."userId" OR c."details"->>'secondaryUserId' = p."userId"::text
+          )
       `;
     } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
-      // otherwise set publishedAt to null when no mode is setup.
-      await dbWrite.$queryRaw`
+      // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
+      // left alone so their own stamps survive.
+      await dbWrite.$executeRaw`
         UPDATE "Post" SET
           "publishedAt" = NULL,
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', to_jsonb("publishedAt"))
-        WHERE "collectionId" = ${updated.id}
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+            'prevPublishedAt', "publishedAt",
+            'unpublishedByCollection', ${updated.id}::int
+          )
+        WHERE "collectionId" = ${updated.id} AND "publishedAt" IS NOT NULL
       `;
     }
 
