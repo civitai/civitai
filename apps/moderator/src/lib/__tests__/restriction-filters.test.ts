@@ -13,7 +13,11 @@ import { SORT_ORDERS } from '../restriction-types';
 describe('resolveRestrictionFilters', () => {
   it('opens on pending, every origin, oldest first', () => {
     expect(resolveRestrictionFilters({})).toEqual(DEFAULT_RESTRICTION_FILTERS);
-    expect(DEFAULT_RESTRICTION_FILTERS).toEqual({ status: 'Pending', origin: 'all', sort: 'oldest' });
+    expect(DEFAULT_RESTRICTION_FILTERS).toEqual({
+      status: 'Pending',
+      origin: 'all',
+      sort: 'oldest',
+    });
   });
 
   it('defaults the sort to the status: newest first once a row is ruled', () => {
@@ -34,12 +38,14 @@ describe('restrictionFilterParams', () => {
   });
 
   it('writes only what differs from the default for that status', () => {
-    expect(
-      restrictionFilterParams({ status: 'Upheld', origin: 'remix', sort: 'newest' })
-    ).toEqual({ status: 'Upheld', origin: 'remix' });
-    expect(
-      restrictionFilterParams({ status: 'Upheld', origin: 'all', sort: 'oldest' })
-    ).toEqual({ status: 'Upheld', sort: 'oldest' });
+    expect(restrictionFilterParams({ status: 'Upheld', origin: 'remix', sort: 'newest' })).toEqual({
+      status: 'Upheld',
+      origin: 'remix',
+    });
+    expect(restrictionFilterParams({ status: 'Upheld', origin: 'all', sort: 'oldest' })).toEqual({
+      status: 'Upheld',
+      sort: 'oldest',
+    });
   });
 });
 

@@ -38,7 +38,7 @@ describe('restrictionRulingRefusal', () => {
     expect(restrictionRulingRefusal('Overturned', 'other', 'because')).toBeNull();
   });
 
-  it("names a reason that belongs to the other verdict in words", () => {
+  it('names a reason that belongs to the other verdict in words', () => {
     const refusal = restrictionRulingRefusal('Upheld', 'word-match', '');
     expect(refusal).toContain('Keyword hit only');
     expect(refusal).toContain('uphold mute');
