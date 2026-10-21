@@ -256,6 +256,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'system.getCreationBlockedTags',
   'system.getDbKV',
   'system.getLiveNow',
+  'system.getUserMenuDefaultPins',
   'tag.getFeedTagBar',
   'tag.getHomeExcluded',
   'technique.getAll',
