@@ -31,8 +31,8 @@ export const SANDBOX_TOOL_TIMEOUT_MS = 610_000;
 /** A reply is kept to its start and end, as the chat keeps an added server's: errors come last. */
 export const RESULT_HEAD_CHARS = 2_000;
 export const RESULT_TAIL_CHARS = 6_000;
-/** What the assistant is told after a failed call, as the chat tells it. */
-const FAILED_NOTE =
+/** What the assistant is told after a failed call, as the chat tells it of an added server's tool (`tools/extra`). */
+const SERVER_TOOL_FAILED_NOTE =
   'This tool failed. Tell the user in plain words; do not call it again this turn unless they ask.';
 const LOST_NOTE =
   'Check its effect (for example by listing or reading the files it would change) before running it again.';
@@ -69,7 +69,7 @@ export class AppSandbox {
   #connection: McpConnection | null = null;
   #closed = false;
   /** The sandbox found again for the calls that failed together, so they wake it once. */
-  #resolving: Promise<boolean> | null = null;
+  #resolving: Promise<'woken' | 'running' | 'gone'> | null = null;
 
   constructor(deps: AppSandboxDeps) {
     this.#deps = deps;
@@ -99,8 +99,14 @@ export class AppSandbox {
     if (running) this.#connect(running);
   }
 
-  /** A sandbox `create_app` opened: it becomes the reply's open app; its tools come with the next reply. */
+  /**
+   * A sandbox `create_app` opened: it becomes the reply's open app; its tools come with the next reply.
+   * The connection to the app open before is closed, as the page drops it: a call still made to it
+   * fails rather than being sent on to the new app.
+   */
   opened(sandbox: Sandbox): void {
+    // Kept, closed, so a later call refuses (it is not "unreachable", which would find the new app).
+    if (sandbox.app !== this.#app) void this.#connection?.close();
     this.#app = sandbox.app;
     this.#active = sandbox;
   }
@@ -123,6 +129,8 @@ export class AppSandbox {
     for (const tool of listed) {
       const name = `${SANDBOX_SERVER_ID}__${tool.name}`;
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue;
+      // The tunnel only serves the live preview, which is page-only: not offered with nobody watching.
+      if (PAGE_ONLY_TOOL.test(tool.name)) continue;
       tools[name] = dynamicTool({
         description: `[your app] ${tool.description ?? ''}`.trim(),
         inputSchema: jsonSchema(objectSchema(tool.inputSchema)),
@@ -153,13 +161,23 @@ export class AppSandbox {
           retryable: true,
           note: LOST_NOTE,
         };
-      // Refused before it ran: the sandbox paused or moved. Found and woken again, then asked there once.
-      if (!notRun(error)) throw error;
-      if (!(await this.#resolveAgain())) throw new Error(SANDBOX_GONE);
+      if (!refused(error)) throw error;
+      // The sandbox may have paused or moved: found again (and woken, if it no longer runs).
+      const found = await this.#resolveAgain();
+      if (found === 'gone') throw new Error(SANDBOX_GONE);
+      // Made again only when it cannot have run: the connection never opened, or the sandbox had to be
+      // woken. An error status from a sandbox that still runs (a proxy's 502, a pod restart) may have
+      // come after the call ran, so it is reported as maybe finished instead of run twice.
+      if (!(error instanceof McpUnreachableError) && found !== 'woken')
+        return {
+          error: `Your app did not answer the ${tool} call; it may have finished.`,
+          retryable: true,
+          note: LOST_NOTE,
+        };
       result = await this.#callOnce(tool, args, signal);
     }
     const text = keepEnds(resultText(result), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
-    return result.isError ? { error: text, note: FAILED_NOTE } : text;
+    return result.isError ? { error: text, note: SERVER_TOOL_FAILED_NOTE } : text;
   }
 
   #callOnce(tool: string, args: Record<string, unknown>, signal?: AbortSignal) {
@@ -171,10 +189,15 @@ export class AppSandbox {
     });
   }
 
-  #resolveAgain(): Promise<boolean> {
-    this.#resolving ??= (async () => {
+  /**
+   * Finds the reply's app again and connects to it: `woken` when it had stopped running and was
+   * woken, `running` when it still ran, `gone` when it is deleted or would not run. Calls that fail
+   * together share one search, so the sandbox is woken once.
+   */
+  #resolveAgain(): Promise<'woken' | 'running' | 'gone'> {
+    this.#resolving ??= (async (): Promise<'woken' | 'running' | 'gone'> => {
       const app = this.#app;
-      if (!app || this.#closed) return false;
+      if (!app || this.#closed) return 'gone';
       const stale = this.#connection;
       this.#connection = null;
       await stale?.close();
@@ -182,18 +205,20 @@ export class AppSandbox {
         const listed = await this.#deps.client.list();
         const found = listed.find((sandbox) => sandbox.app === app);
         // Deleted meanwhile: a new, empty one is not made in its place behind the user's back.
-        if (!found) return false;
-        const running = found.state === 'running' ? found : await this.#wake(app);
-        if (!running || this.#closed) return false;
+        if (!found) return 'gone';
+        const woken = found.state !== 'running';
+        const running = woken ? await this.#wake(app) : found;
+        if (!running || this.#closed) return 'gone';
         this.#active = running;
         this.#connect(running);
-        return this.#connection !== null;
+        if (!this.#connection) return 'gone';
+        return woken ? 'woken' : 'running';
       } catch (error) {
         this.#deps.log.warn(
           { err: (error as Error)?.name, runId: this.#deps.runId },
           'finding the sandbox again failed'
         );
-        return false;
+        return 'gone';
       }
     })().finally(() => {
       this.#resolving = null;
@@ -240,9 +265,18 @@ export class AppSandbox {
   }
 }
 
-/** The call never reached the tool: the connection could not be opened, or the server refused the request. */
-function notRun(error: unknown): boolean {
-  return error instanceof McpUnreachableError || error instanceof StreamableHTTPError;
+/** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
+const PAGE_ONLY_TOOL = /^tunnel_/;
+
+/**
+ * The connection could not be opened, or the MCP address answered the call with an error status (not
+ * an answer of the wrong type, which it did accept).
+ */
+function refused(error: unknown): boolean {
+  return (
+    error instanceof McpUnreachableError ||
+    (error instanceof StreamableHTTPError && (error.code ?? 0) >= 400)
+  );
 }
 
 /** The reply never came: the call timed out without progress. */

@@ -23,8 +23,9 @@ import { isConfiguredSecret } from '~/server/utils/configured-secret';
  * conversation it may touch.
  *
  * Every mint, of either purpose, runs the same gates as `/api/apps/assistant/token` (ban,
- * onboarding, mute, email verification, the App Assistant feature flag), on the user as the database
- * has them now, and then the consent check.
+ * onboarding, mute, email verification, the App Assistant feature flag) plus the server runner's own
+ * flag (`appAssistantRemoteRunner`), on the user as the database has them now, and then the consent
+ * check.
  *
  *   200 `{ token, expiresAt }`
  *   401 the runner's secret is missing or wrong, or the grant is not a current run grant
@@ -68,7 +69,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const { purpose } = parsed.data;
 
   try {
-    const refusal = await getAppAssistantRefusalForUserId(grant.userId);
+    // The runner's own flag too: turning it off ends runs already holding a grant at their next mint.
+    const refusal = await getAppAssistantRefusalForUserId(grant.userId, { remoteRunner: true });
     // Not judged (the session hub or Flipt is down): a passing fault, which the runner retries.
     if (refusal && 'unavailable' in refusal)
       return res.status(503).json({ error: refusal.error, code: 'unavailable' });

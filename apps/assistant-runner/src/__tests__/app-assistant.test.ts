@@ -2,9 +2,9 @@ import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,
   REMOTE_NO_PREVIEW,
-  TURN_LIMIT_MESSAGE,
   TURN_LIMIT_REFUSAL,
 } from '@civitai/app-assistant';
+import { REFUSED_BY_PAGE_NOTE } from '@civitai/components-chat/core';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 import type { ModelMessage, ToolSet } from 'ai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -163,12 +163,53 @@ describe('App Assistant’s tools on the runner', () => {
     expect(fake.requests.some((r) => r.method === 'POST' && r.path === '/v1/sandboxes')).toBe(true);
   });
 
-  it('asks again on the same sandbox when its address refused one call', async () => {
+  it('never makes a call again when an app that still runs answered it with an error status', async () => {
     fake.add('my-app');
     const { tools } = await open();
+    // A proxy's 502, a pod restart: the call may have run before the error came back.
     fake.failCalls = 1;
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' })
+    ).toMatchObject({
+      error: expect.stringMatching(/may have finished/),
+      retryable: true,
+    });
+    expect(fake.callsTo('write_file')).toBe(0);
+    // It ran, so nothing was woken.
+    expect(fake.requests.some((r) => r.method === 'POST' && r.path === '/v1/sandboxes')).toBe(
+      false
+    );
+    // Control: the next call goes through on the same app.
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
-    expect(fake.callsTo('list_dir')).toBe(1);
+  });
+
+  it('wakes a paused app once for calls that failed together', async () => {
+    const record = fake.add('my-app');
+    const { tools } = await open();
+    record.state = 'suspended';
+    const results = await Promise.all([
+      call(tools.tools, 'sandbox__read_file', { path: 'a' }),
+      call(tools.tools, 'sandbox__read_file', { path: 'b' }),
+    ]);
+    expect(results).toEqual(['export {}', 'export {}']);
+    expect(fake.callsTo('read_file')).toBe(2);
+    expect(
+      fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes')
+    ).toHaveLength(1);
+    // The connection it made is the one Stop closes.
+    const running = call(tools.tools, 'sandbox__run_command', run('hang'));
+    running.catch(() => undefined);
+    await expect.poll(() => fake.callsTo('run_command'), { timeout: 5_000 }).toBe(1);
+    await tools.close();
+    await expect.poll(() => fake.abandoned.length, { timeout: 5_000 }).toBe(1);
+  });
+
+  it('does not offer the tunnel tools, which serve only the page’s preview', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(Object.keys(tools.tools).filter((name) => name.includes('tunnel'))).toEqual([]);
+    // Control: the fake does list one.
+    expect(Object.keys(tools.tools)).toContain('sandbox__read_file');
   });
 
   it('never makes a new, empty app in place of one deleted mid-reply', async () => {
@@ -247,9 +288,31 @@ describe('App Assistant’s gate on the runner', () => {
       error: string;
     };
     expect(ended.error).toBe(TURN_LIMIT_REFUSAL);
+    // The 150th was still the gate's ordinary refusal, not the end.
+    expect(reported[149]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
     expect(fake.callsTo('read_file')).toBe(0);
-    void TURN_LIMIT_MESSAGE;
+  });
+
+  it('keeps a subagent read-only: it cannot write or run commands', async () => {
+    fake.add('my-app');
+    const child = scriptedModel((prompt) =>
+      toolResults(prompt) === 0
+        ? {
+            calls: [
+              { toolName: 'sandbox__write_file', input: { path: 'a', content: 'x' } },
+              { toolName: 'sandbox__run_command', input: { command: 'npm test' } },
+              { toolName: 'sandbox__read_file', input: { path: 'a' } },
+            ],
+          }
+        : { text: 'Done.' }
+    );
+    const { tools } = await open({ subagents: true, model: () => child });
+    await call(tools.tools, 'dispatch_agent', { task: 'Change a.', mode: 'read' });
+    expect(fake.callsTo('write_file')).toBe(0);
+    expect(fake.callsTo('run_command')).toBe(0);
+    // Control: the read it was allowed did run.
+    expect(fake.callsTo('read_file')).toBe(1);
   });
 
   it('leaves a subagent’s calls out of the parent’s 150', async () => {
@@ -340,6 +403,8 @@ describe('toolResultsOf', () => {
           { type: 'tool-call', toolCallId: 'a', toolName: 'x', input: { n: 1 } },
           { type: 'tool-call', toolCallId: 'b', toolName: 'y', input: {} },
           { type: 'tool-call', toolCallId: 'c', toolName: 'z', input: {} },
+          { type: 'tool-call', toolCallId: 'd', toolName: 'w', input: {} },
+          { type: 'tool-call', toolCallId: 'e', toolName: 'v', input: {} },
         ],
       },
       {
@@ -357,6 +422,18 @@ describe('toolResultsOf', () => {
             toolName: 'y',
             output: { type: 'error-text', value: 'boom' },
           },
+          {
+            type: 'tool-result',
+            toolCallId: 'd',
+            toolName: 'w',
+            output: { type: 'json', value: { error: 'Not ready', note: REFUSED_BY_PAGE_NOTE } },
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'e',
+            toolName: 'v',
+            output: { type: 'json', value: { error: 'failed', note: 'other' } },
+          },
         ],
       },
     ];
@@ -364,6 +441,14 @@ describe('toolResultsOf', () => {
       { name: 'x', input: { n: 1 }, output: 'ok', isError: false },
       { name: 'y', input: {}, output: { error: 'boom' }, isError: true },
       { name: 'z', input: {}, output: undefined, isError: true },
+      {
+        name: 'w',
+        input: {},
+        output: { error: 'Not ready', note: REFUSED_BY_PAGE_NOTE },
+        isError: true,
+        refused: 'Not ready',
+      },
+      { name: 'v', input: {}, output: { error: 'failed', note: 'other' }, isError: true },
     ]);
   });
 });

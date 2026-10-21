@@ -79,12 +79,17 @@ function accountRefusal(user: GatedAccount): AppAssistantRefusal | null {
   return null;
 }
 
-/** The feature gate: App Assistant is on for this user. */
-async function featureRefusal(ctx: GateContext): Promise<AppAssistantRefusal | null> {
+/** The feature gate: App Assistant is on for this user (and, when asked, its server runner). */
+async function featureRefusal(
+  ctx: GateContext,
+  { remoteRunner = false }: { remoteRunner?: boolean } = {}
+): Promise<AppAssistantRefusal | null> {
   const features = await getFeatureFlagsAsync(ctx);
-  return canAccessAppAssistant(features)
-    ? null
-    : { status: 403, error: 'App Assistant is not available on this account' };
+  if (!canAccessAppAssistant(features))
+    return { status: 403, error: 'App Assistant is not available on this account' };
+  if (remoteRunner && !features.appAssistantRemoteRunner)
+    return { status: 403, error: 'Replies on the server are not available on this account' };
+  return null;
 }
 
 /** The `guardedProcedure` gates, then the feature gate, for a signed-in session's user. */
@@ -120,9 +125,15 @@ const APP_ASSISTANT_FLAGS = ['appBlocks', 'appAssistant'] as const;
  *   static rules, which admit moderators only.
  * When the session hub misses or Flipt is undecided, the answer is `unavailable` (the runner asks
  * again), never a refusal: only a definite answer on that complete context refuses.
+ *
+ * `remoteRunner` also requires `appAssistantRemoteRunner`, so turning the runner off stops every mint
+ * of runs already holding a grant, not only new grants. It is not held to `isFliptDecisive`: while its
+ * Flipt flag does not exist its static rule (`['mod']`) decides, on `isModerator` read from the
+ * database row above, the same answer the run-grant route gave.
  */
 export async function getAppAssistantRefusalForUserId(
-  userId: number
+  userId: number,
+  { remoteRunner = false }: { remoteRunner?: boolean } = {}
 ): Promise<AppAssistantRefusal | AppAssistantGateUnavailable | null> {
   const row = await dbWrite.user.findUnique({
     where: { id: userId },
@@ -150,7 +161,7 @@ export async function getAppAssistantRefusalForUserId(
   if (!cached) return unavailable;
   const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
   if (!(await isFliptDecisive([...APP_ASSISTANT_FLAGS], user))) return unavailable;
-  return featureRefusal({ user });
+  return featureRefusal({ user }, { remoteRunner });
 }
 
 export interface AppAssistantToken {

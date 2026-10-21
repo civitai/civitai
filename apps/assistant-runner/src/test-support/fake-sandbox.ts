@@ -37,6 +37,7 @@ const TOOLS: { name: string; description: string }[] = [
   { name: 'run_command', description: 'Run a command.' },
   { name: 'preview_check', description: 'Check the preview renders.' },
   { name: 'dev_server_logs', description: 'Read the dev server logs.' },
+  { name: 'tunnel_key', description: 'Make a tunnel key.' },
 ];
 
 /**

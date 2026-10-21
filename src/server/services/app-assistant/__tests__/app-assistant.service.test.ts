@@ -217,6 +217,19 @@ describe('getAppAssistantRefusalForUserId (the runner’s mints)', () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
     expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({ status: 403 });
   });
+
+  it('with remoteRunner, also refuses once the server runner is off for the user (its kill switch)', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 403,
+      error: 'Replies on the server are not available on this account',
+    });
+    // Control: the same user is admitted with the runner on, and without asking about it.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: true });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toBeNull();
+  });
 });
 
 describe('enableAppAssistant', () => {

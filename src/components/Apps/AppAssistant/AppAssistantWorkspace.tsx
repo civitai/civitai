@@ -47,10 +47,7 @@ import {
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
-import {
-  createAppAssistantRemoteRunner,
-  createRunnerCredentials,
-} from '~/components/Apps/AppAssistant/remoteRunner';
+import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   createSandboxClient,
@@ -358,12 +355,9 @@ export function AppAssistantWorkspace({
   // each request (a viewer token) and each start (a run grant). Read once, as the chat starts.
   const runner = useMemo(
     () =>
-      remoteRunner
-        ? createAppAssistantRemoteRunner({
-            credentials: createRunnerCredentials(),
-            pageState: () => ({ app: live.current.active?.app ?? null }),
-          })
-        : undefined,
+      appAssistantRemoteRunnerFor(remoteRunner, () => ({
+        app: live.current.active?.app ?? null,
+      })),
     [remoteRunner]
   );
   // On the runner, create_app opens an app the page did not: it follows, once its list has it.

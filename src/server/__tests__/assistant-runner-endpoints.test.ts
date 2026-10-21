@@ -114,7 +114,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(status).toBe(200);
     expect(json).toEqual({ token: 'minted-chat-token', expiresAt: '2099-01-01T00:00:00Z' });
     expect(mintMock).toHaveBeenCalledWith(42, 'chat');
-    expect(userRefusalMock).toHaveBeenCalledWith(42);
+    expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
     expect(headers.get('cache-control')).toBe('no-store');
   });
 
@@ -238,7 +238,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
           token: `minted-${purpose}-token`,
           expiresAt: '2099-01-01T00:00:00Z',
         });
-        expect(userRefusalMock).toHaveBeenCalledWith(42);
+        expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
         expect(mintMock).toHaveBeenCalledWith(42, purpose);
       }
     );

@@ -16,7 +16,7 @@ import { buildApp } from '../app';
 import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
 import { RunGrants } from '../grants';
-import type { ModelProvider } from '../interfaces';
+import type { ModelProvider, ToolContext } from '../interfaces';
 import { TokenMinter } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
@@ -1223,16 +1223,24 @@ describePg('assistant-runner on DBOS + Postgres', () => {
   describe('App Assistant’s sandbox tools', () => {
     let sandbox: FakeSandboxService;
     const real = deps.tools;
+    /** What the runner handed the provider as each reply opened its tools. */
+    const opened: ToolContext[] = [];
     beforeAll(async () => {
       sandbox = new FakeSandboxService();
       await sandbox.start();
       sandbox.add('my-app');
-      deps.tools = new AppAssistantTools({
+      const provider = new AppAssistantTools({
         sandboxUrl: sandbox.url,
         // TEST-ONLY stand-in for a minted sandbox token.
         tokens: () => async (purpose) => `test-token-${purpose}`,
         log: deps.log,
       });
+      deps.tools = {
+        open: (context) => {
+          opened.push(context);
+          return provider.open(context);
+        },
+      };
     });
     afterAll(async () => {
       deps.tools = real;
@@ -1258,7 +1266,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       const rest = await events(runId, user, { lastEventId: upToCall.at(-1)!.id });
       expect(ended(rest).status).toBe('stopped');
       // The sandbox saw the call's connection close: closing the transport is what reaches it.
-      expect(sandbox.abandoned).toHaveLength(1);
+      await expect.poll(() => sandbox.abandoned.length, { timeout: 10_000 }).toBe(1);
     });
 
     it('carrying a reply on never runs a finished sandbox call again, and reports each call', async () => {
@@ -1288,6 +1296,34 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       expect(ended(entries).status).toBe('done');
       expect(sandbox.callsTo('write_file')).toBe(1);
       expect(rebuild(entries).at(-1)).toEqual({ kind: 'text', text: 'Written.' });
+      // The gate of the carried-on reply started from its saved steps: the write counts against it.
+      const carried = opened.at(-1)!;
+      expect(carried.conversationId).toBe('c-sandbox-retry');
+      expect(carried.history?.earlier).toEqual([]);
+      expect(JSON.stringify(carried.history?.current)).toContain(
+        '"toolName":"sandbox__write_file"'
+      );
+      expect(carried.history?.current.some((m) => m.role === 'tool')).toBe(true);
+    });
+
+    it('gives a reply subagents only when civitai’s grant says so', async () => {
+      const user = 'u-sandbox-subagents';
+      const body = startBody({ conversationId: 'c-subagents', model: 'long', page });
+      const grant = await signGrant(
+        keys,
+        { userId: user, conversationId: body.conversationId, idempotencyKey: body.idempotencyKey },
+        7800,
+        { subagents: true }
+      );
+      const on = await post('/runs', { ...as(user), 'x-run-grant': grant }, body);
+      expect(ended(await events(on.body!.runId as string, user)).status).toBe('done');
+      expect(opened.at(-1)).toMatchObject({ subagents: true, model: expect.any(Function) });
+
+      // Control: the same start without the claim.
+      const next = startBody({ conversationId: 'c-subagents-off', model: 'long', page });
+      const off = await post('/runs', as(user), next);
+      expect(ended(await events(off.body!.runId as string, user)).status).toBe('done');
+      expect(opened.at(-1)).toMatchObject({ subagents: false });
     });
   });
 

@@ -28,6 +28,7 @@ import {
   listenReplyResume,
 } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
+import { applyRemoteRunner } from '~/components/Apps/AppAssistant/remoteRunner';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
 
@@ -108,11 +109,7 @@ export function AppAssistantChat({
       el.mcp = APP_ASSISTANT_MCP;
       // Never assigned while off, so the chat runs replies in the browser exactly as without it. Set
       // before `app`, which starts the chat on the runner it names.
-      const initialRemoteRunner = remoteRunnerAtStart.current;
-      if (initialRemoteRunner) {
-        el.runner = 'remote';
-        el.remoteRunner = initialRemoteRunner;
-      }
+      applyRemoteRunner(el, remoteRunnerAtStart.current);
       const initialSubagents = subagentsAtStart.current;
       // Never assigned while off, so the chat runs exactly as it does without the feature.
       if (initialSubagents) el.subagents = initialSubagents;

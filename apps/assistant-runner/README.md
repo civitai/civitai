@@ -52,7 +52,8 @@ See [Not built yet](#not-built-yet).
   civitai's internal mint endpoint for a 5-minute App Assistant token of the purpose it needs
   (`chat` for the model and the store, `sandbox` for the sandbox service and its MCP server), inside
   that request's own fetch, and keeps it in memory until a minute before it expires; a Stop stops waiting for a mint at once. On every mint civitai runs the same gates as the
-  browser's token route (ban, onboarding, mute, email verification, the App Assistant flag) on the
+  browser's token route (ban, onboarding, mute, email verification, the App Assistant flag), plus the runner's own
+  flag `appAssistantRemoteRunner` (so turning it off ends runs already under way), on the
   user as its database has them now, then the consent check, so any of them going off ends a reply at
   its next request with a refusal that is never retried. A grant is deleted on every end the runner
   writes to the head, and when its workflow throws; an end it could not save after retries is kept
@@ -70,12 +71,16 @@ See [Not built yet](#not-built-yet).
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
     call may go 610 s without progress, as the chat's added-server tools.
-  - **Paused mid-reply.** When a call is refused before it reaches the tool (the connection cannot be
-    opened, or the MCP address answers with an error status: the sandbox paused after 30 idle minutes or
-    stopped at its 8-hour cap while the reply only talked to the model), the runner finds the sandbox
-    again, wakes it, and makes the call there, once. A sandbox deleted meanwhile is not recreated: the
-    call fails with words telling the user to open the app again. A call whose reply was lost (no
-    progress for 610 s) is not made again: the assistant is told it may have run.
+  - **Paused mid-reply.** When a call is refused (the connection cannot be opened, or the MCP
+    address answers with an error status: the sandbox paused after 30 idle minutes or stopped at its
+    8-hour cap while the reply only talked to the model), the runner finds the sandbox again, waking
+    it if it no longer runs. The call is made again only when it cannot have run: the connection never
+    opened, or the sandbox had to be woken. An error status from a sandbox that still runs (a proxy's
+    502, a pod restart) may have come after the call ran, so the assistant is told it may have
+    finished instead. Calls that fail together wake the sandbox once. A sandbox deleted meanwhile is
+    not recreated: the call fails with words telling the user to open the app again. A call whose
+    reply was lost (no progress for 610 s) is not made again either.
+  - **The tunnel tools** (`tunnel_*`) are not offered: they serve only the page's live preview.
   - **Stop and the end of a reply close the MCP transport**, which aborts every request in flight:
     the only way to reach a `sandbox__run_command` still running in the sandbox.
   - **Save before run.** Every call, sandbox ones included, waits until the head save that records its

@@ -4,6 +4,8 @@ import {
   ASSISTANT_RUNNER_BASE_PATH,
   RUN_GRANT_ROUTE,
   RUNNER_VIEWER_TOKEN_ROUTE,
+  appAssistantRemoteRunnerFor,
+  applyRemoteRunner,
   createAppAssistantRemoteRunner,
   createRunnerCredentials,
   type RunnerCredentials,
@@ -169,5 +171,30 @@ describe('createRunnerCredentials', () => {
       code: 'runner_off',
       message: 'Not on this account',
     });
+  });
+});
+
+describe('the flag decides where replies run', () => {
+  const credentials = vi.fn(
+    (): RunnerCredentials => ({ viewerToken: async () => VIEWER, grant: async () => 'g' })
+  );
+
+  it('off: no runner is made, and the chat is given nothing, so it runs replies in the browser', () => {
+    const runner = appAssistantRemoteRunnerFor(false, () => ({ app: 'my-app' }), credentials);
+    expect(runner).toBeUndefined();
+    expect(credentials).not.toHaveBeenCalled();
+    const chat: { runner?: 'browser' | 'remote'; remoteRunner?: unknown } = {};
+    applyRemoteRunner(chat, runner);
+    // Not even assigned undefined: the element's own default stays.
+    expect(Object.keys(chat)).toEqual([]);
+  });
+
+  it('on: the chat is pointed at the runner, which tells it the open app', () => {
+    const runner = appAssistantRemoteRunnerFor(true, () => ({ app: 'my-app' }), credentials);
+    expect(runner).toMatchObject({ url: ASSISTANT_RUNNER_BASE_PATH });
+    expect(runner?.pageState?.()).toEqual({ app: 'my-app' });
+    const chat: { runner?: 'browser' | 'remote'; remoteRunner?: unknown } = {};
+    applyRemoteRunner(chat, runner);
+    expect(chat).toEqual({ runner: 'remote', remoteRunner: runner });
   });
 });

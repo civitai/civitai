@@ -1,4 +1,5 @@
 import type { ChatRemoteRunner } from '@civitai/components-chat/civitai-chat';
+import { runPaths } from '@civitai/components-chat/runner-protocol';
 
 /**
  * Where the page reaches App Assistant's server runner (`apps/assistant-runner`): its run API on the
@@ -79,6 +80,10 @@ export function createRunnerCredentials({
   };
 }
 
+// The protocol's own paths, so a renamed route cannot quietly stop carrying its grant.
+const START_PATH = runPaths.start();
+const [PATCH_PREFIX, PATCH_SUFFIX] = runPaths.patch('\u0000').split('%00') as [string, string];
+
 /** A random key for a grant that no start names (a patch's). */
 function patchKey(): string {
   return `patch-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
@@ -122,16 +127,20 @@ export function createAppAssistantRemoteRunner({
       const { path, method } = requestOf(input, init);
       let grant: string | undefined;
       try {
-        if (method === 'POST' && path === `${base}/runs`) {
+        if (method === 'POST' && path === `${base}/${START_PATH}`) {
           const body = JSON.parse(String(init?.body ?? '{}')) as {
             conversationId?: unknown;
             idempotencyKey?: unknown;
           };
           if (typeof body.conversationId === 'string' && typeof body.idempotencyKey === 'string')
             grant = await credentials.grant(body.conversationId, body.idempotencyKey);
-        } else if (method === 'POST' && path.startsWith(`${base}/conversations/`)) {
+        } else if (
+          method === 'POST' &&
+          path.startsWith(`${base}/${PATCH_PREFIX}`) &&
+          path.endsWith(PATCH_SUFFIX)
+        ) {
           const conversationId = decodeURIComponent(
-            path.slice(`${base}/conversations/`.length).replace(/\/patch$/, '')
+            path.slice(`${base}/${PATCH_PREFIX}`.length, path.length - PATCH_SUFFIX.length)
           );
           if (conversationId) grant = await credentials.grant(conversationId, patchKey());
         }
@@ -151,4 +160,31 @@ export function createAppAssistantRemoteRunner({
       return fetchImpl(input, { ...init, headers });
     },
   };
+}
+
+/**
+ * The page's remote runner when the flag is on, else `undefined` (replies run in the browser). What
+ * `AppAssistantWorkspace` hands `AppAssistantChat`.
+ */
+export function appAssistantRemoteRunnerFor(
+  enabled: boolean,
+  pageState: () => { app: string | null },
+  credentials: () => RunnerCredentials = () => createRunnerCredentials()
+): ChatRemoteRunner | undefined {
+  return enabled
+    ? createAppAssistantRemoteRunner({ credentials: credentials(), pageState })
+    : undefined;
+}
+
+/**
+ * Points the chat at the server runner, before `app` starts it. With none it assigns nothing at all,
+ * so the chat runs replies in the browser exactly as it does without the feature.
+ */
+export function applyRemoteRunner(
+  chat: { runner?: 'browser' | 'remote'; remoteRunner?: ChatRemoteRunner },
+  remoteRunner: ChatRemoteRunner | undefined
+): void {
+  if (!remoteRunner) return;
+  chat.runner = 'remote';
+  chat.remoteRunner = remoteRunner;
 }

@@ -54,7 +54,9 @@ const RUNNER_PAGE_TOOLS = ['create_app', 'set_checklist', 'report_ready'] as con
 
 // As `<civitai-chat>`'s `hostToolSet` wraps a page's tools, so they read the same to the assistant.
 const MEDIA_NOTE = ' Pass attachment ids (like up1-1 or gen2-1-1) for files from this chat.';
-const FAILED_NOTE = 'This did not work. Tell the user in plain words; do not retry it this turn.';
+// The chat's note for a failed page tool (`tools/host`), not the one for a server's tool.
+const PAGE_TOOL_FAILED_NOTE =
+  'This did not work. Tell the user in plain words; do not retry it this turn.';
 
 export interface AppAssistantToolsOptions {
   /** The hosted sandbox service's base URL (civitai's `APP_ASSISTANT_SANDBOX_URL`). */
@@ -224,7 +226,7 @@ function pageToolSet(tools: Record<string, AssistantTool>, signal: AbortSignal):
         } catch (error) {
           return {
             error: error instanceof Error ? error.message : String(error),
-            note: FAILED_NOTE,
+            note: PAGE_TOOL_FAILED_NOTE,
           };
         }
       },
