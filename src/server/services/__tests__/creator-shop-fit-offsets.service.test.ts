@@ -6,8 +6,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import {
-  CREATOR_OFFSET_LIMIT,
-  MODERATOR_OFFSET_LIMIT,
   cosmeticOffsetsSchema,
   updateCreatorShopItemSchema,
 } from '~/server/schema/creator-shop.schema';
@@ -85,25 +83,18 @@ const writtenOffsets = () => {
 };
 
 describe('the schema takes the moderator ceiling and no more', () => {
-  it.each([-MODERATOR_OFFSET_LIMIT, -CREATOR_OFFSET_LIMIT, 0, 5, MODERATOR_OFFSET_LIMIT])(
-    'accepts %i on every edge',
-    (value) => {
-      expect(cosmeticOffsetsSchema.safeParse(edges(value)).success).toBe(true);
-    }
-  );
+  it.each([-50, -20, 0, 5, 50])('accepts %i on every edge', (value) => {
+    expect(cosmeticOffsetsSchema.safeParse(edges(value)).success).toBe(true);
+  });
 
-  it.each([-(MODERATOR_OFFSET_LIMIT + 1), MODERATOR_OFFSET_LIMIT + 1, 2.5])(
-    'refuses %s',
-    (value) => {
-      expect(cosmeticOffsetsSchema.safeParse({ ...edges(0), left: value }).success).toBe(false);
-    }
-  );
+  it.each([-51, 51, 2.5])('refuses %s', (value) => {
+    expect(cosmeticOffsetsSchema.safeParse({ ...edges(0), left: value }).success).toBe(false);
+  });
 
   it('lets a moderator update through the shared procedure input at -50', () => {
-    expect(
-      updateCreatorShopItemSchema.safeParse({ id: 42, offsets: edges(-MODERATOR_OFFSET_LIMIT) })
-        .success
-    ).toBe(true);
+    expect(updateCreatorShopItemSchema.safeParse({ id: 42, offsets: edges(-50) }).success).toBe(
+      true
+    );
   });
 });
 
@@ -112,7 +103,7 @@ describe('a creator submitting a frame', () => {
     await expect(
       submitCreatorShopItem({
         userId: 11,
-        offsets: { ...edges(0), bottom: -(CREATOR_OFFSET_LIMIT + 1) },
+        offsets: { ...edges(0), bottom: -21 },
       } as never)
     ).rejects.toThrow(OFFSETS_MESSAGE);
   });
@@ -123,7 +114,7 @@ describe('a creator submitting a frame', () => {
     await expect(
       submitCreatorShopItem({
         userId: 11,
-        offsets: edges(-CREATOR_OFFSET_LIMIT),
+        offsets: edges(-20),
         rightsAffirmed: false,
       } as never)
     ).rejects.toThrow(/confirm you have the rights/);
@@ -149,8 +140,8 @@ describe('editing the fit of an existing frame', () => {
   });
 
   it('accepts a creator at exactly -20 and stores it as given', async () => {
-    await updateCreatorShopItem({ id: 42, userId: 11, offsets: edges(-CREATOR_OFFSET_LIMIT) });
-    expect(writtenOffsets()).toEqual(edges(-CREATOR_OFFSET_LIMIT));
+    await updateCreatorShopItem({ id: 42, userId: 11, offsets: edges(-20) });
+    expect(writtenOffsets()).toEqual(edges(-20));
   });
 
   it('accepts a moderator at -50 and stores it as given', async () => {
@@ -158,9 +149,9 @@ describe('editing the fit of an existing frame', () => {
       id: 42,
       userId: 500,
       isModerator: true,
-      offsets: edges(-MODERATOR_OFFSET_LIMIT),
+      offsets: edges(-50),
     });
-    expect(writtenOffsets()).toEqual(edges(-MODERATOR_OFFSET_LIMIT));
+    expect(writtenOffsets()).toEqual(edges(-50));
   });
 
   it('keeps a moderator-set fit when the creator edits only the name', async () => {
