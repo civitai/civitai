@@ -29,6 +29,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
@@ -751,6 +752,10 @@ export async function unequipWithheldCosmetic(cosmeticId: number | null | undefi
   });
   const userIds = [...new Set(worn.map((row) => row.userId))];
   await afterHoldingsRemoved(userIds, worn);
+  // Rows not placed on content were worn by the user, which their search document shows.
+  await queueWornCosmeticsUpdate(
+    worn.filter((row) => row.equippedToId === null).map((row) => row.userId)
+  );
   await bustUserCreatorCache(userIds);
 }
 

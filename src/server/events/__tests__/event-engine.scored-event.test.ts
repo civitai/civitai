@@ -332,6 +332,21 @@ describe('end-of-event cleanup', () => {
     expect(flagged.map(([, id]) => id)).toEqual([11]);
   });
 
+  // Search results and user pickers render the cosmetics on each user's search document, which the
+  // sync re-pulls only for queued ids: everyone the cleanup unequipped must be queued, and no one else.
+  it('queues the users the cleanup unequipped for a search-index update', async () => {
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation((async (args: {
+      where?: { equippedToId?: unknown };
+    }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+
+    await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([501, 502]);
+    queue.mockRestore();
+  });
+
   const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
   const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
   const winnerUpdates = () =>
