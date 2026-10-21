@@ -166,7 +166,8 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     type,
     filters: resolveRestrictionFilters({ status, origin, sort }),
     q,
-    wide: true,
+    fullBleed: true,
+    headerInline: true,
   };
 }
 

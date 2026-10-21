@@ -162,6 +162,10 @@ describe('generator-restrictions load — filters', () => {
     });
   });
 
+  it('asks the root layout for the edge-to-edge page with an inline header', async () => {
+    expect(await runLoad()).toMatchObject({ fullBleed: true, headerInline: true });
+  });
+
   // Counts are decoration: a failed count query must leave the list up, not turn the page into a 500.
   it('still serves the list when the facet counts fail', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

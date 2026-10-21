@@ -2,11 +2,25 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
-  import { restrictionFilterParams, type RestrictionFilters } from '$lib/restriction-filters';
+  import {
+    DEFAULT_RESTRICTION_FILTERS,
+    RESTRICTION_ORIGIN_LABELS,
+    RESTRICTION_ORIGINS,
+    RESTRICTION_STATUS_LABELS,
+    RESTRICTION_STATUSES,
+    resolveRestrictionFilters,
+    restrictionFilterParams,
+    SORT_LABELS,
+    SORT_ORDERS,
+    type RestrictionFilters,
+  } from '$lib/restriction-filters';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import {
     unwiredRulingReason,
@@ -19,7 +33,6 @@
   } from '$lib/server/user-restriction.service';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
-  import RestrictionFilterBar from './RestrictionFilterBar.svelte';
   import RestrictionTriageDetail from './RestrictionTriageDetail.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -47,12 +60,10 @@
   let {
     data,
     form,
-    types,
     fallbackType,
   }: {
     data: QueueData;
     form: { error?: string } | null | undefined;
-    types: readonly RestrictionType[];
     fallbackType: RestrictionType;
   } = $props();
 
@@ -78,6 +89,36 @@
   const canDecide = (row: RestrictionRow) =>
     row.status === 'Pending' && !unwiredRulingReason(row.type);
 
+  const SELECTION = 'selected';
+
+  const statusGroup = $derived({
+    key: 'status',
+    label: 'Status',
+    values: RESTRICTION_STATUSES,
+    labels: RESTRICTION_STATUS_LABELS,
+    active: data.filters.status,
+    defaultValue: DEFAULT_RESTRICTION_FILTERS.status,
+    counts: data.facets?.status,
+    resets: ['sort'],
+  } satisfies ChipGroup);
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: SORT_ORDERS,
+    labels: SORT_LABELS,
+    active: data.filters.sort,
+    defaultValue: resolveRestrictionFilters({ status: data.filters.status }).sort,
+  } satisfies ChipGroup);
+  const originGroup = $derived({
+    key: 'origin',
+    label: 'Origin',
+    values: RESTRICTION_ORIGINS,
+    labels: RESTRICTION_ORIGIN_LABELS,
+    active: data.filters.origin,
+    defaultValue: DEFAULT_RESTRICTION_FILTERS.origin,
+    counts: data.facets?.origin,
+  } satisfies ChipGroup);
+
   const clearFiltersHref = $derived(
     urlWith(page.url, {
       status: null,
@@ -85,32 +126,36 @@
       sort: null,
       q: null,
       page: null,
-      selected: null,
+      [SELECTION]: null,
     })
   );
   const filtersActive = $derived(
-    data.filters.status !== 'Pending' || data.filters.origin !== 'all' || !!data.q
+    data.filters.status !== DEFAULT_RESTRICTION_FILTERS.status ||
+      data.filters.origin !== DEFAULT_RESTRICTION_FILTERS.origin ||
+      !!data.q
   );
 </script>
 
-<RestrictionFilterBar
-  type={data.type}
-  {types}
-  {fallbackType}
-  status={data.filters.status}
-  origin={data.filters.origin === 'all' ? null : data.filters.origin}
-  sort={data.filters.sort}
-  facets={data.facets}
-  q={data.q}
-/>
-
 {#snippet notice({ unpicked }: { unpicked: boolean })}
   {#if form?.error && !hydrated}
-    <ErrorAlert message={form.error} />
+    <ErrorAlert class="mx-6 mt-3" message={form.error} />
   {/if}
   {#if data.selectedMissing && (unpicked || !hydrated)}
-    <ErrorAlert message="Restriction #{data.selectedMissing} was not found in this queue." />
+    <ErrorAlert
+      class="mx-6 mt-3"
+      message="Restriction #{data.selectedMissing} was not found in this queue."
+    />
   {/if}
+{/snippet}
+
+{#snippet listHeader()}
+  <div class="flex flex-col gap-1.5">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
+      <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+    </div>
+    <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
+  </div>
 {/snippet}
 
 {#snippet empty()}
@@ -125,10 +170,11 @@
 {/snippet}
 
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row: RestrictionRow) => row.id}
   parseKey={(raw) => Number(raw) || null}
-  selectionParam="selected"
+  selectionParam={SELECTION}
   queueLabel="Restriction queue"
   itemLabel="Restriction"
   decisionEnabled={(row) => [canDecide(row), canDecide(row)]}
@@ -140,6 +186,7 @@
   offset={data.offset}
   total={data.totalCount}
   {notice}
+  {listHeader}
   {empty}
 >
   {#snippet listRow(row, state)}
