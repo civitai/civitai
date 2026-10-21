@@ -809,4 +809,43 @@ describe('decideAuthorHolds', () => {
     });
     expect(results).toEqual([{ holdId: 2, ok: false, error: 'down' }]);
   });
+
+  it('reports a request that left without an answer as possibly applied', async () => {
+    callModEndpoint.mockResolvedValue({ ok: false, error: 'timed out' });
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [{ holdId: 2, textHash: 'h-2' }],
+    });
+    expect(results).toEqual([
+      { holdId: 2, ok: false, error: expect.stringContaining('may already have completed') },
+    ]);
+  });
+
+  it('reports a refusal with a status as the main app’s own error', async () => {
+    callModEndpoint.mockResolvedValue({ ok: false, error: 'Forbidden', status: 403 });
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [{ holdId: 2, textHash: 'h-2' }],
+    });
+    expect(results).toEqual([{ holdId: 2, ok: false, error: 'Forbidden' }]);
+  });
+
+  it('sends at most 50 holds and reports the rest as too many', async () => {
+    const ids = Array.from({ length: 52 }, (_, i) => 100 + i);
+    await seed(ids.map((id) => ({ id, createdAt: '2026-10-06' })));
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: ids.map((id) => ({ holdId: id, textHash: `h-${id}` })),
+    });
+    expect(sent()).toHaveLength(1);
+    expect((sent()[0] as { holds: unknown[] }).holds).toHaveLength(50);
+    expect(results.filter((r) => r.ok)).toHaveLength(50);
+    expect(results.slice(50)).toEqual([
+      { holdId: 150, ok: false, error: 'Too many holds at once.' },
+      { holdId: 151, ok: false, error: 'Too many holds at once.' },
+    ]);
+  });
 });

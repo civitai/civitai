@@ -4,6 +4,7 @@ import * as z from 'zod';
 import type { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
@@ -280,7 +281,7 @@ export async function decideCsamHold(args: DecideArgs) {
   // The claim also checks the hash, so a rescan landing after the read above fails here as stale.
   if (!claimed.length) throw throwConflictError('Hold already decided, changed or missing.');
 
-  const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
+  const status: 'Dismissed' | 'Confirmed' = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
   try {
     if (plan.remove) await removeContent(hold, args);
     if (plan.strike) await strikeAuthor(hold, args);
@@ -426,6 +427,16 @@ export async function decideCsamHoldBatch({
     } catch (error) {
       // Only our own refusals carry text safe to show.
       const refusal = error instanceof TRPCError ? error : null;
+      if (!refusal)
+        // Code and name only: a Prisma message can echo the arguments, which here are the held text.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'csam hold batch decision failed',
+          holdId: hold.holdId,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorCode: (error as { code?: unknown } | null | undefined)?.code,
+        }).catch(() => null);
       results.push({
         holdId: hold.holdId,
         ok: false,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const mocks = vi.hoisted(() => ({ decide: vi.fn() }));
 
@@ -33,6 +34,7 @@ const tracker = {} as never;
 
 beforeEach(() => {
   mocks.decide.mockReset();
+  loggingMock.logToAxiom.mockClear();
 });
 
 describe('decideCsamHoldBatch', () => {
@@ -40,7 +42,7 @@ describe('decideCsamHoldBatch', () => {
     mocks.decide
       .mockResolvedValueOnce({ status: 'Confirmed', entityType: 'Model', entityId: 1, userId: 9 })
       .mockRejectedValueOnce(new TRPCError({ code: 'CONFLICT', message: STALE_HOLD_MESSAGE }))
-      .mockRejectedValueOnce(new Error('db exploded'));
+      .mockRejectedValueOnce(Object.assign(new Error('db exploded: held text'), { code: 'P2034' }));
 
     const results = await decideCsamHoldBatch({
       holds: [
@@ -66,6 +68,13 @@ describe('decideCsamHoldBatch', () => {
       { holdId: 3, ok: false, stale: true, error: STALE_HOLD_MESSAGE },
       { holdId: 4, ok: false, stale: false, error: 'Could not apply the decision to this hold.' },
     ]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom.mock.calls[0][0]).toMatchObject({
+      holdId: 4,
+      errorName: 'Error',
+      errorCode: 'P2034',
+    });
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('held text');
   });
 
   it('decides a hold listed twice once', async () => {

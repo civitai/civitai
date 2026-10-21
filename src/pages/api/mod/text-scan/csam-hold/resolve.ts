@@ -43,15 +43,20 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
         tracker: ctx.tracker,
       });
       const decided = results.flatMap((r) => (r.ok ? [r] : []));
-      logToAxiom({
-        name: 'text-scan',
-        type: 'csam-hold-decision',
-        message: 'csam holds decided as a batch',
-        decision: input.decision,
-        requested: input.holds.length,
-        decided: decided.length,
-        moderatorId: ctx.actor.id,
-      }).catch(() => null);
+      for (const r of results) {
+        logToAxiom({
+          name: 'text-scan',
+          type: 'csam-hold-decision',
+          message: 'csam hold decided',
+          holdId: r.holdId,
+          entityType: r.ok ? r.entityType : undefined,
+          entityId: r.ok ? r.entityId : undefined,
+          userId: r.ok ? r.userId : undefined,
+          decision: input.decision,
+          outcome: r.ok ? 'ok' : r.stale ? 'stale' : 'error',
+          moderatorId: ctx.actor.id,
+        }).catch(() => null);
+      }
       return {
         decision: input.decision,
         results,
@@ -72,6 +77,9 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
         message: `This decision needs the "${actionGrant}" moderator permission.`,
       });
 
+    if (input.holdId === undefined)
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Give `holdId` or `holds`.' });
+
     // Audit surface only (it feeds the reward pipeline's idempotency key, never an access check).
     const ip = resolveClientIpOrNull(ctx.req) ?? undefined;
     const result = await decideCsamHold({
@@ -90,7 +98,9 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       holdId: input.holdId,
       entityType: result.entityType,
       entityId: result.entityId,
+      userId: result.userId,
       decision: input.decision,
+      outcome: 'ok',
       moderatorId: ctx.actor.id,
     }).catch(() => null);
 

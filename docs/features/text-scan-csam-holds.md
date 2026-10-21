@@ -117,7 +117,8 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
 - The same endpoint takes `holds: [{ holdId, textHash }]` (at most 50, `remove` or `dismiss` only) to
   decide the author's other pending holds as one call and one rate-limit hit. Each hold is decided on its
   own against its `textHash`; the response lists a result per hold, so a stale or refused hold is
-  reported without stopping the rest.
+  reported without stopping the rest. Each hold of a batch is logged to Axiom like a single decision (with `outcome` ok, stale or error); an
+  unexpected error is logged by name and code only, never its message.
 - Decision keys 1-5 are Dismiss, Remove, Remove + strike, Remove + ban, Ban + file NCMEC report.
   A key is disabled when the content type cannot be removed or the moderator lacks the grant.
   Remove + strike, Remove + ban and the report action still ask for confirmation first; while a
