@@ -4,9 +4,10 @@ export type HoldChatMessage = {
   createdAt: string;
   userId: number;
   username: string | null;
+  bannedAt: string | null;
   content: string;
-  edited: boolean;
-  deleted: boolean;
+  editedAt: string | null;
+  deletedAt: string | null;
 };
 
 export type HoldChat = {

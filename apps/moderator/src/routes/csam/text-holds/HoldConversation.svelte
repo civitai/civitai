@@ -1,9 +1,10 @@
 <script lang="ts">
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { fetchHoldChat } from '$lib/csam-holds/hold-chat';
-  import { chatAuditChatUrl, userLookupUrl } from '$lib/entity-url';
-  import { LINK_CLASS, dateTime, plural } from '$lib/format';
+  import { chatAuditChatUrl } from '$lib/entity-url';
+  import { LINK_CLASS, plural } from '$lib/format';
 
   let { holdId, chatId }: { holdId: number; chatId: number } = $props();
 
@@ -57,16 +58,16 @@
           ]}
           aria-current={isJudged ? 'true' : undefined}
         >
-          <div class="flex flex-wrap items-baseline gap-x-2 text-[11px] text-dark-2">
-            <a href={userLookupUrl(message.userId)} class="font-medium text-dark-0 hover:underline">
-              {message.username ?? `user #${message.userId}`}
-            </a>
-            {#if fromSender}<span>sender</span>{/if}
-            <span>{dateTime(message.createdAt)}</span>
-            {#if isJudged}<MetaChip tone="red">judged</MetaChip>{/if}
-            {#if message.edited}<span>edited</span>{/if}
-            {#if message.deleted}<MetaChip tone="amber">deleted</MetaChip>{/if}
-          </div>
+          <MessageMeta
+            userId={message.userId}
+            username={message.username}
+            bannedAt={message.bannedAt}
+            createdAt={message.createdAt}
+            editedAt={message.editedAt}
+            deletedAt={message.deletedAt}
+            judged={isJudged}
+            sender={fromSender}
+          />
           <p class="m-0 mt-0.5 break-words whitespace-pre-wrap text-dark-0">{message.content}</p>
         </li>
       {/each}

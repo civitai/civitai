@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import { getEntityCovers, type CsamHoldRow } from '$lib/server/csam-holds.queries';
 import type { AppealCoverImage } from '$lib/server/minor-hash.service';
-import { threadEntityId, threadEntityType } from '$lib/server/user-account.service';
+import { commentV2ThreadParents } from '$lib/server/user-account.service';
 import {
   getProfilePictures,
   getProfiles,
@@ -55,19 +55,6 @@ async function profileContexts(userIds: number[]): Promise<Map<number, HoldProfi
 
 type ParentRef = { type: string; id: number };
 const parentKey = ({ type, id }: ParentRef) => `${type}:${id}`;
-
-/** What each `CommentV2` hangs off, through its thread and, for a reply, the root thread. */
-async function commentV2Parents(commentIds: number[]): Promise<Map<number, ParentRef>> {
-  const { rows } = await sql<{ id: number; type: string | null; targetId: number | null }>`
-    select c.id, ${threadEntityType} as type, ${threadEntityId} as "targetId"
-    from "CommentV2" c
-    left join "Thread" t on t.id = c."threadId"
-    left join "Thread" root on root.id = t."rootThreadId"
-    where c.id in (${sql.join(commentIds)})`.execute(dbRead);
-  return new Map(
-    rows.flatMap((r) => (r.type && r.targetId ? [[r.id, { type: r.type, id: r.targetId }]] : []))
-  );
-}
 
 const idsOf = (refs: ParentRef[], type: string) => [
   ...new Set(refs.filter((r) => r.type === type).map((r) => r.id)),
@@ -189,7 +176,7 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
   const v2Ids = holds.filter((h) => h.entityType === 'CommentV2').map((h) => h.entityId);
-  const v2 = v2Ids.length ? await commentV2Parents(v2Ids) : new Map<number, ParentRef>();
+  const v2 = v2Ids.length ? await commentV2ThreadParents(v2Ids) : new Map<number, ParentRef>();
   const refOf = (hold: HoldRef): ParentRef | null =>
     hold.entityType === 'CommentV2'
       ? v2.get(hold.entityId) ?? null

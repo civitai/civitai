@@ -34,9 +34,10 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       createdAt: row.createdAt.toISOString(),
       userId: row.userId,
       username: row.username,
+      bannedAt: row.bannedAt?.toISOString() ?? null,
       content: row.content,
-      edited: row.editedAt !== null,
-      deleted: row.deletedAt !== null,
+      editedAt: row.editedAt?.toISOString() ?? null,
+      deletedAt: row.deletedAt?.toISOString() ?? null,
     })),
   };
   return json(body);

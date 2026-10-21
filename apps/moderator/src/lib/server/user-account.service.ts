@@ -285,6 +285,22 @@ export const threadEntityType = sql<string | null>`case ${sql.join(
   sql` `
 )} end`;
 
+/** What each `CommentV2` hangs off, through its thread and, for a reply, the root thread. A comment whose thread points at nothing has no entry. */
+export async function commentV2ThreadParents(
+  commentIds: number[]
+): Promise<Map<number, { type: string; id: number }>> {
+  if (!commentIds.length) return new Map();
+  const { rows } = await sql<{ id: number; type: string | null; targetId: number | null }>`
+    select c.id, ${threadEntityType} as type, ${threadEntityId} as "targetId"
+    from "CommentV2" c
+    left join "Thread" t on t.id = c."threadId"
+    left join "Thread" root on root.id = t."rootThreadId"
+    where c.id in (${sql.join(commentIds)})`.execute(dbRead);
+  return new Map(
+    rows.flatMap((r) => (r.type && r.targetId ? [[r.id, { type: r.type, id: r.targetId }]] : []))
+  );
+}
+
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
     .selectFrom('CommentV2 as c')
