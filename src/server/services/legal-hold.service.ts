@@ -76,6 +76,16 @@ const markerAppearedSql = Prisma.raw(
   `(to_regclass('"${HOLD_MARKER_VIEW}"') IS NOT NULL OR to_regclass('"${HOLD_MARKER_TABLE}"') IS NOT NULL)`
 );
 
+/**
+ * Every hold on the account `id` (an int SQL expression) as one condition, for a statement that must
+ * not touch a held account's rows even when a hold lands after the check. `markerView` is what
+ * `assertAccountNotUnderLegalHold` returned.
+ */
+export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const legs = [...Object.values(holdLegsSql(id)), markerView ? markerSql(id) : markerAppearedSql];
+  return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
+}
+
 export type AccountLegalHold = {
   legs: AccountHoldLeg[];
   /** The marker view exists, so a statement may name it. */
@@ -172,7 +182,6 @@ export function guardedAccountScrubSql(userId: number, withMarker: boolean): Pri
   if (!Number.isSafeInteger(userId) || userId <= 0)
     throw new Error(`Refusing to build an account scrub for user id ${String(userId)}`);
   const id = Prisma.raw(`${userId}::int`);
-  const holds = [...Object.values(holdLegsSql(id)), withMarker ? markerSql(id) : markerAppearedSql];
   const statement = Prisma.sql`DO $guard$
 DECLARE scrubbed integer;
 BEGIN
@@ -185,7 +194,7 @@ BEGIN
       image = NULL,
       "profilePictureId" = NULL,
       "subscriptionId" = NULL
-  WHERE id = ${id} AND NOT (${Prisma.join(holds, ' OR ')});
+  WHERE id = ${id} AND NOT ${accountHoldSql(id, withMarker)};
   GET DIAGNOSTICS scrubbed = ROW_COUNT;
   IF scrubbed = 0 THEN
     RAISE EXCEPTION USING ERRCODE = ${abortCode}, MESSAGE = 'account scrub changed no row';

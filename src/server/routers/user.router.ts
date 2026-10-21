@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
   claimCosmeticHandler,
@@ -307,7 +309,11 @@ export const userRouter = router({
     // records WHO ordered the wipe. The other caller of `removeAllContent`
     // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
     // identity and correctly passes none.
-    await removeAllContent({ ...input, actorUserId: ctx.user.id });
+    await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch((e: unknown) => {
+      if (e instanceof LegalHoldError)
+        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      throw e;
+    });
     ctx.track.userActivity({
       type: 'RemoveContent',
       targetUserId: input.id,

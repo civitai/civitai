@@ -165,6 +165,11 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
   };
 });
 
+// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -213,6 +218,8 @@ const MOD = 9;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The wipe's re-check after its evidence deletes: still unheld.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
   fake.reset();
   fake.kv.push(
     { user_id: TARGET, key: 'gone-a', size_bytes: 101 },
@@ -409,8 +416,17 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // And the main-DB wipe must have happened in full regardless. These are the
     // deletes that define the wipe; if the purge could abort it, they would be
     // missing or partial.
-    for (const model of ['model', 'image', 'post', 'article', 'collection', 'comment'] as const) {
-      expect(dbMock.dbWrite[model].deleteMany).toHaveBeenCalledWith({ where: { userId: TARGET } });
+    expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
+      where: { userId: TARGET },
+    });
+    // The evidence deletes are raw, so each can carry the legal hold in its own statement.
+    for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
+      const deleted = dbMock.dbWrite.$executeRaw.mock.calls.some(
+        ([strings, ...values]) =>
+          (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
+          values.includes(TARGET)
+      );
+      expect(deleted, table).toBe(true);
     }
   });
 });

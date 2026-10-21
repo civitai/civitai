@@ -23,18 +23,22 @@ export function deleteButtonState(input: {
   return input.hold === 'held' ? 'held' : 'unknown';
 }
 
-/** What the button shows; `null` renders nothing. Only `enabled` can be pressed. */
-export function deleteButtonView(
-  state: DeleteButtonState
+/** What a hold-gated button shows; `null` renders nothing. Only `enabled` can be pressed. */
+export function holdButtonView(
+  state: DeleteButtonState,
+  enabledLabel: string
 ): { label: string; disabled: boolean } | null {
   switch (state) {
     case 'absent':
       return null;
     case 'enabled':
-      return { label: 'Delete account', disabled: false };
+      return { label: enabledLabel, disabled: false };
     case 'held':
       return { label: LEGAL_HOLD_BUTTON_TEXT, disabled: true };
     default:
       return { label: HOLD_UNKNOWN_BUTTON_TEXT, disabled: true };
   }
 }
+
+export const deleteButtonView = (state: DeleteButtonState) =>
+  holdButtonView(state, 'Delete account');
