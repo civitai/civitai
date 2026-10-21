@@ -14,6 +14,8 @@ import {
   flagRuling,
   parseKeptIds,
   planDecision,
+  appealRuling,
+  routesThroughAppeal,
   type FlagRef,
   withRuling,
 } from '$lib/minor-flags/flagged-decision';
@@ -24,6 +26,7 @@ import {
   getMinorQueueCounts,
   getFlaggedModels,
   getFlaggedSourceCounts,
+  getModelAppealState,
   getModelFlagDetail,
   getModelMinor,
   getNeedsReviewCount,
@@ -366,7 +369,8 @@ const flagName = (flag: FlagRef) => {
 const decideAction =
   (
     sources: readonly FlaggedSource[],
-    refuse: (event: RequestEvent, flag: FlagRef) => string | null = () => null
+    refuse: (event: RequestEvent, flag: FlagRef) => string | null = () => null,
+    appealAware = false
   ): Actions[string] =>
   async (event) => {
     const form = await event.request.formData();
@@ -406,6 +410,10 @@ const decideAction =
     const plan = planDecision(flags, keep);
     const input = parseForm(z.object(resolutionReasonFields), form);
     if (typeof input === 'string') return refusal(input);
+    if (appealAware && routesThroughAppeal(flags, true)) {
+      const state = await getModelAppealState(modelId);
+      if (state.pendingAppeal) return decideThroughAppeal(modelId, plan, state, input, refusal);
+    }
     const reasons: (RulingReason | null)[] = [];
     for (const flag of plan) {
       const ruling = flagRuling(flag);
@@ -465,6 +473,48 @@ const decideAction =
     };
   };
 
+/**
+ * An Auto-flagged decision on a model whose owner has an open appeal: the main app refuses to keep a
+ * flag past an open appeal, so the decision resolves the appeal instead, through the resolver the
+ * Appeals tab uses. Keeping every flag upholds it, reverting every flag overturns it, and a split
+ * rules each label. The resolver also rules any label the model carries that it was not told about
+ * (the whole-appeal and per-label calls both default unnamed labels), so a model flagged beyond what
+ * this row lists is refused rather than ruled on a label the moderator never saw.
+ */
+async function decideThroughAppeal(
+  modelId: number,
+  plan: readonly PlannedFlagRef[],
+  state: { minor: boolean; poi: boolean },
+  input: { resolvedReason?: string; internalNotes?: string },
+  refusal: (error: string) => ReturnType<typeof fail>
+) {
+  const listed = new Set(plan.map((f) => f.label));
+  for (const label of ['minor', 'poi'] as const)
+    if (state[label] && !listed.has(label))
+      return refusal(
+        `This model is also flagged as ${FLAG_LABEL_NAMES[label]}, which this row does not list. Rule it from Appeals.`
+      );
+  const ruling = appealRuling(plan);
+  if ('error' in ruling) return refusal(ruling.error);
+  const reason = checkedResolutionReason(
+    'flagAppeal',
+    ruling.verdict,
+    input,
+    ruling.lifted.length ? ruling.lifted : undefined
+  );
+  if (typeof reason === 'string') return refusal(reason);
+
+  const result = ruling.perLabel
+    ? await resolveMinorFlagAppealPerLabel(modelId, ruling.perLabel, reason)
+    : await resolveMinorFlagAppeal(modelId, ruling.verdict === 'Rejected', reason);
+  if (!result.ok) return refusal(result.error);
+  return {
+    success: true,
+    modelId,
+    resolved: ruling.verdict === 'Rejected' ? 'kept' : 'dismissed',
+  };
+}
+
 /** What happened to a ruled flag: an applied flag is kept or reverted; a Needs review lead, which had
  *  nothing applied, is flagged or dismissed. */
 const doneVerb = (flag: PlannedFlagRef) =>
@@ -508,7 +558,7 @@ async function flagFileMatch(
 export const flaggedActions: Actions = {
   keepFlag: flaggedAction(true),
   liftFlag: flaggedAction(false),
-  decideFlags: decideAction(['hash', 'text-scan']),
+  decideFlags: decideAction(['hash', 'text-scan'], undefined, true),
 };
 
 /** The permission each kind of Needs review lead is ruled under (`NEEDS_REVIEW_PERMISSIONS`). */

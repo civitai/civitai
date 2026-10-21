@@ -26,6 +26,7 @@ const {
   getFlaggedModels,
   getFlaggedSourceCounts,
   getHeldDetectionModelCount,
+  getModelAppealState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   reviewDaysLeft,
@@ -507,6 +508,13 @@ describe('Auto-flagged: hash auto-flags', () => {
       20: true,
       21: false,
     });
+  });
+
+  it('reads the appeal state the Auto-flagged ruling routes on, ignoring site-form appeals', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 20, 'Pending', 1, NULL), (2, 'Model', 21, 'Pending', 1, 'Model')`);
+    expect(await getModelAppealState(20)).toMatchObject({ pendingAppeal: true, minor: true });
+    expect(await getModelAppealState(21)).toMatchObject({ pendingAppeal: false });
   });
 
   it('carries the rulings kept on the minor entry and the model facts for a hash row', async () => {

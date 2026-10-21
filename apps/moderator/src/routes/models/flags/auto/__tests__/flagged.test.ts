@@ -10,7 +10,13 @@ const {
   revertMinorFlag,
   getFlaggedModels,
   getFlaggedSourceCounts,
+  getModelAppealState,
+  resolveMinorFlagAppeal,
+  resolveMinorFlagAppealPerLabel,
 } = vi.hoisted(() => ({
+  getModelAppealState: vi.fn(),
+  resolveMinorFlagAppeal: vi.fn(),
+  resolveMinorFlagAppealPerLabel: vi.fn(),
   ruleTextScanFlag: vi.fn(),
   resolveRedetection: vi.fn(),
   confirmMinorFlag: vi.fn(),
@@ -24,12 +30,13 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorFlagAppealGroups: vi.fn(async () => []),
   getFlaggedModels,
   getFlaggedSourceCounts,
+  getModelAppealState,
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag,
   dismissMinorHashMatch: vi.fn(),
-  resolveMinorFlagAppeal: vi.fn(),
-  resolveMinorFlagAppealPerLabel: vi.fn(),
+  resolveMinorFlagAppeal,
+  resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
   ruleTextScanFlag,
@@ -55,6 +62,9 @@ beforeEach(() => {
   revertMinorFlag.mockResolvedValue({ ok: true });
   getFlaggedModels.mockResolvedValue({ items: [], hasMore: false });
   getFlaggedSourceCounts.mockResolvedValue({ all: 3, hash: 2, 'text-scan': 2 });
+  getModelAppealState.mockResolvedValue({ pendingAppeal: false, minor: true, poi: false });
+  resolveMinorFlagAppeal.mockResolvedValue({ ok: true, rescanQueued: false });
+  resolveMinorFlagAppealPerLabel.mockResolvedValue({ ok: true, rescanQueued: false });
 });
 
 const redetected = { modelId: '42', label: 'minor', source: 'redetected', textHash: 'h-1' };
@@ -400,5 +410,87 @@ describe('queue load', () => {
     expect(getFlaggedModels).toHaveBeenLastCalledWith(
       expect.objectContaining({ filters: { source: 'all', flag: 'all', sort: 'oldest' } })
     );
+  });
+});
+
+describe('one decision over a row whose model has a pending appeal', () => {
+  const minorText = { label: 'minor', source: 'text-scan', textHash: 'h-1' };
+  const poiText = { label: 'poi', source: 'text-scan', textHash: 'h-1' };
+  const minorHash = { label: 'minor', source: 'hash', textHash: null };
+  const decide = (flags: object[], keep: string, extra: Record<string, string> = {}) =>
+    run('decideFlags', { modelId: '42', flags: JSON.stringify(flags), keep, ...extra });
+  const noPerFlagRuling = () => {
+    expect(ruleTextScanFlag).not.toHaveBeenCalled();
+    expect(confirmMinorFlag).not.toHaveBeenCalled();
+    expect(revertMinorFlag).not.toHaveBeenCalled();
+  };
+
+  beforeEach(() => {
+    getModelAppealState.mockResolvedValue({ pendingAppeal: true, minor: true, poi: false });
+  });
+
+  it('keeping the flag upholds the appeal instead of ruling the flag', async () => {
+    expect(
+      await decide([minorHash], 'minor:hash', { resolvedReason: 'flag-confirmed' })
+    ).toMatchObject({ success: true, modelId: 42, resolved: 'kept' });
+    expect(resolveMinorFlagAppeal).toHaveBeenCalledWith(42, true, {
+      resolvedReason: 'flag-confirmed',
+      internalNotes: undefined,
+    });
+    noPerFlagRuling();
+  });
+
+  it('reverting the flag overturns the appeal with an approval reason', async () => {
+    expect(
+      await decide([minorText], '', { resolvedReason: 'not-a-minor', internalNotes: 'adult' })
+    ).toMatchObject({ success: true, resolved: 'dismissed' });
+    expect(resolveMinorFlagAppeal).toHaveBeenCalledWith(42, false, {
+      resolvedReason: 'not-a-minor',
+      internalNotes: 'adult',
+    });
+    noPerFlagRuling();
+  });
+
+  it('a split rules the appeal per label', async () => {
+    getModelAppealState.mockResolvedValue({ pendingAppeal: true, minor: true, poi: true });
+    await decide([minorText, poiText], 'minor:text-scan', { resolvedReason: 'not-a-real-person' });
+    expect(resolveMinorFlagAppealPerLabel).toHaveBeenCalledWith(
+      42,
+      { minor: 'uphold', poi: 'overturn' },
+      { resolvedReason: 'not-a-real-person', internalNotes: undefined }
+    );
+    expect(resolveMinorFlagAppeal).not.toHaveBeenCalled();
+    noPerFlagRuling();
+  });
+
+  it('needs an appeal reason: the flag-review reason for a keep is refused', async () => {
+    expect(await decide([minorText], 'minor:text-scan', kept)).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/not a reason/) },
+    });
+    expect(resolveMinorFlagAppeal).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the model carries a flag the row does not list, before any write', async () => {
+    getModelAppealState.mockResolvedValue({ pendingAppeal: true, minor: true, poi: true });
+    expect(
+      await decide([minorText], '', { resolvedReason: 'not-a-minor' })
+    ).toMatchObject({ status: 400, data: { error: expect.stringMatching(/real person/) } });
+    expect(resolveMinorFlagAppeal).not.toHaveBeenCalled();
+  });
+
+  it("shows the main app's refusal against the model", async () => {
+    resolveMinorFlagAppeal.mockResolvedValue({ ok: false, error: 'No longer flagged.' });
+    expect(await decide([minorHash], 'minor:hash', { resolvedReason: 'flag-confirmed' })).toMatchObject({
+      status: 400,
+      data: { error: 'No longer flagged.', modelId: 42, subject: 'Model #42' },
+    });
+  });
+
+  it('rules each flag as before when no appeal is pending', async () => {
+    getModelAppealState.mockResolvedValue({ pendingAppeal: false, minor: true, poi: false });
+    await decide([minorHash], 'minor:hash');
+    expect(confirmMinorFlag).toHaveBeenCalledWith(42);
+    expect(resolveMinorFlagAppeal).not.toHaveBeenCalled();
   });
 });

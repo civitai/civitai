@@ -14,6 +14,7 @@
     flaggedReasonGroups,
     planDecision,
     planReasonProblem,
+    routesThroughAppeal,
     type FlagRef,
     type FlaggedDecision,
   } from '$lib/minor-flags/flagged-decision';
@@ -51,14 +52,20 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  // Mirrors the main app's refusal: an open appeal blocks keeping a flag, and blocks a re-detection
-  // ruling either way. Change with `flaggedDecisionEnabled`.
+  // Mirrors the main app's refusal: an open appeal blocks a re-detection ruling either way. Auto-flagged
+  // rows are ruled through the appeal instead. Change with `flaggedDecisionEnabled`.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
 
   const withAppeal = $derived(flags.map((f) => ({ ...f, hasPendingAppeal })));
   const enabled = $derived(decisions.map((d) => decisionEnabled(withAppeal, d)));
+  // Under an open appeal the decision resolves it, so its reason comes from the appeal's lists.
+  const viaAppeal = $derived(routesThroughAppeal(flags, hasPendingAppeal));
   const reasonGroups = $derived(
-    flaggedReasonGroups(flags, { keep: decisions[0].label, revert: decisions[1].label })
+    flaggedReasonGroups(
+      flags,
+      { keep: decisions[0].label, revert: decisions[1].label },
+      viaAppeal
+    )
   );
   const reasonOptions = $derived(reasonGroups ? decisionReasonOptions(reasonGroups) : null);
   // Key 1 takes one press when it has a single specific reason.
@@ -95,7 +102,8 @@
               planDecision(flags, decisions[index].keep),
               decisions[index].label,
               reason,
-              draft.note
+              draft.note,
+              viaAppeal
             );
     if (refusal) {
       input.cancel();

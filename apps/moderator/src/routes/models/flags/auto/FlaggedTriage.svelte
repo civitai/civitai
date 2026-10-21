@@ -50,8 +50,7 @@
   // Each decision key is on only when every flag allows its part; the first two confirm and revert every flag.
   const rowDecisionEnabled = (row: FlaggedRow) => {
     const flags = row.flags.map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal }));
-    return flaggedDecisions(flags)
-      .map((d) => decisionEnabled(flags, d));
+    return flaggedDecisions(flags).map((d) => decisionEnabled(flags, d));
   };
 
   // Carries the page's query so a no-JS submit re-renders the same queue.

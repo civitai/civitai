@@ -10,16 +10,20 @@ import { decisionReasonProblem } from '$lib/triage/decision-reasons';
 export type FlaggedSource = 'hash' | 'redetected' | 'text-scan' | 'file-match';
 export type FlaggedLabel = 'minor' | 'poi';
 
-/** Key order: 1 keeps the flag, 2 lifts it. The main app refuses to keep a flag while the owner has an
- *  open appeal. A hash or text-scan row can still be lifted (the ruling settles the appeal); a
- *  re-detection is refused either way, so both keys go off. A file match is not tied to an appeal. */
+/** Key order: 1 keeps the flag, 2 lifts it. A hash or text-scan row under appeal is ruled through the
+ *  appeal (`appealRuling`), so both keys stay on. The main app still refuses a re-detection ruling
+ *  while the owner has an open appeal, so both keys go off there. A file match is not tied to an
+ *  appeal. */
 export const flaggedDecisionEnabled = (row: {
   source: FlaggedSource;
   hasPendingAppeal: boolean;
 }): readonly boolean[] =>
-  row.source === 'file-match'
-    ? [true, true]
-    : [!row.hasPendingAppeal, !(row.hasPendingAppeal && row.source === 'redetected')];
+  row.source === 'redetected' && row.hasPendingAppeal ? [false, false] : [true, true];
+
+/** Whether a decision on these flags resolves the owner's open appeal instead of ruling each flag:
+ *  Auto-flagged rows only, since the main app's appeal resolver covers applied flags. */
+export const routesThroughAppeal = (flags: readonly Pick<FlagRef, 'source'>[], pending: boolean) =>
+  pending && flags.every((f) => f.source === 'hash' || f.source === 'text-scan');
 
 /** One flag a Flagged row rules on: the label, what raised it, and the text a ruling is bound to. */
 export type FlagRef = { label: FlaggedLabel; source: FlaggedSource; textHash: string | null };
@@ -37,6 +41,36 @@ export const FLAG_LABEL_NAMES: Record<FlaggedLabel, string> = {
 export type FlaggedDecision = { label: string; keep: string[] };
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * The appeal ruling a plan amounts to: keeping every flag rejects the appeal, reverting every flag
+ * approves it, and a split rules each label (`perLabel`) and approves the appeal for the reverted
+ * ones. `lifted` is the labels the approval covers, which the reason is checked against.
+ */
+export function appealRuling(plan: readonly PlannedFlag[]):
+  | {
+      verdict: 'Rejected' | 'Approved';
+      lifted: FlaggedLabel[];
+      perLabel: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' } | null;
+    }
+  | { error: string } {
+  const kept = new Map<FlaggedLabel, boolean>();
+  for (const flag of plan) {
+    if (kept.has(flag.label) && kept.get(flag.label) !== flag.keep)
+      return { error: 'A flag on the same label cannot be both kept and reverted.' };
+    kept.set(flag.label, flag.keep);
+  }
+  const lifted = [...kept].filter(([, keep]) => !keep).map(([label]) => label);
+  if (!lifted.length) return { verdict: 'Rejected', lifted, perLabel: null };
+  if (lifted.length === kept.size) return { verdict: 'Approved', lifted, perLabel: null };
+  const decision = (label: FlaggedLabel): 'uphold' | 'overturn' =>
+    kept.get(label) ? 'uphold' : 'overturn';
+  return {
+    verdict: 'Approved',
+    lifted,
+    perLabel: { minor: decision('minor'), poi: decision('poi') },
+  };
+}
 
 /**
  * The decisions a row offers, keyed by position. The first two confirm and revert every flag; with
@@ -152,8 +186,21 @@ export function planReasonProblem(
   plan: readonly PlannedFlag[],
   decisionLabel: string,
   reason: string,
-  note: string
+  note: string,
+  appeal = false
 ): string | null {
+  if (appeal) {
+    const ruling = appealRuling(plan);
+    if ('error' in ruling) return ruling.error;
+    return decisionReasonProblem(
+      'flagAppeal',
+      ruling.verdict,
+      decisionLabel,
+      reason,
+      note,
+      ruling.lifted.length ? ruling.lifted : undefined
+    );
+  }
   for (const flag of plan) {
     const ruling = flagRuling(flag);
     if (!ruling) continue;
@@ -182,11 +229,19 @@ export const decisionReasonList = (
   (decision.keep.length === flagCount ? groups[0] : groups[1]).reasons;
 
 /** The reasons the bar's select offers for keeping or reverting these flags, or null when none of
- *  them records a reason. */
+ *  them records a reason. Under an appeal every decision records one, from the appeal's lists. */
 export function flaggedReasonGroups(
   flags: readonly FlagRef[],
-  labels: { keep: string; revert: string }
+  labels: { keep: string; revert: string },
+  appeal = false
 ): { label: string; reasons: readonly ResolutionReason[] }[] | null {
+  if (appeal) {
+    const flagLabels = [...new Set(flags.map((f) => f.label))];
+    return [
+      { label: labels.keep, reasons: resolutionReasonsFor('flagAppeal', 'Rejected') },
+      { label: labels.revert, reasons: resolutionReasonsFor('flagAppeal', 'Approved', flagLabels) },
+    ];
+  }
   const reasoned = flags.filter((f) => flagRuling({ source: f.source, keep: true }) !== null);
   if (!reasoned.length) return null;
   const list = (keep: boolean) => {

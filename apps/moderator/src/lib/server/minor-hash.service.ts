@@ -1,6 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
 import {
@@ -1197,6 +1197,22 @@ export async function getModelMinor(modelId: number) {
     SELECT m.minor FROM "Model" m WHERE m.id = ${modelId}
   `.execute(dbRead);
   return result.rows[0]?.minor ?? false;
+}
+
+/** Whether the model has an open appeal (the same rule as the Appeals tab and the Auto-flagged row's
+ *  `hasPendingAppeal`), and which flags it carries now. Read from the primary: a ruling decides from
+ *  it, and a replica lagging behind a just-resolved appeal would send the decision down the wrong path. */
+export async function getModelAppealState(modelId: number) {
+  const result = await sql<{ pendingAppeal: boolean; minor: boolean; poi: boolean }>`
+    SELECT EXISTS (
+             SELECT 1 FROM "Appeal" a
+             WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+               AND a.status::text = 'Pending' AND a.category IS NULL
+           ) AS "pendingAppeal",
+           m.minor, m.poi
+    FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbWrite);
+  return result.rows[0] ?? { pendingAppeal: false, minor: false, poi: false };
 }
 
 /** Models with a held detection: the detections part of the Needs review badge. Rides

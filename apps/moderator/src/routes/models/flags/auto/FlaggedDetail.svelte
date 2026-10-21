@@ -118,8 +118,8 @@
   >
     <IconMessage class="mt-px size-3.5 shrink-0" aria-hidden="true" />
     <p class="m-0">
-      The owner has an open appeal on this model. Reverting a flag here closes it with the same reason;
-      keeping a flag has to wait for the appeal.
+      The owner has an open appeal on this model. Deciding here resolves it: keeping every flag
+      rejects the appeal, reverting every flag approves it, and the reason is recorded on the appeal.
       {#if canOpenAppeals}
         <a href={appealsHref} class={LINK_CLASS}>Open it in Appeals</a>.
       {:else}
@@ -252,7 +252,9 @@
       hasPendingAppeal={row.hasPendingAppeal}
       {submit}
       {actionHref}
-      hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+      hint={row.hasPendingAppeal
+        ? "This decision resolves the owner's appeal; the reason is recorded on it."
+        : 'Every decision here is stored as a labelled example for tuning the text-scan prompts.'}
       bind:draft
     />
   {/snippet}
