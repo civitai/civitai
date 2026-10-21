@@ -43,6 +43,7 @@ import {
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { cosmeticCache, refreshUserCosmeticCache } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 
 export const events = [holiday2024, birthday2026];
@@ -181,6 +182,7 @@ export const eventEngine = {
             data: { equippedAt: null },
           });
           await refreshUserCosmeticCache(wearers.map((x) => x.userId));
+          await queueWornCosmeticsUpdate(wearers.map((x) => x.userId));
         }
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });

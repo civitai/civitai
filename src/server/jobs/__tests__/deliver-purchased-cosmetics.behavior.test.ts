@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -440,5 +440,27 @@ describe('deliverMembershipCosmetics', () => {
       await run(new Date('2026-10-09T23:00:00Z'), NOW);
       expect(await badgesOf(CANCELING)).toEqual([]);
     });
+  });
+});
+
+// A revoked cosmetic the user was wearing still shows in their search document until the users
+// index re-pulls them, and the sync re-pulls an existing user only when their id is queued.
+describe('deliverMembershipCosmetics: users search index', () => {
+  it('queues the users who were wearing a revoked cosmetic, and only them', async () => {
+    await holder.db.query(
+      `UPDATE "UserCosmetic" SET "equippedAt" = now() WHERE "userId" = $1 AND "cosmeticId" = $2`,
+      [LAPSED, NAMEPLATE]
+    );
+    await holder.db.query(
+      `UPDATE "UserCosmetic" SET "equippedAt" = now(), "equippedToId" = 900 WHERE "userId" = $1`,
+      [EXPIRED]
+    );
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await run();
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([LAPSED]);
   });
 });
