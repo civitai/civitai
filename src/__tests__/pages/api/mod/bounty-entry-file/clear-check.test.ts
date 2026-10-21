@@ -20,7 +20,10 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 
 import handler from '~/pages/api/mod/bounty-entry-file/clear-check';
-import { fileCheckState } from '~/server/services/bounty-entry-file-check.service';
+import {
+  fileCheckState,
+  VALID_OVERRIDE_SQL,
+} from '~/server/services/bounty-entry-file-check.service';
 
 const FILE_ID = 31;
 const ENTRY_ID = 20;
@@ -46,10 +49,18 @@ function call(body: Record<string, unknown>) {
   return handler(req, res).then(() => statusCode);
 }
 
-/** Every UPDATE on "File" the call ran. */
+/** The transaction client the clear writes through, distinct from `dbWrite` itself. */
+const tx = { $executeRaw: vi.fn() };
+const sqlOf = (call: unknown[]) => (call[0] as string[]).join('?').replace(/\s+/g, ' ');
 const fileUpdates = () =>
-  dbMock.dbWrite.$executeRaw.mock.calls.filter((c: unknown[]) =>
-    (c[0] as string[]).join('?').includes('UPDATE "File"')
+  tx.$executeRaw.mock.calls.filter((c) => sqlOf(c).includes('UPDATE "File"'));
+const modActivityRows = () =>
+  tx.$executeRaw.mock.calls.filter((c) => sqlOf(c).includes('"ModActivity"'));
+const anyWrite = () =>
+  tx.$executeRaw.mock.calls.length + dbMock.dbWrite.$executeRaw.mock.calls.length;
+const loggedClear = () =>
+  loggingMock.logToAxiom.mock.calls.some(
+    ([e]) => (e as { message?: string }).message === 'override cleared'
   );
 
 loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
@@ -70,7 +81,9 @@ beforeEach(() => {
     entityId: ENTRY_ID,
     metadata: BLOCKED,
   } as never);
-  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  tx.$executeRaw.mockResolvedValue(1);
+  dbMock.dbWrite.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) =>
+    fn(tx)) as never);
 });
 
 describe('bountyEntryFile.clearCheck', () => {
@@ -78,39 +91,49 @@ describe('bountyEntryFile.clearCheck', () => {
     expect(await call({ fileId: FILE_ID, reason: '  their own alt account ' })).toBe(200);
 
     const [update] = fileUpdates();
-    const [strings, ...values] = update as [string[], ...unknown[]];
+    const [, ...values] = update as [string[], ...unknown[]];
     // Guarded on the url the moderator saw and on the file still being blocked.
-    const sql = strings.join('?').replace(/\s+/g, ' ');
-    expect(sql).toContain(`WHERE id = ? AND url = ? AND "entityType" = 'BountyEntry'`);
-    expect(sql).toContain(
-      `AND metadata->>'blockedReason' IS NOT NULL AND metadata->'checkOverride' IS NULL`
+    expect(sqlOf(update)).toContain(
+      `WHERE f.id = ? AND f.url = ? AND f."entityType" = 'BountyEntry' AND f.metadata->>'blockedReason' IS NOT NULL AND NOT COALESCE(?, false)`
     );
-    expect(values.slice(1, 3)).toEqual([FILE_ID, URL]);
+    expect(values.slice(1, 4)).toEqual([FILE_ID, URL, VALID_OVERRIDE_SQL]);
     const override = JSON.parse(values[0] as string);
     expect(override).toEqual({ by: 7, at: expect.any(String), reason: 'their own alt account' });
     expect(fileCheckState({ ...BLOCKED, checkOverride: override })).toBe('clean');
 
-    const modActivity = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
-      (c[0] as string[]).join('?').includes('"ModActivity"')
-    );
-    expect(modActivity?.slice(1)).toEqual([7, 'bountyEntry', 'clearFileCheck', [ENTRY_ID]]);
+    expect(modActivityRows().map((c) => c.slice(1))).toEqual([
+      [7, 'bountyEntry', 'clearFileCheck', [ENTRY_ID]],
+    ]);
+    // Both writes ride the transaction; nothing goes to the bare client.
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(loggedClear()).toBe(true);
+  });
+
+  it('fails the clear when its ModActivity row cannot be written, so the transaction rolls back', async () => {
+    tx.$executeRaw.mockImplementation(async (strings: string[]) => {
+      if (strings.join('').includes('"ModActivity"')) throw new Error('insert failed');
+      return 1;
+    });
+    expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(500);
+    expect(fileUpdates()).toHaveLength(1);
+    expect(loggedClear()).toBe(false);
   });
 
   it('refuses a caller who is not a moderator, and changes nothing', async () => {
     session.user.isModerator = false;
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(403);
     expect(dbMock.dbWrite.file.findUnique).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
   });
 
   it('refuses a missing reason', async () => {
     expect(await call({ fileId: FILE_ID })).toBe(400);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
   });
 
   it('refuses a reason that is only whitespace', async () => {
     expect(await call({ fileId: FILE_ID, reason: ' \n\t ' })).toBe(400);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
   });
 
   it.each([
@@ -126,14 +149,27 @@ describe('bountyEntryFile.clearCheck', () => {
       metadata,
     } as never);
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(400);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
+  });
+
+  it('clears a file whose stored clear is malformed, which counts as no clear', async () => {
+    dbMock.dbWrite.file.findUnique.mockResolvedValue({
+      id: FILE_ID,
+      url: URL,
+      entityType: 'BountyEntry',
+      entityId: ENTRY_ID,
+      metadata: { ...BLOCKED, checkOverride: { by: '7', at: 'x', reason: 'planted' } },
+    } as never);
+    expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(200);
+    expect(fileUpdates()).toHaveLength(1);
   });
 
   it('refuses when the file changed between the read and the write, and logs nothing', async () => {
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    tx.$executeRaw.mockResolvedValue(0);
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(400);
     expect(fileUpdates()).toHaveLength(1);
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(modActivityRows()).toHaveLength(0);
+    expect(loggedClear()).toBe(false);
   });
 
   it('refuses a file that is not a bounty entry file', async () => {
@@ -145,6 +181,6 @@ describe('bountyEntryFile.clearCheck', () => {
       metadata: BLOCKED,
     } as never);
     expect(await call({ fileId: FILE_ID, reason: 'their own alt account' })).toBe(404);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(anyWrite()).toBe(0);
   });
 });

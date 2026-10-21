@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -33,9 +33,31 @@ type FileCheckState = 'clean' | 'blocked' | 'unchecked';
 /** A moderator's ruling that a blocked file is fine. Dropped with the other check keys on a new url. */
 export type FileCheckOverride = { by: number; at: string; reason: string };
 
+/** Only the shape the clear writes counts: metadata from before these keys were server-only may hold anything. */
+export function isFileCheckOverride(value: unknown): value is FileCheckOverride {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const { by, at, reason } = value as Record<string, unknown>;
+  return (
+    Number.isSafeInteger(by) &&
+    (by as number) > 0 &&
+    typeof at === 'string' &&
+    typeof reason === 'string' &&
+    reason.trim() !== ''
+  );
+}
+
+/** `isFileCheckOverride` in SQL, over the File row aliased as `f`. */
+export const VALID_OVERRIDE_SQL = Prisma.sql`(
+  jsonb_typeof(f.metadata->'checkOverride'->'by') = 'number'
+  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,15}$'
+  AND jsonb_typeof(f.metadata->'checkOverride'->'at') = 'string'
+  AND jsonb_typeof(f.metadata->'checkOverride'->'reason') = 'string'
+  AND (f.metadata->'checkOverride'->>'reason') ~ '[^[:space:]]'
+)`;
+
 export function fileCheckState(metadata: unknown): FileCheckState {
   const meta = (metadata ?? {}) as Record<string, unknown>;
-  if (meta.blockedReason && !meta.checkOverride) return 'blocked';
+  if (meta.blockedReason && !isFileCheckOverride(meta.checkOverride)) return 'blocked';
   return meta.hashCheckedAt ? 'clean' : 'unchecked';
 }
 
@@ -145,7 +167,9 @@ export async function checkPendingBountyEntryFiles({
 } = {}) {
   const pending = await dbRead.$queryRaw<PendingFile[]>`
     SELECT f.id, f.url, f.name, f."sizeKB", be."userId" AS "authorId",
-      COALESCE((f.metadata->>'hashFailCount')::int, 0) AS "hashFailCount"
+      CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number'
+        AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$'
+        THEN (f.metadata->>'hashFailCount')::int ELSE 0 END AS "hashFailCount"
     FROM "Bounty" b
     JOIN "BountyEntry" be ON be."bountyId" = b.id
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -246,27 +270,32 @@ export async function clearBountyEntryFileCheck({
     throw throwBadRequestError('This file is not blocked.');
 
   const override: FileCheckOverride = { by: userId, at: new Date().toISOString(), reason };
-  const count = await dbWrite.$executeRaw`
-    UPDATE "File"
-    SET metadata = metadata || jsonb_build_object('checkOverride', ${JSON.stringify(
-      override
-    )}::jsonb)
-    WHERE id = ${file.id}
-      AND url = ${file.url}
-      AND "entityType" = 'BountyEntry'
-      AND metadata->>'blockedReason' IS NOT NULL
-      AND metadata->'checkOverride' IS NULL
-  `;
-  if (count !== 1)
-    throw throwBadRequestError(
-      'This file changed while you were reviewing it. Reload and try again.'
-    );
+  // One transaction, so a clear is never left without its ModActivity row.
+  await dbWrite.$transaction(async (tx) => {
+    // A malformed checkOverride (written before the key was server-only) counts as none.
+    const count = await tx.$executeRaw`
+      UPDATE "File" f
+      SET metadata = f.metadata || jsonb_build_object('checkOverride', ${JSON.stringify(
+        override
+      )}::jsonb)
+      WHERE f.id = ${file.id}
+        AND f.url = ${file.url}
+        AND f."entityType" = 'BountyEntry'
+        AND f.metadata->>'blockedReason' IS NOT NULL
+        AND NOT COALESCE(${VALID_OVERRIDE_SQL}, false)
+    `;
+    if (count !== 1)
+      throw throwBadRequestError(
+        'This file changed while you were reviewing it. Reload and try again.'
+      );
 
-  await trackModActivity(userId, {
-    entityType: 'bountyEntry',
-    entityId: file.entityId,
-    activity: 'clearFileCheck',
+    await trackModActivity(
+      userId,
+      { entityType: 'bountyEntry', entityId: file.entityId, activity: 'clearFileCheck' },
+      tx
+    );
   });
+
   logToAxiom({
     type: 'info',
     name: 'bounty-entry-file-check',

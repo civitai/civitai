@@ -31,10 +31,25 @@ export type StuckEntryFile = EntryFile & {
 };
 
 export type ClearedEntryFile = EntryFile & {
-  clearedAt: Date;
+  /** ISO timestamp, as the clear wrote it. */
+  clearedAt: string;
   moderator: string | null;
   reason: string | null;
 };
+
+// The main app's `isFileCheckOverride`: only the shape a clear writes counts.
+const validOverride = sql`(
+  jsonb_typeof(f.metadata->'checkOverride'->'by') = 'number'
+  AND (f.metadata->'checkOverride'->>'by') ~ '^[1-9][0-9]{0,15}$'
+  AND jsonb_typeof(f.metadata->'checkOverride'->'at') = 'string'
+  AND jsonb_typeof(f.metadata->'checkOverride'->'reason') = 'string'
+  AND (f.metadata->'checkOverride'->>'reason') ~ '[^[:space:]]'
+)`;
+
+// Metadata from before the key was server-only may hold anything; a non-count reads as 0.
+const failCount = sql`CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number'
+  AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$'
+  THEN (f.metadata->>'hashFailCount')::int ELSE 0 END`;
 
 const entryFileColumns = sql`
   f.id AS "fileId", f.name AS "fileName", be.id AS "entryId",
@@ -66,7 +81,7 @@ export async function getBlockedEntryFiles(limit: number) {
       AND NOT b.complete
       AND NOT b.refunded
       AND f.metadata->>'blockedReason' IS NOT NULL
-      AND f.metadata->'checkOverride' IS NULL
+      AND NOT COALESCE(${validOverride}, false)
     ORDER BY f.metadata->>'hashCheckedAt', f.id
     LIMIT ${limit + 1}
   `.execute(dbRead);
@@ -80,7 +95,7 @@ export async function getBlockedEntryFiles(limit: number) {
 export async function getStuckEntryFiles(limit: number) {
   const { rows } = await sql<StuckEntryFile>`
     SELECT ${entryFileColumns},
-           (f.metadata->>'hashFailCount')::int AS "failCount",
+           ${failCount} AS "failCount",
            f.metadata->>'hashLastError' AS "lastError",
            f.metadata->>'hashAttemptedAt' AS "attemptedAt",
            b."expiresAt"
@@ -92,7 +107,7 @@ export async function getStuckEntryFiles(limit: number) {
       AND NOT b.complete
       AND NOT b.refunded
       AND f.metadata->>'hashCheckedAt' IS NULL
-      AND (f.metadata->>'hashFailCount')::int > 0
+      AND ${failCount} > 0
     ORDER BY b."expiresAt", f.id
     LIMIT ${limit + 1}
   `.execute(dbRead);
@@ -106,19 +121,20 @@ export async function getStuckEntryFiles(limit: number) {
 export async function getClearedEntryFiles(limit: number) {
   const { rows } = await sql<ClearedEntryFile>`
     SELECT ${entryFileColumns},
-           (f.metadata->'checkOverride'->>'at')::timestamptz AS "clearedAt",
+           f.metadata->'checkOverride'->>'at' AS "clearedAt",
            mu.username AS moderator,
            f.metadata->'checkOverride'->>'reason' AS reason
     FROM "BountyEntry" be
     JOIN "Bounty" b ON b.id = be."bountyId"
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
     LEFT JOIN "User" u ON u.id = be."userId"
-    LEFT JOIN "User" mu ON mu.id = (f.metadata->'checkOverride'->>'by')::int
+    LEFT JOIN "User" mu ON mu.id = CASE WHEN ${validOverride}
+      THEN (f.metadata->'checkOverride'->>'by')::bigint END
     WHERE be.id IN (
         SELECT "entityId" FROM "ModActivity"
         WHERE "entityType" = 'bountyEntry' AND activity = 'clearFileCheck'
       )
-      AND f.metadata->'checkOverride' IS NOT NULL
+      AND ${validOverride}
     ORDER BY "clearedAt" DESC, f.id
     LIMIT ${limit}
   `.execute(dbRead);

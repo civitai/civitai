@@ -18,6 +18,7 @@ vi.mock('~/server/services/bounty-entry-file-check.service', async (importOrigin
 
 import {
   checkPendingBountyEntryFiles,
+  fileCheckState,
   getBountyEntryFileStates,
 } from '~/server/services/bounty-entry-file-check.service';
 import {
@@ -49,6 +50,30 @@ loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
 beforeEach(() => {
   vi.clearAllMocks();
   mockCheckOn.mockResolvedValue(true);
+});
+
+describe('fileCheckState', () => {
+  it('a clear lifts the block', () => {
+    expect(fileCheckState(CLEARED)).toBe('clean');
+  });
+
+  // Metadata written before the clear was server-only can hold anything an entrant sent.
+  it.each([
+    ['true', true],
+    ['a string', 'ok'],
+    ['an array', [1]],
+    ['an empty object', {}],
+    ['a string moderator id', { by: '1', at: 'x', reason: 'r' }],
+    ['a fractional moderator id', { by: 1.5, at: 'x', reason: 'r' }],
+    ['a zero moderator id', { by: 0, at: 'x', reason: 'r' }],
+    ['no time', { by: 1, reason: 'r' }],
+    ['a numeric time', { by: 1, at: 1, reason: 'r' }],
+    ['no reason', { by: 1, at: 'x' }],
+    ['an empty reason', { by: 1, at: 'x', reason: '' }],
+    ['a whitespace reason', { by: 1, at: 'x', reason: ' \n ' }],
+  ])('keeps the block when the stored clear is %s', (_, checkOverride) => {
+    expect(fileCheckState({ ...BLOCKED, checkOverride })).toBe('blocked');
+  });
 });
 
 describe('checkPendingBountyEntryFiles', () => {
@@ -124,6 +149,19 @@ describe('checkPendingBountyEntryFiles', () => {
     });
     expect(mockFindHashOwnership).not.toHaveBeenCalled();
     expect(result).toMatchObject({ checked: 0, failed: 1 });
+  });
+
+  it('reads a stored failure count only when it is a small whole number', async () => {
+    pending({ id: 1 });
+    await checkPendingBountyEntryFiles({ hashFile: async () => SHA });
+
+    // A bare `::int` cast throws on a planted string and would fail every run of the job.
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[])
+      .join('?')
+      .replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      `CASE WHEN jsonb_typeof(f.metadata->'hashFailCount') = 'number' AND (f.metadata->>'hashFailCount') ~ '^[0-9]{1,6}$' THEN (f.metadata->>'hashFailCount')::int ELSE 0 END AS "hashFailCount"`
+    );
   });
 
   it('counts repeated failures, and keeps urls out of the recorded error', async () => {
