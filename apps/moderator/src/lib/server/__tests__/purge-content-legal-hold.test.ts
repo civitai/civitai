@@ -93,6 +93,12 @@ describe('purgeAllContent and a legal hold', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
+  it('shows the unknown-status refusal when the endpoint could not check the hold', async () => {
+    purge = () => json({ message: HOLD_UNKNOWN_REFUSAL }, 403);
+    expect(await run()).toEqual({ ok: false, error: HOLD_UNKNOWN_REFUSAL });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
   it('shows any other 403 as the endpoint wrote it, not as a hold', async () => {
     purge = () => json({ message: 'Forbidden' }, 403);
     expect(await run()).toEqual({ ok: false, error: 'Purge: Forbidden' });

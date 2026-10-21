@@ -109,6 +109,7 @@ import {
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import { deleteImages } from '~/server/services/image.service';
@@ -359,6 +360,7 @@ describe('removeAllContent', () => {
     const refused = await removeAllContent({ id: userId }).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(LegalHoldError);
     expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
+    expect(refused).not.toBeInstanceOf(LegalHoldUnconfirmedError);
 
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
@@ -368,7 +370,7 @@ describe('removeAllContent', () => {
   it('refuses when the hold cannot be checked', async () => {
     failLookups = true;
     const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
-    expect(refused).toBeInstanceOf(LegalHoldError);
+    expect(refused).toBeInstanceOf(LegalHoldUnconfirmedError);
     expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
@@ -592,6 +594,7 @@ const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
   LEGAL_HOLD_REFUSAL: string;
   LEGAL_HOLD_STOPPED: string;
+  HOLD_UNKNOWN_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
 };
 beforeAll(async () => {
@@ -605,6 +608,7 @@ beforeAll(async () => {
     restErrorReason: reader.restErrorReason,
     LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
+    HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
     purgeWarning: purge.purgeWarning,
   });
   expect(typeof moderator.purgeWarning).toBe('function');
@@ -677,6 +681,17 @@ describe('/api/mod/remove-all-content', () => {
     expect(tracked).not.toHaveBeenCalled();
   });
 
+  it('answers 403 saying the hold could not be checked, deleting nothing', async () => {
+    failLookups = true;
+    const res = await call(CLEAN);
+    failLookups = false;
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
+    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
+    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    expect(tracked).not.toHaveBeenCalled();
+  });
+
   it('answers 409 and records the activity when a hold stops the wipe part-way', async () => {
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
     const res = await call(CLEAN);
@@ -724,6 +739,16 @@ describe('/api/mod/delete-user-images', () => {
     expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
     expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
     expect((await remaining(HELD)).Image).toBe(1);
+  });
+
+  it('refuses, saying the hold could not be checked, deleting nothing', async () => {
+    failLookups = true;
+    const res = await call(CLEAN);
+    failLookups = false;
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
+    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
+    expect((await remaining(CLEAN)).Image).toBe(2);
   });
 
   it('keeps the images and posts when a hold lands mid-run, and says it stopped', async () => {

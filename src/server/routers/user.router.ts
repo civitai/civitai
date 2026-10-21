@@ -1,9 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import {
+  HOLD_UNCONFIRMED,
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
@@ -326,6 +328,8 @@ export const userRouter = router({
           track();
           throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_STOPPED });
         }
+        if (e instanceof LegalHoldUnconfirmedError)
+          throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED });
         if (e instanceof LegalHoldError)
           throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
         throw e;

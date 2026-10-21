@@ -32,6 +32,17 @@ export class LegalHoldStoppedError extends LegalHoldError {
   }
 }
 
+/** What a moderator is told when whether a hold applies could not be read. */
+export const HOLD_UNCONFIRMED = "Couldn't check legal hold status; try again.";
+
+/** Whether the account is held could not be read; refused like a hold. */
+export class LegalHoldUnconfirmedError extends LegalHoldError {
+  constructor() {
+    super();
+    this.name = 'LegalHoldUnconfirmedError';
+  }
+}
+
 export type AccountHoldLeg =
   | 'report'
   | 'hold-marker'
@@ -139,21 +150,21 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 }
 
 /**
- * Throws `LegalHoldError` when the account is held, or when whether it is held cannot be
- * determined. The reason is logged here and goes no further.
+ * Throws `LegalHoldError` when the account is held, and `LegalHoldUnconfirmedError` when whether it
+ * is held cannot be determined. The reason is logged here and goes no further.
  */
 export async function assertAccountNotUnderLegalHold(
   userId: number
 ): Promise<Pick<AccountLegalHold, 'markerView'>> {
   const hold = await holdOrNull(userId);
-  if (hold && !hold.legs.length) return { markerView: hold.markerView };
-  if (hold)
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: 'Account deletion refused',
-      details: { userId, legs: hold.legs },
-    });
+  if (!hold) throw new LegalHoldUnconfirmedError();
+  if (!hold.legs.length) return { markerView: hold.markerView };
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: 'Account deletion refused',
+    details: { userId, legs: hold.legs },
+  });
   throw new LegalHoldError();
 }
 

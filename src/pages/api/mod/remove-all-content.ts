@@ -3,10 +3,12 @@ import * as z from 'zod';
 import { TRPCError } from '@trpc/server';
 import { Tracker } from '~/server/clickhouse/client';
 import {
+  HOLD_UNCONFIRMED,
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
   LegalHoldStoppedError,
+  LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -35,6 +37,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
       );
     }
+    if (e instanceof LegalHoldUnconfirmedError)
+      return handleEndpointError(
+        res,
+        new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED })
+      );
     if (e instanceof LegalHoldError)
       return handleEndpointError(
         res,

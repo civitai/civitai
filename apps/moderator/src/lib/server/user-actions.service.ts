@@ -1496,6 +1496,8 @@ export async function purgeAllContent(input: {
   if (!result.ok) {
     if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
       return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
+      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // A hold stopped it part-way, after some of the account was deleted: that is recorded.
     if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
       await logAction('purgeAllContent', input.userId, input.moderatorId);
