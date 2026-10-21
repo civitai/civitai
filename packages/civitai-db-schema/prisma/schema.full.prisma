@@ -6550,6 +6550,24 @@ model CsamReportAudit {
   @@index([csamReportId])
 }
 
+/// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
+model CsamReportArchiveObject {
+  id            Int      @id @default(autoincrement())
+  csamReportId  Int
+  /// base | images | generatedImages | trainingData
+  kind          String
+  key           String
+  etag          String?
+  /// Entries appended to a zip archive.
+  entries       Int?
+  /// Items the report names that this archive was expected to hold, and how many it lacks.
+  namedExpected Int?
+  namedMissing  Int?
+  uploadedAt    DateTime @default(now())
+
+  @@index([csamReportId])
+}
+
 model Link {
   id         Int      @id @default(autoincrement())
   url        String

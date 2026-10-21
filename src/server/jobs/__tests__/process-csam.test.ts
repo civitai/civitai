@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
 
+const evidence = vi.hoisted(() => ({ checkCsamArchiveEvidence: vi.fn() }));
+vi.mock('~/server/services/csam-archive-evidence.service', () => evidence);
+
 import {
   CSAM_ARCHIVE_JOB_LOCK_SECONDS,
   CSAM_ARCHIVE_MEASURED_PASS_SECONDS,
@@ -41,6 +44,7 @@ beforeEach(() => {
   mocks.getCsamsToReport.mockResolvedValue(reports);
   mocks.archiveCsamDataForReport.mockResolvedValue(undefined);
   mocks.processCsamReport.mockResolvedValue(undefined);
+  evidence.checkCsamArchiveEvidence.mockResolvedValue(undefined);
 });
 
 /** The exact pre-fix failure: `Promise.reject()` with no argument. */
@@ -109,6 +113,25 @@ describe('archive-csam-reports batch isolation', () => {
       .map(([arg]) => arg as { subType?: string; message?: unknown })
       .filter((arg) => arg?.subType === 'archive-data');
     expect(logged[0].message).toBe('synthetic archive failure');
+  });
+
+  it('checks the stored evidence after the batch, even when a report failed', async () => {
+    mocks.archiveCsamDataForReport.mockImplementationOnce(() =>
+      Promise.reject(new Error('synthetic archive failure'))
+    );
+
+    await archiveJob!.run({}).result;
+
+    expect(evidence.checkCsamArchiveEvidence).toHaveBeenCalledTimes(1);
+    expect(evidence.checkCsamArchiveEvidence.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.archiveCsamDataForReport.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('finishes the job when the evidence check fails', async () => {
+    evidence.checkCsamArchiveEvidence.mockRejectedValueOnce(new Error('synthetic check failure'));
+
+    await expect(archiveJob!.run({}).result).resolves.not.toThrow();
   });
 });
 

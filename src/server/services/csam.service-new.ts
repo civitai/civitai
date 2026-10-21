@@ -109,6 +109,20 @@ type CsamReportDetails = CsamReportFormOutput & {
   archiveSkipped?: string;
 };
 
+type StoredObject = { key: string; etag: string | null };
+
+/** Only image or video bytes count as an archived copy of a named item. */
+const isArchivedMedia = (blob: Blob) => /^(image|video)\//.test(blob.type);
+
+export type CsamArchiveObjectKind = 'base' | 'images' | 'generatedImages' | 'trainingData';
+
+type ArchivedObject = StoredObject & {
+  kind: CsamArchiveObjectKind;
+  entries?: number;
+  namedExpected?: number;
+  namedMissing?: number;
+};
+
 export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
   details: CsamReportDetails;
   images: CsamReportImage[];
@@ -988,7 +1002,7 @@ async function reportExternalLink(report: CsamReportProps) {
   }
 }
 
-function getCsamS3Client() {
+export function getCsamS3Client() {
   if (
     !env.CSAM_UPLOAD_KEY ||
     !env.CSAM_UPLOAD_SECRET ||
@@ -1123,7 +1137,7 @@ function uploadStream({
   // replaces. With no estimate the derivation returns exactly that old pair.
   const { partSize, queueSize } = deriveUploadPartGeometry({ expectedBytes });
 
-  return new Promise<void>(async (resolve, reject) => {
+  return new Promise<StoredObject>(async (resolve, reject) => {
     try {
       const parallelUploads3 = new Upload({
         client,
@@ -1155,9 +1169,8 @@ function uploadStream({
       // error it reports is already surfaced by `done()` rejecting, so there is nothing to do
       // with it here beyond not crashing the process on an unhandled 'error' event.
       stream.pipeline(readStream, passThroughStream, () => undefined);
-      await parallelUploads3.done();
-      // console.dir('upload finished', { depth: null });
-      resolve();
+      const result = (await parallelUploads3.done()) as { ETag?: string } | undefined;
+      resolve({ key: Key, etag: result?.ETag ?? null });
     } catch (e) {
       // Rejecting with a real Error, not the bare `reject()` this used to do. An `undefined`
       // rejection value reaches the caller's `catch (e)` and then blows up on `e.message` with
@@ -1318,7 +1331,7 @@ async function archiveAndUpload({
    */
   expectedBytes?: number;
   append: (archive: BoundedArchive) => Promise<void>;
-}) {
+}): Promise<StoredObject> {
   const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
 
   if (!streamToStorage) {
@@ -1375,8 +1388,7 @@ async function archiveAndUpload({
     //
     // The cost is that this path keeps the old `10,000 x 5 MiB` = 48.8 GiB object ceiling. That
     // is what rolling back MEANS; removing that ceiling is the streaming path's job.
-    await uploadStream({ stream: readableStream, userId, filename });
-    return;
+    return await uploadStream({ stream: readableStream, userId, filename });
   }
 
   const passThrough = new stream.PassThrough();
@@ -1409,7 +1421,7 @@ async function archiveAndUpload({
     filename,
     expectedBytes,
   }).then(
-    () => undefined,
+    (stored) => stored,
     (e: unknown) => {
       uploadError = e;
       // Fail the sink. The `stream.pipeline` above is what turns that into a stop signal for the
@@ -1480,8 +1492,9 @@ async function archiveAndUpload({
   // The upload is what decides the object is complete — `finalize()` only tells us the archive
   // ended and the sink drained. Awaiting it here is what makes this function's resolution mean
   // "the object is in storage", matching what the disk path's `await uploadStream(...)` means.
-  await uploadPromise;
-  if (uploadError) throw uploadError;
+  const stored = await uploadPromise;
+  if (uploadError || !stored) throw uploadError ?? new Error(`failed to upload ${filename}`);
+  return stored;
 }
 
 /** Serialises `bigint` columns (e.g. `Image.pHash`) as strings — `JSON.stringify` throws on them. */
@@ -1606,6 +1619,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       })
     );
 
+  const archived: ArchivedObject[] = [];
+
   try {
     await archiveBaseReportData();
 
@@ -1625,6 +1640,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         break;
     }
 
+    await dbWrite.csamReportArchiveObject.createMany({
+      data: archived.map((object) => ({ csamReportId: report.id, ...object })),
+    });
     await dbWrite.csamReport.update({
       where: { id: report.id },
       data: {
@@ -1768,7 +1786,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     });
 
     const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
+    archived.push({
+      kind: 'base',
+      ...(await uploadStream({ stream: readableStream, userId, filename: 'data.json' })),
+    });
   }
 
   /**
@@ -1793,7 +1814,11 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       ? await dbRead.image.count({ where: { userId } })
       : undefined;
 
-    await archiveAndUpload({
+    const namedIds = new Set(report.images.map((image) => image.id));
+    const appendedIds = new Set<number>();
+    let entries = 0;
+
+    const stored = await archiveAndUpload({
       userId,
       filename: 'images.zip',
       diskPath: `${reportDirs.images}/${userId}_images.zip`,
@@ -1816,7 +1841,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                   getEdgeUrl(image.url, {
                     type: image.type,
                     width: width < maxWidth ? width : maxWidth,
-                  })
+                  }),
+                  undefined,
+                  { requireOk: true }
                 );
                 if (!blob) return;
                 const arrayBuffer = await blob.arrayBuffer();
@@ -1829,11 +1856,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                 const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
                 await boundedArchive.append(buffer, { name: filename });
+                entries += 1;
+                if (isArchivedMedia(blob)) appendedIds.add(image.id);
               });
             })
           );
         }
       },
+    });
+
+    archived.push({
+      kind: 'images',
+      ...stored,
+      entries,
+      namedExpected: namedIds.size,
+      namedMissing: [...namedIds].filter((id) => !appendedIds.has(id)).length,
     });
   }
 
@@ -1841,12 +1878,22 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     const { userId } = report;
 
     const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
-    const imageUrls = flaggedData
-      .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
-      .filter(isDefined)
-      .map((x) => x.previewUrl);
+    const namedUrls = new Set(
+      (report.details?.generatedImages ?? []).flatMap(({ blobs }) => blobs.map(({ url }) => url))
+    );
+    const imageUrls = [
+      ...new Set([
+        ...flaggedData
+          .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+          .filter(isDefined)
+          .map((x) => x.previewUrl),
+        ...namedUrls,
+      ]),
+    ];
+    const appendedUrls = new Set<string>();
+    let entries = 0;
 
-    await archiveAndUpload({
+    const stored = await archiveAndUpload({
       userId,
       filename: 'generated-images.zip',
       diskPath: `${reportDirs.generatedImages}/${userId}_generated-images.zip`,
@@ -1860,7 +1907,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         await Promise.all(
           imageUrls.map((url, index) => {
             return limit(async () => {
-              const blob = await fetchBlob(url);
+              const blob = await fetchBlob(url, undefined, { requireOk: true });
               if (!blob) return;
               try {
                 const arrayBuffer = await blob.arrayBuffer();
@@ -1869,6 +1916,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                 const imageName = zipEntryNameForUrl(url, index);
 
                 await boundedArchive.append(buffer, { name: imageName });
+                entries += 1;
+                if (isArchivedMedia(blob)) appendedUrls.add(url);
               } catch (e) {
                 //
               }
@@ -1876,6 +1925,14 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           })
         );
       },
+    });
+
+    archived.push({
+      kind: 'generatedImages',
+      ...stored,
+      entries,
+      namedExpected: namedUrls.size,
+      namedMissing: [...namedUrls].filter((url) => !appendedUrls.has(url)).length,
     });
   }
 
@@ -1898,7 +1955,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     }
 
     const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'training-data.zip' });
+    archived.push({
+      kind: 'trainingData',
+      ...(await uploadStream({ stream: readableStream, userId, filename: 'training-data.zip' })),
+    });
   }
 }
 

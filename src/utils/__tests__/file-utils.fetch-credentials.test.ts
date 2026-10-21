@@ -44,6 +44,15 @@ describe('fetchBlob — fetch credentials', () => {
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('returns an error response as a blob unless asked to require success', async () => {
+    fetchMock.mockImplementation(async () => new Response('not found', { status: 404 }));
+
+    expect(await fetchBlob('https://image.civitai.com/x.jpeg')).not.toBeNull();
+    expect(
+      await fetchBlob('https://image.civitai.com/x.jpeg', undefined, { requireOk: true })
+    ).toBeNull();
+  });
+
   it('short-circuits a Blob input without calling fetch', async () => {
     const blob = new Blob(['bytes']);
     const out = await fetchBlob(blob);
