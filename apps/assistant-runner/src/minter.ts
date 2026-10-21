@@ -4,9 +4,10 @@ import type { Logger } from './interfaces';
 
 /**
  * What a minted token is for, as civitai's `AppAssistantTokenPurpose`: `chat` spends Buzz through
- * orchestration (model calls and the conversation store). The sandbox tools (B2) add `sandbox`.
+ * orchestration (model calls and the conversation store); `sandbox` only says who the user is, to the
+ * hosted sandbox service and its MCP server (the sandbox tools).
  */
-export type TokenPurpose = 'chat';
+export type TokenPurpose = 'chat' | 'sandbox';
 
 /** The civitai endpoint the runner trades a grant at, relative to `CIVITAI_URL`. */
 export const MINT_PATH = 'api/internal/app-assistant/runner-token';

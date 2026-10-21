@@ -1,6 +1,7 @@
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
 import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
 import { RunCredentials } from './credentials';
@@ -71,8 +72,14 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
-  // TODO(B2): the sandbox MCP tools and the App Assistant gate. Until then a reply is words only.
-  tools = noTools;
+  // App Assistant's tools and gate. Without the sandbox service a reply is words only.
+  tools = civitai.sandboxUrl
+    ? new AppAssistantTools({
+        sandboxUrl: civitai.sandboxUrl,
+        tokens: (runId) => credentials.forRun(runId),
+        log,
+      })
+    : noTools;
 }
 
 const runner = new Runner({
@@ -108,7 +115,12 @@ async function main(): Promise<void> {
   runner.startMaintenance({ retentionMs: config.retentionMs, intervalMs: MAINTENANCE_INTERVAL_MS });
   await app.listen({ port: config.port, host: config.host });
   app.log.info(
-    { executorId: config.executorId, basePath: config.basePath, serving: Boolean(civitai) },
+    {
+      executorId: config.executorId,
+      basePath: config.basePath,
+      serving: Boolean(civitai),
+      tools: Boolean(civitai?.sandboxUrl),
+    },
     'assistant-runner ready'
   );
 }

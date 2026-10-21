@@ -50,6 +50,11 @@ const env = z.object({
   /** Orchestration's base URL: the model (`/v1/chat/completions`) and the conversation store. */
   ORCHESTRATION_URL: z.url().optional(),
   /**
+   * The hosted sandbox service's base URL (civitai's `APP_ASSISTANT_SANDBOX_URL`): App Assistant's
+   * tools. Unset, a reply has no tools (words only), as before B2.
+   */
+  SANDBOX_URL: z.url().optional(),
+  /**
    * The most steps (paid model requests) one reply takes, as the page's `configureChat({ maxSteps })`.
    * App Assistant's page uses 1000.
    */
@@ -69,6 +74,8 @@ export interface CivitaiConfig {
   secret: string;
   civitaiUrl: string;
   orchestrationUrl: string;
+  /** `undefined` when unset: replies then have no tools. */
+  sandboxUrl: string | undefined;
 }
 
 export type RunnerConfig = {
@@ -137,5 +144,6 @@ function civitaiConfig(parsed: z.infer<typeof env>): CivitaiConfig | undefined {
     secret: secret!,
     civitaiUrl: parsed.CIVITAI_URL!,
     orchestrationUrl: parsed.ORCHESTRATION_URL!,
+    sandboxUrl: parsed.SANDBOX_URL,
   };
 }

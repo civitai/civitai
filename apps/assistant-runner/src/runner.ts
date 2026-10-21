@@ -111,6 +111,8 @@ export interface ReplyInput {
   model: string;
   settings: RunSettings;
   page?: StartRunRequest['page'];
+  /** civitai's grant says the viewer may start read-only subagents: a flag, not a credential. */
+  subagents?: boolean;
   wallClockMs: number;
   /**
    * When the run's grant expires (ms since the epoch): a time, not a credential. The run ends
@@ -394,6 +396,7 @@ export class Runner implements RunService {
       model: request.model,
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
+      ...(grant.subagents ? { subagents: true } : {}),
       wallClockMs: this.#deps.wallClockMs,
       grantExpiresAt: grant.expiresAt.getTime(),
     };
@@ -801,10 +804,25 @@ export class Runner implements RunService {
             conversationId,
             ...(input.page ? { page: input.page } : {}),
             signal: stop,
+            history: {
+              earlier: (head?.turns ?? [])
+                .filter((saved) => saved.seq < seq)
+                .flatMap((saved) => turnFrom(saved).assistant.messages),
+              current: from?.messages ?? [],
+            },
+            subagents: input.subagents === true,
+            model: () => this.#model(input, stop),
+            maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),
+            report: (result) => {
+              emitter.flushParts();
+              emitter.emit({ type: 'tool-reported', result });
+            },
+            subagentProgress: (toolCallId, progress) =>
+              emitter.emit({ type: 'subagent-progress', toolCallId, progress }),
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet, stop),
+        request: (toolSet) => this.#request(input, head, toolSet, stop, tools),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -868,13 +886,27 @@ export class Runner implements RunService {
     );
   }
 
+  #model(input: ReplyInput, signal: AbortSignal) {
+    return this.#deps.models.languageModel({
+      userId: input.userId,
+      runId: input.runId,
+      conversationId: input.conversationId,
+      model: input.model,
+      tier: input.settings.tier,
+      signal,
+    });
+  }
+
   #request(
     input: ReplyInput,
     head: StoredConversationMetadata | null,
     tools: ToolSet,
-    signal: AbortSignal
+    signal: AbortSignal,
+    opened?: OpenTools
   ): AgentCoreRequest {
     const { settings } = input;
+    // A provider that builds the reply's instructions (App Assistant's) replaces the page's own.
+    const hostInstructions = opened?.instructions ?? settings.hostInstructions;
     const earlier = (head?.turns ?? [])
       .filter((turn) => turn.seq < input.seq)
       .map((turn) => turnFrom(turn));
@@ -886,23 +918,21 @@ export class Runner implements RunService {
     };
     const context = buildTurnContext({
       attachments: input.user.attachments ?? [],
-      ...(settings.hostInstructions ? { hostInstructions: settings.hostInstructions } : {}),
+      ...(hostInstructions ? { hostInstructions } : {}),
       spoken: settings.spokenReplies,
     });
     return {
-      model: this.#deps.models.languageModel({
-        userId: input.userId,
-        runId: input.runId,
-        conversationId: input.conversationId,
-        model: input.model,
-        tier: settings.tier,
-        signal,
-      }),
-      // TODO: the App Assistant's own rules and gate, ported from the page.
+      model: this.#model(input, signal),
+      // As the browser's Agent builds it, with the provider's rules (`systemPrompt`) and own tools.
       system: buildSystemPrompt({
         now: new Date(),
         ...(settings.customInstructions ? { customInstructions: settings.customInstructions } : {}),
         tools: Object.keys(tools),
+        host: {
+          tools: (opened?.hostTools ?? []).filter((name) => name in tools),
+          instructs: Boolean(hostInstructions?.trim()),
+        },
+        ...(opened?.rules ? { rules: opened.rules } : {}),
       }),
       history: buildModelMessages([...earlier, current], () => undefined, {
         context,

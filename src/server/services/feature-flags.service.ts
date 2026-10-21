@@ -737,6 +737,11 @@ const featureFlags = createFeatureFlags({
   // deploy, before the Flipt flag exists; the flag then widens it or turns it off. Off leaves the
   // chat's `subagents` unset, so non-mods see no change.
   appAssistantSubagents: { availability: ['mod'], fliptKey: 'app-assistant-subagents' },
+  // App Assistant replies on the server runner (`apps/assistant-runner`), so a reply keeps going
+  // while the viewer is away. `['mod']` like `appAssistantSubagents`: moderators get it at deploy, the
+  // Flipt flag then widens it or turns it off. Off, the page runs replies in the browser as before, and
+  // `/api/apps/assistant/run-grant` refuses to start one on the runner.
+  appAssistantRemoteRunner: { availability: ['mod'], fliptKey: 'app-assistant-remote-runner' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag
