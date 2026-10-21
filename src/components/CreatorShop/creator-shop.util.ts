@@ -323,8 +323,16 @@ export const useMutateCreatorShop = () => {
         }% of those sales) from the seller and removed it from ${result.revokedFrom} account${
           result.revokedFrom === 1 ? '' : 's'
         }.${
+          result.boxesPulled || result.boxOpeningsRefunded
+            ? ` Pulled from ${result.boxesPulled} mystery box${
+                result.boxesPulled === 1 ? '' : 'es'
+              } and refunded ${result.boxOpeningsRefunded} box opener${
+                result.boxOpeningsRefunded === 1 ? '' : 's'
+              }.`
+            : ''
+        }${
           failed
-            ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
+            ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
         }${
           // A pack's split can't be re-derived without a payout record, so the
