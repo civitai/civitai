@@ -13,7 +13,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const { mockDeleteImages, hooks } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
-  hooks: { beforeDelete: null as null | ((ids: number[]) => Promise<void>) },
+  hooks: {
+    beforeDelete: null as null | ((ids: number[]) => Promise<void>),
+    afterWorklist: null as null | (() => Promise<void>),
+  },
 }));
 
 vi.mock('~/server/services/image.service', () => ({
@@ -92,11 +95,14 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   hooks.beforeDelete = null;
+  hooks.afterWorklist = null;
   redisMock.sysRedis.get.mockResolvedValue('1000');
 
   const query = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = toSql(first, values);
-    return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
+    const { rows } = await holder.db.query(sql.text, sql.values as unknown[]);
+    if (hooks.afterWorklist && sql.text.includes('m.mode')) await hooks.afterWorklist();
+    return rows;
   }) as never;
   const execute = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = toSql(first, values);
@@ -141,6 +147,20 @@ describe('remove-deleted-user-images under a legal hold', () => {
     // The positive control: the same run, through the same statements, drains an unheld user.
     expect(await imagesOf(UNHELD)).toBe(0);
     expect(await postsOf(UNHELD)).toBe(0);
+  });
+
+  it('never hands a held image to the delete when the hold lands after the worklist', async () => {
+    hooks.afterWorklist = async () => {
+      hooks.afterWorklist = null;
+      await holdSecondaryUser(HELD);
+    };
+
+    await run();
+
+    const handedOver = mockDeleteImages.mock.calls.flatMap(([ids]) => ids as number[]);
+    expect(handedOver.filter((id) => id <= MANY)).toEqual([]);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await imagesOf(UNHELD)).toBe(0);
   });
 
   it('keeps every batch of images when the hold lands after they were read', async () => {
