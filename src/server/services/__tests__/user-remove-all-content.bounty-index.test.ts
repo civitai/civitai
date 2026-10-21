@@ -93,6 +93,8 @@ function keptByBountyDelete() {
       (strings as unknown as string[]).join('?').includes('DELETE FROM "Bounty"\n')
     );
   if (!call) throw new Error('no bounty delete was issued');
+  // The kept list is what the statement excludes, not just a value it was handed.
+  expect((call[0] as unknown as string[]).join('?')).toContain('id <> ALL(');
   const [, userId, kept] = call;
   expect(userId).toBe(USER);
   return kept;

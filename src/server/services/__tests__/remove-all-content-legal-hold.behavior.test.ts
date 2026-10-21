@@ -570,6 +570,16 @@ describe('removeAllContent', () => {
     });
   });
 
+  it('keeps in the index a bounty a stopped wipe did not delete', async () => {
+    landsBefore = 'Bounty';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    expect((await remaining(CLEAN)).Bounty).toBe(1);
+    expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
+  });
+
   it('keeps a bounty entry that won an award', async () => {
     await holder.db.exec(`
       INSERT INTO "BountyEntry" ("userId") VALUES (${CLEAN});
