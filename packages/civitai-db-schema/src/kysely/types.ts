@@ -2911,9 +2911,9 @@ export type CsamReportAudit = {
   oldSecondaryUserId: number | null;
   oldImageCount: number | null;
   /**
-   * A fingerprint of the details, never their content.
+   * A keyed fingerprint of the details for tamper detection, never their content.
    */
-  oldDetailsSha256: string | null;
+  oldDetailsFingerprint: string | null;
   oldReportSentAt: Timestamp | null;
   changedAt: Generated<Timestamp>;
   changedBy: Generated<string>;

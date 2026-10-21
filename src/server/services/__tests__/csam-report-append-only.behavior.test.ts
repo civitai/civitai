@@ -55,8 +55,8 @@ async function insertReport(sentDaysAgo: number | null, details: object | null =
 
 const audit = async (id: number) =>
   (
-    await db.pg.query<{ op: string; oldDetailsSha256: string | null }>(
-      `SELECT op, "oldDetailsSha256" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+    await db.pg.query<{ op: string; oldDetailsFingerprint: string | null }>(
+      `SELECT op, "oldDetailsFingerprint" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
       [id]
     )
   ).rows;
@@ -64,11 +64,27 @@ const audit = async (id: number) =>
 /** The fingerprint the audit records for a details value. */
 const fingerprint = async (details: unknown) =>
   (
+    await db.pg.query<{ fp: string }>(`SELECT csam_audit.details_fingerprint($1::jsonb) AS fp`, [
+      JSON.stringify(details),
+    ])
+  ).rows[0].fp;
+
+/** An unkeyed sha256 of the same details, which the audit must not record. */
+const plainSha256 = async (details: unknown) =>
+  (
     await db.pg.query<{ sha: string }>(
       `SELECT encode(sha256(convert_to($1::jsonb::text, 'UTF8')), 'hex') AS sha`,
       [JSON.stringify(details)]
     )
   ).rows[0].sha;
+
+const auditedSecondaryUsers = async (id: number) =>
+  (
+    await db.pg.query<{ op: string; oldSecondaryUserId: number | null }>(
+      `SELECT op, "oldSecondaryUserId" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+      [id]
+    )
+  ).rows;
 
 /** No column of an audit row holds the content of the details it recorded. */
 const auditHoldsContent = async (id: number, marker: string) =>
@@ -136,11 +152,27 @@ describe('an unsent report', () => {
     await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
     expect(await exists(id)).toBe(false);
-    expect(await audit(id)).toEqual([{ op: 'delete', oldDetailsSha256: await fingerprint({}) }]);
+    expect(await audit(id)).toEqual([
+      { op: 'delete', oldDetailsFingerprint: await fingerprint({}) },
+    ]);
     expect(await auditIdentity(id)).toEqual([
       { oldUserId: SUBJECT, oldReportId: null, oldType: 'Image', oldImageCount: 1 },
     ]);
   });
+
+  // The secondary user is read on every change, sent or not, so a value that is not a user id must
+  // not fail the write.
+  it.each([['not-a-number'], ['12345678901234'], [1.5]])(
+    'can be edited and deleted with secondary user %s, recording none',
+    async (secondaryUserId) => {
+      const id = await insertReport(null, { secondaryUserId });
+      await db.pg.query(`UPDATE "CsamReport" SET images = '[1]' WHERE id = $1`, [id]);
+      await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
+
+      expect(await exists(id)).toBe(false);
+      expect(await auditedSecondaryUsers(id)).toEqual([{ op: 'delete', oldSecondaryUserId: null }]);
+    }
+  );
 
   it('can be sent, setting details in the same update', async () => {
     const id = await insertReport(null, { modelVersionIds: [1] });
@@ -154,6 +186,30 @@ describe('an unsent report', () => {
 });
 
 describe('a sent report', () => {
+  it('records a keyed fingerprint of its details, not a plain sha256', async () => {
+    const id = await insertReport(30, { contents: ['a'] });
+    await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
+
+    const [row] = await audit(id);
+    expect(row.oldDetailsFingerprint).toBe(await fingerprint({ contents: ['a'] }));
+    expect(row.oldDetailsFingerprint).not.toBe(await plainSha256({ contents: ['a'] }));
+  });
+
+  it('records the secondary user as it was before the change that adds one', async () => {
+    const id = await insertReport(30, { contents: ['a'] });
+    await db.pg.query(
+      `UPDATE "CsamReport" SET details = details || jsonb_build_object('secondaryUserId', $2::int)
+       WHERE id = $1`,
+      [id, SECONDARY]
+    );
+    await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
+
+    expect(await auditedSecondaryUsers(id)).toEqual([
+      { op: 'update', oldSecondaryUserId: null },
+      { op: 'update', oldSecondaryUserId: SECONDARY },
+    ]);
+  });
+
   it('accepts details that only gain keys, and the archive stamps, recording each', async () => {
     const id = await insertReport(30, { contents: ['a'] });
     await db.pg.query(
@@ -163,10 +219,10 @@ describe('a sent report', () => {
     await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
 
     expect(await audit(id)).toEqual([
-      { op: 'update', oldDetailsSha256: await fingerprint({ contents: ['a'] }) },
+      { op: 'update', oldDetailsFingerprint: await fingerprint({ contents: ['a'] }) },
       {
         op: 'update',
-        oldDetailsSha256: await fingerprint({ contents: ['a'], archiveSkipped: 'x' }),
+        oldDetailsFingerprint: await fingerprint({ contents: ['a'], archiveSkipped: 'x' }),
       },
     ]);
   });
@@ -174,7 +230,9 @@ describe('a sent report', () => {
   it('accepts an object over details that hold nothing', async () => {
     const id = await insertReport(30, null);
     await db.pg.query(`UPDATE "CsamReport" SET details = '{"restored": true}' WHERE id = $1`, [id]);
-    expect(await audit(id)).toEqual([{ op: 'update', oldDetailsSha256: await fingerprint(null) }]);
+    expect(await audit(id)).toEqual([
+      { op: 'update', oldDetailsFingerprint: await fingerprint(null) },
+    ]);
   });
 
   it('refuses a non-object over details that hold nothing', async () => {
@@ -281,7 +339,7 @@ describe('a sent report', () => {
 
       expect(await exists(id)).toBe(false);
       expect(await audit(id)).toEqual([
-        { op: 'delete', oldDetailsSha256: await fingerprint({ contents: ['a'] }) },
+        { op: 'delete', oldDetailsFingerprint: await fingerprint({ contents: ['a'] }) },
       ]);
       expect(await auditHoldsContent(id, 'contents')).toBe(false);
       const { rows } = await db.pg.query(
@@ -328,5 +386,36 @@ describe('a sent report', () => {
       );
       expect(await exists(id)).toBe(true);
     });
+  });
+});
+
+describe('the fingerprint key', () => {
+  it('cannot be read or used by a role that can read the audit', async () => {
+    const id = await insertReport(30);
+    await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
+    await db.pg.exec(`
+      DROP ROLE IF EXISTS audit_reader;
+      CREATE ROLE audit_reader;
+      GRANT SELECT ON "CsamReportAudit" TO audit_reader;
+    `);
+
+    await db.pg.exec(`SET ROLE audit_reader`);
+    try {
+      // The role works: it reads the audit row it was granted.
+      const { rows } = await db.pg.query(
+        `SELECT 1 FROM "CsamReportAudit" WHERE "csamReportId" = $1`,
+        [id]
+      );
+      expect(rows).toHaveLength(1);
+
+      await expect(db.pg.query(`SELECT "key" FROM csam_audit.secret`)).rejects.toThrow(
+        'permission denied'
+      );
+      await expect(
+        db.pg.query(`SELECT csam_audit.details_fingerprint('{}'::jsonb)`)
+      ).rejects.toThrow('permission denied');
+    } finally {
+      await db.pg.exec(`RESET ROLE`);
+    }
   });
 });

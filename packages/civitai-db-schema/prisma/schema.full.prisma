@@ -6541,8 +6541,8 @@ model CsamReportAudit {
   oldType         String?
   oldSecondaryUserId Int?
   oldImageCount   Int?
-  /// A fingerprint of the details, never their content.
-  oldDetailsSha256 String?
+  /// A keyed fingerprint of the details for tamper detection, never their content.
+  oldDetailsFingerprint String?
   oldReportSentAt DateTime?
   changedAt       DateTime  @default(now())
   changedBy       String    @default(dbgenerated("CURRENT_USER"))

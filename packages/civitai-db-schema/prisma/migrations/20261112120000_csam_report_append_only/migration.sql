@@ -5,6 +5,34 @@
 --
 -- The guard runs as its owner, so a role that may write "CsamReport" needs no grant on the audit
 -- table. Apply this as the owner of "CsamReport".
+--
+-- Creates a key, generated in this database and never leaving it, for the details fingerprint. Only
+-- the owner can read it or compute a fingerprint.
+
+CREATE SCHEMA IF NOT EXISTS csam_audit;
+REVOKE ALL ON SCHEMA csam_audit FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS csam_audit.secret (
+  "id"  BOOLEAN PRIMARY KEY DEFAULT true CHECK ("id"),
+  "key" TEXT NOT NULL
+);
+INSERT INTO csam_audit.secret ("key")
+VALUES (replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
+ON CONFLICT DO NOTHING;
+REVOKE ALL ON csam_audit.secret FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION csam_audit.details_fingerprint(p_details JSONB)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = csam_audit, pg_temp
+AS $$
+  SELECT encode(sha256(convert_to(s."key" || ':' || p_details::text, 'UTF8')), 'hex')
+  FROM csam_audit.secret s
+$$;
+-- Executable by anyone, it would let a reader test guessed details against the audit.
+REVOKE EXECUTE ON FUNCTION csam_audit.details_fingerprint(JSONB) FROM PUBLIC;
 
 CREATE TABLE "CsamReportAudit" (
   "id" SERIAL PRIMARY KEY,
@@ -15,8 +43,8 @@ CREATE TABLE "CsamReportAudit" (
   "oldType" TEXT,
   "oldSecondaryUserId" INTEGER,
   "oldImageCount" INTEGER,
-  -- A fingerprint of the details, never their content.
-  "oldDetailsSha256" TEXT,
+  -- A keyed fingerprint of the details for tamper detection, never their content.
+  "oldDetailsFingerprint" TEXT,
   "oldReportSentAt" TIMESTAMP(3),
   "changedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "changedBy" TEXT NOT NULL DEFAULT current_user
@@ -52,12 +80,12 @@ BEGIN
     END IF;
     INSERT INTO "CsamReportAudit" (
       "csamReportId", "op", "oldUserId", "oldSecondaryUserId", "oldReportId", "oldType",
-      "oldImageCount", "oldDetailsSha256", "oldReportSentAt"
+      "oldImageCount", "oldDetailsFingerprint", "oldReportSentAt"
     )
     VALUES (
       OLD."id", 'delete', OLD."userId", secondary_user, OLD."reportId", OLD."type"::text,
       CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
-      encode(sha256(convert_to(OLD."details"::text, 'UTF8')), 'hex'), OLD."reportSentAt"
+      csam_audit.details_fingerprint(OLD."details"), OLD."reportSentAt"
     );
     RETURN OLD;
   END IF;
@@ -89,12 +117,12 @@ BEGIN
 
   INSERT INTO "CsamReportAudit" (
       "csamReportId", "op", "oldUserId", "oldSecondaryUserId", "oldReportId", "oldType",
-      "oldImageCount", "oldDetailsSha256", "oldReportSentAt"
+      "oldImageCount", "oldDetailsFingerprint", "oldReportSentAt"
   )
   VALUES (
     OLD."id", 'update', OLD."userId", secondary_user, OLD."reportId", OLD."type"::text,
     CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
-    encode(sha256(convert_to(OLD."details"::text, 'UTF8')), 'hex'), OLD."reportSentAt"
+    csam_audit.details_fingerprint(OLD."details"), OLD."reportSentAt"
   );
   RETURN NEW;
 END;

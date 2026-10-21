@@ -4038,7 +4038,7 @@ export interface CsamReportAudit {
   oldType: string | null;
   oldSecondaryUserId: number | null;
   oldImageCount: number | null;
-  oldDetailsSha256: string | null;
+  oldDetailsFingerprint: string | null;
   oldReportSentAt: Date | null;
   changedAt: Date;
   changedBy: string;
