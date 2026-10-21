@@ -205,6 +205,7 @@ async function postJson(opts: {
  * generated client when that lands.
  */
 export type ModEndpoint =
+  | 'bounty-entry-file/clear-check'
   | 'bounty-poi/resolve-appeal'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'

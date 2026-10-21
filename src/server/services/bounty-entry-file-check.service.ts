@@ -4,7 +4,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
-import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { BountyType } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 
@@ -25,9 +30,12 @@ export const BLOCKED_FILE_REASON = 'other-users-model';
 
 type FileCheckState = 'clean' | 'blocked' | 'unchecked';
 
+/** A moderator's ruling that a blocked file is fine. Dropped with the other check keys on a new url. */
+export type FileCheckOverride = { by: number; at: string; reason: string };
+
 export function fileCheckState(metadata: unknown): FileCheckState {
   const meta = (metadata ?? {}) as Record<string, unknown>;
-  if (meta.blockedReason) return 'blocked';
+  if (meta.blockedReason && !meta.checkOverride) return 'blocked';
   return meta.hashCheckedAt ? 'clean' : 'unchecked';
 }
 
@@ -116,6 +124,7 @@ type PendingFile = {
   name: string;
   sizeKB: number;
   authorId: number | null;
+  hashFailCount: number;
 };
 
 /**
@@ -135,7 +144,8 @@ export async function checkPendingBountyEntryFiles({
   checkCanceled?: () => void;
 } = {}) {
   const pending = await dbRead.$queryRaw<PendingFile[]>`
-    SELECT f.id, f.url, f.name, f."sizeKB", be."userId" AS "authorId"
+    SELECT f.id, f.url, f.name, f."sizeKB", be."userId" AS "authorId",
+      COALESCE((f.metadata->>'hashFailCount')::int, 0) AS "hashFailCount"
     FROM "Bounty" b
     JOIN "BountyEntry" be ON be."bountyId" = b.id
     JOIN "File" f ON f."entityType" = 'BountyEntry' AND f."entityId" = be.id
@@ -167,7 +177,11 @@ export async function checkPendingBountyEntryFiles({
         fileId: file.id,
         error: (error as Error).message,
       }).catch(handleLogError);
-      await mergeFileMetadata(file, { hashAttemptedAt: attemptedAt });
+      await mergeFileMetadata(file, {
+        hashAttemptedAt: attemptedAt,
+        hashFailCount: file.hashFailCount + 1,
+        hashLastError: shortHashError(error),
+      });
       continue;
     }
 
@@ -194,11 +208,71 @@ export async function checkPendingBountyEntryFiles({
   return result;
 }
 
+/** Shown to moderators: short, and without the signed download url a fetch error can carry. */
+function shortHashError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[a-z][\w+.-]*:\/\/\S+/gi, '<url>').slice(0, 200);
+}
+
 /** Only while the file still has the url that was hashed: a re-upload is checked afresh. */
-function mergeFileMetadata(file: PendingFile, patch: Record<string, string>) {
+function mergeFileMetadata(file: PendingFile, patch: Record<string, string | number>) {
   return dbWrite.$executeRaw`
     UPDATE "File"
     SET metadata = COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb
     WHERE id = ${file.id} AND url = ${file.url}
   `;
+}
+
+/**
+ * A moderator rules that a blocked entry file is fine: award and download then treat it as clean.
+ * Applies only to the url the moderator reviewed; a re-upload is checked afresh.
+ */
+export async function clearBountyEntryFileCheck({
+  fileId,
+  userId,
+  reason,
+}: {
+  fileId: number;
+  userId: number;
+  reason: string;
+}) {
+  const file = await dbWrite.file.findUnique({
+    where: { id: fileId },
+    select: { id: true, url: true, entityType: true, entityId: true, metadata: true },
+  });
+  if (!file || file.entityType !== 'BountyEntry')
+    throw throwNotFoundError(`No bounty entry file ${fileId}.`);
+  if (fileCheckState(file.metadata) !== 'blocked')
+    throw throwBadRequestError('This file is not blocked.');
+
+  const override: FileCheckOverride = { by: userId, at: new Date().toISOString(), reason };
+  const count = await dbWrite.$executeRaw`
+    UPDATE "File"
+    SET metadata = metadata || jsonb_build_object('checkOverride', ${JSON.stringify(
+      override
+    )}::jsonb)
+    WHERE id = ${file.id}
+      AND url = ${file.url}
+      AND "entityType" = 'BountyEntry'
+      AND metadata->>'blockedReason' IS NOT NULL
+      AND metadata->'checkOverride' IS NULL
+  `;
+  if (count !== 1)
+    throw throwBadRequestError(
+      'This file changed while you were reviewing it. Reload and try again.'
+    );
+
+  await trackModActivity(userId, {
+    entityType: 'bountyEntry',
+    entityId: file.entityId,
+    activity: 'clearFileCheck',
+  });
+  logToAxiom({
+    type: 'info',
+    name: 'bounty-entry-file-check',
+    message: 'override cleared',
+    fileId: file.id,
+  }).catch(handleLogError);
+
+  return { fileId: file.id, entryId: file.entityId };
 }
