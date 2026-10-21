@@ -97,6 +97,7 @@ import {
   getResourceIdsForImages,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
+  getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
@@ -605,17 +606,29 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
     // Pages are cut by image, so an image-level sort leaves a post holding only the images that
     // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
-    // carousel loads the tail from, the same on every page.
-    const partialPostIds = Object.keys(posts)
-      .map(Number)
-      .filter((postId) => posts[postId].length < POST_IMAGE_LIMIT);
+    // carousel loads the tail from, the same on every page. A post whose row count is already on
+    // the page cannot be incomplete, so only the others are fetched again.
+    const pagePostIds = Object.keys(posts).map(Number);
+    const rowCounts = await getPostImageCounts({
+      postIds: pagePostIds,
+      dbTarget: pageFetchArgs.dbTarget,
+    }).catch((error: Error) => {
+      // Without counts, complete every post rather than leave one short.
+      logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
+      return undefined;
+    });
+    const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
+    const partialPostIds = pagePostIds.filter(
+      (postId) => rowCountOf(postId) > posts[postId].length
+    );
     const completions = await Promise.all(
       chunk(partialPostIds, COMPLETION_POSTS_PER_FETCH).map((postIds) =>
         fetchFn({
           ...pageFetchArgs,
           cursor: undefined,
           postIds,
-          limit: postIds.length * POST_IMAGE_LIMIT,
+          // The rows a filtered fetch returns are a subset of the posts' rows.
+          limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
         })
       )
     );

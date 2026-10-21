@@ -2945,6 +2945,32 @@ async function prepareImageFeedRequest(
 }
 
 /**
+ * How many image rows each post holds, before any visibility filter, so it is an upper bound on
+ * what a filtered fetch of the post can return. Reads the index-only `postId_covered_idx`.
+ */
+export async function getPostImageCounts({
+  postIds,
+  dbTarget,
+}: {
+  postIds: number[];
+  dbTarget: 'read' | 'datapacket';
+}) {
+  if (!postIds.length) return new Map<number, number>();
+  const db = dbTarget === 'datapacket' ? datapacketDbRead : pgDbRead;
+  const { rows } = await queryWithTimeout(
+    db,
+    IMAGE_FEED_STATEMENT_TIMEOUT_MS,
+    Prisma.sql`
+      SELECT i."postId", count(*)::int AS "count"
+      FROM "Image" i
+      WHERE i."postId" = ANY(${postIds}::int[])
+      GROUP BY i."postId"
+    `
+  );
+  return new Map((rows as { postId: number; count: number }[]).map((r) => [r.postId, r.count]));
+}
+
+/**
  * Asks the feed service for the page and loads its rows from Postgres. `hydrateInput` is the
  * image query the rows are loaded with; the feed's paging and period are dropped from it.
  */
