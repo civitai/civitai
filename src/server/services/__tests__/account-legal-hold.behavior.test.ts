@@ -34,6 +34,7 @@ const RELEASED_MARKER = 11;
 const REPORT_SUBJECT = 9;
 
 let failQueries = false;
+let unreadable = false;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -65,6 +66,7 @@ async function createMarkerView() {
 beforeEach(async () => {
   vi.clearAllMocks();
   failQueries = false;
+  unreadable = false;
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
@@ -74,7 +76,10 @@ beforeEach(async () => {
       ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
       : (first as Prisma.Sql);
     const { rows } = await holder.db.query<Record<string, unknown>>(sql.text, sql.values);
-    return rows;
+    // Every column comes back as something other than a boolean.
+    return unreadable
+      ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
+      : rows;
   }) as never);
 
   await holder.db.exec(`
@@ -122,6 +127,15 @@ describe('getAccountLegalHoldLegs', () => {
     expect(await getAccountLegalHoldLegs(HOLD_MARKER)).toEqual(['hold-marker']);
     expect(await getAccountLegalHoldLegs(RELEASED_MARKER)).toEqual([]);
     expect(await getAccountLegalHoldLegs(CLEAN)).toEqual([]);
+  });
+});
+
+describe('an answer that is not a boolean', () => {
+  it('counts every unreadable column as a hold', async () => {
+    unreadable = true;
+    expect((await getAccountLegalHoldLegs(CLEAN)).sort()).toEqual(
+      ['hold-marker', 'image-blocked', 'image-review', 'report'].sort()
+    );
   });
 });
 
