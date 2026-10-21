@@ -500,6 +500,8 @@ describe('namesIdentifier and callsImported', () => {
  */
 const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/preview',
+  'apps/assistant/run-grant',
+  'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
   'auth/freshdesk',
   'media/ingest/[mediaId]',

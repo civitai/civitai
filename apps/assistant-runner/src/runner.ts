@@ -28,7 +28,7 @@ import {
 } from '@civitai/components-chat/runner-protocol';
 import { DBOS, Error as DBOSErrors, type WorkflowStatus } from '@dbos-inc/dbos-sdk';
 import type { ModelMessage, ToolSet } from 'ai';
-import pg from 'pg';
+import type pg from 'pg';
 
 import { RunEmitter } from './emitter';
 import {
@@ -45,16 +45,20 @@ import {
   withPatch,
   type EndedReply,
 } from './head';
+import { withRequestGrant } from './grants';
 import type {
   ConversationStore,
+  GrantStore,
   Logger,
   ModelProvider,
   OpenTools,
   ToolProvider,
 } from './interfaces';
+import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
+import type { VerifiedGrant } from './tokens';
 
 export const REPLY_WORKFLOW = 'reply';
 export const STOP_MARKER_WORKFLOW = 'reply-stop-marker';
@@ -108,7 +112,18 @@ export interface ReplyInput {
   settings: RunSettings;
   page?: StartRunRequest['page'];
   wallClockMs: number;
+  /**
+   * When the run's grant expires (ms since the epoch): a time, not a credential. The run ends
+   * `ran_out` shortly before it, while it can still save its end, rather than fail at a mint.
+   */
+  grantExpiresAt?: number;
 }
+
+/** How often pending reply ends are written to the head. */
+const REPAIR_INTERVAL_MS = 30_000;
+
+/** How long before its grant expires a run ends, so its last saves still mint. */
+const GRANT_END_MARGIN_MS = 2 * 60 * 1000;
 
 /** A reply's workflow output: also how a later retry of the same turn finds where to carry on from. */
 export interface ReplyOutput {
@@ -126,6 +141,8 @@ export interface RunnerDeps {
   models: ModelProvider;
   tools: ToolProvider;
   store: ConversationStore;
+  /** Where each run's grant is kept while it runs: never in DBOS. */
+  grants: GrantStore;
   log: Logger;
   wallClockMs: number;
   stopGraceMs: number;
@@ -152,6 +169,7 @@ export class Runner implements RunService {
   #ready = false;
   #executorId = '';
   #maintenance: ReturnType<typeof setInterval> | undefined;
+  #repair: ReturnType<typeof setInterval> | undefined;
   /** The runs whose pass runs in this process, and how to stop each. */
   readonly #running = new Map<string, () => void>();
   #cancelCheck: ReturnType<typeof setTimeout> | undefined;
@@ -180,7 +198,7 @@ export class Runner implements RunService {
     });
     await DBOS.launch();
     await DBOS.registerQueue(REPLIES_QUEUE, { workerConcurrency: options.workerConcurrency });
-    this.#pool = new pg.Pool({ connectionString: options.databaseUrl, max: 4 });
+    this.#pool = createPool({ connectionString: options.databaseUrl, max: 4 }, 'runner');
     this.#executorId = options.executorId;
     this.#ready = true;
     this.#scheduleCancelCheck();
@@ -216,11 +234,20 @@ export class Runner implements RunService {
    * Sweeps runs stranded on another workflow version now, then every `intervalMs` sweeps again and
    * deletes runs that ended more than `retentionMs` ago.
    */
-  startMaintenance(options: { retentionMs: number; intervalMs: number }): void {
+  startMaintenance(options: {
+    retentionMs: number;
+    intervalMs: number;
+    /** How often pending reply ends are written (`repairPendingEnds`); 30 s unless set. */
+    repairIntervalMs?: number;
+  }): void {
     const run = async (cleanup: boolean) => {
       try {
         await this.sweepStranded();
-        if (cleanup) await this.cleanup(options.retentionMs);
+        await this.repairPendingEnds();
+        if (cleanup) {
+          await this.cleanup(options.retentionMs);
+          await this.#deps.grants.sweep();
+        }
       } catch (error) {
         this.#deps.log.error({ err: error }, 'runner maintenance failed');
       }
@@ -228,6 +255,17 @@ export class Runner implements RunService {
     void run(false);
     this.#maintenance = setInterval(() => void run(true), options.intervalMs);
     this.#maintenance.unref();
+    // On a cadence of its own: a pending end must land while its grant is live, which the
+    // maintenance interval alone may give one chance at, or none, near the end of a long run.
+    let repairing = false;
+    this.#repair = setInterval(() => {
+      if (repairing) return;
+      repairing = true;
+      void this.repairPendingEnds()
+        .catch((error) => this.#deps.log.error({ err: error }, 'repairing reply ends failed'))
+        .finally(() => (repairing = false));
+    }, options.repairIntervalMs ?? REPAIR_INTERVAL_MS);
+    this.#repair.unref();
   }
 
   /**
@@ -237,6 +275,7 @@ export class Runner implements RunService {
   async shutdown(graceMs = 0): Promise<void> {
     this.#ready = false;
     if (this.#maintenance) clearInterval(this.#maintenance);
+    if (this.#repair) clearInterval(this.#repair);
     if (this.#cancelCheck) clearTimeout(this.#cancelCheck);
     await DBOS.shutdown(graceMs > 0 ? { workflowCompletionTimeoutMS: graceMs } : undefined);
     await this.#pool?.end();
@@ -277,12 +316,13 @@ export class Runner implements RunService {
     );
     for (const run of stranded) {
       await DBOS.cancelWorkflow(run.workflowID);
-      await this.#endTurnOnce(run, (turn) => ({
+      const turn = await this.#endTurnOnce(run, (turn) => ({
         messages: shownMessages(turn),
         status: 'error',
         error: INTERRUPTED_BY_UPDATE,
         errorKind: INTERRUPTED,
       }));
+      if (turn && hasEnded(turn)) await this.#forgetGrant(run.workflowID);
       this.#deps.log.warn(
         { runId: run.workflowID, version: run.applicationVersion },
         'ended a run left on another workflow version'
@@ -295,20 +335,53 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  async start(userId: string, request: StartRunRequest): Promise<StartOutcome> {
+  async start(
+    userId: string,
+    request: StartRunRequest,
+    grant: VerifiedGrant
+  ): Promise<StartOutcome> {
     const runId = runIdFor(userId, request.idempotencyKey);
+    const { grants } = this.#deps;
+    // Kept in the runner's own table, never in the workflow's input: DBOS persists that.
+    const saveGrant = () =>
+      grants.save(runId, {
+        token: grant.token,
+        userId,
+        conversationId: request.conversationId,
+        expiresAt: grant.expiresAt,
+      });
     const existing = await this.#existingStart(userId, runId);
-    if (existing) return existing;
+    if (existing) {
+      // A retried start: its grant is as good as the first one's, and may outlive it.
+      await saveGrant();
+      return existing;
+    }
     const live = await this.#liveRun(userId);
     if (live) return runActive(live.workflowID);
 
-    const head = await this.#deps.store.load(userId, request.conversationId);
+    // Before anything is read: the store reads the head with this grant.
+    await saveGrant();
+    // A start that runs nothing takes its grant back, unless the same start racing it made the run.
+    const forget = async () => {
+      if (!(await DBOS.getWorkflowStatus(runId))) await grants.delete(runId);
+    };
+    const refused = async (outcome: StartOutcome) => {
+      await forget();
+      return outcome;
+    };
+    let head: StoredConversationMetadata | null;
+    try {
+      head = await this.#deps.store.load(userId, request.conversationId);
+    } catch (error) {
+      await forget().catch(() => undefined);
+      throw error;
+    }
     if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
-      return {
+      return refused({
         ok: false,
         error: 'stale-turn',
         message: 'This chat has changed since; open it again.',
-      };
+      });
     }
     const input: ReplyInput = {
       runId,
@@ -322,6 +395,7 @@ export class Runner implements RunService {
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
       wallClockMs: this.#deps.wallClockMs,
+      grantExpiresAt: grant.expiresAt.getTime(),
     };
     for (let attempt = 0; ; attempt++) {
       try {
@@ -337,13 +411,16 @@ export class Runner implements RunService {
         })(input);
         break;
       } catch (error) {
-        if (!(error instanceof DBOSErrors.DBOSQueueDuplicatedError)) throw error;
+        if (!(error instanceof DBOSErrors.DBOSQueueDuplicatedError)) {
+          await forget().catch(() => undefined);
+          throw error;
+        }
         // The same start racing itself landed first.
         const same = await this.#existingStart(userId, runId);
         if (same) return same;
         // The user's previous run journaled its end and is finishing; its slot frees in a moment.
         const live = await this.#liveRun(userId);
-        if (live || attempt >= ENQUEUE_ATTEMPTS) return runActive(live?.workflowID);
+        if (live || attempt >= ENQUEUE_ATTEMPTS) return refused(runActive(live?.workflowID));
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
@@ -433,15 +510,66 @@ export class Runner implements RunService {
   async patch(
     userId: string,
     conversationId: string,
-    patch: ConversationPatchRequest
+    patch: ConversationPatchRequest,
+    grant?: VerifiedGrant
   ): Promise<boolean> {
-    const head = await this.#deps.store.update(userId, conversationId, (current) =>
-      current ? withPatch(current, patch, new Date()) : null
+    const head = await withRequestGrant(
+      grant ? { userId, conversationId, token: grant.token } : undefined,
+      () =>
+        this.#deps.store.update(userId, conversationId, (current) =>
+          current ? withPatch(current, patch, new Date()) : null
+        )
     );
     return head !== null;
   }
 
   async #workflow(input: ReplyInput): Promise<ReplyOutput> {
+    try {
+      return await this.#replyBody(input);
+    } catch (error) {
+      // The reply's own code threw (a step failed), so the workflow ends ERROR and nothing else will
+      // end it. A DBOS error (a cancel, a recovery limit) or a throw while this process shuts down
+      // is not that: the run is ended elsewhere, or resumes in the next process, and keeps its grant.
+      if (this.#ready && !(error instanceof DBOSErrors.DBOSError)) await this.#failed(input);
+      throw error;
+    }
+  }
+
+  /**
+   * A reply whose workflow threw: its end is written to the head while the grant can still mint,
+   * and then the grant is forgotten (unless an end is already pending for repair).
+   */
+  async #failed(input: ReplyInput): Promise<void> {
+    const { runId, userId, conversationId, seq } = input;
+    try {
+      await this.#deps.store.update(userId, conversationId, (current) => {
+        const turn = savedTurn(current, seq);
+        if (!current || !turn || hasEnded(turn)) return null;
+        return withEnd(
+          current,
+          seq,
+          {
+            messages: shownMessages(turn),
+            status: 'error',
+            error: 'The reply stopped unexpectedly.',
+          },
+          new Date()
+        );
+      });
+    } catch (error) {
+      this.#deps.log.warn(
+        { err: error, runId },
+        'writing the end of a failed run to the head failed'
+      );
+    }
+    await this.#deps.grants
+      .forgetUnlessEndPending(runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId }, 'forgetting a run grant failed')
+      );
+  }
+
+  async #replyBody(input: ReplyInput): Promise<ReplyOutput> {
     const begun = await DBOS.runStep(() => this.#begin(input), { name: 'begin' });
     const stop = new AbortController();
     const why: { reason?: 'stopped' | 'ran_out' } = {};
@@ -458,13 +586,57 @@ export class Runner implements RunService {
       },
       () => undefined
     );
+    let output: ReplyOutput;
     try {
-      return await pass;
+      output = await pass;
     } finally {
       // Wakes the wait above when no Stop came, so the workflow does not sit until its deadline.
       await DBOS.send(input.runId, DONE, CONTROL);
       await control.catch(() => null);
     }
+    // The reply saved its own end: nothing of this run needs to act for the viewer any more. An end
+    // that could not be saved keeps the grant (`markEndPending`) until `repairPendingEnds` writes it.
+    await this.#deps.grants
+      .forgetUnlessEndPending(input.runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId: input.runId }, 'forgetting a run grant failed')
+      );
+    return output;
+  }
+
+  /** Deletes a run's grant once its end is in the head; a failure only leaves it to expire. */
+  async #forgetGrant(runId: string): Promise<void> {
+    await this.#deps.grants
+      .delete(runId)
+      .catch((error) =>
+        this.#deps.log.warn({ err: error, runId }, 'forgetting a run grant failed')
+      );
+  }
+
+  /**
+   * Writes the ends that runs journaled but could not save to the head (`markEndPending`), while
+   * their grants are live, and then forgets those grants. Returns how many it wrote. Safe on every
+   * replica: a head that already has the end is left as it is.
+   */
+  async repairPendingEnds(): Promise<number> {
+    let repaired = 0;
+    for (const pending of await this.#deps.grants.pendingEnds()) {
+      try {
+        await this.#deps.store.update(pending.userId, pending.conversationId, (current) => {
+          const turn = savedTurn(current, pending.seq);
+          if (!current || !turn || hasEnded(turn)) return null;
+          return withEnd(current, pending.seq, pending.reply, new Date());
+        });
+        await this.#forgetGrant(pending.runId);
+        repaired++;
+      } catch (error) {
+        this.#deps.log.warn(
+          { err: error, runId: pending.runId },
+          'writing a pending reply end to the head failed'
+        );
+      }
+    }
+    return repaired;
   }
 
   async #begin(input: ReplyInput): Promise<Begun> {
@@ -482,7 +654,11 @@ export class Runner implements RunService {
         ...(from ? { from } : {}),
       })
     );
-    return { deadline: Date.now() + input.wallClockMs, stoppedBeforeStart };
+    const deadline = Math.min(
+      Date.now() + input.wallClockMs,
+      input.grantExpiresAt === undefined ? Infinity : input.grantExpiresAt - GRANT_END_MARGIN_MS
+    );
+    return { deadline, stoppedBeforeStart };
   }
 
   /** Where a retry of a failed turn carries on from: its saved progress, else the resume point the failed run left. */
@@ -559,7 +735,13 @@ export class Runner implements RunService {
       reply: EndedReply,
       outcome: Partial<AgentCoreOutcome> = {}
     ): Promise<ReplyOutput> => {
-      await progress.end(reply);
+      // An end that could not be saved after its retries is kept with the grant, so it lands later.
+      if (!(await progress.end(reply)))
+        await this.#deps.grants
+          .markEndPending(runId, seq, reply)
+          .catch((error) =>
+            log.error({ err: error, runId }, 'keeping a reply end to save later failed')
+          );
       emitter.flushParts();
       const steps = outcome.resume?.steps ?? outcome.steps ?? countSteps(reply.messages);
       emitter.emit({
@@ -622,7 +804,7 @@ export class Runner implements RunService {
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet),
+        request: (toolSet) => this.#request(input, head, toolSet, stop),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -689,7 +871,8 @@ export class Runner implements RunService {
   #request(
     input: ReplyInput,
     head: StoredConversationMetadata | null,
-    tools: ToolSet
+    tools: ToolSet,
+    signal: AbortSignal
   ): AgentCoreRequest {
     const { settings } = input;
     const earlier = (head?.turns ?? [])
@@ -710,7 +893,10 @@ export class Runner implements RunService {
       model: this.#deps.models.languageModel({
         userId: input.userId,
         runId: input.runId,
+        conversationId: input.conversationId,
         model: input.model,
+        tier: settings.tier,
+        signal,
       }),
       // TODO: the App Assistant's own rules and gate, ported from the page.
       system: buildSystemPrompt({
@@ -746,10 +932,11 @@ export class Runner implements RunService {
       if (length > 0 && (await this.#eventAt(runId, length - 1))?.type === 'run-ended') return;
       this.#deps.log.warn({ runId }, 'stop did not land in time; cancelling the run');
       await DBOS.cancelWorkflow(runId);
-      await this.#endTurnOnce(status, (turn) => ({
+      const turn = await this.#endTurnOnce(status, (turn) => ({
         messages: shownMessages(turn),
         status: 'aborted',
       }));
+      if (turn && hasEnded(turn)) await this.#forgetGrant(runId);
     } catch (error) {
       this.#deps.log.error({ err: error, runId }, 'forcing a stop failed');
     }
@@ -797,6 +984,8 @@ export class Runner implements RunService {
   async #endFromHead(runId: string): Promise<RunEvent> {
     const status = await DBOS.getWorkflowStatus(runId);
     if (!status) return { type: 'run-ended', status: 'error', messages: [], steps: 0 };
+    // A head that cannot be written (the run's grant expired, or the user turned the assistant off)
+    // still gets the stream its end, from the workflow's status alone, so the client stops waiting.
     const turn = await this.#endTurnOnce(status, (running) => {
       const messages = shownMessages(running);
       if (
@@ -807,8 +996,14 @@ export class Runner implements RunService {
         return { messages, status: 'done', ranOut: true };
       if (status.status === 'CANCELLED') return { messages, status: 'aborted' };
       return { messages, status: 'error', error: 'The reply stopped unexpectedly.' };
+    }).catch((error: unknown) => {
+      this.#deps.log.warn({ err: error, runId }, 'writing the end of a run to the head failed');
+      return undefined;
     });
-    if (turn && hasEnded(turn)) return endedEvent(turn);
+    if (turn && hasEnded(turn)) {
+      await this.#forgetGrant(runId);
+      return endedEvent(turn);
+    }
     return {
       type: 'run-ended',
       status: status.status === 'CANCELLED' ? 'stopped' : 'error',

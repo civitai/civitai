@@ -1,8 +1,5 @@
 import type { Authenticator, ConversationStore, ModelProvider, ToolProvider } from './interfaces';
-
-// TODO: replace each of these with the real implementation: the viewer's civitai token
-// verified by the auth hub, orchestration as the model with a token minted per request, the
-// sandbox MCP tools, and the orchestrator-backed conversation head.
+import type { TokenVerifier } from './tokens';
 
 /** Refuses every request. The default, so a runner with no authenticator configured serves nobody. */
 export const refuseAll: Authenticator = {
@@ -11,6 +8,11 @@ export const refuseAll: Authenticator = {
     status: 401,
     message: 'Sign-in is not available on this runner yet.',
   }),
+};
+
+/** Accepts no run grant. The default, so a runner with no key configured starts nothing. */
+export const refuseGrants: Pick<TokenVerifier, 'grant'> = {
+  grant: async () => null,
 };
 
 function unconfigured(what: string): never {
@@ -23,6 +25,14 @@ export const unconfiguredModel: ModelProvider = {
 
 export const unconfiguredTools: ToolProvider = {
   open: async () => unconfigured('tool provider'),
+};
+
+/**
+ * No tools: a reply is words only. What a configured runner uses until the sandbox tools land
+ * (PR B2), so a run answers instead of failing at its first step.
+ */
+export const noTools: ToolProvider = {
+  open: async () => ({ tools: {}, close: async () => undefined }),
 };
 
 export const unconfiguredStore: ConversationStore = {

@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
+import type * as AssistantRunnerTokens from '~/server/services/app-assistant/assistant-runner-tokens';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -44,6 +45,19 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOr
     token: 'minted-assistant-token',
     expiresAt: '2099-01-01T00:00:00Z',
   })),
+  hasAppAssistantConsent: vi.fn(async () => true),
+}));
+vi.mock('~/server/services/app-assistant/assistant-runner-tokens', async (importOriginal) => ({
+  ...(await importOriginal<typeof AssistantRunnerTokens>()),
+  isAssistantRunnerConfigured: () => true,
+  signRunGrant: vi.fn(async () => ({
+    token: 'minted-run-grant',
+    expiresAt: '2099-01-01T00:00:00Z',
+  })),
+  signRunnerViewerToken: vi.fn(async () => ({
+    token: 'minted-viewer-token',
+    expiresAt: '2099-01-01T00:00:00Z',
+  })),
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -55,10 +69,19 @@ const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchest
 const { enableAppAssistant, mintAppAssistantToken } = await import(
   '~/server/services/app-assistant/app-assistant.service'
 );
+const { signRunGrant, signRunnerViewerToken } = await import(
+  '~/server/services/app-assistant/assistant-runner-tokens'
+);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
-const routes: { name: string; path: string; handler: Handler; minted: () => unknown }[] = [
+const routes: {
+  name: string;
+  path: string;
+  handler: Handler;
+  minted: () => unknown;
+  query?: Record<string, string>;
+}[] = [
   {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
@@ -76,6 +99,20 @@ const routes: { name: string; path: string; handler: Handler; minted: () => unkn
     path: '/api/apps/assistant/token',
     handler: (await import('~/pages/api/apps/assistant/token')).default as unknown as Handler,
     minted: () => mintAppAssistantToken,
+  },
+  {
+    name: 'GET /api/apps/assistant/run-grant',
+    path: '/api/apps/assistant/run-grant',
+    handler: (await import('~/pages/api/apps/assistant/run-grant')).default as unknown as Handler,
+    minted: () => signRunGrant,
+    query: { conversationId: 'c1', idempotencyKey: 'k1' },
+  },
+  {
+    name: 'GET /api/apps/assistant/runner-viewer-token',
+    path: '/api/apps/assistant/runner-viewer-token',
+    handler: (await import('~/pages/api/apps/assistant/runner-viewer-token'))
+      .default as unknown as Handler,
+    minted: () => signRunnerViewerToken,
   },
 ];
 
@@ -121,7 +158,9 @@ async function call(
     headers?: Record<string, string>;
   } = {}
 ) {
-  const url = queryToken ? `${route.path}?token=${queryToken}` : route.path;
+  const query = { ...route.query, ...(queryToken ? { token: queryToken } : {}) };
+  const search = new URLSearchParams(query).toString();
+  const url = search ? `${route.path}?${search}` : route.path;
   const req = {
     method,
     url,
@@ -130,7 +169,7 @@ async function call(
       ...(authorization ? { authorization } : {}),
       ...extraHeaders,
     },
-    query: queryToken ? { token: queryToken } : {},
+    query,
     cookies: {},
   } as unknown as NextApiRequest;
   let statusCode = 200;
