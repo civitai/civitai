@@ -43,7 +43,10 @@ const ALREADY_DELETED = 17;
 const IMAGE_ON_OLD_REPORT = 18; // their image is listed on an archived report sent over a year ago
 const IMAGE_PAST_INT_RANGE = 19; // a pending report lists their image, whose id is past int range
 const BIG_IMAGE_ID = 10_000_000_019;
-const ALL_USERS = Array.from({ length: 19 }, (_, i) => i + 1);
+const EXPIRED_MARKER = 20;
+const EXTENDED_MARKER = 21;
+const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
+const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -91,10 +94,22 @@ const userRow = async (id: number) =>
 
 async function createMarkerView() {
   await holder.db.exec(`
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
+    CREATE TABLE "EvidenceHold" (
+      "userId" int NOT NULL, "releasedAt" timestamp(3), "releaseAt" timestamp(3),
+      "extendedUntil" timestamp(3)
+    );
+    -- The view's WHERE as the migration that adds it writes it: released and expired holds drop out.
     CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
-    INSERT INTO "EvidenceHold" VALUES (${HOLD_MARKER}, NULL), (${RELEASED_MARKER}, now());
+      SELECT "userId" FROM "EvidenceHold"
+      WHERE "releasedAt" IS NULL
+        AND ("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())
+      GROUP BY "userId";
+    INSERT INTO "EvidenceHold" VALUES
+      (${HOLD_MARKER}, NULL, NULL, NULL),
+      (${RELEASED_MARKER}, now(), NULL, NULL),
+      (${EXPIRED_MARKER}, NULL, now() - interval '1 day', NULL),
+      (${EXTENDED_MARKER}, NULL, now() - interval '1 day', now() + interval '1 day'),
+      (${RELEASED_WITH_REPORT}, now(), NULL, NULL);
   `);
 }
 
@@ -140,6 +155,7 @@ beforeEach(async () => {
     -- carry the upload's keys beside the id, as the sending job writes them.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details, images) VALUES
       (${PENDING_REPORT}, NULL, NULL, '{}', '[]'),
+      (${RELEASED_WITH_REPORT}, NULL, NULL, '{}', '[]'),
       (${RECENTLY_SENT}, now() - interval '30 days', now(), 'null', '[]'),
       (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', now(), '{}', '[]'),
       (${SENT_LONG_AGO_NOT_ARCHIVED}, now() - interval '400 days', NULL, '{}', '[]'),
@@ -228,7 +244,15 @@ describe('getAccountLegalHoldLegs', () => {
 
     expect(await getAccountLegalHoldLegs(HOLD_MARKER)).toEqual(['hold-marker']);
     expect(await getAccountLegalHoldLegs(RELEASED_MARKER)).toEqual([]);
+    expect(await getAccountLegalHoldLegs(EXPIRED_MARKER)).toEqual([]);
+    expect(await getAccountLegalHoldLegs(EXTENDED_MARKER)).toEqual(['hold-marker']);
     expect(await getAccountLegalHoldLegs(CLEAN)).toEqual([]);
+  });
+
+  // A release lets the marker go, never a report.
+  it('still holds a released marker’s account by its report', async () => {
+    await createMarkerView();
+    expect(await getAccountLegalHoldLegs(RELEASED_WITH_REPORT)).toEqual(['report']);
   });
 
   it('holds every account when the marker table exists without its view', async () => {
@@ -297,6 +321,19 @@ describe('deleteUser under a legal hold', () => {
     await createMarkerView();
     await expect(run(HOLD_MARKER)).rejects.toBeInstanceOf(LegalHoldError);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account whose marker was released but who is named on a report', async () => {
+    await createMarkerView();
+    const before = await userRow(RELEASED_WITH_REPORT);
+    await expect(run(RELEASED_WITH_REPORT)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(await userRow(RELEASED_WITH_REPORT)).toEqual(before);
+  });
+
+  it('deletes an account whose marker expired unreleased', async () => {
+    await createMarkerView();
+    await run(EXPIRED_MARKER);
+    expect(await userRow(EXPIRED_MARKER)).toMatchObject({ email: null, username: null });
   });
 
   it('refuses when the hold cannot be checked', async () => {
