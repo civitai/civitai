@@ -465,7 +465,7 @@ per-ecosystem handlers into `src/server/services/orchestrator/form-graph/`.
 | video: mochi | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |
 | video: sora2 | AR options per resolution (txt2vid only), usePro, durations 4/8 |
 | video: hunyuan (HyV1) | cfg/steps presets, familyResources, 480p AR set |
-| video: flux3-video | First/Last frame slots on img2vid; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
+| video: flux3-video (v3.0 / v3.0-max) | First/Last frame slots on img2vid; Max (3420850) adds the standalone `img2vid:keyframes` workflow (no `variantOf`) — an `imageEntryListDef` list of keyframes (`FLUX3_KEYFRAMES_LIMIT`, `Flux3KeyframeEntry`) rendered by `Flux3KeyframesInput`; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
 | video: minimax (MiniMaxH3, api/comfy) | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us). `controlVideo` (H3 Fun ControlNet Union) is comfy + txt2vid only — the control operation REPLACES imageToVideo, so there is no frame/reference slot to share it with; its five preprocessor keys are the `preprocessVideo` set, not the image ControlNet set |
 | video: happy-horse (v1.0/v1.1) | AR family keyed `resolution|version` (v1.1 widens the set); vid2vid:edit carries video + refs + audioSetting |
 | video: veo3 (fast/standard) | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |

@@ -40,6 +40,7 @@ import {
   useWildcardHandlers,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
+import { Flux3KeyframesInput } from './inputs/Flux3KeyframesInput';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
@@ -367,6 +368,18 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={videoHub}
+        name="keyframes"
+        render={({ value, meta, onChange, error }) => (
+          <Flux3KeyframesInput
+            value={value}
+            onChange={onChange}
+            meta={meta}
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={videoHub}
         name="audioSetting"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
@@ -403,6 +416,23 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: String(o.value) }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="reasoningLevel"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <ControllerLabel
+              label="Reasoning"
+              info="High reasoning follows the prompt more closely but takes longer to generate."
+            />
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
             />
           </div>
         )}
