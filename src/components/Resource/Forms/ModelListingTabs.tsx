@@ -5,6 +5,7 @@ import {
   Group,
   Input,
   Loader,
+  Paper,
   Stack,
   Tabs,
   Text,
@@ -88,44 +89,57 @@ export function ModelListingTabs({
   }, [submitCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <Tabs value={site} onChange={(value) => value && setSite(value as Site)} keepMounted>
-      <Tabs.List>
-        <Tabs.Tab value="red" rightSection={redHasErrors ? <ErrorDot /> : undefined}>
-          civitai.red
-        </Tabs.Tab>
-        <Tabs.Tab
-          value="com"
-          rightSection={
-            comHasErrors ? (
-              <ErrorDot />
-            ) : (
-              <Badge size="xs" variant="light" color={ownComContent ? 'green' : 'gray'}>
-                {ownComContent ? 'Own content' : 'Same as .red'}
-              </Badge>
-            )
-          }
-        >
-          civitai.com
-        </Tabs.Tab>
-      </Tabs.List>
+    <Paper withBorder radius="md" p="md">
+      <Stack gap="xs">
+        <div>
+          <Text fw={600} size="sm">
+            Title, description &amp; cover
+          </Text>
+          <Text size="xs" c="dimmed">
+            The only parts of the listing that differ between civitai.com and civitai.red —
+            everything else about this model is shared across both sites.
+          </Text>
+        </div>
+        <Tabs value={site} onChange={(value) => value && setSite(value as Site)} keepMounted>
+          <Tabs.List>
+            <Tabs.Tab value="red" rightSection={redHasErrors ? <ErrorDot /> : undefined}>
+              civitai.red
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="com"
+              rightSection={
+                comHasErrors ? (
+                  <ErrorDot />
+                ) : (
+                  <Badge size="xs" variant="light" color={ownComContent ? 'green' : 'gray'}>
+                    {ownComContent ? 'Own content' : 'Same as .red'}
+                  </Badge>
+                )
+              }
+            >
+              civitai.com
+            </Tabs.Tab>
+          </Tabs.List>
 
-      <Tabs.Panel value="red" pt="md">
-        <Stack>
-          {redFields}
-          {modelId && <SiteCoverPicker site="red" modelId={modelId} />}
-        </Stack>
-      </Tabs.Panel>
+          <Tabs.Panel value="red" pt="md">
+            <Stack>
+              {redFields}
+              {modelId && <SiteCoverPicker site="red" modelId={modelId} />}
+            </Stack>
+          </Tabs.Panel>
 
-      <Tabs.Panel value="com" pt="md">
-        <ComListing
-          modelId={modelId}
-          ownContent={ownComContent}
-          nameVerdict={nameVerdict}
-          descriptionVerdict={descriptionVerdict}
-          versionsVerdict={versionsVerdict}
-        />
-      </Tabs.Panel>
-    </Tabs>
+          <Tabs.Panel value="com" pt="md">
+            <ComListing
+              modelId={modelId}
+              ownContent={ownComContent}
+              nameVerdict={nameVerdict}
+              descriptionVerdict={descriptionVerdict}
+              versionsVerdict={versionsVerdict}
+            />
+          </Tabs.Panel>
+        </Tabs>
+      </Stack>
+    </Paper>
   );
 }
 
