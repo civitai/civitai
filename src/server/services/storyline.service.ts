@@ -62,7 +62,7 @@ import {
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
   allBrowsingLevelsFlag,
@@ -430,7 +430,7 @@ export async function assertCanContinueStoryline(
       },
     },
   });
-  if (!parent || parent.removedAt || parent.storyline.tosViolation)
+  if (!parent || !isAnswerableParentChapter(parent))
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   const ownerId = parent.storyline.userId;
