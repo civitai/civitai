@@ -1254,9 +1254,9 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     }
   });
 
-  it('a cancel landing after an end was kept for repair never writes over it; the repair lands it', async () => {
-    const user = 'u-end-pending-cancel';
-    const conversationId = 'c-end-pending-cancel';
+  it('a workflow handed off after its end was kept for repair never writes over it; the repair lands it', async () => {
+    const user = 'u-end-pending-handoff';
+    const conversationId = 'c-end-pending-handoff';
     const real = deps.store;
     // The reply's end fails every attempt (its retries included), then the store comes back.
     let refuseEnds = true;
@@ -1271,38 +1271,45 @@ describePg('assistant-runner on DBOS + Postgres', () => {
           return next;
         }),
     };
-    // Once the end is kept for repair, the store is back and a hard cancel lands (its next DBOS
-    // write finds the workflow no longer its own).
+    // The repair loop an earlier test started must not land the end before the assertion.
+    const pendingEnds = grants.pendingEnds.bind(grants);
+    grants.pendingEnds = async () => [];
+    // Once the end is kept for repair, the store is back and the workflow's ownership is taken away
+    // as a recovery re-enqueue does (no cancel): its next DBOS write fails with a conflict.
     const markEndPending = grants.markEndPending.bind(grants);
+    let kept: string | undefined;
     grants.markEndPending = async (runId, seq, reply) => {
       await markEndPending(runId, seq, reply);
       refuseEnds = false;
-      await DBOS.cancelWorkflow(runId);
+      await sql(`update dbos.workflow_status set owner_xid = null where workflow_uuid = $1`, [
+        runId,
+      ]);
+      kept = runId;
     };
+    let runId: string | undefined;
     try {
       const start = await post('/runs', as(user), startBody({ conversationId, model: 'tools' }));
-      const runId = start.body!.runId as string;
+      runId = start.body!.runId as string;
       const deadline = Date.now() + 45_000;
-      while ((await DBOS.getWorkflowStatus(runId))?.status !== 'CANCELLED' && Date.now() < deadline)
+      while (kept !== runId && Date.now() < deadline)
         await new Promise((resolve) => setTimeout(resolve, 100));
-      expect((await DBOS.getWorkflowStatus(runId))?.status).toBe('CANCELLED');
-      // Long enough for the workflow's catch to have run.
+      expect(kept).toBe(runId);
+      // Long enough for the conflict to reach the workflow's catch.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
-      // Nothing wrote over the turn: the kept end is waiting for its repair, or the repair loop an
-      // earlier test started already landed it. Never "stopped unexpectedly".
-      const kept = (await store.load(user, conversationId))!.turns[0]!.assistant;
-      expect(kept?.status === 'running' || kept?.status === 'done', JSON.stringify(kept)).toBe(
-        true
-      );
-      expect(JSON.stringify(kept)).not.toContain('stopped unexpectedly');
+      // Nothing wrote over the turn: the kept end is still waiting for its repair.
+      const waiting = (await store.load(user, conversationId))!.turns[0]!.assistant;
+      expect(waiting?.status, JSON.stringify(waiting)).toBe('running');
 
+      grants.pendingEnds = pendingEnds;
       await runner.repairPendingEnds();
       const reply = (await store.load(user, conversationId))!.turns[0]!.assistant;
       expect(reply).toMatchObject({ status: 'done' });
       expect(JSON.stringify(reply)).toContain('Recorded.');
     } finally {
+      grants.pendingEnds = pendingEnds;
       grants.markEndPending = markEndPending;
       deps.store = real;
+      if (runId) await DBOS.cancelWorkflow(runId).catch(() => undefined);
     }
   });
 
