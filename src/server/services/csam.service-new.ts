@@ -1265,8 +1265,8 @@ async function reportGenerationData(claim: SendClaim) {
   if (!initialReport) return;
 
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
-  if (!generatedImages) return await deleteUnderClaim(claim, 'no generated image of the report');
-  if (!generatedImages.length)
+  // A moderator's filing is the record that it was reported, so a report with nothing to send is kept.
+  if (!generatedImages?.length)
     return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   // Fetched before the CyberTip is opened, so a report that cannot be sent opens none.

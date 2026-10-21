@@ -392,7 +392,6 @@ describe('deleting a report the send finds nothing to send for', () => {
 
   it.each([
     ['Image', { images: [{ id: 601 }] }],
-    ['GeneratedImage', { details: {} }],
     ['TrainingData', { details: { modelVersionIds: [6] } }],
     ['ExternalLink', { userId: null, details: {} }],
   ])('deletes a %s report only under the claim', async (type, copy) => {
@@ -545,13 +544,16 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(lines('send-delete-held')).toHaveLength(1);
   });
 
-  it('is deleted, as before, when a generated-image report names no generated-image list', async () => {
+  it('is kept, waiting, when a generated-image report names no generated-image list', async () => {
     primaryRow = { ...report, type: 'GeneratedImage', details: {} } as unknown as CsamReportProps;
 
     await processCsamReport(primaryRow);
 
     expect(submitReport).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+    expect(lines('send-no-files')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1 }),
+    ]);
   });
 
   it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
