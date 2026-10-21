@@ -5,17 +5,19 @@ import {
   type Sandbox,
   type SandboxClient,
 } from '@civitai/app-assistant';
-import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { ErrorCode, McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { dynamicTool, jsonSchema, type ToolSet } from 'ai';
-
-import type { Logger } from '../interfaces';
 import {
   createMcpConnection,
-  McpUnreachableError,
+  extraToolSet,
+  McpConnectionClosedError,
+  namespacedToolName,
+  type ChatMcpServer,
   type McpConnection,
   type McpTool,
-} from './mcp-connection';
+} from '@civitai/components-chat/core';
+import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { ToolSet } from 'ai';
+
+import type { Logger } from '../interfaces';
 
 /** How long the sandbox has to start running once it was asked to (the page holds a message as long). */
 export const WAKE_TIMEOUT_MS = 3 * 60_000;
@@ -23,19 +25,11 @@ export const WAKE_TIMEOUT_MS = 3 * 60_000;
 export const WAKE_POLL_MS = 3_000;
 /** A sandbox that has not listed its tools by then gives the reply none (the chat's `LIST_TIMEOUT_MS`). */
 export const LIST_TIMEOUT_MS = 15_000;
-/**
- * Without progress a call may go quiet this long; each progress notification starts the wait again.
- * The chat's `EXTRA_TOOL_TIMEOUT_MS`: a little over the ten minutes a command may take.
- */
-export const SANDBOX_TOOL_TIMEOUT_MS = 610_000;
-/** A reply is kept to its start and end, as the chat keeps an added server's: errors come last. */
-export const RESULT_HEAD_CHARS = 2_000;
-export const RESULT_TAIL_CHARS = 6_000;
-/** What the assistant is told after a failed call, as the chat tells it of an added server's tool (`tools/extra`). */
-const SERVER_TOOL_FAILED_NOTE =
-  'This tool failed. Tell the user in plain words; do not call it again this turn unless they ask.';
+/** What the assistant is told about a call it should check before making again (the chat's `LOST_NOTE`). */
 const LOST_NOTE =
   'Check its effect (for example by listing or reading the files it would change) before running it again.';
+/** The sandbox server as the page names it, so its tools read the same: `sandbox__<tool>`, "[your app] …". */
+const SANDBOX_SERVER = { id: SANDBOX_SERVER_ID, label: 'your app' } as const;
 /** What the assistant (and the user) reads when the app is gone. */
 export const SANDBOX_GONE =
   'Your app is gone: it was deleted while the assistant worked. Tell the user to open or create it from the app switcher, then ask again.';
@@ -123,7 +117,11 @@ export class AppSandbox {
     this.#active = sandbox;
   }
 
-  /** Its tools, each named `sandbox__<tool>`; none when it does not run or would not list them in time. */
+  /**
+   * Its tools, each named `sandbox__<tool>` and given the chat's own treatment of an added server's
+   * tools (`extraToolSet`: the reply's first and last characters, 610 s without progress, a lost
+   * reply reported as maybe finished); none when it does not run or would not list them in time.
+   */
   async tools(): Promise<ToolSet> {
     const connection = this.#connection;
     if (!connection) return {};
@@ -137,18 +135,32 @@ export class AppSandbox {
       );
       return {};
     }
-    const tools: ToolSet = {};
-    for (const tool of listed) {
-      const name = `${SANDBOX_SERVER_ID}__${tool.name}`;
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) continue;
+    const server: ChatMcpServer = {
+      ...SANDBOX_SERVER,
+      url: connection.url,
+      token: this.#deps.token,
+    };
+    const named = listed
       // The tunnel only serves the live preview, which is page-only: not offered with nobody watching.
-      if (PAGE_ONLY_TOOL.test(tool.name)) continue;
-      tools[name] = dynamicTool({
-        description: `[your app] ${tool.description ?? ''}`.trim(),
-        inputSchema: jsonSchema(objectSchema(tool.inputSchema)),
-        execute: (input, { abortSignal }) =>
-          this.#call(tool.name, (input ?? {}) as Record<string, unknown>, abortSignal),
-      });
+      .filter((tool) => !PAGE_ONLY_TOOL.test(tool.name))
+      .map((tool) => ({ name: namespacedToolName(SANDBOX_SERVER_ID, tool.name), tool }))
+      .filter(({ name }) => /^[A-Za-z0-9_-]{1,64}$/.test(name));
+    const tools = extraToolSet([{ server, connection, tools: named }], { taken: {} });
+    for (const [name, tool] of Object.entries(tools)) {
+      const execute = tool.execute!;
+      tools[name] = {
+        ...tool,
+        execute: async (input: unknown, options: { abortSignal?: AbortSignal }) => {
+          try {
+            return await (execute as (input: unknown, options: unknown) => Promise<unknown>)(
+              input,
+              options
+            );
+          } catch (error) {
+            return this.#refused(name, error, options.abortSignal);
+          }
+        },
+      } as typeof tool;
     }
     return tools;
   }
@@ -160,39 +172,28 @@ export class AppSandbox {
     await connection?.close();
   }
 
-  async #call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-    let result: CallToolResult;
-    try {
-      const connection = this.#connection;
-      if (!connection) throw new McpUnreachableError(null);
-      result = await connection.callTool(tool, args, {
-        ...(signal ? { signal } : {}),
-        timeoutMs: SANDBOX_TOOL_TIMEOUT_MS,
-      });
-    } catch (error) {
-      if (signal?.aborted || this.#closed) throw error;
-      if (replyLost(error))
-        // The call may well have done its work; only its answer is missing.
-        return {
-          error: `No reply from your app; the ${tool} call may have finished.`,
-          retryable: true,
-          note: LOST_NOTE,
-        };
-      if (!refused(error)) throw error;
-      const state = await this.#check();
-      if (state === 'gone') throw new AppGoneError();
-      // Never made again here: it may have run before the refusal came back.
+  /**
+   * A call that failed outright (not a lost reply, which the chat's wrapper already reports as maybe
+   * finished): one look at the user's apps decides. It is never made again here.
+   */
+  async #refused(tool: string, error: unknown, signal?: AbortSignal): Promise<unknown> {
+    if (signal?.aborted || this.#closed || error instanceof McpConnectionClosedError) throw error;
+    const state = await this.#check();
+    if (state === 'gone') throw new AppGoneError();
+    if (state === 'paused')
       return {
-        error:
-          state === 'paused'
-            ? `Your app was paused, so the ${tool} call may not have finished.`
-            : `Your app did not answer the ${tool} call; it may have finished.`,
+        error: `Your app was paused, so the ${tool} call may not have finished.`,
         retryable: true,
         note: LOST_NOTE,
       };
-    }
-    const text = keepEnds(resultText(result), RESULT_HEAD_CHARS, RESULT_TAIL_CHARS);
-    return result.isError ? { error: text, note: SERVER_TOOL_FAILED_NOTE } : text;
+    // Still running: an error status (a proxy's 502, a pod restart) may have come after it ran.
+    if (error instanceof StreamableHTTPError && (error.code ?? 0) >= 400)
+      return {
+        error: `Your app did not answer the ${tool} call; it may have finished.`,
+        retryable: true,
+        note: LOST_NOTE,
+      };
+    throw error;
   }
 
   /**
@@ -283,47 +284,6 @@ export class AppSandbox {
 
 /** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
 const PAGE_ONLY_TOOL = /^tunnel_/;
-
-/**
- * The connection could not be opened, or the MCP address answered the call with an error status (not
- * an answer of the wrong type, which it did accept).
- */
-function refused(error: unknown): boolean {
-  return (
-    error instanceof McpUnreachableError ||
-    (error instanceof StreamableHTTPError && (error.code ?? 0) >= 400)
-  );
-}
-
-/** The reply never came: the call timed out without progress. */
-function replyLost(error: unknown): boolean {
-  return error instanceof McpError && error.code === ErrorCode.RequestTimeout;
-}
-
-/** As the server defines it; no parameter is the runner's to set. */
-function objectSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  const { $schema: _ignored, ...rest } = schema;
-  return { ...rest, type: 'object' };
-}
-
-/** The result's text, as the chat reads an MCP result (`mcpResultToText`), uncut. */
-export function resultText(result: CallToolResult): string {
-  return result.content
-    .map((block) =>
-      block.type === 'text' ? block.text : block.type === 'resource_link' ? `[${block.name}]` : ''
-    )
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-}
-
-/** The first `head` and last `tail` characters, with how many were left out between them. */
-export function keepEnds(text: string, head: number, tail: number): string {
-  if (text.length <= head + tail) return text;
-  return `${text.slice(0, head)}\n…(${text.length - head - tail} characters omitted)…\n${text.slice(
-    -tail
-  )}`;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -15,7 +15,7 @@ See [Not built yet](#not-built-yet).
 
 ## How it works
 
-- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.21.0`, entry
+- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.22.1`, entry
   `@civitai/components-chat/runner-protocol`, protocol version `v: 1`:
 
   | Call                             | Answer                                                                                                                                                        |
@@ -74,7 +74,9 @@ See [Not built yet](#not-built-yet).
     `sandbox__<tool>`, over Streamable HTTP to the sandbox's MCP address, which must be on the sandbox
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
-    call may go 610 s without progress, as the chat's added-server tools.
+    call may go 610 s without progress: the chat's own MCP connection and added-server tool adapter
+    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.22.1), so a lost
+    reply stream is answered at once, as in the browser.
   - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
     (the connection cannot be opened, or the MCP address answers with an error status), the runner
     looks at the user's apps once and never makes the call again (it may have run before the refusal
@@ -249,8 +251,6 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 Known gaps:
 
-- A sandbox MCP call whose event stream closes without its answer waits out its 610 s timeout (the
-  browser's chat answers it at once).
 
 - A model step cut by a crash is asked for again (and paid again) until orchestration can reattach
   to a step in flight.

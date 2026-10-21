@@ -8,7 +8,6 @@ import {
   createGateCore,
   createSandboxClient,
   openApp,
-  type AssistantTool,
   type Sandbox,
 } from '@civitai/app-assistant';
 import {
@@ -16,15 +15,17 @@ import {
   SubagentTracker,
   dispatchAgentTool,
   gateToolSet,
+  hostToolSet,
   nextReply,
   outputTokenCap,
   resolveSubagents,
   subagentToolNames,
+  type ChatTool,
   type GateDeps,
   type SubagentProgress,
 } from '@civitai/components-chat/core';
 import type { ChatToolResult, RunPageState } from '@civitai/components-chat/runner-protocol';
-import { dynamicTool, jsonSchema, type ToolSet } from 'ai';
+import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
@@ -77,12 +78,6 @@ const REPORTED_OUTPUT_CHARS = 200;
 
 /** The tools the page offers the assistant that the runner offers too; the preview tools stay page-only. */
 const RUNNER_PAGE_TOOLS = ['create_app', 'set_checklist', 'report_ready'] as const;
-
-// As `<civitai-chat>`'s `hostToolSet` wraps a page's tools, so they read the same to the assistant.
-const MEDIA_NOTE = ' Pass attachment ids (like up1-1 or gen2-1-1) for files from this chat.';
-// The chat's note for a failed page tool (`tools/host`), not the one for a server's tool.
-const PAGE_TOOL_FAILED_NOTE =
-  'This did not work. Tell the user in plain words; do not retry it this turn.';
 
 export interface AppAssistantToolsOptions {
   /** The hosted sandbox service's base URL (civitai's `APP_ASSISTANT_SANDBOX_URL`). */
@@ -177,7 +172,18 @@ export class AppAssistantTools implements ToolProvider {
         app: sandbox.active?.app ?? null,
       });
 
-      const page = pageToolSet({ ...appTools.tools, ...core.tools }, signal);
+      const pageTools: Record<string, ChatTool> = { ...appTools.tools, ...core.tools };
+      // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
+      // descriptions and the same failure note. No chat files reach them on the runner.
+      const page = hostToolSet(
+        Object.fromEntries(RUNNER_PAGE_TOOLS.map((name) => [name, pageTools[name]!])),
+        sandboxTools,
+        {
+          conversationId,
+          findAttachment: () => undefined,
+          resolveArgs: async (args) => args,
+        }
+      );
       const tools: ToolSet = { ...sandboxTools, ...page };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();
@@ -243,30 +249,4 @@ class ReportingTracker extends SubagentTracker {
     super.set(id, progress);
     this.#report?.(id, progress ?? null);
   }
-}
-
-/** The page tools the runner offers, as `<civitai-chat>` offers a page's tools to the assistant. */
-function pageToolSet(tools: Record<string, AssistantTool>, signal: AbortSignal): ToolSet {
-  const set: ToolSet = {};
-  for (const name of RUNNER_PAGE_TOOLS) {
-    const pageTool = tools[name];
-    if (!pageTool) continue;
-    set[name] = dynamicTool({
-      description: `${pageTool.description}${MEDIA_NOTE}`,
-      inputSchema: jsonSchema({ type: 'object', ...pageTool.inputSchema }),
-      execute: async (input) => {
-        if (signal.aborted) throw new Error('The reply was stopped before this call ran.');
-        try {
-          const result = await pageTool.execute((input ?? {}) as Record<string, unknown>);
-          return result === undefined ? { ok: true } : result;
-        } catch (error) {
-          return {
-            error: error instanceof Error ? error.message : String(error),
-            note: PAGE_TOOL_FAILED_NOTE,
-          };
-        }
-      },
-    });
-  }
-  return set;
 }

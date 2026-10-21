@@ -175,7 +175,7 @@ export function AppAssistantChat({
     // The chat it opened on start can be announced before this listens.
     const opened = (el as CivitaiChat).chatId;
     if (opened) onChatChange(opened);
-    return listenChatChange(el, onChatChange);
+    return listenChatChange(el, onChatChange, opened ?? undefined);
   }, [ready, onChatChange]);
 
   if (error)
