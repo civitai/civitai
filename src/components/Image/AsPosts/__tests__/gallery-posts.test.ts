@@ -48,17 +48,17 @@ describe('mergePostPages', () => {
     ]);
   });
 
-  // With lazy post images a card carries its first few images and the count of that page's
-  // images of the post; the carousel loads the rest of the count on demand.
-  it("counts the post's images from every page, so the carousel can load the rest", () => {
-    const posts = mergePostPages([[card(1, [11, 12], 8)], [card(1, [13, 14], 3)]]);
-    expect(shape(posts)).toEqual([{ postId: 1, imageIds: [11, 12, 13, 14], count: 11 }]);
+  // With lazy post images a card carries its first few images and the count of the whole post,
+  // on every page it appears; the carousel loads the rest of the count on demand.
+  it("keeps the post's count once, however many pages carry it", () => {
+    const twice = mergePostPages([[card(1, [11, 12], 8)], [card(1, [13, 14], 8)]]);
+    expect(shape(twice)).toEqual([{ postId: 1, imageIds: [11, 12, 13, 14], count: 8 }]);
 
-    const repeated = mergePostPages([[card(1, [11, 12], 2)], [card(1, [12, 13], 2)]]);
+    const repeated = mergePostPages([[card(1, [11, 12], 3)], [card(1, [12, 13], 3)]]);
     expect(shape(repeated)).toEqual([{ postId: 1, imageIds: [11, 12, 13], count: 3 }]);
 
-    // The later card's visible images are all on the first card, but it counts two more.
-    const hiddenTail = mergePostPages([[card(1, [11, 12], 2)], [card(1, [12], 3)]]);
-    expect(shape(hiddenTail)).toEqual([{ postId: 1, imageIds: [11, 12], count: 4 }]);
+    // A later card that counts more than the first one raises the count.
+    const grown = mergePostPages([[card(1, [11, 12], 2)], [card(1, [12], 5)]]);
+    expect(shape(grown)).toEqual([{ postId: 1, imageIds: [11, 12], count: 5 }]);
   });
 });

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { chunk } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
@@ -440,6 +441,8 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
+// Keeps one completion fetch inside the search index's hit window.
+const COMPLETION_POSTS_PER_FETCH = 25;
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
@@ -601,22 +604,25 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     // Pages are cut by image, so an image-level sort leaves a post holding only the images that
-    // ranked onto this page. The lazy carousel loads the rest itself, so the two never both run.
-    if (!features.galleryLazyPostImages) {
-      const partialPostIds = Object.keys(posts)
-        .map(Number)
-        .filter((postId) => posts[postId].length < POST_IMAGE_LIMIT);
-      if (partialPostIds.length) {
-        const { items: wholePosts } = await fetchFn({
+    // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
+    // carousel loads the tail from, the same on every page.
+    const partialPostIds = Object.keys(posts)
+      .map(Number)
+      .filter((postId) => posts[postId].length < POST_IMAGE_LIMIT);
+    const completions = await Promise.all(
+      chunk(partialPostIds, COMPLETION_POSTS_PER_FETCH).map((postIds) =>
+        fetchFn({
           ...pageFetchArgs,
           cursor: undefined,
-          postIds: partialPostIds,
-          limit: partialPostIds.length * POST_IMAGE_LIMIT,
-        });
-        for (const image of wholePosts) {
-          const post = image?.postId ? posts[image.postId] : undefined;
-          if (post && !post.some((x) => x.id === image.id)) post.push(image);
-        }
+          postIds,
+          limit: postIds.length * POST_IMAGE_LIMIT,
+        })
+      )
+    );
+    for (const { items: wholePosts } of completions) {
+      for (const image of wholePosts) {
+        const post = image?.postId ? posts[image.postId] : undefined;
+        if (post && !post.some((x) => x.id === image.id)) post.push(image);
       }
     }
 
