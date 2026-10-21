@@ -783,6 +783,53 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     return runId;
   }
 
+  it('an old run’s end, written late by a stale reader, never lands on a newer retry of its turn', async () => {
+    const user = 'u-stale-end';
+    const conversationId = 'c-stale-end';
+    // Run A ended without journaling run-ended (here: ERROR) while nobody read its stream.
+    const runA = await parkedRun(user, conversationId, 'ERROR');
+    const recordsBefore = calls.record;
+    // Run B, a retry of the same turn from another tab; its save recording its call is held back.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const real = deps.store;
+    deps.store = {
+      load: (userId, id) => real.load(userId, id),
+      update: async (userId, id, change) => {
+        const next = change(await real.load(userId, id));
+        if (userId === user && JSON.stringify(next).includes('"toolName":"record"')) await held;
+        return real.update(userId, id, change);
+      },
+    };
+    try {
+      const retry = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId, model: 'tools', retry: true })
+      );
+      expect(retry.status).toBe(201);
+      const runB = retry.body!.runId as string;
+      expect(runB).not.toBe(runA);
+      await events(runB, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+
+      // The first tab wakes and reads A's stream: A's end is built from its status, not written over B.
+      expect(ended(await events(runA, user)).status).toBe('error');
+      const during = await store.load(user, conversationId);
+      expect(during!.turns[0]!.assistant).toMatchObject({ status: 'running' });
+
+      // B's saves and its end still land: its call runs, and the head ends with B's reply.
+      release();
+      expect(ended(await events(runB, user))).toMatchObject({ status: 'done' });
+      expect(calls.record).toBe(recordsBefore + 1);
+      const head = await store.load(user, conversationId);
+      expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(head!.turns[0]!.assistant)).toContain('Recorded.');
+    } finally {
+      release();
+      deps.store = real;
+    }
+  });
+
   it('a run DBOS cancelled at its deadline ends ran_out, in its stream and its head', async () => {
     const runId = await parkedRun('u-timed-out', 'c-timed-out', 'CANCELLED', true);
     expect(ended(await events(runId, 'u-timed-out'))).toMatchObject({
