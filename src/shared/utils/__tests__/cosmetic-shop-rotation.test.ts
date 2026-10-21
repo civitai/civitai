@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   rotateShopSectionItems,
+  shopBlockMaxItems,
   visibleShopBlockItems,
 } from '~/shared/utils/cosmetic-shop-rotation';
+
+describe('shopBlockMaxItems', () => {
+  it('shows 6 of a rotating block that names no maxItems, and all of one that does not rotate', () => {
+    expect(shopBlockMaxItems({ random: true })).toBe(6);
+    expect(shopBlockMaxItems({ random: true, maxItems: 4 })).toBe(4);
+    expect(shopBlockMaxItems({})).toBeUndefined();
+    expect(shopBlockMaxItems({ maxItems: 8 })).toBe(8);
+  });
+});
 
 describe('rotateShopSectionItems', () => {
   it('gives two sections in the same window different orders', () => {

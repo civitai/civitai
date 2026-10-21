@@ -1,7 +1,14 @@
-import { seededRng } from '@civitai/shared/post-scheduling';
+import { seededRng, shuffle } from '@civitai/shared/post-scheduling';
 
 /** What a rotating block falls back to when its metadata leaves these out. */
 export const COSMETIC_SHOP_ROTATION_DEFAULTS = { maxItems: 6, rotateHours: 3 } as const;
+
+type ShopBlockMeta = { maxItems?: number; random?: boolean } | undefined;
+
+/** How many items a shop block shows: its own `maxItems`, else 6 when it rotates, else all. */
+export function shopBlockMaxItems(meta: ShopBlockMeta) {
+  return meta?.maxItems ?? (meta?.random ? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems : undefined);
+}
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -13,18 +20,16 @@ const HOUR_MS = 60 * 60 * 1000;
  */
 export function rotateShopSectionItems<T>(
   items: T[],
-  { sectionId, rotateHours, now }: { sectionId: number; rotateHours: number; now: number }
+  {
+    sectionId,
+    rotateHours = COSMETIC_SHOP_ROTATION_DEFAULTS.rotateHours,
+    now,
+  }: { sectionId: number; rotateHours?: number; now: number }
 ): T[] {
   // Metadata is cast rather than parsed, so a hand-written 0 or negative has to land somewhere.
   const windowMs = Math.max(1, rotateHours) * HOUR_MS;
   const bucket = Math.floor(now / windowMs);
-  const rng = seededRng(Math.imul(bucket, 0x9e3779b1) ^ sectionId);
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
+  return shuffle(items, seededRng(Math.imul(bucket, 0x9e3779b1) ^ sectionId));
 }
 
 type ShopBlockItem = {

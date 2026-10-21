@@ -207,6 +207,14 @@ describe('getShopSectionsWithItems viewer gating', () => {
     ]);
   });
 
+  it('signed-out viewer with the flag (the homepage block): creator items stay, no block lookup', async () => {
+    await getShopSectionsWithItems({ creatorShopEnabled: true });
+
+    expect(capturedCosmeticWhere()).not.toHaveProperty('createdById');
+    expect(capturedShopItemWhere().status).toBe('Published');
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
+  });
+
   it('skips the block lookup for anonymous, unflagged, and moderator viewers', async () => {
     await getShopSectionsWithItems({ creatorShopEnabled: true });
     await getShopSectionsWithItems({ userId: 1 });
@@ -347,6 +355,18 @@ describe('adding one item to a section from the review drawer', () => {
       'These creator items are not published resellable cosmetics: Pumpkin hat'
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    // The mock returns the row whatever it is asked, so the consent rule is pinned here.
+    expect(dbMock.dbWrite.cosmeticShopItem.findMany).toHaveBeenLastCalledWith({
+      where: {
+        id: { in: [7] },
+        cosmetic: { createdById: { not: null } },
+        OR: [
+          { status: { not: 'Published' } },
+          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+        ],
+      },
+      select: { title: true },
+    });
   });
 
   it('refuses a mystery box', async () => {
@@ -371,7 +391,15 @@ describe('adding one item to a section from the review drawer', () => {
     await addShopItemToSection({ shopItemId: 7, sectionId: 5 });
 
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    const [, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    const [strings, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
     expect(values).toEqual([5, 7, 5]);
+    // Appended after the section's last index, and a second add of the same item is a no-op
+    // rather than a unique-violation error.
+    expect(strings.map((s: string) => s.replace(/\s+/g, ' ').trim())).toEqual([
+      'INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index") SELECT',
+      ',',
+      ', COALESCE(MAX("index") + 1, 0) FROM "CosmeticShopSectionItem" WHERE "shopSectionId" =',
+      'ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING',
+    ]);
   });
 });
