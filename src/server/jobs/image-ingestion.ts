@@ -728,8 +728,8 @@ export const removeBlockedImages = createJob(
     //       takedown. Its `trackModActivity` call was added alongside this split; it is a
     //       moderator-gated per-image decision that previously left no row in the mod audit log
     //       at all.
-    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
-    //   object is left alone:
+    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only its public
+    //   copies are not deleted:
     //     • the scan pipeline's three block outcomes — the orchestrator content rating
     //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
     //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
@@ -752,10 +752,10 @@ export const removeBlockedImages = createJob(
     //       this comment was written. That is the property being bought.
     //
     // ── WHAT RETRACTION KEYS ON ──────────────────────────────────────────────────────────────
-    // A moderator activity row on the image dated at or after its queue row's `createdAt`; without
-    // one the image is still deleted, but not retracted. Every un-block writer drops the image's
-    // queue row, so an un-block's own `review` row is never compared against a later block. A new
-    // un-block writer has to do the same.
+    // A `MODERATOR_TAKEDOWN_ACTIVITIES` row on the image dated at or after its queue row's
+    // `createdAt`; without one the image is still deleted, but not retracted. Every un-block that
+    // writes a `review` row drops the image's queue row, so that row is never compared against a
+    // later block. A new one has to do the same.
     //
     // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
     // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
