@@ -80,7 +80,11 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import { getCsamsToArchive, processCsamReport } from '~/server/services/csam.service-new';
+import {
+  CSAM_SEND_DECISION_AFTER_HOURS,
+  getCsamsToArchive,
+  processCsamReport,
+} from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -618,17 +622,39 @@ describe('sending each type of report', () => {
   it.each([
     ['no job', []],
     ['jobs with no blob', [{ jobId: 'job-1', blobs: [] }]],
-  ])('opens no CyberTip for a generated-image report naming %s', async (_, jobs) => {
+  ])(
+    'opens no CyberTip for a generated-image report naming %s, and keeps it waiting',
+    async (_, jobs) => {
+      primaryRow = {
+        ...report,
+        type: 'GeneratedImage',
+        details: { generatedImages: jobs },
+      } as unknown as CsamReportProps;
+
+      await processCsamReport(primaryRow);
+
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(lines('send-no-files')).toEqual([
+        expect.objectContaining({ type: 'error', reportId: 1 }),
+      ]);
+      expect(releases()).toHaveLength(1);
+    }
+  );
+
+  it('asks for a decision on a report with no file to send once it has waited past the decision limit', async () => {
     primaryRow = {
       ...report,
       type: 'GeneratedImage',
-      details: { generatedImages: jobs },
+      createdAt: new Date(Date.now() - CSAM_SEND_DECISION_AFTER_HOURS * 3_600_000 - 60_000),
+      details: { generatedImages: [] },
     } as unknown as CsamReportProps;
 
     await processCsamReport(primaryRow);
 
-    expect(submitReport).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
+    expect(lines('send-decision-needed')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1 }),
+    ]);
   });
 
   describe('training data', () => {

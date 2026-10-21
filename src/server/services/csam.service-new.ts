@@ -890,6 +890,22 @@ async function cancelStoredCyberTip(
   return delivered ? 'held' : 'cancelled';
 }
 
+/** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
+function logNoFiles(claim: SendClaim, message: string) {
+  const hoursPending = hoursSinceFiled(claim.report);
+  logSendLine(claim, 'send-no-files', { message, hoursPending }, 'error');
+  if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
+    logSendLine(
+      claim,
+      'send-decision-needed',
+      {
+        message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
+        hoursPending,
+      },
+      'error'
+    );
+}
+
 async function uploadToCyberTip(claim: SendClaim, file: File) {
   const result = await cybertipClient.uploadFile({ id: claim.ncmecReportId as number, file });
   logSendLine(claim, 'send-upload', { fileId: result.data.fileId });
@@ -1230,8 +1246,9 @@ async function reportGenerationData(claim: SendClaim) {
   if (!initialReport) return;
 
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
-  if (!generatedImages?.length)
-    return await deleteUnderClaim(claim, 'no generated image of the report');
+  if (!generatedImages) return await deleteUnderClaim(claim, 'no generated image of the report');
+  if (!generatedImages.length)
+    return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   await sendCyberTip(claim, initialReport, {
     sendFiles: async (reportId) => {
@@ -1320,13 +1337,7 @@ async function reportTrainingData(claim: SendClaim) {
     } catch (e) {
       return logSendFailure(report, e, 'archive-data');
     }
-    if (!files.length)
-      return logSendLine(
-        claim,
-        'send-no-files',
-        { message: `report ${report.id} training data holds no image` },
-        'error'
-      );
+    if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const limit = plimit(2);
     await sendCyberTip(claim, initialReport, {
