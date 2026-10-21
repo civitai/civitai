@@ -13,9 +13,10 @@ CREATE TABLE "CsamReportAudit" (
   "oldUserId" INTEGER,
   "oldReportId" INTEGER,
   "oldType" TEXT,
+  "oldSecondaryUserId" INTEGER,
   "oldImageCount" INTEGER,
-  -- Kept for a change to a sent report; a delete records no details.
-  "oldDetails" JSONB,
+  -- A fingerprint of the details, never their content.
+  "oldDetailsSha256" TEXT,
   "oldReportSentAt" TIMESTAMP(3),
   "changedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "changedBy" TEXT NOT NULL DEFAULT current_user
@@ -28,6 +29,10 @@ DECLARE
   secondary_user INTEGER;
   held BOOLEAN;
 BEGIN
+  IF (OLD."details" ->> 'secondaryUserId') ~ '^[0-9]{1,9}$' THEN
+    secondary_user := (OLD."details" ->> 'secondaryUserId')::int;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     IF OLD."reportSentAt" IS NOT NULL THEN
       IF OLD."reportSentAt" > now() - interval '1 year' THEN
@@ -38,9 +43,6 @@ BEGIN
       IF to_regclass('"EvidenceHeldUser"') IS NULL THEN
         RAISE EXCEPTION 'CsamReport % cannot be deleted: hold status is unavailable', OLD."id";
       END IF;
-      IF (OLD."details" ->> 'secondaryUserId') ~ '^[0-9]{1,9}$' THEN
-        secondary_user := (OLD."details" ->> 'secondaryUserId')::int;
-      END IF;
       EXECUTE 'SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ANY($1))'
         INTO held
         USING ARRAY[OLD."userId", secondary_user];
@@ -49,13 +51,13 @@ BEGIN
       END IF;
     END IF;
     INSERT INTO "CsamReportAudit" (
-      "csamReportId", "op", "oldUserId", "oldReportId", "oldType", "oldImageCount", "oldDetails",
-      "oldReportSentAt"
+      "csamReportId", "op", "oldUserId", "oldSecondaryUserId", "oldReportId", "oldType",
+      "oldImageCount", "oldDetailsSha256", "oldReportSentAt"
     )
     VALUES (
-      OLD."id", 'delete', OLD."userId", OLD."reportId", OLD."type"::text,
+      OLD."id", 'delete', OLD."userId", secondary_user, OLD."reportId", OLD."type"::text,
       CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
-      NULL, OLD."reportSentAt"
+      encode(sha256(convert_to(OLD."details"::text, 'UTF8')), 'hex'), OLD."reportSentAt"
     );
     RETURN OLD;
   END IF;
@@ -86,13 +88,13 @@ BEGIN
   END IF;
 
   INSERT INTO "CsamReportAudit" (
-    "csamReportId", "op", "oldUserId", "oldReportId", "oldType", "oldImageCount", "oldDetails",
-    "oldReportSentAt"
+      "csamReportId", "op", "oldUserId", "oldSecondaryUserId", "oldReportId", "oldType",
+      "oldImageCount", "oldDetailsSha256", "oldReportSentAt"
   )
   VALUES (
-    OLD."id", 'update', OLD."userId", OLD."reportId", OLD."type"::text,
+    OLD."id", 'update', OLD."userId", secondary_user, OLD."reportId", OLD."type"::text,
     CASE WHEN jsonb_typeof(OLD."images") = 'array' THEN jsonb_array_length(OLD."images") END,
-    OLD."details", OLD."reportSentAt"
+    encode(sha256(convert_to(OLD."details"::text, 'UTF8')), 'hex'), OLD."reportSentAt"
   );
   RETURN NEW;
 END;

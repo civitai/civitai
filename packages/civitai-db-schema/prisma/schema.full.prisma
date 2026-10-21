@@ -6539,9 +6539,10 @@ model CsamReportAudit {
   oldUserId       Int?
   oldReportId     Int?
   oldType         String?
+  oldSecondaryUserId Int?
   oldImageCount   Int?
-  /// Kept for a change to a sent report; a delete records no details.
-  oldDetails      Json?
+  /// A fingerprint of the details, never their content.
+  oldDetailsSha256 String?
   oldReportSentAt DateTime?
   changedAt       DateTime  @default(now())
   changedBy       String    @default(dbgenerated("CURRENT_USER"))

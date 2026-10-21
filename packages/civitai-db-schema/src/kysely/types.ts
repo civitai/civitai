@@ -2908,11 +2908,12 @@ export type CsamReportAudit = {
   oldUserId: number | null;
   oldReportId: number | null;
   oldType: string | null;
+  oldSecondaryUserId: number | null;
   oldImageCount: number | null;
   /**
-   * Kept for a change to a sent report; a delete records no details.
+   * A fingerprint of the details, never their content.
    */
-  oldDetails: unknown | null;
+  oldDetailsSha256: string | null;
   oldReportSentAt: Timestamp | null;
   changedAt: Generated<Timestamp>;
   changedBy: Generated<string>;

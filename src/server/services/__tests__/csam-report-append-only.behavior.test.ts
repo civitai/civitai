@@ -55,11 +55,29 @@ async function insertReport(sentDaysAgo: number | null, details: object | null =
 
 const audit = async (id: number) =>
   (
-    await db.pg.query<{ op: string; oldDetails: unknown }>(
-      `SELECT op, "oldDetails" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+    await db.pg.query<{ op: string; oldDetailsSha256: string | null }>(
+      `SELECT op, "oldDetailsSha256" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
       [id]
     )
   ).rows;
+
+/** The fingerprint the audit records for a details value. */
+const fingerprint = async (details: unknown) =>
+  (
+    await db.pg.query<{ sha: string }>(
+      `SELECT encode(sha256(convert_to($1::jsonb::text, 'UTF8')), 'hex') AS sha`,
+      [JSON.stringify(details)]
+    )
+  ).rows[0].sha;
+
+/** No column of an audit row holds the content of the details it recorded. */
+const auditHoldsContent = async (id: number, marker: string) =>
+  (
+    await db.pg.query(
+      `SELECT 1 FROM "CsamReportAudit" a WHERE a."csamReportId" = $1 AND to_jsonb(a)::text LIKE $2`,
+      [id, `%${marker}%`]
+    )
+  ).rows.length > 0;
 
 /** The audit's record of the send time matches the report's own. */
 const auditedSendTimes = async (id: number) =>
@@ -118,7 +136,7 @@ describe('an unsent report', () => {
     await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
     expect(await exists(id)).toBe(false);
-    expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: null }]);
+    expect(await audit(id)).toEqual([{ op: 'delete', oldDetailsSha256: await fingerprint({}) }]);
     expect(await auditIdentity(id)).toEqual([
       { oldUserId: SUBJECT, oldReportId: null, oldType: 'Image', oldImageCount: 1 },
     ]);
@@ -145,15 +163,18 @@ describe('a sent report', () => {
     await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
 
     expect(await audit(id)).toEqual([
-      { op: 'update', oldDetails: { contents: ['a'] } },
-      { op: 'update', oldDetails: { contents: ['a'], archiveSkipped: 'x' } },
+      { op: 'update', oldDetailsSha256: await fingerprint({ contents: ['a'] }) },
+      {
+        op: 'update',
+        oldDetailsSha256: await fingerprint({ contents: ['a'], archiveSkipped: 'x' }),
+      },
     ]);
   });
 
   it('accepts an object over details that hold nothing', async () => {
     const id = await insertReport(30, null);
     await db.pg.query(`UPDATE "CsamReport" SET details = '{"restored": true}' WHERE id = $1`, [id]);
-    expect(await audit(id)).toEqual([{ op: 'update', oldDetails: null }]);
+    expect(await audit(id)).toEqual([{ op: 'update', oldDetailsSha256: await fingerprint(null) }]);
   });
 
   it('refuses a non-object over details that hold nothing', async () => {
@@ -259,7 +280,10 @@ describe('a sent report', () => {
       await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
       expect(await exists(id)).toBe(false);
-      expect(await audit(id)).toEqual([{ op: 'delete', oldDetails: null }]);
+      expect(await audit(id)).toEqual([
+        { op: 'delete', oldDetailsSha256: await fingerprint({ contents: ['a'] }) },
+      ]);
+      expect(await auditHoldsContent(id, 'contents')).toBe(false);
       const { rows } = await db.pg.query(
         `SELECT "oldUserId", "oldReportId", "oldType", "oldImageCount"
          FROM "CsamReportAudit" WHERE "csamReportId" = $1`,
@@ -274,11 +298,21 @@ describe('a sent report', () => {
     it('is allowed after a year when neither the subject nor the secondary user is held', async () => {
       await createHoldView();
       await db.pg.exec(`INSERT INTO "HeldUserFixture" VALUES (${UNRELATED})`);
-      const id = await insertReport(400, { secondaryUserId: SECONDARY });
+      const id = await insertReport(400, { secondaryUserId: SECONDARY, contents: ['a'] });
+      await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
 
       await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
 
       expect(await exists(id)).toBe(false);
+      const { rows } = await db.pg.query<{ op: string; oldSecondaryUserId: number | null }>(
+        `SELECT op, "oldSecondaryUserId" FROM "CsamReportAudit" WHERE "csamReportId" = $1 ORDER BY id`,
+        [id]
+      );
+      expect(rows).toEqual([
+        { op: 'update', oldSecondaryUserId: SECONDARY },
+        { op: 'delete', oldSecondaryUserId: SECONDARY },
+      ]);
+      expect(await auditHoldsContent(id, 'contents')).toBe(false);
     });
 
     it.each([
