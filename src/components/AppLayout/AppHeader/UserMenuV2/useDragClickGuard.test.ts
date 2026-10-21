@@ -52,9 +52,10 @@ describe('useDragClickGuard', () => {
   it('swallows the click a drop produces, then lets clicks through again', () => {
     pointerdown(true);
     guard.onDragStart();
+    // dnd-kit ends the drag before the browser dispatches the drop's click.
+    guard.onDragSettled();
     expect(click()).toEqual({ delivered: false, defaultPrevented: true });
 
-    guard.onDragSettled();
     vi.runAllTimers();
     expect(click().delivered).toBe(true);
   });
