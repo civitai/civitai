@@ -1,4 +1,7 @@
 import fs from 'fs';
+import fsAsync from 'fs/promises';
+import JSZip from 'jszip';
+import type { Readable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -15,20 +18,30 @@ await vi.hoisted(async () => {
   process.env.NEXT_PUBLIC_CIVITAI_LINK ??= 'https://example.invalid/civitai-link';
 });
 
-const { submitReport, uploadFile, finishReport, cancelReport, getObject, fetchBlobAsFile } =
-  vi.hoisted(() => ({
-    submitReport: vi.fn(),
-    uploadFile: vi.fn(),
-    finishReport: vi.fn(),
-    cancelReport: vi.fn(),
-    getObject: vi.fn(),
-    fetchBlobAsFile: vi.fn(),
-  }));
+const {
+  getStatus,
+  submitReport,
+  uploadFile,
+  finishReport,
+  cancelReport,
+  getObject,
+  fetchBlobAsFile,
+  getFileForModelVersion,
+} = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  getFileForModelVersion: vi.fn(),
+  submitReport: vi.fn(),
+  uploadFile: vi.fn(),
+  finishReport: vi.fn(),
+  cancelReport: vi.fn(),
+  getObject: vi.fn(),
+  fetchBlobAsFile: vi.fn(),
+}));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   ...(await importOriginal<typeof CybertiplineTools>()),
   Client: class {
-    getStatus = async () => ({ data: { responseCode: 0 } });
+    getStatus = getStatus;
     submitReport = submitReport;
     uploadFile = uploadFile;
     submitFileDetails = vi.fn();
@@ -63,7 +76,7 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
 
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getFileForModelVersion: async () => ({ status: 'not-found' }),
+  getFileForModelVersion,
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
@@ -113,6 +126,8 @@ const order = (fn: { mock: { invocationCallOrder: number[] } }) => fn.mock.invoc
 beforeEach(() => {
   vi.mocked(logToAxiom).mockClear();
   primaryRow = report;
+  getStatus.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
+  getFileForModelVersion.mockReset().mockResolvedValue({ status: 'not-found' });
   submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   finishReport.mockReset().mockResolvedValue({});
@@ -396,5 +411,288 @@ describe('deleting a report the send finds nothing to send for', () => {
     expect(lines('send-delete-refused')).toEqual([
       expect.objectContaining({ type: 'error', reportId: 1 }),
     ]);
+  });
+});
+
+const theClaim = () => claimWrites()[0].data.sendClaimId;
+const answering = (responseCode: number) => ({ data: { responseCode } });
+
+describe("this run's CyberTip, after a failed send", () => {
+  it('is cancelled again by the next run when its cancel fails, and two failed cancels open no third CyberTip', async () => {
+    finishReport.mockRejectedValueOnce(new Error('synthetic finish failure'));
+    cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
+    submitReport
+      .mockResolvedValueOnce({ data: { reportId: 99 } })
+      .mockResolvedValueOnce({ data: { reportId: 100 } });
+
+    await processCsamReport(report);
+
+    expect(lines('send-cancel-failed')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1, ncmecReportId: 99 }),
+    ]);
+    expect(writesWith('details')).toEqual([]);
+
+    primaryRow = { ...report, reportId: 99 } as CsamReportProps;
+    await processCsamReport(report);
+
+    expect(cancelReport).toHaveBeenLastCalledWith({ id: 99 });
+    expect(lines('send-possible-duplicate')).toEqual([
+      expect.objectContaining({ reportId: 1, ncmecReportId: 99, cancelOutcome: 'failed' }),
+    ]);
+    expect(submitReport).toHaveBeenCalledTimes(2);
+    expect(stamps().map(({ data }) => data.reportId)).toEqual([100]);
+  });
+
+  it('is marked sent, not sent again, when NCMEC answers the cancel that it was already finished', async () => {
+    finishReport.mockRejectedValue(new Error('synthetic finish timeout'));
+    cancelReport.mockResolvedValue(answering(5102));
+
+    await processCsamReport(report);
+
+    expect(lines('send-cancel-already-finished')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1, ncmecReportId: 99 }),
+    ]);
+    expect(stamps().map(({ data }) => data.reportId)).toEqual([99]);
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(writesWith('details').filter(({ data }) => !('reportSentAt' in data))).toEqual([]);
+  });
+
+  it('is recorded as cancelled when NCMEC answers it was already retracted', async () => {
+    finishReport.mockRejectedValue(new Error('synthetic finish failure'));
+    cancelReport.mockResolvedValue(answering(5101));
+
+    await processCsamReport(report);
+
+    expect(stamps()).toEqual([]);
+    expect(writesWith('details').at(-1)?.data).toEqual({
+      reportId: null,
+      details: { cancelledReportIds: [99] },
+    });
+    expect(lines('send-cancel-already-retracted')).toEqual([
+      expect.objectContaining({ reportId: 1, ncmecReportId: 99 }),
+    ]);
+  });
+});
+
+describe('a stored CyberTip id NCMEC answers for', () => {
+  it('is a possible duplicate when already finished, and the report is sent again', async () => {
+    primaryRow = { ...report, reportId: 77 } as CsamReportProps;
+    cancelReport.mockResolvedValueOnce(answering(5102));
+
+    await processCsamReport(report);
+
+    expect(lines('send-possible-duplicate')).toEqual([
+      expect.objectContaining({ type: 'error', ncmecReportId: 77, cancelOutcome: 'finished' }),
+    ]);
+    expect(writesWith('details')[0].data.details).toEqual({ possibleDuplicateReportIds: [77] });
+    expect(stamps()).toHaveLength(1);
+  });
+
+  it('is recorded as cancelled when already retracted', async () => {
+    primaryRow = { ...report, reportId: 77 } as CsamReportProps;
+    cancelReport.mockResolvedValueOnce(answering(5101));
+
+    await processCsamReport(report);
+
+    expect(lines('send-cancel-already-retracted')).toEqual([
+      expect.objectContaining({ ncmecReportId: 77 }),
+    ]);
+    expect(writesWith('details')[0].data.details).toEqual({ cancelledReportIds: [77] });
+  });
+
+  it.each([
+    ['cancelled', answering(0), { cancelledReportIds: [5, 77], possibleDuplicateReportIds: [6] }],
+    ['finished', answering(5102), { cancelledReportIds: [5], possibleDuplicateReportIds: [6, 77] }],
+  ])('when %s, is added to the ids the report already notes', async (_, answer, noted) => {
+    primaryRow = {
+      ...report,
+      reportId: 77,
+      details: { cancelledReportIds: [5], possibleDuplicateReportIds: [6] },
+    } as CsamReportProps;
+    cancelReport.mockResolvedValueOnce(answer);
+
+    await processCsamReport(report);
+
+    expect(writesWith('details')[0].data.details).toEqual(noted);
+  });
+});
+
+describe('a report that may have a CyberTip at NCMEC', () => {
+  it.each([
+    ['a stored CyberTip id', { reportId: 77 }],
+    ['a possible duplicate noted', { details: { possibleDuplicateReportIds: [6] } }],
+  ])('is not deleted when it has %s and nothing to send', async (_, held) => {
+    primaryRow = { ...report, images: [{ id: 601 }], ...held } as unknown as CsamReportProps;
+
+    await processCsamReport(report);
+
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+    expect(lines('send-delete-held')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1 }),
+    ]);
+    expect(releases()).toEqual([
+      {
+        where: { id: 1, sendClaimId: theClaim() },
+        data: { sendClaimId: null, sendClaimedAt: null },
+      },
+    ]);
+  });
+});
+
+describe('a send that throws', () => {
+  it('releases its claim, and only its own, when a read throws before any CyberTip is opened', async () => {
+    dbMock.dbRead.image.findMany.mockRejectedValue(new Error('synthetic replica outage'));
+
+    await expect(processCsamReport(report)).rejects.toThrow('synthetic replica outage');
+
+    expect(releases()).toEqual([
+      {
+        where: { id: 1, sendClaimId: theClaim() },
+        data: { sendClaimId: null, sendClaimedAt: null },
+      },
+    ]);
+  });
+
+  it('raises send-stamp-lost with both ids when the final write throws', async () => {
+    dbMock.dbWrite.csamReport.updateMany.mockImplementation(async ({ data }) => {
+      if ('reportSentAt' in data) throw new Error('synthetic write failure');
+      return { count: 1 };
+    });
+
+    await expect(processCsamReport(report)).rejects.toThrow('synthetic write failure');
+
+    expect(finishReport).toHaveBeenCalledWith({ id: 99 });
+    expect(lines('send-stamp-lost')).toEqual([
+      expect.objectContaining({ type: 'error', reportId: 1, ncmecReportId: 99 }),
+    ]);
+  });
+
+  it('takes no claim while NCMEC is unavailable', async () => {
+    getStatus.mockResolvedValue({ data: { responseCode: 1 } });
+
+    await processCsamReport(report);
+
+    expect(dbMock.dbWrite.csamReport.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('sending each type of report', () => {
+  const filedJobs = [
+    { jobId: 'job-1', blobs: [{ url: 'blob-1' }], prompt: 'filed prompt', resources: ['r'] },
+  ];
+
+  it('sends a generated-image report, keeping the filed jobs and recording the uploads beside them', async () => {
+    primaryRow = {
+      ...report,
+      type: 'GeneratedImage',
+      details: { generatedImages: filedJobs },
+    } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(stamps()[0].data.details).toEqual({
+      generatedImages: filedJobs,
+      generatedImageUploads: [{ url: 'blob-1', fileId: 'file-1', hash: 'ncmec-md5' }],
+    });
+    expect(order(finishReport)).toBeLessThan(
+      dbMock.dbWrite.csamReport.updateMany.mock.invocationCallOrder[
+        claimWrites().indexOf(stamps()[0])
+      ]
+    );
+  });
+
+  it('finishes no generated-image CyberTip with no file in it', async () => {
+    primaryRow = {
+      ...report,
+      type: 'GeneratedImage',
+      details: { generatedImages: [] },
+    } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(finishReport).not.toHaveBeenCalled();
+    expect(cancelReport).toHaveBeenCalledWith({ id: 99 });
+    expect(stamps()).toEqual([]);
+  });
+
+  describe('training data', () => {
+    async function zipOf(names: string[]) {
+      const zip = new JSZip();
+      for (const name of names) zip.file(name, 'bytes');
+      return zip.generateAsync({ type: 'nodebuffer' });
+    }
+    async function serveZip(names: string[]) {
+      const zip = await zipOf(names);
+      getFileForModelVersion.mockResolvedValue({
+        status: 'success',
+        url: 'https://example.invalid/td.zip',
+      });
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response(new Uint8Array(zip)));
+      // The zip passes through the job's disk; here, through memory.
+      let written = Buffer.alloc(0);
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
+      vi.spyOn(fsAsync, 'writeFile').mockImplementation(async (_, data) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of data as Readable) chunks.push(Buffer.from(chunk));
+        written = Buffer.concat(chunks);
+      });
+      vi.spyOn(fs, 'readFile').mockImplementation(((
+        _: unknown,
+        done: (e: Error | null, data: Buffer) => void
+      ) => done(null, written)) as never);
+    }
+    const trainingReport = {
+      ...report,
+      type: 'TrainingData',
+      details: { modelVersionIds: [7] },
+    } as unknown as CsamReportProps;
+
+    it('sends it, recording each file NCMEC took', async () => {
+      await serveZip(['a.png']);
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(stamps()[0].data.details).toEqual({
+        modelVersionIds: [7],
+        trainingData: [{ filename: 'a.png', fileId: 'file-1', hash: 'ncmec-md5' }],
+      });
+    });
+
+    it('finishes no CyberTip for a zip with no image in it', async () => {
+      await serveZip(['notes.txt']);
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(finishReport).not.toHaveBeenCalled();
+      expect(stamps()).toEqual([]);
+    });
+  });
+
+  it('sends an external-link report that names no evidence file', async () => {
+    primaryRow = {
+      ...report,
+      type: 'ExternalLink',
+      details: { email: 'x@example.invalid' },
+    } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(finishReport).toHaveBeenCalledWith({ id: 99 });
+    expect(stamps()).toHaveLength(1);
+  });
+});
+
+describe('the note to NCMEC on what a CyberTip omits', () => {
+  it('counts an image the report names whose row no longer exists', async () => {
+    primaryRow = { ...report, images: [{ id: 501 }, { id: 601 }] } as CsamReportProps;
+
+    await processCsamReport(report);
+
+    expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+      '1 file(s) named in this report are no longer stored and are not included.'
+    );
   });
 });

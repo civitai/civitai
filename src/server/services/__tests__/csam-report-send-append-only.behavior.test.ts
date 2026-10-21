@@ -72,6 +72,8 @@ import {
   processCsamReport,
 } from '~/server/services/csam.service-new';
 import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
+import { CSAM_SEND_BLOCKED_AFTER_HOURS } from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
 import { createCsamReport } from '~/server/services/csam.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -313,6 +315,59 @@ describe('the send claim under the append-only trigger', () => {
     return rows[0].id;
   }
   const runStartCopy = readRow;
+  const ANOTHER_RUN = '00000000-0000-4000-8000-000000000001';
+  const takeOver = (id: number) =>
+    db.pg.query(`UPDATE "CsamReport" SET "sendClaimId" = $2, "sendClaimedAt" = $3 WHERE id = $1`, [
+      id,
+      ANOTHER_RUN,
+      new Date(),
+    ]);
+  const lines = (subType: string) =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .filter((line) => line.subType === subType);
+  const newReport = async () =>
+    (
+      await db.pg.query<{ id: number }>(
+        `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
+         VALUES (20, 10, '[{"id":501}]', '{}') RETURNING id`
+      )
+    ).rows[0].id;
+
+  it('a run whose claim was taken over during the send marks nothing sent, and leaves the new claim', async () => {
+    vi.mocked(logToAxiom).mockClear();
+    const id = await newReport();
+    uploadFile.mockImplementationOnce(async () => {
+      await takeOver(id);
+      return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+    });
+
+    await processCsamReport(await runStartCopy(id));
+
+    const row = await readRow(id);
+    expect(row.reportSentAt).toBeNull();
+    expect(row.sendClaimId).toBe(ANOTHER_RUN);
+    expect(lines('send-stamp-lost')).toEqual([
+      expect.objectContaining({ reportId: id, ncmecReportId: 900 }),
+    ]);
+  });
+
+  it('a run whose claim was taken over while it held the report back releases nothing', async () => {
+    vi.mocked(logToAxiom).mockClear();
+    const id = await newReport();
+    getObject.mockImplementation(async () => {
+      await takeOver(id);
+      throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+    });
+
+    await processCsamReport(await runStartCopy(id));
+
+    const row = await readRow(id);
+    expect(row.sendClaimId).toBe(ANOTHER_RUN);
+    expect(row.details).toEqual({});
+    expect(lines('send-claim-lost')).toEqual([expect.objectContaining({ reportId: id })]);
+  });
 
   it('claims, stores the id and marks the report sent unaudited while unsent; the archive write after is audited', async () => {
     const id = await sendNewReport();
@@ -340,8 +395,12 @@ describe('the send claim under the append-only trigger', () => {
     expect(await readRow(id)).toMatchObject({ reportId: 900, sendClaimId: null });
   });
 
-  it('leaves a report to a run that has held it as long as the job lock', async () => {
+  it('expires a claim after the job lock, and before a report it held is alerted as blocked', () => {
     expect(CSAM_SEND_CLAIM_EXPIRY_SECONDS).toBeGreaterThan(CSAM_SEND_JOB_LOCK_SECONDS);
+    expect(CSAM_SEND_CLAIM_EXPIRY_SECONDS).toBeLessThan(CSAM_SEND_BLOCKED_AFTER_HOURS * 3600);
+  });
+
+  it('leaves a report to a run that has held it as long as the job lock', async () => {
     const id = await insertClaimed(CSAM_SEND_JOB_LOCK_SECONDS + 60);
     const held = await readRow(id);
 

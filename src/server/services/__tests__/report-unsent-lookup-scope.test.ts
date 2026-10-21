@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createCsamReport } from '~/server/services/csam.service';
 import { CSAM_SEND_CLAIM_EXPIRY_SECONDS } from '~/server/services/csam.service-new';
+import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 import { logToAxiom } from '~/server/logging/client';
 
 type Row = {
@@ -442,18 +443,26 @@ describe('a report a send run has claimed', () => {
       .filter((line) => line.subType === 'fold-skip-claimed');
   beforeEach(() => vi.mocked(logToAxiom).mockClear());
 
-  it('takes no filing while the run holds it: the filing is a report of its own, and the held id is logged', async () => {
-    const held = seed({ userId: 101, images: [{ id: 1 }], ...claimedAgo(60) });
+  it.each([
+    ['just claimed', 60],
+    ['claimed as long as the job lock', CSAM_SEND_JOB_LOCK_SECONDS + 60],
+  ])(
+    'takes no filing while the run holds it (%s): the filing is a report of its own, and the held id is logged',
+    async (_, age) => {
+      // Another account's held report, filed first, must not be the one named.
+      seed({ userId: 202, images: [{ id: 9 }], ...claimedAgo(60) });
+      const held = seed({ userId: 101, images: [{ id: 1 }], ...claimedAgo(age) });
 
-    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+      await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
 
-    expect(rows.find((r) => r.id === held.id)).toEqual(held);
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({ userId: 101, images: [{ id: 4 }], sendClaimId: null });
-    expect(skipLines()).toEqual([
-      expect.objectContaining({ reportId: held.id, newReportId: rows[1].id }),
-    ]);
-  });
+      expect(rows.find((r) => r.id === held.id)).toEqual(held);
+      expect(rows).toHaveLength(3);
+      expect(rows[2]).toMatchObject({ userId: 101, images: [{ id: 4 }], sendClaimId: null });
+      expect(skipLines()).toEqual([
+        expect.objectContaining({ reportId: held.id, newReportId: rows[2].id }),
+      ]);
+    }
+  );
 
   it('takes no filing when the claim lands between the lookup and the lock', async () => {
     const raced = seed({ userId: 101, images: [{ id: 1 }] });
