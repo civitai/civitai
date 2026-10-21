@@ -101,7 +101,9 @@ beforeEach(async () => {
   const query = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
     const sql = toSql(first, values);
     const { rows } = await holder.db.query(sql.text, sql.values as unknown[]);
-    if (hooks.afterWorklist && sql.text.includes('m.mode')) await hooks.afterWorklist();
+    // After the worklist that actually picked the users up (the fresh one comes back empty here).
+    if (hooks.afterWorklist && sql.text.includes('m.mode') && rows.length)
+      await hooks.afterWorklist();
     return rows;
   }) as never;
   const execute = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
