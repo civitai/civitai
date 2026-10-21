@@ -94,7 +94,10 @@ BEGIN
   INSERT INTO "CommentTopic" ("entityType", "entityId", "locked")
   VALUES (et, ei, COALESCE(lock, false))
   ON CONFLICT ("entityId", "entityType") DO NOTHING;
-  RETURN true;
+  -- A no-op here means a concurrent creator committed meanwhile, and the caller's insert needs the
+  -- row held before an entity cascade can take it.
+  PERFORM 1 FROM "CommentTopic" WHERE "entityId" = ei AND "entityType" = et FOR KEY SHARE SKIP LOCKED;
+  RETURN FOUND;
 END $$;
 
 -- Past commentv3_depth_cap a reply attaches to the depth-19 ancestor and replyToId keeps who was answered;
