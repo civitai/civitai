@@ -216,4 +216,22 @@ describe('sending a report under the append-only trigger', () => {
     expect(row.reportSentAt).toBeNull();
     expect(row.details).toEqual({ filedMeanwhile: true, readFailures: { 501: 1 } });
   });
+
+  it('counts a failed read on a report whose details are JSON null', async () => {
+    const { rows } = await db.pg.query<{ id: number }>(
+      `INSERT INTO "CsamReport" ("userId", "reportedById", "images", "details")
+       VALUES (20, 10, '[{"id":501}]', 'null'::jsonb) RETURNING id`
+    );
+    const id = rows[0].id;
+    getObject.mockRejectedValue(
+      Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' })
+    );
+
+    await processCsamReport({
+      ...(await readRow(id)),
+      createdAt: new Date(Date.now() - 3_600_000),
+    });
+
+    expect((await readRow(id)).details).toEqual({ readFailures: { 501: 1 } });
+  });
 });
