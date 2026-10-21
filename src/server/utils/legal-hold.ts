@@ -1,31 +1,54 @@
 import { Prisma } from '@prisma/client';
 
 /** The owner `deleteUser` hands a kept model to. */
-const PLACEHOLDER_OWNER_ID = -1;
+export const PLACEHOLDER_OWNER_ID = -1;
+
+const reportHolds = (hc: string) =>
+  Prisma.raw(`(
+    ${hc}."reportSentAt" IS NULL
+    OR ${hc}."archivedAt" IS NULL
+    OR ${hc}."reportSentAt" > now() - interval '1 year'
+  )`);
+
+/**
+ * The users under a legal hold through a report: named on one, as its subject or its secondary
+ * user, that is still pending, not yet archived, or sent within the last year. One distinct
+ * `"userId"` text per row, never null, since the secondary user is read out of the report's details.
+ */
+export const legalHoldUserIdsSql = Prisma.sql`
+  SELECT hc."userId"::text AS "userId"
+  FROM "CsamReport" hc
+  WHERE hc."userId" IS NOT NULL AND ${reportHolds('hc')}
+  UNION
+  SELECT hs.details ->> 'secondaryUserId'
+  FROM "CsamReport" hs
+  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${reportHolds('hs')}
+`;
 
 /**
  * Whether a user is named on a report that is still pending, not yet archived, or sent within the
  * last year, as its subject or its secondary user. `userId` is an expression: a bound id or a column.
  */
 export function userNamedOnHoldingReportSql(userId: Prisma.Sql): Prisma.Sql {
-  return Prisma.sql`EXISTS (
-    SELECT 1
-    FROM "CsamReport" hc
-    WHERE (hc."userId" = ${userId} OR hc.details ->> 'secondaryUserId' = (${userId})::text)
-      AND (
-        hc."reportSentAt" IS NULL
-        OR hc."archivedAt" IS NULL
-        OR hc."reportSentAt" > now() - interval '1 year'
-      )
+  // Uncorrelated, so Postgres builds the held set once per statement rather than once per row.
+  return Prisma.sql`((${userId})::text IN (${legalHoldUserIdsSql}))`;
+}
+
+/**
+ * Whether a user is under a legal hold. The hold is user-level, so any report naming them holds
+ * every one of their files, not only the files the report is about. The placeholder owner is always
+ * held: who uploaded what it owns is no longer known.
+ */
+export function userUnderLegalHoldSql(userId: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(
+    ${userId} = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
+    OR ${userNamedOnHoldingReportSql(userId)}
   )`;
 }
 
 /**
- * Whether the owner of a model version is under a legal hold. The hold is user-level, so any report
- * naming the owner holds every one of their files, not only the files the report is about.
- *
- * A model whose owner deleted their account and kept it public belongs to the placeholder owner, so
- * who uploaded it is no longer known; its files are held too.
+ * Whether the owner of a model version is under a legal hold. A model whose owner deleted their
+ * account and kept it public belongs to the placeholder owner, so its files are held too.
  */
 export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
   // Once the EvidenceHeldUser view is applied, OR in:
@@ -36,10 +59,7 @@ export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
     FROM "ModelVersion" hmv
     JOIN "Model" hm ON hm.id = hmv."modelId"
     WHERE hmv.id = ${modelVersionId}
-      AND (
-        hm."userId" = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
-        OR ${userNamedOnHoldingReportSql(Prisma.sql`hm."userId"`)}
-      )
+      AND ${userUnderLegalHoldSql(Prisma.raw('hm."userId"'))}
   )`;
 }
 

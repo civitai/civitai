@@ -151,10 +151,13 @@ function candidates(within: (deletedAt: Date) => boolean, direction: 'asc' | 'de
 }
 
 async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
-  // remove-blocked-images: open CSAM reports. None in this fixture.
-  if (sql.includes('FROM "CsamReport"') && sql.includes('GROUP BY')) return [];
+  // remove-blocked-images: users under a legal hold. None in this fixture.
+  if (sql.includes('FROM "CsamReport"')) return [];
 
   // remove-deleted-user-images: the two account-state re-reads. They differ by whether the
   // predicate also inspects the stored removal choice.
@@ -256,6 +259,14 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return store.images
       .filter((i) => i.needsReview && named.includes(i.needsReview) && i.ingestion === 'Blocked')
       .map((i) => ({ id: i.id, needsReview: i.needsReview }));
+  }
+
+  // remove-blocked-images: the blocked images of users under a legal hold.
+  if (sql.includes('FROM "Image"') && sql.includes('"userId" = ANY')) {
+    const owners = (values.find(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => owners.includes(i.userId) && i.ingestion === 'Blocked')
+      .map((i) => ({ id: i.id }));
   }
 
   // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
