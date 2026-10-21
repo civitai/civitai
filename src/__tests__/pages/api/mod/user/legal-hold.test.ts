@@ -83,6 +83,7 @@ function call(query: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hasModeratorGrant.mockImplementation(async () => true);
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -125,14 +126,27 @@ describe('user.legalHold', () => {
     expect(body).toEqual({ userId: TARGET, held: null });
   });
 
-  it('refuses a moderator without user.deleteAccount, before looking anything up', async () => {
-    hasModeratorGrant.mockResolvedValueOnce(false);
+  it('refuses a moderator with neither grant, before looking anything up', async () => {
+    hasModeratorGrant.mockResolvedValue(false);
 
     const { status, body } = await call({ userId: String(TARGET) });
 
     expect(status).toBe(403);
     expect(JSON.stringify(body)).not.toContain('held');
     expect(hasModeratorGrant).toHaveBeenCalledWith(expect.anything(), 'user.deleteAccount');
+    expect(hasModeratorGrant).toHaveBeenCalledWith(expect.anything(), 'user.purge');
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
+
+  it.each(['user.deleteAccount', 'user.purge'])(
+    'answers a moderator who holds only %s',
+    async (grant) => {
+      hasModeratorGrant.mockImplementation(async (_actor, id) => id === grant);
+
+      const { status, body } = await call({ userId: String(TARGET) });
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ userId: TARGET, held: false });
+    }
+  );
 });

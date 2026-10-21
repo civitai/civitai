@@ -68,9 +68,12 @@ export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  // Only where the Delete account button renders, and only for someone who may press it.
+  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
   let deleteHold: DeleteHold | null = null;
-  if (params.section === 'admin' && locals.grants['user.deleteAccount']) {
+  if (
+    params.section === 'admin' &&
+    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
+  ) {
     const { result } = await parent();
     if (result) deleteHold = await deleteAccountHold(result.identity.id);
   }

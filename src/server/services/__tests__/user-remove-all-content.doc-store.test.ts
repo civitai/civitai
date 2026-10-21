@@ -20,6 +20,11 @@ const { holder, recorded } = vi.hoisted(() => ({
   recorded: [] as string[],
 }));
 
+// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({
     ...holder.maintenance,
@@ -72,7 +77,7 @@ vi.mock('~/server/metrics', async (importOriginal) => {
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -111,6 +116,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The wipe's re-check after its evidence deletes: still unheld.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
   recorded.length = 0;
   holder.maintenance = createDocStoreMaintenance({ db: h.db });
   for (const model of Object.values(dbMock.dbRead) as any[]) {
@@ -163,7 +170,14 @@ async function state(app: string) {
   };
 }
 
-const MAIN_DB_WIPE = ['model', 'image', 'post', 'article', 'collection', 'comment'] as const;
+/** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
+const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article', 'Comment'];
+const rawDeleted = (table: string) =>
+  dbMock.dbWrite.$executeRaw.mock.calls.some(
+    ([strings, ...values]) =>
+      (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
+      values.includes(TARGET)
+  );
 
 describe('removeAllContent → document store', () => {
   it('wipes the target account from the store and leaves the bystander alone', async () => {
@@ -230,9 +244,10 @@ describe('removeAllContent → document store', () => {
     await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toBeUndefined();
 
     // The main-database wipe ran in full regardless.
-    for (const model of MAIN_DB_WIPE) {
-      expect(dbMock.dbWrite[model].deleteMany).toHaveBeenCalledWith({ where: { userId: TARGET } });
-    }
+    expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
+      where: { userId: TARGET },
+    });
+    for (const table of MAIN_DB_WIPE) expect(rawDeleted(table), table).toBe(true);
     expect(recorded).toEqual(['failed']);
     const line = warn.mock.calls
       .map((c) => String(c[0]))

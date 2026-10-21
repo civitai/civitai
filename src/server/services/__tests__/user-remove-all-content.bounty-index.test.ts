@@ -15,6 +15,11 @@ const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
   },
 }));
 
+// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   const idx = { queueUpdate: vi.fn(async () => undefined) };
@@ -36,7 +41,7 @@ vi.mock('~/server/metrics', async (importOriginal) => {
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -80,9 +85,24 @@ const del = (...ids: number[]) => ids.map((id) => `${SearchIndexUpdateQueueActio
 let unsettled: number[] = [];
 const BOUNTIES = [701, 702];
 
+/** The kept-bounty list the account's bounty delete was given. */
+function keptByBountyDelete() {
+  const call = vi
+    .mocked(dbMock.dbWrite.$executeRaw)
+    .mock.calls.find(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('DELETE FROM "Bounty"\n')
+    );
+  if (!call) throw new Error('no bounty delete was issued');
+  const [, userId, kept] = call;
+  expect(userId).toBe(USER);
+  return kept;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   unsettled = [];
+  // The wipe's re-check after its evidence deletes: still unheld.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
   bountyService.settleBountyPayout.mockImplementation(async () => false);
   bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);
   // Ids distinct per table and per database, so an index fed from the wrong one is visible.
@@ -122,9 +142,7 @@ describe('removeAllContent and the bounty index', () => {
 
     await removeAllContent({ id: USER });
 
-    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, id: { notIn: [702] } },
-    });
+    expect(keptByBountyDelete()).toEqual([702]);
     expect(queued(bountiesIndex)).toEqual(del(701));
   });
 
@@ -136,9 +154,7 @@ describe('removeAllContent and the bounty index', () => {
 
     expect(bountyService.refundUnpayableBountyAward).toHaveBeenCalledWith(702);
     expect(bountyService.refundUnpayableBountyAward).not.toHaveBeenCalledWith(701);
-    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, id: { notIn: [702] } },
-    });
+    expect(keptByBountyDelete()).toEqual([702]);
     expect(queued(bountiesIndex)).toEqual(del(701));
   });
 
@@ -148,9 +164,7 @@ describe('removeAllContent and the bounty index', () => {
 
     await removeAllContent({ id: USER });
 
-    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, id: { notIn: [701] } },
-    });
+    expect(keptByBountyDelete()).toEqual([701]);
     expect(queued(bountiesIndex)).toEqual(del(702));
   });
 });
