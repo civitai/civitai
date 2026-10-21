@@ -27,10 +27,6 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => undefined),
-  safeError: (e: unknown) => ({ message: (e as Error).message }),
-}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: vi.fn(async (_key: string, defaultValue: Date) => [defaultValue, vi.fn()]),
