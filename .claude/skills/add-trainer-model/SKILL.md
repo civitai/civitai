@@ -177,7 +177,14 @@ Edit `trainingModels.ts`:
    media (`image`/`video`). Add the card `type` here if it should appear above the "show more" fold;
    otherwise it lives in the long tail automatically.
 
-5. **Update the mirror-date comment** at the top of `trainingModels.ts` (and the `PARAM_DEFAULTS`
+5. **Train further's checkpoint AIR** — the orchestrator checks a continuation's `continueFrom` AIR
+   ecosystem against its own name for the model, which can differ from the step's `ecosystem` input
+   (`mossImage` → `moss`). Whatif a training step for the new ecosystem with
+   `continueFrom: urn:air:<ecosystem>:lora:orchestrator:blob@<any existing blob key>`; if it fails with
+   "continueFrom ecosystem … must match the training model ecosystem 'X'", add `<ecosystem>: 'X'` to
+   `CONTINUE_FROM_ECOSYSTEM` in `apps/training-studio/src/lib/train-core.ts`.
+
+6. **Update the mirror-date comment** at the top of `trainingModels.ts` (and the `PARAM_DEFAULTS`
    comment if numbers changed) so the next re-mirror knows the snapshot moved.
 
 ## Step 4 — Typecheck both trainers, then the gate test

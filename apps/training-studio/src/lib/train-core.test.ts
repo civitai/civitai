@@ -16,7 +16,11 @@ const getResource = vi.fn();
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
 vi.mock('@civitai/client', () => ({
-  Air: { isAir: () => false, stringify: vi.fn() },
+  Air: {
+    isAir: () => false,
+    stringify: (p: Record<string, string>) =>
+      `urn:air:${p.ecosystem}:${p.type}:${p.source}:${p.id}@${p.version}`,
+  },
   getResource: (...args: unknown[]) => getResource(...args),
   getWorkflow: (...args: unknown[]) => getWorkflow(...args),
   updateWorkflow: vi.fn(),
@@ -229,6 +233,39 @@ describe('keep-training base model pin', () => {
     await continueTraining(client, opts, { checkText });
     expect('model' in submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input).toBe(false);
   });
+});
+
+describe('keep-training checkpoint reference', () => {
+  const source = (input: Record<string, unknown>) => ({
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', epochs: 10, steps: 2000, ...input },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  });
+  const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  it.each([
+    ['mossImage', 'moss'],
+    ['flux2klein', 'flux2'],
+    ['flux3klein', 'flux3'],
+    ['wan', 'wanvideo'],
+    ['sdxl', 'sdxl'],
+  ])(
+    'names a %s checkpoint by the ecosystem the orchestrator checks it against',
+    async (ecosystem, air) => {
+      getWorkflow.mockResolvedValue(source({ ecosystem }));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(client, opts, { checkText });
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.continueFrom).toBe(
+        `urn:air:${air}:lora:orchestrator:blob@blob-10`
+      );
+    }
+  );
 });
 
 describe('custom base model', () => {

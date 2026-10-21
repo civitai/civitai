@@ -442,6 +442,20 @@ type EpochOutput = {
 export const loraBlobAir = (ecosystem: string, blobKey: string) =>
   Air.stringify({ ecosystem, type: 'lora', source: 'orchestrator', id: 'blob', version: blobKey });
 
+// The orchestrator requires `continueFrom`'s AIR ecosystem to equal its own name for the training model's
+// ecosystem, which differs from the step's `ecosystem` input for these — sending the input name fails with
+// "continueFrom ecosystem 'mossImage' must match the training model ecosystem 'moss'". Every other
+// ai-toolkit ecosystem in the catalog passes as-is (checked against the orchestrator's whatif, 2026-10-21).
+const CONTINUE_FROM_ECOSYSTEM: Record<string, string> = {
+  flux2klein: 'flux2',
+  flux3klein: 'flux3',
+  mossImage: 'moss',
+  wan: 'wanvideo',
+};
+
+const continueFromAir = (ecosystem: string, blobKey: string) =>
+  loraBlobAir(CONTINUE_FROM_ECOSYSTEM[ecosystem] ?? ecosystem, blobKey);
+
 export interface ContinueOpts {
   workflowId: string;
   fromEpoch: number;
@@ -481,7 +495,7 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
-  const continueFrom = loraBlobAir(ecosystem, modelKey);
+  const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;
