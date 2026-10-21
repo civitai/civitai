@@ -22,7 +22,7 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
 
 vi.mock('~/utils/file-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile: async () => null,
+  fetchBlobAsFile: async () => new File(['generated'], 'generated.png'),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({

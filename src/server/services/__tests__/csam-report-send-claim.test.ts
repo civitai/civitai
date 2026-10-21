@@ -523,6 +523,37 @@ describe('a stored CyberTip id NCMEC answers for', () => {
 });
 
 describe('a report that may have a CyberTip at NCMEC', () => {
+  it.each([
+    ['cancelled', answering(0)],
+    ['already retracted', answering(5101)],
+  ])('is deleted for having nothing to send once its stored CyberTip is %s', async (_, answer) => {
+    cancelReport.mockResolvedValue(answer);
+    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+
+    await processCsamReport(report);
+
+    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not deleted when its stored CyberTip cannot be cancelled', async () => {
+    cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
+    primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
+
+    await processCsamReport(report);
+
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+    expect(lines('send-delete-held')).toHaveLength(1);
+  });
+
+  it('is deleted, as before, when a generated-image report names no generated-image list', async () => {
+    primaryRow = { ...report, type: 'GeneratedImage', details: {} } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
   it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
     primaryRow = { ...report, images: [{ id: 601 }], reportId: 77 } as CsamReportProps;
 
@@ -724,6 +755,18 @@ describe('sending each type of report', () => {
       ]);
     });
 
+    it('sends no queued file to a CyberTip being cancelled after one upload fails', async () => {
+      await serveZip(['a.png', 'b.png', 'c.png', 'd.png']);
+      uploadFile.mockRejectedValueOnce(new Error('synthetic upload failure'));
+      primaryRow = trainingReport;
+
+      await processCsamReport(trainingReport);
+
+      expect(uploadFile).toHaveBeenCalledTimes(2);
+      expect(Math.max(...uploadFile.mock.invocationCallOrder)).toBeLessThan(order(cancelReport));
+      expect(stamps()).toEqual([]);
+    });
+
     it('opens no CyberTip when the training data cannot be downloaded', async () => {
       await serveZip(['a.png']);
       getFileForModelVersion.mockResolvedValue({ status: 'not-found' });
@@ -749,6 +792,27 @@ describe('sending each type of report', () => {
         recursive: true,
       });
     });
+  });
+
+  it('opens no CyberTip for a generated-image report a job of which has no file that can be fetched', async () => {
+    fetchBlobAsFile.mockImplementation(async (url: string) =>
+      url === 'blob-gone' ? null : new File(['generated'], 'generated.png')
+    );
+    primaryRow = {
+      ...report,
+      type: 'GeneratedImage',
+      details: {
+        generatedImages: [
+          { jobId: 'job-1', blobs: [{ url: 'blob-1' }] },
+          { jobId: 'job-2', blobs: [{ url: 'blob-gone' }] },
+        ],
+      },
+    } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
   });
 
   it('sends an external-link report that names no evidence file', async () => {

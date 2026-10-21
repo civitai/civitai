@@ -906,6 +906,25 @@ function logNoFiles(claim: SendClaim, message: string) {
     );
 }
 
+/** Sends files two at a time; once one fails, none still queued goes to the CyberTip being cancelled. */
+function sendEach<T, R>(items: T[], send: (item: T) => Promise<R>) {
+  const limit = plimit(2);
+  const started: Promise<unknown>[] = [];
+  const sent = Promise.all(
+    items.map((item) =>
+      limit(() => {
+        const sending = send(item);
+        started.push(sending);
+        return sending.catch((e) => {
+          limit.clearQueue();
+          throw e;
+        });
+      })
+    )
+  );
+  return { sent, settled: async () => void (await Promise.allSettled(started)) };
+}
+
 async function uploadToCyberTip(claim: SendClaim, file: File) {
   const result = await cybertipClient.uploadFile({ id: claim.ncmecReportId as number, file });
   logSendLine(claim, 'send-upload', { fileId: result.data.fileId });
@@ -1250,55 +1269,54 @@ async function reportGenerationData(claim: SendClaim) {
   if (!generatedImages.length)
     return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
+  // Fetched before the CyberTip is opened, so a report that cannot be sent opens none.
+  const jobs = await Limiter({ batchSize: 1, limit: 2 }).process(generatedImages, async ([job]) => [
+    {
+      job,
+      files: (
+        await Promise.all(
+          job.blobs.map(async ({ url }) => {
+            const file = await fetchBlobAsFile(url);
+            return file ? { url, file } : null;
+          })
+        )
+      ).filter(isDefined),
+    },
+  ]);
+  if (jobs.some(({ files }) => files.length === 0))
+    return logSendFailure(report, new Error('missing images for report'), 'archive-data');
+
+  let sending: ReturnType<typeof sendEach> | undefined;
   await sendCyberTip(claim, initialReport, {
     sendFiles: async (reportId) => {
-      const uploads = await Limiter({ batchSize: 1, limit: 2 }).process(
-        generatedImages,
-        async ([{ blobs, prompt, negativePrompt, resources }]) => {
-          const data = (
-            await Promise.all(
-              blobs.map(async (blob) => {
-                const file = await fetchBlobAsFile(blob.url);
-                if (!file) return null;
-                return { ...blob, file };
-              })
-            )
-          ).filter(isDefined);
+      sending = sendEach(
+        jobs.flatMap(({ job, files }) => files.map((file) => ({ job, ...file }))),
+        async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+          const {
+            data: { fileId, hash },
+          } = await uploadToCyberTip(claim, file);
 
-          if (!data.length) throw new Error('missing images for report');
+          const valuePair: Array<{ name: string; value: string }> = [];
+          if (prompt) valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
+          if (negativePrompt)
+            valuePair.push({
+              name: 'negativePrompt',
+              value: trimNonAlphanumeric(negativePrompt) ?? '',
+            });
+          if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
 
-          const arr: CsamReportGeneratedImageData[] = [];
-          for (const { file, url } of data) {
-            if (file) {
-              const {
-                data: { fileId, hash },
-              } = await uploadToCyberTip(claim, file);
-
-              const valuePair: Array<{ name: string; value: string }> = [];
-              if (prompt)
-                valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-              if (negativePrompt)
-                valuePair.push({
-                  name: 'negativePrompt',
-                  value: trimNonAlphanumeric(negativePrompt) ?? '',
-                });
-              if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-              await cybertipClient.submitFileDetails({
-                fileId,
-                reportId,
-                publiclyAvailable: false,
-                // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-              });
-              arr.push({ url, fileId, hash });
-            }
-          }
-
-          return arr;
+          await cybertipClient.submitFileDetails({
+            fileId,
+            reportId,
+            publiclyAvailable: false,
+            // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
+          });
+          return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
         }
       );
-      return { generatedImageUploads: uploads };
+      return { generatedImageUploads: await sending.sent };
     },
+    beforeCancel: async () => sending?.settled(),
   });
 }
 
@@ -1339,25 +1357,19 @@ async function reportTrainingData(claim: SendClaim) {
     }
     if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
 
-    const limit = plimit(2);
+    let sending: ReturnType<typeof sendEach> | undefined;
     await sendCyberTip(claim, initialReport, {
-      sendFiles: async (reportId) => ({
-        trainingData: await Promise.all(
-          files.map(({ imgBlob, filename }) =>
-            limit(async () => {
-              const {
-                data: { fileId, hash },
-              } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-              await cybertipClient.submitFileDetails({
-                reportId,
-                fileId,
-                originalFileName: filename,
-              });
-              return { filename, fileId, hash };
-            })
-          )
-        ),
-      }),
+      sendFiles: async (reportId) => {
+        sending = sendEach(files, async ({ imgBlob, filename }) => {
+          const {
+            data: { fileId, hash },
+          } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
+          await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
+          return { filename, fileId, hash };
+        });
+        return { trainingData: await sending.sent };
+      },
+      beforeCancel: async () => sending?.settled(),
     });
   } finally {
     // A scratch copy of the stored training data: every run downloads its own.
