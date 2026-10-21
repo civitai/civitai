@@ -99,6 +99,13 @@ const INTERRUPTED_BY_UPDATE =
 /** How many times a start retries, 100 ms apart, while the user's previous run is finishing. */
 const ENQUEUE_ATTEMPTS = 20;
 
+/** Why a pass was aborted: the viewer's Stop, its wall clock, or a tool that could not go on. */
+interface Why {
+  reason?: 'stopped' | 'ran_out' | 'paused';
+  /** The words a `paused` reply ends with. */
+  message?: string;
+}
+
 /** A reply's workflow input. Persisted by DBOS: it must never carry a credential. */
 export interface ReplyInput {
   runId: string;
@@ -111,6 +118,8 @@ export interface ReplyInput {
   model: string;
   settings: RunSettings;
   page?: StartRunRequest['page'];
+  /** civitai's grant says the viewer may start read-only subagents: a flag, not a credential. */
+  subagents?: boolean;
   wallClockMs: number;
   /**
    * When the run's grant expires (ms since the epoch): a time, not a credential. The run ends
@@ -146,6 +155,11 @@ export interface RunnerDeps {
   log: Logger;
   wallClockMs: number;
   stopGraceMs: number;
+  /**
+   * Set when the runner cannot serve a reply as App Assistant's page expects (its tools are not set
+   * up): every start is refused with these words, rather than answered with no tools.
+   */
+  startRefusal?: string;
 }
 
 export interface LaunchOptions {
@@ -340,6 +354,9 @@ export class Runner implements RunService {
     request: StartRunRequest,
     grant: VerifiedGrant
   ): Promise<StartOutcome> {
+    // Refused before anything is kept: not `unavailable`, which the page would ask again forever.
+    if (this.#deps.startRefusal)
+      return { ok: false, error: 'refused', message: this.#deps.startRefusal };
     const runId = runIdFor(userId, request.idempotencyKey);
     const { grants } = this.#deps;
     // Kept in the runner's own table, never in the workflow's input: DBOS persists that.
@@ -394,6 +411,7 @@ export class Runner implements RunService {
       model: request.model,
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
+      ...(grant.subagents ? { subagents: true } : {}),
       wallClockMs: this.#deps.wallClockMs,
       grantExpiresAt: grant.expiresAt.getTime(),
     };
@@ -572,7 +590,7 @@ export class Runner implements RunService {
   async #replyBody(input: ReplyInput): Promise<ReplyOutput> {
     const begun = await DBOS.runStep(() => this.#begin(input), { name: 'begin' });
     const stop = new AbortController();
-    const why: { reason?: 'stopped' | 'ran_out' } = {};
+    const why: Why = {};
     // The pass and the wait for a Stop run side by side; DBOS reserves their step ids in call order.
     const pass = DBOS.runStep(() => this.#pass(input, begun, stop.signal, why), { name: 'pass' });
     const control = DBOS.recv<string>(CONTROL, {
@@ -688,12 +706,7 @@ export class Runner implements RunService {
    * top after a crash; the head's progress then says where to carry on, and a call that had started
    * and not finished is closed as interrupted, never run again.
    */
-  async #pass(
-    input: ReplyInput,
-    begun: Begun,
-    stop: AbortSignal,
-    why: { reason?: 'stopped' | 'ran_out' }
-  ): Promise<ReplyOutput> {
+  async #pass(input: ReplyInput, begun: Begun, stop: AbortSignal, why: Why): Promise<ReplyOutput> {
     const { runId, userId, conversationId, seq } = input;
     const { store, log } = this.#deps;
     const journal = await this.#readJournal(runId);
@@ -750,7 +763,13 @@ export class Runner implements RunService {
         messages: reply.messages,
         steps,
         ...(status === 'done' && outcome.stopped !== undefined ? { endedBy: outcome.stopped } : {}),
-        ...(status === 'error' ? { resumable: outcome.resume !== undefined } : {}),
+        ...(status === 'error'
+          ? {
+              resumable:
+                outcome.resume !== undefined ||
+                (reply.errorKind === INTERRUPTED && countSteps(reply.messages) > 0),
+            }
+          : {}),
       });
       await emitter.drain();
       emitter.close();
@@ -801,10 +820,30 @@ export class Runner implements RunService {
             conversationId,
             ...(input.page ? { page: input.page } : {}),
             signal: stop,
+            history: {
+              earlier: (head?.turns ?? [])
+                .filter((saved) => saved.seq < seq)
+                .flatMap((saved) => turnFrom(saved).assistant.messages),
+              current: from?.messages ?? [],
+            },
+            subagents: input.subagents === true,
+            model: () => this.#model(input, stop),
+            maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),
+            report: (result) => {
+              emitter.flushParts();
+              emitter.emit({ type: 'tool-reported', result });
+            },
+            endReply: (message) => {
+              why.reason ??= 'paused';
+              why.message ??= message;
+              abort();
+            },
+            subagentProgress: (toolCallId, progress) =>
+              emitter.emit({ type: 'subagent-progress', toolCallId, progress }),
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet, stop),
+        request: (toolSet) => this.#request(input, head, toolSet, stop, tools),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -828,6 +867,27 @@ export class Runner implements RunService {
         status: 'error',
         error: 'The reply did not start.',
       });
+    if (outcome.status === 'aborted' && why.reason === 'paused') {
+      // A tool could not go on (its app was paused by the user opening another): the reply ends as
+      // interrupted with its saved steps, every call in them answered (one that had not finished
+      // closed as interrupted), so Continue carries on from them and runs none of them again.
+      await progress.idle();
+      const saved = savedTurn(await store.load(userId, conversationId).catch(() => null), seq);
+      const message = why.message ?? 'The reply was paused.';
+      emitter.flushParts();
+      emitter.emit({
+        type: 'error',
+        message,
+        kind: 'unavailable',
+        trace: errorTrace(new Error(message), { stage: 'tool', step: 0, msIntoStep: 0 }),
+      });
+      return end('error', {
+        messages: saved && !hasEnded(saved) ? shownMessages(saved) : outcome.messages,
+        status: 'error',
+        error: message,
+        errorKind: INTERRUPTED,
+      });
+    }
     if (outcome.status === 'aborted') {
       return why.reason === 'ran_out'
         ? end('ran_out', { messages: outcome.messages, status: 'done', ranOut: true }, outcome)
@@ -868,13 +928,27 @@ export class Runner implements RunService {
     );
   }
 
+  #model(input: ReplyInput, signal: AbortSignal) {
+    return this.#deps.models.languageModel({
+      userId: input.userId,
+      runId: input.runId,
+      conversationId: input.conversationId,
+      model: input.model,
+      tier: input.settings.tier,
+      signal,
+    });
+  }
+
   #request(
     input: ReplyInput,
     head: StoredConversationMetadata | null,
     tools: ToolSet,
-    signal: AbortSignal
+    signal: AbortSignal,
+    opened?: OpenTools
   ): AgentCoreRequest {
     const { settings } = input;
+    // A provider that builds the reply's instructions (App Assistant's) replaces the page's own.
+    const hostInstructions = opened?.instructions ?? settings.hostInstructions;
     const earlier = (head?.turns ?? [])
       .filter((turn) => turn.seq < input.seq)
       .map((turn) => turnFrom(turn));
@@ -886,23 +960,21 @@ export class Runner implements RunService {
     };
     const context = buildTurnContext({
       attachments: input.user.attachments ?? [],
-      ...(settings.hostInstructions ? { hostInstructions: settings.hostInstructions } : {}),
+      ...(hostInstructions ? { hostInstructions } : {}),
       spoken: settings.spokenReplies,
     });
     return {
-      model: this.#deps.models.languageModel({
-        userId: input.userId,
-        runId: input.runId,
-        conversationId: input.conversationId,
-        model: input.model,
-        tier: settings.tier,
-        signal,
-      }),
-      // TODO: the App Assistant's own rules and gate, ported from the page.
+      model: this.#model(input, signal),
+      // As the browser's Agent builds it, with the provider's rules (`systemPrompt`) and own tools.
       system: buildSystemPrompt({
         now: new Date(),
         ...(settings.customInstructions ? { customInstructions: settings.customInstructions } : {}),
         tools: Object.keys(tools),
+        host: {
+          tools: (opened?.hostTools ?? []).filter((name) => name in tools),
+          instructs: Boolean(hostInstructions?.trim()),
+        },
+        ...(opened?.rules ? { rules: opened.rules } : {}),
       }),
       history: buildModelMessages([...earlier, current], () => undefined, {
         context,

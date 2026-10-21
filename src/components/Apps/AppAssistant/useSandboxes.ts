@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssistantTokenError } from '~/components/Apps/AppAssistant/assistantToken';
+import { openApp } from '@civitai/app-assistant';
 import type { Sandbox, SandboxClient } from '~/components/Apps/AppAssistant/sandboxClient';
-import { isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
+
+// Shared with the server runner, which opens apps the same way.
+export { openApp };
 
 const SANDBOXES_KEY = ['app-assistant', 'sandboxes'] as const;
 
@@ -9,23 +12,6 @@ const SANDBOXES_KEY = ['app-assistant', 'sandboxes'] as const;
 export function shouldRetrySandboxList(failureCount: number, error: unknown): boolean {
   if (error instanceof AssistantTokenError && error.code === 'consent_required') return false;
   return failureCount < 3;
-}
-
-/**
- * Creates or resumes the sandbox for `app`. The service runs one at a time, so when it refuses for
- * that reason the others are suspended and the open is tried once more; any other refusal leaves them
- * running.
- */
-export async function openApp(client: SandboxClient, app: string) {
-  try {
-    return await client.open(app);
-  } catch (error) {
-    // The service checks the kept-apps cap before the running cap, so at that cap nothing is paused.
-    if (!isRunningLimit(error)) throw error;
-  }
-  const others = (await client.list()).filter((s) => s.app !== app && s.state !== 'suspended');
-  for (const sandbox of others) await client.suspend(sandbox.name);
-  return client.open(app);
 }
 
 /** The caller's sandboxes, polled quickly while one is starting. */

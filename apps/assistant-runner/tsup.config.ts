@@ -8,6 +8,8 @@ export default defineConfig({
   platform: 'node',
   target: 'node22',
   outDir: 'dist',
+  // The workspace package ships TypeScript source, so it is bundled rather than left external.
+  noExternal: ['@civitai/app-assistant'],
   sourcemap: true,
   clean: true,
 });

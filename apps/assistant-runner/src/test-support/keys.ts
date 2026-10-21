@@ -54,12 +54,14 @@ export function signViewer(keys: TestKeys, userId: string, expiresIn = 300): Pro
 export function signGrant(
   keys: TestKeys,
   grant: { userId: string; conversationId: string; idempotencyKey: string },
-  expiresIn = 7800
+  expiresIn = 7800,
+  /** More claims, as civitai adds them (`subagents: true`). */
+  extra: Record<string, unknown> = {}
 ): Promise<string> {
   return signTestToken(keys.privateKey, {
     ...GRANT,
     sub: grant.userId,
-    claims: { cid: grant.conversationId, key: grant.idempotencyKey },
+    claims: { cid: grant.conversationId, key: grant.idempotencyKey, ...extra },
     expiresIn,
   });
 }

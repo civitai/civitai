@@ -4,14 +4,20 @@ import type { Logger } from './interfaces';
 
 /**
  * What a minted token is for, as civitai's `AppAssistantTokenPurpose`: `chat` spends Buzz through
- * orchestration (model calls and the conversation store). The sandbox tools (B2) add `sandbox`.
+ * orchestration (model calls and the conversation store); `sandbox` only says who the user is, to the
+ * hosted sandbox service and its MCP server (the sandbox tools).
  */
-export type TokenPurpose = 'chat';
+export type TokenPurpose = 'chat' | 'sandbox';
 
 /** The civitai endpoint the runner trades a grant at, relative to `CIVITAI_URL`. */
 export const MINT_PATH = 'api/internal/app-assistant/runner-token';
 /** A token this close to expiry is minted again rather than used. */
 const EXPIRY_MARGIN_MS = 60_000;
+/**
+ * The longest one token is used, however long it is valid: every mint re-checks the user's gates and
+ * the runner's flag, so a ban, a revoked consent or the runner turned off lands within about this.
+ */
+export const MAX_TOKEN_REUSE_MS = 60_000;
 const MINT_TIMEOUT_MS = 15_000;
 /** The most tokens kept in memory; past it, expired ones are dropped first, then the oldest. */
 const MAX_CACHED = 5_000;
@@ -142,9 +148,11 @@ export class TokenMinter {
       throw new MintRefusedError('unavailable', 'Civitai could not be reached just now.', 503);
     }
     const expiresAtMs = typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : NaN;
+    // Kept as if it expired a minute (plus the margin) from now at the latest.
+    const reuseUntil = this.#now() + MAX_TOKEN_REUSE_MS + EXPIRY_MARGIN_MS;
     this.#remember(key, {
       token: body.token,
-      expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : 0,
+      expiresAtMs: Number.isFinite(expiresAtMs) ? Math.min(expiresAtMs, reuseUntil) : 0,
     });
     return body.token;
   }

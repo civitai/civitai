@@ -59,7 +59,7 @@ import {
   getAppAssistantRefusalForUserId,
   mintAppAssistantToken,
 } from '../app-assistant.service';
-import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 
 const USER_ID = 42;
 const CLIENT_ID = 'appassist-42';
@@ -216,6 +216,34 @@ describe('getAppAssistantRefusalForUserId (the runner’s mints)', () => {
   it('refuses a user who no longer exists', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
     expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({ status: 403 });
+  });
+
+  it('with remoteRunner, also refuses once the server runner is off for the user (its kill switch)', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 403,
+      error: 'Replies on the server are not available on this account',
+    });
+    // Control: the same user is admitted with the runner on, and without asking about it.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: true });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toBeNull();
+  });
+
+  it('with remoteRunner, answers unavailable (asked again), never a refusal, while Flipt cannot decide the runner flag', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    vi.mocked(isFliptDecisive).mockImplementation(
+      async (keys) => !keys.includes('appAssistantRemoteRunner')
+    );
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+    // Control: App Assistant's own mints are not held to the runner's flag.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    vi.mocked(isFliptDecisive).mockImplementation(async () => decisiveMock());
   });
 });
 

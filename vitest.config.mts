@@ -124,6 +124,9 @@ const civitaiWorkspacePkgs = [
   // `@civitai/post-planner` (packages/civitai-post-planner) is imported by the planner REST route
   // and its service; resolved through tsconfig paths in the app build, not symlinked into root.
   'post-planner',
+  // `@civitai/app-assistant` (packages/civitai-app-assistant): App Assistant's gate, prompt and
+  // sandbox client, shared by the page and apps/assistant-runner. Not symlinked into root either.
+  'app-assistant',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');

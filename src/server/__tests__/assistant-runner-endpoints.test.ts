@@ -4,11 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 
-const { mintMock, consentMock, refusalMock, userRefusalMock } = vi.hoisted(() => ({
+const { mintMock, consentMock, refusalMock, userRefusalMock, featuresMock } = vi.hoisted(() => ({
   mintMock: vi.fn(),
   consentMock: vi.fn(),
   refusalMock: vi.fn(),
   userRefusalMock: vi.fn(),
+  featuresMock: vi.fn(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -30,6 +31,10 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 vi.mock('~/server/utils/require-full-scope-session', () => ({
   requireFullScopeSession: () => true,
+}));
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getFeatureFlagsAsync: featuresMock,
 }));
 
 const { verifyRunGrant, signRunGrant, signRunnerViewerToken } = await import(
@@ -97,6 +102,7 @@ beforeEach(() => {
   consentMock.mockResolvedValue(true);
   refusalMock.mockResolvedValue(null);
   userRefusalMock.mockResolvedValue(null);
+  featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true });
 });
 
 describe('POST /api/internal/app-assistant/runner-token', () => {
@@ -108,7 +114,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(status).toBe(200);
     expect(json).toEqual({ token: 'minted-chat-token', expiresAt: '2099-01-01T00:00:00Z' });
     expect(mintMock).toHaveBeenCalledWith(42, 'chat');
-    expect(userRefusalMock).toHaveBeenCalledWith(42);
+    expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
     expect(headers.get('cache-control')).toBe('no-store');
   });
 
@@ -215,13 +221,88 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(mintMock).not.toHaveBeenCalled();
   });
 
-  it('refuses the sandbox purpose, which B1 does not mint', async () => {
-    const { status } = await call(mintRoute, {
-      headers: asRunner,
-      body: { grant: await grantFor(), purpose: 'sandbox' },
+  describe('the sandbox purpose, gated exactly as chat', () => {
+    it.each(['chat', 'sandbox'] as const)(
+      'mints a %s token for a user every gate lets through',
+      async (purpose) => {
+        mintMock.mockResolvedValue({
+          token: `minted-${purpose}-token`,
+          expiresAt: '2099-01-01T00:00:00Z',
+        });
+        const { status, json } = await call(mintRoute, {
+          headers: asRunner,
+          body: { grant: await grantFor(), purpose },
+        });
+        expect(status).toBe(200);
+        expect(json).toEqual({
+          token: `minted-${purpose}-token`,
+          expiresAt: '2099-01-01T00:00:00Z',
+        });
+        expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
+        expect(mintMock).toHaveBeenCalledWith(42, purpose);
+      }
+    );
+
+    it.each(['chat', 'sandbox'] as const)(
+      'refuses a %s token to a user a gate refuses now, minting nothing',
+      async (purpose) => {
+        userRefusalMock.mockResolvedValue({
+          status: 403,
+          error: 'You cannot perform this action because your account has been banned',
+        });
+        const { status, json } = await call(mintRoute, {
+          headers: asRunner,
+          body: { grant: await grantFor(), purpose },
+        });
+        expect(status).toBe(403);
+        expect(json).toMatchObject({ code: 'refused' });
+        expect(mintMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['chat', 'sandbox'] as const)(
+      'answers %s unavailable when the gates cannot be judged just now',
+      async (purpose) => {
+        userRefusalMock.mockResolvedValue({
+          status: 503,
+          error: 'App Assistant could not check this account just now',
+          unavailable: true,
+        });
+        const { status, json } = await call(mintRoute, {
+          headers: asRunner,
+          body: { grant: await grantFor(), purpose },
+        });
+        expect(status).toBe(503);
+        expect(json).toMatchObject({ code: 'unavailable' });
+        expect(mintMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['chat', 'sandbox'] as const)(
+      'answers %s consent_required once the user turned App Assistant off',
+      async (purpose) => {
+        mintMock.mockResolvedValue(null);
+        const { status, json } = await call(mintRoute, {
+          headers: asRunner,
+          body: { grant: await grantFor(), purpose },
+        });
+        expect(status).toBe(403);
+        expect(json).toMatchObject({ code: 'consent_required' });
+      }
+    );
+
+    it('needs the runner’s secret and a current grant for a sandbox token too', async () => {
+      const grant = await grantFor();
+      expect(
+        (await call(mintRoute, { headers: {}, body: { grant, purpose: 'sandbox' } })).status
+      ).toBe(401);
+      const viewer = (await signRunnerViewerToken(42)).token;
+      expect(
+        (await call(mintRoute, { headers: asRunner, body: { grant: viewer, purpose: 'sandbox' } }))
+          .status
+      ).toBe(401);
+      expect(mintMock).not.toHaveBeenCalled();
     });
-    expect(status).toBe(400);
-    expect(mintMock).not.toHaveBeenCalled();
   });
 
   it('answers 403 consent_required once the user turned App Assistant off', async () => {
@@ -265,6 +346,26 @@ describe('GET /api/apps/assistant/run-grant', () => {
       idempotencyKey: 'k-9',
     });
     expect(Date.parse(json!.expiresAt as string) - Date.now()).toBeGreaterThan(7700 * 1000);
+  });
+
+  it('refuses while the server runner is off for the user, signing nothing', async () => {
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: false });
+    const { status, json } = await call(grantRoute, { method: 'GET', query });
+    expect(status).toBe(403);
+    expect(json).toMatchObject({ code: 'runner_off' });
+    expect(json).not.toHaveProperty('grant');
+    // Control: the same request with the runner on is granted.
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true });
+    expect((await call(grantRoute, { method: 'GET', query })).status).toBe(200);
+  });
+
+  it('says in the grant whether the viewer may start subagents', async () => {
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true, appAssistantSubagents: true });
+    const on = await call(grantRoute, { method: 'GET', query });
+    expect(await verifyRunGrant(on.json!.grant as string)).toMatchObject({ subagents: true });
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true });
+    const off = await call(grantRoute, { method: 'GET', query });
+    expect(await verifyRunGrant(off.json!.grant as string)).toMatchObject({ subagents: false });
   });
 
   it('refuses without App Assistant consent', async () => {

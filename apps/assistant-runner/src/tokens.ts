@@ -38,6 +38,8 @@ export interface VerifiedGrant {
   /** The grant's own id (`jti`). */
   id: string;
   expiresAt: Date;
+  /** civitai says the viewer may start read-only subagents (claim `subagents: true`). */
+  subagents: boolean;
 }
 
 export interface TokenVerifier {
@@ -89,6 +91,7 @@ export function createTokenVerifier(publicKeyPem: string): TokenVerifier {
         idempotencyKey,
         id,
         expiresAt: new Date(payload.exp * 1000),
+        subagents: payload.subagents === true,
       };
     },
   };

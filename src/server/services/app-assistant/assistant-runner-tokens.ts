@@ -113,6 +113,12 @@ export interface RunGrantFields {
   userId: number;
   conversationId: string;
   idempotencyKey: string;
+  /**
+   * The viewer may start read-only subagents (`appAssistantSubagents`), as the page decides for the
+   * browser runner. Signed into the grant (`subagents: true`), so the runner decides it from civitai's
+   * word, never from the page's.
+   */
+  subagents?: boolean;
 }
 
 /** A run grant for one start, valid for `ASSISTANT_RUNNER_GRANT_TTL_SECONDS`. */
@@ -120,9 +126,10 @@ export function signRunGrant({
   userId,
   conversationId,
   idempotencyKey,
+  subagents,
 }: RunGrantFields): Promise<SignedRunnerToken> {
   return sign(
-    { cid: conversationId, key: idempotencyKey },
+    { cid: conversationId, key: idempotencyKey, ...(subagents ? { subagents: true } : {}) },
     {
       audience: RUN_GRANT_AUDIENCE,
       typ: RUN_GRANT_TYP,
@@ -163,6 +170,7 @@ export async function verifyRunGrant(token: string): Promise<VerifiedRunGrant | 
       userId,
       conversationId: payload.cid,
       idempotencyKey: payload.key,
+      subagents: payload.subagents === true,
       grantId: payload.jti,
       expiresAt: new Date(payload.exp * 1000),
     };
