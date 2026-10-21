@@ -5,9 +5,11 @@ const {
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  decideAuthorHolds,
   getHoldCoverImages,
   getHoldContexts,
 } = vi.hoisted(() => ({
+  decideAuthorHolds: vi.fn(),
   getHoldCoverImages: vi.fn(),
   getHoldContexts: vi.fn(),
   listCsamHolds: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  decideAuthorHolds,
   getHoldCoverImages,
 }));
 
@@ -72,6 +75,7 @@ beforeEach(() => {
   countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
   countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
+  decideAuthorHolds.mockResolvedValue([{ holdId: 13, ok: true }]);
   getHoldCoverImages.mockResolvedValue(new Map());
   getHoldContexts.mockResolvedValue(new Map());
 });
@@ -323,6 +327,73 @@ describe('csam text holds decide', () => {
       status: 400,
       data: { error: 'already decided or missing', key: 12 },
     });
+  });
+});
+
+describe('csam text holds decide with the author’s other holds', () => {
+  const also = JSON.stringify([{ holdId: 13, textHash: 'h-13' }]);
+
+  it('decides the open hold first, then the others, and reports each', async () => {
+    const result = await decide(
+      { holdId: '12', textHash: 'h-12', decision: 'remove_ban', also, note: 'x' },
+      holder
+    );
+    expect(decideCsamHold).toHaveBeenCalledWith({
+      holdId: 12,
+      textHash: 'h-12',
+      decision: 'remove_ban',
+      note: 'x',
+    });
+    expect(decideAuthorHolds).toHaveBeenCalledWith({
+      holdId: 12,
+      also: [{ holdId: 13, textHash: 'h-13' }],
+      decision: 'remove_ban',
+      note: 'x',
+    });
+    expect(decideCsamHold.mock.invocationCallOrder[0]).toBeLessThan(
+      decideAuthorHolds.mock.invocationCallOrder[0]
+    );
+    expect(result).toMatchObject({ success: true, key: 12, others: [{ holdId: 13, ok: true }] });
+  });
+
+  it('touches no other hold when the open one is refused, so a refused ban removes nothing', async () => {
+    decideCsamHold.mockResolvedValue({ ok: false, error: 'already decided' });
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove_ban', also }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideAuthorHolds).not.toHaveBeenCalled();
+  });
+
+  it('keeps the open hold’s success when applying to the others throws', async () => {
+    decideAuthorHolds.mockRejectedValue(new Error('db down'));
+    const result = await decide(
+      { holdId: '12', textHash: 'h-12', decision: 'remove', also },
+      holder
+    );
+    expect(result).toMatchObject({
+      success: true,
+      others: [{ holdId: 13, ok: false, error: expect.any(String) }],
+    });
+  });
+
+  it('applies to no others when none are sent', async () => {
+    const result = await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, holder);
+    expect(decideAuthorHolds).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('others');
+  });
+
+  it.each([
+    ['malformed JSON', '{nope'],
+    ['a hold without a hash', JSON.stringify([{ holdId: 13 }])],
+    [
+      'too many holds',
+      JSON.stringify(Array.from({ length: 51 }, (_, i) => ({ holdId: i + 1, textHash: 'h' }))),
+    ],
+  ])('refuses %s before deciding anything', async (_, bad) => {
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', also: bad }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideCsamHold).not.toHaveBeenCalled();
   });
 });
 

@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
@@ -24,12 +25,20 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { csamReportUrl, entityUrl, userLookupUrl } from '$lib/entity-url';
-  import { LINK_BUTTON, LINK_CLASS, dateTime, shortAge } from '$lib/format';
+  import { LINK_BUTTON, LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
     import type { Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
+  import HoldAuthorCard from './HoldAuthorCard.svelte';
   import HoldConversation from './HoldConversation.svelte';
   import HoldParentCard from './HoldParentCard.svelte';
   import HoldProfileCard from './HoldProfileCard.svelte';
+  import {
+    alsoDecidable,
+    fetchHoldAuthor,
+    forgetHoldAuthors,
+    type AlsoResult,
+    type HoldAuthor,
+  } from './hold-author';
   import { parentUrlType, type CsamHoldView } from './hold-context';
   import {
     CSAM_HOLD_CONFIRMS,
@@ -56,6 +65,7 @@
     error,
     submit,
     actionHref,
+    onothers,
   }: {
     row: CsamHoldView;
     civitaiUrl: string;
@@ -69,6 +79,8 @@
     error: string | undefined;
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
+    /** What the decision did to the author's other holds, when it was applied to them as well. */
+    onothers: (decision: string, results: AlsoResult[]) => void;
   } = $props();
 
   const entityHref = $derived(holdEntityHref(civitaiUrl, row));
@@ -99,18 +111,70 @@
   let confirming = $state<CsamHoldDecision | null>(null);
   let confirmOpen = $state(false);
 
+  // The author loads for the open hold only; it also says which other holds a decision can cover.
+  let author = $state<HoldAuthor | null>(null);
+  let authorFailed = $state(false);
+  let authorAttempt = $state(0);
+  let applyToAuthor = $state(false);
+  $effect(() => {
+    const holdId = row.id;
+    void authorAttempt;
+    author = null;
+    authorFailed = false;
+    applyToAuthor = false;
+    let current = true;
+    fetchHoldAuthor(holdId)
+      .then((loaded) => {
+        if (current) author = loaded;
+      })
+      .catch(() => {
+        if (current) authorFailed = true;
+      });
+    return () => {
+      current = false;
+    };
+  });
+
+  const otherPending = $derived(author?.holds.others.filter((h) => h.status === 'Pending') ?? []);
+  // What the toggle would add to `next`; the ones its type cannot take stay pending and are said so.
+  const alsoFor = (next: CsamHoldDecision) =>
+    applyToAuthor ? alsoDecidable(otherPending, next, canRemoveHeld) : [];
+  let also = $state<{ holdId: number; textHash: string }[]>([]);
+
   // One form and one note for every action; the hidden field carries which button was pressed.
   async function decide(next: CsamHoldDecision) {
     decision = next;
+    also = alsoFor(next);
     await tick();
     formEl?.requestSubmit();
   }
 
   const press = (next: CsamHoldDecision) => {
-    if (CSAM_HOLD_CONFIRMS[next]) {
+    if (CSAM_HOLD_CONFIRMS[next] || alsoFor(next).length) {
       confirming = next;
       confirmOpen = true;
     } else void decide(next);
+  };
+
+  const confirmAsk = (next: CsamHoldDecision) => {
+    const base = CSAM_HOLD_CONFIRMS[next] ?? {
+      label: next === 'dismiss' ? 'Dismiss all' : 'Remove all',
+      title: next === 'dismiss' ? 'Dismiss these holds?' : 'Remove the content of these holds?',
+      description:
+        next === 'dismiss'
+          ? 'The hold is closed and nothing changes on the content or the account.'
+          : 'The content is taken down.',
+    };
+    const covered = alsoFor(next).length;
+    if (!covered) return base;
+    const skipped = otherPending.length - covered;
+    const alone = next === 'remove_strike' || next === 'remove_ban' || next === 'remove_ban_report';
+    return {
+      ...base,
+      description: `${base.description} The same is applied to ${plural(covered, 'other pending hold')} by this author, each against the text you saw${
+        alone ? ', but the strike or ban is applied once, with this hold' : ''
+      }.${skipped ? ` ${plural(skipped, 'hold')} cannot be removed from here and stay pending.` : ''}`,
+    };
   };
 
   type KeyTone = 'red' | 'dark-red' | 'darker-red' | 'red-outline';
@@ -145,7 +209,11 @@
     return async (opts) => {
       const finish = await inner;
       await finish?.(opts);
-      if (reportUserId !== null && opts.result.type === 'success')
+      if (opts.result.type !== 'success') return;
+      forgetHoldAuthors();
+      const others = (opts.result.data as { others?: AlsoResult[] } | undefined)?.others;
+      if (others) onothers(String(input.formData.get('decision')), others);
+      if (reportUserId !== null)
         window.open(csamReportUrl(civitaiUrl, reportUserId), '_blank', 'noopener');
     };
   };
@@ -271,6 +339,15 @@
       <HoldConversation holdId={row.id} chatId={row.chatId} />
     {/if}
 
+    {#if row.userId !== null}
+      <HoldAuthorCard
+        {author}
+        failed={authorFailed}
+        holdId={row.id}
+        onretry={() => authorAttempt++}
+      />
+    {/if}
+
     <TriageCard dense title="Details">
       <dl class="m-0 space-y-1.5">
         <FactRow label="Held">{dateTime(row.createdAt)}</FactRow>
@@ -297,6 +374,7 @@
         <input type="hidden" name="holdId" value={row.id} />
         <input type="hidden" name="textHash" value={row.textHash} />
         <input type="hidden" name="decision" value={decision} />
+        {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
         <TriageDecisionBar
           hint="Dismiss closes the hold and changes nothing. 5 bans the author and opens the CSAM report form for them. The next hold opens after each decision; J/K to move."
         >
@@ -317,6 +395,12 @@
             {/each}
           {/snippet}
           {#snippet fields()}
+            {#if otherPending.length}
+              <label class="flex shrink-0 items-center gap-2 text-[13px] text-dark-0">
+                <Checkbox bind:checked={applyToAuthor} aria-label="Also apply to the author's other pending holds" />
+                Also apply to {plural(otherPending.length, 'other pending hold')} by this author
+              </label>
+            {/if}
             <!-- Enter in the only text field would otherwise submit the form as a dismissal. -->
             <Input
               name="note"
@@ -333,8 +417,8 @@
       </form>
       <AlertDialog.Root bind:open={confirmOpen}>
         <AlertDialog.Content>
-          {#if confirming && CSAM_HOLD_CONFIRMS[confirming]}
-            {@const ask = CSAM_HOLD_CONFIRMS[confirming]!}
+          {#if confirming}
+            {@const ask = confirmAsk(confirming)}
             <AlertDialog.Header>
               <AlertDialog.Title>{ask.title}</AlertDialog.Title>
               <AlertDialog.Description>{ask.description}</AlertDialog.Description>

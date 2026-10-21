@@ -41,6 +41,10 @@ export type CsamHoldRow = {
   priorStatus: string | null;
   priorDecidedAt: Date | null;
   priorDecidedByUsername: string | null;
+  /** Other pending holds by the same author, across the whole queue and not just this page. */
+  otherPendingByAuthor: number;
+  /** Other pending holds by the same author in the same chat; 0 for any hold that is not a chat message. */
+  otherPendingInChat: number;
 };
 
 export type CsamHoldSearch = { id: number } | { username: string };
@@ -158,6 +162,16 @@ export async function listCsamHolds({
       'ph.decidedAt as priorDecidedAt',
       'pd.username as priorDecidedByUsername',
       'lc.modelId as commentModelId',
+      // Both count only for a hold still pending: the chip leads to the holds a decision could still cover.
+      sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
+        select count(*)::int from "TextScanHold" x
+        where x."userId" = h."userId" and x.label = 'csam' and x.status = 'Pending' and x.id <> h.id
+      ) else 0 end`.as('otherPendingByAuthor'),
+      sql<number>`case when h.status = 'Pending' and h."userId" is not null and h."entityType" = 'ChatMessage' and h.meta->>'chatId' is not null then (
+        select count(*)::int from "TextScanHold" x
+        where x."userId" = h."userId" and x."entityType" = 'ChatMessage' and x.label = 'csam'
+          and x.status = 'Pending' and x.id <> h.id and x.meta->>'chatId' = h.meta->>'chatId'
+      ) else 0 end`.as('otherPendingInChat'),
       sql<string | null>`coalesce(p.title, m.name)`.as('title'),
       sql<
         boolean | null
@@ -201,6 +215,92 @@ export async function listCsamHolds({
     };
   });
   return { items, hasMore: rows.length > limit };
+}
+
+export type AuthorHoldSummary = {
+  id: number;
+  entityType: string;
+  entityId: number;
+  status: string;
+  decision: string | null;
+  reason: string;
+  createdAt: Date;
+  decidedAt: Date | null;
+  /** Only for a pending hold: what a decision applied together with this one has to echo back. */
+  textHash: string | null;
+};
+
+export type HoldAuthorHolds = {
+  userId: number;
+  /** Every other hold of the author, counting those beyond `others`. */
+  total: number;
+  others: AuthorHoldSummary[];
+};
+
+export const AUTHOR_HOLDS_LIMIT = 50;
+
+// The migration's superseded duplicates were never ruled on, so they are not history.
+const notSuperseded = sql<boolean>`h.meta->>'decision' is distinct from 'superseded'`;
+
+/** The other csam holds of a hold's author, newest first; null when the hold is missing or has no recorded author. */
+export async function getHoldAuthorHolds(holdId: number): Promise<HoldAuthorHolds | null> {
+  const hold = await dbRead
+    .selectFrom('TextScanHold')
+    .select('userId')
+    .where('id', '=', holdId)
+    .where('label', '=', 'csam')
+    .executeTakeFirst();
+  const userId = hold?.userId;
+  if (!userId) return null;
+
+  const others = () =>
+    dbRead
+      .selectFrom('TextScanHold as h')
+      .where('h.userId', '=', userId)
+      .where('h.label', '=', 'csam')
+      .where('h.id', '<>', holdId)
+      .where(notSuperseded);
+  const [rows, count] = await Promise.all([
+    others()
+      .select([
+        'h.id',
+        'h.entityType',
+        'h.entityId',
+        'h.status',
+        'h.reason',
+        'h.createdAt',
+        'h.decidedAt',
+        sql<string | null>`h.meta->>'decision'`.as('decision'),
+        sql<string | null>`case when h.status = 'Pending' then h."textHash" end`.as('textHash'),
+      ])
+      .orderBy('h.createdAt', 'desc')
+      .orderBy('h.id', 'desc')
+      .limit(AUTHOR_HOLDS_LIMIT)
+      .execute(),
+    others()
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .executeTakeFirst(),
+  ]);
+  return { userId, total: Number(count?.count ?? 0), others: rows };
+}
+
+/** Of `ids`, the holds that are still pending and have the same author as `holdId`: all that a decision may be applied to along with it. */
+export async function filterAuthorPendingHolds(
+  holdId: number,
+  ids: number[]
+): Promise<{ id: number; entityType: string }[]> {
+  if (!ids.length) return [];
+  return dbRead
+    .selectFrom('TextScanHold as h')
+    .innerJoin('TextScanHold as o', 'o.userId', 'h.userId')
+    .select(['o.id', 'o.entityType'])
+    .where('h.id', '=', holdId)
+    .where('h.label', '=', 'csam')
+    .where('o.label', '=', 'csam')
+    .where('o.status', '=', 'Pending')
+    .where('o.id', '<>', holdId)
+    .where('o.id', 'in', ids)
+    .execute();
 }
 
 export async function countCsamHoldsByType(args: {

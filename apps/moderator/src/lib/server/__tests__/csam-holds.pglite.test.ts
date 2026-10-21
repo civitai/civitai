@@ -25,11 +25,14 @@ vi.mock('../user-actions.service', () => ({ callModEndpoint }));
 const {
   countCsamHoldsByType,
   countPendingCsamHolds,
+  decideAuthorHolds,
   decideCsamHold,
   getHoldCoverImages,
   listCsamHolds,
 } = await import('../csam-holds.service');
-const { getChatHold } = await import('../csam-holds.queries');
+const { filterAuthorPendingHolds, getChatHold, getHoldAuthorHolds } = await import(
+  '../csam-holds.queries'
+);
 
 const OLDEST_PENDING: CsamHoldQuery = {
   status: 'pending',
@@ -579,5 +582,189 @@ describe('getHoldCoverImages', () => {
 
   it('reads nothing for an empty page', async () => {
     expect((await getHoldCoverImages([])).size).toBe(0);
+  });
+});
+
+describe('same-author and same-chat counts', () => {
+  const countsOf = async (query: Partial<CsamHoldQuery> = {}) =>
+    new Map(
+      (await listCsamHolds({ ...OLDEST_PENDING, ...query })).items.map((item) => [
+        item.id,
+        [item.otherPendingByAuthor, item.otherPendingInChat],
+      ])
+    );
+
+  it('counts the author’s other pending holds across the whole queue, not just the page', async () => {
+    // Author 10 has pending holds 1 and 2; the page holds one row, the count still sees the other.
+    const counts = await countsOf({ limit: 1, search: { id: 404 } });
+    expect([...counts.keys()]).toEqual([3]);
+    expect(counts.get(3)).toEqual([0, 0]);
+    expect((await countsOf({ limit: 1 })).get(2)).toEqual([1, 0]);
+  });
+
+  it('counts a chat message’s other pending holds from the same author in the same chat', async () => {
+    await seed([
+      { id: 8, createdAt: '2026-10-05', entityType: 'ChatMessage', meta: { chatId: 77 } },
+      // Another sender in the same chat, the same sender in another chat, and one already decided.
+      {
+        id: 9,
+        createdAt: '2026-10-05',
+        entityType: 'ChatMessage',
+        userId: 11,
+        meta: { chatId: 77 },
+      },
+      { id: 12, createdAt: '2026-10-05', entityType: 'ChatMessage', meta: { chatId: 78 } },
+      {
+        id: 13,
+        createdAt: '2026-10-05',
+        entityType: 'ChatMessage',
+        status: 'Dismissed',
+        meta: { chatId: 77 },
+      },
+    ]);
+    const counts = await countsOf();
+    expect(counts.get(2)).toEqual([3, 1]);
+    expect(counts.get(8)).toEqual([3, 1]);
+    expect(counts.get(12)).toEqual([3, 0]);
+    expect(counts.get(9)).toEqual([0, 0]);
+  });
+
+  it('counts nothing for a decided hold or one without an author', async () => {
+    const counts = await countsOf({ status: 'all' });
+    expect(counts.get(4)).toEqual([0, 0]);
+    expect(counts.get(6)).toEqual([0, 0]);
+  });
+});
+
+describe('getHoldAuthorHolds', () => {
+  it('lists the author’s other holds, newest first, with the hash only for a pending one', async () => {
+    const author = await getHoldAuthorHolds(1);
+    expect(author).toMatchObject({ userId: 10, total: 3 });
+    expect(author!.others.map((hold) => hold.id)).toEqual([2, 7, 4]);
+    expect(author!.others.map((hold) => [hold.status, hold.decision, hold.textHash])).toEqual([
+      ['Pending', null, 'h-2'],
+      ['Confirmed', 'remove_ban', null],
+      ['Dismissed', 'dismiss', null],
+    ]);
+  });
+
+  it('leaves out holds the migration superseded, since nobody ruled on them', async () => {
+    await seed([
+      { id: 8, createdAt: '2026-10-05', status: 'Dismissed', meta: { decision: 'superseded' } },
+    ]);
+    expect((await getHoldAuthorHolds(1))!.others.map((hold) => hold.id)).not.toContain(8);
+  });
+
+  it('caps the list but not the total', async () => {
+    await seed(Array.from({ length: 52 }, (_, i) => ({ id: 100 + i, createdAt: '2026-10-06' })));
+    const author = await getHoldAuthorHolds(1);
+    expect(author!.total).toBe(55);
+    expect(author!.others).toHaveLength(50);
+  });
+
+  it('is null for a hold without an author, another label or no hold at all', async () => {
+    expect(await getHoldAuthorHolds(6)).toBeNull();
+    expect(await getHoldAuthorHolds(5)).toBeNull();
+    expect(await getHoldAuthorHolds(999)).toBeNull();
+  });
+});
+
+describe('filterAuthorPendingHolds', () => {
+  it('keeps only pending holds of the same author, never the hold itself', async () => {
+    const found = await filterAuthorPendingHolds(1, [1, 2, 3, 4, 5, 6, 7, 999]);
+    expect(found.map((hold) => hold.id)).toEqual([2]);
+  });
+
+  it('is empty for no ids', async () => {
+    expect(await filterAuthorPendingHolds(1, [])).toEqual([]);
+  });
+});
+
+describe('decideAuthorHolds', () => {
+  beforeEach(async () => {
+    await seed([
+      { id: 8, createdAt: '2026-10-05', entityType: 'Model' },
+      { id: 9, createdAt: '2026-10-05', userId: 11 },
+    ]);
+    callModEndpoint.mockReset();
+    callModEndpoint.mockResolvedValue({ ok: true, body: { status: 'Confirmed' } });
+  });
+
+  const sent = () => callModEndpoint.mock.calls.map(([, body]) => body);
+
+  it('decides each of the author’s other holds on its own text hash', async () => {
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      note: 'same author',
+      also: [
+        { holdId: 2, textHash: 'h-2' },
+        { holdId: 8, textHash: 'h-8' },
+      ],
+    });
+    expect(results).toEqual([
+      { holdId: 2, ok: true },
+      { holdId: 8, ok: true },
+    ]);
+    expect(sent()).toEqual([
+      { holdId: 2, textHash: 'h-2', decision: 'remove', note: 'same author' },
+      { holdId: 8, textHash: 'h-8', decision: 'remove', note: 'same author' },
+    ]);
+  });
+
+  it.each(['remove_strike', 'remove_ban', 'remove_ban_report'] as const)(
+    'applies %s to the author once: the others are only removed',
+    async (decision) => {
+      await decideAuthorHolds({ holdId: 1, decision, also: [{ holdId: 2, textHash: 'h-2' }] });
+      expect(sent()).toEqual([{ holdId: 2, textHash: 'h-2', decision: 'remove' }]);
+    }
+  );
+
+  it('dismisses the others when the open hold is dismissed', async () => {
+    callModEndpoint.mockResolvedValue({ ok: true, body: { status: 'Dismissed' } });
+    await decideAuthorHolds({
+      holdId: 1,
+      decision: 'dismiss',
+      also: [{ holdId: 2, textHash: 'h-2' }],
+    });
+    expect(sent()).toEqual([{ holdId: 2, textHash: 'h-2', decision: 'dismiss' }]);
+  });
+
+  it('reports a hold that changed since it was seen and carries on with the rest', async () => {
+    callModEndpoint
+      .mockResolvedValueOnce({ ok: false, error: 'Decide hold: changed', status: 409 })
+      .mockResolvedValueOnce({ ok: true, body: { status: 'Confirmed' } });
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [
+        { holdId: 2, textHash: 'stale' },
+        { holdId: 8, textHash: 'h-8' },
+      ],
+    });
+    expect(results).toEqual([
+      { holdId: 2, ok: false, error: 'Decide hold: changed' },
+      { holdId: 8, ok: true },
+    ]);
+  });
+
+  it('never decides a hold of another author, a decided one, the open one or a duplicate', async () => {
+    const results = await decideAuthorHolds({
+      holdId: 1,
+      decision: 'remove',
+      also: [
+        { holdId: 9, textHash: 'h-9' },
+        { holdId: 4, textHash: 'h-4' },
+        { holdId: 1, textHash: 'h-1' },
+        { holdId: 2, textHash: 'h-2' },
+        { holdId: 2, textHash: 'h-2' },
+      ],
+    });
+    expect(results.map((r) => [r.holdId, r.ok])).toEqual([
+      [9, false],
+      [4, false],
+      [2, true],
+    ]);
+    expect(sent().map((body) => (body as { holdId: number }).holdId)).toEqual([2]);
   });
 });

@@ -2316,6 +2316,7 @@ model TextScanHold {
 
   @@index([entityType, entityId, label, textHash])
   @@index([status, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ImageEngagementType {

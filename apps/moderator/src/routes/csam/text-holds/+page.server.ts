@@ -11,12 +11,13 @@ import {
   countCsamHoldsByType,
   countPendingCsamHolds,
   csamHoldSearch,
+  decideAuthorHolds,
   decideCsamHold,
   getHoldCoverImages,
   listCsamHolds,
   type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
-import { int4Id, parseForm, parseQuery } from '$lib/server/query';
+import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
 import type { HoldContext } from './hold-context';
 import { getHoldContexts } from './hold-context.server';
@@ -95,10 +96,17 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   };
 };
 
+// Every hold a decision is applied to along with the one on screen, by the text hash the moderator saw.
+const ALSO_MAX = 50;
+const alsoSchema = z
+  .array(z.object({ holdId: int4Id, textHash: z.string().min(1).max(200) }))
+  .max(ALSO_MAX);
+
 const decideSchema = z.object({
   holdId: int4Id,
   textHash: z.string().min(1).max(200),
   decision: z.enum(CSAM_HOLD_DECISIONS),
+  also: jsonField(alsoSchema).optional(),
   note: z
     .string()
     .trim()
@@ -116,8 +124,25 @@ export const actions: Actions = {
     if (needed && !locals.grants[needed])
       return fail(403, { scope: 'denied' as const, error: denied(needed), key: input.holdId });
 
-    const result = await decideCsamHold(input);
+    const { also, ...primary } = input;
+    const result = await decideCsamHold(primary);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
-    return { success: true, key: input.holdId };
+    // After the hold on screen, so a refused strike or ban never leaves the author's others removed.
+    const others = also?.length
+      ? await decideAuthorHolds({
+          holdId: input.holdId,
+          also,
+          decision: input.decision,
+          note: input.note,
+        }).catch((err) => {
+          console.error('CSAM hold bulk decision failed', err);
+          return also.map(({ holdId }) => ({
+            holdId,
+            ok: false,
+            error: 'Could not apply the decision to this hold.',
+          }));
+        })
+      : undefined;
+    return { success: true, key: input.holdId, ...(others ? { others } : {}) };
   }),
 };

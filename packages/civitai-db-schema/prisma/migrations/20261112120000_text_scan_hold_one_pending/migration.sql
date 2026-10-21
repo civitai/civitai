@@ -39,3 +39,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "TextScanHold_chat_textHash_key"
 CREATE UNIQUE INDEX IF NOT EXISTS "TextScanHold_one_pending_per_entity_key"
   ON "TextScanHold" ("entityType", "entityId", "label")
   WHERE "status" = 'Pending' AND "entityType" <> 'ChatMessage';
+
+-- 5. The author's other holds, for the moderator queue's author context and "same author" grouping.
+CREATE INDEX IF NOT EXISTS "TextScanHold_userId_createdAt_idx"
+  ON "TextScanHold" ("userId", "createdAt" DESC);

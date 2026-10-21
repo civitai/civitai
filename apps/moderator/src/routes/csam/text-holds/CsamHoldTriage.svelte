@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { SvelteMap } from 'svelte/reactivity';
   import {
     IconEyeOff,
     IconMessage,
@@ -9,7 +10,7 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
-  import { LINK_CLASS } from '$lib/format';
+  import { LINK_CLASS, plural } from '$lib/format';
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
@@ -18,6 +19,8 @@
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
   import CsamHoldFilters from './CsamHoldFilters.svelte';
+  import HoldGroupChip from './HoldGroupChip.svelte';
+  import type { AlsoResult } from './hold-author';
   import {
     decisionLabel,
     entityLabel,
@@ -77,6 +80,37 @@
   const grants = $derived({ canDecide, canStrike, canBan });
   const ondecision = (_row: unknown, index: number) => pressDecisionKey(index);
 
+  // The author's other holds a decision was applied to along with the open one: dimmed in place like any
+  // decided hold, and summarised once because the queue moves on to the next hold.
+  const alsoDecided = new SvelteMap<number, string>();
+  let alsoSummary = $state<{ done: number; failed: { holdId: number; error: string }[] } | null>(
+    null
+  );
+  $effect(() => {
+    void data.items;
+    alsoDecided.clear();
+    alsoSummary = null;
+  });
+  const onothers = (decision: string, results: AlsoResult[]) => {
+    const verdict =
+      decision === 'dismiss' ? 'Dismissed with the same author’s hold' : 'Removed with the same author’s hold';
+    for (const result of results) if (result.ok) alsoDecided.set(result.holdId, verdict);
+    alsoSummary = {
+      done: results.filter((r) => r.ok).length,
+      failed: results.flatMap((r) => (r.ok ? [] : [{ holdId: r.holdId, error: r.error ?? 'Failed.' }])),
+    };
+  };
+
+  // A chip filters the queue to the author's pending holds, chat messages only for "same chat".
+  const authorHref = (userId: number, chat = false) =>
+    urlWith(page.url, {
+      q: userId,
+      status: 'pending',
+      entityType: chat ? 'ChatMessage' : null,
+      page: null,
+      hold: null,
+    });
+
   const statusLabel = $derived(
     data.holdFilters.status === 'all'
       ? ''
@@ -98,6 +132,28 @@
   </div>
 {/snippet}
 
+{#snippet notice()}
+  {#if alsoSummary}
+    <div class="mx-6 mt-3 flex items-start justify-between gap-3 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2.5 text-[13px] text-dark-0" role="status">
+      <div class="min-w-0">
+        <p class="m-0">
+          Applied to {plural(alsoSummary.done, 'other hold')} by the same author{alsoSummary.failed.length
+            ? `; ${alsoSummary.failed.length} not applied:`
+            : '.'}
+        </p>
+        {#if alsoSummary.failed.length}
+          <ul class="m-0 mt-1 list-none space-y-0.5 p-0 text-red-300">
+            {#each alsoSummary.failed as f (f.holdId)}
+              <li>Hold #{f.holdId}: {f.error}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+      <button type="button" class={LINK_CLASS} onclick={() => (alsoSummary = null)}>Dismiss</button>
+    </div>
+  {/if}
+{/snippet}
+
 {#snippet listHeader()}
   <CsamHoldFilters
     filters={data.holdFilters}
@@ -115,7 +171,7 @@
   selectionParam="hold"
   queueLabel="CSAM text holds queue"
   itemLabel="Hold"
-  decisionEnabled={(row) => holdDecisionEnabled(row, grants)}
+  decisionEnabled={(row) => (alsoDecided.has(row.id) ? [] : holdDecisionEnabled(row, grants))}
   {ondecision}
   pageNumber={data.page}
   hasMore={data.hasMore}
@@ -124,6 +180,7 @@
   {form}
   {listHeader}
   {empty}
+  {notice}
 >
   {#snippet listRow(row, state)}
     <TriageRow
@@ -131,10 +188,11 @@
       href={state.href}
       selected={state.selected}
       title={holdTitle(row)}
-      coverUrl={row.coverImages.find((image) => image.type !== 'video')?.url}
+      coverUrl={row.coverImages[0]?.url}
+      coverType={row.coverImages[0]?.type}
       coverBlurred={!imageReveal.on}
       meta={holdMeta(row)}
-      verdict={state.verdict}
+      verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
       onselect={state.select}
     >
@@ -153,6 +211,23 @@
         <span class="block w-full truncate text-xs text-dark-0">{row.reason}</span>
         <MetaChip>{entityLabel(row.entityType)}</MetaChip>
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.userId !== null && row.otherPendingByAuthor > 0}
+          <HoldGroupChip
+            href={authorHref(row.userId)}
+            title="Show this author’s pending holds"
+          >
+            same author ×{row.otherPendingByAuthor + 1}
+          </HoldGroupChip>
+        {/if}
+        {#if row.userId !== null && row.otherPendingInChat > 0}
+          <HoldGroupChip
+            href={authorHref(row.userId, true)}
+            title="Show this author’s pending holds in chats"
+            tone="violet"
+          >
+            same chat
+          </HoldGroupChip>
+        {/if}
         {#if row.status !== 'Pending'}
           <MetaChip tone={row.status === 'Dismissed' ? 'neutral' : 'red'}>{decisionLabel(row)}</MetaChip>
         {/if}
@@ -166,10 +241,11 @@
       {canDecide}
       {canStrike}
       {canBan}
-      verdict={state.verdict}
+      verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
       submit={state.submit}
       {actionHref}
+      {onothers}
     />
   {/snippet}
 </TriageShell>
