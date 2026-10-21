@@ -167,9 +167,74 @@ export function deriveUploadPartGeometry({
  * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
  * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
  * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
- * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free.
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals, so a
+ * library that is mostly video still fits, not for the width-capped copies it once estimated.
  */
-export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = Math.round(1.4 * 1024 * 1024);
+export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
+
+/**
+ * Ceiling on source bytes one archive holds at once, from a reader's reservation until the
+ * archiver has written that entry. It replaces a count bound for stored originals, whose sizes
+ * span three orders of magnitude (a video original can be hundreds of MiB). One object larger
+ * than the budget still runs, alone.
+ */
+export const MAX_ARCHIVE_SOURCE_BYTES = 256 * 1024 * 1024;
+
+export type ByteBudget = {
+  /** Resolves once `bytes` fit, with the function that gives them back (safe to call twice). */
+  reserve: (bytes: number) => Promise<() => void>;
+  /** Rejects every waiting and future reservation, so a failed archive parks no reader. */
+  abort: (reason: unknown) => void;
+  readonly reservedBytes: number;
+};
+
+/** A FIFO byte semaphore: a large reservation waits its turn rather than being overtaken. */
+export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBudget {
+  let reserved = 0;
+  let aborted: Error | undefined;
+  const queue: Array<{ want: number; grant: () => void; fail: (e: Error) => void }> = [];
+  // `reserved === 0` admits an oversize reservation, alone.
+
+  const fits = (want: number) => reserved === 0 || reserved + want <= limitBytes;
+  const drain = () => {
+    while (queue.length > 0 && fits(queue[0].want)) queue.shift()?.grant();
+  };
+
+  return {
+    get reservedBytes() {
+      return reserved;
+    },
+    async reserve(bytes) {
+      if (aborted) throw aborted;
+      const want = Math.min(Math.max(0, bytes), limitBytes);
+      // Counted at grant time, not on resume: `drain` grants several in one loop, and each must
+      // see the bytes the previous one took.
+      if (queue.length === 0 && fits(want)) reserved += want;
+      else
+        await new Promise<void>((resolve, fail) =>
+          queue.push({
+            want,
+            grant: () => {
+              reserved += want;
+              resolve();
+            },
+            fail,
+          })
+        );
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        reserved -= want;
+        drain();
+      };
+    },
+    abort(reason) {
+      aborted ??= reason instanceof Error ? reason : new Error(String(reason));
+      for (const waiter of queue.splice(0)) waiter.fail(aborted);
+    },
+  };
+}
 
 /**
  * Default ceiling on entries that have been handed to the archiver but not yet compressed and
@@ -221,8 +286,9 @@ export type BoundedArchive = {
   /**
    * Appends an entry, first waiting until the archiver has drained below the pending-entry
    * ceiling. Resolves once the entry has been accepted (not once it has been written).
+   * `onWritten` runs once the archiver has written the entry, or when the archive fails.
    */
-  append: (source: Buffer | Readable, data: EntryData) => Promise<void>;
+  append: (source: Buffer | Readable, data: EntryData, onWritten?: () => void) => Promise<void>;
   /** Finalizes the archive and waits for the output sink to flush and close. */
   finalize: () => Promise<void>;
   /** Entries appended but not yet processed. Exposed for tests and diagnostics. */
@@ -276,6 +342,8 @@ export function createBoundedArchive({
   let peak = 0;
   let failure: Error | undefined;
   const waiters: Array<() => void> = [];
+  // `archiver` processes entries one at a time in append order, so 'entry' events arrive FIFO.
+  const onWrittenQueue: Array<(() => void) | undefined> = [];
 
   // 🔴 The `while` is what makes the FAILURE path settle, and must not be narrowed to an `if`.
   // An earlier revision of this comment said the opposite — "that re-check is the actual guard",
@@ -312,11 +380,13 @@ export function createBoundedArchive({
 
   archive.on('entry', () => {
     if (pending > 0) pending--;
+    onWrittenQueue.shift()?.();
     releaseWaiters();
   });
 
   archive.on('error', (err: unknown) => {
     failure ??= err instanceof Error ? err : new Error(String(err));
+    for (const onWritten of onWrittenQueue.splice(0)) onWritten?.();
     releaseWaiters();
   });
 
@@ -327,7 +397,7 @@ export function createBoundedArchive({
     get peakPendingEntries() {
       return peak;
     },
-    async append(source, data) {
+    async append(source, data, onWritten) {
       if (failure) throw failure;
       while (pending >= maxPendingEntries) {
         await new Promise<void>((resolve) => waiters.push(resolve));
@@ -335,6 +405,7 @@ export function createBoundedArchive({
       }
       pending++;
       if (pending > peak) peak = pending;
+      onWrittenQueue.push(onWritten);
       archive.append(source, data);
     },
     async finalize() {

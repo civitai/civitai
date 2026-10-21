@@ -102,6 +102,19 @@ describe('archive-csam-reports batch isolation', () => {
     expect(logged[0].message).toBe(expected);
   });
 
+  it('names the report and how long it has waited, so one stuck retrying is visible', async () => {
+    const sentAt = new Date(Date.now() - 50 * 3_600_000 - 60_000);
+    mocks.getCsamsToArchive.mockResolvedValue([{ id: 8804, reportSentAt: sentAt }]);
+    mocks.archiveCsamDataForReport.mockRejectedValueOnce(new Error('synthetic archive failure'));
+
+    await archiveJob!.run({}).result;
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as Record<string, unknown>)
+      .filter((arg) => arg?.subType === 'archive-data');
+    expect(logged).toEqual([expect.objectContaining({ reportId: 8804, hoursSinceSent: 50 })]);
+  });
+
   it('preserves the message of a real Error', async () => {
     mocks.archiveCsamDataForReport.mockImplementationOnce(() =>
       Promise.reject(new Error('synthetic archive failure'))

@@ -121,11 +121,16 @@ const archiveCsamReportDataJob = createJob(
       try {
         await archiveCsamDataForReport(report);
       } catch (e) {
+        // A failed archive is retried next hour; the age is what shows one stuck retrying.
         logToAxiom({
           name: 'csam-report',
           type: 'error',
           subType: 'archive-data',
           message: errorMessage(e),
+          reportId: report.id,
+          hoursSinceSent: report.reportSentAt
+            ? Math.floor((Date.now() - report.reportSentAt.getTime()) / 3_600_000)
+            : null,
         });
       }
     }

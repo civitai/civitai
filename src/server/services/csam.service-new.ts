@@ -28,7 +28,7 @@ import { isDev, isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
-import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { CYBERTIP_CONTACT_EMAIL } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { Report } from '@civitai/cybertipline-tools';
 import {
@@ -43,6 +43,7 @@ import { Limiter } from '~/server/utils/concurrency-helpers';
 import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
+  createByteBudget,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -55,6 +56,8 @@ import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
+import type { OriginalImageSource } from '~/server/services/csam-original-image';
+import { extensionForContentType, readOriginalImage } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
   environment: isDev ? Environment.Testing : Environment.Production,
@@ -69,10 +72,19 @@ type CsamReportUploadProps = {
   hash?: string | undefined;
 };
 
+/** What one evidence file was; also the shape of an `images.zip` manifest entry. */
+type EvidenceFileRecord = {
+  source: OriginalImageSource;
+  sha256?: string;
+  bytes?: number;
+  contentType?: string;
+};
+
 type CsamReportImage = {
   id: number;
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
-} & CsamReportUploadProps;
+} & CsamReportUploadProps &
+  Partial<EvidenceFileRecord>;
 
 type CsamReportUserActivity = {
   type: 'Login' | 'Registration' | 'Upload' | 'Unknown';
@@ -129,6 +141,8 @@ export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
 };
 
 const baseDir = `${isProd && env.DIRNAME ? env.DIRNAME : process.cwd()}/csam`;
+
+const IMAGES_ARCHIVE_MANIFEST_NAME = 'manifest.json';
 
 export async function getImageResources({ ids }: GetImageResourcesOutput) {
   return await dbRead.imageResourceHelper.findMany({
@@ -297,6 +311,7 @@ async function getImages(imageIds?: number[]) {
       createdAt: true,
       name: true,
       type: true,
+      mimeType: true,
       meta: true,
       post: {
         select: { modelVersionId: true },
@@ -612,12 +627,13 @@ async function reportImages(report: CsamReportProps) {
           fileAnnotations.physicalHarm = true;
         }
 
-        const blob = await fetchBlobAsFile(imageUrl);
-        if (!blob) return;
+        const original = await readOriginalImage(image);
+        if (original.source === 'missing') return;
+        const file = blobToFile(new Blob([original.data], { type: original.contentType }));
 
         const {
           data: { fileId, hash },
-        } = await cybertipClient.uploadFile({ id: reportId, file: blob });
+        } = await cybertipClient.uploadFile({ id: reportId, file });
 
         await cybertipClient.submitFileDetails({
           reportId,
@@ -628,12 +644,17 @@ async function reportImages(report: CsamReportProps) {
           fileAnnotations,
         });
 
+        // Written by the same update that sets `reportSentAt`, so a sent report always has them.
         return {
           ...imageReportInfo,
           fileAnnotations,
           fileId,
           hash,
-        };
+          source: original.source,
+          sha256: original.sha256,
+          bytes: original.data.length,
+          contentType: original.contentType,
+        } satisfies CsamReportImage;
       }
     );
 
@@ -1826,42 +1847,70 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       expectedBytes:
         imageCount !== undefined ? imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE : undefined,
       append: async (boundedArchive) => {
-        // concurrency limiter
-        const maxWidth = MAX_POST_IMAGES_WIDTH;
         const limit = plimit(10);
-        // Paged rather than `images.map(...)` over one array of every row the user owns: the row
-        // set is unbounded, and materialising it was half of the memory problem this file exists
-        // to fix. Concurrency within a page is unchanged (10); pages are processed in order.
-        for await (const page of scanUserImages()) {
-          await Promise.all(
-            page.map((image) => {
-              return limit(async () => {
-                const width = image.width ?? maxWidth;
-                const blob = await fetchBlob(
-                  getEdgeUrl(image.url, {
-                    type: image.type,
-                    width: width < maxWidth ? width : maxWidth,
-                  }),
-                  undefined,
-                  { requireOk: true }
-                );
-                if (!blob) return;
-                const arrayBuffer = await blob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-
-                const imageName = image.name
-                  ? image.name.substring(0, image.name.lastIndexOf('.'))
-                  : image.url;
-                const name = imageName.length ? imageName : image.url;
-                const filename = `${name}.${blob.type.split('/').pop() as string}`;
-
-                await boundedArchive.append(buffer, { name: filename });
-                entries += 1;
-                if (isArchivedMedia(blob)) appendedIds.add(image.id);
-              });
-            })
-          );
+        // Originals range up to hundreds of MiB, so what is held is bounded in bytes: a
+        // reservation lasts from the object's headers until the archiver has written it.
+        const budget = createByteBudget();
+        const manifest: ({ imageId: number } & EvidenceFileRecord)[] = [];
+        try {
+          // Paged rather than `images.map(...)` over one array of every row the user owns: the
+          // row set is unbounded. Pages are processed in order.
+          for await (const page of scanUserImages()) {
+            await Promise.all(
+              page.map((image) =>
+                limit(async () => {
+                  const original = await readOriginalImage(image, { reserve: budget.reserve });
+                  if (original.source === 'missing') {
+                    manifest.push({ imageId: image.id, source: 'missing' });
+                    return;
+                  }
+                  // Named by id, never by `Image.name`: that is user input, and `data.json`
+                  // already carries it.
+                  const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+                  try {
+                    await boundedArchive.append(original.data, { name }, original.release);
+                  } catch (e) {
+                    original.release();
+                    throw e;
+                  }
+                  entries += 1;
+                  // A stored object is the upload itself; an edge copy counts only as media.
+                  if (original.source === 'original' || /^(image|video)\//.test(original.contentType))
+                    appendedIds.add(image.id);
+                  manifest.push({
+                    imageId: image.id,
+                    source: original.source,
+                    sha256: original.sha256,
+                    bytes: original.data.length,
+                    contentType: original.contentType,
+                  });
+                })
+              )
+            );
+          }
+        } catch (e) {
+          budget.abort(e);
+          throw e;
         }
+
+        manifest.sort((a, b) => a.imageId - b.imageId);
+        await boundedArchive.append(Buffer.from(JSON.stringify({ images: manifest }, null, 2)), {
+          name: IMAGES_ARCHIVE_MANIFEST_NAME,
+        });
+        entries += 1;
+
+        const counts = { original: 0, 'edge-fallback': 0, missing: 0 };
+        for (const entry of manifest) counts[entry.source]++;
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          subType: 'archive-images',
+          message: `built the images archive for report ${report.id}`,
+          reportId: report.id,
+          original: counts.original,
+          edgeFallback: counts['edge-fallback'],
+          missing: counts.missing,
+        });
       },
     });
 

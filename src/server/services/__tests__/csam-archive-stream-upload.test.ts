@@ -179,6 +179,31 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+// Stored originals are served by the same fake as edge blobs, keyed by `Image.url`, so one
+// fault-injection point covers both archive types.
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getImageUploadBackend: async () => ({
+    bucket: 'test-images',
+    backend: 'backblaze',
+    s3: {
+      send: async (command: { input: { Key: string } }) => {
+        const blob = (await mockFetchBlob(command.input.Key)) as {
+          type: string;
+          arrayBuffer: () => Promise<ArrayBuffer>;
+        } | null;
+        if (!blob) throw Object.assign(new Error('no such key'), { name: 'NoSuchKey' });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        return {
+          Body: { transformToByteArray: async () => bytes },
+          ContentType: blob.type,
+          ContentLength: bytes.length,
+        };
+      },
+    },
+  }),
+}));
+
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getConsumerStrikes: (...args: unknown[]) => mockGetConsumerStrikes(...args),
@@ -293,8 +318,8 @@ function fakeBlob(index: number) {
   };
 }
 
-/** Name the service derives for image row `i` — `picture-<i>.jpeg` minus its extension, plus the blob's. */
-const entryNameForIndex = (index: number) => `picture-${index}.jpeg`;
+/** Zip entry name for image row `i`: its id plus the stored content type's extension. */
+const entryNameForIndex = (index: number) => `${index + 1}.jpeg`;
 
 type InventoryEntry = { name: string; size: number; sha256: string };
 
@@ -322,11 +347,30 @@ async function zipInventory(bytes: Buffer): Promise<InventoryEntry[]> {
 
 /** What the inventory MUST be, derived from the fixture rather than from either code path. */
 function expectedInventory(): InventoryEntry[] {
-  return Array.from({ length: ENTRY_COUNT }, (_, i) => ({
-    name: entryNameForIndex(i),
-    size: ENTRY_BYTES,
-    sha256: createHash('sha256').update(entryBytes(i)).digest('hex'),
-  })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+  const manifest = Buffer.from(
+    JSON.stringify(
+      {
+        images: Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+          imageId: i + 1,
+          source: 'original',
+          sha256: sha256(entryBytes(i)),
+          bytes: ENTRY_BYTES,
+          contentType: 'image/jpeg',
+        })),
+      },
+      null,
+      2
+    )
+  );
+  return [
+    ...Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+      name: entryNameForIndex(i),
+      size: ENTRY_BYTES,
+      sha256: sha256(entryBytes(i)),
+    })),
+    { name: 'manifest.json', size: manifest.length, sha256: sha256(manifest) },
+  ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 const report = {
@@ -343,7 +387,7 @@ function seedDb(entryCount: number = ENTRY_COUNT) {
   const rows = Array.from({ length: entryCount }, (_, i) => ({
     id: i + 1,
     url: `image-uuid-${i}`,
-    name: entryNameForIndex(i),
+    name: `picture-${i}.jpeg`,
     type: 'image',
     width: 1024,
     userId: report.userId,

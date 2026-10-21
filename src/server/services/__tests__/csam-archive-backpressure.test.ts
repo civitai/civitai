@@ -123,6 +123,22 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+// The image archive reads each stored original from the upload bucket.
+const getObjectKeys: string[] = [];
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getImageUploadBackend: async () => ({
+    bucket: 'test-images',
+    backend: 'backblaze',
+    s3: {
+      send: (command: { input: { Key: string } }) => {
+        getObjectKeys.push(command.input.Key);
+        return mockGetObject(command.input.Key);
+      },
+    },
+  }),
+}));
+
 /**
  * Captures every uploaded object by its S3 key. The service deletes its scratch directories
  * before returning, so what reaches this mock is the only observable copy of what was archived —
@@ -183,6 +199,7 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 }));
 
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
+let mockGetObject: (key: string) => Promise<unknown>;
 const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
   status: 'not-found',
 });
@@ -193,6 +210,9 @@ import {
   ARCHIVE_SCAN_PAGE_SIZE,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
+import { createHash } from 'crypto';
+import JSZip from 'jszip';
+import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -205,6 +225,14 @@ import {
 // it is testing. Invented figures — the real report was a different size entirely.
 const IMAGE_COUNT = 53;
 const IMAGE_BYTES = 97 * 1024;
+
+function fakeObject(bytes: number, contentType = 'image/jpeg') {
+  return {
+    Body: { transformToByteArray: async () => new Uint8Array(Buffer.alloc(bytes, 0xab)) },
+    ContentType: contentType,
+    ContentLength: bytes,
+  };
+}
 
 function fakeBlob(bytes: number) {
   return {
@@ -220,7 +248,9 @@ beforeEach(() => {
   probes.length = 0;
   uploads.clear();
   uploadFailure = undefined;
+  getObjectKeys.length = 0;
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
+  mockGetObject = async () => fakeObject(IMAGE_BYTES);
   mockGetConsumerStrikes = async () => [];
   setEnv({
     CSAM_UPLOAD_KEY: 'test-key',
@@ -338,7 +368,8 @@ describe('archiveCsamDataForReport (Image report)', () => {
     // because it is the only counter that reads IMAGE_COUNT on BOTH the fixed and the unfixed
     // code — asserting the processed count instead would kill this test on the un-awaited
     // finalize defect before the bound assertion below ever ran, i.e. green for the wrong reason.
-    expect(imageArchive!.appended).toBe(IMAGE_COUNT);
+    // Every image plus the manifest.
+    expect(imageArchive!.appended).toBe(IMAGE_COUNT + 1);
 
     // The regression. Pre-fix this reads IMAGE_COUNT, because every append was fire-and-forget.
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
@@ -357,8 +388,8 @@ describe('archiveCsamDataForReport (Image report)', () => {
     // Pre-fix `archive.finalize()` was not awaited, so this returned with the archive still
     // draining and `fs.createReadStream(outPath)` opened a partial file.
     const imageArchive = probes.find((p) => p.appended > 0);
-    expect(imageArchive!.appended).toBe(IMAGE_COUNT);
-    expect(imageArchive!.processed).toBe(IMAGE_COUNT);
+    expect(imageArchive!.appended).toBe(IMAGE_COUNT + 1);
+    expect(imageArchive!.processed).toBe(IMAGE_COUNT + 1);
   });
 
   it('archives every image exactly once — backpressure must not change what is stored', async () => {
@@ -367,10 +398,11 @@ describe('archiveCsamDataForReport (Image report)', () => {
     await archiveCsamDataForReport(report as never);
 
     const imageArchive = probes.find((p) => p.appended > 0);
-    expect(imageArchive!.entryNames).toHaveLength(IMAGE_COUNT);
-    expect(new Set(imageArchive!.entryNames).size).toBe(IMAGE_COUNT);
-    expect(imageArchive!.entryNames).toContain('picture-0.jpeg');
-    expect(imageArchive!.entryNames).toContain(`picture-${IMAGE_COUNT - 1}.jpeg`);
+    const imageEntries = imageArchive!.entryNames.filter((n) => n !== 'manifest.json');
+    expect(imageEntries).toHaveLength(IMAGE_COUNT);
+    expect(new Set(imageEntries).size).toBe(IMAGE_COUNT);
+    expect(imageEntries).toContain('1.jpeg');
+    expect(imageEntries).toContain(`${IMAGE_COUNT}.jpeg`);
   });
 
   it('archives images from EVERY page, not just the first round-trip', async () => {
@@ -403,18 +435,18 @@ describe('archiveCsamDataForReport (Image report)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
-    mockFetchBlob = async () => fakeBlob(8);
+    mockGetObject = async () => fakeObject(8);
 
     await archiveCsamDataForReport(report as never);
 
     const imageArchive = probes.find((p) => p.appended > 0);
     expect(imageArchive, 'no archive received any entries').toBeDefined();
-    expect(imageArchive!.entryNames).toHaveLength(TOTAL);
+    expect(imageArchive!.entryNames).toHaveLength(TOTAL + 1);
     // Named explicitly at both ends of the boundary: the last entry of page 1, the first of
     // page 2, and the last overall.
-    expect(imageArchive!.entryNames).toContain(`picture-${PAGE_SIZE - 1}.jpeg`);
-    expect(imageArchive!.entryNames).toContain(`picture-${PAGE_SIZE}.jpeg`);
-    expect(imageArchive!.entryNames).toContain(`picture-${TOTAL - 1}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${PAGE_SIZE}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${PAGE_SIZE + 1}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${TOTAL}.jpeg`);
     // The bound still holds across page boundaries — a per-page drain must not become a
     // per-page burst.
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
@@ -451,7 +483,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
         return rows.filter((row) => row.id > (after ?? 0)).slice(0, args.take ?? rows.length);
       }
     );
-    mockFetchBlob = async () => fakeBlob(8);
+    mockGetObject = async () => fakeObject(8);
 
     const realCreateWriteStream = fs.createWriteStream;
     const created: fs.WriteStream[] = [];
@@ -569,7 +601,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
 
   it('does not stamp archivedAt when the archive fails', async () => {
     seedDb();
-    mockFetchBlob = async () => {
+    mockGetObject = async () => {
       throw new Error('synthetic download failure');
     };
 
@@ -960,6 +992,129 @@ describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
     expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
     );
+  });
+});
+
+describe('archiveCsamDataForReport (Image report, stored originals)', () => {
+  const report = {
+    id: 4747,
+    userId: 404040,
+    reportedById: 5,
+    reportId: 82,
+    type: 'Image',
+    details: {},
+    images: [],
+  };
+  const stored = Buffer.from('stored original bytes');
+  const edge = Buffer.from('edge copy bytes');
+  const rows = [
+    { id: 7, url: 'key-seven', name: '../../not a name.png', type: 'image', mimeType: null },
+    { id: 8, url: 'key-eight', name: 'eight.jpeg', type: 'image', mimeType: 'image/jpeg' },
+    { id: 9, url: 'key-nine', name: 'nine.mp4', type: 'video', mimeType: 'video/mp4' },
+  ];
+  const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    // 7 is stored; 8 and 9 are gone from storage, and only 8 is still on the edge.
+    mockGetObject = async (key) => {
+      if (key === 'key-seven')
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+      String(input).includes('key-eight')
+        ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+        : new Response('not found', { status: 404 })
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function archivedZip() {
+    await archiveCsamDataForReport(report as never);
+    const zip = uploads.get('images.zip');
+    expect(zip, 'images.zip was never uploaded').toBeDefined();
+    return JSZip.loadAsync(zip!);
+  }
+
+  it('reads each image from storage by its key, not through the edge', async () => {
+    await archivedZip();
+    expect(getObjectKeys.sort()).toEqual(['key-eight', 'key-nine', 'key-seven']);
+    const fetched = vi.mocked(globalThis.fetch).mock.calls.map(([url]) => String(url));
+    expect(fetched.some((url) => url.includes('key-seven'))).toBe(false);
+  });
+
+  it('stores the original bytes under an id-based name with an extension from the content type', async () => {
+    const zip = await archivedZip();
+    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+    expect((await zip.file('7.webp')!.async('nodebuffer')).equals(stored)).toBe(true);
+    expect((await zip.file('8.jpeg')!.async('nodebuffer')).equals(edge)).toBe(true);
+  });
+
+  it('writes a manifest of ids, hashes, sizes, sources and content types only', async () => {
+    const zip = await archivedZip();
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+
+    expect(manifest).toEqual({
+      images: [
+        {
+          imageId: 7,
+          source: 'original',
+          sha256: sha256(stored),
+          bytes: stored.length,
+          contentType: 'image/webp',
+        },
+        {
+          imageId: 8,
+          source: 'edge-fallback',
+          sha256: sha256(edge),
+          bytes: edge.length,
+          contentType: 'image/jpeg',
+        },
+        { imageId: 9, source: 'missing' },
+      ],
+    });
+  });
+
+  it('logs counts only, never a storage key or a name', async () => {
+    await archivedZip();
+    const line = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-images');
+
+    expect(line).toMatchObject({ reportId: report.id, original: 1, edgeFallback: 1, missing: 1 });
+    const text = JSON.stringify(line);
+    for (const row of rows) {
+      expect(text).not.toContain(row.url);
+      expect(text).not.toContain(row.name);
+    }
+  });
+
+  it('fails the archive on a storage error rather than storing an edge copy in its place', async () => {
+    mockGetObject = async () => {
+      throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'synthetic storage outage'
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
   });
 });
 
