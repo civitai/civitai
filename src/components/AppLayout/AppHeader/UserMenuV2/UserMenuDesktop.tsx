@@ -53,7 +53,7 @@ export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellP
       withinPortal
     >
       <Menu.Target>{trigger}</Menu.Target>
-      <Menu.Dropdown className="flex flex-col p-0">
+      <Menu.Dropdown className="flex max-h-[calc(100dvh-var(--header-height)-16px)] flex-col p-0">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           {switching ? (
             <AccountSwitcher onAccountClick={() => setSwitching(false)} />
@@ -80,7 +80,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   const { toggle, announce, region } = usePinActions(pins);
 
   return (
-    <div className="p-1">
+    <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
       {region}
       {currentUser && <DesktopHeaderRows />}
       {events.map((item, i) => (
