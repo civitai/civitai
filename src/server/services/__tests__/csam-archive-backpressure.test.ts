@@ -1076,6 +1076,48 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
   });
 });
 
+describe('archiveCsamDataForReport (Image report, failed read)', () => {
+  const ROWS = 30;
+
+  it('starts no further reads once one has failed', async () => {
+    const rows = Array.from({ length: ROWS }, (_, i) => ({
+      id: i + 1,
+      url: `key-${i + 1}`,
+      type: 'image',
+    }));
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 202020 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    mockGetObject = async (key) => {
+      if (key === 'key-1')
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return fakeObject(8);
+    };
+
+    await expect(
+      archiveCsamDataForReport({
+        id: 4949,
+        userId: 202020,
+        reportedById: 5,
+        reportId: 84,
+        type: 'Image',
+        details: {},
+        images: [],
+      } as never)
+    ).rejects.toThrow('synthetic storage outage');
+    // Let any read still queued behind the concurrency limit start, if it is going to.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(getObjectKeys.length).toBeGreaterThan(1);
+    expect(getObjectKeys.length).toBeLessThan(ROWS);
+  });
+});
+
 describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   const report = {
     id: 4747,
