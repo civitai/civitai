@@ -121,6 +121,25 @@ describe('moderators are kept off public leaderboards without the exclusion flag
     ]);
   });
 
+  // The live 'writer' board is this shape: a bare SELECT with no CTE, wrapped by the job.
+  it("Postgres boards without a CTE ('writer'): the moderator is not ranked", async () => {
+    await q(
+      `INSERT INTO "Leaderboard" (id, public) VALUES ('writer', true) ON CONFLICT DO NOTHING`
+    );
+
+    await populateLeaderboard(
+      {
+        ...base,
+        id: 'writer',
+        includesCTE: false,
+        query: `SELECT "userId", score, '{}'::jsonb metrics FROM "Score"`,
+      },
+      async () => [0, 1]
+    );
+
+    expect((await board('writer')).map((r) => r.userId)).toEqual([PLAIN, PLAIN_LOW]);
+  });
+
   it('Postgres boards: a non-public board still ranks the moderator and the flagged account', async () => {
     await pgBoard('mod-only-board');
 
