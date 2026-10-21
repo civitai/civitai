@@ -85,8 +85,17 @@ export function useDragClickGuard() {
       event.preventDefault();
       event.stopPropagation();
     };
+    // dnd-kit skips the end and cancel callbacks when the browser cancels a drag before it has
+    // rendered, which would leave every later click cancelled. Every drag starts after a pointerdown.
+    const reset = (event: PointerEvent) => {
+      if (event.isPrimary) dragging.current = false;
+    };
     window.addEventListener('click', cancel, true);
-    return () => window.removeEventListener('click', cancel, true);
+    window.addEventListener('pointerdown', reset, true);
+    return () => {
+      window.removeEventListener('click', cancel, true);
+      window.removeEventListener('pointerdown', reset, true);
+    };
   }, []);
   return {
     onDragStart: () => {
