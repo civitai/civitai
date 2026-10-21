@@ -107,7 +107,9 @@ The `/text-scan/model-rules` Matches tab marks each rule as matched by the model
 and lists literal-only hits the model did not match.
 
 Image moderation rules are separate and stay in Retool; `/api/mod/mod-rules` now accepts Image rules
-only, so a Model rule can only be managed on `/text-scan/model-rules`.
+only, so a Model rule can only be managed on `/text-scan/model-rules`. An Image rule is built from
+`content`, `tag`, `and` and `or` nodes only; any other node type is refused there and never matches if
+stored. Each create or update writes a `ModerationRuleVersion` row in the same transaction.
 
 ## Actions
 
