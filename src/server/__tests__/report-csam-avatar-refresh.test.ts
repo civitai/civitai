@@ -6,10 +6,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const { refreshProfilePicturesForImages } = vi.hoisted(() => ({
   refreshProfilePicturesForImages: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  refreshProfilePicturesForImages,
-}));
+// A plain factory, not importOriginal: loading the real user.service pulls in most of the server,
+// which fails under the partial db mock; the never-throwing lazy import would then swallow that
+// and the refresh would never be called.
+vi.mock('~/server/services/user.service', () => ({ refreshProfilePicturesForImages }));
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 
 const reportCreate = vi.fn();
