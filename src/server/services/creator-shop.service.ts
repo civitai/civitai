@@ -2375,7 +2375,15 @@ async function refundShelfPurchase(input: {
     if (getBuzzApiStatus(error) !== 409) throw error;
   }
   await refundAllLegsByPrefix(input);
-  const { reversed } = await getPrefixRefundState(input.externalTransactionIdPrefix);
+  // Read back rather than trusting its counts: a 404 there returns zeros, and a single leg's 409 is
+  // counted done without a refund on the ledger. Flagged refunded, a leg left charged is lost.
+  const { reversed, missing } = await getPrefixRefundState(input.externalTransactionIdPrefix);
+  if (!reversed.length || missing.length)
+    throw new Error(
+      `Refund of ${input.externalTransactionIdPrefix} left ${missing.length} of ${
+        reversed.length + missing.length
+      } transactions unreversed`
+    );
   return {
     refundedTransactions: reversed.map((leg) => ({
       originalTransactionId: leg.transactionId,

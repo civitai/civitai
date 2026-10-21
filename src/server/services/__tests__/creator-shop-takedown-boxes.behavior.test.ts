@@ -764,6 +764,74 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     expect(buzz.refundTransaction).toHaveBeenCalledWith('payout-9', expect.any(String));
   });
 
+  // The 409 case the completion exists for: an earlier attempt reversed one leg and not the other.
+  it('reverses the leg an earlier shelf refund attempt left, and flags the purchase refunded', async () => {
+    await seedBox();
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+    const leg = (transactionId: string, amount: number) => ({
+      transactionId,
+      externalTransactionId: `shelf-1:${transactionId}`,
+      accountType: 'yellow',
+      accountId: 104,
+      amount,
+    });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([leg('a', 300), leg('b', 200)]);
+    const refunds = new Set(['refund-a']);
+    buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
+      refunds.has(id) ? { transactionId: id } : null) as never);
+    buzz.refundTransaction.mockImplementation((async (id: string) => {
+      refunds.add(`refund-${id}`);
+      return { transactionId: `refund-${id}` };
+    }) as never);
+    dbMock.dbWrite.userCosmeticShopPurchases.update.mockClear();
+
+    const result = await takedown();
+
+    expect(buzz.refundTransaction).toHaveBeenCalledWith('b', expect.any(String), undefined);
+    expect([result.refunded, result.failures]).toEqual([1, []]);
+    expect(dbMock.dbWrite.userCosmeticShopPurchases.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' }, data: { refunded: true } })
+    );
+  });
+
+  // Flagged refunded, a leg still charged would never be retried.
+  it('leaves a shelf purchase owed when its refund cannot be read back as complete', async () => {
+    await seedBox();
+    dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
+      { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
+    ]);
+    // A conflict, then Buzz no longer seeing the charge at all.
+    buzz.refundMultiAccountTransaction
+      .mockRejectedValueOnce(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'conflict',
+          cause: new BuzzApiError(409, 'x'),
+        })
+      )
+      .mockRejectedValue(
+        new TRPCError({ code: 'NOT_FOUND', message: 'none', cause: new BuzzApiError(404, 'x') })
+      );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+    // Calls from earlier tests stay recorded on the shared db mock.
+    dbMock.dbWrite.userCosmeticShopPurchases.update.mockClear();
+
+    const result = await takedown();
+
+    expect([result.refunded, result.failures]).toEqual([
+      0,
+      [expect.objectContaining({ stage: 'refund', userId: 104 })],
+    ]);
+    expect(dbMock.dbWrite.userCosmeticShopPurchases.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' } })
+    );
+  });
+
   it('does not take back a payout the purchase refund already reversed', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });
     await seedOpening(boxId, {
