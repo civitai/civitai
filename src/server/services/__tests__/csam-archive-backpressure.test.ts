@@ -617,6 +617,26 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(zipSinks[0].destroyed).toBe(true);
   });
 
+  it('archives the blobs the report names, and counts the ones it could not fetch', async () => {
+    const named = ['https://example.invalid/named-0.jpeg', 'https://example.invalid/named-1.jpeg'];
+    mockFetchBlob = async (url: unknown) => (url === named[1] ? null : fakeBlob(8));
+
+    await archiveCsamDataForReport({
+      ...report,
+      details: { generatedImages: [{ jobId: 'job-1', blobs: named.map((url) => ({ url })) }] },
+    } as never);
+
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: 'generatedImages',
+        entries: IMAGE_COUNT + 1,
+        namedExpected: 2,
+        namedMissing: 1,
+      })
+    );
+  });
+
   it('holds a bounded number of generated-image buffers', async () => {
     await archiveCsamDataForReport(report as never);
 
