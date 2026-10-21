@@ -2,6 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
+import { createServer, type Server } from 'http';
+import type { AddressInfo } from 'net';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -28,6 +30,10 @@ const BLOCKED_QUEUE_MIGRATION = path.join(
   '20260806130000_blocked_image_delete_queue_completeness/migration.sql'
 );
 const CDN_ACCESS_MIGRATION = path.join(MIGRATIONS, '20261111120000_cdn_access_sync/migration.sql');
+const CDN_ACCESS_FIXES_MIGRATION = path.join(
+  MIGRATIONS,
+  '20261121120000_cdn_access_sync_fixes/migration.sql'
+);
 
 const CACHER = 'http://image-cacher.test';
 const OWNER = 10;
@@ -63,11 +69,14 @@ const fetchFake = vi.fn(async (input: string, init?: { method?: string }) => {
   return { ok: status >= 200 && status < 300, status } as Response;
 });
 
+const realFetch = globalThis.fetch;
 const s3Send = vi.spyOn(S3Client.prototype, 'send');
 
 const { syncCdnAccess, reconcileCdnAccess } = await import('~/server/services/cdn-access.service');
 const { cdnAccessSync } = await import('~/server/jobs/cdn-access-sync');
-const { EVIDENCE_VERIFIED_KEY } = await import('~/server/services/cdn-access.service');
+const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
+  '~/server/services/cdn-access.service'
+);
 const { MODERATOR_TAKEDOWN_ACTIVITIES } = await import(
   '~/server/common/moderator-takedown-activities'
 );
@@ -101,8 +110,13 @@ beforeAll(async () => {
       ON CONFLICT DO NOTHING;
     END;
     $$;
-    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL);
-    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL, meta jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY,
+      "modelId" int NOT NULL,
+      status text NOT NULL,
+      meta jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -137,6 +151,7 @@ beforeAll(async () => {
   `);
   await pg.db.exec(readFileSync(BLOCKED_QUEUE_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
+  await pg.db.exec(readFileSync(CDN_ACCESS_FIXES_MIGRATION, 'utf8'));
 });
 
 afterAll(async () => {
@@ -146,7 +161,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await pg.db.exec(`
     TRUNCATE "JobQueue", "Image", "Post", "ModelVersion", "Model", "ModActivity", "CsamReport",
-      "ImageCdnAccess";
+      "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim";
     INSERT INTO "Model" (id, status) VALUES (1, 'Published');
     INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1, 1, 'Published');
   `);
@@ -189,16 +204,26 @@ const scannerBlock = (id: number) =>
 /** `report.service` on a user's CSAM report. */
 const reportCsamBlock = (id: number) =>
   sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${id}`;
-/** The moderator app's `acceptImage`: un-blocks and writes a `review` row, keeps the delete queue row. */
+/** The moderator app's `acceptImage`: un-blocks, drops the delete queue row, writes a `review` row. */
 const acceptImage = async (id: number) => {
   await sql`UPDATE "Image" SET ingestion = 'Scanned', "blockedFor" = NULL WHERE id = ${id}`;
+  await sql`DELETE FROM "JobQueue" WHERE type = 'BlockedImageDelete' AND "entityId" = ${id}`;
   await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
             VALUES (${MOD}, 'review', 'image', ${id})`;
 };
 
 /** The post UPDATE in `unpublishModelById` / `unpublishModelVersionById`, as `actorId`. */
-const modelCascade = async (postId: number, actorId: number, status: string) => {
-  await sql`UPDATE "ModelVersion" SET status = ${status} WHERE id = 1`;
+const modelCascade = async (
+  postId: number,
+  actorId: number,
+  status: string,
+  reason: string | null = null
+) => {
+  await sql`UPDATE "ModelVersion"
+    SET status = ${status},
+        meta = CASE WHEN ${reason}::text IS NULL THEN meta
+                    ELSE meta || jsonb_build_object('unpublishedReason', ${reason}::text) END
+    WHERE id = 1`;
   await sql`UPDATE "Post"
     SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
           'unpublishedAt', now()::text, 'unpublishedBy', ${actorId}::int, 'prevPublishedAt', "publishedAt"),
@@ -206,11 +231,11 @@ const modelCascade = async (postId: number, actorId: number, status: string) => 
     WHERE id = ${postId} AND "publishedAt" IS NOT NULL`;
 };
 /** `unpublishPostAsModerator`. */
-const moderatorPostUnpublish = (postId: number) =>
+const moderatorPostUnpublish = (postId: number, reason = 'other') =>
   sql`UPDATE "Post"
     SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
           'unpublishedAt', now()::text, 'unpublishedBy', ${MOD}::int,
-          'unpublishedReason', 'csam-hold', 'prevPublishedAt', "publishedAt"),
+          'unpublishedReason', ${reason}::text, 'prevPublishedAt', "publishedAt"),
         "publishedAt" = NULL
     WHERE id = ${postId} AND "publishedAt" IS NOT NULL`;
 /** The republish in `process-scheduled-publishing` / `publishModelById`. */
@@ -219,6 +244,7 @@ const republish = async (postId: number) => {
   await sql`UPDATE "Post"
     SET "publishedAt" = ("metadata"->>'prevPublishedAt')::timestamp,
         "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          - 'unpublishedReason'
     WHERE id = ${postId}`;
 };
 
@@ -289,6 +315,33 @@ describe('image takedowns', () => {
     expect(await stateOf(u(1))).toBeUndefined();
   });
 
+  it('a report-driven block after a moderator accept is deny only', async () => {
+    await image(1);
+    await scannerBlock(1);
+    await syncCdnAccess();
+    await acceptImage(1);
+    await syncCdnAccess();
+    calls.length = 0;
+    await reportCsamBlock(1);
+    await syncCdnAccess();
+    expect(calls.map(kind)).toEqual(['deny']);
+  });
+
+  it('an AiNotVerified block makes no call', async () => {
+    await image(1);
+    await sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 1`;
+    expect((await queued()).n).toBe(1);
+    await syncCdnAccess();
+    expect(calls).toEqual([]);
+  });
+
+  it('an image inserted already Blocked is denied', async () => {
+    await sql`INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor")
+              VALUES (1, ${OWNER}, ${u(1)}, 'Blocked', 'moderated')`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+  });
+
   it('restoring a retracted image lifts the deny', async () => {
     await image(1);
     await moderatorBlock(1);
@@ -339,6 +392,54 @@ describe('post takedowns', () => {
     expect(callsFor(u(1))).toEqual(['retract']);
   });
 
+  it('a reason left by an earlier moderator unpublish does not make an owner unpublish a takedown', async () => {
+    await moderatorPostUnpublish(5);
+    await syncCdnAccess();
+    // A republish that kept the reason, as one could before republishing cleared it.
+    await sql`UPDATE "Post"
+      SET "publishedAt" = ("metadata"->>'prevPublishedAt')::timestamp,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+      WHERE id = 5`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract', 'allow']);
+    calls.length = 0;
+    await modelCascade(5, OWNER, 'Unpublished');
+    await syncCdnAccess();
+    expect(calls).toEqual([]);
+  });
+
+  it('a csam-hold removal is deny only until a report exists, then follows the evidence rule', async () => {
+    await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+
+    await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`;
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+
+    await sql`UPDATE "CsamReport" SET "reportSentAt" = now(),
+              details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+  });
+
+  it('a mature-underage violation unpublish is deny only until a verified report releases it', async () => {
+    await modelCascade(5, MOD, 'UnpublishedViolation', 'mature-underage');
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+
+    // A report alone does not release it, sent or not, until its evidence is verified.
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${OWNER}, now())`;
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+
+    await sql`UPDATE "CsamReport"
+              SET details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await reconcileCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+  });
+
   it('an owner unpublishing their own model makes no call', async () => {
     await modelCascade(5, OWNER, 'Unpublished');
     expect((await queued()).n).toBe(1);
@@ -379,12 +480,21 @@ describe('post takedowns', () => {
 });
 
 describe('shared url', () => {
-  it('a takedown wins over a live image on the same url', async () => {
+  it('a takedown wins over a live image of the same owner, and retracts', async () => {
+    await image(1, { url: SHARED });
+    await image(2, { url: SHARED });
+    await moderatorBlock(2);
+    await syncCdnAccess();
+    expect(callsFor(SHARED)).toEqual(['retract']);
+  });
+
+  it('a takedown on a url another owner also uses stops it serving but does not retract', async () => {
     await image(1, { url: SHARED });
     await image(2, { url: SHARED, userId: OTHER_OWNER });
     await moderatorBlock(2);
     await syncCdnAccess();
-    expect(callsFor(SHARED)).toEqual(['retract']);
+    await reconcileCdnAccess();
+    expect(callsFor(SHARED)).toEqual(['deny']);
   });
 
   it('the live copy does not lift a deny the takedown holds', async () => {
@@ -395,7 +505,7 @@ describe('shared url', () => {
     // Any later write to the live copy re-checks the url; it must stay taken down.
     await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
     await syncCdnAccess();
-    expect(callsFor(SHARED)).toEqual(['retract']);
+    expect(callsFor(SHARED)).toEqual(['deny']);
   });
 });
 
@@ -434,6 +544,15 @@ describe('evidence holds', () => {
               SET details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny', 'retract']);
+  });
+
+  it('a verification marker that is not a timestamp still holds', async () => {
+    await image(1);
+    await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
+              VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, 'pending'))`;
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a sent report with a verified evidence copy does not hold', async () => {
@@ -477,9 +596,9 @@ describe('evidence holds', () => {
 });
 
 describe('moderator-app deletes', () => {
-  const queueDelete = (id: number, url: string, userId = OWNER) =>
+  const queueDelete = (id: number, url: string, { userId = OWNER, csamReview = false } = {}) =>
     sql`SELECT queue_cdn_access_sync(${id}::int, 'Image',
-          ${JSON.stringify({ url, userId, moderatorDelete: true })}::jsonb)`;
+          ${JSON.stringify({ url, userId, csamReview, moderatorDelete: true })}::jsonb)`;
 
   it('retracts a deleted image by the url the queue row carries', async () => {
     await queueDelete(1, GONE);
@@ -492,6 +611,49 @@ describe('moderator-app deletes', () => {
     await queueDelete(1, GONE);
     await syncCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
+  });
+
+  it('denies only when the deleted image was flagged for CSAM review, or the row does not say', async () => {
+    await queueDelete(1, GONE, { csamReview: true });
+    await sql`SELECT queue_cdn_access_sync(2, 'Image',
+          ${JSON.stringify({ url: u(2), userId: OWNER, moderatorDelete: true })}::jsonb)`;
+    await syncCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it('keeps a delete on a url the same owner still uses retracted through the reconciler', async () => {
+    await image(1, { url: SHARED });
+    await queueDelete(2, SHARED);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    // A later write to the surviving row re-checks the url.
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    expect(callsFor(SHARED)).toEqual(['retract']);
+  });
+
+  it('keeps a delete on a url another owner still uses denied through the reconciler', async () => {
+    await image(1, { url: SHARED });
+    await queueDelete(2, SHARED, { userId: OTHER_OWNER });
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(SHARED)).toEqual(['deny']);
+    expect(await stateOf(SHARED)).toBe('Denied');
+  });
+
+  it('keeps a held delete on record and retracts once the hold is released', async () => {
+    await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`;
+    await queueDelete(1, GONE);
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(await stateOf(GONE)).toBe('Denied');
+
+    await sql`UPDATE "CsamReport" SET "reportSentAt" = now(),
+              details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z')`;
+    await reconcileCdnAccess();
+    expect(callsFor(GONE)).toEqual(['deny', 'retract']);
+    expect(await stateOf(GONE)).toBe('Retracted');
   });
 
   it('denies only when the queue row does not say whose image it was', async () => {
@@ -543,6 +705,34 @@ describe('failures', () => {
     expect(calls.map(kind)).toEqual(['deny', 'deny', 'deny', 'deny']);
     expect(await stateOf(u(1))).toBe('Denied');
     expect((await queued()).n).toBe(0);
+  });
+
+  it('does not call the image server without the admin secret', async () => {
+    setEnv({ IMAGE_CACHER_ADMIN_SECRET: '' });
+    await image(1);
+    await scannerBlock(1);
+    const result = await syncCdnAccess();
+    expect(calls).toEqual([]);
+    expect(result.failed).toBe(1);
+    expect((await queued()).n).toBe(1);
+  });
+
+  it('a run that overlaps another on the same url leaves the newer takedown in place', async () => {
+    await image(1);
+    await scannerBlock(1);
+    await syncCdnAccess();
+    await sql`UPDATE "Image" SET ingestion = 'Scanned', "blockedFor" = NULL WHERE id = 1`;
+    fetchFake.mockImplementationOnce(async (input: string, init?: { method?: string }) => {
+      calls.push({ method: init?.method ?? 'GET', path: input.replace(CACHER, '') });
+      // A second run starts while this run's lift is in flight, after a fresh takedown.
+      await moderatorBlock(1);
+      await syncCdnAccess();
+      return { ok: true, status: 200 } as Response;
+    });
+    await syncCdnAccess();
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny', 'allow', 'retract']);
+    expect(await stateOf(u(1))).toBe('Retracted');
   });
 
   it('keeps a row that was queued again while the run was reading it', async () => {
@@ -631,6 +821,42 @@ describe('scope of what it calls', () => {
         /^\/admin\/(invalidate|deny)\?imageKey=[^&]+(&retractPublicBlobs=true)?$/
       );
     expect(s3Send).not.toHaveBeenCalled();
+  });
+});
+
+describe('image server requests', () => {
+  const listen = (handler: Parameters<typeof createServer>[1]) =>
+    new Promise<Server>((resolve) => {
+      const server = createServer(handler);
+      server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+  const origin = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const close = (server: Server) => new Promise((resolve) => server.close(resolve));
+
+  it('sends the admin secret and never follows a redirect', async () => {
+    const elsewhere: string[] = [];
+    const target = await listen((req, res) => {
+      elsewhere.push(String(req.headers['x-admin-secret']));
+      res.writeHead(200).end();
+    });
+    const secrets: (string | undefined)[] = [];
+    const cacher = await listen((req, res) => {
+      secrets.push(req.headers['x-admin-secret'] as string | undefined);
+      res.writeHead(307, { Location: `${origin(target)}${req.url}` }).end();
+    });
+    try {
+      vi.stubGlobal('fetch', realFetch);
+      setEnv({ IMAGE_CACHER_URL: origin(cacher) });
+      await image(1);
+      await scannerBlock(1);
+      const result = await syncCdnAccess();
+      expect(secrets).toEqual(['secret', 'secret', 'secret']);
+      expect(elsewhere).toEqual([]);
+      expect(result.failed).toBe(1);
+      expect((await queued()).n).toBe(1);
+    } finally {
+      await Promise.all([close(cacher), close(target)]);
+    }
   });
 });
 

@@ -4352,6 +4352,20 @@ export interface ImageCdnAccess {
   lastAssertedAt: Date;
 }
 
+export interface ImageCdnModeratorDelete {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: boolean;
+  deletedAt: Date;
+}
+
+export interface ImageCdnAccessClaim {
+  url: string;
+  token: string;
+  claimedUntil: Date;
+}
+
 export interface JobQueue {
   type: JobQueueType;
   entityType: EntityType;

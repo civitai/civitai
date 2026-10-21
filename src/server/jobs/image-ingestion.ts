@@ -773,11 +773,11 @@ export const removeBlockedImages = createJob(
     //   a moderator (a `review` row), then re-blocked by automation — the surviving queue row
     //   still carries the FIRST block's timestamp, so the moderator's unblock dates after it and
     //   reads as a takedown. It needs a queue row to survive the un-block, which narrows it twice.
-    //   By WRITER: the moderator app's `acceptImage` is the only un-block path that does not call
-    //   `dropBlockedImageDeleteQueue` (`handleUnblockImages` and `/api/mod/unblock-images` both
-    //   do, and a dropped row cannot be compared against). And by TIME: both the accept and the
-    //   re-block have to land between two consecutive runs of this job, because any run in
-    //   between takes the un-blocked image into `staleIds` and deletes its queue row below.
+    //   By WRITER: the moderator un-block paths all drop the row (`dropBlockedImageDeleteQueue`
+    //   here, and its twin in the moderator app's image-moderation service), and a dropped row
+    //   cannot be compared against. And by TIME: for any other un-block, both it and the re-block
+    //   have to land between two consecutive runs of this job, because any run in between takes
+    //   the un-blocked image into `staleIds` and deletes its queue row below.
     //   Closing it properly needs `review` split into distinct block/unblock activities, which is
     //   a change to the mod audit vocabulary the account-history panel buckets on; not done here.
     //

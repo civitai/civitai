@@ -19,18 +19,12 @@
  *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
  *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
  *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
- *                     after it reads as a takedown. What actually closes that for most of the
- *                     un-block direction is the writers dropping the queue row —
- *                     `handleUnblockImages` and `/api/mod/unblock-images` both call
- *                     `dropBlockedImageDeleteQueue`, leaving nothing to compare against. The
- *                     moderator app's `acceptImage` does not — so an accept followed by an
- *                     automated re-block, BOTH landing between two consecutive runs of this
- *                     hourly job, is a real window in which an un-block licenses retraction. It
- *                     is bounded to that gap and no wider: any run in between evicts the queue
- *                     row as stale (`staleIds` takes everything no longer `ingestion = 'Blocked'`,
- *                     and the delete at the end of the job removes it), and the re-block then
- *                     writes a fresh row that post-dates the accept. Listed as accepted
- *                     imprecision in the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note below.
+ *                     after it reads as a takedown. What closes that is the un-block writers
+ *                     dropping the queue row: `handleUnblockImages` and `/api/mod/unblock-images`
+ *                     call `dropBlockedImageDeleteQueue`, and the moderator app's `acceptImage`
+ *                     and appeal approval drop it the same way, leaving nothing to compare
+ *                     against. See the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note in
+ *                     `image-ingestion.ts` for what remains.
  *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block

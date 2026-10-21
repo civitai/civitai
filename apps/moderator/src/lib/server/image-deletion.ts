@@ -23,7 +23,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       const image = await dbWrite
         .deleteFrom('Image')
         .where('id', '=', id)
-        .returning(['url', 'userId', 'postId', thumbnailParentId.as('parentId')])
+        .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
         .executeTakeFirst();
       if (!image) continue;
       // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
@@ -36,7 +36,12 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       if (image.url) {
         // The main app's cdn-access-sync job stops the image serving; this app cannot reach the
         // image server's admin API. Queued whether or not the url is shared: a takedown wins.
-        await queueCdnAccessForDelete({ id, url: image.url, userId: image.userId });
+        await queueCdnAccessForDelete({
+          id,
+          url: image.url,
+          userId: image.userId,
+          csamReview: image.needsReview === 'csam',
+        });
         // Another Image may share this url; deleting the S3 object while one does would break that image.
         const shared = await dbWrite
           .selectFrom('Image')
@@ -86,12 +91,14 @@ async function queueCdnAccessForDelete({
   id,
   url,
   userId,
+  csamReview,
 }: {
   id: number;
   url: string;
   userId: number;
+  csamReview: boolean;
 }): Promise<void> {
-  const payload = JSON.stringify({ url, userId, moderatorDelete: true });
+  const payload = JSON.stringify({ url, userId, csamReview, moderatorDelete: true });
   await sql`
     SELECT queue_cdn_access_sync(${id}::int, 'Image', ${payload}::jsonb)
   `
