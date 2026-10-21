@@ -170,6 +170,17 @@ const workflowBody = (steps: unknown[], args?: Record<string, unknown>) => ({
   steps,
   ...(args ? { arguments: args } : {}),
 });
+/** An `imageResourceTraining` input as the Training Studio sends one: the trigger word is `loraName`. */
+const irtInput = (loraName: unknown) => ({
+  engine: 'flux2-dev',
+  model: 'urn:air:flux2:checkpoint:civitai:1@1',
+  loraName,
+  trainingData: 'K1.png',
+  trainingDataImagesCount: 1,
+  samplePrompts: [],
+  negativePrompt: '',
+});
+const NOT_A_STRING_LORA = 'a training step’s loraName must be a literal string';
 const repeatOverImages = (template: Record<string, unknown>) => ({
   $type: 'repeat',
   name: 'loop',
@@ -232,6 +243,29 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('checks an `imageResourceTraining` step’s `loraName`, at the estimate and the submit', async () => {
+    const body = stepBody(irtInput('badword'), 'imageResourceTraining');
+    await expect(estimate(body)).rejects.toThrow(REFUSED);
+    await expect(submit(body)).rejects.toThrow(REFUSED);
+    expect(h.check).toHaveBeenCalledTimes(2);
+    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a `loraName` that is not a literal string, before any check or orchestrator call', async () => {
+    const body = stepBody(irtInput({ $ref: '$arguments', path: 'name' }), 'imageResourceTraining');
+    await expect(estimate(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING_LORA,
+    });
+    await expect(submit(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING_LORA,
+    });
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('control: a non-training step with the same field is not checked by this rule', async () => {
     await estimate(stepBody({ triggerWord: 'badword' }, 'wdTagging'));
     expect(h.check).not.toHaveBeenCalled();
@@ -256,13 +290,44 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
       { name: 'tag', $type: 'wdTagging', input: { triggerWord: 'nottraining' } },
       { name: 'a', $type: 'training', input: { triggerWord: 'cleanword' } },
       { name: 'b', $type: 'training', input: { triggerWord: '   ' } },
-      { name: 'c', $type: 'imageResourceTraining', input: { triggerWord: 'badword' } },
+      { name: 'c', $type: 'imageResourceTraining', input: irtInput('badword') },
     ]);
     await expect(estimate(body)).rejects.toThrow(REFUSED);
     expect(h.check.mock.calls.map(([input]) => input.triggerWord)).toEqual([
       'cleanword',
       'badword',
     ]);
+  });
+
+  it('checks an `imageResourceTraining` step’s `loraName`, inside a `repeat` too', async () => {
+    const direct = workflowBody([{ $type: 'imageResourceTraining', input: irtInput('badword') }]);
+    const repeated = workflowBody(
+      [repeatOverImages({ $type: 'imageResourceTraining', input: irtInput('badword') })],
+      { images: [{ url: 'a' }] }
+    );
+    for (const body of [direct, repeated]) {
+      await expect(estimate(body)).rejects.toThrow(REFUSED);
+      await expect(submit(body)).rejects.toThrow(REFUSED);
+    }
+    expect(h.check).toHaveBeenCalledTimes(4);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a `$ref` `loraName` in a workflow, before any check or orchestrator call', async () => {
+    const body = workflowBody(
+      [{ $type: 'imageResourceTraining', input: irtInput({ $ref: '$arguments', path: 'n' }) }],
+      { n: 'badword' }
+    );
+    await expect(estimate(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING_LORA,
+    });
+    await expect(submit(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOT_A_STRING_LORA,
+    });
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('control: a workflow with no training step is never checked by this rule', async () => {
