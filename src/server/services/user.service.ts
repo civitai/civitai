@@ -3168,8 +3168,9 @@ export async function amIBlockedByUser({
   userId: number;
   targetUserId?: number;
   /**
-   * Interaction gates (comment, reaction, tip) pass true: when the cache says "not
-   * blocked", confirm against the primary. A cache entry can miss a block that just
+   * Write gates (comment and reaction via throwIfBlockedByOwners, tip, challenge entry, and
+   * the prompt-provenance mint) pass true: when the cache says "not blocked", confirm
+   * against the primary. A cache entry can miss a block that just
    * landed (see the comment below), and a write path must not let a blocked user
    * through for that window. Page views leave it off and stay cache-only.
    */
