@@ -20,9 +20,9 @@ const OLD = new Date('2026-01-01T00:00:00Z');
 let rows: Row[];
 let nextId: number;
 
-type JsonPathFilter = { path: string[]; array_contains: unknown[] };
+type JsonPathFilter = { path: string[]; equals: unknown };
 const isJsonPathFilter = (value: unknown): value is JsonPathFilter =>
-  typeof value === 'object' && value !== null && 'array_contains' in value;
+  typeof value === 'object' && value !== null && 'path' in value && 'equals' in value;
 
 // Prisma drops a `where` key whose value is `undefined` rather than matching it, and that is the
 // semantics a lookup with a missing user id is judged by — so the fake applies the same rule.
@@ -34,7 +34,7 @@ function matches(row: Row, where: Record<string, unknown>) {
         (node, part) => (node as Record<string, unknown> | null)?.[part],
         row[key as keyof Row]
       );
-      return Array.isArray(list) && value.array_contains.every((item) => list.includes(item));
+      return JSON.stringify(list) === JSON.stringify(value.equals);
     }
     return row[key as keyof Row] === value;
   });
@@ -165,7 +165,9 @@ describe('unsent-report lookup', () => {
 
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(tx.$queryRaw.mock.calls[0][1]).toBe(unsent.id);
-    expect(lockSql()).toMatch(/WHERE id = \? AND "reportSentAt" IS NULL\s+FOR UPDATE\s*$/);
+    expect(lockSql()).toMatch(
+      /^\s*SELECT images, details FROM "CsamReport"\s+WHERE id = \? AND "reportSentAt" IS NULL\s+FOR UPDATE\s*$/
+    );
   });
 
   it('a report sent after the lookup is left alone, and the new report filed on its own', async () => {
@@ -183,6 +185,7 @@ describe('unsent-report lookup', () => {
     expect(rows).toHaveLength(2);
     expect(rows[1]).toMatchObject({ userId: 101, images: [{ id: 4 }] });
     expect(tx.csamReport.update).not.toHaveBeenCalled();
+    expect(tx.csamReport.create).toHaveBeenCalledTimes(1);
   });
 
   it('an account’s report of one type leaves its unsent report of another type untouched', async () => {
@@ -255,10 +258,9 @@ describe('a second report folded into an unsent one', () => {
       details: { minorDepiction: undefined },
     });
 
-    expect(rows.find((r) => r.id === first.id)).toMatchObject({
-      images: [{ id: 1, fileId: 'file-1' }, { id: 2 }, { id: 3 }],
-      details: { modelVersionIds: [7], minorDepiction: 'non-real' },
-    });
+    const folded = rows.find((r) => r.id === first.id)!;
+    expect(folded.images).toEqual([{ id: 1, fileId: 'file-1' }, { id: 2 }, { id: 3 }]);
+    expect(folded.details).toEqual({ modelVersionIds: [7], minorDepiction: 'non-real' });
   });
 
   it('never downgrades a real-minor depiction', async () => {
@@ -286,10 +288,9 @@ describe('a second report folded into an unsent one', () => {
       details: { modelVersionIds: [8] },
     });
 
-    expect(rows.find((r) => r.id === first.id)).toMatchObject({
-      images: [{ id: 1 }, { id: 2 }],
-      details: { modelVersionIds: [8] },
-    });
+    const folded = rows.find((r) => r.id === first.id)!;
+    expect(folded.images).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(folded.details).toEqual({ modelVersionIds: [8] });
   });
 
   it('keeps the first report’s generated images, and the blobs of a job both name', async () => {
@@ -347,5 +348,40 @@ describe('a second report folded into an unsent one', () => {
       minorDepiction: 'real',
     });
     expect(rows[1]).toMatchObject({ type: 'TrainingData', details: { modelVersionIds: [8] } });
+    expect(tx.csamReport.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('files training data naming no version, or only some of a report’s versions, as its own report', async () => {
+    const both = seed({ userId: 101, type: 'TrainingData', details: { modelVersionIds: [7, 8] } });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'TrainingData' });
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'TrainingData',
+      details: { modelVersionIds: [8] },
+    });
+
+    expect(rows).toHaveLength(3);
+    expect(rows.find((r) => r.id === both.id)?.details).toEqual({ modelVersionIds: [7, 8] });
+  });
+
+  it('keeps a stored generated-images entry it cannot merge', async () => {
+    const first = seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-a', blobs: 'corrupt' }, { blobs: [] }] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-a', blobs: [{ url: 'a' }] }] },
+    });
+
+    expect(rows.find((r) => r.id === first.id)?.details).toEqual({
+      generatedImages: [{ jobId: 'job-a', blobs: [{ url: 'a' }] }, { blobs: [] }],
+    });
   });
 });
