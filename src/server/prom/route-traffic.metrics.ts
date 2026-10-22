@@ -8,7 +8,10 @@ import {
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { PAGE_ROUTE_HEADER } from '~/shared/constants/page-route.constants';
-import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
+import {
+  SESSION_UNRESOLVED_REQ_KEY,
+  SHELL_REQ_KEY,
+} from '~/shared/constants/render-session.constants';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
 export const PAGE_RENDER_METRIC = PROM_PREFIX + 'page_render_total';
@@ -40,7 +43,9 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class'> {
           'Server-rendered HTML responses, counted once per document: route is the page actually ' +
           'rendered (/404 for notFound, /_error for a thrown error); redirects and /_next/data ' +
           'requests for getServerSideProps pages render no document and are not counted. authed ' +
-          'is unknown when the settings bootstrap failed for a request with a session cookie; ' +
+          'is unknown when the settings bootstrap failed for a request with a session cookie, and ' +
+          'shell for a static-shell render (no session resolved; signed-in renders are ' +
+          'authed=~"true|shell"); ' +
           'bot_class is set only where bot verification runs',
         labelNames: ['route', 'authed', 'bot_class'] as const,
         registers: [instrumentationRegistry],
@@ -55,13 +60,19 @@ export function botClassLabel(raw: string | string[] | null | undefined): string
 type HeaderBag = Record<string, string | string[] | undefined>;
 
 /** The request as `_app.getInitialProps` leaves it: `session` set when signed in. */
-type RenderRequest = {
+export type RenderRequest = {
   headers: HeaderBag;
   session?: { user?: unknown } | null;
   [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+  [SHELL_REQ_KEY]?: boolean;
 };
 
-export function renderAuthedLabel(req: RenderRequest): 'true' | 'false' | 'unknown' {
+/**
+ * `shell` is a value of its own rather than `true`: a shell render resolves no session, and keeping
+ * it out of `true` leaves every query over today's `true`/`false` series meaning what it meant.
+ */
+export function renderAuthedLabel(req: RenderRequest): 'true' | 'false' | 'unknown' | 'shell' {
+  if (req[SHELL_REQ_KEY] === true) return 'shell';
   if (req[SESSION_UNRESOLVED_REQ_KEY]) return 'unknown';
   return req.session?.user ? 'true' : 'false';
 }
