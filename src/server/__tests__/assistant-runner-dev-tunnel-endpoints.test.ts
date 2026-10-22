@@ -469,6 +469,21 @@ describe('POST dev-tunnel/stop', () => {
     expect(await stop(OWNER, sessionId)).toMatchObject({ status: 200, json: { stopped: false } });
   });
 
+  it('answers 503 unavailable, not stopped:false, when the session cannot be read just now', async () => {
+    const sessionId = (await startFor(OWNER, OWNED_APP)).json!.sessionId as string;
+    // A Redis blip on the session read only: "nothing to close" would tell the runner not to retry
+    // while the tunnel is still live.
+    redisMock.sysRedis.get.mockImplementation(async (k: string) => {
+      if (k.includes(':session:')) throw new Error('redis blip');
+      return store.get(k) ?? null;
+    });
+    expect(await stop(OWNER, sessionId)).toMatchObject({
+      status: 503,
+      json: { error: 'Could not close the dev tunnel right now', code: 'unavailable' },
+    });
+    expect(sessionRecord(sessionId)).toMatchObject({ userId: OWNER });
+  });
+
   it('never ends another user’s session', async () => {
     const theirs = (await startFor(OWNER, OWNED_APP)).json!.sessionId as string;
     expect(await stop(OTHER, theirs)).toMatchObject({ status: 200, json: { stopped: false } });

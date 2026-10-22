@@ -992,10 +992,24 @@ async function teardownSession(
  *  a caller can never tear down another author's tunnel). Returns true if a
  *  session was found + torn down. */
 export async function stopDevTunnel(userId: number, sessionId: string): Promise<boolean> {
-  const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
-  if (!session || session.userId !== userId) return false;
-  await teardownSession(session, 'stop');
-  return true;
+  return (await stopOwnDevTunnel(userId, sessionId)) === 'stopped';
+}
+
+/**
+ * `stopDevTunnel`, telling a session that is not there (or not `userId`'s) apart from one that
+ * could not be READ just now — which `stopDevTunnel` reports as `false`, i.e. "nothing to close".
+ * For a caller that retries (App Assistant's server runner): `unavailable` means nothing was
+ * closed and the tunnel may still be live, so ask again.
+ */
+export async function stopOwnDevTunnel(
+  userId: number,
+  sessionId: string
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return 'unavailable';
+  if (read.status === 'absent' || read.session.userId !== userId) return 'not_found';
+  await teardownSession(read.session, 'stop');
+  return 'stopped';
 }
 
 /** Stop whatever active tunnel exists for a (user, block) pair (used by

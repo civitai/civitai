@@ -145,6 +145,7 @@ import {
   reserveDevSessionBuzz,
   startDevTunnel,
   stopDevTunnel,
+  stopOwnDevTunnel,
   stopDevTunnelForUserBlock,
   listActiveDevTunnelBlockIds,
   reapExpiredDevTunnels,
@@ -578,6 +579,26 @@ describe('stopDevTunnel (ownership-checked)', () => {
     // wrong user → no-op false, session survives
     expect(await stopDevTunnel(999, 'bki_testsession')).toBe(false);
     expect(sysRedis._store.has('system:blocks:dev-tunnel:session:bki_testsession')).toBe(true);
+  });
+
+  it('stopOwnDevTunnel tells an unreadable session (unavailable) apart from an absent or foreign one', async () => {
+    await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
+    const baseGet = sysRedis.get.getMockImplementation()!;
+    try {
+      sysRedis.get.mockImplementation(async () => {
+        throw new Error('redis down');
+      });
+      expect(await stopOwnDevTunnel(555, 'bki_testsession')).toBe('unavailable');
+      // The boolean API keeps answering false for it, as before.
+      expect(await stopDevTunnel(555, 'bki_testsession')).toBe(false);
+    } finally {
+      sysRedis.get.mockReset();
+      sysRedis.get.mockImplementation(baseGet);
+    }
+    expect(sysRedis._store.has('system:blocks:dev-tunnel:session:bki_testsession')).toBe(true);
+    expect(await stopOwnDevTunnel(999, 'bki_testsession')).toBe('not_found');
+    expect(await stopOwnDevTunnel(555, 'bki_nosuchsession')).toBe('not_found');
+    expect(await stopOwnDevTunnel(555, 'bki_testsession')).toBe('stopped');
   });
 
   it('the owner tears down: deletes route + all keys', async () => {
