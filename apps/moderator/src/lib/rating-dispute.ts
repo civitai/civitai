@@ -89,14 +89,17 @@ export function disputeOutcome(
   const { current, suggested, chosen } = levels;
   const level = ratingReviewLevelLabel(entityType, chosen);
   const flag = entityType === 'Model' || entityType === 'Collection';
-  const effect =
-    chosen === current
-      ? `Keeps ${level}.`
-      : flag
-      ? `Sets ${ratingReviewEntityLabels[entityType].toLowerCase()} to ${level}.`
-      : chosen > current
-      ? `Raises to ${level}.`
-      : `Lowers to ${level}.`;
+  // A flag shows as SFW or NSFW, so two NSFW levels change nothing the moderator can see.
+  const unchanged = flag
+    ? level === ratingReviewLevelLabel(entityType, current)
+    : chosen === current;
+  const effect = unchanged
+    ? `Keeps ${level}.`
+    : flag
+    ? `Sets ${ratingReviewEntityLabels[entityType].toLowerCase()} to ${level}.`
+    : chosen > current
+    ? `Raises to ${level}.`
+    : `Lowers to ${level}.`;
   const approves = chosen === suggested;
   return { approves, label: approves ? 'Approves dispute' : 'Rejects dispute', effect };
 }

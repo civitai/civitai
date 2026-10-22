@@ -367,6 +367,37 @@ describe('getRatingReviewImagesBatch covers', () => {
     expect(found.get(service.ratingReviewImagesKey('Article', a2))?.total).toBe(1);
   });
 
+  it('counts and previews only connections whose image still exists', async () => {
+    const dangling = 987654;
+    const cover = await seedImage({ url: 'cover' });
+    const article = await seedEntity(db, 'Article', { userId: alice, coverId: cover });
+    const bounty = await seedEntity(db, 'Bounty', { userId: alice });
+    // The dangling link sorts first, so a cap applied before the lookup would swallow a slot.
+    await connect(dangling, 'Article', article);
+    await connect(dangling, 'Bounty', bounty);
+    for (let i = 1; i <= 7; i++) {
+      const id = await seedImage({ url: `body-${i}` });
+      await connect(id, 'Article', article);
+      await connect(id, 'Bounty', bounty);
+    }
+
+    const found = await batch(['Article', article], ['Bounty', bounty]);
+    const art = found.get(service.ratingReviewImagesKey('Article', article));
+    const bnt = found.get(service.ratingReviewImagesKey('Bounty', bounty));
+
+    expect(art?.total).toBe(8);
+    expect(art?.images.map((i) => i.url)).toEqual([
+      'cover',
+      'body-1',
+      'body-2',
+      'body-3',
+      'body-4',
+      'body-5',
+    ]);
+    expect(bnt?.total).toBe(7);
+    expect(bnt?.images).toHaveLength(6);
+  });
+
   it('previews a challenge, crucible and collection by their cover, a crucible falling back to its hero image', async () => {
     const challenge = await seedEntity(db, 'Challenge', {
       coverImageId: await seedImage({ url: 'challenge' }),

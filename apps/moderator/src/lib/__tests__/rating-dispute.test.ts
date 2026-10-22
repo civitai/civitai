@@ -41,6 +41,19 @@ describe('disputeOutcome', () => {
       effect: 'Keeps NSFW.',
     });
   });
+
+  it('keeps a flag when the stored level and the chosen one read as the same SFW or NSFW label', () => {
+    expect(
+      disputeOutcome('Model', { current: NsfwLevel.X, suggested: PG, chosen: R })
+    ).toMatchObject({
+      approves: false,
+      effect: 'Keeps NSFW.',
+    });
+    expect(disputeOutcome('Model', { current: PG, suggested: PG, chosen: PG13 })).toMatchObject({
+      approves: false,
+      effect: 'Keeps SFW.',
+    });
+  });
 });
 
 describe('ordinal', () => {

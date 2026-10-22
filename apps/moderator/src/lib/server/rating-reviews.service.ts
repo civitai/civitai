@@ -398,8 +398,9 @@ async function loadImagesForType(
         SELECT "entityId", "imageId" FROM (
           SELECT "entityId", "imageId",
             row_number() OVER (PARTITION BY "entityId" ORDER BY "imageId") AS rn
-          FROM "ImageConnection"
-          WHERE "entityType" = ${entityType} AND "entityId" IN (${sql.join(ids)})) x
+          FROM "ImageConnection" ic
+          WHERE "entityType" = ${entityType} AND "entityId" IN (${sql.join(ids)})
+            AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ic."imageId")) x
         WHERE x.rn <= ${CONNECTION_CAP}
         ORDER BY "entityId", "imageId"`.execute(dbRead);
       const covers = new Map<number, number>();
@@ -409,9 +410,11 @@ async function loadImagesForType(
           .select(['id', 'coverId'])
           .where('id', 'in', ids)
           .execute();
-        for (const a of found) if (a.coverId) covers.set(a.id, a.coverId);
+        const existing = await imagesById(found.map((a) => a.coverId));
+        for (const a of found)
+          if (a.coverId && existing.has(a.coverId)) covers.set(a.id, a.coverId);
       }
-      // The cover leads, then the connections by image id.
+      // The cover leads, then the connections by image id; both are already known to exist.
       const idsByEntity = new Map<number, number[]>();
       for (const id of ids) {
         const cover = covers.get(id);
