@@ -3340,15 +3340,17 @@ export type FinalizeCrucibleResult = {
 };
 
 /**
- * An entry whose image was blocked, held for review, flagged, unpublished, or re-rated outside the
- * crucible's levels can't place; its fee stays in the pool. A scan still in progress doesn't
- * disqualify.
+ * An entry by a banned entrant, or whose image was blocked, held for review, flagged, unpublished,
+ * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
+ * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
+ * is finalized holds the prize instead (see `prize.service`).
  */
 const rankableEntryWhere = (
   crucibleId: number,
   nsfwLevel: number
 ): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
+  user: { bannedAt: null },
   image: {
     ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
