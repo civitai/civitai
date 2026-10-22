@@ -21,8 +21,7 @@ export {
   type OwnerRuleHolds,
 } from './model-rule-holds.queries';
 
-// Not yet in `ModEndpoint` (user-actions.service.ts).
-const RESOLVE = 'text-scan/model-rules-hold/resolve' as ModEndpoint;
+const RESOLVE: ModEndpoint = 'text-scan/model-rules-hold/resolve';
 
 const MAY_HAVE_COMPLETED =
   'Could not confirm the decision. It may already have completed — reload the queue before retrying.';
