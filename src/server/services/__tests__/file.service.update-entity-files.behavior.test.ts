@@ -333,12 +333,29 @@ describe('updateEntityFiles', () => {
     expect(await metadataOf(OWN_FILE)).toEqual({ unlockAmount: 5, ownRights: true });
   });
 
-  it('saves a file whose stored metadata is empty', async () => {
+  // jsonb_each throws on a JSON array or scalar; SQL NULL alone would pass without the guard.
+  it.each([
+    ['missing', null],
+    ['a JSON array', '[]'],
+    ['JSON null', 'null'],
+  ])('saves a file whose stored metadata is %s', async (_, stored) => {
     await seed(OWN_FILE, ENTRY, null);
+    await db.query(`UPDATE "File" SET metadata = $1::jsonb WHERE id = $2`, [stored, OWN_FILE]);
 
     await save([file(OWN_FILE, { metadata: { unlockAmount: 1 } })]);
 
     expect(await metadataOf(OWN_FILE)).toEqual({ unlockAmount: 1, ownRights: true });
+  });
+
+  it('takes ownRights from the server, not from the caller', async () => {
+    await seed(OWN_FILE, ENTRY, CLEARED);
+
+    await save([
+      file(OWN_FILE, { metadata: { ownRights: false } }),
+      file(undefined, { metadata: { ownRights: false } }),
+    ]);
+
+    expect((await files()).map((f) => f.metadata.ownRights)).toEqual([true, true]);
   });
 
   it('updates several files of the item, each keeping its own check result', async () => {

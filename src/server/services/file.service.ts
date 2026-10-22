@@ -79,8 +79,9 @@ export const updateEntityFiles = async ({
 
   // A file saved again at the same url keeps its check result; a new url is checked afresh. The
   // result is read inside this UPDATE, from the row as it is written, so a moderator's change to it
-  // is never written back over; read it in an earlier statement and that guarantee is gone. In id
-  // order, so two saves of one item take the row locks in the same order.
+  // is never written back over; read it in an earlier statement and that guarantee is gone. The
+  // server keys must be read from `f`, the row being updated, not a joined or sub-selected copy. In
+  // id order, so two saves of one item take the row locks in the same order.
   for (const file of [...updatedFiles].sort((a, b) => (a.id as number) - (b.id as number))) {
     const metadata = { ...callerMetadata(file.metadata), ownRights };
     const count = await tx.$executeRaw`
