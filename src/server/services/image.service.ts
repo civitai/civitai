@@ -39,6 +39,7 @@ import {
   feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
+  hydrateWithReadRescue,
   serveFromFeed,
   type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
@@ -1678,6 +1679,12 @@ const imagesByIdsEmptyCounter = registerCounterWithLabels({
   help: 'getAllImages pages requested by id that came back empty, by the branch that emptied them',
   labelNames: ['stage'] as const,
 });
+// A feed page DataPacket hydrated as empty, retried on the read replica (hydrateWithReadRescue).
+const feedHydrateDatapacketRescueCounter = registerCounterWithLabels({
+  name: 'feed_hydrate_datapacket_rescue_total',
+  help: 'Feed pages DataPacket hydrated as empty, retried on the read replica, by outcome',
+  labelNames: ['outcome'] as const,
+});
 const IDS_EMPTY_LOG_INTERVAL_MS = 10_000;
 let idsEmptyLoggedAt = 0;
 function noteEmptyIdsPage(
@@ -3001,9 +3008,11 @@ async function serveImagesFromFeedService(
       {
         fetchFeed: fetchFeedPrimary,
         hydrate: async (ids) =>
-          (
-            await getAllImagesUncaptured(feedHydrateQuery(hydrateInput, ids))
-          ).items,
+          hydrateWithReadRescue(
+            feedHydrateQuery(hydrateInput, ids),
+            async (query) => (await getAllImagesUncaptured(query)).items,
+            (outcome) => feedHydrateDatapacketRescueCounter.inc({ outcome })
+          ),
         route,
       }
     )
