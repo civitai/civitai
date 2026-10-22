@@ -276,22 +276,29 @@ describe('UserMenu_Click', () => {
       'desktop',
       (onTogglePin: () => void) => inMenu(createElement(DesktopHeaderRows, { onTogglePin })),
       '[title="Pin"]',
+      true,
     ],
     [
       'mobile',
       (onTogglePin: () => void) => createElement(MobileHeaderRows, { onTogglePin }),
       '[aria-label="Pin Your Profile"]',
+      false,
     ],
   ] as const)(
     'toggles the %s profile pin without opening or recording the profile',
-    async (_surface, node, toggleSelector) => {
+    async (_surface, node, toggleSelector, insideLink) => {
       const onTogglePin = vi.fn();
+      const preventDefault = vi.spyOn(Event.prototype, 'preventDefault');
       await mount(node(onTogglePin));
       await click(document.querySelector(toggleSelector));
 
       expect(onTogglePin).toHaveBeenCalledTimes(1);
       expect(mocks.actions).toEqual([]);
       expect(handleClose).not.toHaveBeenCalled();
+      // Desktop only: the toggle sits inside the profile link, and `stopPropagation` keeps the click from
+      // reaching `noNavigate`, so this call is the toggle's own.
+      if (insideLink) expect(preventDefault).toHaveBeenCalled();
+      preventDefault.mockRestore();
     }
   );
 

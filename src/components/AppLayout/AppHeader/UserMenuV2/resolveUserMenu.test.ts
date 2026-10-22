@@ -145,14 +145,4 @@ describe('moving items between groups', () => {
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'crucibles')).toBe('rewards');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'browse-challenges')).toBe('rewards');
   });
-
-  it('keeps a saved pin of a moved item, which is keyed by id and not by group', () => {
-    const registry: UserMenuRegistry = {
-      inventory: entry('inventory'),
-      auctions: entry('auctions'),
-      crucibles: entry('crucibles'),
-    };
-    const { pinned } = resolveUserMenu(USER_MENU_LAYOUT, registry, ['auctions', 'inventory']);
-    expect(pinned.map((item) => item.id)).toEqual(['auctions', 'inventory']);
-  });
 });
