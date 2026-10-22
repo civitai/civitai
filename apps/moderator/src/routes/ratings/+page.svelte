@@ -1,312 +1,249 @@
 <script lang="ts">
-  import { dateTime, plural } from '$lib/format';
-  import { untrack } from 'svelte';
-  import { applyAction, enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import type { SubmitFunction } from '@sveltejs/kit';
-  import { IconExternalLink } from '@tabler/icons-svelte';
-  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import {
-    Pagination,
-    PaginationContent,
-    PaginationEllipsis,
-    PaginationItem,
-    PaginationLink,
-    PaginationNext,
-    PaginationPrevious,
-  } from '@civitai/ui/components/ui/pagination/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { userUrl } from '$lib/entity-url';
-  import {
-    ratingReviewStatusFilters,
-    ratingReviewStatusBadge,
-    ratingReviewTypeFilters,
-  } from '$lib/rating-review';
-  import {
-    ratingReviewEntityLabels,
-    ratingReviewLevelLabel,
-  } from '@civitai/shared/rating-review';
-  import type { ActionData, PageData } from './$types';
+  import { IconArrowRight, IconPhoto, IconZoomCancel } from '@tabler/icons-svelte';
+  import { ratingReviewEntityLabels, ratingReviewLevelLabel } from '@civitai/shared/rating-review';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
+  import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import TriageShell from '$lib/components/triage/TriageShell.svelte';
+  import { LINK_CLASS, shortAge } from '$lib/format';
+  import {
+    ASK_FILTERS,
+    ASK_LABELS,
+    DEFAULT_DISPUTE_TAB,
+    defaultDisputeSort,
+    DISPUTE_SORT_LABELS,
+    DISPUTE_SORTS,
+    DISPUTE_TAB_LABELS,
+    DISPUTE_TABS,
+    disputeTitle,
+    SCAN_LABELS,
+  } from '$lib/rating-dispute';
+  import { ratingReviewStatusFilters, type RatingReviewStatusFilter } from '$lib/rating-review';
+  import type { RatingDisputeRow } from '$lib/server/rating-dispute-queue';
+  import { formActionHref } from '$lib/triage/queue';
+  import { urlWith } from '$lib/url';
+  import LevelChip from './LevelChip.svelte';
+  import RatingDisputeDetail from './RatingDisputeDetail.svelte';
+  import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Local copies so a resolve prunes the row + adjusts counts client-side without a refetch (mods blast the
-  // queue); a real navigation resyncs.
-  let items = $state(untrack(() => data.items));
-  let counts = $state(untrack(() => data.counts));
+  const SELECTION = 'selected';
+  const STATUS_VALUES = ratingReviewStatusFilters.map((s) => s.value);
+  const STATUS_LABELS = Object.fromEntries(
+    ratingReviewStatusFilters.map((s) => [s.value, s.label])
+  ) as Record<RatingReviewStatusFilter, string>;
+
+  // The open dispute, reported by the shell; a level picked for confirmation belongs to it alone.
+  let current = $state<number | null>(null);
+  let chosen = $state<number | null>(null);
   $effect(() => {
-    items = data.items;
-    counts = data.counts;
+    void current;
+    chosen = null;
   });
 
-  const total = $derived(counts[data.status] ?? 0);
-  const totalPages = $derived(Math.max(1, Math.ceil(total / data.limit)));
-  const fmtDate = dateTime;
+  const f = $derived(data.filters);
 
-  let applying = $state<{ reviewId: number; level: number } | null>(null);
+  const actionHref = (action: string) =>
+    formActionHref(action, {
+      tab: f.tab === DEFAULT_DISPUTE_TAB ? undefined : f.tab,
+      status: f.status === 'Pending' ? undefined : f.status,
+      ask: f.ask,
+      scan: f.scan,
+      sort: f.sort === defaultDisputeSort(f.status) ? undefined : f.sort,
+      q: data.q,
+      page: data.page > 1 ? data.page : undefined,
+    });
 
-  // Applied level → Approved (matched the suggestion) vs Rejected (overrode); the action returns which.
-  const resolveReview =
-    (reviewId: number): SubmitFunction =>
-    ({ submitter }) => {
-      applying = { reviewId, level: Number((submitter as HTMLButtonElement | null)?.value) };
-      return async ({ result }) => {
-        applying = null;
-        if (result.type === 'success') {
-          items = items.filter((r) => r.id !== reviewId);
-          const status = (result.data as { status?: 'Actioned' | 'Unactioned' } | undefined)
-            ?.status;
-          counts = {
-            Pending: Math.max(0, counts.Pending - 1),
-            Actioned: counts.Actioned + (status === 'Actioned' ? 1 : 0),
-            Unactioned: counts.Unactioned + (status === 'Unactioned' ? 1 : 0),
-          };
-        } else {
-          await applyAction(result);
-        }
-      };
-    };
+  // The shell shows a refusal on its row; a deep link to a missing dispute is announced here until
+  // the moderator picks a row.
+  let hydrated = $state(false);
+  onMount(() => (hydrated = true));
 
-  function urlWith(params: Record<string, string | number | null>) {
-    const url = new URL(page.url);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === null) url.searchParams.delete(k);
-      else url.searchParams.set(k, String(v));
-    }
-    return url.pathname + url.search;
-  }
+  const statusGroup = $derived({
+    key: 'status',
+    label: 'Status',
+    values: STATUS_VALUES,
+    labels: STATUS_LABELS,
+    active: f.status,
+    defaultValue: 'Pending',
+    resets: ['sort'],
+    pill: true,
+    compact: true,
+  } satisfies ChipGroup);
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: DISPUTE_SORTS,
+    labels: DISPUTE_SORT_LABELS,
+    active: f.sort,
+    defaultValue: defaultDisputeSort(f.status),
+  } satisfies ChipGroup);
+  const chipGroups = $derived([
+    {
+      key: 'ask',
+      label: 'Ask',
+      values: ASK_FILTERS,
+      labels: ASK_LABELS,
+      active: f.ask ?? 'all',
+      defaultValue: 'all',
+      counts: data.facets?.chips,
+      compact: true,
+    },
+    {
+      key: 'scan',
+      label: 'Scan',
+      values: ['all', 'raised'],
+      labels: SCAN_LABELS,
+      active: f.scan ?? 'all',
+      defaultValue: 'all',
+      toggle: true,
+      counts: data.facets ? { raised: data.facets.chips.raised } : undefined,
+      compact: true,
+    },
+  ] satisfies ChipGroup[]);
+
+  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
+  const tabs = DISPUTE_TABS.map((value) => ({ value, ...DISPUTE_TAB_LABELS[value] }));
+
+  const waitText = (row: RatingDisputeRow) => {
+    const pending = row.status === 'Pending';
+    const at = pending ? row.createdAt : (row.resolvedAt ?? row.createdAt);
+    return `${pending ? 'waiting' : 'ruled'} ${at ? shortAge(at) : ''}`.trim();
+  };
+  const emptyTitle = $derived(
+    `No ${STATUS_LABELS[f.status].toLowerCase()} ${DISPUTE_TAB_LABELS[f.tab].noun} disputes${data.q ? ` match "${data.q}"` : ''}`
+  );
 </script>
 
-<header class="page-header">
-  <h1>Rating Disputes</h1>
-  <div class="mt-1 flex flex-wrap gap-2">
-    <Badge class={ratingReviewStatusBadge.Pending.class}>
-      {plural(counts.Pending, 'dispute')} pending
-    </Badge>
-    <Badge class={ratingReviewStatusBadge.Actioned.class}>
-      {plural(counts.Actioned, 'dispute')} approved
-    </Badge>
-    <Badge class={ratingReviewStatusBadge.Unactioned.class}>
-      {plural(counts.Unactioned, 'dispute')} rejected
-    </Badge>
+{#snippet notice({ unpicked }: { unpicked: boolean })}
+  {#if data.selectedMissing && (unpicked || !hydrated)}
+    <ErrorAlert
+      class="mx-6 mt-3"
+      message="Dispute #{data.selectedMissing} was not found in this queue."
+    />
+  {/if}
+{/snippet}
+
+{#snippet listHeader()}
+  <div class="flex flex-col gap-1.5">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
+      <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+    </div>
+    <TriageFilterChips groups={chipGroups} selectionParam={SELECTION} />
   </div>
-</header>
+{/snippet}
 
-{#if form?.error}
-  <ErrorAlert class="mb-4" message={form.error} />
-{/if}
-
-<Tabs
-  value={data.status}
-  onValueChange={(v) => v && goto(urlWith({ status: v, page: 1 }))}
-  class="mb-4"
->
-  <TabsList>
-    {#each ratingReviewStatusFilters as f (f.value)}
-      <TabsTrigger value={f.value}>{f.label}</TabsTrigger>
-    {/each}
-  </TabsList>
-</Tabs>
-
-<Tabs
-  value={data.type ?? 'all'}
-  onValueChange={(v) => v && goto(urlWith({ type: v === 'all' ? null : v, page: 1 }))}
-  class="mb-4"
->
-  <TabsList>
-    {#each ratingReviewTypeFilters as f (f.value)}
-      <TabsTrigger value={f.value}>{f.label}</TabsTrigger>
-    {/each}
-  </TabsList>
-</Tabs>
-
-{#if items.length === 0}
-  <div class="placeholder">No reviews in this bucket.</div>
-{:else}
-  <div class="flex flex-col gap-3">
-    {#each items as review (review.id)}
-      {@const entity = review.entity}
-      {@const title = entity?.title ?? `${review.entityType} #${review.entityId}`}
-      {@const href = entity?.path ? data.civitaiUrl + entity.path : null}
-      <div class="flex gap-4 rounded-xl border p-3">
-        <div class="size-28 shrink-0 overflow-hidden rounded-lg bg-muted">
-          {#if entity?.coverUrl}
-            <EdgeMedia
-              src={entity.coverUrl}
-              type={entity.coverType ?? undefined}
-              width={112}
-              alt={title}
-              class="size-full object-cover"
-            />
-          {/if}
-        </div>
-
-        <div class="flex min-w-0 flex-1 flex-col gap-2">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{ratingReviewEntityLabels[review.entityType]}</Badge>
-            {#if href}
-              <a {href} target="_blank" rel="noreferrer" class="truncate font-semibold">
-                {title}
-              </a>
-              <a {href} target="_blank" rel="noreferrer" class="text-muted-foreground">
-                <IconExternalLink size={14} />
-              </a>
-            {:else}
-              <span class="truncate font-semibold">{title}</span>
-            {/if}
-            {#if !entity}
-              <span class="text-xs italic text-muted-foreground">Deleted</span>
-            {/if}
-            {#if ratingReviewStatusBadge[review.status]}
-              <Badge class={ratingReviewStatusBadge[review.status].class}>
-                {ratingReviewStatusBadge[review.status].label}
-              </Badge>
-            {/if}
-            <div class="ml-auto flex items-center gap-2 text-sm">
-              {#if review.user.username}
-                <a href={userUrl(data.civitaiUrl, review.user.username)} target="_blank" rel="noreferrer">
-                  {review.user.username}
-                </a>
-              {:else}
-                <span class="text-muted-foreground">User #{review.user.id}</span>
-              {/if}
-              <span class="text-xs text-muted-foreground">· {fmtDate(review.createdAt)}</span>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-3 gap-2">
-            <div class="rounded-md border px-2 py-1">
-              <div class="text-xs text-muted-foreground">System</div>
-              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.currentLevel)}</div>
-            </div>
-            <div class="rounded-md border border-blue-500/40 bg-blue-500/10 px-2 py-1">
-              <div class="text-xs text-muted-foreground">Owner suggested</div>
-              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.suggestedLevel)}</div>
-            </div>
-            <div class="rounded-md border border-dashed px-2 py-1">
-              <div class="text-xs text-muted-foreground">Mod applied</div>
-              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.appliedLevel)}</div>
-            </div>
-          </div>
-
-          {#if review.scan}
-            <div class="rounded-md border border-orange-500/40 bg-orange-500/10 p-2 text-sm">
-              <span class="text-xs font-medium text-muted-foreground">
-                Text scan · {ratingReviewLevelLabel(review.entityType, review.scan.level)}
-              </span>
-              {#if review.scan.reason}
-                <p class="whitespace-pre-wrap wrap-anywhere">{review.scan.reason}</p>
-              {/if}
-            </div>
-          {:else}
-            <span class="text-xs italic text-muted-foreground">No text-scan raise on record</span>
-          {/if}
-
-          {#if review.userComment}
-            <div class="rounded-md bg-muted/40 p-2 text-sm">
-              <span class="text-xs font-medium text-muted-foreground">Owner comment</span>
-              <p class="whitespace-pre-wrap wrap-anywhere">{review.userComment}</p>
-            </div>
-          {:else}
-            <span class="text-xs italic text-muted-foreground">No comment from owner</span>
-          {/if}
-
-          {#if review.status === 'Pending'}
-            <form
-              method="POST"
-              action="?/resolve"
-              use:enhance={resolveReview(review.id)}
-              class="flex flex-col gap-2"
-            >
-              <input type="hidden" name="reviewId" value={review.id} />
-              <Textarea
-                name="modComment"
-                rows={2}
-                placeholder="Optional moderator comment (visible to owner)"
-                maxlength={1000}
-              />
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs text-muted-foreground">Apply rating:</span>
-                {#each review.levelOptions as level (level)}
-                  <Button
-                    type="submit"
-                    name="appliedLevel"
-                    value={level}
-                    size="sm"
-                    variant={level === review.suggestedLevel ? 'default' : 'outline'}
-                    disabled={applying?.reviewId === review.id}
-                    title={level === review.suggestedLevel
-                      ? 'Approve the owner’s suggestion'
-                      : 'Override to this level'}
-                  >
-                    {applying?.reviewId === review.id && applying.level === level
-                      ? 'Applying…'
-                      : ratingReviewLevelLabel(review.entityType, level)}
-                  </Button>
-                {/each}
-              </div>
-              {#if review.entityType === 'Collection'}
-                <p class="text-xs text-dark-2">
-                  SFW removes the text rating; NSFW items still rate this collection.
-                </p>
-              {/if}
-            </form>
-          {:else}
-            <div class="flex flex-col gap-1 text-sm">
-              <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                {#if review.resolver}
-                  <span>Resolved by {review.resolver.username ?? `User #${review.resolver.id}`}</span>
-                {:else}
-                  <span class="italic">Auto-approved</span>
-                {/if}
-                {#if review.resolvedAt}<span>· {fmtDate(review.resolvedAt)}</span>{/if}
-              </div>
-              {#if review.modComment}
-                <p class="whitespace-pre-wrap wrap-anywhere">{review.modComment}</p>
-              {/if}
-            </div>
-          {/if}
-        </div>
-      </div>
-    {/each}
-  </div>
-{/if}
-
-<div class="mt-4 flex flex-wrap items-center justify-between gap-2">
-  <span class="text-sm text-muted-foreground">Page {data.page} of {totalPages}</span>
-  <Pagination
-    count={total}
-    perPage={data.limit}
-    page={data.page}
-    onPageChange={(p) => p !== data.page && goto(urlWith({ page: p }))}
+<!-- The shell renders this in the list and again in the detail pane when nothing matches; the
+     `in-[...]` variants pick the half that belongs to the pane it landed in. -->
+{#snippet empty()}
+  <div
+    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
   >
-    {#snippet children({ pages, currentPage })}
-      <PaginationContent>
-        <PaginationItem>
-          <PaginationPrevious />
-        </PaginationItem>
-        {#each pages as p (p.key)}
-          {#if p.type === 'ellipsis'}
-            <PaginationItem>
-              <PaginationEllipsis />
-            </PaginationItem>
-          {:else}
-            <PaginationItem>
-              <PaginationLink page={p} isActive={currentPage === p.value}>
-                {p.value}
-              </PaginationLink>
-            </PaginationItem>
-          {/if}
-        {/each}
-        <PaginationItem>
-          <PaginationNext />
-        </PaginationItem>
-      </PaginationContent>
-    {/snippet}
-  </Pagination>
+    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
+    <p class="m-0 font-medium text-white">{emptyTitle}</p>
+    <p class="m-0 text-xs text-dark-2">Search matches an owner username or an ID.</p>
+    {#if data.q}
+      <a href={clearSearchHref} class="text-xs {LINK_CLASS}">Clear search</a>
+    {/if}
+  </div>
+  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select a dispute to review it.</p>
+{/snippet}
+
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="Rating disputes"
+    subtitle="Owners asking for a different rating. Apply the rating the content earns; the owner sees your note."
+    placeholder="Owner or ID"
+    searchLabel="Search rating disputes"
+  />
+  <TriageParamTabs
+    {tabs}
+    current={f.tab}
+    param="tab"
+    defaultValue={DEFAULT_DISPUTE_TAB}
+    label="Dispute type"
+    selectionParam={SELECTION}
+    counts={data.facets?.tabs}
+  />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <TriageShell
+      flush
+      rows={data.items}
+      rowKey={(row: RatingDisputeRow) => row.id}
+      parseKey={(raw) => Number(raw) || null}
+      selectionParam={SELECTION}
+      queueLabel="Dispute queue"
+      itemLabel="Dispute"
+      decisionEnabled={(row) => row.levelOptions.map(() => row.status === 'Pending')}
+      ondecision={(row, index) => (chosen = row.levelOptions[index] ?? chosen)}
+      pinned={data.pinned}
+      bind:current
+      pageNumber={data.page}
+      hasMore={data.hasMore}
+      offset={data.offset}
+      total={data.totalCount}
+      {form}
+      {notice}
+      {listHeader}
+      {empty}
+    >
+      {#snippet listRow(row, state)}
+        {@const pending = row.status === 'Pending'}
+        {@const scan = row.scan}
+        <TriageRow
+          id={state.id}
+          href={state.href}
+          selected={state.selected}
+          title={disputeTitle(row.entityType, row.entityId, row.entity)}
+          meta={waitText(row)}
+          metaClass={pending ? 'text-amber-300' : 'text-dark-2'}
+          coverUrl={row.entity?.coverUrl ?? undefined}
+          coverType={row.entity?.coverType}
+          verdict={state.verdict}
+          error={state.error}
+          onselect={state.select}
+        >
+          {#snippet coverIcon()}<IconPhoto aria-hidden="true" />{/snippet}
+          {#snippet badges()}
+            {#if f.tab === 'other'}
+              <span class="rounded border border-dark-4 px-1.5 py-px text-[11px] text-dark-1">
+                {ratingReviewEntityLabels[row.entityType]}
+              </span>
+            {/if}
+            {#if !row.entity}<span class="text-[11px] text-dark-2 italic">Deleted</span>{/if}
+            <LevelChip label={ratingReviewLevelLabel(row.entityType, row.currentLevel)} />
+            <IconArrowRight class="size-3 text-dark-2" aria-hidden="true" />
+            <LevelChip
+              tone="ask"
+              label={ratingReviewLevelLabel(row.entityType, row.suggestedLevel)}
+            />
+            <span class="basis-full truncate text-xs text-dark-2">
+              {row.user.username ?? `User #${row.user.id}`}
+              {#if scan}· scan {ratingReviewLevelLabel(row.entityType, scan.level)}{/if}
+              · {row.userComment ? 'commented' : 'no comment'}
+            </span>
+          {/snippet}
+        </TriageRow>
+      {/snippet}
+      {#snippet detail(row, state)}
+        <RatingDisputeDetail
+          {row}
+          civitaiUrl={data.civitaiUrl}
+          verdict={state.verdict}
+          error={state.error}
+          submit={state.submit}
+          {actionHref}
+          bind:chosen
+        />
+      {/snippet}
+    </TriageShell>
+  </div>
 </div>

@@ -5,10 +5,7 @@ import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { textScanRaisedMinLevel } from '@civitai/shared/rated-entity-sql';
-import {
-  RATING_REVIEW_ENTITY_TYPES,
-  type RatingReviewEntityType,
-} from '@civitai/shared/rating-review';
+import { RATING_REVIEW_ENTITY_TYPES } from '@civitai/shared/rating-review';
 import { dbRead } from './db';
 import { escapeLike } from './like';
 import { resolveRatingReviewAction } from './rating-review-actions';
@@ -20,31 +17,29 @@ import {
   type RatingReviewImages,
   type RatingReviewRow,
 } from './rating-reviews.service';
+import {
+  DEFAULT_DISPUTE_TAB,
+  defaultDisputeSort,
+  DISPUTE_SORTS,
+  DISPUTE_TAB_TYPES,
+  DISPUTE_TABS,
+  type DisputeSort,
+  type DisputeTab,
+} from '$lib/rating-dispute';
 import type { RatingReviewStatusFilter } from '$lib/rating-review';
 
 const PAGE_SIZE = 50;
 const MAX_INT4 = 2_147_483_647;
 
-export const DISPUTE_TABS = ['posts', 'models', 'articles', 'other'] as const;
-export type DisputeTab = (typeof DISPUTE_TABS)[number];
-
-export const DISPUTE_TAB_TYPES: Record<DisputeTab, readonly RatingReviewEntityType[]> = {
-  posts: ['Post'],
-  models: ['Model'],
-  articles: ['Article'],
-  other: ['Bounty', 'BountyEntry', 'Challenge', 'Crucible', 'Collection'],
-};
-
 const STATUSES = ['Pending', 'Actioned', 'Unactioned'] as const;
 const ASKS = ['lower', 'higher'] as const;
-const SORTS = ['oldest', 'newest'] as const;
 
 export type DisputeFilters = {
   tab: DisputeTab;
   status: RatingReviewStatusFilter;
   ask: (typeof ASKS)[number] | undefined;
   scan: 'raised' | undefined;
-  sort: (typeof SORTS)[number];
+  sort: DisputeSort;
 };
 
 export type RatingDisputeRow = RatingReviewRow & {
@@ -62,11 +57,11 @@ export type DisputeFacets = {
 const param = (url: URL, key: string) => url.searchParams.get(key) ?? undefined;
 
 const querySchema = z.object({
-  tab: z.enum(DISPUTE_TABS).catch('posts'),
+  tab: z.enum(DISPUTE_TABS).catch(DEFAULT_DISPUTE_TAB),
   status: z.enum(STATUSES).catch('Pending'),
   ask: z.enum(ASKS).optional().catch(undefined),
   scan: z.literal('raised').optional().catch(undefined),
-  sort: z.enum(SORTS).optional().catch(undefined),
+  sort: z.enum(DISPUTE_SORTS).optional().catch(undefined),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   selected: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
@@ -204,7 +199,7 @@ export async function ratingDisputeTriageLoad(url: URL) {
     selected: param(url, 'selected'),
   });
   const { tab, status, ask, scan, q, page, selected } = parsed;
-  const sort = parsed.sort ?? (status === 'Pending' ? 'oldest' : 'newest');
+  const sort = parsed.sort ?? defaultDisputeSort(status);
   const filters: DisputeFilters = { tab, status, ask, scan, sort };
 
   const scoped = () => withFilters(withScope(ratingReviewRowQuery(), { status, q, tab }), filters);

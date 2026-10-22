@@ -11,7 +11,7 @@
     title: string;
     /** The compact card of a flush triage page: small muted title, 13px body, tighter padding. */
     dense?: boolean;
-    accent?: 'red' | 'neutral';
+    accent?: 'red' | 'neutral' | 'blue' | 'amber';
     children: Snippet;
   } = $props();
 </script>
@@ -22,6 +22,8 @@
     accent && 'border-l-[3px]',
     accent === 'red' && 'border-l-red-500',
     accent === 'neutral' && 'border-l-dark-1',
+    accent === 'blue' && 'border-l-blue-500',
+    accent === 'amber' && 'border-l-amber-500',
     dense ? 'rounded-lg p-3.5 text-[13px]' : 'rounded-xl p-5'
   )}
 >

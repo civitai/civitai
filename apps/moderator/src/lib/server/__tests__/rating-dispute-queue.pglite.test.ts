@@ -86,7 +86,12 @@ async function fileReview(row: Seed = {}) {
 const load = (query = '') => queue.ratingDisputeTriageLoad(new URL(`http://x/ratings${query}`));
 const ids = (data: { items: { id: number }[] }) => data.items.map((i) => i.id);
 
-async function seedImage(row: { url: string; postId?: number; index?: number; nsfwLevel?: number }) {
+async function seedImage(row: {
+  url: string;
+  postId?: number;
+  index?: number;
+  nsfwLevel?: number;
+}) {
   const [r] = await rows<{ id: number }>(
     db,
     `INSERT INTO "Image" ("url", "type", "postId", "index", "nsfwLevel") VALUES ($1, 'image', $2, $3, $4) RETURNING "id"`,
@@ -207,7 +212,10 @@ describe('ratingDisputeTriageLoad ordering and paging', () => {
 
   it('pages by 50 and reports whether another page follows', async () => {
     for (let i = 0; i < 51; i++)
-      await fileReview({ entityId: i + 1, createdAt: `2026-09-01T10:${String(i).padStart(2, '0')}:00.000Z` });
+      await fileReview({
+        entityId: i + 1,
+        createdAt: `2026-09-01T10:${String(i).padStart(2, '0')}:00.000Z`,
+      });
 
     const first = await load();
     expect(first.items).toHaveLength(50);
@@ -330,6 +338,62 @@ describe('getRatingReviewImagesBatch', () => {
     expect(urls('Post', p2)).toEqual(['p2-1']);
     expect(urls('Model', m1)).toEqual(['model-img']);
     expect(found.has(service.ratingReviewImagesKey('Collection', 404))).toBe(false);
+  });
+});
+
+describe('getRatingReviewImagesBatch covers', () => {
+  const batch = (...refs: [string, number][]) =>
+    service.getRatingReviewImagesBatch(
+      refs.map(([entityType, entityId]) => ({ entityType: entityType as 'Article', entityId }))
+    );
+  const urls = (found: Awaited<ReturnType<typeof batch>>, type: string, id: number) =>
+    found.get(service.ratingReviewImagesKey(type as 'Article', id))?.images.map((i) => i.url);
+
+  it('leads an article with its cover once, even when it is also connected, and totals each article apart', async () => {
+    const cover = await seedImage({ url: 'cover' });
+    const bodyA = await seedImage({ url: 'body-a' });
+    const bodyB = await seedImage({ url: 'body-b' });
+    const a1 = await seedEntity(db, 'Article', { userId: alice, coverId: cover });
+    const a2 = await seedEntity(db, 'Article', { userId: alice });
+    await connect(bodyA, 'Article', a1);
+    await connect(cover, 'Article', a1);
+    await connect(bodyB, 'Article', a2);
+
+    const found = await batch(['Article', a1], ['Article', a2]);
+
+    expect(urls(found, 'Article', a1)).toEqual(['cover', 'body-a']);
+    expect(found.get(service.ratingReviewImagesKey('Article', a1))?.total).toBe(2);
+    expect(urls(found, 'Article', a2)).toEqual(['body-b']);
+    expect(found.get(service.ratingReviewImagesKey('Article', a2))?.total).toBe(1);
+  });
+
+  it('previews a challenge, crucible and collection by their cover, a crucible falling back to its hero image', async () => {
+    const challenge = await seedEntity(db, 'Challenge', {
+      coverImageId: await seedImage({ url: 'challenge' }),
+    });
+    const crucible = await seedEntity(db, 'Crucible', {
+      imageId: await seedImage({ url: 'crucible' }),
+      heroImageId: await seedImage({ url: 'crucible-hero' }),
+    });
+    const heroOnly = await seedEntity(db, 'Crucible', {
+      heroImageId: await seedImage({ url: 'hero-only' }),
+    });
+    const collection = await seedEntity(db, 'Collection', {
+      userId: alice,
+      imageId: await seedImage({ url: 'collection' }),
+    });
+
+    const found = await batch(
+      ['Challenge', challenge],
+      ['Crucible', crucible],
+      ['Crucible', heroOnly],
+      ['Collection', collection]
+    );
+
+    expect(urls(found, 'Challenge', challenge)).toEqual(['challenge']);
+    expect(urls(found, 'Crucible', crucible)).toEqual(['crucible']);
+    expect(urls(found, 'Crucible', heroOnly)).toEqual(['hero-only']);
+    expect(urls(found, 'Collection', collection)).toEqual(['collection']);
   });
 });
 

@@ -56,6 +56,11 @@ async function fileReview(
   return r.id;
 }
 
+const listPending = async () =>
+  service.hydrateRatingReviews(
+    await service.ratingReviewRowQuery().where('rr.status', '=', 'Pending').execute()
+  );
+
 const review = async (id: number) =>
   (
     await rows<{
@@ -486,7 +491,7 @@ describe('resolveRatingReview', () => {
     // Filed while the mask still topped out at R.
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
     await expect(
       service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
@@ -503,7 +508,7 @@ describe('resolveRatingReview', () => {
     });
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4]);
     await expect(
       service.resolveRatingReview({ reviewId: id, appliedLevel: 8, moderatorId: mod })
@@ -639,7 +644,7 @@ describe('resolveRatingReview', () => {
   });
 });
 
-describe('getRatingReviews', () => {
+describe('hydrateRatingReviews', () => {
   it('summarises a crucible by its mask level and a collection by its SFW/NSFW bucket', async () => {
     const crucibleId = await seedEntity(db, 'Crucible', { userId: owner, nsfwLevel: 1 | 4 });
     const collectionId = await seedEntity(db, 'Collection', {
@@ -650,7 +655,7 @@ describe('getRatingReviews', () => {
     await fileReview('Crucible', crucibleId);
     await fileReview('Collection', collectionId);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     const byType = Object.fromEntries(items.map((i) => [i.entityType, i]));
 
     expect(byType.Crucible.entity).toMatchObject({
@@ -667,7 +672,7 @@ describe('getRatingReviews', () => {
     });
   });
 
-  it('joins each entity, shows only a text-scan raise, and filters by type', async () => {
+  it('joins each entity and shows only a text-scan raise', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'hello' });
     const entryId = await seedEntity(db, 'BountyEntry', {
       userId: owner,
@@ -690,8 +695,8 @@ describe('getRatingReviews', () => {
     await fileReview('BountyEntry', entryId);
     await fileReview('Model', 404);
 
-    const all = await service.getRatingReviews({ status: 'Pending' });
-    const byType = Object.fromEntries(all.items.map((i) => [i.entityType, i]));
+    const all = await listPending();
+    const byType = Object.fromEntries(all.map((i) => [i.entityType, i]));
 
     expect(byType.Post.entity).toMatchObject({
       id: postId,
@@ -703,8 +708,6 @@ describe('getRatingReviews', () => {
     expect(byType.BountyEntry.scan).toBeNull();
     expect(byType.Model.entity).toBeNull();
 
-    const posts = await service.getRatingReviews({ status: 'Pending', entityType: 'Post' });
-    expect(posts.items.map((i) => i.entityType)).toEqual(['Post']);
     expect(await service.getRatingReviewCounts('Post')).toEqual({
       Pending: 1,
       Actioned: 0,
@@ -819,7 +822,7 @@ describe('rating review images', () => {
     ] as const)
       await fileReview(type, id);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending', limit: 50 });
+    const items = await listPending();
     const cover = (type: string, id: number) =>
       items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl;
 
@@ -838,7 +841,7 @@ describe('rating review images', () => {
   it('leaves the cover empty for an entity with no image', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner });
     await fileReview('Post', postId);
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items[0].entity?.coverUrl).toBeNull();
   });
 
@@ -859,7 +862,7 @@ describe('rating review images', () => {
     });
     await fileReview('Model', modelId);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items[0].entity?.coverUrl).toBe('first-ok');
 
     const preview = await service.getRatingReviewImages('Model', modelId);

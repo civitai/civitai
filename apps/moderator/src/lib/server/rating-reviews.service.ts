@@ -364,9 +364,7 @@ async function loadImagesForType(
 
   switch (entityType) {
     case 'Post': {
-      const { rows } = await sql<
-        RatingReviewImage & { key: number; total: string; rn: string }
-      >`
+      const { rows } = await sql<RatingReviewImage & { key: number; total: string; rn: string }>`
         SELECT * FROM (
           SELECT i."id", i."url", i."type", i."nsfwLevel", i."postId" AS "key",
             row_number() OVER (PARTITION BY i."postId" ORDER BY i."index" ASC NULLS LAST, i."id") AS rn,
@@ -381,9 +379,7 @@ async function loadImagesForType(
       const covers = await modelCovers(ids);
       if (!covers.size) return out;
       const pairs = sql.join([...covers].map(([id, c]) => sql`(${id}, ${c.versionId})`));
-      const { rows } = await sql<
-        RatingReviewImage & { key: number; total: string; rn: string }
-      >`
+      const { rows } = await sql<RatingReviewImage & { key: number; total: string; rn: string }>`
         SELECT * FROM (
           SELECT i."id", i."url", i."type", i."nsfwLevel", m."id" AS "key",
             row_number() OVER (PARTITION BY m."id" ORDER BY p."id", i."index", i."id") AS rn,
@@ -473,7 +469,9 @@ export async function getRatingReviewImagesBatch(
   for (const e of entities)
     idsByType.set(e.entityType, (idsByType.get(e.entityType) ?? new Set()).add(e.entityId));
   const loaded = await Promise.all(
-    [...idsByType].map(async ([t, ids]) => [t, await loadImagesForType(t, [...ids], limit)] as const)
+    [...idsByType].map(
+      async ([t, ids]) => [t, await loadImagesForType(t, [...ids], limit)] as const
+    )
   );
   const out = new Map<string, RatingReviewImages>();
   for (const [t, found] of loaded) for (const [id, v] of found) out.set(imageKey(t, id), v);
@@ -589,26 +587,6 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
       levelOptions: moderatorLevelsFor(t, r.currentLevel, s?.nsfwLevel),
     };
   });
-}
-
-export async function getRatingReviews({
-  status,
-  entityType,
-  page = 1,
-  limit = 20,
-}: {
-  status: RatingReviewStatusFilter;
-  entityType?: RatingReviewEntityType;
-  page?: number;
-  limit?: number;
-}): Promise<{ items: RatingReviewRow[]; page: number; limit: number }> {
-  let q = ratingReviewRowQuery()
-    .where('rr.status', '=', status)
-    .orderBy('rr.id', 'desc')
-    .limit(limit)
-    .offset((page - 1) * limit);
-  if (entityType) q = q.where('rr.entityType', '=', entityType);
-  return { items: await hydrateRatingReviews(await q.execute()), page, limit };
 }
 
 export async function getRatingReviewCounts(
