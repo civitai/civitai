@@ -131,9 +131,7 @@ See [Not built yet](#not-built-yet).
        browser.
     2. The result is `{ shown, blockId, host, next_step }`, journaled like every call as
        `tool-reported`. The page reads `blockId` and `host` from it and (re)fetches
-       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. A
-       report is not replayed after a reload or on another device, so in runner mode the page also
-       asks that route once the open app runs, and shows a tunnel that is still up. The
+       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
        tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
     3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
        window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
@@ -323,6 +321,12 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 Known gaps:
 
+- The page learns of a runner's preview only from the live `tool-reported` event, which a reload
+  or another device does not replay: the pane then shows nothing until the assistant calls
+  `start_preview` again (the instructions say to when the preview is gone). Asking civitai's
+  preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
+  window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
+  preview), so it would show a dead preview.
 - A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
   keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
 

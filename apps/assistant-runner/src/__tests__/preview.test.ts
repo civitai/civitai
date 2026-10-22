@@ -179,13 +179,10 @@ describe('start_preview on the runner', () => {
   it('a dead grant says to send the message again; an unconfigured runner says there is no preview', async () => {
     fake.add('my-app');
     const { tools } = await open();
-    tunnels.startError = new DevTunnelError(
-      'This reply can no longer act for you. Send your message again.',
-      401,
-      'invalid_grant'
-    );
+    // civitai's own words for it, which are not for the assistant.
+    tunnels.startError = new DevTunnelError('Not a current run grant', 401, 'invalid_grant');
     expect(String((await call(tools.tools, 'start_preview')).error)).toBe(
-      'This reply can no longer act for you. Send your message again.'
+      'This reply can no longer act for the user. Tell them to send their message again.'
     );
     tunnels.startError = new DevTunnelError('x', 503, 'not_configured');
     expect(String((await call(tools.tools, 'start_preview')).error)).toMatch(

@@ -237,8 +237,6 @@ const m = vi.hoisted(() => ({
   listNeverLoaded: true,
   /** The session the preview pane was last rendered with. */
   previewSession: undefined as unknown,
-  /** `/api/apps/assistant/preview?blockId=`, as the page asks it for a runner's live tunnel. */
-  fetchFrame: vi.fn(),
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
@@ -285,9 +283,6 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
     m.previewSession = session;
     return <div data-testid="preview" />;
   },
-}));
-vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
-  fetchPreviewFrame: m.fetchFrame,
 }));
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
   useSandboxes: (client: { list: () => Promise<unknown> } | null) => {
@@ -515,8 +510,6 @@ beforeEach(() => {
   m.listError = null;
   m.listNeverLoaded = true;
   m.previewSession = undefined;
-  // No tunnel up, as civitai answers then (409).
-  m.fetchFrame.mockReset().mockRejectedValue(new Error('No live preview is running for this app'));
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
@@ -2187,38 +2180,6 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     expect(document.querySelector('[role="radiogroup"]')).toBeNull();
     reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
     await expect.element(page.getByRole('radio', { name: 'Preview' })).toBeChecked();
-  });
-
-  test('after a reload, shows the tunnel the runner still keeps up for the open app', async () => {
-    m.fetchFrame.mockResolvedValue({ host: HOST, iframeSrc: `https://${HOST}/?dev=x` });
-    await mountRunner();
-    await openFirst();
-    await expect.element(pane()).toBeInTheDocument();
-    expect(m.fetchFrame).toHaveBeenCalledWith('app-aaaa');
-    expect(m.previewSession).toEqual({
-      blockId: 'app-aaaa',
-      host: HOST,
-      sessionId: null,
-      view: 1,
-    });
-    expect(m.stop).not.toHaveBeenCalled();
-  });
-
-  test('with no tunnel up, asks once and shows nothing', async () => {
-    await mountRunner();
-    await openFirst();
-    await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledWith('app-aaaa'));
-    await settle();
-    expect(pane().query()).toBeNull();
-  });
-
-  test('NEGATIVE CONTROL: replies in the browser never ask for a tunnel the page did not start', async () => {
-    m.fetchFrame.mockResolvedValue({ host: HOST, iframeSrc: `https://${HOST}/?dev=x` });
-    await mount();
-    await openFirst();
-    await settle();
-    expect(m.fetchFrame).not.toHaveBeenCalled();
-    expect(pane().query()).toBeNull();
   });
 
   test('opening another app hides it, stopping nothing', async () => {

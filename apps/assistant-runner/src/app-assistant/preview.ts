@@ -301,7 +301,8 @@ function refusalMessage(error: unknown): string {
     return 'The preview could not start. Tell the user it failed and try again later.';
   const known = previewRefusal(error.code);
   if (known) return known;
-  if (error.code === 'invalid_grant') return error.message;
+  if (error.code === 'invalid_grant')
+    return 'This reply can no longer act for the user. Tell them to send their message again.';
   if (error.code === 'not_configured')
     return 'The live preview is not set up here. Tell the user, and keep building without it.';
   if (error.code === 'refused')
