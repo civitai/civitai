@@ -1,6 +1,8 @@
 .root {
   user-select: none;
   background-color: theme('colors.blue.8/.2');
+  /* Darkens the tint so the white label stays readable on a white image. */
+  background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5));
   color: theme('colors.white');
   padding-left: 8px;
   padding-right: 8px;

@@ -53,7 +53,7 @@ export function ImageCard({ data }: Props) {
         </div>
       }
       footer={({ safe }) => (
-        <div className="flex w-full flex-col gap-2">
+        <div className={cardClasses.footerScrim}>
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
