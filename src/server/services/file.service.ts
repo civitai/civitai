@@ -54,12 +54,10 @@ export const SERVER_FILE_METADATA_KEYS = [
   'checkOverride',
 ] as const;
 
-function pickMetadata(metadata: unknown, server: boolean) {
-  const isServerKey = (key: string) =>
-    (SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key);
+function callerMetadata(metadata: unknown) {
   return Object.fromEntries(
     Object.entries((metadata ?? {}) as Record<string, unknown>).filter(
-      ([key]) => isServerKey(key) === server
+      ([key]) => !(SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key)
     )
   );
 }
@@ -79,30 +77,27 @@ export const updateEntityFiles = async ({
 }) => {
   const updatedFiles = files.filter((f) => f.id);
 
-  if (updatedFiles.length > 0) {
-    // A file saved again at the same url keeps its check result; a new url is checked afresh.
-    const existing = await tx.file.findMany({
-      where: { id: { in: updatedFiles.map((f) => f.id as number) }, entityId, entityType },
-      select: { id: true, url: true, metadata: true },
-    });
-    const counts = await Promise.all(
-      updatedFiles.map((file) => {
-        const before = existing.find((x) => x.id === file.id);
-        return tx.file.updateMany({
-          where: { id: file.id, entityId, entityType },
-          data: {
-            ...file,
-            metadata: {
-              ...pickMetadata(file.metadata, false),
-              ownRights,
-              ...(before?.url === file.url ? pickMetadata(before.metadata, true) : {}),
-            },
-          },
-        });
-      })
-    );
-    if (counts.some(({ count }) => count !== 1))
-      throw throwBadRequestError('A file to update is not part of this item.');
+  // A file saved again at the same url keeps its check result; a new url is checked afresh. The
+  // result is read inside this UPDATE, from the row as it is written, so a moderator's change to it
+  // is never written back over; read it in an earlier statement and that guarantee is gone. The
+  // server keys must be read from `f`, the row being updated, not a joined or sub-selected copy. In
+  // id order, so two saves of one item take the row locks in the same order.
+  for (const file of [...updatedFiles].sort((a, b) => (a.id as number) - (b.id as number))) {
+    const metadata = { ...callerMetadata(file.metadata), ownRights };
+    const count = await tx.$executeRaw`
+      UPDATE "File" f
+      SET name = ${file.name}, url = ${file.url}, "sizeKB" = ${file.sizeKB},
+        metadata = ${JSON.stringify(metadata)}::jsonb || CASE
+          WHEN f.url = ${file.url} AND jsonb_typeof(f.metadata) = 'object' THEN COALESCE(
+            (SELECT jsonb_object_agg(key, value) FROM jsonb_each(f.metadata)
+              WHERE key = ANY(${[...SERVER_FILE_METADATA_KEYS]}::text[])),
+            '{}'::jsonb
+          )
+          ELSE '{}'::jsonb
+        END
+      WHERE f.id = ${file.id} AND f."entityId" = ${entityId} AND f."entityType" = ${entityType}
+    `;
+    if (count !== 1) throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.
@@ -127,7 +122,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
-        metadata: { ...pickMetadata(file.metadata, false), ownRights },
+        metadata: { ...callerMetadata(file.metadata), ownRights },
       })),
     });
   }
