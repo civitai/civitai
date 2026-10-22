@@ -30,7 +30,7 @@
 <div class={cn('@container flex w-full flex-col', compact ? 'gap-2' : 'gap-2.5')}>
   <div
     class={compact
-      ? 'grid grid-cols-2 gap-1.5 [&>*]:h-auto [&>*]:min-h-8 [&>*]:w-full [&>*]:justify-start [&>*]:py-1.5 [&>*]:text-left [&>*]:leading-tight [&>*]:whitespace-normal'
+      ? 'grid grid-cols-2 gap-1.5 [&>button]:h-auto [&>button]:min-h-8 [&>button]:w-full [&>button]:justify-start [&>button]:py-1.5 [&>button]:text-left [&>button]:leading-tight [&>button]:whitespace-normal'
       : 'flex flex-wrap items-center gap-2'}
   >
     {@render buttons()}
