@@ -177,7 +177,7 @@ beforeAll(async () => {
     );
   `);
   await db.pg.exec(readFileSync(migration('20261112120000_csam_report_append_only'), 'utf8'));
-  await db.pg.exec(readFileSync(migration('20261122120000_csam_report_send_claim'), 'utf8'));
+  await db.pg.exec(readFileSync(migration('20261123120000_csam_report_send_claim'), 'utf8'));
 });
 
 beforeEach(() => {

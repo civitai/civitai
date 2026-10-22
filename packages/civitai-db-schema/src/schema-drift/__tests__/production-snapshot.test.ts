@@ -250,7 +250,7 @@ describe('production catalog snapshot (2026-10-19)', () => {
   it('reports no missing columns: every declared column was live at capture', () => {
     // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
     // catalog is recaptured after it:
-    //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261122120000_csam_report_send_claim`
+    //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261123120000_csam_report_send_claim`
     const inFlightColumns = new Set(['CsamReport.sendClaimId', 'CsamReport.sendClaimedAt']);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
