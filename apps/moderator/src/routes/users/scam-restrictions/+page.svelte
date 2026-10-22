@@ -1,13 +1,19 @@
 <script lang="ts">
-  import RestrictionQueue from '$lib/components/restrictions/RestrictionQueue.svelte';
-  import type { PageData } from './$types';
+  import RestrictionTriage from '$lib/components/restrictions/RestrictionTriage.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
-<header class="page-header">
-  <h1>Scam Restrictions</h1>
-  <p>Accounts flagged for scam activity, and the rulings on them.</p>
-</header>
-
-<RestrictionQueue {data} />
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="Scam Restrictions"
+    subtitle="Accounts flagged for scam activity, and the rulings on them."
+    placeholder="Username or user ID"
+    searchLabel="Search scam restrictions"
+  />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-dark-4">
+    <RestrictionTriage {data} {form} fallbackType="scam" />
+  </div>
+</div>

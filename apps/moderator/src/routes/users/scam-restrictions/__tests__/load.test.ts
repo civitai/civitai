@@ -5,8 +5,11 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 const { getGenerationRestrictions } = vi.hoisted(() => ({
   getGenerationRestrictions: vi.fn(),
 }));
-vi.mock('$lib/server/user-restriction.service', () => ({
+vi.mock('$lib/server/user-restriction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/user-restriction.service')>()),
   getGenerationRestrictions,
+  getRestrictionFacets: vi.fn(async () => undefined),
+  getRemixSources: vi.fn(async () => []),
   saveSuspiciousMatches: vi.fn(),
   unwiredRulingReason: vi.fn(() => null),
 }));

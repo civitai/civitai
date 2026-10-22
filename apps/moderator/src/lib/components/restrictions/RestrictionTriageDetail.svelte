@@ -15,7 +15,8 @@
   import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
+  import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
+  import { denied } from '$lib/permissions';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
@@ -144,17 +145,18 @@
 </script>
 
 {#snippet extras()}
-  {#if canBan}
-    <Button
-      type="button"
-      variant="outline"
-      class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
-      disabled={!!unwiredReason}
-      onclick={() => ((banReason = ''), (banOpen = true))}
-    >
-      Ban user…
-    </Button>
-  {/if}
+  <!-- Shown to everyone on a pending row, disabled with the reason when the viewer lacks the grant: a
+       ban that is simply absent read as the page having none. -->
+  <Button
+    type="button"
+    variant="outline"
+    class="{VERDICT_BUTTON} border-dark-4 bg-transparent dark:bg-transparent"
+    disabled={!canBan || !!unwiredReason}
+    title={!canBan ? denied('audit.ban.execute') : (unwiredReason ?? undefined)}
+    onclick={() => ((banReason = ''), (banOpen = true))}
+  >
+    Ban user…
+  </Button>
   {#if selected.size > 0}
     <!-- Its form is a sibling of the ruling form: forms do not nest. -->
     <Button
@@ -167,10 +169,10 @@
       Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
     </Button>
   {/if}
-  {#if flag.error}<span class="text-sm text-red-300">{flag.error}</span>{/if}
+  {#if flag.error}<span class="col-span-2 text-sm text-red-300">{flag.error}</span>{/if}
 {/snippet}
 
-{#snippet bar()}
+{#snippet decision()}
   <RestrictionDecisionForm
     restrictionId={row.id}
     {unwiredReason}
@@ -180,6 +182,9 @@
     {extras}
     bind:draft
   />
+  {#if !canBan}
+    <p class="m-0 mt-2 text-[11px] text-amber-300">{denied('audit.ban.execute')}</p>
+  {/if}
   {#if selected.size > 0}
     <form
       id={flagFormId}
@@ -196,75 +201,76 @@
   {/if}
 {/snippet}
 
-<TriageDetailFrame {verdict} {error} actions={pending ? bar : undefined}>
-  {#snippet children()}
-    <header class="space-y-2">
-      <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div class="min-w-0 flex-1 basis-80 space-y-1.5">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 class="m-0 text-lg font-semibold break-words text-white">{name}</h2>
-            <span class="text-[13px] text-dark-2 tabular-nums">#{row.userId}</span>
-            <StatusBadge status={row.status} outline />
-          </div>
-          <p class="m-0 text-sm text-dark-2">
-            Account {shortAge(row.userCreatedAt)} old · restricted
-            <span title={dateTime(row.createdAt)}>{shortAge(row.createdAt)} ago</span>
-            {#if row.resolvedAt}
-              · ruled <span title={dateTime(row.resolvedAt)}>{shortAge(row.resolvedAt)} ago</span>
-            {/if}
-            · {triggerCount.total}
-            {triggerCount.total === 1 ? 'trigger' : 'triggers'}
-            {#if triggerCount.total > 1}
-              · {triggerCount.distinctPrompts}
-              {triggerCount.distinctPrompts === 1 ? 'prompt' : 'prompts'}
-              {#if triggerSpan}· over {formatSpan(triggerSpan)}{/if}
-            {/if}
-          </p>
+{#snippet header()}
+  <div class="space-y-2">
+    <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div class="min-w-0 flex-1 basis-80 space-y-1.5">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <h2 class="m-0 text-lg font-semibold break-words text-white">{name}</h2>
+          <span class="text-[13px] text-dark-2 tabular-nums">#{row.userId}</span>
+          <StatusBadge status={row.status} outline />
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-          {#if row.username}
-            <Button
-              variant="outline"
-              size="sm"
-              class={LINK_BUTTON}
-              href="{civitaiUrl}/user/{row.username}"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <IconExternalLink aria-hidden="true" /> Profile
-            </Button>
+        <p class="m-0 text-sm text-dark-2">
+          Account {shortAge(row.userCreatedAt)} old · restricted
+          <span title={dateTime(row.createdAt)}>{shortAge(row.createdAt)} ago</span>
+          {#if row.resolvedAt}
+            · ruled <span title={dateTime(row.resolvedAt)}>{shortAge(row.resolvedAt)} ago</span>
           {/if}
+          · {triggerCount.total}
+          {triggerCount.total === 1 ? 'trigger' : 'triggers'}
+          {#if triggerCount.total > 1 && triggerCount.distinctPrompts > 0}
+            · {triggerCount.distinctPrompts}
+            {triggerCount.distinctPrompts === 1 ? 'prompt' : 'prompts'}
+            {#if triggerSpan}· over {formatSpan(triggerSpan)}{/if}
+          {/if}
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        {#if row.username}
           <Button
             variant="outline"
             size="sm"
             class={LINK_BUTTON}
-            href={userLookupUrl(row.username ?? row.userId)}
+            href="{civitaiUrl}/user/{row.username}"
+            target="_blank"
+            rel="noreferrer"
           >
-            <IconUser aria-hidden="true" /> User lookup
+            <IconExternalLink aria-hidden="true" /> Profile
           </Button>
-          {#if canViewGenerations}
-            <!-- The generations are the panel further down this pane, not a page of their own. -->
-            <Button
-              variant="outline"
-              size="sm"
-              class={LINK_BUTTON}
-              onclick={() =>
-                document.getElementById(generationsId)?.scrollIntoView({ behavior: 'smooth' })}
-            >
-              <IconPhoto aria-hidden="true" /> Generations
-            </Button>
-          {/if}
-        </div>
-      </div>
-      {#if unwiredReason && pending}
-        <p
-          class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200"
+        {/if}
+        <Button
+          variant="outline"
+          size="sm"
+          class={LINK_BUTTON}
+          href={userLookupUrl(row.username ?? row.userId)}
         >
-          {unwiredReason}
-        </p>
-      {/if}
-    </header>
+          <IconUser aria-hidden="true" /> User lookup
+        </Button>
+        {#if canViewGenerations}
+          <!-- The generations are the panel further down the middle column, not a page of their own. -->
+          <Button
+            variant="outline"
+            size="sm"
+            class={LINK_BUTTON}
+            onclick={() =>
+              document.getElementById(generationsId)?.scrollIntoView({ behavior: 'smooth' })}
+          >
+            <IconPhoto aria-hidden="true" /> Generations
+          </Button>
+        {/if}
+      </div>
+    </div>
+    {#if unwiredReason && pending}
+      <p class="m-0 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+        {unwiredReason}
+      </p>
+    {/if}
+  </div>
+{/snippet}
 
+<!-- What tripped the restriction, and the account's generations, in the middle. -->
+{#snippet evidence()}
+  <div class="space-y-5">
     {#if row.triggers.length > 1}
       <TriggerSummary
         triggers={row.triggers}
@@ -305,31 +311,37 @@
     <div id={generationsId}>
       <UserWorkflowsPanel userId={row.userId} canView={canViewGenerations} />
     </div>
+  </div>
+{/snippet}
 
-    {#if row.userMessage}
-      <TriageCard title="What the user says">
-        <p class="m-0 text-base break-words whitespace-pre-wrap text-dark-0">{row.userMessage}</p>
-        {#if row.userMessageAt}
-          <p class="m-0 mt-3 text-sm text-dark-2">{dateTime(row.userMessageAt)}</p>
+<!-- The user's side and the ruling in the sidebar. -->
+{#snippet info()}
+  {#if row.userMessage}
+    <TriageCard dense title="What the user says">
+      <p class="m-0 break-words whitespace-pre-wrap text-dark-0">{row.userMessage}</p>
+      {#if row.userMessageAt}
+        <p class="m-0 mt-2 text-xs text-dark-2">{dateTime(row.userMessageAt)}</p>
+      {/if}
+    </TriageCard>
+  {:else}
+    <p class="m-0 text-sm text-dark-2">The user has said nothing about this restriction.</p>
+  {/if}
+
+  {#if row.resolvedAt}
+    <TriageCard dense title="Resolution">
+      <div class="space-y-1 text-dark-0">
+        <p class="m-0 text-xs text-dark-2">Resolved {dateTime(row.resolvedAt)}</p>
+        {#if row.resolvedReason}
+          <p class="m-0">Reason: {resolutionReasonLabel(row.resolvedReason)}</p>
         {/if}
-      </TriageCard>
-    {/if}
+        {#if row.internalNotes}<p class="m-0 text-dark-2">Note: {row.internalNotes}</p>{/if}
+        {#if row.resolvedMessage}<p class="m-0">{row.resolvedMessage}</p>{/if}
+      </div>
+    </TriageCard>
+  {/if}
+{/snippet}
 
-    {#if row.resolvedAt}
-      <TriageCard title="Resolution">
-        <div class="space-y-1 text-sm text-dark-0">
-          <p class="m-0 text-xs text-dark-2">Resolved {dateTime(row.resolvedAt)}</p>
-          {#if row.resolvedReason}
-            <p class="m-0">Reason: {resolutionReasonLabel(row.resolvedReason)}</p>
-          {/if}
-          {#if row.internalNotes}<p class="m-0 text-dark-2">Note: {row.internalNotes}</p>{/if}
-          {#if row.resolvedMessage}<p class="m-0">{row.resolvedMessage}</p>{/if}
-        </div>
-      </TriageCard>
-    {/if}
-  {/snippet}
-</TriageDetailFrame>
-
+<TriageColumns {verdict} {error} {header} {evidence} {info} decision={pending ? decision : undefined} />
 {#if pending}
     <Dialog.Root bind:open={banOpen}>
       <Dialog.Content class="sm:max-w-xl">
