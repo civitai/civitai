@@ -1,8 +1,8 @@
 import { Button, Divider, Grid } from '@mantine/core';
-import { IconSearch } from '@tabler/icons-react';
+import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ReactElement, RefObject } from 'react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowsingModeIcon } from '~/components/BrowsingMode/BrowsingMode';
 import { ReadOnlyNotice } from '~/components/ReadOnlyNotice/ReadOnlyNotice';
 import { ChatButton } from '~/components/Chat/ChatButton';
@@ -55,10 +55,22 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   // Gate on the user's resolved chat setting so the chat icon never flashes in
   // then out for users who have chat disabled. See useChatEnabled for details.
   const showChat = useChatEnabled();
-  const searchRef = useRef<HTMLInputElement>(null);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
 
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
+
+  // Finds the input in the DOM because a ref passed to the `dynamic` search component lands on
+  // next/dynamic's own handle, not on the input. The category select inside the search is hidden at
+  // this width, so take the first input that is shown. iOS Safari may still ignore a focus() made
+  // outside the tap, which is why the close button below does not depend on it.
+  useEffect(() => {
+    if (!showSearch) return;
+    const inputs = searchWrapperRef.current?.querySelectorAll('input') ?? [];
+    Array.from(inputs)
+      .find((input) => input.offsetParent !== null)
+      ?.focus();
+  }, [showSearch]);
 
   return (
     <header
@@ -67,8 +79,18 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       })}
       style={{ height: HEADER_HEIGHT_PX, borderBottomStyle: 'solid' }}
     >
-      <div className={clsx('h-full', { ['hidden']: !showSearch })}>
-        {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
+      <div className={clsx('flex h-full items-center', { ['hidden']: !showSearch })}>
+        <div ref={searchWrapperRef} className="h-full min-w-0 flex-1">
+          {renderSearchComponent({ onSearchDone, isMobile: true })}
+        </div>
+        <LegacyActionIcon
+          className="shrink-0"
+          size={44}
+          onClick={onSearchDone}
+          aria-label="Close search"
+        >
+          <IconX />
+        </LegacyActionIcon>
       </div>
 
       <Grid
