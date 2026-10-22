@@ -97,6 +97,9 @@ export const createPostHandler = async ({
   try {
     const { ip } = ctx;
     const today = new Date();
+    // The storyline router's flag, for the one storyline write that goes through posts.
+    if ((input.storylineId || input.parentChapterId) && !ctx.features.storylines)
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     const post = await createPost({
       ...input,

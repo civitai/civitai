@@ -915,15 +915,33 @@ export const createPost = async ({
     }
   }
 
-  const post = await dbWrite.post.create({
-    data: {
-      ...data,
-      availability,
-      userId,
-      tags: tagsToAdd.length > 0 ? { create: tagData } : undefined,
-    },
-    select: postSelect,
-  });
+  const { storylineId, parentChapterId, ...postData } = data;
+  const insertPost = (db: Prisma.TransactionClient | typeof dbWrite) =>
+    db.post.create({
+      data: {
+        ...postData,
+        availability,
+        userId,
+        tags: tagsToAdd.length > 0 ? { create: tagData } : undefined,
+      },
+      select: postSelect,
+    });
+  const linksStoryline = !!storylineId || !!parentChapterId;
+  // The chapter is written when the post is published, from the editor; a post created published
+  // would skip that step and leave the link pending.
+  if (linksStoryline && postData.publishedAt)
+    throw throwBadRequestError('A storyline chapter is published from the post editor');
+  // Imported on use: the storyline layer imports this module, through report.service.
+  const { linkPendingChapter } = linksStoryline
+    ? await import('~/server/services/storyline.service')
+    : { linkPendingChapter: undefined };
+  const post = linkPendingChapter
+    ? await dbWrite.$transaction(async (tx) => {
+        const created = await insertPost(tx);
+        await linkPendingChapter(tx, { postId: created.id, userId, storylineId, parentChapterId });
+        return created;
+      })
+    : await insertPost(dbWrite);
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
