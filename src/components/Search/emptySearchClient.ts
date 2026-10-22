@@ -1,5 +1,5 @@
 import type { InstantSearchProps } from 'react-instantsearch';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 

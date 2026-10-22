@@ -2,7 +2,7 @@ import type { InstantSearchProps } from 'react-instantsearch';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 

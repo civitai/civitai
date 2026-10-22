@@ -189,6 +189,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'search/[...path]':
+    'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',

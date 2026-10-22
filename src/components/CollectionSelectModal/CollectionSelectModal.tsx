@@ -10,7 +10,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconCloudOff, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import React, { useContext, useEffect, useRef } from 'react';

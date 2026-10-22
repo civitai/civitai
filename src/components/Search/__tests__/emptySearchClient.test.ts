@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// `NEXT_PUBLIC_SEARCH_HOST` is unset in the test environment and the module builds a client from
-// it at import time, so the transport is faked. The spy also lets us prove the empty client never
-// delegates to it — the whole point is that no request reaches the retired index.
+// The transport is faked so the spy can prove the empty client never delegates to it — the whole point is that no request reaches the retired index.
 const underlyingSearch = vi.hoisted(() => vi.fn(async () => ({ results: [] })));
 vi.mock('@meilisearch/instant-meilisearch', () => ({
   instantMeiliSearch: () => ({ search: underlyingSearch }),

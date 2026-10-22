@@ -1,7 +1,7 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
