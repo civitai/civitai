@@ -32,7 +32,6 @@ export function resolveDailyCap(
   return { usd: DEFAULT_DAILY_USD, from: 'default' };
 }
 
-/** The rows that can apply to this moderator: their own and their roles'. */
 export async function capsFor(moderator: {
   id: number;
   roles: readonly string[];
@@ -78,11 +77,14 @@ export const spendCapUnavailableMessage = (status: Exclude<ModeratorDbStatus, 'o
 /** The cap moved after the caller read it. Nothing was written. */
 export class SpendCapConflictError extends Error {
   readonly status = 409;
-  constructor(readonly current: number | null) {
+  /** `undefined`: another save created it at the same moment, so its value is not known here. */
+  constructor(readonly current: number | null | undefined) {
     super(
-      `This cap changed since the page loaded: it is now ${
-        current === null ? 'unset' : `$${current.toFixed(2)}`
-      }.`
+      current === undefined
+        ? 'This cap changed since the page loaded.'
+        : `This cap changed since the page loaded: it is now ${
+            current === null ? 'unset' : `$${current.toFixed(2)}`
+          }.`
     );
   }
 }
@@ -143,7 +145,9 @@ export async function changeSpendCap(input: {
                 .where('subject', '=', input.subject)
                 .returning('subject')
                 .executeTakeFirst()
-            : await trx
+            : before === null
+            ? // No row to lock: a concurrent first save of the same cap fails this on the key.
+              await trx
                 .insertInto('assistant_spend_cap')
                 .values({
                   scope: input.scope,
@@ -151,13 +155,13 @@ export async function changeSpendCap(input: {
                   usd_per_day: input.usd,
                   updated_by: input.actorId,
                 })
-                .onConflict((oc) =>
-                  oc.columns(['scope', 'subject']).doUpdateSet({
-                    usd_per_day: input.usd as number,
-                    updated_by: input.actorId,
-                    updated_at: new Date(),
-                  })
-                )
+                .returning('subject')
+                .executeTakeFirst()
+            : await trx
+                .updateTable('assistant_spend_cap')
+                .set({ usd_per_day: input.usd, updated_by: input.actorId, updated_at: new Date() })
+                .where('scope', '=', input.scope)
+                .where('subject', '=', input.subject)
                 .returning('subject')
                 .executeTakeFirst();
         if (!written) throw new Error('The cap write touched no row.');
@@ -165,6 +169,8 @@ export async function changeSpendCap(input: {
       });
   } catch (e) {
     if (e instanceof SpendCapConflictError) throw e;
+    if ((e as { code?: unknown } | null)?.code === '23505')
+      throw new SpendCapConflictError(undefined);
     console.error('[assistant] spend cap change failed, nothing was written', e);
     throw new SpendCapUnavailableError(moderatorDbStatus(e));
   }

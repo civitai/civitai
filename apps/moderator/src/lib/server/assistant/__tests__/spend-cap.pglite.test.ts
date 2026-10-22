@@ -78,9 +78,40 @@ describe('usdToday', () => {
     expect(await store.usdToday(1)).toBe(0.75);
   });
 
+  it('charges a turn whose process died at its recorded tokens, at the dearest listed price', async () => {
+    const chatId = await store.createChat({
+      moderatorId: 1,
+      title: 'c',
+      seedUserId: null,
+      seedReportId: null,
+    });
+    const turnId = await store.startTurn({
+      chatId,
+      moderatorId: 1,
+      prompt: 'q',
+      playbookSlug: null,
+      playbookVersion: null,
+      model: 'm',
+    });
+    await store.recordTurnTokens(turnId, 1_000_000, 1_000_000);
+    await pg.query(
+      `UPDATE assistant_turn SET created_at = now() - interval '1 hour' WHERE id = $1`,
+      [turnId]
+    );
+    expect(await store.hasRunningTurn(1, 60_000)).toBe(false);
+    expect(await store.usdToday(1)).toBeCloseTo(3.7, 10);
+  });
+
+  it('keeps a finished turn’s own record over a late token update', async () => {
+    const turnId = await turn(1, { prompt: 10, completion: 10 }, { usd: 0.25, source: 'live' });
+    await store.recordTurnTokens(turnId, 1_000_000, 1_000_000);
+    expect(await store.usdToday(1)).toBe(0.25);
+    expect(await store.tokensToday(1)).toBe(20);
+  });
+
   it('charges a turn with no recorded cost at the dearest listed price', async () => {
     await turn(1, { prompt: 1_000_000, completion: 1_000_000 }, null);
-    expect(await store.usdToday(1)).toBe(3.7);
+    expect(await store.usdToday(1)).toBeCloseTo(3.7, 10);
   });
 });
 
@@ -119,9 +150,15 @@ describe('changeSpendCap', () => {
   });
 
   it('changes nothing when the history row cannot be written', async () => {
+    await change();
     await pg.exec('DROP TABLE assistant_spend_cap_change');
-    await expect(change()).rejects.toBeInstanceOf(caps.SpendCapUnavailableError);
-    expect(await caps.capsFor({ id: 7, roles: [] })).toEqual([]);
+    for (const attempt of [
+      { subject: '8', usd: 3, expect: null }, // add
+      { subject: '7', usd: 4, expect: 2.5 }, // change
+      { subject: '7', usd: null, expect: 2.5 }, // remove
+    ])
+      await expect(change(attempt)).rejects.toBeInstanceOf(caps.SpendCapUnavailableError);
+    expect(await caps.listSpendCaps()).toEqual([{ scope: 'user', subject: '7', usd: 2.5 }]);
   });
 
   it('refuses a change to a cap that moved since it was read', async () => {

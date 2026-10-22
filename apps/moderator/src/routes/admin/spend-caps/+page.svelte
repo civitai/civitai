@@ -35,7 +35,17 @@
 {/if}
 
 {#snippet capForm(scope: 'role' | 'user', subject: string, usd: number | null, label: string)}
-  <form method="POST" action="?/save" use:enhance class="flex flex-wrap items-center gap-2">
+  <!-- `reset: false`: a reset puts the input back to the value it was first rendered with, and a save
+       that changes nothing pushes no new value to undo that, so the next save would write the stale
+       one. -->
+  <form
+    method="POST"
+    action="?/save"
+    use:enhance={() =>
+      ({ update }) =>
+        update({ reset: false })}
+    class="flex flex-wrap items-center gap-2"
+  >
     <input type="hidden" name="scope" value={scope} />
     <input type="hidden" name="subject" value={subject} />
     <input type="hidden" name="expect" value={field(usd)} />

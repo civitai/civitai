@@ -75,30 +75,30 @@ describe('capPrice', () => {
     const { price, source } = capPrice(model, prices);
     return { usd: costUsd(1_000_000, 1_000_000, price), source };
   };
+  const flash = findModel('z-ai/glm-5.3-flash')!;
+  const listed = flash.price.input + flash.price.output;
 
   it('charges the list price when the live one reads lower', () => {
-    expect(
-      million('z-ai/glm-5.3-flash', {
-        'z-ai/glm-5.3-flash': { input: 0, output: 0, current: true },
-      })
-    ).toEqual({ usd: 0.65, source: 'live' });
+    const r = million(flash.id, { [flash.id]: { input: 0, output: 0, current: true } });
+    expect(r.source).toBe('live');
+    expect(r.usd).toBeCloseTo(listed, 10);
   });
 
   it('charges the live price when it is higher', () => {
-    expect(
-      million('z-ai/glm-5.3-flash', {
-        'z-ai/glm-5.3-flash': { input: 1, output: 2, current: true },
-      })
-    ).toEqual({ usd: 3, source: 'live' });
+    const r = million(flash.id, { [flash.id]: { input: 1, output: 2, current: true } });
+    expect(r).toEqual({ usd: 3, source: 'live' });
   });
 
   it('ignores a price that was not read live', () => {
-    expect(
-      million('z-ai/glm-5.3-flash', { 'z-ai/glm-5.3-flash': { input: 5, output: 5 } })
-    ).toEqual({ usd: 0.65, source: 'list' });
+    const r = million(flash.id, { [flash.id]: { input: 5, output: 5 } });
+    expect(r.source).toBe('list');
+    expect(r.usd).toBeCloseTo(listed, 10);
   });
 
-  it('charges a model it cannot price at the dearest listed price, never $0', () => {
-    expect(million('retired/model')).toEqual({ usd: 3.7, source: 'list' });
+  it('charges a model it cannot price at least as much as any listed one, never $0', () => {
+    const unknown = million('retired/model');
+    expect(unknown.source).toBe('list');
+    for (const m of ASSISTANT_MODELS)
+      expect(unknown.usd).toBeGreaterThanOrEqual(costUsd(1_000_000, 1_000_000, m.price));
   });
 });

@@ -73,10 +73,10 @@ describe('admitTurn', () => {
 
 describe('remainingTokens', () => {
   it('converts the dollars left at the dearer direction of the price', () => {
-    // $0.27 left at $1 in / $2.70 out per million: 100k tokens, not the 270k the input price allows.
+    // $0.50 left at $1 in / $2 out per million: 250k tokens, not the 500k the input price allows.
     expect(
-      remainingTokens({ spentUsd: 0.73, capUsd: 1, usedTokens: 0 }, { input: 1, output: 2.7 })
-    ).toBe(100_000);
+      remainingTokens({ spentUsd: 0.5, capUsd: 1, usedTokens: 0 }, { input: 1, output: 2 })
+    ).toBe(250_000);
   });
 
   it('never exceeds what the circuit breaker leaves', () => {

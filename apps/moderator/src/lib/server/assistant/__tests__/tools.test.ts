@@ -102,6 +102,7 @@ vi.mock('../store', () => ({
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
+const { DAILY_TOKEN_CAP } = await import('../loop');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -442,7 +443,7 @@ describe('turnTokenBudget', () => {
   it('clamps a setting into range, so a tighter budget never comes out looser', () => {
     expect(turnTokenBudget('3000')).toBe(5_000);
     expect(turnTokenBudget('40000')).toBe(40_000);
-    expect(turnTokenBudget('99000000')).toBe(10_000_000);
+    expect(turnTokenBudget('99000000')).toBe(DAILY_TOKEN_CAP);
   });
 
   it('falls back to the default when unset or not a whole number', () => {

@@ -23,7 +23,7 @@ vi.mock('$lib/server/assistant/store', async (importOriginal) => ({
 }));
 vi.mock('$lib/server/assistant/spend-cap', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/assistant/spend-cap')>()),
-  capsFor: vi.fn(async () => []),
+  capsFor: vi.fn(async () => [{ scope: 'role', subject: 'moderator:mod-high-access', usd: 3 }]),
 }));
 vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => ({}) }));
 vi.mock('$lib/server/xguard-api', () => ({ openrouterKey: () => 'test-key' }));
@@ -43,7 +43,7 @@ const { load } = await import('../+page.server');
 const run = async () =>
   (await (load as unknown as (e: unknown) => Promise<unknown>)({
     params: { chatId: '7' },
-    locals: { user: { id: 1 } },
+    locals: { user: { id: 1, roles: ['moderator:mod-high-access'] } },
   })) as {
     model: string;
     spend: { usd: number };
@@ -72,7 +72,7 @@ describe('/assistant/[chatId] load', () => {
     expect((await run()).model).toBe('z-ai/glm-5.3-flash');
   });
 
-  it("shows today's spend against the moderator's dollar cap", async () => {
-    expect((await run()).allowance).toEqual({ spentUsd: 0.4, capUsd: 1 });
+  it("shows today's spend against the cap the moderator's roles give them", async () => {
+    expect((await run()).allowance).toEqual({ spentUsd: 0.4, capUsd: 3 });
   });
 });

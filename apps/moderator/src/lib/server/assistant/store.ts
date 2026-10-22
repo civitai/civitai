@@ -249,6 +249,24 @@ export async function finishTurn(
     .execute();
 }
 
+/** A running turn's tokens so far. Only a running row: the outcome `finishTurn` wrote is final. */
+export async function recordTurnTokens(
+  id: number,
+  promptTokens: number,
+  completionTokens: number
+): Promise<void> {
+  await db()
+    .updateTable('assistant_turn')
+    .set({
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    })
+    .where('id', '=', id)
+    .where('status', '=', 'running')
+    .execute();
+}
+
 /**
  * Whether this moderator has a turn running, in any chat. A turn left `running` by a process that died
  * mid-turn would otherwise block them forever; one that has run longer than any turn can is closed out
@@ -272,9 +290,9 @@ export async function hasRunningTurn(moderatorId: number, staleAfterMs: number):
   return !!row;
 }
 
-/** Tokens this moderator's finished turns have spent since midnight UTC. A running turn counts 0 until
- *  it finishes, which is why only one may run at a time (`assistant_turn_one_running_idx`). Summed
- *  from the per-model split, so the cap that refuses a turn and the count the page shows are one sum. */
+/** Tokens this moderator's turns have spent since midnight UTC: the circuit breaker's count. A running
+ *  turn counts what it has recorded so far, which is why only one may run at a time
+ *  (`assistant_turn_one_running_idx`). */
 export async function tokensToday(moderatorId: number): Promise<number> {
   return sumTokens(await tokensTodayByModel(moderatorId));
 }
@@ -286,8 +304,8 @@ const startOfUtcDay = sql<Date>`date_trunc('day', now() at time zone 'utc') at t
 
 /**
  * USD this moderator's turns have cost since midnight UTC: what the daily dollar cap compares against.
- * A turn with no recorded cost (one from before costs were kept, or one that never finished) is charged
- * at `CEILING_PRICE`, so a gap in the record can only make the cap stricter.
+ * A turn with no recorded cost (one from before costs were kept, one still running, or one whose
+ * process died) is charged its recorded tokens at `CEILING_PRICE`.
  */
 export async function usdToday(moderatorId: number): Promise<number> {
   const row = await db()

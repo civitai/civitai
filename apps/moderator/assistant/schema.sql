@@ -82,13 +82,13 @@ CREATE TABLE IF NOT EXISTS assistant_turn (
 ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS reasoning text;
 
 CREATE INDEX IF NOT EXISTS assistant_turn_chat_idx ON assistant_turn (chat_id, id);
--- One answer in flight per MODERATOR. The daily token cap is checked before a turn starts, so
+-- One answer in flight per MODERATOR. The daily caps are checked before a turn starts, so
 -- concurrent turns would each pass it; one at a time bounds the overshoot to one model call. (It also
 -- stops two questions in one chat each replaying a history missing the other.) The second is refused
 -- (23505) rather than run.
 CREATE UNIQUE INDEX IF NOT EXISTS assistant_turn_one_running_idx
   ON assistant_turn (moderator_id) WHERE status = 'running';
--- The daily token cap sums one moderator's turns since midnight; the audit lists newest first.
+-- The daily caps sum one moderator's turns since midnight; the audit lists newest first.
 CREATE INDEX IF NOT EXISTS assistant_turn_moderator_idx
   ON assistant_turn (moderator_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS assistant_turn_created_idx ON assistant_turn (created_at DESC);
@@ -158,8 +158,8 @@ CREATE INDEX IF NOT EXISTS assistant_tool_request_created_idx
 
 -- What each finished turn cost, in USD, at the higher of OpenRouter's live price and the release's list
 -- price for its model (`price_source` says whether a live price was read). The daily dollar cap sums
--- it. Null on turns from before it existed and on turns that never finished; the cap prices those at
--- the most expensive listed model, never at $0.
+-- it. Null on turns from before it existed and on turns that never finished; the cap charges those
+-- their recorded tokens at the most expensive listed model's price.
 ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS cost_usd numeric;
 ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS price_source text;
 

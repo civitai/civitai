@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * to. Either alone would let the audit name a model that never ran, or run one nobody chose.
  */
 
-const { complete, startTurn, finishTurn, listPrices } = vi.hoisted(() => ({
+const { complete, startTurn, finishTurn, listPrices, recordTurnTokens } = vi.hoisted(() => ({
+  recordTurnTokens: vi.fn(),
   complete: vi.fn(),
   startTurn: vi.fn(),
   finishTurn: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('../store', () => ({
   getMaskSalt: vi.fn(async () => 'salt'),
   startTurn,
   finishTurn,
+  recordTurnTokens,
   renameChat: vi.fn(async () => true),
   hasRunningTurn: vi.fn(async () => false),
   tokensToday: vi.fn(async () => 0),
@@ -52,6 +54,7 @@ const ask = (model: string | null, allowance = { spentUsd: 0, capUsd: 1, usedTok
 beforeEach(() => {
   startTurn.mockReset().mockResolvedValue(9);
   finishTurn.mockReset().mockResolvedValue(undefined);
+  recordTurnTokens.mockReset().mockResolvedValue(undefined);
   listPrices.mockReset().mockResolvedValue({});
   complete.mockReset().mockResolvedValue({
     message: { content: 'ok' },
@@ -90,6 +93,28 @@ describe('executeTurn', () => {
     });
     await ask('stepfun/step-5-preview');
     // List is 1 in / 2.7 out: input at list (1), output at live (3).
+    expect(finishTurn).toHaveBeenCalledTimes(1);
     expect(finishTurn).toHaveBeenCalledWith(9, expect.anything(), { usd: 4, source: 'live' });
+  });
+
+  it('stops the turn once it has spent the dollars left, priced at the model’s dearer direction', async () => {
+    // One cent left on Step 5 (dearest direction $2.70/M) is 3,703 tokens; the call spends 5,000.
+    complete.mockResolvedValue({
+      message: {
+        content: null,
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'none', arguments: '{}' } }],
+      },
+      finishReason: 'tool_calls',
+      usage: { prompt: 4_000, completion: 1_000 },
+    });
+    const outcome = await ask('stepfun/step-5-preview', {
+      spentUsd: 0.99,
+      capUsd: 1,
+      usedTokens: 0,
+    });
+    expect(outcome.status).toBe('capped');
+    expect(complete).toHaveBeenCalledTimes(1);
+    // Recorded before the turn ends, so a process that dies here still leaves the spend on the row.
+    expect(recordTurnTokens).toHaveBeenCalledWith(9, 4_000, 1_000);
   });
 });

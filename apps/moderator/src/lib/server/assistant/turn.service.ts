@@ -25,6 +25,7 @@ import {
   hasRunningTurn,
   listPlaybooks,
   listTurns,
+  recordTurnTokens,
   renameChat,
   startTurn,
   tokensToday,
@@ -174,10 +175,14 @@ export async function executeTurn(input: {
     turnBudget: turnTokenBudget(),
     knownRefs: turns.flatMap((t) => t.sources.map((s) => s.ref)),
     complete: (req) => complete({ ...req, model }),
+    onUsage: (prompt, completion) =>
+      recordTurnTokens(turnId, prompt, completion).catch((e) =>
+        console.error('[assistant] could not record a running turn’s tokens', e)
+      ),
     emit: input.emit,
   });
 
-  // Priced again at the end: the live price is re-read at most hourly, and a turn can straddle it.
+  // Priced again at the end: the live price can refresh mid-turn.
   const charged = capPrice(model, await listPrices());
   await finishTurn(turnId, outcome, {
     usd: costUsd(outcome.promptTokens, outcome.completionTokens, charged.price),

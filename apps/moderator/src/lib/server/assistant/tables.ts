@@ -8,7 +8,7 @@ import type {
   TurnToolCall,
 } from '$lib/assistant/types';
 
-/** Postgres `numeric` reads back as a string, so it is never rounded through a float on the way out. */
+/** Postgres `numeric` reads back as a string. */
 type Numeric = ColumnType<string, number | string, number | string>;
 export type SpendCapScope = 'role' | 'user';
 export type PriceSource = 'live' | 'list';

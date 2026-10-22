@@ -10,10 +10,8 @@ import type { z } from 'zod';
 
 /** Rounds in which the model may call tools. One further call, with tools off, forces an answer. */
 export const MAX_ROUNDS = 10;
-/**
- * Tokens one moderator may spend per UTC day, across all chats, whatever their dollar cap allows: a
- * circuit breaker for a price read wrong, not the allowance. The allowance is the dollar cap.
- */
+/** Tokens per moderator per UTC day, across all chats: a circuit breaker for a wrong price. The
+ *  allowance is the dollar cap. */
 export const DAILY_TOKEN_CAP = 10_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
 /** A whole turn; past this the in-flight model call is aborted. */
@@ -92,6 +90,9 @@ export async function runTurn(input: {
     signal?: AbortSignal;
   }) => Promise<Completion>;
   emit: (event: TurnEvent) => void;
+  /** The turn's running token totals after each model call, so a turn that dies mid-way still shows
+   *  what it spent. */
+  onUsage?: (promptTokens: number, completionTokens: number) => Promise<void>;
   now?: () => number;
 }): Promise<TurnOutcome> {
   const now = input.now ?? Date.now;
@@ -162,6 +163,7 @@ export async function runTurn(input: {
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
+      await input.onUsage?.(promptTokens, completionTokens);
       const thought = completion.message.reasoning?.trim();
       if (thought) reasoning.push(thought);
       const calls = last ? [] : completion.message.tool_calls ?? [];

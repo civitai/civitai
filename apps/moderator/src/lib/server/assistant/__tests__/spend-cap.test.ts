@@ -18,10 +18,12 @@ describe('resolveDailyCap', () => {
     expect(resolveDailyCap([role(HIGH, 5), own(7, 0)], mod).usd).toBe(0);
   });
 
-  it('takes the highest cap among the roles held, and none from roles not held', () => {
-    expect(
-      resolveDailyCap([role(MEDIUM, 3), role(HIGH, 2), role('moderator:other', 40)], mod)
-    ).toEqual({ usd: 3, from: 'role' });
+  it('takes the highest cap among the roles held, in any order, and none from roles not held', () => {
+    for (const caps of [
+      [role(HIGH, 2), role(MEDIUM, 3), role('moderator:other', 40)],
+      [role(MEDIUM, 3), role(HIGH, 2), role('moderator:other', 40)],
+    ])
+      expect(resolveDailyCap(caps, mod)).toEqual({ usd: 3, from: 'role' });
   });
 
   it("ignores another moderator's cap and falls back to $1", () => {
