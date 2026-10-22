@@ -325,9 +325,16 @@ type LeaderboardResult = {
   metrics: Record<string, number>;
   position: number;
 };
+/** Board SQL writes this where it needs the metric-excluded user ids; that list is in ClickHouse, not Postgres. */
+export const METRIC_EXCLUDED_USERS_TOKEN = '{{metricExcludedUserIds}}';
+
 async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
+  const query = ctx.query.replaceAll(
+    METRIC_EXCLUDED_USERS_TOKEN,
+    intArrayLiteral(ctx.excludedUserIds)
+  );
   const leaderboardScoreQuery = await pgDbReadLong.cancellableQuery<LeaderboardResult>(`
-    ${ctx.includesCTE ? ctx.query : `WITH scores AS (${ctx.query})`}
+    ${ctx.includesCTE ? query : `WITH scores AS (${query})`}
     SELECT
       s."userId",
       ROUND(s.score)::int as score,

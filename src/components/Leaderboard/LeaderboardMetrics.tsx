@@ -16,12 +16,15 @@ import {
   IconBox,
   IconBrush,
   IconBulb,
+  IconCalendarWeek,
   IconCheck,
   IconChecks,
   IconDownload,
   IconEye,
   IconFileStar,
+  IconFileText,
   IconHeart,
+  IconHeartHandshake,
   IconHexagonFilled,
   IconMedal,
   IconMoodSmile,
@@ -230,6 +233,22 @@ const metricTypes: Record<
   wins: () => ({
     tooltip: 'Wins',
     icon: <IconMedal {...iconProps} />,
+  }),
+  articles: () => ({
+    tooltip: 'Articles counted',
+    icon: <IconFileText {...iconProps} />,
+  }),
+  readers: () => ({
+    tooltip: 'Readers',
+    icon: <IconUsers {...iconProps} />,
+  }),
+  loyalReaders: () => ({
+    tooltip: 'Readers who came back for 3+ chapters',
+    icon: <IconHeartHandshake {...iconProps} />,
+  }),
+  activeWeeks: () => ({
+    tooltip: 'Weeks with a new chapter, of the last 12',
+    icon: <IconCalendarWeek {...iconProps} />,
   }),
 };
 
