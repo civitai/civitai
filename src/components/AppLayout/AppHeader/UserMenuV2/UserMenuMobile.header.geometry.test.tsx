@@ -11,7 +11,7 @@ import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 
 /**
  * The account menu's header row on a 390px phone: avatar and name, the Pro chip, and the Buzz amount
- * with Buy Buzz, all on one line. Real cascade and Tailwind; the session, the balance and the avatar
+ * with Buy Buzz, and the profile pin, all on one line. Real cascade and Tailwind; the session, the balance and the avatar
  * are stubbed, so this pins the row's own layout, not the real avatar's sizing.
  */
 const mocks = vi.hoisted(() => ({ username: 'tester' }));
@@ -85,7 +85,7 @@ async function renderHeader() {
     <ContainerProvider containerName="main">
       <UserMenuCtx.Provider value={{ handleClose: () => undefined }}>
         <div id="panel" className="flex flex-col p-1" style={{ width: PHONE_VIEWPORT.width }}>
-          <MobileHeaderRows />
+          <MobileHeaderRows pinned={false} onTogglePin={() => undefined} />
         </div>
       </UserMenuCtx.Provider>
     </ContainerProvider>,
@@ -95,35 +95,42 @@ async function renderHeader() {
   const profile = row.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!;
   const buzz = row.querySelector('a[href="/user/buzz-dashboard"]')!;
   const chip = row.querySelector('a[href*="pricing"], a[href="/purchase/buzz"]')!;
-  return { row, profile, buzz, chip };
+  const pin = row.querySelector('[aria-label="Pin Your Profile"]')!;
+  return { row, profile, buzz, chip, pin };
 }
 
 describe('mobile menu header row', () => {
   test.each([
     ['a short name', 'tester'],
     ['the longest name allowed (25 characters)', 'abcdefghijklmnopqrstuvwxy'],
-  ])('keeps avatar, Pro chip, Buzz and Buy Buzz on one line for %s', async (_label, username) => {
-    mocks.username = username;
-    const { row, profile, buzz, chip } = await renderHeader();
+  ])(
+    'keeps avatar, Pro chip, Buzz, Buy Buzz and the pin on one line for %s',
+    async (_label, username) => {
+      mocks.username = username;
+      const { row, profile, buzz, chip, pin } = await renderHeader();
 
-    const parts = [profile, chip, buzz].map(box);
-    const centres = parts.map((b) => b.top + b.height / 2);
-    // One line: every part is centred on the same horizontal axis, and the row is one row tall.
-    expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(1);
-    expect(box(row).height).toBeLessThanOrEqual(56);
-    // The name keeps room: the avatar and part of the name, not a sliver.
-    expect(parts[0].width).toBeGreaterThanOrEqual(100);
-    // The chip keeps its full width and its label is not cut off.
-    expect(chip.scrollWidth).toBeLessThanOrEqual(chip.clientWidth);
-    // Left to right: name, Pro chip, Buzz, with nothing past the phone's edge.
-    expect(parts[0].right).toBeLessThanOrEqual(parts[1].left);
-    expect(parts[1].right).toBeLessThanOrEqual(parts[2].left);
-    expect(parts[2].right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
-    // Buy Buzz stays on screen and is right-aligned.
-    const buyBuzz = [...buzz.querySelectorAll('div')].find((d) => d.textContent === 'Buy Buzz')!;
-    expect(box(buyBuzz).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
-    expect(PHONE_VIEWPORT.width - box(buyBuzz).right).toBeLessThan(24);
-  });
+      const parts = [profile, chip, buzz, pin].map(box);
+      const centres = parts.map((b) => b.top + b.height / 2);
+      // One line: every part is centred on the same horizontal axis, and the row is one row tall.
+      expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(1);
+      expect(box(row).height).toBeLessThanOrEqual(56);
+      // The name keeps room: the avatar and part of the name, not a sliver.
+      expect(parts[0].width).toBeGreaterThanOrEqual(100);
+      // The chip keeps its full width and its label is not cut off.
+      expect(chip.scrollWidth).toBeLessThanOrEqual(chip.clientWidth);
+      // Left to right: name, Pro chip, Buzz, with nothing past the phone's edge.
+      expect(parts[0].right).toBeLessThanOrEqual(parts[1].left);
+      expect(parts[1].right).toBeLessThanOrEqual(parts[2].left);
+      expect(parts[2].right).toBeLessThanOrEqual(parts[3].left);
+      // The profile pin keeps its full touch target, on screen at the right edge.
+      expect(parts[3].width).toBeGreaterThanOrEqual(30);
+      expect(parts[3].right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+      // Buy Buzz stays on screen and sits just left of the pin.
+      const buyBuzz = [...buzz.querySelectorAll('div')].find((d) => d.textContent === 'Buy Buzz')!;
+      expect(box(buyBuzz).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+      expect(box(buyBuzz).right).toBeLessThanOrEqual(parts[3].left);
+    }
+  );
 });
 
 describe('mobile menu sheet', () => {
