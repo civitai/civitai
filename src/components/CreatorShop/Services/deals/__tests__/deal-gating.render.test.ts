@@ -47,6 +47,9 @@ vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'civitai.com', blue: 'civitai.red', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ creatorServices: true }),
+}));
 // Stands in for the button so the test can read which offering it would report.
 vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
   ReportServiceButton: ({ offeringId }: { offeringId: number }) =>

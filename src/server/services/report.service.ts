@@ -40,6 +40,7 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
@@ -612,6 +613,11 @@ export const createReport = async ({
           blockedFor: BlockedReason.CSAM,
         },
       });
+      // Right after the block, not after the transaction: the block above goes through dbWrite, so
+      // it autocommits and stands even if a search-index queue below throws, and a refresh placed
+      // after the transaction would then never run. The refresh reads the primary, which already
+      // has the Blocked row. Never throws.
+      await refreshProfilePicturesForImagesLazy([id]);
       // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
       await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
       // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): see above (CSAM-block path).
@@ -645,17 +651,33 @@ export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findMany({ where: { id: { in: ids } }, select });
 };
 
+/** On a CSAM path, the reported account and an image's owner are not rewarded for its reports. */
+export function csamReportRewardExclusions(
+  reportedUserId: number | undefined,
+  imageReports: { reportId: number; image: { userId: number } }[]
+) {
+  const owners = new Map(imageReports.map((report) => [report.reportId, report.image.userId]));
+  return (reportId: number) =>
+    [reportedUserId, owners.get(reportId)].filter((id): id is number => id !== undefined);
+}
+
 export async function bulkSetReportStatus({
   ids,
   status,
   userId,
   ip,
+  noRewardFor = () => [],
+  rewardRemovedReporters = true,
 }: {
   ids: number[];
   status: ReportStatus;
   userId: number;
   ip?: string;
+  /** Reporters of a report who get no reward for it; the report is still actioned. */
+  noRewardFor?: (reportId: number) => readonly number[];
+  rewardRemovedReporters?: boolean;
 }) {
+  if (!ids.length) return;
   const statusSetAt = new Date();
 
   const reports = await dbRead.report.findMany({
@@ -685,10 +707,27 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
-    const prepReports = reports.map((report) => ({
-      id: report.id,
-      userIds: [report.userId, ...report.alsoReportedBy],
-    }));
+    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+    // The primary: a ban from moments ago may not have reached a replica.
+    const removed = rewardRemovedReporters
+      ? []
+      : await dbWrite.user.findMany({
+          where: {
+            id: { in: reporterIds },
+            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+          },
+          select: { id: true },
+        });
+    const removedIds = new Set(removed.map((user) => user.id));
+    const prepReports = reports.map((report) => {
+      const excluded = noRewardFor(report.id);
+      return {
+        id: report.id,
+        userIds: [report.userId, ...report.alsoReportedBy].filter(
+          (id) => !removedIds.has(id) && !excluded.includes(id)
+        ),
+      };
+    });
 
     await Promise.allSettled(
       prepReports.flatMap((report) =>

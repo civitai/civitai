@@ -133,7 +133,11 @@ describe('upsertComment — block enforcement on create', () => {
 
   it('allows a non-blocked author to create', async () => {
     await expect(upsertComment({ ...baseCreate })).resolves.toMatchObject({ id: 999 });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 100,
+      confirmOnPrimary: true,
+    });
     expect(db.tx.commentV2.create).toHaveBeenCalledTimes(1);
   });
 
@@ -192,8 +196,16 @@ describe('upsertComment — block enforcement on a reply create', () => {
   it('checks the parent author and the content owner the stored chain resolves', async () => {
     db.commentV2.findUnique.mockResolvedValueOnce({ userId: 55, threadId: 1 });
     await upsertComment(reply);
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 55 });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 55,
+      confirmOnPrimary: true,
+    });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 100,
+      confirmOnPrimary: true,
+    });
   });
 
   // The thread-lock walk refuses an unresolved chain too, with the same message; this pins that the

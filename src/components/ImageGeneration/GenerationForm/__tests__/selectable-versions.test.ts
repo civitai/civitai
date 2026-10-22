@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { selectableVersions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  needsVersionFilter,
+  selectableVersions,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 const version = (
   id: number,
@@ -41,6 +44,20 @@ describe('selectableVersions', () => {
     expect(
       pick([version(1), version(2, { turbo: true }), version(3)], { turboOnly: true })
     ).toEqual([2]);
+  });
+
+  it('drops turbo versions where another control owns them', () => {
+    expect(
+      pick([version(1), version(2, { turbo: true }), version(3)], { excludeTurbo: true })
+    ).toEqual([1, 3]);
+  });
+
+  // The hit list skips the per-version pass when no filter asks for it, so a filter missing
+  // from this predicate is silently never applied.
+  it('the exclusion alone is reason to re-check versions', () => {
+    const none = { resources: [], loadedOnly: false, turboOnly: false, excludeTurbo: false };
+    expect(needsVersionFilter(none)).toBe(false);
+    expect(needsVersionFilter({ ...none, excludeTurbo: true })).toBe(true);
   });
 
   // Versions arrive in the model's own order, so the first survivor is what the card selects.

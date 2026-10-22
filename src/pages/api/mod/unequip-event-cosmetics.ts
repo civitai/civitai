@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
+import { refreshUserCosmeticCache } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { events } from '~/server/events';
@@ -22,10 +24,18 @@ export default ModEndpoint(
       const cosmeticId = await eventDef.getTeamCosmetic(team);
       if (!cosmeticId) continue;
 
+      const wearers = await dbWrite.userCosmetic
+        .findMany({
+          where: { cosmeticId, equippedAt: { not: null }, equippedToId: null },
+          select: { userId: true },
+        })
+        .catch(() => []);
       await dbWrite.userCosmetic.updateMany({
         where: { cosmeticId, equippedAt: { not: null } },
         data: { equippedAt: null },
       });
+      await refreshUserCosmeticCache(wearers.map((x) => x.userId));
+      await queueWornCosmeticsUpdate(wearers.map((x) => x.userId));
     }
 
     return res.status(200).json({ ok: true });

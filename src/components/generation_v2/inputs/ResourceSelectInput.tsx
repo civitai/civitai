@@ -18,6 +18,8 @@ import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { clampStrength } from '~/shared/constants/generation.constants';
+import { asResourceValue, defaultStrength } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
@@ -71,6 +73,8 @@ export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'child
   allowRemove?: boolean;
   /** Whether to allow swapping the selected resource (set to false to lock the resource) */
   allowSwap?: boolean;
+  /** No border or radius on the card: it fills a container that draws its own. */
+  flush?: boolean;
   /** Source context for resource selection */
   selectSource?: ResourceSelectSource;
   /** Whether the input is disabled */
@@ -101,6 +105,7 @@ interface ResourceCardProps {
   disabled?: boolean;
   allowSwap?: boolean;
   options?: ResourceSelectOptions;
+  flush?: boolean;
 }
 
 function ResourceCard({
@@ -113,6 +118,7 @@ function ResourceCard({
   disabled,
   allowSwap = true,
   options,
+  flush,
 }: ResourceCardProps) {
   const status = getResourceStatus(resource, options);
   const statusClasses = getStatusClasses(status);
@@ -121,7 +127,7 @@ function ResourceCard({
   return (
     <div
       className={clsx(
-        'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
+        !flush && 'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
         'bg-gray-0 dark:bg-dark-6',
         'p-2',
         statusClasses.border,
@@ -130,7 +136,7 @@ function ResourceCard({
     >
       <ResourceItemContent
         resource={resource}
-        strengthValue={value.strength ?? resource.strength}
+        strengthValue={value.strength ?? defaultStrength(resource)}
         onStrengthChange={
           // Don't allow strength changes for disabled resources
           onChange && !resourceIsDisabled
@@ -148,7 +154,14 @@ function ResourceCard({
                 color="blue"
                 radius="xl"
                 size="compact-xs"
-                onClick={() => onChange({ ...value, ...resource.substitute! })}
+                onClick={() => {
+                  const substitute = resource.substitute!;
+                  onChange({
+                    ...value,
+                    ...substitute,
+                    strength: clampStrength(value.strength, substitute.settings.strength),
+                  });
+                }}
                 leftSection={<IconRotate size={14} />}
               >
                 Use Substitute
@@ -208,6 +221,7 @@ export function ResourceSelectInput({
   options = {},
   allowRemove = true,
   allowSwap = true,
+  flush,
   selectSource = 'generation',
   disabled,
   resourceType,
@@ -245,7 +259,7 @@ export function ResourceSelectInput({
   const handleVersionChange = (stringId: string) => {
     const numericId = Number(stringId);
     const versionResourceData = getResourceData(numericId);
-    onChange?.(versionResourceData);
+    onChange?.(versionResourceData && asResourceValue(versionResourceData));
   };
 
   const handleOpenResourceSearch = () => {
@@ -292,10 +306,7 @@ export function ResourceSelectInput({
 
   // Render selected resource
   // Use resourceData as the canonical value, with strength from form state
-  const displayValue: ResourceSelectValue = {
-    ...resourceData,
-    strength: value.strength ?? resourceData.strength,
-  };
+  const displayValue: ResourceSelectValue = asResourceValue(resourceData, value.strength);
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
@@ -309,6 +320,7 @@ export function ResourceSelectInput({
         disabled={disabled}
         allowSwap={allowSwap}
         options={options}
+        flush={flush}
       />
       {/* Version selector for models with multiple versions */}
       {showVersionSelector && versions && (

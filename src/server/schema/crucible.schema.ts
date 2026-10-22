@@ -9,6 +9,9 @@ import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_EVENT_TAG_MAX_LENGTH,
+  CRUCIBLE_EVENT_TAG_PATTERN,
+  CRUCIBLE_MAX_EVENT_TAGS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -30,6 +33,7 @@ import {
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
+  normalizeCrucibleEventTag,
 } from '~/shared/constants/crucible.constants';
 
 // Re-export CrucibleSort for convenience
@@ -344,6 +348,26 @@ export const getJudgingPairSchema = z.object({
     .optional(),
   browsingLevel: z.number().int().min(0).optional(),
   judgingSessionId: judgingSessionIdSchema,
+});
+
+export const crucibleEventTagSchema = z
+  .string()
+  .transform(normalizeCrucibleEventTag)
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(CRUCIBLE_EVENT_TAG_MAX_LENGTH)
+      .regex(CRUCIBLE_EVENT_TAG_PATTERN, 'Use letters, numbers and dashes')
+  );
+
+export type SetCrucibleEventTagsSchema = z.infer<typeof setCrucibleEventTagsSchema>;
+export const setCrucibleEventTagsSchema = z.object({
+  id: z.number(),
+  eventTags: z
+    .array(crucibleEventTagSchema)
+    .max(CRUCIBLE_MAX_EVENT_TAGS)
+    .transform((tags) => [...new Set(tags)]),
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted

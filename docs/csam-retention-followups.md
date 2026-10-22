@@ -31,8 +31,22 @@ and the moderator dashboard column that reads it (`src/pages/moderator/csam/inde
 
 ## 2. Alerting on a stranded CSAM report
 
-The send/archive pipeline has **no retry limit, no backoff, and no dead-letter**. Every failure
-leaves `reportSentAt` NULL and retries hourly forever:
+The send/archive pipeline has **no report-level retry limit, backoff or dead-letter**. A failure
+leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the exceptions below.
+
+- Send checks every image file before it opens a CyberTip, so a held report opens none; a file that
+  has failed repeatedly is read in full for that check, not just probed. A file that is gone does not
+  hold the report: it is recorded as `missing` with its reason and the rest is sent. A file that fails
+  this run's check holds the report until it has failed repeatedly and the report is a day old; it is
+  then sent without it. A report with no file that can be sent is never sent. Thresholds are the
+  `CSAM_SEND_*` constants in `csam.service-new.ts`.
+- Archive reads stored originals (`csam-original-image.ts`, import-guarded by
+  `no-csam-original-image-import`). A file stored as a key that fails to read holds the archive,
+  which is retried with no limit; a full-URL file that stays unreadable is recorded `missing` in the
+  manifest after a bounded time. The images archive bounds the source bytes it holds at once
+  (`MAX_ARCHIVE_SOURCE_BYTES`).
+
+Other causes of a stranded report (these also retry hourly with no limit):
 
 - `processCsamReport` returns silently when NCMEC responds with a non-zero code — no log, no state
   change.
@@ -43,13 +57,20 @@ leaves `reportSentAt` NULL and retries hourly forever:
 Historical latency (n=458): median 0.58h to send, but max 645h (27 days); median 1.3h to archive,
 max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
 
-- [ ] Alert when any `CsamReport` is unsent for >24h or unarchived for >7d.
-- [ ] Consider an attempt counter / dead-letter so a permanently-failing report is visible rather
-      than silently retried forever.
+- [x] Log unsent reports. After each run the send job logs `send-blocked` for every report it fetched
+      that is still unsent past `CSAM_SEND_BLOCKED_AFTER_HOURS`, whatever held it. A report with no
+      readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
+      `CSAM_SEND_DECISION_AFTER_HOURS`.
+- [ ] Route those lines to an alert, and alert when a report is unarchived for >7d (the
+      `archive-data` error line carries `reportId` and `hoursSinceSent`).
+- [ ] Consider a report-level dead-letter so a permanently-failing report is visible rather than
+      silently retried forever. Failed file reads are already counted per file in
+      `details.readFailures`, and a stale full-URL archive file is recorded `missing`; this is for
+      the other causes (a non-zero NCMEC status, missing credentials).
 
-This matters more now: the CSAM hold added in the retention work holds a user's blocked media while
-they have an open report, bounded by `CSAM_HOLD_MAX_DAYS` (30). A stranded report means evidence is
-purged at the ceiling with only an Axiom alert to show for it.
+In `remove-blocked-images`, the legal hold (`src/server/utils/legal-hold.ts`) keeps a user's blocked
+media while any report naming them is unsent, unarchived, or sent within the last year, with no
+ceiling. A stranded report therefore holds its owner's media rather than losing it.
 
 ## 3. `archivedAt` is doing double duty
 
@@ -125,9 +146,9 @@ WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
       rate. Expect sustained S3/DB delete load and heavy use of the 20-minute job lock. This is a
       backlog being paid down — the new clock is strictly more conservative than the old one — but
       it will look like a spike.
-- [ ] **The CSAM hold is inert in prod** (zero users currently have an open report), so it will not
-      be exercised by real traffic on deploy. Unit tests are its only coverage. Watch the first
-      real report through the full send → archive → release cycle.
+- [ ] **The legal hold.** Each run logs the held images it would otherwise delete as `Would skip`
+      (reason `legal-hold`). Check those lines after deploy, and watch the first real report
+      through the full send → archive → release cycle.
 - [ ] **External cron config.** `remove-csam-content` is still not exported in `csamJobs`, so if the
       out-of-repo scheduler has an entry for it, that entry 404s. Harmless (the job does nothing),
       but it will show as a failing cron.

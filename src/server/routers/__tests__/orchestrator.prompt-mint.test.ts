@@ -184,7 +184,12 @@ describe('orchestrator.mintPromptProvenance', () => {
     vi.mocked(amIBlockedByUser).mockResolvedValue(true);
 
     expect(await mint()).toEqual({ ok: false, code: 'NOT_FOUND' });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    // The mint is a write, so the block check confirms a cache "not blocked" on the primary.
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   it('refuses an image that does not exist', async () => {

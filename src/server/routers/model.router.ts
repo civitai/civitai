@@ -443,7 +443,7 @@ export const modelRouter = router({
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
-  getModelsByHash: publicProcedure
+  getModelsByHash: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(modelByHashesInput)
     .mutation(getModelByHashesHandler),

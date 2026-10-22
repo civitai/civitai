@@ -54,6 +54,7 @@ export const happyHorseVersionIds = {
 
 export const flux3VideoVersionIds = {
   'v3.0': 3204701,
+  'v3.0-max': 3420850,
 } as const;
 
 export const grokVersionIds = {

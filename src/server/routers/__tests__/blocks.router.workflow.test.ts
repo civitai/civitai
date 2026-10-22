@@ -12594,7 +12594,7 @@ describe('blocks.estimateWorkflowBatch', () => {
           // A body the single estimate's schema ACCEPTS — so the refusal below is the
           // batch's own, not a parse failure that would have happened anyway.
           kind: 'training',
-          datasetId: `tds_${'a'.repeat(32)}`,
+          items: [{ air: 'K1.jpeg', caption: 'a' }],
           engine: 'ai-toolkit',
           model: 'sdxl',
           params: {

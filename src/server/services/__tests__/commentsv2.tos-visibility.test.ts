@@ -69,6 +69,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   threadFindUnique.mockResolvedValue({ id: 10, locked: false });
   pinnedFindMany.mockResolvedValue([]);
+  // `clearAllMocks` keeps implementations, so a row one case hands `findFirst` would otherwise leak
+  // into every later case as a target comment, and a bare `{ id }` has no `user`, which the real
+  // select always returns.
+  dbMock.dbRead.commentV2.findFirst.mockResolvedValue(null);
   commentCount.mockResolvedValue(0);
   queryRaw.mockResolvedValue([]);
 });

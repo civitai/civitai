@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -34,6 +34,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
   })
 );
 const killSwitch = vi.hoisted(() => ({ on: true }));
+const mockRefreshWorn = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
 
 // The engine's kill switch is on unless a test turns it off.
 vi.mock('~/server/events/points/enabled', () => ({
@@ -48,6 +49,7 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { refresh: vi.fn() },
+  refreshUserCosmeticCache: (ids: number[]) => mockRefreshWorn(ids),
   cosmeticEntityCaches: new Proxy({}, { get: () => ({ refresh: vi.fn() }) }),
   eventDecorationEntityCaches: new Proxy(
     {},
@@ -304,17 +306,45 @@ describe('end-of-event cleanup', () => {
     // Proves the assertions above can see a cleanup: the same observable fires when it should.
     // Also pins the for..in fix: the old loop passed indices "0".."3" to getCosmetic and
     // collected no ids.
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation((async (args: {
+      where?: { equippedToId?: unknown };
+    }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
     await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledWith({
       where: { cosmeticId: { in: [11, 12, 13, 14] } },
       data: { equippedAt: null },
     });
+    // The users wearing one are read before the unequip, then their worn-cosmetic entries refreshed.
+    expect(dbMock.dbWrite.userCosmetic.findMany).toHaveBeenCalledWith({
+      where: {
+        cosmeticId: { in: [11, 12, 13, 14] },
+        equippedAt: { not: null },
+        equippedToId: null,
+      },
+      select: { userId: true },
+    });
+    expect(mockRefreshWorn).toHaveBeenCalledWith([501, 502]);
     // An unscored event's cleanup still flags its own winner: Yellow, first of four tied at zero.
     const flagged = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
     expect(flagged.map(([, id]) => id)).toEqual([11]);
+  });
+
+  // Search results and user pickers render the cosmetics on each user's search document, which the
+  // sync re-pulls only for queued ids: everyone the cleanup unequipped must be queued, and no one else.
+  it('queues the users the cleanup unequipped for a search-index update', async () => {
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation((async (args: {
+      where?: { equippedToId?: unknown };
+    }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([501, 502]);
   });
 
   const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);

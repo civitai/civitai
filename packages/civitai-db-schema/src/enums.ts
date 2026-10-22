@@ -545,6 +545,24 @@ export const ApiKeyType = {
 
 export type ApiKeyType = (typeof ApiKeyType)[keyof typeof ApiKeyType];
 
+export const CommentEntityType = {
+  model: 'model',
+  image: 'image',
+  post: 'post',
+  article: 'article',
+  review: 'review',
+  bounty: 'bounty',
+  bountyEntry: 'bountyEntry',
+  comicChapter: 'comicChapter',
+  challenge: 'challenge',
+  model3d: 'model3d',
+  model3dReview: 'model3dReview',
+  appListing: 'appListing',
+  crucible: 'crucible',
+} as const;
+
+export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
+
 export const TagEngagementType = {
   Hide: 'Hide',
   Follow: 'Follow',
@@ -908,6 +926,7 @@ export const EntityType = {
   Collection: 'Collection',
   Comment: 'Comment',
   CommentV2: 'CommentV2',
+  CommentV3: 'CommentV3',
   User: 'User',
   UserProfile: 'UserProfile',
   ResourceReview: 'ResourceReview',
@@ -929,6 +948,7 @@ export const JobQueueType = {
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
+  CdnAccessSync: 'CdnAccessSync',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

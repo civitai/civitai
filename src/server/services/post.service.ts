@@ -32,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
@@ -721,14 +722,34 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
-  const ownModelId = await getOwnModelId({
-    modelVersionId: post.modelVersionId,
-    postOwnerId: post.user.id,
-  });
+  const model = await getPostModel({ modelVersionId: post.modelVersionId });
 
-  // Unpublish context is already attached by getPostDetail above.
-  return { ...post, collectionTagId, images, collectionItemExists, ownModelId };
+  // `parentModelId` from getPostDetail is only resolved for an unpublished post; the editor's
+  // "View Model" link needs it whatever the post's state.
+  return {
+    ...post,
+    parentModelId: model?.id ?? null,
+    collectionTagId,
+    images,
+    collectionItemExists,
+    ownModelId: model?.userId === post.user.id ? model.id : null,
+  };
 };
+
+async function getPostModel({
+  modelVersionId,
+  db = dbRead,
+}: {
+  modelVersionId: number | null;
+  db?: typeof dbRead | typeof dbWrite;
+}) {
+  if (!modelVersionId) return null;
+  const version = await db.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { model: { select: { id: true, userId: true } } },
+  });
+  return version?.model ?? null;
+}
 
 /**
  * The model a post belongs to, when the post's owner also owns the model: the editor's event card
@@ -737,18 +758,14 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
 export async function getOwnModelId({
   modelVersionId,
   postOwnerId,
-  db = dbRead,
+  db,
 }: {
   modelVersionId: number | null;
   postOwnerId: number;
   db?: typeof dbRead | typeof dbWrite;
 }) {
-  if (!modelVersionId) return null;
-  const version = await db.modelVersion.findUnique({
-    where: { id: modelVersionId },
-    select: { model: { select: { id: true, userId: true } } },
-  });
-  return version?.model.userId === postOwnerId ? version.model.id : null;
+  const model = await getPostModel({ modelVersionId, db });
+  return model?.userId === postOwnerId ? model.id : null;
 }
 
 export type PostUnpublishContext = {
@@ -999,7 +1016,7 @@ export const updatePost = async ({
             THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
         RETURNING "publishedAt"
@@ -1228,6 +1245,7 @@ export const getPostTags = async ({
 
 export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
+  await throwOnBlockedUserContent(await newTagNames([name]), { surface: 'post' });
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
       where: { name },

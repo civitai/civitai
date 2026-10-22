@@ -3,6 +3,9 @@ export type TextScanFlagView = {
   workflowId?: string;
   reason?: string;
   names?: string[];
+  textHash?: string;
+  /** TextScanPrompt ids the scan ran with (`base` and one per label). */
+  promptIds?: unknown;
   appealGranted?: unknown;
 };
 
@@ -20,6 +23,7 @@ export type RedetectionView = {
   reason?: string;
   names?: string[];
   textHash: string;
+  promptIds?: unknown;
   model?: string | null;
 };
 
@@ -123,18 +127,8 @@ export const detectionKind = (marker: { kind?: DetectionKind }): DetectionKind =
   marker.kind === 'first' ? 'first' : 'redetected';
 
 const DETECTION_COPY = {
-  first: {
-    badge: 'First detection',
-    explanation:
-      "No moderator has cleared this text. The scan held it for review instead of flagging, and the owner wasn't told.",
-    showsPriorClear: false,
-  },
-  redetected: {
-    badge: 'Re-detected',
-    explanation:
-      "Found on text edited after it was cleared. The scan held this instead of flagging; the owner wasn't told.",
-    showsPriorClear: true,
-  },
+  first: { provenance: 'first detection', showsPriorClear: false },
+  redetected: { provenance: 're-detection after a clear', showsPriorClear: true },
 } as const;
 
 /** The wording that depends on whether a human ever cleared this label. */

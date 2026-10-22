@@ -2,7 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
-import { getHiddenModelIds } from '~/server/services/model-visibility.service';
+import {
+  getHiddenModelVersionIds,
+  isPrivateModelVersion,
+} from '~/server/services/model-visibility.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
@@ -32,8 +35,10 @@ export default PublicEndpoint(
           modelVersionId: true,
           modelVersion: {
             select: {
+              id: true,
               modelId: true,
-              model: { select: { poi: true } },
+              availability: true,
+              model: { select: { poi: true, availability: true, userId: true } },
             },
           },
           hashes: {
@@ -48,20 +53,20 @@ export default PublicEndpoint(
       })) ?? [];
 
     // Versions the caller may not see are left out, as if their hashes had not matched.
-    const flaggedModelIds = matched
-      .filter((entry) => entry.modelVersion.model.poi)
-      .map((entry) => entry.modelVersion.modelId);
-    const hidden = flaggedModelIds.length
-      ? await getHiddenModelIds(flaggedModelIds, (await getServerAuthSession({ req, res }))?.user)
-      : new Set<number>();
-    const ids = matched
-      .filter((entry) => !hidden.has(entry.modelVersion.modelId))
-      .map((entry) => ({
-        modelVersionId: entry.modelVersionId,
-        modelId: entry.modelVersion.modelId,
-        hash: entry.hashes[0].hash,
-      }));
+    const hidden = await getHiddenModelVersionIds(
+      matched.map((entry) => entry.modelVersion),
+      async () => (await getServerAuthSession({ req, res }))?.user
+    );
+    const visible = matched.filter((entry) => !hidden.has(entry.modelVersionId));
+    const ids = visible.map((entry) => ({
+      modelVersionId: entry.modelVersionId,
+      modelId: entry.modelVersion.modelId,
+      hash: entry.hashes[0].hash,
+    }));
 
+    // Only its owner or a moderator is still holding a Private version here.
+    if (visible.some((entry) => isPrivateModelVersion(entry.modelVersion)))
+      res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(ids);
   },
   ['POST']

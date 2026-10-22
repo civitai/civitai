@@ -45,6 +45,18 @@ export type ModActivityCursor = { at: string; id: number };
 /** One filter option: an `activityGroup` key on one entity type, counted over the whole history. */
 export type ModActivityCount = { activity: string; entityType: string; count: number };
 
+/** A purge whose answer was lost: sent, and it may or may not have run. Never a confirmed purge. */
+export const PURGE_UNCONFIRMED_ACTIVITY = 'purgeAllContentUnconfirmed';
+
+/** Activities whose recorded name, read on its own, would claim more than happened. */
+const ACTIVITY_LABELS: Record<string, string> = {
+  [PURGE_UNCONFIRMED_ACTIVITY]: 'Purge sent, not confirmed',
+};
+
 /** Camel-cased enum values read as identifiers in a list a moderator scans. */
 export const activityLabel = (activity: string) =>
+  ACTIVITY_LABELS[activity] ??
   activity.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+
+/** The recorded name, except where that name alone would mislead. */
+export const activityBadge = (activity: string) => ACTIVITY_LABELS[activity] ?? activity;

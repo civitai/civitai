@@ -13,6 +13,7 @@ import {
   trackImageRestore,
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
@@ -22,6 +23,19 @@ import { holdRemovals, type HeldRemoval } from './removal-hold';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
+
+/**
+ * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
+ * so this un-block's `review` activity would read as a takedown of the next block.
+ */
+async function dropBlockedImageDeleteQueue(imageId: number) {
+  await dbWrite
+    .deleteFrom('JobQueue')
+    .where('type', '=', 'BlockedImageDelete')
+    .where('entityType', '=', 'Image')
+    .where('entityId', '=', imageId)
+    .execute();
+}
 
 /**
  * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
@@ -40,6 +54,7 @@ const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
+  await bustProfilePictures({ imageIds: [imageId] });
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -117,6 +132,7 @@ export async function acceptImage({
     throw new FlagOnlyRemovedError(imageId);
   }
 
+  await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
   const reviewTags = await dbRead
@@ -254,6 +270,7 @@ export async function blockImage({
   if (!numUpdatedRows) return {};
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
+  await bustProfilePictures({ imageIds: [imageId] });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
@@ -491,7 +508,10 @@ export async function resolveImageAppeal({
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .executeTakeFirst();
     restored = numUpdatedRows > 0n;
-    if (restored) await resetBlockedNsfwLevel(imageId);
+    if (restored) {
+      await dropBlockedImageDeleteQueue(imageId);
+      await resetBlockedNsfwLevel(imageId);
+    }
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });

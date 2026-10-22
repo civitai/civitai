@@ -28,7 +28,7 @@ import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
 import { blankKeys, blankedKeyNames } from './blank-keys.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
+import { DEFAULT_MAX_WORKERS, DEFAULT_RUN_TIMEOUT_MS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -97,6 +97,7 @@ function loadSkillConfig() {
     testConcurrency: 1,
     typecheckConcurrency: 1,
     testMaxWorkers: DEFAULT_MAX_WORKERS,
+    testRunTimeoutMs: DEFAULT_RUN_TIMEOUT_MS,
     testCacheMode: 'off',
     prodGroups: [],
   };
@@ -207,6 +208,14 @@ function loadSkillConfig() {
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
           else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1 or 'none')`);
+          break;
+        }
+        case 'TEST_RUN_TIMEOUT_MIN': {
+          // Minutes. Same degrade-don't-throw rule: the queue is built at module scope.
+          if (!value) break;
+          const parsed = /^\d+$/.test(value) ? Number(value) : NaN;
+          if (parsed >= 1) config.testRunTimeoutMs = parsed * 60 * 1000;
+          else console.error(`Ignoring TEST_RUN_TIMEOUT_MIN=${value} (want whole minutes >= 1)`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':
@@ -2110,6 +2119,7 @@ const testQueue = new TestQueue({
     typecheck: skillConfig.typecheckConcurrency,
   },
   maxWorkers: skillConfig.testMaxWorkers,
+  runTimeoutMs: skillConfig.testRunTimeoutMs,
   cacheMode: skillConfig.testCacheMode,
 });
 
@@ -2739,6 +2749,7 @@ async function main() {
                 }
               }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
+              if (parsed.runTimeoutMs !== undefined) testQueue.setRunTimeoutMs(parsed.runTimeoutMs);
               if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
             } catch (err) {
               res.writeHead(400);
@@ -2778,6 +2789,8 @@ async function main() {
           res.end(JSON.stringify({
             ...laneLimits,
             maxWorkers: testQueue.maxWorkers,
+            runTimeoutMs: testQueue.runTimeoutMs,
+            runTimeoutMin: testQueue.runTimeoutMs / 60000,
             cacheMode: testQueue.cacheMode,
             paused: testQueue.paused,
             queued: testQueue.order.length,

@@ -485,9 +485,13 @@ export async function getMinorHashMatchDetail({
     LEFT JOIN "User" u ON u.id = m."userId"
     LEFT JOIN "Model" mm ON mm.id = ${minorModelId}::int
     LEFT JOIN "User" mu ON mu.id = mm."userId"
-    LEFT JOIN "ModActivity" ma
-      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId}::int
-        AND ma.activity = 'setMinor'
+    -- The latest flag only: the log is append-only, so a re-flagged seed has one row per flag.
+    LEFT JOIN LATERAL (
+      SELECT "createdAt", "userId" FROM "ModActivity"
+      WHERE "entityType" = 'model' AND "entityId" = ${minorModelId}::int AND activity = 'setMinor'
+      ORDER BY "createdAt" DESC, id DESC
+      LIMIT 1
+    ) ma ON true
     LEFT JOIN "User" fu ON fu.id = ma."userId"
     WHERE m.id = ${modelId}
   `;

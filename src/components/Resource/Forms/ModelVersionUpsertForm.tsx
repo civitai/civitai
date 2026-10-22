@@ -71,6 +71,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
 import {
   getBaseModelConfig,
   getEcosystemTurboSettings,
@@ -91,13 +92,11 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
   ModelVersionPaidAccessDto,
   ModelVersionUpsertInput,
-  RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
   baseModelToTraningDetailsBaseModelMap,
   modelVersionUpsertSchema2,
   TURBO_VARIANT_MODEL_TYPES,
-  recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
   type ModelVersionTerms,
@@ -168,10 +167,7 @@ const schema = modelVersionUpsertSchema2
       )
       .nullish(),
     useMonetization: z.boolean().default(false),
-    recommendedResources: generationResourceSchema
-      .merge(recommendedSettingsSchema)
-      .array()
-      .nullish(),
+    recommendedResources: generationResourceSchema.array().nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     error: 'You need to specify at least one trained word',
@@ -1263,6 +1259,17 @@ export function ModelVersionUpsertForm({
                             turboOnly: true,
                           }}
                         />
+                        {turboLora && (
+                          <InputNumber
+                            name="settings.generation.turboLora.strength"
+                            label="Turbo LoRA strength"
+                            description={`Leave empty for the LoRA's own default (${turboLora.settings.strength.default}).`}
+                            min={turboLora.settings.strength.min}
+                            max={turboLora.settings.strength.max}
+                            decimalScale={2}
+                            step={0.05}
+                          />
+                        )}
                         {turboLora && (turboLora.isPrivate || !turboLora.canGenerate) && (
                           <Text size="xs" c="yellow.6">
                             This LoRA is not published or not generatable right now. The generator
@@ -1301,8 +1308,8 @@ export function ModelVersionUpsertForm({
                         <InputNumber
                           name="settings.strength"
                           label="Strength"
-                          min={minStrength ?? -1}
-                          max={maxStrength ?? 2}
+                          min={minStrength ?? LORA_STRENGTH_BOUNDS.min}
+                          max={maxStrength ?? LORA_STRENGTH_BOUNDS.max}
                           decimalScale={1}
                           step={0.1}
                         />
@@ -2094,11 +2101,7 @@ type VersionInput = Omit<
   'recommendedResources' | 'paidAccess' | 'donationGoal'
 > & {
   createdAt: Date | null;
-  recommendedResources?: (Omit<
-    GenerationResourceSchema,
-    'strength' | 'minStrength' | 'maxStrength'
-  > &
-    RecommendedSettingsSchema)[];
+  recommendedResources?: GenerationResourceSchema[];
   // The DTO shape the version is loaded with (getById), NOT the write-input shape.
   paidAccess: ModelVersionPaidAccessDto | null;
   donationGoal: { goalAmount: number } | null;

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -29,7 +30,7 @@ import { isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import JSZip from 'jszip';
-import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -82,6 +83,70 @@ export async function getImageResources({ ids }: GetImageResourcesOutput) {
   });
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function unionLists<T>(stored: unknown, added: T[] | undefined, keyOf: (item: T) => unknown) {
+  if (!Array.isArray(stored) && !added) return undefined;
+  const kept = Array.isArray(stored) ? (stored as T[]) : [];
+  const keys = new Set(kept.map(keyOf));
+  return [...kept, ...(added ?? []).filter((item) => !keys.has(keyOf(item)))];
+}
+
+/** Keeps every image the report already names, with what was recorded on it, and adds the new ones. */
+function foldImages(stored: unknown, added: { id: number }[]) {
+  return unionLists(stored, added, (image) => image.id) ?? [];
+}
+
+type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
+
+/** One entry per job; a job named by both reports keeps the blobs of both. */
+function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | undefined) {
+  if (!Array.isArray(stored) && !added) return undefined;
+  const byJob = new Map<unknown, Record<string, unknown>>();
+  const loose: unknown[] = [];
+  for (const entry of [...(Array.isArray(stored) ? stored : []), ...(added ?? [])]) {
+    if (!isRecord(entry) || typeof entry.jobId !== 'string') {
+      loose.push(entry);
+      continue;
+    }
+    const kept = byJob.get(entry.jobId);
+    const blobs = (value: unknown) => (Array.isArray(value) ? value : undefined);
+    if (!kept) byJob.set(entry.jobId, entry);
+    else
+      kept.blobs = unionLists<{ url: string }>(
+        blobs(kept.blobs),
+        blobs(entry.blobs),
+        (b) => b?.url
+      );
+  }
+  return [...byJob.values(), ...loose];
+}
+
+/** The new form's answers win, except that a real-minor depiction is never downgraded. */
+function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
+  const prior = isRecord(stored) ? stored : {};
+  const next = Object.fromEntries(
+    Object.entries(added ?? {}).filter(([, value]) => value !== undefined)
+  ) as CsamReportFormOutput;
+  const folded: Record<string, unknown> = { ...prior, ...next };
+  if (prior.minorDepiction === 'real') folded.minorDepiction = 'real';
+  for (const key of ['modelVersionIds', 'capabilities', 'contents'] as const) {
+    const list = unionLists<unknown>(prior[key], next[key], (item) => item);
+    if (list) folded[key] = list;
+  }
+  const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
+  if (generatedImages) folded.generatedImages = generatedImages;
+  return folded as Prisma.InputJsonObject;
+}
+
+// A training-data report sends and archives one version's data, so a filing folds only into a
+// report on exactly its versions.
+const trainingVersionFilter = (type: CsamReportType, details?: CsamReportFormOutput) =>
+  type === CsamReportType.TrainingData
+    ? { details: { path: ['modelVersionIds'], equals: details?.modelVersionIds ?? [] } }
+    : {};
+
 export async function createCsamReport({
   reportedById,
   userId,
@@ -99,18 +164,34 @@ export async function createCsamReport({
     images: imageIds?.map((id) => ({ id })) ?? [],
   };
 
-  // An update replaces the row's images and details, so only fold into a report of the same account
-  // AND type: internal reports belong to no account, and a different type is a different report.
-  const unsent = isInternalReport
-    ? null
-    : await dbWrite.csamReport.findFirst({
-        where: { userId, type, reportSentAt: null },
-        select: { id: true },
-      });
+  // Only fold into a report of the same account AND type: internal reports belong to no account, and
+  // a different type is a different report.
+  const report = isInternalReport
+    ? await dbWrite.csamReport.create({ data })
+    : await dbWrite.$transaction(async (tx) => {
+        const unsent = await tx.csamReport.findFirst({
+          where: { userId, type, reportSentAt: null, ...trainingVersionFilter(type, details) },
+          select: { id: true },
+        });
+        if (!unsent) return tx.csamReport.create({ data });
 
-  const report = unsent
-    ? await dbWrite.csamReport.update({ where: { id: unsent.id }, data })
-    : await dbWrite.csamReport.create({ data });
+        // Locked and re-read, so two filings on the same report both land. A report sent since the
+        // lookup gets a new report instead.
+        const [locked] = await tx.$queryRaw<Pick<CsamReport, 'images' | 'details'>[]>`
+          SELECT images, details FROM "CsamReport"
+          WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
+          FOR UPDATE`;
+        if (!locked) return tx.csamReport.create({ data });
+
+        return tx.csamReport.update({
+          where: { id: unsent.id },
+          data: {
+            ...data,
+            images: foldImages(locked.images, data.images),
+            details: foldDetails(locked.details, details),
+          },
+        });
+      });
 
   if (imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
@@ -395,7 +476,7 @@ async function constructReportPayload({
           email: reportingUser?.email,
         },
         contactPerson: {
-          email: 'report@civitai.com',
+          email: CYBERTIP_CONTACT_EMAIL,
         },
       },
       personOrUserReported: userId

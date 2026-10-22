@@ -32,12 +32,22 @@ describe('by-hash/ids endpoint', () => {
     mockFindMany.mockResolvedValue([
       {
         modelVersionId: 101,
-        modelVersion: { modelId: 11, model: { poi: false } },
+        modelVersion: {
+          id: 101,
+          modelId: 11,
+          availability: 'Public',
+          model: { poi: false, availability: 'Public', userId: 1 },
+        },
         hashes: [{ hash: HASH }],
       },
       {
         modelVersionId: 202,
-        modelVersion: { modelId: 22, model: { poi: false } },
+        modelVersion: {
+          id: 202,
+          modelId: 22,
+          availability: 'Public',
+          model: { poi: false, availability: 'Public', userId: 1 },
+        },
         hashes: [{ hash: HASH_2 }],
       },
     ]);

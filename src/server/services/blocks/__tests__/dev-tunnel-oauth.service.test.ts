@@ -19,6 +19,7 @@ vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
 }));
 
 import { Prisma } from '@prisma/client';

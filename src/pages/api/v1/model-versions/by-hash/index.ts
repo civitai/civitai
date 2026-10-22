@@ -6,7 +6,10 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { getHiddenModelIds } from '~/server/services/model-visibility.service';
+import {
+  getHiddenModelVersionIds,
+  isPrivateModelVersion,
+} from '~/server/services/model-visibility.service';
 import { getPublicPaidAccessForModelVersions } from '~/server/services/paid-access.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -40,13 +43,11 @@ export default PublicEndpoint(
     });
 
     // Versions the caller may not see are left out, as if their hashes had not matched.
-    const flaggedModelIds = matched
-      .filter((file) => file.modelVersion.model.poi)
-      .map((file) => file.modelVersion.modelId);
-    const hidden = flaggedModelIds.length
-      ? await getHiddenModelIds(flaggedModelIds, (await getServerAuthSession({ req, res }))?.user)
-      : new Set<number>();
-    const files = matched.filter((file) => !hidden.has(file.modelVersion.modelId));
+    const hidden = await getHiddenModelVersionIds(
+      matched.map((file) => file.modelVersion),
+      async () => (await getServerAuthSession({ req, res }))?.user
+    );
+    const files = matched.filter((file) => !hidden.has(file.modelVersion.id));
 
     const modelVersionIds = [...new Set(files.map((file) => file.modelVersion.id))];
     const images = await getImagesForModelVersion({
@@ -74,6 +75,9 @@ export default PublicEndpoint(
       )
     );
 
+    // Only its owner or a moderator is still holding a Private version here.
+    if (files.some((file) => isPrivateModelVersion(file.modelVersion)))
+      res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(modelVersions);
   },
   ['POST']

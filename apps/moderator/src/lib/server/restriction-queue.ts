@@ -4,6 +4,12 @@ import type { Actions } from '@sveltejs/kit';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { requiresGrant } from '$lib/server/access';
 import type { RestrictionType } from '$lib/restriction-types';
+import {
+  DEFAULT_RESTRICTION_FILTERS,
+  ORIGIN_FILTERS,
+  RESTRICTION_STATUSES,
+  resolveRestrictionFilters,
+} from '$lib/restriction-filters';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
@@ -11,7 +17,6 @@ import { planRemixSources } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
   getRemixSources,
-  ORIGIN_FILTERS,
   SORT_ORDERS,
   getRestrictionFacets,
   saveSuspiciousMatches,
@@ -38,7 +43,7 @@ type QueueConfig = {
 function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, extra: S) {
   const base = z.object({
     type: z.enum(queue.types).catch(queue.fallback),
-    status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
+    status: z.enum(RESTRICTION_STATUSES).catch(DEFAULT_RESTRICTION_FILTERS.status),
     q: z.string().trim().max(100).catch(''),
     page: z.coerce.number().int().min(1).max(500).catch(1),
   });
@@ -108,7 +113,7 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
       selected: selectedSchema,
     }
   );
-  const filters = {
+  const query = {
     type,
     status: status === 'any' ? undefined : status,
     origin,
@@ -117,8 +122,12 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   };
 
   const [{ items, totalCount }, facets] = await Promise.all([
-    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...filters, sort }),
-    getRestrictionFacets(filters),
+    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...query, sort }),
+    // Counts are decoration: a failed count must not take the list down with it.
+    getRestrictionFacets(query).catch((err) => {
+      console.error('Restriction facet counts failed', err);
+      return undefined;
+    }),
   ]);
 
   // A deep link may name a restriction the filters or paging leave off this page; it opens regardless
@@ -155,11 +164,10 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     hasMore: page * TRIAGE_PAGE_SIZE < totalCount,
     offset: (page - 1) * TRIAGE_PAGE_SIZE,
     type,
-    status,
-    origin: origin ?? null,
-    sort: sort ?? null,
+    filters: resolveRestrictionFilters({ status, origin, sort }),
     q,
-    wide: true,
+    fullBleed: true,
+    headerInline: true,
   };
 }
 

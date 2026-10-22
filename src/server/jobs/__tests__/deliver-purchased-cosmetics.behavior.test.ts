@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -15,6 +15,15 @@ dbMock.dbWrite.$executeRaw.mockImplementation((async (
   const { affectedRows } = await holder.db.query(flat.text, flat.values as unknown[]);
   return affectedRows ?? 0;
 }) as never);
+// The revoke returns the rows it deleted, so it is a query rather than an execute.
+dbMock.dbWrite.$queryRaw.mockImplementation((async (
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => {
+  const flat = Prisma.sql(strings, ...(values as never[]));
+  const { rows } = await holder.db.query(flat.text, flat.values as unknown[]);
+  return rows;
+}) as never);
 
 const { deliverMembershipCosmetics } = await import('~/server/jobs/deliver-purchased-cosmetics');
 
@@ -23,6 +32,7 @@ const SILVER = 'stripe-silver';
 const OTHER_PROVIDER_BRONZE = 'other-provider-bronze';
 const OTHER_PROVIDER_SILVER = 'other-provider-silver';
 const CIVITAI_BRONZE = 'civitai-bronze';
+const CIVITAI_BUZZ_BRONZE = 'civitai-buzz-bronze'; // bought with Buzz; copies civitai-bronze's level
 const FOUNDER = 'founder';
 const RETIRED_BRONZE = 'retired-bronze'; // a lower tier that is no longer sold
 
@@ -35,7 +45,9 @@ const CIVITAI_SEP_BRONZE = 94;
 const CIVITAI_OCT_BRONZE = 104;
 const PERMANENT_BADGE = 200;
 const NON_MEMBERSHIP_ITEM = 201; // not permanent, but not a Membership cosmetic either
-const UNDATED_PRODUCT_COSMETIC = 300; // carries a productId but no window, so it is not a monthly badge
+const NAMEPLATE = 300; // Supporter Nameplate: Bronze product, no window, not permanent
+const CIVITAI_NAMEPLATE = 301;
+const UNDATED_PURCHASE_ITEM = 302; // a non-membership cosmetic on a subscribed product
 const GRANDFATHER = 400;
 const RETIRED_OCT_BRONZE = 105;
 const OPEN_ENDED_SILVER = 106; // dated start, no end
@@ -59,6 +71,7 @@ const FOUNDER_ONLY = 16; // active founder, no tier subscription
 const FOUNDER_CANCELED = 17; // canceled founder, active tier
 const PAST_DUE = 18; // renewal payment being retried, period current, plus an old canceled subscription
 const PAST_DUE_ENDED = 19; // past_due, period already ended, plus an old canceled subscription
+const BUZZ_MEMBER = 20; // Buzz-purchased Civitai membership that started this month
 
 const NOW = new Date('2026-10-08T23:00:00Z');
 const LAST_DELIVERED = new Date('2026-10-07T23:00:00Z');
@@ -104,6 +117,8 @@ beforeAll(async () => {
       "cosmeticId" int NOT NULL,
       "obtainedAt" timestamp(3),
       "claimKey" text NOT NULL DEFAULT 'claimed',
+      "equippedAt" timestamp(3),
+      "equippedToId" int,
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
     INSERT INTO "Product" VALUES
@@ -112,6 +127,7 @@ beforeAll(async () => {
       ('${OTHER_PROVIDER_BRONZE}', 'Paddle', true, '{"level": 1, "tier": "bronze"}'),
       ('${OTHER_PROVIDER_SILVER}', 'Paddle', true, '{"level": 2, "tier": "silver"}'),
       ('${CIVITAI_BRONZE}', 'Civitai', true, '{"level": 1, "tier": "bronze"}'),
+      ('${CIVITAI_BUZZ_BRONZE}', 'Civitai', true, '{"level": 1, "tier": "bronze", "buzzPurchase": true}'),
       ('${FOUNDER}', 'Stripe', false, '{"tier": "founder"}'),
       ('${RETIRED_BRONZE}', 'Stripe', false, '{"level": 1, "tier": "bronze"}');
   `);
@@ -130,7 +146,9 @@ beforeEach(async () => {
       (${CIVITAI_OCT_BRONZE}, 'Oct Bronze', 'Membership', false, '${CIVITAI_BRONZE}', '2026-10-01 07:00', '2026-10-31 07:00'),
       (${PERMANENT_BADGE}, 'Keepsake', 'Membership', true, NULL, NULL, NULL),
       (${NON_MEMBERSHIP_ITEM}, 'Event item', 'Event', false, NULL, NULL, NULL),
-      (${UNDATED_PRODUCT_COSMETIC}, 'Nameplate', 'Membership', true, '${BRONZE}', NULL, NULL),
+      (${NAMEPLATE}, 'Supporter Nameplate', 'Membership', false, '${BRONZE}', NULL, NULL),
+      (${CIVITAI_NAMEPLATE}, 'Supporter Nameplate', 'Membership', false, '${CIVITAI_BRONZE}', NULL, NULL),
+      (${UNDATED_PURCHASE_ITEM}, 'Donator Nameplate', 'Purchase', true, '${BRONZE}', NULL, NULL),
       (${GRANDFATHER}, 'Grandfather Badge', 'Membership', true, NULL, NULL, NULL),
       (${RETIRED_OCT_BRONZE}, 'Oct Bronze', 'Membership', false, '${RETIRED_BRONZE}', '2026-10-01 07:00', '2026-10-31 07:00'),
       (${OPEN_ENDED_SILVER}, 'Silver forever', 'Membership', true, '${SILVER}', '2026-10-01 07:00', NULL);
@@ -263,6 +281,14 @@ beforeEach(async () => {
         '2026-10-05 00:00'
       )},
       ${sub(
+        's-buzz',
+        BUZZ_MEMBER,
+        CIVITAI_BUZZ_BRONZE,
+        'active',
+        '2026-10-04 00:00',
+        '2026-11-04 00:00'
+      )},
+      ${sub(
         's-past-due-ended-old',
         PAST_DUE_ENDED,
         OTHER_PROVIDER_SILVER,
@@ -274,6 +300,7 @@ beforeEach(async () => {
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId") VALUES
       (${RETURNING}, ${OCT_BRONZE}),
       (${LAPSED}, ${SEP_BRONZE}),
+      (${LAPSED}, ${NAMEPLATE}),
       (${LAPSED}, ${PERMANENT_BADGE}),
       (${LAPSED}, ${NON_MEMBERSHIP_ITEM}),
       (${UNRENEWED}, ${SEP_BRONZE}),
@@ -300,17 +327,22 @@ describe('deliverMembershipCosmetics', () => {
   describe('delivery', () => {
     it("grants the month of the current period, for the member's tier and every lower tier still sold by the same provider", async () => {
       await run();
-      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER, OPEN_ENDED_SILVER]);
+      expect(await badgesOf(ONTIME)).toEqual([
+        OCT_BRONZE,
+        OCT_SILVER,
+        OPEN_ENDED_SILVER,
+        NAMEPLATE,
+      ]);
     });
 
     it('grants the badge for the month a period started in, when payment lands in the next month', async () => {
       await run();
-      expect(await badgesOf(LATE)).toEqual([SEP_BRONZE]);
+      expect(await badgesOf(LATE)).toEqual([SEP_BRONZE, NAMEPLATE]);
     });
 
     it('does not grant a month the current period did not start in', async () => {
       await run();
-      expect(await badgesOf(UNRENEWED)).toEqual([SEP_BRONZE]);
+      expect(await badgesOf(UNRENEWED)).toEqual([SEP_BRONZE, NAMEPLATE]);
     });
 
     it('grants nothing for a period that has ended or not yet started', async () => {
@@ -321,12 +353,12 @@ describe('deliverMembershipCosmetics', () => {
 
     it('counts a period starting on the first before the badge opens as that month', async () => {
       await run();
-      expect(await badgesOf(FIRST_OF_MONTH)).toEqual([OCT_BRONZE]);
+      expect(await badgesOf(FIRST_OF_MONTH)).toEqual([OCT_BRONZE, NAMEPLATE]);
     });
 
     it('counts a period starting on the last day after the badge closes as that month', async () => {
       await run();
-      expect(await badgesOf(LAST_OF_MONTH)).toEqual([SEP_BRONZE]);
+      expect(await badgesOf(LAST_OF_MONTH)).toEqual([SEP_BRONZE, NAMEPLATE]);
     });
 
     it('gives a Civitai membership only badges from the current month', async () => {
@@ -350,15 +382,35 @@ describe('deliverMembershipCosmetics', () => {
       expect((await holder.db.query(`SELECT 1 FROM "UserCosmetic"`)).rows.length).toBe(after);
 
       await run(new Date('2026-10-09T23:00:00Z'), NOW);
-      expect(await badgesOf(ONTIME)).toEqual([OCT_BRONZE, OCT_SILVER, OPEN_ENDED_SILVER]);
-      expect(await badgesOf(LATE)).toEqual([SEP_BRONZE]);
+      expect(await badgesOf(ONTIME)).toEqual([
+        OCT_BRONZE,
+        OCT_SILVER,
+        OPEN_ENDED_SILVER,
+        NAMEPLATE,
+      ]);
+      expect(await badgesOf(LATE)).toEqual([SEP_BRONZE, NAMEPLATE]);
+    });
+  });
+
+  describe('undated cosmetics', () => {
+    it('leaves Civitai memberships to the monthly delivery, so a Buzz-bought one gets no nameplate through the level join', async () => {
+      await run();
+      expect(await badgesOf(ONTIME)).toContain(NAMEPLATE);
+      expect(await badgesOf(CIVITAI_RENEWED)).toEqual([CIVITAI_OCT_BRONZE]);
+      expect(await badgesOf(BUZZ_MEMBER)).not.toContain(CIVITAI_NAMEPLATE);
+    });
+
+    it('grants only membership cosmetics', async () => {
+      await run();
+      expect(await badgesOf(LATE)).toContain(NAMEPLATE);
+      expect(await badgesOf(LATE)).not.toContain(UNDATED_PURCHASE_ITEM);
     });
   });
 
   describe('revoke', () => {
     it('keeps the badges of an active member who also has an old canceled subscription', async () => {
       await run();
-      expect(await badgesOf(RETURNING)).toEqual([OCT_BRONZE]);
+      expect(await badgesOf(RETURNING)).toEqual([OCT_BRONZE, NAMEPLATE]);
     });
 
     it('keeps the badges of a trialing member who also has an old canceled subscription', async () => {
@@ -388,5 +440,27 @@ describe('deliverMembershipCosmetics', () => {
       await run(new Date('2026-10-09T23:00:00Z'), NOW);
       expect(await badgesOf(CANCELING)).toEqual([]);
     });
+  });
+});
+
+// A revoked cosmetic the user was wearing still shows in their search document until the users
+// index re-pulls them, and the sync re-pulls an existing user only when their id is queued.
+describe('deliverMembershipCosmetics: users search index', () => {
+  it('queues the users who were wearing a revoked cosmetic, and only them', async () => {
+    await holder.db.query(
+      `UPDATE "UserCosmetic" SET "equippedAt" = now() WHERE "userId" = $1 AND "cosmeticId" = $2`,
+      [LAPSED, NAMEPLATE]
+    );
+    await holder.db.query(
+      `UPDATE "UserCosmetic" SET "equippedAt" = now(), "equippedToId" = 900 WHERE "userId" = $1`,
+      [EXPIRED]
+    );
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await run();
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([LAPSED]);
   });
 });

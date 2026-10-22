@@ -14,6 +14,8 @@
 import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { defaultStrength } from '~/shared/utils/resource.utils';
+import { strengthSliderBounds } from '~/shared/constants/generation.constants';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
@@ -32,7 +34,7 @@ import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResid
 export interface ResourceItemContentProps {
   /** The resource to display */
   resource: GenerationResource;
-  /** Current strength value (may differ from resource.strength if user changed it) */
+  /** The chosen weight; the resource's default shows until set. */
   strengthValue?: number;
   /** Called when strength changes */
   onStrengthChange?: (strength: number) => void;
@@ -183,7 +185,7 @@ export function ResourceItemContent({
     !isDisabled &&
     ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type) &&
     onStrengthChange;
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
+  const strengthBounds = strengthSliderBounds(resource.settings?.strength);
 
   const modelUrl = getModelUrl({
     modelId: resource.model.id,
@@ -237,6 +239,11 @@ export function ResourceItemContent({
             {epochDetails?.epochNumber && (
               <Badge size="sm" color="dark.5" variant="filled" className="shrink-0">
                 Epoch {epochDetails.epochNumber}
+              </Badge>
+            )}
+            {resource.turbo && (
+              <Badge size="sm" color="orange" variant="filled" className="shrink-0">
+                Turbo
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
@@ -321,10 +328,10 @@ export function ResourceItemContent({
         <div className="flex w-full items-center gap-2">
           <NumberSlider
             className="flex-1"
-            value={strengthValue ?? resource.strength ?? 1}
+            value={strengthValue ?? defaultStrength(resource)}
             onChange={(strength) => onStrengthChange(strength ?? 1)}
-            min={!isSameMinMaxStrength ? resource.minStrength : -1}
-            max={!isSameMinMaxStrength ? resource.maxStrength : 2}
+            min={strengthBounds.min}
+            max={strengthBounds.max}
             step={0.05}
             disabled={disabled}
           />

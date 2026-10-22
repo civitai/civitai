@@ -59,6 +59,7 @@ import type {
   TagSource,
   PartnerPricingModel,
   ApiKeyType,
+  CommentEntityType,
   TagEngagementType,
   DomainColor,
   CosmeticType,
@@ -2542,6 +2543,11 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
 };
+export type CommentMute = {
+  userId: number;
+  commentId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type CommentReaction = {
   id: Generated<number>;
   commentId: number;
@@ -2553,6 +2559,18 @@ export type CommentReaction = {
 export type CommentReport = {
   commentId: number;
   reportId: number;
+};
+export type CommentTopic = {
+  entityType: CommentEntityType;
+  entityId: number;
+  locked: Generated<boolean>;
+  commentCount: Generated<number>;
+};
+export type CommentTopicMute = {
+  userId: number;
+  entityType: CommentEntityType;
+  entityId: number;
+  mutedAt: Generated<Timestamp>;
 };
 export type CommentV2 = {
   id: Generated<number>;
@@ -2578,6 +2596,38 @@ export type CommentV2Reaction = {
 };
 export type CommentV2Report = {
   commentV2Id: number;
+  reportId: number;
+};
+export type CommentV3 = {
+  id: Generated<number>;
+  entityType: CommentEntityType;
+  entityId: number;
+  parentId: number | null;
+  replyToId: number | null;
+  rootId: Generated<number>;
+  depth: Generated<number>;
+  userId: number;
+  content: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  tosViolation: Generated<boolean>;
+  hidden: Generated<boolean>;
+  locked: Generated<boolean>;
+  pinnedAt: Timestamp | null;
+  reactionCount: Generated<number>;
+  legacyV1Id: number | null;
+};
+export type CommentV3Reaction = {
+  id: Generated<number>;
+  commentId: number;
+  userId: number;
+  reaction: ReviewReactions;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type CommentV3Report = {
+  commentId: number;
   reportId: number;
 };
 export type Cosmetic = {
@@ -2778,6 +2828,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2850,6 +2901,43 @@ export type CsamReport = {
   details: Generated<unknown>;
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
+};
+export type CsamReportArchiveObject = {
+  id: Generated<number>;
+  csamReportId: number;
+  /**
+   * base | images | generatedImages | trainingData
+   */
+  kind: string;
+  key: string;
+  etag: string | null;
+  /**
+   * Entries appended to a zip archive.
+   */
+  entries: number | null;
+  /**
+   * Items the report names that this archive was expected to hold, and how many it lacks.
+   */
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Generated<Timestamp>;
+};
+export type CsamReportAudit = {
+  id: Generated<number>;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  /**
+   * A keyed fingerprint of the details for tamper detection, never their content.
+   */
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Timestamp | null;
+  changedAt: Generated<Timestamp>;
+  changedBy: Generated<string>;
 };
 export type CustomerSubscription = {
   id: string;
@@ -3208,6 +3296,25 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+};
+export type ImageCdnAccess = {
+  url: string;
+  state: string;
+  deniedAt: Generated<Timestamp>;
+  retractedAt: Timestamp | null;
+  lastAssertedAt: Generated<Timestamp>;
+};
+export type ImageCdnAccessClaim = {
+  url: string;
+  token: string;
+  claimedUntil: Timestamp;
+};
+export type ImageCdnModeratorDelete = {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: Generated<boolean>;
+  deletedAt: Generated<Timestamp>;
 };
 export type ImageConnection = {
   imageId: number;
@@ -6002,11 +6109,17 @@ export type DB = {
   ComicReference: ComicReference;
   ComicReferenceImage: ComicReferenceImage;
   Comment: Comment;
+  CommentMute: CommentMute;
   CommentReaction: CommentReaction;
   CommentReport: CommentReport;
+  CommentTopic: CommentTopic;
+  CommentTopicMute: CommentTopicMute;
   CommentV2: CommentV2;
   CommentV2Reaction: CommentV2Reaction;
   CommentV2Report: CommentV2Report;
+  CommentV3: CommentV3;
+  CommentV3Reaction: CommentV3Reaction;
+  CommentV3Report: CommentV3Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
@@ -6028,6 +6141,8 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamReport: CsamReport;
+  CsamReportArchiveObject: CsamReportArchiveObject;
+  CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
   Donation: Donation;
   DonationGoal: DonationGoal;
@@ -6054,6 +6169,9 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageCdnAccess: ImageCdnAccess;
+  ImageCdnAccessClaim: ImageCdnAccessClaim;
+  ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;

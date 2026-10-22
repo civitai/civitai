@@ -745,8 +745,8 @@ jobs:
     # jobs keep the blame attributable: a red app suite should not make the package suites
     # look broken. Costs one more `pnpm install`; these suites run in seconds.
     #
-    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
-    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # Not `continue-on-error`, for the same reason as `packages`: no browser and no Next module
+    # graph (its only database is the throwaway Postgres service below). As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
     # Selection is by vitest config, so an app without one is silently not covered here. Every app
@@ -759,6 +759,20 @@ jobs:
     # is the moderator app's pglite suites. Speed those up or shard this run before raising
     # this again.
     timeout-minutes: 30
+    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
+    # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
+    # own databases on this throwaway server.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:

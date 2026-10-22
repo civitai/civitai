@@ -44,9 +44,10 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
+  import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -74,13 +75,7 @@
   });
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
-  const rollupFor = (item: NavLink) =>
-    item.children
-      ? item.children.reduce(
-          (sum, c) => sum + (c.informational ? 0 : (countFor(c.countKey) ?? 0)),
-          0
-        ) || null
-      : null;
+  const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
 
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
@@ -162,9 +157,11 @@
                         {/snippet}
                       </CollapsibleTrigger>
                       <CollapsibleContent>
-                        <SidebarMenuSub>
+                        <!-- mr-0 pr-0: the sub-list's default right inset would leave its items narrower than the
+                             top-level ones; only the left indent and rule stay as the hierarchy cue. -->
+                        <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = countFor(childLink.countKey)}
+                            {@const cnt = navCount(childLink, countFor)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -173,7 +170,7 @@
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : childLink.path}
+                                      : navHref(childLink)}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     data-sveltekit-preload-data={childLink.noPreload ? 'off' : undefined}
@@ -239,13 +236,20 @@
           </a>
         {/if}
       </div>
+      <p class="m-0 px-2 text-[11px] tabular-nums text-dark-2">v{__APP_VERSION__}</p>
     </SidebarFooter>
   </Sidebar>
 
   <!-- min-w-0: a flex item's automatic minimum is its content's width, so one wide table would widen
        the whole content column past the viewport instead of scrolling inside its own container. -->
   <SidebarInset class="min-w-0">
-    <header class="flex h-12 shrink-0 items-center gap-2 px-4">
+    <!-- headerInline: the page's own header starts at the top and leaves room for the trigger, which
+         floats over it instead of reserving a row. -->
+    <header
+      class={page.data.headerInline
+        ? 'absolute top-0 left-0 z-10 flex h-12 items-center px-4'
+        : 'flex h-12 shrink-0 items-center gap-2 px-4'}
+    >
       <SidebarTrigger />
     </header>
     <!-- fullBleed: edge-to-edge, self-managed height (scanner focused review). wide: full content width
@@ -265,6 +269,8 @@
 <!-- Success confirmations: a write that changes nothing on screen (a publish toggle, a saved banner)
      otherwise gives the operator no signal that it landed. -->
 <Toaster position="bottom-right" />
+
+<QuickSwitcher nav={data.nav} civitaiUrl={data.civitaiUrl} />
 
 {#if data.canSeeUserCard}<UserCardPopover />{/if}
 

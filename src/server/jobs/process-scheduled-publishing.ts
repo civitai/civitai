@@ -244,7 +244,7 @@ export const processScheduledPublishing = createJob(
               THEN (p."metadata"->>'prevPublishedAt')::timestamptz
               ELSE mv."publishedAt"
             END,
-            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})

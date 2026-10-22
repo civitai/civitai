@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { settlePlacement } from '~/server/services/placement-escrow.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { tombstoneChaptersForPlacements } from '~/server/services/storyline-chapter-removal.service';
+import { isAnswerableParentChapter } from '~/shared/utils/storyline-placement';
 
 /**
  * Whether either user has blocked the other.
@@ -135,9 +136,10 @@ export async function declinePlacementsOnBlock({
 }
 
 /**
- * The storyline continuations among `rows` whose parent is no longer a live
- * chapter: removed, its post deleted (no chapter holds the post), or in a
- * taken-down storyline. The same rule the owner's own answer is refused by.
+ * The storyline continuations among `rows` whose parent chapter is not answerable
+ * (`isAnswerableParentChapter`): removed, its post deleted (no chapter holds the
+ * post), or in a taken-down storyline. The same rule the owner's own answer is
+ * refused by.
  */
 async function orphanedContinuationIds(
   rows: { id: number; surface: string; targetType: string; targetId: number }[]
@@ -151,11 +153,7 @@ async function orphanedContinuationIds(
     where: { postId: { in: continuations.map((row) => row.targetId) } },
     select: { postId: true, removedAt: true, storyline: { select: { tosViolation: true } } },
   });
-  const live = new Set(
-    chapters
-      .filter((chapter) => !chapter.removedAt && !chapter.storyline.tosViolation)
-      .map((chapter) => chapter.postId)
-  );
+  const live = new Set(chapters.filter(isAnswerableParentChapter).map((chapter) => chapter.postId));
   return new Set(continuations.filter((row) => !live.has(row.targetId)).map((row) => row.id));
 }
 

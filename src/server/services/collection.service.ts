@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
@@ -82,13 +83,18 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  nsfwBrowsingLevelsFlag,
+  parseBitwiseBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   DETAIL_BACKED_REASONS,
   resolveRejectionCopy,
 } from '~/shared/constants/collection-rejection.constants';
 import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  ArticleStatus,
   ChallengeSource,
   CollectionContributorPermission,
   CollectionInviteStatus,
@@ -102,6 +108,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MetricTimeframe,
+  ModelModifier,
   ModelStatus,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -688,10 +695,73 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   };
 };
 
-export const getPendingReviewCount = (collectionId: number) =>
-  dbRead.collectionItem.count({
-    where: { collectionId, status: CollectionItemStatus.REVIEW },
-  });
+/**
+ * Whether a collection item's target would survive the review queue's hydration, as SQL over a
+ * `CollectionItem` aliased `ci`. Shared by the queue's `forReview` read and both pending counts, so
+ * a badge cannot count items the queue never shows.
+ *
+ * `getCollectionItemsByCollectionId` hydrates REVIEW rows through the feed services as a moderator
+ * with `browsingLevel` = `allBrowsingLevelsFlag`, and drops every row whose target does not come
+ * back. Each branch mirrors the clauses that decide that:
+ * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
+ *   Archived); `getModelsWithImagesAndModelVersions` drops TakenDown.
+ * - Image: `getAllImages` with `pending` keeps any image on an existing post, unrated ones included,
+ *   minus the license-restricted base model clause.
+ * - Post: `getPostsInfinite` without a `username` shows a moderator published posts only.
+ * - Article: `getArticles` requires Published with a publish date.
+ * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
+ *
+ * The browsing level is `allBrowsingLevelsFlag`, which has no Blocked bit: a Blocked-only target
+ * never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
+ * The CASE order is hydration's: a row with two target columns is judged by the first one only.
+ *
+ * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
+ * images, a post with no images). Those cost a join per row and are rare states; the queue can
+ * still show slightly fewer items than the count for them.
+ */
+const reviewQueueVisibleTargetSql = Prisma.sql`(CASE
+  WHEN ci."modelId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "ModelMetric" rv_mm
+    WHERE rv_mm."modelId" = ci."modelId"
+      AND rv_mm."status" = ${ModelStatus.Published}::"ModelStatus"
+      AND (rv_mm."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+      AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
+        ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
+      ))
+  )
+  WHEN ci."postId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Post" rv_p
+    WHERE rv_p.id = ci."postId"
+      AND rv_p."publishedAt" <= now()
+      AND (rv_p."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+  )
+  WHEN ci."imageId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Image" rv_i
+    JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
+    WHERE rv_i.id = ci."imageId"
+      AND ((rv_i."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0 OR rv_i."nsfwLevel" = 0)
+      AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
+  )
+  WHEN ci."articleId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Article" rv_a
+    WHERE rv_a.id = ci."articleId"
+      AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
+      AND rv_a."publishedAt" IS NOT NULL
+      AND (rv_a."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+  )
+  ELSE false
+END)`;
+
+export async function getPendingReviewCount(collectionId: number) {
+  const [row] = await dbRead.$queryRaw<{ pending: number }[]>`
+    SELECT count(*)::int AS pending
+    FROM "CollectionItem" ci
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus"
+      AND ${reviewQueueVisibleTargetSql}
+  `;
+  return Number(row?.pending ?? 0);
+}
 
 /**
  * How many submissions are waiting on this user, per collection, for the badge on the user menu's
@@ -712,11 +782,15 @@ export const getPendingReviewCount = (collectionId: number) =>
  * rows across 66 users are non-owner. The contributor branch is small; the owner branch does the
  * work.
  *
- * Prod covers this with `CollectionItem_collectionId_status_covered`
- * (`(collectionId, status, createdAt DESC) INCLUDE (...)`) as an Index Only Scan with both
- * equality columns in the Index Cond — 0.65 ms for a typical user, 136 ms cold for the largest.
+ * Prod covers the `(collectionId, status)` filter with `CollectionItem_collectionId_status_covered`
+ * (`(collectionId, status, createdAt DESC) INCLUDE (...)`), both equality columns in the Index
+ * Cond. `reviewQueueVisibleTargetSql` then adds a primary-key lookup or two per pending row, so
+ * cost grows with pending rows, not collection size.
  * That index is NOT in `schema.full.prisma`, so an environment built from the schema alone does
  * not have it and this query will be slower there. That is known, not a regression.
+ *
+ * Not cached: it runs once per page load (`checkNotifications` is `staleTime: Infinity`) and on
+ * explicit invalidation after a review action, never on a poll.
  */
 export async function getPendingCollectionReviewCounts({ userId }: { userId: number }) {
   const rows = await dbRead.$queryRaw<{ collectionId: number; pending: number }[]>`
@@ -731,6 +805,7 @@ export async function getPendingCollectionReviewCounts({ userId }: { userId: num
            AND ${CollectionContributorPermission.MANAGE}::"CollectionContributorPermission"
                = ANY(cc."permissions")
       )
+      AND ${reviewQueueVisibleTargetSql}
     GROUP BY ci."collectionId"
   `;
 
@@ -1294,10 +1369,10 @@ export const upsertCollection = async ({
   // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
   // A grep for `note:` in a write position does not find it, because it is spread — this check was
   // deleted once on that evidence and had to be restored.
-  await throwOnBlockedUserContent([name, description, collectionItem.note], {
-    isModerator,
-    surface: 'collection',
-  });
+  await throwOnBlockedUserContent(
+    [name, description, collectionItem.note, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+    { isModerator, surface: 'collection' }
+  );
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image
@@ -1336,7 +1411,6 @@ export const upsertCollection = async ({
         write: true,
         availability: true,
         mode: true,
-        createdAt: true,
         metadata: true,
         image: { select: { id: true } },
       },
@@ -1460,20 +1534,63 @@ export const upsertCollection = async ({
     await userCollectionCountCache.refresh(updated.userId);
 
     if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
-      // Set publishedAt for all post belonging to this collection if changing privacy to public
-      await dbWrite.$queryRaw`
-        UPDATE "Post" SET
-          "publishedAt" = COALESCE(DATE("metadata"->>'prevPublishedAt'), ${currentCollection.createdAt}, NOW()),
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
-        WHERE "collectionId" = ${updated.id}
+      // Only restores posts the collection itself hid: the `unpublishedByCollection` marker, or a
+      // bare `prevPublishedAt` (what this hide wrote before the marker existed). Every other
+      // unpublish stamps one of the excluded keys and is undone by its own republish path. A
+      // collection-hidden post cannot be unpublished again (every unpublish skips posts that are
+      // already down), so an action taken while it was hidden lands only on the owner, the images,
+      // a hold, or the post's model or version; any of those keeps the post down.
+      // One statement, so a failed lookup restores nothing.
+      await dbWrite.$executeRaw`
+        WITH reported AS (
+          SELECT "userId"::bigint AS id FROM "CsamReport" WHERE "userId" IS NOT NULL
+          UNION
+          SELECT ("details"->>'secondaryUserId')::bigint FROM "CsamReport"
+          WHERE "details"->>'secondaryUserId' ~ '^[0-9]{1,18}$'
+        )
+        UPDATE "Post" p SET
+          "publishedAt" = (p."metadata"->>'prevPublishedAt')::timestamp,
+          "metadata" = p."metadata" - 'prevPublishedAt' - 'unpublishedByCollection'
+        WHERE p."collectionId" = ${updated.id}
+          AND p."publishedAt" IS NULL
+          AND p."metadata"->>'prevPublishedAt' IS NOT NULL
+          AND (
+            p."metadata"->>'unpublishedByCollection' = ${String(updated.id)}
+            OR NOT p."metadata" ? 'unpublishedByCollection'
+          )
+          AND NOT p."metadata" ?| array['unpublishedAt', 'unpublishedBy', 'unpublishedReason', 'repairStampAt']
+          AND NOT EXISTS (
+            SELECT 1 FROM "User" u WHERE u.id = p."userId" AND u."bannedAt" IS NOT NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" i
+            WHERE i."postId" = p.id AND (i.ingestion = 'Blocked' OR i."needsReview" = 'csam')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "TextScanHold" h
+            WHERE h."entityType" = 'Post' AND h."entityId" = p.id AND h.status = 'Confirmed'
+          )
+          AND NOT EXISTS (SELECT 1 FROM reported r WHERE r.id = p."userId")
+          AND (
+            p."modelVersionId" IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = p."modelVersionId" AND mv.status = 'Published' AND m.status = 'Published'
+            )
+          )
       `;
     } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
-      // otherwise set publishedAt to null when no mode is setup.
-      await dbWrite.$queryRaw`
+      // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
+      // left alone so their own stamps survive.
+      await dbWrite.$executeRaw`
         UPDATE "Post" SET
           "publishedAt" = NULL,
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', to_jsonb("publishedAt"))
-        WHERE "collectionId" = ${updated.id}
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+            'prevPublishedAt', "publishedAt",
+            'unpublishedByCollection', ${updated.id}::int
+          )
+        WHERE "collectionId" = ${updated.id} AND "publishedAt" IS NOT NULL
       `;
     }
 
@@ -1900,6 +2017,11 @@ export const getCollectionItemsByCollectionId = async ({
       collection.type === CollectionType.Image && !forReview
         ? Prisma.sql`AND i."ingestion" = 'Scanned'`
         : Prisma.sql``;
+    // Hydration would drop these rows anyway; filtering here keeps a page of dead rows from
+    // rendering as an empty queue, and keeps the queue reading the same predicate as the counts.
+    const reviewVisibleCondition = forReview
+      ? Prisma.sql`AND ${reviewQueueVisibleTargetSql}`
+      : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)
     const cursorCondition = parsedCursor.id
@@ -1960,6 +2082,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${tagCondition}
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
+        ${reviewVisibleCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
       LIMIT ${limit + 1}
@@ -2870,6 +2993,8 @@ export const validateContestCollectionEntry = async ({
     const blocked = await amIBlockedByUser({
       userId,
       targetUserId: userChallenge.createdById ?? undefined,
+      // An entry is a write: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) throw throwBadRequestError('This challenge is not available.');
   }

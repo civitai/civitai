@@ -210,6 +210,9 @@ export default defineNextConfig(
       // won't resolve the out-of-root symlink without transpiling it
       'form-graph',
       'superjson',
+      // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
+      // left external; bundling it lets Turbopack resolve the directory.
+      '@civitai/orchestration-client',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
@@ -225,6 +228,7 @@ export default defineNextConfig(
       '@civitai/notifications',
       '@civitai/moderation',
       '@civitai/mod-utils',
+      '@civitai/app-assistant',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

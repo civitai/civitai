@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ModelVersionService from '~/server/services/model-version.service';
+import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 
 const { mockGetVersionById, STOP } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
@@ -10,9 +10,9 @@ const { mockGetVersionById, STOP } = vi.hoisted(() => ({
 // The controller reaches the orchestrator caller through training.service, which throws on a
 // missing token at import. Nothing on this path calls it.
 vi.mock('~/server/services/training.service', () => ({}));
-vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ModelVersionService>()),
-  getVersionById: mockGetVersionById,
+vi.mock('~/server/services/model-version-generation-children.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof VersionChildrenService>()),
+  getVersionByIdWithGenerationChildren: mockGetVersionById,
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   getResourceData: vi.fn(async () => []),

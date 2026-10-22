@@ -348,6 +348,48 @@ describe('resolving an appeal of a title-scan takedown', () => {
     expect(closedAs()).toEqual(['Approved']);
   });
 
+  describe('a clean rescan that lifts the title-scan takedown', () => {
+    it('closes the open appeal approved, marked as a rescan lift and not an appeal review', async () => {
+      await flaggingScan();
+      await cleanScan();
+      expect(state()).toEqual(UP);
+      expect(mockResolveEntityAppeal.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            ids: [ID],
+            entityType: 'Storyline',
+            status: 'Approved',
+            resolvedReason: 'lifted-by-rescan',
+            internalNotes: expect.stringContaining('not an appeal review'),
+          }),
+        ],
+      ]);
+      expect(appealOpen).toBe(false);
+    });
+
+    it("leaves the appeal open while a moderator's takedown still holds the storyline down", async () => {
+      await flaggingScan();
+      await takeDown();
+      await cleanScan();
+      expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      expect(appealOpen).toBe(true);
+    });
+
+    it('leaves the appeal alone when there was no scan takedown to lift', async () => {
+      await cleanScan();
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    });
+
+    it('still lifts when closing the appeal fails', async () => {
+      await flaggingScan();
+      mockResolveEntityAppeal.mockRejectedValueOnce(new Error('db down'));
+      await expect(cleanScan()).resolves.toBeUndefined();
+      expect(state()).toEqual(UP);
+      expect(appealOpen).toBe(true);
+    });
+  });
+
   // The moderator's button and `storyline.moderateTitle` both lift through moderateStorylineTitle.
   describe('a direct lift by a moderator', () => {
     const lift = (reviewedTitle = TITLE) =>

@@ -405,10 +405,10 @@ read that file. As of this writing the families are:
   surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `PREPARE_TRAINING_DATASET` (→
-  `TRAINING_DATASET_RESULT`), `RUN_TRAINING` (→ `TRAINING_RESULT`) and
-  `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last three page host only — see
-  "Training runs" and "Confirmed steps".
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `RUN_TRAINING` (→ `TRAINING_RESULT`) and
+  `RUN_CONFIRMED_STEP` (→ `CONFIRMED_STEP_RESULT`), the last two page host only — see
+  "Training runs" and "Confirmed steps". `PREPARE_TRAINING_DATASET` is removed: the page
+  host answers it with `TRAINING_DATASET_RESULT { requestId, error: 'removed' }`.
 - **Reactions** (REQUEST-style, both real hosts, `social:react:self`, image only):
   `SET_ENTITY_REACTION` (→ `ENTITY_REACTION_RESULT`) and `GET_ENTITY_REACTIONS`
   (→ `ENTITY_REACTIONS_RESULT`), host-brokered via `blocks.setReactionFromApp` /
@@ -488,7 +488,8 @@ read that file. As of this writing the families are:
   The answer is `{ requestId, selected? }` with
   `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
   on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
-  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged. Logic:
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
+  `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
@@ -682,43 +683,36 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 
 ### Training runs (`kind: 'training'`)
 
-A page app can train a LoRA (ai-toolkit engine) on the viewer's own images. Behind its
-own fail-closed flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and
-review-sandbox tokens are refused, and so is an editor's read-only private run. The app
-owner's own private run is allowed, under the private-run Buzz cap.
+A page app can train a LoRA (ai-toolkit engine) on images the viewer uploads, through
+the same upload path and dataset shape as the Training Studio. Behind its own fail-closed
+flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and review-sandbox
+tokens are refused, and so is an editor's read-only private run. The app owner's own
+private run is allowed, under the private-run Buzz cap.
 
 **Prerequisites.** The app is a page app (`/apps/run/<slug>`); the model slot has no
-training bridge and answers both training messages with an error. The manifest declares
+training bridge and answers `RUN_TRAINING` with an error. The manifest declares
 `ai:write:budgeted`, and the viewer has granted it. `app-blocks-training-kind` is on for
-the viewer, and the viewer is signed in. Steps 1–3 check these server-side.
+the viewer, and the viewer is signed in. Steps 2–3 check these server-side.
 
-1. **Dataset** — `PREPARE_TRAINING_DATASET { requestId, items: [{ imageId, caption }] }`
-   → `TRAINING_DATASET_RESULT { requestId, result: { datasetId, count, rejected } }` or
-   `{ requestId, error }`. The block cannot call the procedure itself (the web tRPC
-   endpoint refuses its origin), so the host calls `blocks.prepareTrainingDataset` with
-   the page's block token. No dialog: preparing charges nothing. The host refuses a
-   payload that fails the server's item schema (`blockTrainingDatasetItemsSchema`: 1 to
-   `BLOCK_TRAINING_DATASET_MAX_ITEMS` (50) items, positive integer ids, captions up to
-   `BLOCK_TRAINING_CAPTION_MAX_CHARS` (1,000) characters, no other keys) with
-   `invalid training dataset`, before any call; its other refusals are `review-mode`,
-   `block is not ready`, `sign in to train` and `no block token`. Server refusals arrive
-   in the same `error` field.
-
-   The server admits only the viewer's own scanned, unflagged images within the token's
-   maturity ceiling, moderates the captions, imports the admitted images under the
-   viewer's orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
-   bound to the viewer, app and install; the image count is always server-derived.
-   Every image is re-checked at submit, before anything is charged; a dataset with an
-   image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
-   outage) is a retryable rejection; `import-failed` is not.
-
-2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`)
-   returns `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The
-   price is the orchestrator's quote for that exact step; an unknown or variable price
-   is refused.
-3. **Run** — `RUN_TRAINING { body: { …, quoteId } }`. The host shows the server's copy
-   of the quote, and on the viewer's confirm records it through
-   `blocks.consentTrainingQuote` (signed-in session only) and then submits. A submit
+1. **Upload** — `OPEN_IMAGE_UPLOAD { requestId, purpose: 'trainingData' }` opens a host
+   modal where the viewer picks up to `BLOCK_TRAINING_DATASET_MAX_ITEMS` (50) PNG, JPEG or
+   WebP images; each is uploaded as a consumer blob, as the Training Studio does. The
+   reply is `IMAGE_UPLOAD_RESULT { requestId, selected: { images: [{ url, air }] } }`, or a
+   bare `{ requestId }` when the viewer cancels. The host remembers every key it uploaded
+   for the block; step 3 refuses a run naming any other.
+2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`):
+   `{ kind, engine: 'ai-toolkit', model, params, triggerWord, samplePrompts, items }`,
+   where `items` is 1 to 50 `{ air, caption }` entries. `air` is the uploaded blob's key
+   or its `url` (the server keeps only the key); one blob may appear once, and a caption
+   holds up to `BLOCK_TRAINING_CAPTION_MAX_CHARS` (8,192) characters. The reply carries
+   `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The price is the
+   orchestrator's quote for that exact step; an unknown or variable price is refused.
+3. **Run** — `RUN_TRAINING { body: { …, quoteId } }`. The host reads the quote back from
+   the server and replies `error: 'training data not uploaded here'`, with no dialog, when
+   it names an image this host did not upload for the block. Otherwise it shows the
+   server's copy of the quote with its own uploads as thumbnails, and on the viewer's
+   confirm records it through `blocks.consentTrainingQuote` (signed-in session only) and
+   then submits. A submit
    whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
    directly cannot start a run. If the outcome of the submit is unknown — the connection
    dropped, or the server attempted the run but could not confirm it — the host replies
@@ -742,6 +736,13 @@ A confirmed run may cost more than the token's per-call budget, up to
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
 re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
 reserved, when the balance can be read). Training charges no author fee.
+
+The trigger word of every training step an app runs gets the same trigger-word check the
+trainer and Training Studio use, at the estimate and again at the submit, before anything is
+reserved. The trigger word is the body's `triggerWord` on a `kind: 'training'` body; on a
+`kind: 'step'` step or a step of a `kind: 'workflow'` (inside a `repeat` too) it is
+`input.triggerWord` for `$type: 'training'` and `input.loraName` for
+`$type: 'imageResourceTraining'`. That field must be a literal string; a reference is refused.
 
 If the viewer set a daily Buzz limit for the app and the run would exceed what remains of
 it, the submit returns a failed snapshot with `errorCode: 'daily-limit-exceeded'` (the same
@@ -784,7 +785,7 @@ same page host, so the owner sees the same confirm.
      body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+     kind:'training'`. Training runs have their own kind, with its own checks.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session

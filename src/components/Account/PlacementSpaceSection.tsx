@@ -3,6 +3,7 @@ import {
   Anchor,
   Badge,
   Button,
+  Chip,
   Divider,
   Group,
   SegmentedControl,
@@ -19,11 +20,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
+  STICKER_MEDIA_TYPES,
   STICKER_PLACEMENT_DEFAULT_MAX_SCALE,
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
+  stickerMediaTypes,
 } from '~/shared/utils/sticker-placement';
+import type { StickerMediaType } from '~/shared/utils/sticker-placement';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import {
@@ -123,6 +127,7 @@ export function PlacementSpaceSection({
   const [mode, setMode] = useState<string>(DEFAULT_MODE);
   const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
+  const [mediaTypes, setMediaTypes] = useState<StickerMediaType[]>([...STICKER_MEDIA_TYPES]);
   // `null`, not the default value, and that distinction is the mechanism rather
   // than a nicety: a stored number stops tracking the surface default when it
   // moves. Seeding this to `1` and sending it on every commit wrote an explicit
@@ -138,12 +143,14 @@ export function PlacementSpaceSection({
       setMode(DEFAULT_MODE);
       setPrice(DEFAULT_PRICE ?? '');
       setFreeSlots(null);
+      setMediaTypes([...STICKER_MEDIA_TYPES]);
       return;
     }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
     setFreeSlots(stored.freeSlots);
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
+    setMediaTypes(stickerMediaTypes(stored.settings as Record<string, unknown>));
   }, [stored]);
 
   const save = trpc.placement.setSpace.useMutation({
@@ -160,6 +167,7 @@ export function PlacementSpaceSection({
       // would then write into their row.
       setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
       setFreeSlots(stored?.freeSlots ?? null);
+      setMediaTypes(stickerMediaTypes(stored?.settings as Record<string, unknown> | undefined));
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });
@@ -208,10 +216,20 @@ export function PlacementSpaceSection({
      * it means leaving it NULL — and NULL is what tracks the surface default.
      * Sending the on-screen number on every commit is what froze it.
      */
-    nextFreeSlots?: number
+    nextFreeSlots?: number,
+    nextMediaTypes = mediaTypes
   ) =>
     save.mutate({
-      settings: { maxScale: nextMaxScale },
+      // `settings` replaces the stored object, so every key the card owns goes out
+      // on every commit — a slider move that left `mediaTypes` out would reopen
+      // the types the creator had closed. Omitted when both are on, which is what
+      // an absent key already means.
+      settings: {
+        maxScale: nextMaxScale,
+        ...(nextMediaTypes.length < STICKER_MEDIA_TYPES.length
+          ? { mediaTypes: nextMediaTypes }
+          : {}),
+      },
       freeSlots: nextFreeSlots,
       surface: 'sticker',
       entityType: 'user',
@@ -296,6 +314,36 @@ export function PlacementSpaceSection({
             </Button>
           </Group>
         </Alert>
+      )}
+
+      {/* Hidden at "No stickers", like the free-slot slider: with the space closed
+          there is nothing for it to narrow. The one chip left on is disabled, not
+          silently ignored — the mode is how everything is switched off. */}
+      {mode !== 'off' && (
+        <Stack gap={8}>
+          <Text size="sm" fw={500}>
+            Allow stickers on
+          </Text>
+          <Chip.Group
+            multiple
+            value={mediaTypes}
+            onChange={(next) => {
+              const types = STICKER_MEDIA_TYPES.filter((type) => next.includes(type));
+              if (types.length === 0) return;
+              setMediaTypes(types);
+              commit(mode, price, maxScale, undefined, types);
+            }}
+          >
+            <Group gap="xs">
+              <Chip value="image" disabled={mediaTypes.length === 1 && mediaTypes[0] === 'image'}>
+                Images
+              </Chip>
+              <Chip value="video" disabled={mediaTypes.length === 1 && mediaTypes[0] === 'video'}>
+                Videos
+              </Chip>
+            </Group>
+          </Chip.Group>
+        </Stack>
       )}
 
       <Stack gap={4}>

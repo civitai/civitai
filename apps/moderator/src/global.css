@@ -142,3 +142,33 @@
     inset: calc((var(--touch-target-min) - 100%) / -2);
   }
 }
+
+/* Scrollbars follow the dark theme. The sidebar and the Model Flags panes scroll inside their own
+   containers, where the default track paints light. The fallbacks are the dark-4 / dark-3 values:
+   Tailwind only emits a theme variable that a utility uses. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-dark-4, #373a40) transparent;
+}
+
+/* Engines without `scrollbar-color`. Where it is supported the pseudo-elements are ignored, so
+   the thumb has no hover state there. */
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-dark-4, #373a40);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-dark-3, #5c5f66);
+  }
+}

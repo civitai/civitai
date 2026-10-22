@@ -1,0 +1,62 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** The bulk form of `dismissFlag`: same per-queue refusal, and the service decides the rest. */
+
+const { clearUserCsamFlags } = vi.hoisted(() => ({ clearUserCsamFlags: vi.fn() }));
+
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// Pulls in `$app/server`, which only resolves inside a SvelteKit build.
+vi.mock('$lib/server/user-actions.service', () => ({ setImageFlag: vi.fn() }));
+vi.mock('$lib/server/csam-flag-clear', () => ({ clearUserCsamFlags }));
+
+const { actions } = await import('../[slug]/+page.server');
+
+const request = (fields: Record<string, string>) =>
+  ({
+    formData: async () => {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(fields)) form.set(k, v);
+      return form;
+    },
+  } as never);
+
+const post = (
+  slug: string,
+  fields: Record<string, string> = { userId: '40', expectedCount: '3' }
+) =>
+  actions.dismissUserFlags({
+    request: request(fields),
+    locals: { user: { id: 7 } },
+    params: { slug },
+  } as never);
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  clearUserCsamFlags.mockResolvedValue({ ok: true, cleared: 3, remaining: 0 });
+});
+
+describe('dismissUserFlags', () => {
+  it('refuses from any other queue', async () => {
+    expect(await post('minor')).toMatchObject({ status: 403 });
+    expect(clearUserCsamFlags).not.toHaveBeenCalled();
+  });
+
+  it('refuses without the count the moderator confirmed', async () => {
+    expect(await post('csam', { userId: '40' })).toMatchObject({ status: 400 });
+    expect(clearUserCsamFlags).not.toHaveBeenCalled();
+  });
+
+  it('clears as the acting moderator, for the count confirmed', async () => {
+    expect(await post('csam')).toMatchObject({ success: true });
+    expect(clearUserCsamFlags).toHaveBeenCalledWith({
+      userId: 40,
+      expectedCount: 3,
+      moderatorId: 7,
+    });
+  });
+
+  it.each(['held', 'changed'] as const)('reports a refusal (%s) as a conflict', async (reason) => {
+    clearUserCsamFlags.mockResolvedValue({ ok: false, reason });
+    expect(await post('csam')).toMatchObject({ status: 409 });
+  });
+});

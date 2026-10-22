@@ -258,7 +258,7 @@ export type UserCommentV2 = {
 //
 // (Its name promises a link filter that its SQL does not contain — the filtering was done in the
 // browser. What the query is actually for is this resolution, so that is what is ported.)
-const THREAD_TARGETS = [
+export const THREAD_TARGETS = [
   'imageId',
   'modelId',
   'postId',
@@ -270,12 +270,12 @@ const THREAD_TARGETS = [
   'answerId',
 ] as const;
 
-const threadEntityId = sql<number | null>`coalesce(${sql.join(
+export const threadEntityId = sql<number | null>`coalesce(${sql.join(
   THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
   sql`, `
 )})`;
 
-const threadEntityType = sql<string | null>`case ${sql.join(
+export const threadEntityType = sql<string | null>`case ${sql.join(
   THREAD_TARGETS.map(
     (c) =>
       sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
@@ -284,6 +284,22 @@ const threadEntityType = sql<string | null>`case ${sql.join(
   ),
   sql` `
 )} end`;
+
+/** What each `CommentV2` hangs off, through its thread and, for a reply, the root thread. A comment whose thread points at nothing has no entry. */
+export async function commentV2ThreadParents(
+  commentIds: number[]
+): Promise<Map<number, { type: string; id: number }>> {
+  if (!commentIds.length) return new Map();
+  const { rows } = await sql<{ id: number; type: string | null; targetId: number | null }>`
+    select c.id, ${threadEntityType} as type, ${threadEntityId} as "targetId"
+    from "CommentV2" c
+    left join "Thread" t on t.id = c."threadId"
+    left join "Thread" root on root.id = t."rootThreadId"
+    where c.id in (${sql.join(commentIds)})`.execute(dbRead);
+  return new Map(
+    rows.flatMap((r) => (r.type && r.targetId ? [[r.id, { type: r.type, id: r.targetId }]] : []))
+  );
+}
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead

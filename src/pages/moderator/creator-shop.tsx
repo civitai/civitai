@@ -62,6 +62,7 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -82,7 +83,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  DECORATION_OFFSET_LIMIT,
+  MODERATOR_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -481,6 +482,7 @@ function CreatorShopReviewPage() {
     hasEdit: !!boxRevision,
     hasLive: !!mysteryReview.data?.live,
     loaded: !!mysteryReview.data,
+    takenDown: !!(selected?.meta as CosmeticShopItemMeta | null)?.takedown,
   });
 
   const queryUtils = trpc.useUtils();
@@ -623,6 +625,27 @@ function CreatorShopReviewPage() {
       confirmProps: { color: 'red' },
       centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
+    });
+  };
+
+  // Runs the same takedown again: it pays only refunds still owed, and strips the cosmetic from
+  // anyone who got it since.
+  const confirmRetryTakedown = () => {
+    if (!selected) return;
+    const takedown = (selected.meta as CosmeticShopItemMeta | null)?.takedown;
+    if (!takedown) return;
+    openConfirmModal({
+      title: 'Retry takedown',
+      children: (
+        <Text size="sm">
+          Finish the takedown of <strong>{selected.title}</strong>: refund any buyer or box opener
+          it still owes, then remove the cosmetic again. Nobody already refunded is paid twice.
+        </Text>
+      ),
+      labels: { confirm: 'Retry takedown', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => takedownItem.mutate({ id: selected.id, reason: takedown.reason }),
     });
   };
 
@@ -976,9 +999,9 @@ function CreatorShopReviewPage() {
                           Fit adjustment
                         </Text>
                         <Text size="xs" c="dimmed">
-                          Pixel offset per edge (−{DECORATION_OFFSET_LIMIT} to{' '}
-                          {DECORATION_OFFSET_LIMIT}) — negative extends the frame outside the
-                          avatar. The preview above updates live.
+                          Pixel offset per edge (−{MODERATOR_OFFSET_LIMIT} to{' '}
+                          {MODERATOR_OFFSET_LIMIT}) — negative extends the frame outside the avatar.
+                          The preview above updates live.
                         </Text>
                         <Group gap="xs" grow>
                           {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
@@ -986,8 +1009,8 @@ function CreatorShopReviewPage() {
                               key={side}
                               size="xs"
                               label={side.charAt(0).toUpperCase() + side.slice(1)}
-                              min={-DECORATION_OFFSET_LIMIT}
-                              max={DECORATION_OFFSET_LIMIT}
+                              min={-MODERATOR_OFFSET_LIMIT}
+                              max={MODERATOR_OFFSET_LIMIT}
                               step={1}
                               allowDecimal={false}
                               suffix="px"
@@ -999,8 +1022,8 @@ function CreatorShopReviewPage() {
                                   [side]:
                                     typeof v === 'number'
                                       ? Math.max(
-                                          -DECORATION_OFFSET_LIMIT,
-                                          Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                          -MODERATOR_OFFSET_LIMIT,
+                                          Math.min(MODERATOR_OFFSET_LIMIT, Math.round(v))
                                         )
                                       : 0,
                                 }))
@@ -1231,6 +1254,19 @@ function CreatorShopReviewPage() {
                       </Paper>
                     </Stack>
 
+                    {selected.status === CosmeticShopItemStatus.Published && (
+                      <ShopSectionsPanel
+                        shopItemId={selected.id}
+                        placeable={
+                          isMysteryPack
+                            ? 'Mystery packs are sold only through their own page.'
+                            : selected.cosmetic && !selectedMeta.sellableByOthers
+                            ? "The creator hasn't allowed resale, so it can't be placed in an official section."
+                            : true
+                        }
+                      />
+                    )}
+
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Flag concerns
@@ -1263,10 +1299,28 @@ function CreatorShopReviewPage() {
                     only way back from a rejection, and it is moderator-only. */}
                 {selected.status === CosmeticShopItemStatus.Archived ? (
                   <Group pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
-                    <Text size="sm" c="dimmed">
-                      This item is archived and can&apos;t be reviewed. The creator can restore it
-                      from their shop&apos;s manage view.
-                    </Text>
+                    {actions.retryTakedown ? (
+                      <>
+                        <Text size="sm" c="dimmed" style={{ flex: 1 }}>
+                          This item was taken down. If refunds failed, retrying pays what is still
+                          owed.
+                        </Text>
+                        <Button
+                          color="red"
+                          variant="light"
+                          leftSection={<IconBan size={16} />}
+                          loading={takedownItem.isPending}
+                          onClick={confirmRetryTakedown}
+                        >
+                          Retry takedown
+                        </Button>
+                      </>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        This item is archived and can&apos;t be reviewed. The creator can restore it
+                        from their shop&apos;s manage view.
+                      </Text>
+                    )}
                   </Group>
                 ) : (
                   <Stack gap={8} pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>

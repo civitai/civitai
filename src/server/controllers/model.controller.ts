@@ -27,6 +27,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
   stampWorkflowPublished,
@@ -108,7 +109,11 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import {
+  bustMvCache,
+  getLinkedVaeIds,
+  withPairedStrength,
+} from '~/server/services/model-version.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -154,6 +159,7 @@ import {
 import {
   amIBlockedByUser,
   bustUserDownloadsCache,
+  getCosmeticsAndProfilePicturesForUsers,
   getUserSettings,
 } from '~/server/services/user.service';
 import {
@@ -207,7 +213,6 @@ import {
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
-import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
@@ -519,7 +524,7 @@ export const getModelHandler = async ({
           .map((item) => {
             const match = generationResources.find((x) => x.id === item.resource.id);
             if (!match) return null;
-            return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            return withPairedStrength(match, item.settings);
           })
           .filter(isDefined),
         linkedComponents: selectLiveLinkedComponents(
@@ -560,16 +565,17 @@ export const getModelHandler = async ({
         })
       : null;
 
-    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
-      ctx.user,
-      model.user.id
-    );
+    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+      getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
+      getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+    ]);
 
     return {
       ...resolveModelFace(model, withSfwFace),
       hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
+      user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
       ownerMetricPrivacyDefaults,
@@ -2049,34 +2055,14 @@ export const getAssociatedResourcesCardDataHandler = async ({
   }
 };
 // #endregion
-export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesInput }) => {
-  const { hashes } = input;
-
-  if (hashes.length === 0) {
-    return [];
-  }
-
-  // `ModelFileHash.hash` is citext, so the ::citext[] cast is what makes this case-insensitive
-  // AND indexable on modelFileHash_hash_cs. Do not "simplify" it to a plain IN over text or a
-  // subquery: citext compared against an explicitly-typed text value degrades to a
-  // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
-  // returns nothing.
-  const modelsByHashes = await dbRead.$queryRaw<
-    { userId: number; modelId: number; hash: string }[]
-  >`
-    SELECT m."userId",
-           m."id",
-           mfh."hash"
-    FROM "ModelFileHash" mfh
-           JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
-           JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
-           JOIN "Model" m ON mv."modelId" = m.id
-    WHERE mfh."hash" = ANY(ARRAY[${Prisma.join(hashes.map((h) => h.toLowerCase()))}]::citext[])
-      AND m."deletedAt" IS NULL;
-  `;
-
-  return modelsByHashes;
-};
+/** Per matched hash, whether a model the caller does not own already has a file with it. */
+export const getModelByHashesHandler = ({
+  input,
+  ctx,
+}: {
+  input: ModelByHashesInput;
+  ctx: ProtectedContext;
+}) => findHashOwnership({ hashes: input.hashes, userId: ctx.user.id });
 
 export async function getSimpleModelsInfiniteHandler({
   input,
