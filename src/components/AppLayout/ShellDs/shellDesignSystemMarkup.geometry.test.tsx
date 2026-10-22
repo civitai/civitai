@@ -679,34 +679,3 @@ describe('shell design-system markup: the literal contract', () => {
     expect(shellRoot().querySelector('header .mantine-Grid-root')).not.toBeNull();
   });
 });
-
-// THROWAWAY (reverted in the next commit): emit screenshots of the shell, flag OFF and ON, into
-// the CI log as base64 so they can be diffed offline.
-describe('TEMP screenshots', () => {
-  const CONFIGS = [
-    ['light', DESKTOP],
-    ['dark', DESKTOP],
-    ['light', PHONE],
-    ['dark', PHONE],
-  ] as const;
-  test.each(CONFIGS)('%s %o', async (scheme, vp) => {
-    for (const ds of [false, true]) {
-      await renderShell({ ds, scheme, viewport: vp });
-      const root = shellRoot();
-      const regions: Array<[string, Element | null]> = [
-        ['header', root.querySelector('header')],
-        ['subnav', root.children[1]],
-        ['footer', root.querySelector('footer')],
-      ];
-      for (const [name, el] of regions) {
-        if (!el) throw new Error(`no ${name}`);
-        const b64 = await page.screenshot({ element: el, base64: true, save: false });
-        const key = `${scheme}-${vp.width}-${ds ? 'on' : 'off'}-${name}`;
-        for (let i = 0; i < b64.length; i += 40000)
-          console.log(`SHOT ${key} ${i} ${b64.slice(i, i + 40000)}`);
-        console.log(`SHOTEND ${key} ${b64.length}`);
-      }
-      await cleanup();
-    }
-  });
-});
