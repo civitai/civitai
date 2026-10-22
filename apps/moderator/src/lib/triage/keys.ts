@@ -41,6 +41,23 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
   return null;
 };
 
+export type BulkReviewKeyAction = 'next' | 'previous' | 'toggle';
+
+/**
+ * A bulk review's keys: J/K as on every triage list, the arrows as well (it reads like a document), and
+ * Enter or Space to tick or untick the row under the cursor. `onControl` is focus on a button or link
+ * that is not a row's own tick box: Enter there presses it, and must not also toggle a row.
+ */
+export const bulkReviewKeyAction = (
+  e: PlainKeyEvent & { onControl: boolean }
+): BulkReviewKeyAction | null => {
+  if (!isPlainKey(e)) return null;
+  if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowDown') return 'next';
+  if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowUp') return 'previous';
+  if ((e.key === 'Enter' || e.key === ' ') && !e.onControl) return 'toggle';
+  return null;
+};
+
 export type ReasonPickerKeyEvent = {
   key: string;
   ctrlKey: boolean;

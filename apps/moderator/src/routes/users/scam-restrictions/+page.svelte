@@ -13,6 +13,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num, plural, shortAge } from '$lib/format';
   import { denied } from '$lib/permissions';
+  import { bulkReviewKeyAction, isDialogOpen, isTypingTarget } from '$lib/triage/keys';
   import { urlWith } from '$lib/url';
   import type { PageData } from './$types';
 
@@ -21,13 +22,47 @@
   // Unticked rather than ticked: every row starts ticked, since nearly all of them are scam accounts.
   // Cleared when the page's rows change, so a tick cannot carry over to a row it was not made on.
   const kept = new SvelteSet<number>();
+  // The row the keys act on. Back to the top when the page's rows change.
+  let cursor = $state(0);
   $effect(() => {
     void data.rows;
     kept.clear();
+    cursor = 0;
   });
   const toBan = $derived(data.rows.filter((r) => !kept.has(r.id)));
   const toClear = $derived(data.rows.filter((r) => kept.has(r.id)));
   const toggle = (id: number) => (kept.has(id) ? kept.delete(id) : kept.add(id));
+
+  const rowId = (id: number) => `scam-row-${id}`;
+  // Keeps the cursor's row on screen as the keys move it; `scroll-my` keeps a margin past its edge.
+  $effect(() => {
+    const row = data.rows[cursor];
+    if (row) document.getElementById(rowId(row.id))?.scrollIntoView({ block: 'nearest' });
+  });
+
+  function onkeydown(e: KeyboardEvent) {
+    const target = e.target as Element | null;
+    const action = bulkReviewKeyAction({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      altKey: e.altKey,
+      defaultPrevented: e.defaultPrevented,
+      isComposing: e.isComposing,
+      typing: isTypingTarget(target),
+      dialogOpen: isDialogOpen(),
+      onControl: !!target?.closest('button, a') && !target.closest('[data-scam-row]'),
+    });
+    if (!action || !data.rows.length) return;
+    // Also stops a focused tick box toggling itself on top of this. Focus inside a row (tabbed to its
+    // tick box) makes that row the cursor's, so the key acts on the row the moderator is looking at.
+    e.preventDefault();
+    const focused = data.rows.findIndex((r) => target?.closest(`#${rowId(r.id)}`));
+    if (focused >= 0 && action === 'toggle') cursor = focused;
+    if (action === 'next') cursor = Math.min(cursor + 1, data.rows.length - 1);
+    else if (action === 'previous') cursor = Math.max(cursor - 1, 0);
+    else if (!e.repeat) toggle(data.rows[cursor].id);
+  }
 
   type Failure = { id: number; username: string | null; error: string };
   let failures = $state<Failure[]>([]);
@@ -54,6 +89,8 @@
   const first = $derived(data.offset + 1);
   const last = $derived(data.offset + data.rows.length);
 </script>
+
+<svelte:window {onkeydown} />
 
 <div class="flex flex-col lg:h-svh">
   <TriagePageHeader
@@ -88,6 +125,7 @@
       >
         Untick all
       </Button>
+      <span class="text-xs text-dark-2">J/K or ↑/↓ to move · Enter to tick or untick</span>
       <Button
         type="button"
         size="sm"
@@ -129,18 +167,28 @@
   
       {#if data.rows.length}
         <ul class="m-0 list-none divide-y divide-dark-4 p-0">
-          {#each data.rows as row (row.id)}
+          {#each data.rows as row, i (row.id)}
             {@const ban = !kept.has(row.id)}
+            <!-- A click anywhere on the row moves the cursor to it; the tick box toggles it. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
             <li
+              id={rowId(row.id)}
+              data-scam-row
+              aria-current={i === cursor ? 'true' : undefined}
+              onclick={() => (cursor = i)}
               class={cn(
-                'flex gap-3 border-l-[3px] px-6 py-3',
-                ban ? 'border-l-red-500' : 'border-l-green-500 bg-green-500/5'
+                'flex scroll-my-12 gap-3 border-l-[3px] px-6 py-3',
+                ban ? 'border-l-red-500' : 'border-l-green-500 bg-green-500/5',
+                i === cursor && 'bg-dark-6 outline-2 -outline-offset-2 outline-blue-500'
               )}
             >
               <Checkbox
                 id="scam-{row.id}"
                 checked={ban}
-                onCheckedChange={() => toggle(row.id)}
+                onCheckedChange={() => {
+                  cursor = i;
+                  toggle(row.id);
+                }}
                 aria-label="Ban {row.username ?? `user #${row.userId}`}"
                 class="mt-0.5"
               />
