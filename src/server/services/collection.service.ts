@@ -84,6 +84,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
@@ -700,52 +701,56 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
  * a badge cannot count items the queue never shows.
  *
  * `getCollectionItemsByCollectionId` hydrates REVIEW rows through the feed services as a moderator
- * with `browsingLevel` = all, and drops every row whose target does not come back. Each branch
- * mirrors the clauses that decide that:
+ * with `browsingLevel` = `allBrowsingLevelsFlag`, and drops every row whose target does not come
+ * back. Each branch mirrors the clauses that decide that:
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
- *   Archived, nsfwLevel != 0); `getModelsWithImagesAndModelVersions` drops TakenDown.
- * - Image: `getAllImages` with `pending` keeps any image on an existing post, minus the
- *   license-restricted base model clause.
+ *   Archived); `getModelsWithImagesAndModelVersions` drops TakenDown.
+ * - Image: `getAllImages` with `pending` keeps any image on an existing post, unrated ones included,
+ *   minus the license-restricted base model clause.
  * - Post: `getPostsInfinite` without a `username` shows a moderator published posts only.
  * - Article: `getArticles` requires Published with a publish date.
- * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them, and
- *   `model3dId` is not in the covering index the counts rely on.
+ * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
  *
- * nsfwLevel 0 (not yet rated) is dropped because the queue's browsingLevel bitmask drops it.
+ * The browsing level is `allBrowsingLevelsFlag`, which has no Blocked bit: a Blocked-only target
+ * never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
+ * The CASE order is hydration's: a row with two target columns is judged by the first one only.
+ *
  * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
  * images, a post with no images). Those cost a join per row and are rare states; the queue can
  * still show slightly fewer items than the count for them.
- *
- * Each branch is a primary-key probe that runs only for the column the row actually has.
  */
-const reviewQueueVisibleTargetSql = Prisma.sql`(
-  (ci."modelId" IS NOT NULL AND EXISTS (
+const reviewQueueVisibleTargetSql = Prisma.sql`(CASE
+  WHEN ci."modelId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "ModelMetric" rv_mm
     WHERE rv_mm."modelId" = ci."modelId"
       AND rv_mm."status" = ${ModelStatus.Published}::"ModelStatus"
-      AND rv_mm."nsfwLevel" != 0
+      AND (rv_mm."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
       AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
         ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
       ))
-  ))
-  OR (ci."imageId" IS NOT NULL AND EXISTS (
+  )
+  WHEN ci."postId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Post" rv_p
+    WHERE rv_p.id = ci."postId"
+      AND rv_p."publishedAt" <= now()
+      AND (rv_p."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+  )
+  WHEN ci."imageId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "Image" rv_i
     JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
     WHERE rv_i.id = ci."imageId"
+      AND ((rv_i."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0 OR rv_i."nsfwLevel" = 0)
       AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
-  ))
-  OR (ci."postId" IS NOT NULL AND EXISTS (
-    SELECT 1 FROM "Post" rv_p
-    WHERE rv_p.id = ci."postId" AND rv_p."publishedAt" <= now() AND rv_p."nsfwLevel" != 0
-  ))
-  OR (ci."articleId" IS NOT NULL AND EXISTS (
+  )
+  WHEN ci."articleId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "Article" rv_a
     WHERE rv_a.id = ci."articleId"
       AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
       AND rv_a."publishedAt" IS NOT NULL
-      AND rv_a."nsfwLevel" != 0
-  ))
-)`;
+      AND (rv_a."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
+  )
+  ELSE false
+END)`;
 
 export async function getPendingReviewCount(collectionId: number) {
   const [row] = await dbRead.$queryRaw<{ pending: number }[]>`
@@ -777,11 +782,10 @@ export async function getPendingReviewCount(collectionId: number) {
  * rows across 66 users are non-owner. The contributor branch is small; the owner branch does the
  * work.
  *
- * Prod covers this with `CollectionItem_collectionId_status_covered`
- * (`(collectionId, status, createdAt DESC) INCLUDE (...)`) as an Index Only Scan with both
- * equality columns in the Index Cond. Its INCLUDE carries the four target columns that
- * `reviewQueueVisibleTargetSql` reads, so the scan stays index-only and the visibility check adds
- * one primary-key probe per pending row: cost grows with pending rows, not collection size.
+ * Prod covers the `(collectionId, status)` filter with `CollectionItem_collectionId_status_covered`
+ * (`(collectionId, status, createdAt DESC) INCLUDE (...)`), both equality columns in the Index
+ * Cond. `reviewQueueVisibleTargetSql` then adds one primary-key probe per pending row, so cost
+ * grows with pending rows, not collection size.
  * That index is NOT in `schema.full.prisma`, so an environment built from the schema alone does
  * not have it and this query will be slower there. That is known, not a regression.
  *

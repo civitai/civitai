@@ -25,11 +25,13 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const { echoIds } = vi.hoisted(() => ({
   echoIds: (ids: number[] = []) => Promise.resolve({ items: ids.map((id) => ({ id })) }),
 }));
-vi.mock('~/server/services/model.service', () => ({
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   getModelsWithImagesAndModelVersions: ({ input }: { input: { ids: number[] } }) =>
     echoIds(input.ids),
 }));
-vi.mock('~/server/services/article.service', () => ({
+vi.mock('~/server/services/article.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   getArticles: ({ ids }: { ids: number[] }) => echoIds(ids),
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -82,6 +84,7 @@ const PUBLISHED_POST = 1;
 const DRAFT_POST = 2;
 const SCHEDULED_POST = 3;
 const UNRATED_POST = 4;
+const BLOCKED_POST = 5;
 
 const enumType = (name: string, values: object) =>
   `CREATE TYPE "${name}" AS ENUM (${Object.values(values)
@@ -190,13 +193,18 @@ beforeAll(async () => {
       (5, 'Published', 'TakenDown', 1),
       (6, 'Published', 'Archived', 1),
       -- 7 has no ModelMetric row at all
-      (8, 'Published', NULL, 0);
+      (8, 'Published', NULL, 0),
+      -- Blocked only: allBrowsingLevelsFlag has no Blocked bit, so the queue never hydrates it.
+      (9, 'Published', NULL, 32),
+      -- PG plus Blocked still matches the PG bit and shows.
+      (10, 'Published', NULL, 33);
 
     INSERT INTO "Post" ("id","publishedAt","nsfwLevel") VALUES
       (${PUBLISHED_POST}, now() - interval '1 day', 1),
       (${DRAFT_POST},     NULL, 1),
       (${SCHEDULED_POST}, now() + interval '1 day', 1),
-      (${UNRATED_POST},   now() - interval '1 day', 0);
+      (${UNRATED_POST},   now() - interval '1 day', 0),
+      (${BLOCKED_POST},   now() - interval '1 day', 32);
 
     INSERT INTO "Image" ("id","postId","nsfwLevel","modelRestricted") VALUES
       (1, ${PUBLISHED_POST}, 1, false),
@@ -206,14 +214,18 @@ beforeAll(async () => {
       -- R-rated on a license-restricted base model: getAllImages never returns it.
       (4, ${PUBLISHED_POST}, 4, true),
       -- Its post row is gone.
-      (5, 999, 1, false);
+      (5, 999, 1, false),
+      (6, ${PUBLISHED_POST}, 32, false),
+      -- Unrated: pending: true keeps nsfwLevel 0 for images, unlike every other target.
+      (7, ${PUBLISHED_POST}, 0, false);
 
     INSERT INTO "Article" ("id","status","publishedAt","nsfwLevel") VALUES
       (1, 'Published', now() - interval '1 day', 1),
       (2, 'Draft', NULL, 1),
       (3, 'Unpublished', now() - interval '1 day', 1),
       (4, 'Published', NULL, 1),
-      (5, 'Published', now() - interval '1 day', 0);
+      (5, 'Published', now() - interval '1 day', 0),
+      (6, 'Published', now() - interval '1 day', 32);
 
     INSERT INTO "CollectionItem" ("id","collectionId","status","modelId") VALUES
       (1, ${OWNED_WITH_QUEUE}, 'REVIEW',   ${VISIBLE_MODEL}),
@@ -236,26 +248,36 @@ beforeAll(async () => {
       (105, ${VIS_MODEL}, 'REVIEW', 5),
       (106, ${VIS_MODEL}, 'REVIEW', 6),
       (107, ${VIS_MODEL}, 'REVIEW', 7),
-      (108, ${VIS_MODEL}, 'REVIEW', 8);
+      (108, ${VIS_MODEL}, 'REVIEW', 8),
+      (109, ${VIS_MODEL}, 'REVIEW', 9),
+      (110, ${VIS_MODEL}, 'REVIEW', 10);
     INSERT INTO "CollectionItem" ("id","collectionId","status","imageId") VALUES
       (201, ${VIS_IMAGE}, 'REVIEW', 1),
       (202, ${VIS_IMAGE}, 'REVIEW', 2),
       (203, ${VIS_IMAGE}, 'REVIEW', 3),
       (204, ${VIS_IMAGE}, 'REVIEW', 4),
       (205, ${VIS_IMAGE}, 'REVIEW', 5),
-      (206, ${VIS_IMAGE}, 'REVIEW', 404);
+      (206, ${VIS_IMAGE}, 'REVIEW', 404),
+      (207, ${VIS_IMAGE}, 'REVIEW', 6),
+      (208, ${VIS_IMAGE}, 'REVIEW', 7);
     INSERT INTO "CollectionItem" ("id","collectionId","status","postId") VALUES
       (301, ${VIS_POST}, 'REVIEW', ${PUBLISHED_POST}),
       (302, ${VIS_POST}, 'REVIEW', ${DRAFT_POST}),
       (303, ${VIS_POST}, 'REVIEW', ${SCHEDULED_POST}),
       (304, ${VIS_POST}, 'REVIEW', ${UNRATED_POST}),
-      (305, ${VIS_POST}, 'REVIEW', 404);
+      (305, ${VIS_POST}, 'REVIEW', 404),
+      (306, ${VIS_POST}, 'REVIEW', ${BLOCKED_POST});
+    -- Hydration judges a row by its first target column (model, post, image, article), so a draft
+    -- post hides the row even though its image alone would show.
+    INSERT INTO "CollectionItem" ("id","collectionId","status","postId","imageId") VALUES
+      (209, ${VIS_IMAGE}, 'REVIEW', ${DRAFT_POST}, 1);
     INSERT INTO "CollectionItem" ("id","collectionId","status","articleId") VALUES
       (401, ${VIS_ARTICLE}, 'REVIEW', 1),
       (402, ${VIS_ARTICLE}, 'REVIEW', 2),
       (403, ${VIS_ARTICLE}, 'REVIEW', 3),
       (404, ${VIS_ARTICLE}, 'REVIEW', 4),
-      (405, ${VIS_ARTICLE}, 'REVIEW', 5);
+      (405, ${VIS_ARTICLE}, 'REVIEW', 5),
+      (406, ${VIS_ARTICLE}, 'REVIEW', 6);
     INSERT INTO "CollectionItem" ("id","collectionId","status","model3dId") VALUES
       (501, ${VIS_MODEL3D}, 'REVIEW', 1);
   `);
@@ -320,15 +342,17 @@ describe('getPendingCollectionReviewCounts', () => {
 // items (which must still count, so a predicate that drops everything fails too) beside hidden
 // ones (which main counted, so every case here was red there).
 const VISIBLE_IDS: Record<number, number[]> = {
-  // Only the Published, rated, live model. Deleted, Unpublished, UnpublishedViolation, TakenDown,
-  // Archived, missing-metric and unrated models are hidden.
-  [VIS_MODEL]: [101],
-  // Images on any existing post, draft posts included; not the license-restricted one, not an
-  // image with no post or a missing post, not a missing image.
-  [VIS_IMAGE]: [201, 202],
-  // Only the published, rated post. Not a draft, a scheduled post, an unrated one or a missing one.
+  // The Published, rated, live models. Deleted, Unpublished, UnpublishedViolation, TakenDown,
+  // Archived, missing-metric, unrated and Blocked-only models are hidden.
+  [VIS_MODEL]: [101, 110],
+  // Images on any existing post, draft posts included, unrated included; not the
+  // license-restricted one, not a Blocked one, not an image with no post or a missing post, not a
+  // missing image, and not one on a row whose draft post is judged first.
+  [VIS_IMAGE]: [201, 202, 208],
+  // Only the published, rated post. Not a draft, a scheduled post, an unrated, Blocked or missing
+  // one.
   [VIS_POST]: [301],
-  // Only the Published article with a publish date and a rating.
+  // Only the Published article with a publish date and a non-Blocked rating.
   [VIS_ARTICLE]: [401],
   // The queue never selects model3dId, so it shows none: the badge matches it at zero. A
   // follow-up owns real Model3D review support; when it lands, this expectation changes with it.
