@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The sampled log of signed-in `/images/[imageId]` HTML renders. It exists to measure how often
- * the SAME image URL is rendered again within a minute at the SAME Cloudflare colo, which is the
- * best a 60 s edge cache could ever hit. So the line carries exactly imageId, colo and minute — no
+ * the SAME image URL is rendered again within 60 s at the SAME Cloudflare colo (a sliding window
+ * over each record's own timestamp). So the line carries exactly imageId and colo — no
  * user, cookie or address — and is dark until the `shell-images-render-sample` Flipt flag is on.
  *
  * Flipt is mocked key-aware (only the real key answers), so a typo in the declared `fliptKey`
@@ -30,7 +30,6 @@ import {
   __resetImageRenderSampleForTest,
   cfRayColo,
   IMAGE_RENDER_SAMPLE_MAX_PER_SEC,
-  minuteBucket,
   sampleImageRender,
 } from '~/server/logging/image-render-sample';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
@@ -82,7 +81,7 @@ afterEach(() => {
 });
 
 describe('sampleImageRender', () => {
-  it('logs exactly imageId, colo and minute for a signed-in render when the flag is on', async () => {
+  it('logs exactly imageId and colo for a signed-in render when the flag is on', async () => {
     flagOn();
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
     expect(logToAxiom).toHaveBeenCalledTimes(1);
@@ -95,7 +94,6 @@ describe('sampleImageRender', () => {
       type: 'info',
       imageId: 918273,
       colo: 'SJC',
-      minute: '2026-10-22T10:15Z',
     });
     expect(datastream).toBeUndefined();
     // Nothing identifying leaks in under another name.
@@ -131,7 +129,6 @@ describe('sampleImageRender', () => {
       { imageId: IMAGE_ID },
       { session: undefined, sessionUnresolved: true },
     ],
-    ['a static-shell render', ROUTE, { imageId: IMAGE_ID }, { shellRender: true }],
     ['the /images feed', '/images', { imageId: IMAGE_ID }, {}],
     ['a notFound render', '/404', { imageId: IMAGE_ID }, {}],
     [
@@ -171,7 +168,6 @@ describe('sampleImageRender', () => {
       type: 'info',
       imageId: 5555,
       colo: 'SJC',
-      minute: '2026-10-22T10:15Z',
       droppedSinceLastLog: 7,
     });
     // ...and only once.
@@ -219,16 +215,6 @@ describe('cfRayColo', () => {
     [undefined, 'unknown'],
   ])('%j -> %s', (raw, colo) => {
     expect(cfRayColo(raw)).toBe(colo);
-  });
-});
-
-describe('minuteBucket', () => {
-  it('truncates to the UTC minute', () => {
-    expect(minuteBucket(NOW)).toBe('2026-10-22T10:15Z');
-    expect(minuteBucket(Date.UTC(2026, 9, 22, 10, 15, 0, 0))).toBe('2026-10-22T10:15Z');
-    expect(minuteBucket(Date.UTC(2026, 9, 22, 10, 15, 59, 999))).toBe('2026-10-22T10:15Z');
-    expect(minuteBucket(Date.UTC(2026, 9, 22, 10, 16, 0, 0))).toBe('2026-10-22T10:16Z');
-    expect(minuteBucket(Date.UTC(2027, 0, 3, 7, 4, 30, 0))).toBe('2027-01-03T07:04Z');
   });
 });
 

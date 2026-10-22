@@ -6,12 +6,7 @@ import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type client from 'prom-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AppDocument from '~/pages/_document';
-import {
-  measurePageDataCpu,
-  measureRenderCpu,
-  SSR_CPU_METRIC,
-  ssrRequestKind,
-} from '~/server/prom/ssr-cpu.metrics';
+import { measureRenderCpu, SSR_CPU_METRIC } from '~/server/prom/ssr-cpu.metrics';
 import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
 
 const MODEL_ROUTE = '/models/[id]/[[...slug]]';
@@ -38,10 +33,7 @@ async function rows(): Promise<Row[]> {
   return metric ? ((await metric.get()).values as Row[]) : [];
 }
 
-function runDocument(
-  req: { url: string; headers: Record<string, string>; shellRender?: boolean },
-  pathname: string
-) {
+function runDocument(req: { url: string; headers: Record<string, string> }, pathname: string) {
   return AppDocument.getInitialProps({
     req,
     pathname,
@@ -132,68 +124,6 @@ describe('_document records the render', () => {
     await runDocument({ url, headers }, MODEL_ROUTE);
     expect((await rows()).map((r) => r.labels)).toEqual([
       { route: MODEL_ROUTE, phase: 'render', kind: 'data' },
-    ]);
-  });
-});
-
-describe('measurePageDataCpu', () => {
-  it('adds the CPU of a page-data call under phase="page-data", kind="shell"', async () => {
-    const result = await measurePageDataCpu(MODEL_ROUTE, async () => burn(20));
-    expect(typeof result).toBe('number');
-    const [cpu, ...rest] = await rows();
-    expect(rest).toEqual([]);
-    expect(cpu.labels).toEqual({ route: MODEL_ROUTE, phase: 'page-data', kind: 'shell' });
-    expect(cpu.value).toBeGreaterThanOrEqual(0.02);
-    expect(cpu.value).toBeLessThan(1);
-  });
-
-  it('labels by the page pattern: a URL buckets as other', async () => {
-    await measurePageDataCpu('/models/123', async () => 'ok');
-    expect((await rows()).map((r) => r.labels)).toEqual([
-      { route: 'other', phase: 'page-data', kind: 'shell' },
-    ]);
-  });
-
-  it('still records when the call throws, and rethrows', async () => {
-    await expect(
-      measurePageDataCpu(MODEL_ROUTE, async () => {
-        throw new Error('page data failed');
-      })
-    ).rejects.toThrow('page data failed');
-    expect((await rows()).map((r) => r.labels)).toEqual([
-      { route: MODEL_ROUTE, phase: 'page-data', kind: 'shell' },
-    ]);
-  });
-
-  it('records nothing in the browser', async () => {
-    vi.stubGlobal('window', {});
-    expect(await measurePageDataCpu(MODEL_ROUTE, async () => 'ok')).toBe('ok');
-    expect(await rows()).toEqual([]);
-  });
-});
-
-describe('ssrRequestKind', () => {
-  it('is html for an ordinary document request, as today', () => {
-    expect(ssrRequestKind({ url: '/models/123', headers: {} })).toBe('html');
-    expect(ssrRequestKind({ url: '/models/123', headers: {}, shellRender: false })).toBe('html');
-  });
-
-  it('is shell when _app marked the request as a static-shell render', () => {
-    expect(ssrRequestKind({ url: '/images/123', headers: {}, shellRender: true })).toBe('shell');
-  });
-
-  it('keeps a /_next/data request data even if marked: the shell is a document-only mode', () => {
-    expect(
-      ssrRequestKind({ url: '/_next/data/b/images/123.json', headers: {}, shellRender: true })
-    ).toBe('data');
-  });
-});
-
-describe('_document records a shell render', () => {
-  it('labels it kind="shell", phase="render"', async () => {
-    await runDocument({ url: '/models/123', headers: {}, shellRender: true }, MODEL_ROUTE);
-    expect((await rows()).map((r) => r.labels)).toEqual([
-      { route: MODEL_ROUTE, phase: 'render', kind: 'shell' },
     ]);
   });
 });

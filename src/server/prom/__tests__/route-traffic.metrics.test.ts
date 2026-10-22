@@ -73,29 +73,6 @@ describe(PAGE_RENDER_METRIC, () => {
     expect(await rows(PAGE_RENDER_METRIC)).toHaveLength(2);
   });
 
-  it("keeps today's label set for an ordinary render: no new label, authed only true|false", async () => {
-    recordPageRender('/images', { headers: {}, session: { user: { id: 4242 } } });
-    recordPageRender('/images', { headers: {} });
-    recordPageRender('/images', { headers: {}, shellRender: false });
-    const got = await rows(PAGE_RENDER_METRIC);
-    for (const row of got)
-      expect(Object.keys(row.labels).sort()).toEqual(['authed', 'bot_class', 'route']);
-    expect(got).toEqual(
-      expect.arrayContaining([
-        { value: 1, labels: { route: '/images', authed: 'true', bot_class: 'none' } },
-        { value: 2, labels: { route: '/images', authed: 'false', bot_class: 'none' } },
-      ])
-    );
-    expect(got).toHaveLength(2);
-  });
-
-  it('counts a static-shell render as authed="shell", apart from true and false', async () => {
-    recordPageRender('/images', { headers: {}, shellRender: true });
-    expect(await rows(PAGE_RENDER_METRIC)).toEqual([
-      { value: 1, labels: { route: '/images', authed: 'shell', bot_class: 'none' } },
-    ]);
-  });
-
   it('keeps `/404` and `/_error` as their own routes', async () => {
     recordPageRender('/404', { headers: {} });
     recordPageRender('/_error', { headers: {} });
@@ -124,18 +101,6 @@ describe('label helpers', () => {
     expect(renderAuthedLabel({ headers: {}, session: null })).toBe('false');
     expect(renderAuthedLabel({ headers: {}, sessionUnresolved: true })).toBe('unknown');
     expect(renderAuthedLabel({ headers: {}, sessionUnresolved: false })).toBe('false');
-  });
-
-  it('renderAuthedLabel reports a shell render as shell, whatever else the request carries', () => {
-    // The shell resolves no session, so the marker must win over both other signals.
-    expect(renderAuthedLabel({ headers: {}, shellRender: true })).toBe('shell');
-    expect(renderAuthedLabel({ headers: {}, shellRender: true, sessionUnresolved: true })).toBe(
-      'shell'
-    );
-    expect(
-      renderAuthedLabel({ headers: {}, shellRender: true, session: { user: { id: 1 } } })
-    ).toBe('shell');
-    expect(renderAuthedLabel({ headers: {}, shellRender: false })).toBe('false');
   });
 
   it('botClassLabel only reports the verified-bot classes', () => {

@@ -1,19 +1,18 @@
 /**
  * Sampled log of signed-in `/images/[imageId]` HTML renders, for sizing an edge cache of the
- * static shell before building it. Grouping the lines by (imageId, colo, minute) gives how often
- * the same image URL is rendered again at the same Cloudflare colo within a minute: the most a 60 s
- * edge cache of that URL could ever hit.
+ * static shell before building it. Each line's own record timestamp allows a sliding 60 s window
+ * per (imageId, colo): how often the same image URL is rendered again at the same Cloudflare colo
+ * within 60 s of a previous render.
  *
  * - Dark until the Flipt boolean `shell-images-render-sample` (`shellImagesRenderSample`) is on,
  *   evaluated with no user, so it is one switch for everyone.
  * - At most `IMAGE_RENDER_SAMPLE_MAX_PER_SEC` lines per process per 1 s tumbling window. A line
  *   emitted after the cap dropped some carries `droppedSinceLastLog`, so a binding cap is visible.
- * - PRIVACY: the line carries the numeric image id, the colo and the UTC minute, nothing else —
+ * - PRIVACY: the line carries the numeric image id and the colo, nothing else —
  *   no user id, cookie, IP, user agent or URL. (`logToAxiom` adds the process's pod name.)
  * - Never throws and is not awaited by `_document`: losing a line is fine, delaying a render is not.
  */
 import type { ParsedUrlQuery } from 'querystring';
-import type { RenderRequest } from '~/server/prom/route-traffic.metrics';
 import { renderAuthedLabel } from '~/server/prom/route-traffic.metrics';
 import { ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 
@@ -34,10 +33,13 @@ export function cfRayColo(raw: string | string[] | undefined): string {
   return COLO_RE.test(colo) ? colo : 'unknown';
 }
 
-/** The UTC minute containing `nowMs`, e.g. `2026-10-22T10:15Z`. */
-export function minuteBucket(nowMs: number): string {
-  return new Date(Math.floor(nowMs / 60_000) * 60_000).toISOString().slice(0, 16) + 'Z';
-}
+/** The request as `_app.getInitialProps` leaves it (see `renderAuthedLabel`). */
+type SampleRequest = {
+  url?: string;
+  headers: Record<string, string | string[] | undefined>;
+  session?: { user?: unknown } | null;
+  sessionUnresolved?: boolean;
+};
 
 let windowStartMs = 0;
 let countThisWindow = 0;
@@ -66,7 +68,7 @@ export function __resetImageRenderSampleForTest() {
   droppedSinceEmit = 0;
 }
 
-async function isSampleFlagOn(req: RenderRequest): Promise<boolean> {
+async function isSampleFlagOn(req: SampleRequest): Promise<boolean> {
   const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
   const host = req.headers.host;
   const flags = await getFeatureFlagsAsync({ host: Array.isArray(host) ? host[0] : host });
@@ -80,7 +82,7 @@ async function isSampleFlagOn(req: RenderRequest): Promise<boolean> {
 export async function sampleImageRender(
   route: string,
   query: ParsedUrlQuery | undefined,
-  req: RenderRequest & { url?: string },
+  req: SampleRequest,
   now: number = Date.now()
 ): Promise<void> {
   try {
@@ -100,7 +102,6 @@ export async function sampleImageRender(
       type: 'info',
       imageId: Number(rawId),
       colo: cfRayColo(req.headers['cf-ray']),
-      minute: minuteBucket(now),
       ...(dropped > 0 ? { droppedSinceLastLog: dropped } : {}),
     });
   } catch {
