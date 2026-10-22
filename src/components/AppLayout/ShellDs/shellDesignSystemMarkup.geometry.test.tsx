@@ -501,6 +501,9 @@ describe('shell design-system markup: flag ON matches flag OFF', () => {
       await renderShell({ ds: true, scheme, viewport: DESKTOP });
       const on = layoutBoxes();
       expect(off.divider).not.toBeNull();
+      // ON really renders the replacement, so the comparison is not Mantine against Mantine.
+      expect(shellRoot().querySelector('header .mantine-Divider-root')).toBeNull();
+      expect(shellRoot().querySelector('header .mantine-Grid-root')).toBeNull();
       expect(on.divider).toEqual(off.divider);
       expect(on).toEqual(off);
     }
@@ -515,6 +518,7 @@ describe('shell design-system markup: flag ON matches flag OFF', () => {
     await renderShell({ ds: true, scheme: 'dark', viewport: DESKTOP });
     const on = { look: look(twitch()), semantics: semantics(twitch()) };
     expect(off.semantics.title).toBe('Live now!');
+    expect(twitch().getAttribute('data-civitai-ui')).toBe('button');
     expect(on).toEqual(off);
   });
 });
@@ -598,6 +602,8 @@ describe('shell design-system markup: the literal contract', () => {
     await renderShell({ ds: true, scheme: 'dark', viewport: DESKTOP });
     const el = page.getByRole('link', { name: 'Civitai on Twitch', exact: true }).element();
     expect(el.getAttribute('title')).toBe('Live now!');
+    // Mantine's ActionIcon emits `data-variant="filled"` too; this is what separates the two.
+    expect(el.getAttribute('data-civitai-ui')).toBe('button');
     expect(el.getAttribute('data-variant')).toBe('filled');
     // The other seven are unaffected.
     expect(document.querySelectorAll('footer a[data-variant="filled"]')).toHaveLength(1);
