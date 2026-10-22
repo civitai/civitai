@@ -709,13 +709,14 @@ describe('sending each type of report', () => {
       ...report,
       type: 'GeneratedImage',
       createdAt: new Date(Date.now() - CSAM_SEND_DECISION_AFTER_HOURS * 3_600_000 - 60_000),
+      reportId: 77,
       details: { generatedImages: [] },
     } as unknown as CsamReportProps;
 
     await processCsamReport(primaryRow);
 
     expect(lines('send-decision-needed')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
+      expect.objectContaining({ type: 'error', reportId: 1, ncmecReportId: 77 }),
     ]);
   });
 
@@ -948,10 +949,13 @@ describe('sending each type of report', () => {
       );
     });
 
-    it('sends a URL the filing names twice when only its first fetch failed', async () => {
+    it.each([
+      ['first', [false, true]],
+      ['second', [true, false]],
+    ])('sends a URL the filing names twice when only its %s fetch failed', async (_, fetched) => {
       let fetches = 0;
       fetchBlobAsFile.mockImplementation(async () =>
-        fetches++ === 0 ? null : new File(['generated'], 'generated.png')
+        fetched[fetches++] ? new File(['generated'], 'generated.png') : null
       );
       primaryRow = {
         ...twoJobs(1),
