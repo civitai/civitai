@@ -695,7 +695,7 @@ describe('the OAuth mirror', () => {
    * `manifest.auth` (a publisher push replaces it without re-approval), the env flag (can be
    * switched off after rows exist), and position after the publish. Dropping all gates closed
    * those and overcorrected — the callee is NOT a no-op without a row: two primary `deleteMany`s
-   * plus `deleteAuthSubject` plus an AWAITED `invalidateCivitaiUser`, an untimed outbound
+   * plus `deleteAuthSubject` plus an AWAITED `revokeCivitaiUserTokens`, an untimed outbound
    * orchestrator call, on every revoke of every app.
    *
    * MUTATION THAT MUST KILL IT: remove the `oauthConsent.findFirst` gate.
@@ -821,7 +821,7 @@ describe('the OAuth mirror', () => {
   /**
    * 🔴 POSTGRES, THEN REDIS, THEN THE MIRROR — and the middle step moved BACK in front of the
    * teardown deliberately. Putting the teardown first did close the unreachability hole, but
-   * `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator DELETE
+   * `revokeOauthConsentForBlock` awaits `revokeCivitaiUserTokens`, an outbound orchestrator DELETE
    * with NO timeout, so a slow orchestrator delayed the "immediate" half of the revoke for
    * exactly as long as it was slow — and that window is the one the 503 message apologises for.
    * A `finally` gets both properties.
