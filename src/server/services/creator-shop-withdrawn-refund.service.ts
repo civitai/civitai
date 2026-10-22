@@ -96,7 +96,8 @@ type PurchaseOutcome =
       clawedBack: number;
       payoutFailures: PayoutFailure[];
     }
-  | { status: 'failed'; error: string };
+  /** `refunded`: what of the buyer's debits is already back, so a hand refund pays only the rest. */
+  | { status: 'failed'; error: string; refunded?: number };
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -163,11 +164,13 @@ export async function reversePurchase(
   }
 
   // The buyer first: until every debit is back the purchase stays owed and the job retries it.
+  let refunded = 0;
   for (const t of debits) {
     try {
       await refundOnce(t.transactionId, description);
+      refunded += t.amount;
     } catch (error) {
-      return { status: 'failed', error: messageOf(error) };
+      return { status: 'failed', error: messageOf(error), refunded };
     }
   }
   // A payout that won't come back does not hold the buyer's refund: it is logged for a person to

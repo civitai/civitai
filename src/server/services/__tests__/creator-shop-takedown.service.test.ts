@@ -184,14 +184,6 @@ const sale = (prefix: string, buyerId: number): LedgerRow[] => [
   },
 ];
 const refundedIds = () => mocks.refundTransaction.mock.calls.map(([id]: [string]) => id);
-// Every leg reversed, whether refunded by id or as part of a prefix refund.
-const reversedLegs = () => [
-  ...refundedIds(),
-  ...mocks.refundMultiAccountTransaction.mock.calls.flatMap(
-    ([input]: [{ externalTransactionIdPrefix: string }]) =>
-      (ledger[input.externalTransactionIdPrefix] ?? []).map((l) => l.transactionId)
-  ),
-];
 
 describe('takedownCosmeticShopItem on a mystery box listing', () => {
   beforeEach(() => {
@@ -418,7 +410,7 @@ describe('takedownCosmeticShopItem', () => {
     const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
 
     // The buyer's charge comes back, and the creator gives back the payout once, not again.
-    expect(reversedLegs()).toContain(charge);
+    expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(refundedIds()).toEqual([charge, 'legacy-payout']);
     expect(result).toMatchObject({
@@ -597,20 +589,6 @@ describe('takedownCosmeticShopItem', () => {
     expect(result).toMatchObject({ refunded: 1, failures: [] });
   });
 
-  it('refunds a recorded payout with no transaction id by its ledger id, not a fresh charge', async () => {
-    mocks.purchaseFindMany.mockResolvedValue([
-      {
-        ...purchases[0],
-        meta: { payouts: [{ userId: 11, amount: 700, color: 'yellow' }], platformCut: 300 },
-      },
-    ]);
-
-    await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
-
-    expect(refundedIds()).toEqual(['purchase-1-debit', 'purchase-1-payout']);
-    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
-  });
-
   it('leaves a buyer unrefunded, and says so, when the ledger does not add up to the price', async () => {
     mocks.purchaseFindMany.mockResolvedValue([purchases[0]]);
     ledger = { 'purchase-1': [{ ...sale('purchase-1', 101)[0], amount: 400 }] };
@@ -762,6 +740,153 @@ describe('takedownCosmeticShopItem', () => {
       },
     ]);
     expect(mocks.revokeCosmeticsFromUsers).toHaveBeenCalled();
+  });
+
+  // A legacy single payout keyed by the charge id alone went to the creator, a reseller or a listed
+  // payee, and the ledger does not say which. Naming the creator would bill someone on a guess.
+  it('files a legacy payout that will not come back under its recipient, or under no one', async () => {
+    const split = 'a1b2c3d4-0000-4000-8000-000000000003';
+    const single = 'a1b2c3d4-0000-4000-8000-000000000004';
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 101, buzzTransactionId: split, unitAmount: 1000, meta: null },
+      { userId: 102, buzzTransactionId: single, unitAmount: 1000, meta: null },
+    ]);
+    ledger = {
+      [split]: [
+        {
+          transactionId: 'pay-55',
+          externalTransactionId: `${split}:55`,
+          accountId: 0,
+          amount: 200,
+        },
+      ],
+      [single]: [
+        { transactionId: 'pay-any', externalTransactionId: single, accountId: 0, amount: 700 },
+      ],
+    };
+    const refund = mocks.refundTransaction.getMockImplementation()!;
+    mocks.refundTransaction.mockImplementation(async (id: string, ...rest: unknown[]) => {
+      if (id.startsWith('pay-')) throw new Error('insufficient funds');
+      return refund(id, ...rest);
+    });
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(result).toMatchObject({
+      refunded: 2,
+      refundedValue: 2000,
+      clawedBack: 0,
+      owedBack: 900,
+    });
+    expect(result.failures).toEqual([
+      {
+        stage: 'clawback',
+        userId: 55,
+        amount: 200,
+        error: 'Payout pay-55 not reversed: insufficient funds',
+      },
+      {
+        stage: 'clawback',
+        userId: 0,
+        amount: 700,
+        error: 'Payout pay-any not reversed (recipient not on its key): insufficient funds',
+      },
+    ]);
+  });
+
+  // The rest is back already; a hand refund of the full price would pay the first colour twice.
+  it('files a buyer refund that stops partway at what is still owed', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([purchases[0]]);
+    ledger = {
+      'purchase-1': [
+        {
+          transactionId: 'd-blue',
+          externalTransactionId: 'purchase-1-blue',
+          accountId: 101,
+          amount: 400,
+        },
+        {
+          transactionId: 'd-green',
+          externalTransactionId: 'purchase-1-green',
+          accountId: 101,
+          amount: 600,
+        },
+      ],
+    };
+    const refund = mocks.refundTransaction.getMockImplementation()!;
+    mocks.refundTransaction.mockImplementation(async (id: string, ...rest: unknown[]) => {
+      if (id === 'd-green') throw new Error('insufficient bank funds');
+      return refund(id, ...rest);
+    });
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.purchaseUpdate).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([
+      { stage: 'refund', userId: 101, amount: 600, error: 'insufficient bank funds' },
+    ]);
+  });
+
+  // Only a bank payout is a legacy payout: a buyer-owned row under the charge id is not known to
+  // be anything, and refunding it on a guess cannot be undone.
+  it('refuses a non-bank row under a legacy charge id rather than refund it', async () => {
+    const charge = 'a1b2c3d4-0000-4000-8000-000000000005';
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 101, buzzTransactionId: charge, unitAmount: 1000, meta: null },
+    ]);
+    ledger = {
+      [charge]: [
+        { transactionId: 'odd', externalTransactionId: `${charge}:55`, accountId: 55, amount: 200 },
+      ],
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([
+      {
+        stage: 'refund',
+        userId: 101,
+        amount: 1000,
+        error: 'unexpected transactions under the purchase: 1',
+      },
+    ]);
+  });
+
+  // A pack's payouts go to each member's creator, keyed per member. All of them come back from
+  // the ledger, so nothing is left for a moderator to settle and the lister is charged nothing.
+  it('reverses every member payout of a pack sale and charges the lister nothing', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      cosmeticId: null,
+      cosmetic: null,
+    });
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 101, buzzTransactionId: 'cosmetic-pack-1', unitAmount: 1000, meta: null },
+    ]);
+    ledger = {
+      'cosmetic-pack-1': [
+        sale('cosmetic-pack-1', 101)[0],
+        {
+          transactionId: 'pay-21',
+          externalTransactionId: 'cosmetic-pack-1:sell:21:yellow:7',
+          accountId: 0,
+          amount: 300,
+        },
+        {
+          transactionId: 'pay-22',
+          externalTransactionId: 'cosmetic-pack-1:sell:22:yellow:8',
+          accountId: 0,
+          amount: 400,
+        },
+      ],
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(refundedIds()).toEqual(['cosmetic-pack-1-debit', 'pay-21', 'pay-22']);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refunded: 1, owedBack: 700, clawedBack: 700, failures: [] });
   });
 });
 

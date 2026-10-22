@@ -2631,7 +2631,7 @@ export const takedownCosmeticShopItem = async ({
         failures.push({
           stage: 'refund',
           userId: purchase.userId,
-          amount: price,
+          amount: price - (outcome.refunded ?? 0),
           error: outcome.error,
         });
         // The buyer loses the cosmetic below regardless, so an unrefunded sale is
@@ -2640,7 +2640,7 @@ export const takedownCosmeticShopItem = async ({
           shopItemId: id,
           userId: purchase.userId,
           buzzTransactionId: purchase.buzzTransactionId,
-          amount: price,
+          amount: price - (outcome.refunded ?? 0),
           error: outcome.error,
         });
         continue;
@@ -2656,17 +2656,21 @@ export const takedownCosmeticShopItem = async ({
       owedFromLedger += outcome.clawedBack;
 
       // The buyer is whole; what is left is the payout, filed as that leg for a person to finish.
+      // A legacy payout keyed by the purchase id alone went to the creator, a reseller or a listed
+      // payee, and the ledger does not say which: user 0 rather than a guess someone gets billed on.
       for (const failure of outcome.payoutFailures) {
         owedFromLedger += failure.amount;
         failures.push({
           stage: 'clawback',
-          userId: failure.recipientId ?? creatorId ?? 0,
+          userId: failure.recipientId ?? 0,
           amount: failure.amount,
-          error: `Payout ${failure.transactionId} not reversed: ${failure.error}`,
+          error: `Payout ${failure.transactionId} not reversed${
+            failure.recipientId === undefined ? ' (recipient not on its key)' : ''
+          }: ${failure.error}`,
         });
         await logTakedown('error', 'Payout refund failed', {
           shopItemId: id,
-          userId: failure.recipientId ?? creatorId ?? 0,
+          userId: failure.recipientId ?? 0,
           buzzTransactionId: purchase.buzzTransactionId,
           payoutTransactionId: failure.transactionId,
           amount: failure.amount,
