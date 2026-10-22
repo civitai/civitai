@@ -131,6 +131,29 @@ describe('saveAll', () => {
   });
 });
 
+describe('saveAll as the alias approval path', () => {
+  it('appends to each rule against its saved version and reports a stale rule by id', async () => {
+    service.updateModelRule
+      .mockResolvedValueOnce({ cacheStale: false })
+      .mockRejectedValueOnce(new ModelRuleStaleError());
+    const base = { subject: 'Example', description: '', note: '', baseUpdatedAt: 't1' };
+    const rules = [
+      { ...base, draftId: 3, id: 3, aliases: 'Old\nNew' },
+      { ...base, draftId: 4, id: 4, aliases: 'Other' },
+    ];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 422,
+      data: { saved: [{ draftId: 3, id: 3 }], failed: [{ draftId: 4 }] },
+    });
+    expect(service.updateModelRule).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ aliases: ['Old', 'New'] }),
+      1,
+      { baseUpdatedAt: 't1' }
+    );
+  });
+});
+
 describe('restoreRule', () => {
   it('refuses a restore that would change nothing', async () => {
     service.restoreModelRuleVersion.mockRejectedValue(new RestoreRefusedError('same'));
