@@ -185,7 +185,7 @@ beforeAll(async () => {
       (2, ${HOST}), (2, ${HOST}), (1, ${EXCLUDED_COMMENTER}), (3, ${COMMENTERS[0]});
 
     INSERT INTO "ArticleMetric"
-    SELECT id, tf, 10, 5, 1, 0, 3, 400, 4 FROM "Article", unnest(ARRAY['AllTime', 'Year']) tf;
+    SELECT id, 'AllTime', 10, 5, 1, 0, 3, 400, 4 FROM "Article";
     UPDATE "ArticleMetric" SET "viewCount" = 30000, "collectedCount" = 500, "likeCount" = 300
     WHERE "articleId" IN (200, 500);
 

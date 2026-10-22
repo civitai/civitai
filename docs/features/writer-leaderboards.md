@@ -37,13 +37,13 @@ violation. An article whose only categories are announcement, news or event earn
 points on Active Writers, Rising Writers and Community Builders. "Half-life" is how many days after publishing an article
 keeps half its points.
 
-| Board              | Id                 | Per-article value                                                  | Half-life | Articles counted                              |
-| ------------------ | ------------------ | ------------------------------------------------------------------ | --------- | --------------------------------------------- |
-| Active Writers     | `writer-active`    | `√views/2 + √readers×7 + √bookmarks×10 + √participants×5`          | 90 days   | Best 30 from the last 365 days                |
-| Storytellers       | `writer-story`     | `√readers×7 + √participants×10 + √bookmarks×5 + √views/4`          | 90 days   | Best 20 story articles from the last 365 days |
-| Guide Writers      | `writer-guide`     | `√views/2 + √bookmarks×12 + √participants×4`, past-year engagement | 365 days  | Best 20 guides of any age                     |
-| Rising Writers     | `writer-rising`    | `√readers×10 + √views/2`                                           | none      | Best 10                                       |
-| Community Builders | `writer-community` | `√participants×6 + √answers×20 + √first-time answers×10`           | 180 days  | Best 10 from the last 365 days                |
+| Board              | Id                 | Per-article value                                                | Half-life | Articles counted                              |
+| ------------------ | ------------------ | ---------------------------------------------------------------- | --------- | --------------------------------------------- |
+| Active Writers     | `writer-active`    | `√views/2 + √readers×7 + √bookmarks×10 + √participants×5`        | 90 days   | Best 30 from the last 365 days                |
+| Storytellers       | `writer-story`     | `√readers×7 + √participants×10 + √bookmarks×5 + √views/4`        | 90 days   | Best 20 story articles from the last 365 days |
+| Guide Writers      | `writer-guide`     | `√views/2 + √bookmarks×12 + √participants×4`, past-year comments | 365 days  | Best 20 guides of any age                     |
+| Rising Writers     | `writer-rising`    | `√readers×10 + √views/2`                                         | none      | Best 10                                       |
+| Community Builders | `writer-community` | `√participants×6 + √answers×20 + √first-time answers×10`         | 180 days  | Best 10 from the last 365 days                |
 
 The same formulas ship as each board's `scoringDescription` in the migration; change both together.
 
@@ -54,7 +54,8 @@ The same formulas ship as each board's `scoringDescription` in the migration; ch
   out of both through the `{{metricExcludedUserIds}}` token (see `METRIC_EXCLUDED_USERS_TOKEN` in
   `prepare-leaderboard.ts`). If that list cannot be fetched, the run proceeds with it empty.
   `ArticleMetric`'s reaction and comment counts include the author's own, so no board reads them;
-  views and bookmarks still come from `ArticleMetric`.
+  views and bookmarks still come from `ArticleMetric`, whose `AllTime` row is the only one the
+  article metrics job still writes.
 - **Answers** are later articles by other people, published in the last 365 days, that link to the
   article (`/articles/<id>` in the body), each author counted once. A **first-time** answer is one
   that is the answering author's first published article ever. Community Builders lists only authors
@@ -64,9 +65,8 @@ The same formulas ship as each board's `scoringDescription` in the migration; ch
   days to three or more of the author's story articles (any of them, not only the best 20), and
   multiplies the total by `0.75 + 0.25 × weeks / 12`, where `weeks` counts the calendar weeks in the
   last 12 that contain a new chapter, capped at 12.
-- **Guide Writers** reads views and bookmarks from the `Year` row of `ArticleMetric` and participants
-  from comments in the past 365 days, and needs a guide published in that time. A guide with no
-  `Year` metric row is not counted.
+- **Guide Writers** counts participants from comments in the past 365 days and needs a guide published
+  in that time. Views and bookmarks are all-time; the 365-day half-life is what lets old guides fade.
 - **Rising Writers** takes only authors whose first published article is under 90 days old, with 25
   distinct readers across their articles.
 

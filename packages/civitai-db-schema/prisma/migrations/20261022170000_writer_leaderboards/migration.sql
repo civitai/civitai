@@ -7,7 +7,8 @@
 -- syntax error, and one failing board stops the whole nightly run, Legends and the cache purge included.
 -- Queries end in a `scores` CTE with no final SELECT (the job appends one) and may use {{metricExcludedUserIds}}.
 -- Readers and participants are computed from ArticleReaction/CommentV2 rather than read from ArticleMetric,
--- whose reaction and comment counts include the author.
+-- whose reaction and comment counts include the author. ArticleMetric is read only for its AllTime row; the
+-- article metrics job writes no other timeframe.
 --
 -- ROLLBACK (deletes the five boards and what they produced: results, Legends rows, populated markers, and
 -- ranks taken from them, which are rebuilt from the remaining public boards as leaderboardRankInsert in
@@ -221,7 +222,7 @@ $q$WITH story AS (
 )$q$),
   ('writer-guide', 3, 'Guide Writers',
    'Guides people keep reading and saving',
-   E'Per guide: √(views) / 2 + √(bookmarks) × 12 + √(participants) × 4, counting only the past year''s views, bookmarks and comments\n---\nGuides of any age; each loses half its points every 365 days\nYour best 20 guides count\nParticipants: people other than you who commented, each counted once\nYou need a guide published in the last 365 days',
+   E'Per guide: √(views) / 2 + √(bookmarks) × 12 + √(participants) × 4, counting only the past year''s comments\n---\nGuides of any age; each loses half its points every 365 days\nYour best 20 guides count\nParticipants: people other than you who commented, each counted once\nYou need a guide published in the last 365 days',
 $q$WITH guide AS (
   SELECT a.id, a."userId", a."publishedAt"
   FROM "Article" a
@@ -262,7 +263,7 @@ $q$WITH guide AS (
       + SQRT(COALESCE(p.participants, 0)) * 4
     ) AS v
   FROM guide g
-  JOIN "ArticleMetric" am ON am."articleId" = g.id AND am.timeframe = 'Year'
+  JOIN "ArticleMetric" am ON am."articleId" = g.id AND am.timeframe = 'AllTime'
   LEFT JOIN participants p ON p.id = g.id
 ), ranked AS (
   SELECT *, row_number() OVER (PARTITION BY "userId" ORDER BY v DESC) AS rn
