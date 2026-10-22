@@ -103,10 +103,27 @@ async function plan(raw: string): Promise<Plan | string> {
   }
 }
 
-type Answer = {
+const answerSchema = z.object({
+  rules: z.array(z.object({ id: z.number(), subject: z.string() })),
+  results: z.array(
+    z.object({
+      key: z.string(),
+      matches: z.array(
+        z.object({
+          ruleId: z.number(),
+          term: z.string(),
+          field: z.string(),
+          fieldIndex: z.number(),
+          start: z.number(),
+          end: z.number(),
+        })
+      ),
+    })
+  ),
+}) satisfies z.ZodType<{
   rules: LiteralTryRule[];
   results: { key: string; matches: ModelRulesHoldMatch[] }[];
-};
+}>;
 
 /**
  * Which rules, and which of their terms, match the text, with where. The main app's matcher does
@@ -137,8 +154,18 @@ export async function runLiteralTry(
   );
   if (!result.ok) return fail(502, { error: result.error });
 
-  const answer = result.body as unknown as Answer;
-  const byKey = new Map(answer.results.map((r) => [r.key, r.matches]));
+  const answer = answerSchema.safeParse(result.body);
+  if (!answer.success)
+    return fail(502, { error: 'The main app gave an unreadable answer; nothing was tried.' });
+  const byKey = new Map(answer.data.results.map((r) => [r.key, r.matches]));
+  // A subject the answer left out was never judged, so it must not read as "no rule matched".
+  const unjudged = planned.subjects.filter((subject) => !byKey.has(subject.key));
+  if (unjudged.length)
+    return fail(502, {
+      error: `The main app's answer left out ${unjudged
+        .map((subject) => subject.title)
+        .join(', ')}; nothing was tried.`,
+    });
   const items: LiteralTryItem[] = planned.subjects.map((subject) => ({
     ...subject,
     matches: byKey.get(subject.key) ?? [],
@@ -146,7 +173,7 @@ export async function runLiteralTry(
   return {
     tried: true,
     notice: planned.notice,
-    rules: answer.rules,
+    rules: answer.data.rules,
     items,
     skipped: planned.skipped,
   };

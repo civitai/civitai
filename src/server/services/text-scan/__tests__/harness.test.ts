@@ -140,7 +140,6 @@ describe('text-scan harness with segmented text', () => {
     const res = await run({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw' });
     expect(res.items.map((i: any) => i.textChangedSinceScan)).toEqual([false]);
   });
-
 });
 
 describe('a labels override', () => {
@@ -313,5 +312,18 @@ describe('putLabelModes', () => {
       textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'hold' })
         .success
     ).toBe(false);
+  });
+});
+
+describe('text-scan harness with the retired ModelRules type', () => {
+  it.each([
+    { action: 'sampleShadow', label: 'nsfw' },
+    { action: 'quoteEntities', entityIds: [1] },
+  ])('refuses $action for ModelRules instead of reading its leftover rows', async (rest) => {
+    await expect(run({ ...rest, entityType: 'ModelRules' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('no profile registered'),
+    });
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });

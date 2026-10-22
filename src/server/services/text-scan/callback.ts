@@ -100,6 +100,15 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     return;
   }
+  // In flight when the LLM scan was retired: there is no profile or label left to read it with.
+  if (entityType === 'ModelRules')
+    return log('info', 'callback for the retired ModelRules scan dropped', {
+      workflowId,
+      entityType,
+      entityId,
+      mode,
+      status: event.status,
+    });
   const variant = metadata.variant;
   if (
     variant !== undefined &&
@@ -300,10 +309,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
     csam: outcome.csam?.detected,
-    tags: [
-      ...outcome.triggeredLabels,
-      ...(metadata.inputCut ? ['inputCut'] : []),
-    ],
+    tags: [...outcome.triggeredLabels, ...(metadata.inputCut ? ['inputCut'] : [])],
     textHash: metadata.textHash,
     ...(variant ? { variant } : {}),
   });

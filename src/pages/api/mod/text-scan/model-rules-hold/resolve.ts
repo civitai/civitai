@@ -95,14 +95,25 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
         tracker: ctx.tracker,
       });
     } catch (error) {
+      const refusal = isModelRulesHoldRefusal(error) ? error : null;
       log(
         { holdId: input.holdId },
-        error instanceof TRPCError && error.message === MODEL_RULES_STALE_HOLD_MESSAGE
+        refusal?.message === MODEL_RULES_STALE_HOLD_MESSAGE
           ? 'stale'
-          : isModelRulesHoldRefusal(error)
+          : refusal
           ? 'refused'
           : 'error'
       );
+      if (!refusal)
+        // Code and name only: a Prisma message can echo the arguments, which here are the held text.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'model rules hold decision failed',
+          holdId: input.holdId,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorCode: (error as { code?: unknown } | null | undefined)?.code,
+        }).catch(() => null);
       throw error;
     }
     log({ holdId: input.holdId, ...result }, 'ok');

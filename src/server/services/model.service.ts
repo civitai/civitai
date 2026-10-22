@@ -397,6 +397,13 @@ export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+/**
+ * A flagged model, unless a Model rules takedown flagged it: that is ruled on in the model rule matches queue.
+ * A JSON-null `modelRules` is no takedown, so it stays listed, as it does in the Prisma `AnyNull` filter.
+ */
+export const MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL = Prisma.sql`(m."meta"->>'needsReview' = 'true'
+          AND (m."meta"->'modelRules' IS NULL OR m."meta"->'modelRules' = 'null'::jsonb))`;
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -670,8 +677,7 @@ export const getModelsRaw = async ({
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
       (
-        -- A Model rules takedown is ruled on in the model rule matches queue, not here.
-        (m."meta"->>'needsReview' = 'true' AND m."meta"->'modelRules' IS NULL)
+        ${MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL}
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv

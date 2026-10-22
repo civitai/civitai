@@ -319,7 +319,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       pass: harnessPass,
       labels: labelsOverride,
       promptOverrides,
-        model: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
       wait: waitSecondsSchema,

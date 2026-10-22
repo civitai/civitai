@@ -21,11 +21,27 @@ import { lockModelRulesHold } from '~/server/services/text-scan/actions/model-ru
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
 import { isPublicModel } from '~/server/services/text-scan/public-content';
-import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
+import { throwConflictError } from '~/server/utils/errorHandling';
 import { ModelStatus, StrikeReason } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
 export { MODEL_RULES_HOLD_DECISIONS, type ModelRulesHoldDecision };
+
+/**
+ * The refusals this service raises on purpose (stale, superseded, moved on, unknown versions, already decided,
+ * no owner to strike): their text is safe to show and none is a fault. Any other error, a TRPCError included
+ * (the lost-claim conflict above all), is audited as an error.
+ */
+export class ModelRulesHoldRefusal extends TRPCError {
+  constructor(code: 'CONFLICT' | 'BAD_REQUEST', message: string) {
+    super({ code, message });
+    this.name = 'ModelRulesHoldRefusal';
+  }
+}
+
+function refuse(message: string, code: 'CONFLICT' | 'BAD_REQUEST' = 'CONFLICT'): never {
+  throw new ModelRulesHoldRefusal(code, message);
+}
 
 const PLAN: Record<
   ModelRulesHoldDecision,
@@ -140,12 +156,12 @@ async function restoreModel(
     model.status !== ModelStatus.UnpublishedViolation ||
     held?.textHash !== hold.textHash
   )
-    throw throwConflictError(MODEL_RULES_MOVED_ON_MESSAGE);
+    refuse(MODEL_RULES_MOVED_ON_MESSAGE);
 
   // Dynamic: the controller pulls in the whole model service graph.
   const { publishModelHandler } = await import('~/server/controllers/model.controller');
   const versionIds = await versionsToRestore(hold.entityId, model, publishing);
-  if (!versionIds.length) throw throwConflictError(UNKNOWN_VERSIONS_MESSAGE);
+  if (!versionIds.length) refuse(UNKNOWN_VERSIONS_MESSAGE);
   // As a moderator, so the publish approves the matches (`modelRulesCleared`) and drops the take-down notice.
   await publishModelHandler({
     input: { id: hold.entityId, versionIds },
@@ -193,18 +209,17 @@ export async function decideModelRulesHold(args: DecideArgs) {
       meta: true,
     },
   });
-  if (!hold || hold.entityType !== 'Model')
-    throw throwConflictError('Hold already decided or missing.');
+  if (!hold || hold.entityType !== 'Model') refuse('Hold already decided or missing.');
   const meta = parseModelRulesHoldMeta(hold.meta);
   if (hold.status !== 'Pending')
-    throw throwConflictError(
+    refuse(
       meta.decision === 'superseded'
         ? MODEL_RULES_SUPERSEDED_MESSAGE
         : 'Hold already decided or missing.'
     );
-  if (hold.textHash !== textHash) throw throwConflictError(MODEL_RULES_STALE_HOLD_MESSAGE);
+  if (hold.textHash !== textHash) refuse(MODEL_RULES_STALE_HOLD_MESSAGE);
   if (plan.strike && !hold.userId)
-    throw throwBadRequestError('This hold has no recorded owner to strike.');
+    refuse('This hold has no recorded owner to strike.', 'BAD_REQUEST');
 
   const claimed = await dbWrite.$queryRaw<{ at: string }[]>`
     UPDATE "TextScanHold"
@@ -216,7 +231,7 @@ export async function decideModelRulesHold(args: DecideArgs) {
         OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
     RETURNING "meta"->'decisionClaim'->>'at' AS "at"
   `;
-  if (!claimed.length) throw throwConflictError('Hold already decided, changed or missing.');
+  if (!claimed.length) refuse('Hold already decided, changed or missing.');
 
   const status: 'Dismissed' | 'Confirmed' = plan.confirm ? 'Confirmed' : 'Dismissed';
   try {
@@ -230,8 +245,7 @@ export async function decideModelRulesHold(args: DecideArgs) {
     // A moderator's edit is not checked, so it can change a live model's text without superseding the hold.
     if (meta.mode === 'shadow' && model && isLive(model)) {
       const current = await currentTextHash(hold.entityId);
-      if (current && current !== hold.textHash)
-        throw throwConflictError(MODEL_RULES_STALE_HOLD_MESSAGE);
+      if (current && current !== hold.textHash) refuse(MODEL_RULES_STALE_HOLD_MESSAGE);
     }
 
     // Effects are not idempotent, so each one is recorded on the hold the moment it completes and a retry
@@ -277,7 +291,7 @@ export async function decideModelRulesHold(args: DecideArgs) {
           },
         },
       });
-      if (count === 0) throw throwConflictError('Hold already decided or missing.');
+      if (count === 0) refuse('Hold already decided or missing.');
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // ruling; it lands in `label_store.record_failure`.
@@ -332,9 +346,8 @@ async function strikeOwner(
   });
 }
 
-/** Our own refusals (stale, superseded, moved on, no owner) carry text safe to show and are not faults. */
-export const isModelRulesHoldRefusal = (error: unknown): error is TRPCError =>
-  error instanceof TRPCError;
+export const isModelRulesHoldRefusal = (error: unknown): error is ModelRulesHoldRefusal =>
+  error instanceof ModelRulesHoldRefusal;
 
 export const MODEL_RULES_HOLD_BATCH_MAX = 50;
 /** A strike belongs to the owner once, with the hold the moderator is on, never per hold. */

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -35,8 +35,12 @@ vi.mock('~/server/services/text-scan/profiles/model.profile', () => ({
   loadModelScanSubjects: mocks.loadSubjects,
 }));
 
-const { decideModelRulesHold, decideModelRulesHoldBatch, resolveModelRulesHoldInput } =
-  await import('~/server/services/text-scan/model-rules-hold-decision');
+const {
+  decideModelRulesHold,
+  decideModelRulesHoldBatch,
+  isModelRulesHoldRefusal,
+  resolveModelRulesHoldInput,
+} = await import('~/server/services/text-scan/model-rules-hold-decision');
 const { MODEL_RULES_UNPUBLISH_MESSAGE } = await import(
   '~/server/services/text-scan/actions/model-rules'
 );
@@ -423,11 +427,35 @@ describe('retrying after an effect already ran', () => {
       );
       return { id: 31 };
     });
-    await expect(decide('confirm_strike')).rejects.toMatchObject({ code: 'CONFLICT' });
+    const failure = await decide('confirm_strike').catch((e) => e);
+    expect(failure).toMatchObject({ code: 'CONFLICT' });
+    // The effect ran unrecorded: this is a fault to investigate, never a benign refusal.
+    expect(isModelRulesHoldRefusal(failure)).toBe(false);
     const left = await hold();
     expect(left.status).toBe('Pending');
     expect(left.meta).toMatchObject({ decisionClaim: { by: 8 } });
     expect(left.meta).not.toHaveProperty('effects');
+  });
+
+  it('reports a lost claim in a batch as a fault, not a refusal, and logs it', async () => {
+    await seed({ mode: 'shadow' });
+    mocks.createStrike.mockImplementationOnce(async () => {
+      await db.pg.query(
+        `UPDATE "TextScanHold" SET meta = meta || jsonb_build_object('decisionClaim', jsonb_build_object('by', 8, 'at', now() + interval '1 second'))`
+      );
+      return { id: 31 };
+    });
+    // A batch cannot strike, so the strike path is driven through the real decide with a strike decision.
+    const results = await decideModelRulesHoldBatch({
+      holds: [{ holdId: 12, textHash: HASH }],
+      decision: 'confirm_strike' as never,
+      actor,
+      tracker: tracker as never,
+    });
+    expect(results[0]).toMatchObject({ ok: false, refused: false, stale: false });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', holdId: 12 })
+    );
   });
 });
 
@@ -501,6 +529,29 @@ describe('refusals', () => {
     expect((await hold()).meta).not.toHaveProperty('decisionClaim');
     await decide('confirm');
     expect((await hold()).status).toBe('Confirmed');
+  });
+});
+
+describe('which failures are refusals', () => {
+  it('counts only the expected refusals, not other TRPC errors', async () => {
+    const { TRPCError } = await import('@trpc/server');
+    expect(isModelRulesHoldRefusal(new TRPCError({ code: 'CONFLICT', message: 'x' }))).toBe(false);
+    expect(
+      isModelRulesHoldRefusal(new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'x' }))
+    ).toBe(false);
+    expect(isModelRulesHoldRefusal(new Error('db down'))).toBe(false);
+
+    await seed();
+    await decide('dismiss_allowed');
+    expect(isModelRulesHoldRefusal(await decide('confirm').catch((e) => e))).toBe(true);
+    expect(
+      isModelRulesHoldRefusal(await decide('confirm', { textHash: 'old' }).catch((e) => e))
+    ).toBe(true);
+  });
+
+  it('counts a strike with no recorded owner as a refusal', async () => {
+    await seed({ userId: null });
+    expect(isModelRulesHoldRefusal(await decide('confirm_strike').catch((e) => e))).toBe(true);
   });
 });
 

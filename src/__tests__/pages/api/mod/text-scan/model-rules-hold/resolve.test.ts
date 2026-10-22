@@ -9,6 +9,7 @@ import {
   MODEL_RULES_MOVED_ON_MESSAGE,
   MODEL_RULES_STALE_HOLD_MESSAGE,
   MODEL_RULES_SUPERSEDED_MESSAGE,
+  ModelRulesHoldRefusal,
 } from '~/server/services/text-scan/model-rules-hold-decision';
 import type * as DecisionModule from '~/server/services/text-scan/model-rules-hold-decision';
 
@@ -190,9 +191,11 @@ describe('textScan.resolveModelRulesHold', () => {
   });
 
   it.each([
-    ['stale', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_STALE_HOLD_MESSAGE })],
-    ['refused', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_SUPERSEDED_MESSAGE })],
-    ['refused', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_MOVED_ON_MESSAGE })],
+    ['stale', new ModelRulesHoldRefusal('CONFLICT', MODEL_RULES_STALE_HOLD_MESSAGE)],
+    ['refused', new ModelRulesHoldRefusal('CONFLICT', MODEL_RULES_SUPERSEDED_MESSAGE)],
+    ['refused', new ModelRulesHoldRefusal('CONFLICT', MODEL_RULES_MOVED_ON_MESSAGE)],
+    ['error', new TRPCError({ code: 'CONFLICT', message: 'The decision lost its claim.' })],
+    ['error', new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' })],
     ['error', new Error('db down')],
   ])('audits a single decision that fails as %s, as a batch does', async (outcome, failure) => {
     mocks.decide.mockRejectedValueOnce(failure);
@@ -204,6 +207,26 @@ describe('textScan.resolveModelRulesHold', () => {
         outcome,
         moderatorId: 7,
       })
+    );
+  });
+
+  it('sends an unexpected single-decision failure to the fault log, never a refusal', async () => {
+    mocks.decide.mockRejectedValueOnce(
+      new TRPCError({ code: 'CONFLICT', message: 'The decision lost its claim.' })
+    );
+    await call({ holdId: 12, textHash: 'h-1', decision: 'confirm' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', holdId: 12 })
+    );
+  });
+
+  it('keeps a benign single-decision refusal out of the fault log', async () => {
+    mocks.decide.mockRejectedValueOnce(
+      new ModelRulesHoldRefusal('CONFLICT', MODEL_RULES_SUPERSEDED_MESSAGE)
+    );
+    await call({ holdId: 12, textHash: 'h-1', decision: 'confirm' });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' })
     );
   });
 });

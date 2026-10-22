@@ -8,6 +8,12 @@ vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/text-scan-lab/harness-client')>()),
   ...harness,
 }));
+const compose = vi.hoisted(() => ({ normaliseLabFields: vi.fn() }));
+vi.mock('$lib/text-scan-lab/compose', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/text-scan-lab/compose')>();
+  compose.normaliseLabFields.mockImplementation(actual.normaliseLabFields);
+  return { ...actual, ...compose };
+});
 const endpoint = vi.hoisted(() => ({ callModEndpoint: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
@@ -127,6 +133,93 @@ describe('runLiteralTry', () => {
     harness.composeEntities.mockResolvedValue([{ entityId: 8, ok: false, error: 'not found' }]);
     expect(await runLiteralTry(form({ input: '8' }))).toMatchObject({ status: 400 });
     expect(endpoint.callModEndpoint).not.toHaveBeenCalled();
+  });
+});
+
+describe('runLiteralTry planning', () => {
+  it('refuses more ids than one try can take, naming the limit', async () => {
+    const ids = Array.from({ length: 51 }, (_, i) => i + 1).join(' ');
+    const result = await runLiteralTry(form({ input: ids }));
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/51 ids is more than the 50/) },
+    });
+    expect(harness.composeEntities).not.toHaveBeenCalled();
+    expect(endpoint.callModEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('shows the checker notice when links of different kinds are pasted', async () => {
+    const result = await runLiteralTry(
+      form({ input: 'https://civitai.com/models/1 https://civitai.com/posts/2' })
+    );
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('different kinds of content') },
+    });
+    expect(endpoint.callModEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('loads a model link as an id', async () => {
+    harness.composeEntities.mockResolvedValue([
+      { entityId: 5, ok: true, fields: [{ heading: 'Name', text: 'five' }], text: '', userId: 1 },
+    ]);
+    endpoint.callModEndpoint.mockResolvedValue(answer([{ key: '5', matches: [] }]));
+    const result = await runLiteralTry(form({ input: 'https://civitai.com/models/5/some-slug' }));
+    expect(harness.composeEntities).toHaveBeenCalledWith('Model', [5]);
+    expect(result).toMatchObject({ items: [{ title: 'Model 5' }], notice: null });
+  });
+
+  it('judges an unknown link as text and carries the notice', async () => {
+    endpoint.callModEndpoint.mockResolvedValue(answer([{ key: 'text', matches: [] }]));
+    const result = await runLiteralTry(form({ input: 'https://example.com/page' }));
+    expect(endpoint.callModEndpoint.mock.calls[0][1].texts).toEqual([
+      { key: 'text', fields: [{ heading: 'Name', text: 'https://example.com/page' }] },
+    ]);
+    expect(result).toMatchObject({
+      tried: true,
+      notice: expect.stringContaining('judged as text'),
+    });
+  });
+
+  it('refuses text whose fields do not normalise', async () => {
+    compose.normaliseLabFields.mockReturnValueOnce('Every field needs a heading.');
+    expect(await runLiteralTry(form({ input: 'some text' }))).toMatchObject({
+      status: 400,
+      data: { error: 'Every field needs a heading.' },
+    });
+    compose.normaliseLabFields.mockReturnValueOnce([]);
+    expect(await runLiteralTry(form({ input: 'some text' }))).toMatchObject({ status: 400 });
+    expect(endpoint.callModEndpoint).not.toHaveBeenCalled();
+  });
+});
+
+describe('runLiteralTry reading the main app answer', () => {
+  it.each([
+    ['has no results', { rules: [] }],
+    ['has no rules', { results: [] }],
+    ['has results that are not a list', { rules: [], results: {} }],
+    [
+      'has a match without an offset',
+      { rules: [], results: [{ key: 'text', matches: [{ ruleId: 1 }] }] },
+    ],
+  ])('surfaces a body that %s as an error, never as no match', async (_n, body) => {
+    endpoint.callModEndpoint.mockResolvedValue({ ok: true, body });
+    expect(await runLiteralTry(form({ input: 'text' }))).toMatchObject({
+      status: 502,
+      data: { error: expect.stringContaining('unreadable') },
+    });
+  });
+
+  it('surfaces a subject the answer left out, naming it', async () => {
+    harness.composeEntities.mockResolvedValue([
+      { entityId: 7, ok: true, fields: [{ heading: 'Name', text: 'seven' }], text: '', userId: 1 },
+      { entityId: 8, ok: true, fields: [{ heading: 'Name', text: 'eight' }], text: '', userId: 1 },
+    ]);
+    endpoint.callModEndpoint.mockResolvedValue(answer([{ key: '7', matches: [] }]));
+    expect(await runLiteralTry(form({ input: '7 8' }))).toMatchObject({
+      status: 502,
+      data: { error: expect.stringContaining('Model 8') },
+    });
   });
 });
 
