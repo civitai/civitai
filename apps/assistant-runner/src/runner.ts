@@ -154,6 +154,8 @@ export interface RunnerDeps {
   store: ConversationStore;
   /** Where each run's grant is kept while it runs: never in DBOS. */
   grants: GrantStore;
+  /** The model calls' ledger (`PgModelCalls`), swept with the runs' retention. */
+  modelCalls?: { sweep(olderThanMs: number): Promise<number> };
   log: Logger;
   wallClockMs: number;
   stopGraceMs: number;
@@ -267,6 +269,7 @@ export class Runner implements RunService {
         if (cleanup) {
           await this.cleanup(options.retentionMs);
           await this.#deps.grants.sweep();
+          await this.#deps.modelCalls?.sweep(options.retentionMs);
         }
       } catch (error) {
         this.#deps.log.error({ err: error }, 'runner maintenance failed');
@@ -758,6 +761,9 @@ export class Runner implements RunService {
     // Only the run that owns the turn carries on from (and shows) its saved steps: a run a retry
     // took the turn over from shows none of the retry's.
     const from = turn && ownedBy(turn, runId) ? resumeOf(turn) : undefined;
+    // A retry carrying on from an earlier run's saved steps: a model request that run had in flight
+    // may be answered by the workflow it sent.
+    const carriesOn = input.retry && from !== undefined;
     const startParts = from ? partsFromMessages(from.messages) : [];
 
     const core = new AgentCore({ change: () => emitter.partsChanged() });
@@ -868,7 +874,7 @@ export class Runner implements RunService {
               current: from?.messages ?? [],
             },
             subagents: input.subagents === true,
-            model: () => this.#model(input, stop),
+            model: () => this.#model(input, stop, carriesOn),
             maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),
             report: (result) => {
               emitter.flushParts();
@@ -884,7 +890,7 @@ export class Runner implements RunService {
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet, stop, tools),
+        request: (toolSet) => this.#request(input, head, toolSet, stop, carriesOn, tools),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -900,6 +906,10 @@ export class Runner implements RunService {
       stop.removeEventListener('abort', abort);
       this.#running.delete(runId);
       await closeTools();
+      // A model call the abort cut off is cancelled at orchestration while the grant can still mint.
+      await this.#deps.models
+        .settle?.(runId)
+        .catch((error) => log.warn({ err: error, runId }, 'settling the model calls failed'));
     }
 
     if (!outcome)
@@ -969,7 +979,7 @@ export class Runner implements RunService {
     );
   }
 
-  #model(input: ReplyInput, signal: AbortSignal) {
+  #model(input: ReplyInput, signal: AbortSignal, carriesOn: boolean) {
     return this.#deps.models.languageModel({
       userId: input.userId,
       runId: input.runId,
@@ -977,6 +987,8 @@ export class Runner implements RunService {
       model: input.model,
       tier: input.settings.tier,
       signal,
+      seq: input.seq,
+      ...(carriesOn ? { carriesOn: true } : {}),
     });
   }
 
@@ -985,6 +997,7 @@ export class Runner implements RunService {
     head: StoredConversationMetadata | null,
     tools: ToolSet,
     signal: AbortSignal,
+    carriesOn: boolean,
     opened?: OpenTools
   ): AgentCoreRequest {
     const { settings } = input;
@@ -1005,7 +1018,7 @@ export class Runner implements RunService {
       spoken: settings.spokenReplies,
     });
     return {
-      model: this.#model(input, signal),
+      model: this.#model(input, signal, carriesOn),
       // As the browser's Agent builds it, with the provider's rules (`systemPrompt`) and own tools.
       system: buildSystemPrompt({
         now: new Date(),

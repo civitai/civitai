@@ -6,6 +6,7 @@ import { loadConfig } from './config';
 import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
 import { RunCredentials } from './credentials';
 import { RunGrants } from './grants';
+import { PgModelCalls } from './model-calls';
 import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
 import { TokenMinter } from './minter';
 import { OrchestrationClient } from './orchestration';
@@ -36,6 +37,8 @@ const pool = createPool(
   'runner-grants'
 );
 const grants = new RunGrants(pool, log);
+/** Which orchestration workflow each model request was sent as: on the same pool, ids only. */
+const modelCalls = new PgModelCalls(pool);
 /**
  * Conversation locks on a pool of their own: a lock holds its connection while the write it guards
  * looks up grants on the pool above, so sharing one pool could leave every connection held by a
@@ -68,6 +71,8 @@ if (civitai) {
     baseUrl: civitai.orchestrationUrl,
     orchestration,
     tokens: (runId) => credentials.forRun(runId),
+    calls: modelCalls,
+    log,
   });
   store = new OrchestrationConversationStore({
     orchestration,
@@ -90,6 +95,7 @@ const runner = new Runner({
   tools,
   store,
   grants,
+  modelCalls,
   log,
   wallClockMs: config.wallClockMs,
   stopGraceMs: config.stopGraceMs,
@@ -111,6 +117,7 @@ async function main(): Promise<void> {
   runner.register();
   // Before DBOS launches: the runs it recovers read their grants at once.
   await grants.init();
+  await modelCalls.init();
   await runner.launch({
     databaseUrl: config.databaseUrl,
     executorId: config.executorId,

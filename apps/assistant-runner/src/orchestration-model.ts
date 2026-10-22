@@ -1,8 +1,9 @@
 import { createAssistantModel, FreeTier, freeTierFetch } from '@civitai/components-chat/core';
 import type { LanguageModel } from 'ai';
 
-import type { ModelContext, ModelProvider } from './interfaces';
+import type { Logger, ModelCallLedger, ModelContext, ModelProvider } from './interfaces';
 import { MintRefusedError, type TokenSource } from './minter';
+import { ModelCalls } from './model-calls';
 import type { OrchestrationClient } from './orchestration';
 
 export interface OrchestrationModelOptions {
@@ -12,6 +13,16 @@ export interface OrchestrationModelOptions {
   /** The token source for one run (minted from that run's grant). */
   tokens(runId: string): TokenSource;
   fetch?: typeof fetch;
+  /**
+   * Where each request's orchestration workflow is kept, so a request asked again after a crash is
+   * answered by it rather than sent (and paid for) twice (`ModelCalls`). Unset: every request is sent.
+   */
+  calls?: ModelCallLedger;
+  log?: Logger;
+  /** How long a request asked again waits for its workflow still running (`REUSE_WAIT_MS`). */
+  reuseWaitMs?: number;
+  /** The least time between two status reads of a workflow still running (1 s). */
+  pollIntervalMs?: number;
 }
 
 /**
@@ -21,13 +32,28 @@ export interface OrchestrationModelOptions {
  * `AgentCore`'s provider options reach the request), the same 401 retry, the viewer's own `chat`
  * token on every request (minted inside it), so orchestration bills the viewer under the App
  * Assistant's client and its daily Buzz cap, and `X-Civitai-Tier: free` while the viewer's free
- * allowance for the model lasts, as their tier allows.
+ * allowance for the model lasts, as their tier allows. With `calls`, a request asked again (its step
+ * recovered after a crash, or a retry of it) is answered by the orchestration workflow it was first
+ * sent as when that can be reused, and a request cut off by the run cancels its workflow
+ * (`ModelCalls`).
  */
 export class OrchestrationModels implements ModelProvider {
   readonly #options: OrchestrationModelOptions;
+  readonly #calls: ModelCalls | undefined;
 
   constructor(options: OrchestrationModelOptions) {
     this.#options = options;
+    this.#calls = options.calls
+      ? new ModelCalls({
+          ledger: options.calls,
+          orchestration: options.orchestration,
+          ...(options.log ? { log: options.log } : {}),
+          ...(options.reuseWaitMs !== undefined ? { reuseWaitMs: options.reuseWaitMs } : {}),
+          ...(options.pollIntervalMs !== undefined
+            ? { pollIntervalMs: options.pollIntervalMs }
+            : {}),
+        })
+      : undefined;
   }
 
   languageModel(context: ModelContext): LanguageModel {
@@ -35,6 +61,23 @@ export class OrchestrationModels implements ModelProvider {
     const tokens = this.#options.tokens(context.runId);
     const freeTier = new FreeTier(() => orchestration.getFreeTier(tokens));
     const tier = context.tier;
+    const calls = this.#calls;
+    // Inside the free-tier fetch, so each request it sends (a free one, then a paid one when the
+    // free one is slow to start) is kept, and the free one it gives up on is cancelled.
+    const send = (signed: typeof fetch) =>
+      calls
+        ? calls.fetch(
+            refusalsAsAnswers(signed),
+            {
+              runId: context.runId,
+              userId: context.userId,
+              conversationId: context.conversationId,
+              seq: context.seq ?? 0,
+              ...(context.carriesOn ? { carriesOn: true } : {}),
+            },
+            tokens
+          )
+        : refusalsAsAnswers(signed);
     return createAssistantModel(
       // A Stop stops waiting for a mint at once, rather than after its timeout.
       {
@@ -46,12 +89,16 @@ export class OrchestrationModels implements ModelProvider {
         model: context.model,
         ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
         wrap: (signed) =>
-          freeTierFetch(refusalsAsAnswers(signed), context.model, freeTier, () => ({
+          freeTierFetch(send(signed), context.model, freeTier, () => ({
             useFree: tier !== 'paid',
             payWhenOut: tier !== 'free',
           })),
       }
     );
+  }
+
+  settle(runId: string): Promise<void> {
+    return this.#calls?.settle(runId) ?? Promise.resolve();
   }
 }
 
