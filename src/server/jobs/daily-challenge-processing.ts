@@ -945,10 +945,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
   )`;
 
-  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
-  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
-  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
-  // the participant cap. Free challenges keep the sampled selection below.
+  // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
+  // sampling and per-user cap (both sized for free dailies) must not leave one unjudged.
   const judgeAllEntries =
     challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
 
