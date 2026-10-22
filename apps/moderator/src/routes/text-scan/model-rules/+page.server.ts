@@ -4,68 +4,33 @@ import type { Actions, PageServerLoad } from './$types';
 import { modelRuleFormSchema, type ModelRuleForm } from '$lib/model-rules';
 import { requiresGrant } from '$lib/server/access';
 import { logAxiomError } from '$lib/server/axiom';
-import { civitaiLinkUrl } from '$lib/server/civitai-url';
 import {
   LegacyRuleError,
-  MATCH_MODES,
   ModelRuleNotFoundError,
   ModelRuleStaleError,
   ModelRuleVersionNotFoundError,
   RestoreRefusedError,
   RuleNeedsReviewError,
   createModelRule,
-  getModelRuleMatches,
   listModelRules,
   restoreModelRuleVersion,
   setModelRuleEnabled,
   updateModelRule,
 } from '$lib/server/model-rules.service';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
-import {
-  restorePrompt,
-  restoreSchema,
-  savePrompt,
-  saveSchema,
-} from '$lib/server/text-scan-lab/prompt-save';
-import { runTry } from '$lib/server/text-scan-lab/try';
-import { loadPrompts, promptAuthors } from '$lib/server/text-scan-lab/version';
-import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { MAX_INT4 } from '$lib/server/users.service';
-import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
-import { WORKSPACE_ONLY } from '$lib/text-scan-tests/types';
-
-const PAGE_SIZE = 50;
+import { runLiteralTry } from './literal-try.server';
 
 const querySchema = z.object({
-  tab: z.enum(['rules', 'matches']).catch('rules'),
   q: z.string().trim().max(200).catch(''),
   status: z.enum(['all', 'enabled', 'disabled']).catch('all'),
-  mode: z.enum(MATCH_MODES).catch('all'),
-  rule: int4Id.optional().catch(undefined),
-  cursor: z.string().max(64).optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
-  const query = parseQuery(url, querySchema);
-  const base = { query, civitaiUrl: civitaiLinkUrl(), wide: true };
-
-  if (query.tab === 'matches') {
-    const matches = await getModelRuleMatches({
-      mode: query.mode,
-      ruleId: query.rule,
-      cursor: query.cursor,
-      limit: PAGE_SIZE,
-    });
-    return { ...base, rules: null, policy: null, authors: {}, matches };
-  }
-
-  const [rules, policy] = await Promise.all([
-    listModelRules(),
-    loadPrompts(MODEL_RULES_POLICY_KEY, 'policy prompt'),
-  ]);
-  const authors = await promptAuthors(policy.ok ? policy.value : null);
-  return { ...base, rules, policy, authors, matches: null };
-};
+export const load: PageServerLoad = async ({ url }) => ({
+  query: parseQuery(url, querySchema),
+  rules: await listModelRules(),
+  wide: true,
+});
 
 const ruleSaveSchema = modelRuleFormSchema.extend({
   id: int4Id.optional().catch(undefined),
@@ -92,8 +57,6 @@ const saveAllSchema = z.object({
     'Malformed rules.'
   ),
 });
-const policySaveSchema = saveSchema.omit({ key: true });
-const policyRestoreSchema = restoreSchema.omit({ key: true });
 
 const STALE_CACHE =
   'Could not clear the rules cache; the main app may serve the old rules for a while.';
@@ -123,7 +86,7 @@ async function saveRule(
 }
 
 export const actions: Actions = {
-  try: async ({ request }) => runTry(await request.formData(), { only: WORKSPACE_ONLY.modelRules }),
+  try: async ({ request }) => runLiteralTry(await request.formData()),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {
     const form = await request.formData();
@@ -217,20 +180,4 @@ export const actions: Actions = {
       return fail(refusal.status, { error: refusal.error });
     }
   }),
-
-  savePolicy: requiresGrant('textScan.modelRules.edit', async ({ request }) => {
-    const input = parseForm(policySaveSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-    return savePrompt({ ...input, key: MODEL_RULES_POLICY_KEY });
-  }),
-
-  restorePolicy: requiresGrant('textScan.modelRules.edit', async ({ request }) => {
-    const input = parseForm(policyRestoreSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-    return restorePrompt({ ...input, key: MODEL_RULES_POLICY_KEY });
-  }),
-
-  quoteRun: (event) => quoteAction(event, 'modelRules'),
-  startRun: (event) => startAction(event, 'modelRules'),
-  cancelRun: cancelAction,
 };

@@ -1,24 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RulesService from '$lib/server/model-rules.service';
-import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/cache', () => ({ bustKeyBestEffort: vi.fn(async () => true) }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
-vi.mock('$lib/server/civitai-url', () => ({ civitaiLinkUrl: () => 'https://civitai.com' }));
 const axiom = vi.hoisted(() => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/axiom', () => axiom);
 
-const harness = vi.hoisted(() => ({
-  getPrompts: vi.fn(),
-  putPrompt: vi.fn(),
-  scanTexts: vi.fn(),
-  composeEntities: vi.fn(),
-}));
-vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
-  ...(await importOriginal<typeof HarnessClient>()),
-  ...harness,
-}));
+const tryRun = vi.hoisted(() => vi.fn());
+vi.mock('../literal-try.server', () => ({ runLiteralTry: tryRun }));
 const service = vi.hoisted(() => ({
   createModelRule: vi.fn(),
   updateModelRule: vi.fn(),
@@ -59,29 +49,15 @@ beforeEach(() => {
 });
 
 describe('permissions', () => {
-  it.each(['save', 'saveAll', 'toggle', 'restoreRule', 'savePolicy', 'restorePolicy'] as const)(
+  it.each(['save', 'saveAll', 'toggle', 'restoreRule'] as const)(
     '%s returns 403 without textScan.modelRules.edit, even with the prompt publish permission',
     async (action) => {
       expect(await post(action, {}, { 'textScan.prompt.publish': true })).toMatchObject({
         status: 403,
       });
-      for (const fn of [...Object.values(service), harness.putPrompt])
-        expect(fn).not.toHaveBeenCalled();
+      for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
     }
   );
-});
-
-describe('savePolicy', () => {
-  it('saves the Model rules policy whatever key the form names', async () => {
-    harness.putPrompt.mockResolvedValue({ id: 9, key: 'label:modelRules' });
-    expect(await post('savePolicy', { key: 'base', content: 'POLICY', baseId: '5' })).toEqual({
-      saved: { key: 'label:modelRules', id: 9 },
-    });
-    expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('label:modelRules', 'POLICY', {
-      note: undefined,
-      baseId: 5,
-    });
-  });
 });
 
 describe('save', () => {
@@ -176,10 +152,10 @@ describe('restoreRule messages', () => {
 });
 
 describe('try', () => {
-  it('always judges as Model rules, with only the page grant', async () => {
-    harness.scanTexts.mockResolvedValue({ results: [], system: null, rules: null });
-    await post('try', { input: 'some model text', judgeAs: 'CommentV2' }, {});
-    expect(harness.scanTexts.mock.calls[0][0]).toBe('ModelRules');
+  it('runs the literal try with only the page grant', async () => {
+    tryRun.mockResolvedValue({ tried: true });
+    expect(await post('try', { input: 'some model text' }, {})).toEqual({ tried: true });
+    expect(tryRun).toHaveBeenCalledOnce();
   });
 });
 
@@ -242,17 +218,20 @@ describe('toggle', () => {
 });
 
 describe('load', () => {
-  it('still lists the rules when the policy prompt cannot load', async () => {
+  it('lists the rules with the filters from the url', async () => {
     const rule = { id: 3, subject: 'Example' };
     service.listModelRules.mockResolvedValue([rule]);
-    harness.getPrompts.mockRejectedValue(new Error('down'));
     const data = (await load({
-      url: new URL('http://x/text-scan/model-rules'),
+      url: new URL('http://x/text-scan/model-rules?q=ex&status=disabled'),
     } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
-    expect(data).toMatchObject({
-      rules: [rule],
-      policy: { ok: false, error: 'Could not load the policy prompt: unexpected error' },
-      authors: {},
-    });
+    expect(data).toMatchObject({ rules: [rule], query: { q: 'ex', status: 'disabled' } });
+  });
+
+  it('falls back to all rules for an unknown status', async () => {
+    service.listModelRules.mockResolvedValue([]);
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules?status=nope&tab=matches'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data.query).toEqual({ q: '', status: 'all' });
   });
 });

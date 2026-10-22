@@ -1,21 +1,15 @@
 import { sql, type Insertable, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
-import { MODEL_RULES_RESULT_PG_PATHS } from '@civitai/moderation/model-rules';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
-  isHeldAtPublish,
   isSemanticDefinition,
-  parseMatchCursor,
-  parseRuleMatches,
   semanticModelRuleSchema,
   type ModelRuleForm,
-  type RuleMatch,
 } from '$lib/model-rules';
 import { sameRuleState, type ModelRuleVersionView } from '$lib/model-rule-versions';
 import { bustKeyBestEffort } from './cache';
-import { dbRead, dbWrite } from './db';
-import { takePage } from './keyset-page';
+import { dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { usersByIds } from './users.service';
 
@@ -30,7 +24,7 @@ const bustCache = () =>
     message: 'Model rule was written but its cache key was not cleared; readers stay stale',
   });
 
-/** The tail of every rule write: clear the scan cache, then log the activity. */
+/** The tail of every rule write: clear the rules cache, then log the activity. */
 async function afterRuleWrite(
   userId: number,
   ruleId: number,
@@ -398,94 +392,4 @@ export async function restoreModelRuleVersion(
   });
 
   return { ...(await afterRuleWrite(userId, ruleId, 'restore')), flagged };
-}
-
-export const MATCH_MODES = ['all', 'shadow', 'active'] as const;
-export type MatchMode = (typeof MATCH_MODES)[number];
-
-const ENTITY_TYPES: Record<MatchMode, readonly string[]> = {
-  all: ['ModelRules', 'ModelRules:shadow'],
-  shadow: ['ModelRules:shadow'],
-  active: ['ModelRules'],
-};
-
-export type ModelRuleMatchRow = {
-  id: number;
-  modelId: number;
-  modelName: string | null;
-  mode: 'shadow' | 'active';
-  scannedAt: Date;
-  matches: RuleMatch[];
-  heldAtPublish: boolean;
-};
-
-/**
- * Ordered by verdict time; the cursor is the last row's `updatedAt` as Postgres prints it, so it
- * round-trips without a timezone conversion. A row matches when the model matched a rule
- * (`modelRules`) or the text names one literally (`modelRulesLiteral`). The entity type, status and
- * label filters are SQL literals, not bound parameters: the planner can only use the partial index
- * `EntityModeration_modelRules_matches_idx` when the query repeats its predicate as literals.
- */
-export async function getModelRuleMatches({
-  mode,
-  ruleId,
-  cursor,
-  limit,
-}: {
-  mode: MatchMode;
-  ruleId?: number;
-  cursor?: string;
-  limit: number;
-}): Promise<{ items: ModelRuleMatchRow[]; nextCursor?: string }> {
-  let query = dbRead
-    .selectFrom('EntityModeration as em')
-    .leftJoin('Model as m', 'm.id', 'em.entityId')
-    .select([
-      'em.id',
-      'em.entityType',
-      'em.entityId',
-      'em.updatedAt',
-      sql<string>`em."updatedAt"::text`.as('updatedAtText'),
-      'em.result',
-      'm.name as modelName',
-    ])
-    .where(
-      sql<boolean>`em."entityType" IN (${sql.join(ENTITY_TYPES[mode].map((t) => sql.lit(t)))})`
-    )
-    .where(sql<boolean>`em.status = 'Succeeded'`)
-    .where(
-      sql<boolean>`('modelRules' = ANY(em."triggeredLabels") OR 'modelRulesLiteral' = ANY(em."triggeredLabels"))`
-    );
-  if (ruleId !== undefined)
-    query = query.where(
-      sql<boolean>`(em.result #> ${sql.lit(
-        MODEL_RULES_RESULT_PG_PATHS.matched
-      )} @> ${JSON.stringify([{ ruleId }])}::jsonb OR em.result #> ${sql.lit(
-        MODEL_RULES_RESULT_PG_PATHS.literalRuleIds
-      )} @> ${JSON.stringify([ruleId])}::jsonb)`
-    );
-  const after = parseMatchCursor(cursor);
-  if (after)
-    query = query.where(
-      sql<boolean>`(em."updatedAt", em.id) < (${after.updatedAt}::timestamp, ${after.id})`
-    );
-
-  const rows = await query
-    .orderBy('em.updatedAt', 'desc')
-    .orderBy('em.id', 'desc')
-    .limit(limit + 1)
-    .execute();
-  const page = takePage(rows, limit, (r) => `${r.updatedAtText}|${r.id}`);
-  return {
-    items: page.items.map((r) => ({
-      id: r.id,
-      modelId: r.entityId,
-      modelName: r.modelName,
-      mode: r.entityType === 'ModelRules:shadow' ? 'shadow' : 'active',
-      scannedAt: r.updatedAt,
-      matches: parseRuleMatches(r.result),
-      heldAtPublish: isHeldAtPublish(r.result),
-    })),
-    nextCursor: page.nextCursor,
-  };
 }

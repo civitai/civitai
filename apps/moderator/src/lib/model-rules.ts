@@ -4,7 +4,6 @@ import {
   modelRuleAliasesField,
   modelRuleDescriptionField,
   modelRuleSubjectField,
-  parseModelRulesStoredResult,
   semanticModelRuleSchema,
   type SemanticModelRule,
 } from '@civitai/moderation/model-rules';
@@ -99,12 +98,6 @@ export function ruleChoicesOf(
   return [...seen].map(([id, subject]) => ({ id, subject }));
 }
 
-export function parseRuleMatches(result: unknown): RuleMatch[] {
-  const { matched, snapshot, literalRuleIds } = parseModelRulesStoredResult(result);
-  const subjects = new Map(snapshot.map((rule) => [rule.id, rule.subject]));
-  return mergeRuleMatches(matched, literalRuleIds, subjects);
-}
-
 export const matchSourceLabel = (match: Pick<RuleMatch, 'llm' | 'literal'>) =>
   !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
 
@@ -112,13 +105,3 @@ export const matchSourceVariant = (
   match: Pick<RuleMatch, 'llm' | 'literal'>
 ): 'secondary' | 'outline' | 'default' =>
   !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
-
-/** The cursor is a row's `updatedAt` as Postgres prints it plus its id: `YYYY-MM-DD HH:MM:SS(.ffffff)|id`. */
-export function parseMatchCursor(cursor: string | undefined) {
-  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
-  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
-}
-
-/** A row written by the publish-time literal hold rather than by a scan. */
-export const isHeldAtPublish = (result: unknown): boolean =>
-  parseModelRulesStoredResult(result).heldAtPublish;
