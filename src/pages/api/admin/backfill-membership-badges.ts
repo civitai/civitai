@@ -111,7 +111,15 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       JOIN "Product" pr ON pr.id = cs."productId"
       JOIN "Product" cosmeticProduct ON cosmeticProduct.id = ${cosmetic.productId}
       WHERE cs.status IN ('active', 'expired_claimable')
-        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+        AND (
+          pr.metadata->>'monthlyBuzz' IS NOT NULL
+          -- Buzz memberships earn dated monthly badges only, as in deliverMonthlyCosmetics.
+          ${
+            cosmetic.availableStart
+              ? Prisma.sql`OR (pr.metadata->>'buzzPurchase') = 'true'`
+              : Prisma.empty
+          }
+        )
         -- Cosmetic is provider-specific: only grant it to subs from the same provider
         -- (mirrors the deliver-purchased-cosmetics job's pdl.provider = pr.provider rule).
         AND pr.provider = cosmeticProduct.provider

@@ -1,15 +1,15 @@
 # Buzz-purchased memberships (perks-only)
 
 Lets a user spend Buzz on **one month** of membership _perks_ — the tier's generation
-limits, priority, vault, private models and support level — without any of the things that
-only make sense when real money changed hands.
+limits, priority, vault, private models, support level and monthly badge — without any of
+the things that only make sense when real money changed hands.
 
 ## What a Buzz membership does NOT include
 
 - Monthly Buzz
 - Bonus Buzz on purchases
 - Bonus Buzz on daily rewards
-- The monthly badge / cosmetics
+- The undated Supporter Nameplate (the monthly badge IS included — see below)
 - Anything Creator Program: membership, banking caps, and cash out
 
 ## How this fits the existing `Civitai` provider catalog
@@ -164,7 +164,6 @@ metadata:
 | --------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
 | `tier`                | `bronze` \| `silver` \| `gold` | Same tiers as cash — checks throughout the app stay blank tier checks          |
 | `buzzPurchase`        | `true`                         | Marks the product as the perks-only Buzz catalog (mirrors `referralGrantable`) |
-| `badgeType`           | `none`                         | No monthly badge — renders "No monthly badge" on the plan card                 |
 | `monthlyBuzz`         | _removed_                      | See note below — the removal is load-bearing                                   |
 | `purchasesMultiplier` | `1`                            | Renders as "No Bonus Buzz on purchases"                                        |
 | `rewardsMultiplier`   | `1`                            | Renders as "No Bonus Buzz on daily rewards"                                    |
@@ -172,7 +171,12 @@ metadata:
 
 Everything else — `queueLimit`, `quantityLimit`, `vaultSizeKb`, `steps`, `resources`,
 `badge`, `badgeType` — is copied verbatim from the matching cash product. Those are the
-perks being sold, so they should never diverge.
+perks being sold, so they should never diverge. `badge` / `badgeType` then follow the cash
+product every month: `syncActiveBadgeMetadata` copies a Civitai cash tier's live badge onto
+the Buzz product of the same tier.
+
+Catalogs seeded before the monthly badge was included carry `badgeType: none`;
+`scripts/oneoffs/buzz-membership-products-badge.sql` corrects them in place.
 
 `Price.unitAmount` mirrors the cash plan (the script copies it). The Buzz price is derived
 from it as `dollars × 1000 buzz/$ × 1.25` (`getBuzzMembershipPrice`), so with today's cash
@@ -188,15 +192,16 @@ Set `buzzPrice` in metadata to override.
 
 ### `monthlyBuzz` is removed, not set to 0
 
-`deliverMonthlyCosmetics` and the prepaid-token unlock cron both filter on
-`pr.metadata->>'monthlyBuzz' IS NOT NULL`, so an absent key keeps **both** crons off these
-rows — no monthly Buzz and, deliberately, no monthly badge. (`0` would have kept them in
-scope, which is why it isn't used here even though the referral-perks products do.)
+The prepaid-token unlock cron filters on `pr.metadata->>'monthlyBuzz' IS NOT NULL`, so an
+absent key keeps it off these rows: that is what withholds monthly Buzz. (`0` would have
+kept them in scope, which is why it isn't used here even though the referral-perks products
+do.) **Never add a `monthlyBuzz` key to these products.**
 
-That's defence in depth rather than the primary guard: `deliverMonthlyCosmetics` also
-excludes `buzzPurchase` products outright, and `purchaseMembershipWithBuzz` doesn't call it
-at all. Adding a `monthlyBuzz` key back to one of these products still won't start granting
-badges.
+The monthly badge is delivered the same way as for cash members: `purchaseMembershipWithBuzz`
+calls `deliverMonthlyCosmetics` at purchase, and the daily run picks them up through their
+`buzzPurchase` flag instead of `monthlyBuzz`. Buzz memberships get **dated** badges only —
+the undated Supporter Nameplate stays cash-only, because a Buzz row has no `cancelAt` and the
+nightly revoke would never take it back.
 
 The plan card reads "0 Buzz per month" either way — `getPlanDetails` falls back to 0 when
 the key is missing.
@@ -228,7 +233,7 @@ resolve their tier through it:
 - the banking-cap lookup in `creator-program.service.ts` — excluded in SQL, so a Buzz
   membership can't raise a cap either
 
-Monthly badges are separately excluded — see `deliverMonthlyCosmetics` above.
+Monthly badges are included — see `deliverMonthlyCosmetics` above.
 
 **And the plan card has to say so.** `PlanBenefitList`'s `defaultBenefits` had the
 "Creator Program: earn from your Buzz" line gated only on `tier`, so a Buzz _gold_ card
