@@ -126,29 +126,33 @@ export class FakeChatOrchestration {
       : Promise.resolve();
     const order = this.order;
     let read = false;
-    const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        if (read) return;
-        read = true;
-        order.push(`read ${id}`);
-        const aborted = new Promise<never>((_, reject) => {
-          if (signal?.aborted) reject(signal.reason);
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
-        try {
-          await Promise.race([gate, aborted]);
-        } catch (error) {
-          controller.error(error);
-          return;
-        }
-        controller.enqueue(new TextEncoder().encode(sseOf(id, answer)));
-        controller.close();
-        if (workflow.status === 'processing') {
-          workflow.status = 'succeeded';
-          workflow.output = outputOf(workflow);
-        }
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          if (read) return;
+          read = true;
+          order.push(`read ${id}`);
+          const aborted = new Promise<never>((_, reject) => {
+            if (signal?.aborted) reject(signal.reason);
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+          try {
+            await Promise.race([gate, aborted]);
+          } catch (error) {
+            controller.error(error);
+            return;
+          }
+          controller.enqueue(new TextEncoder().encode(sseOf(id, answer)));
+          controller.close();
+          if (workflow.status === 'processing') {
+            workflow.status = 'succeeded';
+            workflow.output = outputOf(workflow);
+          }
+        },
       },
-    });
+      // No read-ahead: `pull` (and `read <id>` in `order`) happens only when someone reads the body.
+      { highWaterMark: 0 }
+    );
     return new Response(stream, {
       headers: { 'content-type': 'text/event-stream', 'X-Civitai-Workflow-Id': id },
     });
