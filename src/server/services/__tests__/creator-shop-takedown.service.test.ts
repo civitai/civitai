@@ -370,6 +370,9 @@ describe('takedownCosmeticShopItem', () => {
       order.push('refund');
       return refund?.(...args);
     });
+    mocks.createNotification.mockImplementation(async () => {
+      order.push('notify');
+    });
     vi.mocked(recordShopTakedownLabel).mockImplementationOnce(async () => {
       order.push('label');
     });
@@ -378,7 +381,8 @@ describe('takedownCosmeticShopItem', () => {
 
     expect(order[0]).toBe('archive');
     expect(order).toContain('refund');
-    expect(order.at(-1)).toBe('label');
+    // After the refund lock is released, which the creator notice is sent after.
+    expect(order.slice(-2)).toEqual(['notify', 'label']);
     const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
     expect(recordShopTakedownLabel).toHaveBeenCalledTimes(1);
     expect(recordShopTakedownLabel).toHaveBeenCalledWith(
