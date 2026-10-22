@@ -82,6 +82,10 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import {
+  FLUX3_MATURE_SOURCE_MESSAGE,
+  MATURE_SOURCE_ALTERNATIVE,
+} from '~/shared/constants/mature-source.constants';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
 import {
   hasPendingPromptMint,
@@ -100,6 +104,7 @@ import { hasTipEligibleSelection } from './creator-tip';
 import { FOOTER_RESET } from './footer-reset';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
+import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
 
 // =============================================================================
 // Cost (including tips)
@@ -144,6 +149,38 @@ export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore })
 // Priority alerts
 // =============================================================================
 
+export function MatureSourceNotice({
+  store,
+  canSwitch,
+}: {
+  store: GenerationStore;
+  canSwitch: boolean;
+}) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      <div className="flex w-full items-center justify-between gap-2">
+        <Text size="sm">{FLUX3_MATURE_SOURCE_MESSAGE}</Text>
+        {canSwitch && (
+          <Button
+            variant="light"
+            color="yellow"
+            radius="xl"
+            size="compact-sm"
+            onClick={() => switchToMatureSourceAlternative(store)}
+          >
+            Switch to {MATURE_SOURCE_ALTERNATIVE.label}
+          </Button>
+        )}
+      </div>
+    </Notification>
+  );
+}
+
 function PriorityAlertSpace({
   store,
   submitError,
@@ -179,6 +216,7 @@ function PriorityAlertSpace({
   const totalCost = useTotalGenerationCost(store);
   const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
+  const matureSource = useFlux3MatureSource(store);
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
@@ -224,6 +262,8 @@ function PriorityAlertSpace({
         {missingFieldMessage}
       </Notification>
     );
+  } else if (matureSource.blocked) {
+    priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;
   } else if (blockingTrialMessage) {
     showingTrialAlert = true;
     priorityAlert = (
@@ -404,9 +444,11 @@ export function SubmitButton({
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const matureSource = useFlux3MatureSource(store);
 
   const submitBlocked =
     !canGenerate ||
+    matureSource.blocked ||
     gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
@@ -812,8 +854,11 @@ export function FormFooter({
   // A second click while the remix link is being prepared must not submit twice.
   const preparingRemixRef = useRef(false);
 
+  // "Generate Anyway" on a flagged prompt submits without the Generate button.
+  const matureSource = useFlux3MatureSource(store);
+
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
-    if (preparingRemixRef.current) return;
+    if (preparingRemixRef.current || matureSource.blocked) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
