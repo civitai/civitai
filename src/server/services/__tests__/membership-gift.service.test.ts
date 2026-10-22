@@ -205,6 +205,7 @@ beforeEach(() => {
   mockStripe.subscriptions.create.mockResolvedValue({ id: 'sub_residual', status: 'active' });
   mockStripe.subscriptions.deleteDiscount.mockResolvedValue({});
   mockDbWrite.membershipGift.update.mockResolvedValue({});
+  mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.delete.mockResolvedValue({});
   mockDbWrite.membershipGift.findMany.mockResolvedValue([]);
   mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
@@ -311,6 +312,17 @@ describe('createMembershipGiftCheckout', () => {
     expect(result).toMatchObject({ giftId: 'gift_1', sessionId: 'cs_1' });
   });
 
+  // Deliberate: do not widen to dynamic payment methods. The paid gate cannot see a debit
+  // reversed after it succeeded.
+  it('offers only card payment for a gift', async () => {
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+
+    await createMembershipGiftCheckout(input);
+
+    const sessionArgs = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(sessionArgs.payment_method_types).toEqual(['card']);
+  });
+
   it('deletes the pending row when session creation fails', async () => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
     mockStripe.checkout.sessions.create.mockRejectedValue(new Error('stripe down'));
@@ -327,7 +339,17 @@ describe('fulfillMembershipGift', () => {
       status: 'Fulfilled',
     });
     expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
-    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when a concurrent delivery fulfilled the gift first', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue(baseGift);
+    mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockSendReceivedEmail).not.toHaveBeenCalled();
+    expect(mockSendSentEmail).not.toHaveBeenCalled();
   });
 
   it('queues the gift with its full months and touches NOTHING in Stripe', async () => {
@@ -336,8 +358,9 @@ describe('fulfillMembershipGift', () => {
     const result = await fulfillMembershipGift({ giftId: 'gift_1', paymentIntentId: 'pi_1' });
 
     expect(result).toMatchObject({ fulfilled: true, queued: true });
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: 'gift_1', status: 'Pending' },
         data: expect.objectContaining({ status: 'Fulfilled', monthsRemaining: 3 }),
       })
     );
