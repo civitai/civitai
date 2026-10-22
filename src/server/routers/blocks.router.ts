@@ -166,6 +166,7 @@ import {
   SITE_REACTION_RATE_LIMIT_KEY,
 } from '~/shared/constants/block-reaction.constants';
 import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
+import { devTunnelStartSchema } from '~/server/schema/blocks/dev-tunnel.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
@@ -1768,38 +1769,6 @@ async function checkReviewRunForRealMintRateLimit(userId: number): Promise<boole
   }
 }
 
-// EPHEMERAL DEV-TUNNEL rate limit (Phase 1 pre-submit). Per-user fixed window,
-// bounding how many EPHEMERAL (no-owned-AppBlock) dev-tunnel starts a single
-// author can trigger — blunts host-pool enumeration / DoS across many unclaimed
-// slugs. Applies ONLY to the ephemeral branch; the approved/owned path never
-// increments this counter.
-const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } as const;
-
-/**
- * Atomically counts one ephemeral dev-tunnel start against this user's fixed
- * window and returns whether the call is ALLOWED. Same `INCR` + first-hit `EX`
- * (with a ttl<0 self-heal) shape as reserveBlockBuzzSpend / the dev-token
- * limiter. Fails CLOSED (returns false) on a Redis error — an ephemeral tunnel
- * start is not latency-critical, and failing closed here can never block the
- * approved/owned path (which does not call this).
- */
-async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:${userId}` as const;
-  try {
-    const count = await sysRedis.incrBy(key, 1);
-    if (count === 1) {
-      await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
-    } else {
-      const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
-    }
-    return count <= EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.max;
-  } catch {
-    // Fail closed — never silently bypass the ephemeral enumeration limiter.
-    return false;
-  }
-}
-
 // Free-form slot strings are a cache-busting surface for anon callers. Bound
 // to the explicit model-slot set; the canonical source is now the slot registry
 // (src/shared/constants/slot-registry.ts) — re-exported under the SAME name so
@@ -2266,73 +2235,26 @@ export const blocksRouter = router({
     // no-regression guarantee. Do NOT "tighten" enforceTokenScope to also gate Full keys here.
     .meta({ requiredScope: TokenScope.AppBlocksDevTunnel })
     .use(enforceAppBlocksFlag)
-    .input(
-      z.object({
-        blockId: z.string().min(1).max(64),
-        // The CLI's ephemeral SSH public key (raw OpenSSH line). Bounded so a
-        // determined caller can't push parse pressure; a real ed25519/rsa pubkey
-        // is well under 2kb.
-        sshPublicKey: z.string().min(1).max(4096),
-        // App Dev Tunnel — the caller's local `block.manifest.json` scopes, sent by
-        // the CLI. Stored (clamped) on the session so an UNSUBMITTED (no-pending-row)
-        // app can mint a dev token carrying them. NOT an authz input: the proc has
-        // already gated author + ownership + flags; these are clamped to the tunnel
-        // allowlist at write + re-gated (incl. the dedicated unsubmitted-spend flag)
-        // at the mint. Bounded to blunt parse pressure; absent → read-only.
-        declaredScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
-        declaredAuth: z.enum(['block-token', 'oauth']).optional(),
-      })
-    )
+    // Shared with the server runner's start endpoint, so the two accept the same input.
+    .input(devTunnelStartSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksDevTunnelEnabled({ user: ctx.user }))) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Dev tunnels are not available' });
-      }
-      // Ownership gate — resolve the caller's OWN app at any status. null → the
-      // bare NOT_FOUND (no existence/ownership oracle, mirrors dev-token).
-      const app = await BlockRegistry.resolveDevPageBlockForAuthor(input.blockId, ctx.user.id, {
-        db: 'write',
-      });
-      if (!app) throw throwNotFoundError('App not found');
-      // EPHEMERAL PRE-SUBMIT PATH (Phase 1): the caller owns no AppBlock row for
-      // this slug yet (resolveEphemeralDevPageBlock returned a synthetic
-      // `status:'ephemeral'` resolution — already anti-shadow-guarded so the slug
-      // is unclaimed / the caller's own pending / canonical). Rate-limit these
-      // host-pool allocations per-user to blunt enumeration / DoS across unclaimed
-      // slugs. The approved/owned path skips this entirely.
-      //
-      // HONEST SECURITY NOTE (not a full "no existence oracle"): a claimed slug
-      // returns the bare NOT_FOUND above (consuming NO rate-limit budget) while an
-      // unclaimed slug reaches this branch (consuming budget / allocating a host),
-      // so a claimed-vs-unclaimed signal is INHERENT — and once a caller exhausts
-      // their 20/hr budget, claimed→NOT_FOUND vs unclaimed→429 becomes freely
-      // distinguishable. What the guard DOES guarantee: it never distinguishes
-      // AMONG the claimed cases (foreign-approved / foreign-pending / foreign-
-      // suspended all return the identical bare NOT_FOUND). Approved slugs are
-      // already public (they render at `<slug>.civit.ai`), so the only residual
-      // leak is the existence of a PENDING/SUSPENDED slug — and only to another
-      // author-flagged (trusted-cohort) caller. The 429 message is kept (not
-      // suppressed to NOT_FOUND): actionable rate-limit feedback is better UX for
-      // that trusted cohort, and it exposes nothing an exhausted-budget probe
-      // couldn't already infer.
-      if (app.status === 'ephemeral') {
-        if (!(await checkEphemeralDevTunnelRateLimit(ctx.user.id))) {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
-          });
-        }
-      }
+      // The dev-tunnel flag, ownership, and the unsubmitted-app start limit: shared with the
+      // server runner's start endpoint (`dev-tunnel-access.service.ts`), one predicate for both.
+      const { authorizeDevTunnelStart } = await import(
+        '~/server/services/blocks/dev-tunnel-access.service'
+      );
+      const gate = await authorizeDevTunnelStart(ctx.user, input.blockId);
+      if (!gate.ok) throw new TRPCError({ code: gate.refusal.code, message: gate.refusal.error });
       const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
       try {
         return await startDevTunnel({
           userId: ctx.user.id,
           // Belt-and-suspenders: key the tunnel state off the RESOLVED, canonical
-          // block_id (app.blockId), never the raw client input. Safe today only
+          // block_id (gate.blockId), never the raw client input. Safe today only
           // because the ownership resolve above ran first — using the resolved
           // value makes that independent of input normalization.
-          blockId: app.blockId,
+          blockId: gate.blockId,
           sshPublicKey: input.sshPublicKey,
           // Self-declared local-manifest scopes (bounded above). Clamped to the
           // tunnel allowlist at write; the mint re-gates spend behind the dedicated
@@ -3870,7 +3792,7 @@ export const blocksRouter = router({
       // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
       // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
       // real hole (a Redis failure threw past it, so the mirror was never touched), but
-      // `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator
+      // `revokeOauthConsentForBlock` awaits `revokeCivitaiUserTokens`, an outbound orchestrator
       // `DELETE` with NO timeout — so a slow orchestrator delayed the "immediate" half of the
       // revoke for exactly as long as it was slow. That window is the one the 503 below
       // apologises for. A `finally` gets both: the marker goes out first, and the teardown runs
@@ -3901,7 +3823,7 @@ export const blocksRouter = router({
         // which can be switched off after rows exist; and position after the publish. Dropping
         // all gates closed those but overcorrected — the callee is NOT a no-op without a row (an
         // earlier comment here claimed it was, and that was false): it does two primary
-        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
+        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `revokeCivitaiUserTokens`,
         // regardless. One cheap existence read gates all of it on the only condition that
         // matters.
         await (async () => {

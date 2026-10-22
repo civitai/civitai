@@ -11,6 +11,13 @@
     toggle?: boolean;
     /** A number after a chip's label (models it would list); a value with none shows no number. */
     counts?: Partial<Record<string, number>>;
+    /** Params cleared when this group changes, because they only made sense for the old value. */
+    resets?: readonly string[];
+    /** Chips only: counts of 1,000 or more read as "2.4k" and the padding is tighter, so a row of chips
+     *  keeps to one line in a narrow list. */
+    compact?: boolean;
+    /** The sort select only: a bordered pill, "Label Value", with the active count as a blue badge. */
+    pill?: boolean;
   };
 </script>
 
@@ -39,17 +46,25 @@
     chipHref(page.url, group, value, selectionParam);
   const go = (href: string) => goto(href, { noScroll: true, keepFocus: true });
   const chips = $derived(rowChips(groups));
+  const countText = (group: ChipGroup, value: string) => {
+    const n = group.counts?.[value];
+    if (n == null) return '';
+    if (!group.compact || n < 1000) return String(n);
+    return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  };
+  const PILL_CONTROL =
+    'h-[26px] gap-1.5 rounded-md border-dark-4 bg-dark-7 px-2.5 text-white shadow-none outline-none hover:bg-dark-6 focus-visible:ring-2 focus-visible:ring-blue-500/50 dark:bg-dark-7 dark:hover:bg-dark-6 [&>svg]:size-3 [&>svg]:text-dark-2';
   const TEXT_CONTROL =
     'inline-flex items-center gap-1 rounded px-1 py-[3px] text-xs text-dark-2 outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500/50';
 </script>
 
 {#snippet count(group: ChipGroup, value: string)}
   {#if group.counts?.[value] != null}
-    <span class="tabular-nums text-dark-2">{group.counts[value]}</span>
+    <span class="tabular-nums text-dark-2">{countText(group, value)}</span>
   {/if}
 {/snippet}
 
-<div class="flex flex-wrap items-center gap-1.5">
+<div class={cn('flex flex-wrap items-center', groups.some((g) => g.compact) ? 'gap-1' : 'gap-1.5')}>
   {#each chips as { group, value } (`${group.key}:${value}`)}
     {@const active = group.active === value}
     <a
@@ -58,7 +73,8 @@
       data-sveltekit-keepfocus
       aria-current={active ? 'true' : undefined}
       class={cn(
-        'inline-flex items-center rounded-full border px-[9px] py-[3px] text-xs leading-[15px] transition-colors',
+        'inline-flex items-center rounded-full border py-[3px] text-xs leading-[15px] transition-colors',
+        group.compact ? 'px-1.5 whitespace-nowrap' : 'px-[9px]',
         active
           ? 'border-dark-5 bg-dark-5 text-white'
           : 'border-dark-4 text-dark-1 hover:bg-dark-5 hover:text-white'
@@ -66,8 +82,9 @@
     >
       {group.labels[value]}
       {#if group.counts?.[value] != null}
-        <span class="ml-1 tabular-nums {active ? 'text-dark-0' : 'text-dark-2'}"
-          >{group.counts[value]}</span
+        <span
+          class="tabular-nums {group.compact ? 'ml-[3px]' : 'ml-1'} {active ? 'text-dark-0' : 'text-dark-2'}"
+          >{countText(group, value)}</span
         >
       {/if}
     </a>
@@ -86,10 +103,21 @@
     >
       <Select.Trigger
         aria-label={sort.label}
-        class="{TEXT_CONTROL} h-auto border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg]:size-3"
+        class={sort.pill ? PILL_CONTROL : `${TEXT_CONTROL} h-auto border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg]:size-3`}
       >
-        {sort.labels[sort.active]}
-        {@render count(sort, sort.active)}
+        {#if sort.pill}
+          <span class="text-xs text-dark-2">{sort.label}</span>
+          <span class="text-[13px] font-medium text-white">{sort.labels[sort.active]}</span>
+          {#if sort.counts?.[sort.active] != null}
+            <span
+              class="rounded-lg bg-blue-500 px-[7px] py-px text-[11px] font-semibold text-white tabular-nums"
+              >{countText(sort, sort.active)}</span
+            >
+          {/if}
+        {:else}
+          {sort.labels[sort.active]}
+          {@render count(sort, sort.active)}
+        {/if}
       </Select.Trigger>
       <Select.Content>
         {#each sort.values as value (value)}

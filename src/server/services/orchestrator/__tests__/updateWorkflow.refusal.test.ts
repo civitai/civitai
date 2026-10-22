@@ -12,7 +12,7 @@ vi.mock('~/server/utils/errorHandling', () => ({
     .mockImplementation((msg) => new Error(`unavailable: ${msg}`)),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('@civitai/client', () => ({
 import {
   getWorkflow as clientGetWorkflow,
   updateWorkflow as clientUpdateWorkflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { updateWorkflow } from '../workflows';
 
 beforeEach(() => {

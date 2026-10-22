@@ -323,18 +323,16 @@ export const useMutateCreatorShop = () => {
         }% of those sales) from the seller and removed it from ${result.revokedFrom} account${
           result.revokedFrom === 1 ? '' : 's'
         }.${
-          failed
-            ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
+          result.boxesPulled || result.boxOpeningsRefunded
+            ? ` Pulled from ${result.boxesPulled} mystery box${
+                result.boxesPulled === 1 ? '' : 'es'
+              } and refunded ${result.boxOpeningsRefunded} box opener${
+                result.boxOpeningsRefunded === 1 ? '' : 's'
+              }.`
             : ''
         }${
-          // A pack's split can't be re-derived without a payout record, so the
-          // amount is only knowable here. Telling the moderator to finish by
-          // hand without telling them how much leaves them the one person who
-          // can act and can't see the number.
-          result.unrecoveredPackPool
-            ? ` ${numberWithCommas(
-                result.unrecoveredPackPool
-              )} Buzz of pack payouts could not be reversed.`
+          failed
+            ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
         }`,
       });

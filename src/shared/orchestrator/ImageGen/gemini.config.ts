@@ -2,7 +2,7 @@ import type {
   Gemini25FlashCreateImageGenInput,
   Gemini25FlashEditImageGenInput,
   NanoBananaProImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
@@ -101,7 +101,6 @@ export const geminiConfig = ImageGenConfig({
         engine: 'google',
         model,
         images: params.images?.map((x) => x.url),
-        numImages: params.quantity,
       } as NanoBananaProImageGenInput;
   },
 });

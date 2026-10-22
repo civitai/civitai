@@ -31,7 +31,8 @@ vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorCl
 vi.mock('~/env/client', () => ({
   env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.test' },
 }));
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('./civitai-client.stub')).civitaiClientStub(),
   submitWorkflow: mockSubmitWorkflow,
   WorkflowStatus: {},
   TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },

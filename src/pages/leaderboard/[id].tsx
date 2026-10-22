@@ -255,10 +255,9 @@ export default function Leaderboard() {
                     {board === 'season' ? (
                       <Stack gap={4}>
                         <Text fw={500}>Rank is calculated based on:</Text>
+                        {/* Each board states its own window (30, 90, 7 days, all time) in
+                            scoringDescription; a shared line here would be wrong for some. */}
                         <Code block>{selectedLeaderboard?.scoringDescription}</Code>
-                        <Text c="dimmed" size="xs">
-                          Only the last 30 days are considered
-                        </Text>
                       </Stack>
                     ) : board === 'legend' ? (
                       <Stack gap={4}>

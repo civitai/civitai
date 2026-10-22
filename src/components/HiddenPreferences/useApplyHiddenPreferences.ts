@@ -7,6 +7,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { Flags } from '~/shared/utils/flags';
 import { emitFeedNoImagesDrop } from '~/utils/faro/feedDrop';
 import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit-base';
@@ -209,6 +210,7 @@ export function filterPreferences<
     systemHiddenTags,
   } = hiddenPreferences;
   const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
+  const showSfwFace = showsSfwFace(browsingLevel);
   const maxBrowsingLevel = Flags.maxValue(browsingLevel);
 
   switch (key) {
@@ -217,7 +219,9 @@ export function filterPreferences<
         .filter((model) => {
           const userId = model.user.id;
           const isOwner = ownedByViewer(userId);
-          if (!canViewNsfw && (hasNsfwWords(model.name) || model.nsfw === true)) return false;
+          const shownName = (showSfwFace && model.sfwName) || model.name;
+          const matureListing = model.nsfw === true && !model.hasSfwFace;
+          if (!canViewNsfw && (hasNsfwWords(shownName) || matureListing)) return false;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
           if (showHidden && !hiddenModels.get(model.id)) return false;
           if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
@@ -870,6 +874,8 @@ type BaseModel = {
   nsfwLevel: number;
   nsfw?: boolean;
   name?: string | null;
+  sfwName?: string | null;
+  hasSfwFace?: boolean;
   minor?: boolean;
   poi?: boolean;
 };

@@ -1,5 +1,6 @@
-import type { ChatCompletionStep, ChatCompletionStepTemplate } from '@civitai/client';
+import type { ChatCompletionStep, ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 type ChatMessage = {
@@ -128,7 +129,14 @@ export async function orchestratorChatCompletion(input: {
   workflowId: string;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }> {
-  const { token, model = 'gpt-4o-mini', messages, temperature, maxTokens, currencies } = input;
+  const {
+    token,
+    model = DEFAULT_CHAT_COMPLETION_MODEL,
+    messages,
+    temperature,
+    maxTokens,
+    currencies,
+  } = input;
 
   const workflow = await submitWorkflow({
     token,
@@ -178,7 +186,14 @@ export async function orchestratorChatCompletionCost(input: {
   maxTokens?: number;
   currencies?: BuzzSpendType[];
 }): Promise<{ cost: number; ready: boolean }> {
-  const { token, model = 'gpt-4o-mini', messages, temperature, maxTokens, currencies } = input;
+  const {
+    token,
+    model = DEFAULT_CHAT_COMPLETION_MODEL,
+    messages,
+    temperature,
+    maxTokens,
+    currencies,
+  } = input;
 
   try {
     const workflow = await submitWorkflow({

@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { IconCheck, IconRefresh, IconUpload, IconX } from '@tabler/icons-react';
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

@@ -4,7 +4,7 @@ import { moderatorProcedure, protectedProcedure, publicProcedure, router } from 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { findCatalogParentIdsForClient } from '~/server/services/blocks/app-sub-listing.service';
 import { withdrawCatalogItemsOnClientDelete } from '~/server/services/blocks/oauth-consent-sync.service';
@@ -286,11 +286,9 @@ export const oauthClientRouter = router({
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
 
-      // The DB cascade revokes the tokens, but the orchestrator caches them
-      // for auth and would keep honoring the deleted tokens until TTL. Expire
-      // each affected user's cache so revocation takes effect immediately.
-      // Best-effort: invalidateCivitaiUser swallows its own errors.
-      await Promise.all(tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId })));
+      // The DB cascade revokes the tokens, but the orchestrator caches them for auth.
+      // Best-effort: revokeCivitaiUserTokens swallows its own errors.
+      await Promise.all(tokenHolders.map(({ userId }) => revokeCivitaiUserTokens({ userId })));
 
       // The platform is gone, so the items it listed in the store go with it. Never throws.
       await withdrawCatalogItemsOnClientDelete({

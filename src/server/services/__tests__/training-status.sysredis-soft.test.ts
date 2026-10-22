@@ -14,7 +14,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  * The SLOW test is fail-on-revert: the underlying hGet NEVER settles, so
  * removing the wrap would hang the call → the test would TIME OUT.
  *
- * The heavy training.service import graph (@aws-sdk, @civitai/client,
+ * The heavy training.service import graph (@aws-sdk, @civitai/orchestration-client,
  * orchestrator caller, s3) + the client-coupled training.schema are stubbed;
  * trainingServiceStatusSchema is replaced with an equivalent local zod schema so
  * the parse still exercises the real default (available:true).
@@ -58,7 +58,7 @@ vi.mock('@aws-sdk/lib-storage', () => {
   const Upload = class {};
   return { Upload, default: { Upload } };
 });
-vi.mock('@civitai/client', () => ({}));
+vi.mock('@civitai/orchestration-client', () => ({}));
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));

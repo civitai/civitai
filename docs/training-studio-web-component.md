@@ -14,7 +14,7 @@ browser with the injected user token. Minting stays server-side in whichever hos
 ## Why this shape
 
 - The current app's 13 `/api/*` routes are almost all thin wrappers: verify session → mint/read
-  the user's orchestrator token → one `@civitai/client` SDK call. Moving those calls into the
+  the user's orchestrator token → one `@civitai/orchestration-client` SDK call. Moving those calls into the
   browser removes the wrapper tier entirely; nothing of substance is lost.
 - Signals already works exactly this way today (server mints a token at `/api/signals-token`,
   the browser connects to the signals host directly), so the pattern is proven in this app.

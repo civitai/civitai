@@ -19,12 +19,17 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { ReviewCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
+import { lockBox } from '~/server/services/box-version-lock';
 import {
   checkProposal,
   creatorIsRestricted,
   lockCreator,
   type MysteryPackProposal,
 } from '~/server/services/creator-mystery-pack.service';
+import {
+  recordShopVerdict,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
 import { appendItemHistory } from '~/server/services/creator-shop.data';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -190,21 +195,6 @@ function draftOf(
     })
   );
   return { tiers, contents };
-}
-
-const BOX_LOCK_TIMEOUT = '3s';
-
-/**
- * FOR NO KEY UPDATE waits for every open in flight (each reads this row FOR SHARE). Never take the
- * item-holder lock after it: opens take that lock before this row. The wait is bounded because
- * Prisma's transaction timeout doesn't cancel a waiting statement; it stays set to commit.
- */
-async function lockBox(tx: Tx, boxId: number) {
-  await tx.$executeRaw`SELECT set_config('lock_timeout', ${BOX_LOCK_TIMEOUT}, true)`;
-  const [box] = await tx.$queryRaw<{ status: string; version: number; updatedAt: Date }[]>`
-    SELECT status, version, "updatedAt" FROM "ItemDefinition" WHERE id = ${boxId}
-    FOR NO KEY UPDATE`;
-  return box;
 }
 
 /** The builder's save on Prisma, in the builder's order: changed rows only, batched. */
@@ -438,10 +428,11 @@ export async function applyBoxRevision({
         INSERT INTO "BoxOddsSnapshot" ("boxDefinitionId", version, snapshot, "createdById")
         VALUES (${boxId}, ${version}, ${JSON.stringify(snapshot)}::jsonb, ${moderatorId})`;
 
+      const at = new Date().toISOString();
       const meta = appendItemHistory(
         { ...(box.meta ?? { purchases: 0 }), lastApprovedAmount: proposal.price },
         {
-          at: new Date().toISOString(),
+          at,
           userId: moderatorId,
           kind: 'reviewed',
           status: 'Published',
@@ -462,8 +453,21 @@ export async function applyBoxRevision({
         note,
         appliedVersion: version,
       });
+      await recordShopVerdict(
+        tx,
+        box.listingId,
+        {
+          action: 'approve',
+          moderatorId,
+          at,
+          note,
+          statusBefore: box.listingStatus,
+          statusAfter: 'Published',
+        },
+        revision.id
+      );
       return { stale: false as const, version, listingId: box.listingId };
-    });
+    }, SHOP_VERDICT_TRANSACTION);
   } catch (error) {
     if (error instanceof BoxRefusal) throw throwBadRequestError(error.message);
     if (isPrismaLockTimeout(error))
@@ -561,8 +565,9 @@ export async function reviewMysteryPack({
         }
       }
 
+      const at = new Date().toISOString();
       const meta = appendItemHistory(box.meta ?? { purchases: 0 }, {
-        at: new Date().toISOString(),
+        at,
         userId: reviewerId,
         kind: 'reviewed',
         status: nextStatus,
@@ -576,13 +581,28 @@ export async function reviewMysteryPack({
         meta
       )}::jsonb
         WHERE id = ${box.listingId}`;
+      await recordShopVerdict(
+        tx,
+        box.listingId,
+        {
+          action,
+          moderatorId: reviewerId,
+          at,
+          note,
+          statusBefore: box.listingStatus,
+          statusAfter: nextStatus,
+          finalReject: action === 'reject' ? nextStatus === 'Rejected' : undefined,
+        },
+        // A revert acts on the pack on sale and leaves a waiting edit unjudged.
+        action === 'revert' ? null : revision?.id
+      );
       return {
         listingId: box.listingId,
         title: owner.title,
         sellerId: owner.sellerId,
         finalReject: nextStatus === 'Rejected',
       };
-    });
+    }, SHOP_VERDICT_TRANSACTION);
   }
 
   // A reject that only turned the edit down reads to the creator as changes requested.
@@ -657,8 +677,9 @@ async function approveMysteryPack({
       throw throwBadRequestError(
         "This pack's creator is muted, banned or deleted, so it can't go back on sale."
       );
+    const at = new Date().toISOString();
     const meta = appendItemHistory(current.meta ?? { purchases: 0 }, {
-      at: new Date().toISOString(),
+      at,
       userId: reviewerId,
       kind: 'reviewed',
       status: 'Published',
@@ -670,6 +691,14 @@ async function approveMysteryPack({
       SET status = 'Published', "rejectionReason" = NULL, "reviewedById" = ${reviewerId},
         "reviewedAt" = now(), meta = ${JSON.stringify(meta)}::jsonb
       WHERE id = ${current.listingId}`;
+    await recordShopVerdict(tx, current.listingId, {
+      action: 'approve',
+      moderatorId: reviewerId,
+      at,
+      note,
+      statusBefore: current.listingStatus,
+      statusAfter: 'Published',
+    });
     return { listingId: current.listingId, title: box.title, sellerId: box.sellerId };
-  });
+  }, SHOP_VERDICT_TRANSACTION);
 }

@@ -20,7 +20,10 @@
  * multi-view operation. `polygen-graph.handler.ts` picks between the two.
  */
 
-import type { MeshyImageTo3dFalPolyGenInput, MeshyTextTo3dFalPolyGenInput } from '@civitai/client';
+import type {
+  MeshyImageTo3dFalPolyGenInput,
+  MeshyTextTo3dFalPolyGenInput,
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 

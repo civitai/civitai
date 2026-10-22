@@ -145,10 +145,12 @@ import {
   reserveDevSessionBuzz,
   startDevTunnel,
   stopDevTunnel,
+  stopOwnDevTunnel,
   stopDevTunnelForUserBlock,
   listActiveDevTunnelBlockIds,
   reapExpiredDevTunnels,
   touchDevTunnelActivity,
+  keepAliveDevTunnel,
   __resetDevTunnelDnsCacheForTest,
   DEV_TUNNEL_IDLE_SECONDS,
   DEV_TUNNEL_HARD_SECONDS,
@@ -579,6 +581,26 @@ describe('stopDevTunnel (ownership-checked)', () => {
     expect(sysRedis._store.has('system:blocks:dev-tunnel:session:bki_testsession')).toBe(true);
   });
 
+  it('stopOwnDevTunnel tells an unreadable session (unavailable) apart from an absent or foreign one', async () => {
+    await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
+    const baseGet = sysRedis.get.getMockImplementation()!;
+    try {
+      sysRedis.get.mockImplementation(async () => {
+        throw new Error('redis down');
+      });
+      expect(await stopOwnDevTunnel(555, 'bki_testsession')).toBe('unavailable');
+      // The boolean API keeps answering false for it, as before.
+      expect(await stopDevTunnel(555, 'bki_testsession')).toBe(false);
+    } finally {
+      sysRedis.get.mockReset();
+      sysRedis.get.mockImplementation(baseGet);
+    }
+    expect(sysRedis._store.has('system:blocks:dev-tunnel:session:bki_testsession')).toBe(true);
+    expect(await stopOwnDevTunnel(999, 'bki_testsession')).toBe('not_found');
+    expect(await stopOwnDevTunnel(555, 'bki_nosuchsession')).toBe('not_found');
+    expect(await stopOwnDevTunnel(555, 'bki_testsession')).toBe('stopped');
+  });
+
   it('the owner tears down: deletes route + all keys', async () => {
     await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     expect(await stopDevTunnel(555, 'bki_testsession')).toBe(true);
@@ -656,6 +678,72 @@ describe('touchDevTunnelActivity (F3 — idle refresh on gate entry)', () => {
 
   it('is a no-op for an unknown host (never throws)', async () => {
     await expect(touchDevTunnelActivity('dev-ffffffffffffffff.civit.ai')).resolves.toBeUndefined();
+  });
+});
+
+describe('keepAliveDevTunnel (the server runner’s idle refresh, ownership-checked)', () => {
+  const OWNER = 6101;
+  const STRANGER = 6202;
+  const SESSION_KEY = 'system:blocks:dev-tunnel:session:bki_testsession';
+  const readSession = () => JSON.parse(sysRedis._store.get(SESSION_KEY)!);
+  const ageSession = (lastActivityAt: number) =>
+    sysRedis._store.set(SESSION_KEY, JSON.stringify({ ...readSession(), lastActivityAt }));
+
+  // Two cases below queue a one-shot answer on `get`/`set`. If the function under test never
+  // consumes it (absent, or returning early), it would leak into whichever test runs next — the
+  // reaper's, measured — so every case ends with both queues drained and the fakes restored.
+  const baseGet = sysRedis.get.getMockImplementation()!;
+  const baseSet = sysRedis.set.getMockImplementation()!;
+  afterEach(() => {
+    sysRedis.get.mockReset();
+    sysRedis.get.mockImplementation(baseGet);
+    sysRedis.set.mockReset();
+    sysRedis.set.mockImplementation(baseSet);
+  });
+
+  beforeEach(async () => {
+    await startDevTunnel({ userId: OWNER, blockId: 'kept-app', sshPublicKey: PUBKEY });
+    ageSession(1000);
+  });
+
+  it('stamps the owner’s session now, re-persisted only if it still exists, never past the hard cap', async () => {
+    const before = Math.floor(Date.now() / 1000);
+    const kept = await keepAliveDevTunnel(OWNER, 'bki_testsession');
+    expect(kept).toEqual({
+      status: 'kept',
+      lastActivityAt: expect.any(Number),
+      hardExpiresAt: readSession().hardExpiresAt,
+    });
+    expect(readSession().lastActivityAt).toBeGreaterThanOrEqual(before);
+    const write = sysRedis.set.mock.calls.filter((c) => c[0] === SESSION_KEY).at(-1)!;
+    const opts = write[2] as { EX: number; XX: boolean };
+    expect(opts.XX).toBe(true);
+    expect(opts.EX).toBeGreaterThan(0);
+    expect(opts.EX).toBeLessThanOrEqual(DEV_TUNNEL_HARD_SECONDS);
+  });
+
+  it('refuses another user’s session as not_found, and leaves its idle clock alone', async () => {
+    expect(await keepAliveDevTunnel(STRANGER, 'bki_testsession')).toEqual({ status: 'not_found' });
+    expect(readSession().lastActivityAt).toBe(1000);
+  });
+
+  it('answers not_found for an unknown session and for one past its hard cap', async () => {
+    expect(await keepAliveDevTunnel(OWNER, 'bki_nosuchsession')).toEqual({ status: 'not_found' });
+    sysRedis._store.set(SESSION_KEY, JSON.stringify({ ...readSession(), hardExpiresAt: 1 }));
+    expect(await keepAliveDevTunnel(OWNER, 'bki_testsession')).toEqual({ status: 'not_found' });
+    expect(readSession().lastActivityAt).toBe(1000);
+  });
+
+  it('answers not_found, not kept, when the session vanished between the read and the write', async () => {
+    // The XX write finds no key (a teardown won the race) and Redis answers null.
+    sysRedis.set.mockResolvedValueOnce(null as never);
+    expect(await keepAliveDevTunnel(OWNER, 'bki_testsession')).toEqual({ status: 'not_found' });
+  });
+
+  it('answers unavailable, not not_found, when the session cannot be read just now', async () => {
+    sysRedis.get.mockRejectedValueOnce(new Error('redis down'));
+    expect(await keepAliveDevTunnel(OWNER, 'bki_testsession')).toEqual({ status: 'unavailable' });
+    expect(readSession().lastActivityAt).toBe(1000);
   });
 });
 

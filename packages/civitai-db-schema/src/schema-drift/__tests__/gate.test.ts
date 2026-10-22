@@ -25,7 +25,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
 const gateCli = join(packageRoot, 'src/schema-drift/gate-cli.ts');
 const realSchema = join(packageRoot, 'prisma/schema.full.prisma');
-const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-19.json';
+const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json';
 const snapshot = join(packageRoot, snapshotRelative);
 const baselineRelative = 'src/schema-drift/drift-baseline.json';
 
@@ -781,7 +781,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   it('prints the snapshot capture date on every run, not only when it is stale', async () => {
     const result = await gate([]);
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-10-19 \(\d+ day\(s\) old\)/);
+    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-10-20 \(\d+ day\(s\) old\)/);
   });
 
   it('warns loudly when the snapshot carries no capture date', async () => {
@@ -928,7 +928,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     it('prints the snapshot age, which is the command run right after a recapture', async () => {
       const path = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', path]);
-      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-10-19 \(\d+ day\(s\) old\)/);
+      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-10-20 \(\d+ day\(s\) old\)/);
     });
   });
 

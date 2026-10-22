@@ -12,7 +12,7 @@
  *   the graph handler when building the `polyGen` step.
  */
 
-import type { TripoFalPolyGenInput } from '@civitai/client';
+import type { TripoFalPolyGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 

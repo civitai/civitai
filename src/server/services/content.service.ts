@@ -152,6 +152,14 @@ const tosHashOverrideMap: Record<string, string> = {
   // tos.green.md
   '906c25c702d4b89244b444fd2a050e9585ba0a92bf84c3918fd0ba09d4b3ae86':
     '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
+  // 2026-10-22 §5.8 drops the right to delete an account over a failed renewal; §9.6(d) lead-in
+  // reworded (tos.md only). Neither asks anything new of users, so no re-accept.
+  // tos.md (blue/red)
+  '96c9f47c302edebe0aa4ad9d69ba9bad3879a851ed38e60af77af93faba62510':
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  '2b505d7d9b293fd03785fa1c59911c4c54c0028ff075ac1312d86da7d7b29b99':
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 /**

@@ -171,6 +171,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     select: {
       name: true,
       description: true,
+      sfwName: true,
+      sfwDescription: true,
+      coverImageId: true,
+      sfwCoverImageId: true,
       meta: true,
       userId: true,
       user: { select: { username: true, settings: true } },
@@ -205,7 +209,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  const [metric, image] = await Promise.all([
+  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
+  const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
+  const previewableImage = {
+    tosViolation: false,
+    needsReview: null,
+    ingestion: 'Scanned' as const,
+  };
+  const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
         where: { modelId: id },
@@ -234,6 +246,21 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       select: ogImageSelect,
       orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
     }),
+    coverId
+      ? dbRead.image.findFirst({
+          where: {
+            id: coverId,
+            post: {
+              publishedAt: { not: null },
+              modelVersion: { modelId: id },
+              availability: Availability.Public,
+              ...ownPosts,
+            },
+            ...previewableImage,
+          },
+          select: ogImageSelect,
+        })
+      : null,
   ]);
 
   const stats: StatItem[] = metric
@@ -247,13 +274,18 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       ].filter(isDefined)
     : [];
 
-  const description = publishedVersion.description || model.description || '';
+  // Link previews have no signed-in viewer, so they always get the .com face when one is set.
+  const { sfwName } = model;
+  const description =
+    sfwName != null
+      ? model.sfwDescription ?? ''
+      : publishedVersion.description || model.description || '';
 
   return {
-    title: model.name,
+    title: sfwName ?? model.name,
     description: cleanDescription(description),
     creator: model.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(image)),
+    ...buildEntityImage(getSafeImage(coverImage) ?? getSafeImage(defaultImage)),
     stats,
   };
 }

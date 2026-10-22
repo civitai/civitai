@@ -37,11 +37,45 @@ export interface ModelContext {
   tier: RunSettings['tier'];
   /** Aborted when the run stops or ends. */
   signal?: AbortSignal;
+  /** The turn the reply answers. */
+  seq?: number;
+  /**
+   * The reply carries on from steps an earlier run of the same turn saved (a retry of a reply that
+   * ended in error or was interrupted): a request that run had in flight may be answered for it.
+   */
+  carriesOn?: boolean;
 }
 
 /** The model a reply asks with. Called once per pass of a reply; a real one mints its token per request. */
 export interface ModelProvider {
   languageModel(context: ModelContext): LanguageModel;
+  /**
+   * Waits, briefly, for what the run's requests left to do when they were cut off (cancelling a
+   * model call in flight), and forgets the run. Called as each pass ends, before its end is saved
+   * and its grant goes.
+   */
+  settle?(runId: string): Promise<void>;
+}
+
+/** The model requests one stored orchestration workflow may answer. */
+export interface ModelCallScope {
+  runId: string;
+  userId: string;
+  conversationId: string;
+  seq: number;
+  /** Also a workflow an earlier run of the same turn sent (`ModelContext.carriesOn`). */
+  carriesOn?: boolean;
+}
+
+/**
+ * Which orchestration workflow each model request was sent as, kept the moment orchestration names
+ * it (before its answer is read), so a request asked again after a crash finds it. Keyed by run and
+ * by a hash of what the request asks (`callKey`). Holds ids only: never a token.
+ */
+export interface ModelCallLedger {
+  /** The workflow the latest request with this key in `scope` was sent as, else `null`. */
+  find(scope: ModelCallScope, key: string): Promise<string | null>;
+  save(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
 }
 
 export interface ToolContext {

@@ -12,6 +12,7 @@ import {
   IconBrandYoutube,
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { ShellLink } from '~/components/AppLayout/ShellDs/ShellDs';
 import { useIsLive } from '~/hooks/useIsLive';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
@@ -59,17 +60,19 @@ const SocialLabels: Record<SocialOption, string> = {
   twitch: 'Civitai on Twitch',
 };
 
+const defaultInclude: SocialOption[] = [
+  'discord',
+  'twitter',
+  'instagram',
+  'youtube',
+  'tiktok',
+  'reddit',
+  'github',
+  'twitch',
+];
+
 export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
-  include ??= [
-    'discord',
-    'twitter',
-    'instagram',
-    'youtube',
-    'tiktok',
-    'reddit',
-    'github',
-    'twitch',
-  ];
+  include ??= defaultInclude;
   const isLive = useIsLive();
 
   return (
@@ -98,6 +101,40 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
           >
             <Icon size={iconSize} />
           </LegacyActionIcon>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * The footer's social links as `@civitai/components` markup (flag `shellDesignSystemMarkup`) —
+ * the same eight links, labels, hrefs and live-on-Twitch state as `SocialLinks` with its
+ * defaults (`ActionIcon` `size="lg"`, `radius="xl"`, subtle gray). Takes no Mantine props: its
+ * only caller is the page shell, and `SocialHomeBlock`'s sized variant stays on `SocialLinks`.
+ */
+export function ShellSocialLinks() {
+  const isLive = useIsLive();
+
+  return (
+    <>
+      {defaultInclude.map((option) => {
+        const Icon = SocialIcons[option];
+        const live = option === 'twitch' && isLive;
+        return (
+          <ShellLink
+            key={option}
+            href={`/${option}`}
+            target="_blank"
+            rel="nofollow noreferrer"
+            aria-label={SocialLabels[option]}
+            title={live ? 'Live now!' : undefined}
+            variant={live ? 'filled-red' : 'subtle-gray'}
+            icon="lg"
+            radius="xl"
+          >
+            <Icon size={20} />
+          </ShellLink>
         );
       })}
     </>

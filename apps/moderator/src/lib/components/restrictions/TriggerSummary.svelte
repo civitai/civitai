@@ -9,7 +9,6 @@
     recheckReasonLabels,
     type Recheck,
   } from '$lib/restrictions/recheck';
-  import { formatSpan } from '$lib/restrictions/trigger-groups';
   import { summarizeTriggers } from '$lib/restrictions/trigger-summary';
   import type { RestrictionTriggerView } from '$lib/server/user-restriction.service';
 
@@ -33,10 +32,7 @@
     )
   );
   const summary = $derived(summarizeTriggers(triggers, labels));
-  const originChips = $derived(originSummary(triggers).chip.split(' · ').filter(Boolean));
-  const span = $derived(
-    summary.first && summary.last ? Date.parse(summary.last) - Date.parse(summary.first) : null
-  );
+  const originMix = $derived(originSummary(triggers).chip);
   const range = $derived(
     summary.first && summary.last
       ? `${dateTime(summary.first)} → ${dateTime(summary.last)}`
@@ -52,16 +48,12 @@
         : 'plain';
 </script>
 
-<section class="space-y-2">
-  <p class="m-0 text-sm text-white" title={range}>
+<section
+  class="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2.5"
+>
+  <p class="m-0 text-sm font-medium text-white" title={range}>
     {summary.total}
     {summary.total === 1 ? 'trigger' : 'triggers'}
-    <span class="text-dark-2">·</span>
-    {summary.distinctPrompts}
-    {summary.distinctPrompts === 1 ? 'prompt' : 'prompts'}
-    {#if span}
-      <span class="text-dark-2">· over {formatSpan(span)}</span>
-    {/if}
   </p>
   <div class="flex flex-wrap items-center gap-1.5">
     {#each summary.reasons as item (item.label)}
@@ -74,16 +66,12 @@
       </Badge>
     {/each}
     {#if summary.sources.length > 1}
-      <span class="mx-1 text-dark-2" aria-hidden="true">|</span>
       {#each summary.sources as item (item.label)}
         <Badge variant="secondary">{item.label} × {item.count}</Badge>
       {/each}
     {/if}
-    {#if originChips.length}
-      <span class="mx-1 text-dark-2" aria-hidden="true">|</span>
-      {#each originChips as chip (chip)}
-        <Badge variant="ghost" class="text-dark-2">{chip}</Badge>
-      {/each}
+    {#if originMix}
+      <Badge variant="outline" class="text-dark-0">{originMix}</Badge>
     {/if}
   </div>
 </section>

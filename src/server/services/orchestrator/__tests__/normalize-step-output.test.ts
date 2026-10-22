@@ -84,3 +84,32 @@ describe('normalizeStepOutput — soniloAudioGen', () => {
     expect(await normalize({ $type: 'soniloAudioGen', output: {} })).toEqual([]);
   });
 });
+
+describe('normalizeStepOutput — polyGen', () => {
+  const GLB = { id: 'glb', url: 'https://x/m.glb', format: 'glb', available: true };
+  const FBX = { id: 'fbx', url: 'https://x/m.fbx', format: 'fbx', available: true };
+
+  it('keeps the GLB as the base mesh with the FBX as its sibling', async () => {
+    const [item] = await normalize({ $type: 'polyGen', output: { model: GLB, fbxModel: FBX } });
+
+    expect(item).toMatchObject({ id: 'glb', format: 'glb', type: 'model3d', fbxModel: FBX });
+  });
+
+  // Tripo quad, after the orchestrator stopped emitting a GLB.
+  it('surfaces the FBX when there is no GLB', async () => {
+    const result = await normalize({ $type: 'polyGen', output: { model: null, fbxModel: FBX } });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: 'fbx', format: 'fbx', type: 'model3d', fbxModel: null });
+  });
+
+  // Tripo quad, before that change: a GLB blob that never became available.
+  it('surfaces the FBX when the GLB never became available', async () => {
+    const [item] = await normalize({
+      $type: 'polyGen',
+      output: { model: { ...GLB, available: false }, fbxModel: FBX },
+    });
+
+    expect(item).toMatchObject({ id: 'fbx', format: 'fbx', available: true, fbxModel: null });
+  });
+});

@@ -1,5 +1,5 @@
-import type { BlobArchiveEntry, BlobArchiveOutput } from '@civitai/client';
-import { invokeBlobArchiveStepTemplate } from '@civitai/client';
+import type { BlobArchiveEntry, BlobArchiveOutput } from '@civitai/orchestration-client';
+import { invokeBlobArchiveStepTemplate } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   isUpstreamNetworkError,

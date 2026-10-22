@@ -1,6 +1,7 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
+import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/generation.constants';
 import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -202,7 +203,7 @@ export function rawAirGenerationResource(stored: {
   name?: string | null;
   strength?: number;
   baseModel?: string;
-}): GenerationResource & { air: string; workflowId?: string } {
+}): GenerationResourceValue & { air: string; workflowId?: string } {
   const label = stored.name?.trim() || 'Training epoch';
   return {
     id: stored.id,
@@ -212,8 +213,7 @@ export function rawAirGenerationResource(stored: {
     canGenerate: true,
     hasAccess: true,
     strength: stored.strength ?? 1,
-    minStrength: -1,
-    maxStrength: 2,
+    settings: { strength: DEFAULT_STRENGTH_RANGE },
     air: stored.air,
     workflowId: stored.workflowId,
     model: { id: stored.id, name: label, type: ModelType.LORA },

@@ -1,4 +1,7 @@
-import type { Blob as OrchestratorBlob, ConsumerBlobPresignResponse } from '@civitai/client';
+import type {
+  Blob as OrchestratorBlob,
+  ConsumerBlobPresignResponse,
+} from '@civitai/orchestration-client';
 import { reportApplicationError } from '~/utils/application-error';
 import type { UploadPartError } from '~/utils/upload-retry';
 import {

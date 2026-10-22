@@ -27,7 +27,7 @@ const {
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // surface enums consumed at module-load time
   WorkflowStatus: {},

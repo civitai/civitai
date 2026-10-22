@@ -6,7 +6,7 @@ import type * as PromptModule from '~/server/services/text-scan/prompt';
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/env.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -21,7 +21,7 @@ const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
   await import('~/server/services/text-scan/prompt');
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');

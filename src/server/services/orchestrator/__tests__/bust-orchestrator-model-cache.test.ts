@@ -6,7 +6,7 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   getCurrentLSN: vi.fn(async () => '0/ABC'),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -16,7 +16,7 @@ import {
 } from '~/server/services/orchestrator/models';
 import { modelVersionAirSelect } from '~/server/utils/resource-air';
 
-/** The global `@civitai/client` stub returns `''` from `Air.stringify`; the AIR is the assertion. */
+/** The global `@civitai/orchestration-client` stub returns `''` from `Air.stringify`; the AIR is the assertion. */
 function installAirCodec() {
   const air = Air as unknown as Record<string, unknown>;
   air.stringify = ({ ecosystem, type, source, id, version, modelFileId }: Record<string, string>) =>

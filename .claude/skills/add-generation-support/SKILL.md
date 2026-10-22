@@ -27,11 +27,9 @@ If any are missing, stop and direct the user to run `add-ecosystem` first.
 
 ### 1. Check @civitai/orchestration-client for ecosystem-specific types
 
-The orchestrator client package is **`@civitai/orchestration-client`**. It is the continuation of the old
-`@civitai/client`, which can no longer be published to and is frozen at `0.2.0-beta.98`; the version line
-carries on unbroken in the new package (`0.2.0-beta.101` and up). **The repo depends on both** — the new
-package for anything recent, the frozen one for the handlers and workflow types that still import it. New
-ecosystem types only ever land in the new package.
+The orchestrator client package is **`@civitai/orchestration-client`**. It replaced `@civitai/client`,
+which can no longer be published to; the version line carries on unbroken in the new package. Nothing in
+the repo imports the old name any more, so do not reintroduce it.
 
 **Always** check the latest published client version, even if types aren't in the currently installed version.
 
@@ -63,9 +61,7 @@ If the installed version is older than the latest and the latest has useful type
 pnpm add @civitai/orchestration-client@<latest-version>
 ```
 
-Import new types from `@civitai/orchestration-client` rather than hand-rolling them. Handlers already
-importing from `@civitai/client` keep working — leave them unless migrating them is the task you were
-asked to do.
+Import new types from `@civitai/orchestration-client` rather than hand-rolling them.
 
 ### 2. Research model defaults
 
@@ -170,7 +166,7 @@ its family grouping.
 `src/server/services/orchestrator/form-graph/<name>.handler.ts`:
 
 ```ts
-import type { <StepTemplateType> } from '@civitai/client';          // ImageGenStepTemplate | VideoGenStepTemplate
+import type { <StepTemplateType> } from '@civitai/orchestration-client';          // ImageGenStepTemplate | VideoGenStepTemplate
 import type { <EcosystemSpecificInputType> } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { <name>VersionIds } from '~/shared/form-graph/generation/<modality>/<name>.graph';
@@ -352,7 +348,7 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 
 - Single-image example: see `img2imgImages` in `src/shared/form-graph/generation/defs.ts`.
 - `normalizeInput` (in `orchestration-new.service.ts`) folds any legacy `sourceImage` into `images[]`, so older stored/remixed data still resolves — do **not** reintroduce or depend on `sourceImage`.
-- Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references — each `{ image, strength }`) is a different shape and stays `image`; those are not top-level source images.
+- Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references, Flux 3 keyframes) is a different shape and stays `image`; those are not top-level source images. For images that each carry a setting (strength, frame position), use `imageEntryListDef({ fields, defaults, limit, noun })` from `defs.ts` (entries without an image are dropped on output) and render it with `ImageEntryListInput` (`src/components/form-graph/generation/inputs/`). Wrap it as `Krea2StyleReferencesInput` and `Flux3KeyframesInput` do; don't write a new schema, dropzone or row markup. Any image object schema is `imageObjectSchema` from `~/shared/generation/values`, not a local `z.object({ url, width, height })`.
 
 ### Don't use `.effect()` to reset slider values across variants
 
@@ -421,6 +417,7 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 | Simple video ecosystem | `form-graph/seedance.handler.ts`, `video/seedance.graph.ts` |
 | Complex video ecosystem (txt/img/ref variants) | `form-graph/vidu.handler.ts`, `video/vidu.graph.ts` |
 | Image+video on one ecosystem | `form-graph/grok.handler.ts`, `image/grok.graph.ts` + `video/grok.graph.ts` |
+| Images with a per-image setting (style strength, frame position) | `image/krea2.graph.ts` (`styleReferencesDef`), `video/flux3-video.graph.ts` (`img2vid:keyframes`) + `imageEntryListDef` in `defs.ts`, `inputs/ImageEntryListInput.tsx` |
 
 ## Notes
 

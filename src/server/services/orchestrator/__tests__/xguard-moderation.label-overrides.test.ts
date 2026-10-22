@@ -4,7 +4,8 @@ import type { XGuardLabelOverride } from '~/server/services/orchestrator/orchest
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('./civitai-client.stub')).civitaiClientStub(),
   submitWorkflow: mockSubmitWorkflow,
   WorkflowStatus: {},
   TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },

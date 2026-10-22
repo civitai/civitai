@@ -47,6 +47,7 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
     item('bookmarked-articles'),
     item('following'),
     item('downloads'),
+    item('service-requests'),
     item('vault'),
     item('inventory'),
     item('bounties'),

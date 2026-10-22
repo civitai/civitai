@@ -72,7 +72,7 @@ import { TRAINING_STEP_TYPES } from './output';
  *
  * 🔴 DO NOT TRUST A COUNT COPIED FROM A DOCUMENT. The live orchestrator spec
  * gained three step types between 2026-08-05 and 2026-09-16 (`imageScanning`,
- * `preprocessVideo`, `yuE2`), and the pinned `@civitai/client` did not have
+ * `preprocessVideo`, `yuE2`), and the pinned `@civitai/orchestration-client` did not have
  * them. Re-derive the population when you touch this:
  *
  *   curl -s https://orchestration.civitai.com/openapi/v2-consumers.json \

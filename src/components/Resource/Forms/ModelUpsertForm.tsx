@@ -77,6 +77,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
+import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 
 const schema = modelUpsertSchema
   .extend({
@@ -111,6 +112,10 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
     error: 'Private models must be set to SFW only.',
     path: ['sfwOnly'],
+  })
+  .refine((data) => data.sfwName == null || data.sfwName.trim().length > 0, {
+    error: 'Cannot be empty',
+    path: ['sfwName'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -166,6 +171,10 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
+    sfwName: model?.sfwName ?? null,
+    sfwDescription: model?.sfwDescription ?? null,
+    coverImageId: model?.coverImageId ?? null,
+    sfwCoverImageId: model?.sfwCoverImageId ?? null,
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: initialType,
@@ -372,12 +381,46 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
   const isDraft = model?.status === ModelStatus.Draft;
 
+  const nameInput = <InputText name="name" label="Name" placeholder="Name" withAsterisk />;
+  const descriptionInput = (
+    <InputRTE
+      name="description"
+      label="Description"
+      description="Tell us what your model does"
+      includeControls={[
+        'heading',
+        'formatting',
+        'list',
+        'link',
+        'media',
+        'mentions',
+        'colors',
+        'blurb',
+      ]}
+      editorSize="xl"
+      placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
+      withAsterisk
+    />
+  );
+
   return (
     <Form id={id} form={form} onSubmit={handleSubmit}>
       <ContainerGrid2 gutter="xl">
         <ContainerGrid2.Col span={12}>
           <Stack>
-            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+            {features.modelComFace ? (
+              <ModelListingTabs
+                modelId={model?.id}
+                redFields={
+                  <>
+                    {nameInput}
+                    {descriptionInput}
+                  </>
+                }
+              />
+            ) : (
+              nameInput
+            )}
             <Stack gap={5}>
               {replacedType && (
                 <AlertWithIcon
@@ -483,24 +526,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 </Text>
               </AlertWithIcon>
             )}
-            <InputRTE
-              name="description"
-              label="Description"
-              description="Tell us what your model does"
-              includeControls={[
-                'heading',
-                'formatting',
-                'list',
-                'link',
-                'media',
-                'mentions',
-                'colors',
-                'blurb',
-              ]}
-              editorSize="xl"
-              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
-              withAsterisk
-            />
+            {!features.modelComFace && descriptionInput}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"

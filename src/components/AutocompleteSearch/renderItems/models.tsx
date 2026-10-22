@@ -16,6 +16,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import styles from './common.module.scss';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -23,6 +24,7 @@ export const ModelSearchItem = forwardRef<
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
   const theme = useMantineTheme();
+  const showSfwFace = useShowsSfwFace();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -72,7 +74,11 @@ export const ModelSearchItem = forwardRef<
       <Stack gap={4} style={{ flex: '1 !important' }}>
         <Group gap={8}>
           <Text>
-            <Highlight attribute="name" hit={hit} classNames={styles} />
+            <Highlight
+              attribute={showSfwFace && hit.sfwName ? 'sfwName' : 'name'}
+              hit={hit}
+              classNames={styles}
+            />
           </Text>
           {features.imageGeneration && !!version?.generationCoverage?.covered && (
             <ThemeIcon color="white" variant="filled" radius="xl" size="sm">

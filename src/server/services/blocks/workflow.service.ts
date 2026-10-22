@@ -1,7 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { coveragePair, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
-import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  CustomComfyStepTemplate,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
@@ -324,8 +328,10 @@ const UNSUCCESSFUL_STEP_STATUSES: ReadonlySet<string> = new Set(['failed', 'expi
  */
 function stepFailureReason(step: NonNullable<Workflow['steps']>[number]): string | undefined {
   if (!UNSUCCESSFUL_STEP_STATUSES.has(step.status)) return undefined;
-  for (const job of step.jobs ?? []) {
-    const reason = (job as { reason?: unknown }).reason;
+  // The SDK stopped declaring `jobs` on a step at 0.2.0-beta.125; the response may still carry them.
+  const jobs = (step as { jobs?: Array<{ reason?: unknown }> | null }).jobs;
+  for (const job of jobs ?? []) {
+    const reason = job.reason;
     if (typeof reason !== 'string' || reason.length === 0) continue;
     return safeQuoteReason(reason, '');
   }
@@ -1516,7 +1522,7 @@ export function createBlockCustomComfyStep(
 // The orchestrator's `GET /v2/consumer/workflows/{id}` accepts `?wait=<seconds>`
 // and holds the response until the workflow reaches a terminal status, replying
 // 202 with the current snapshot if the hold elapses first
-// (`GetWorkflowData.query.wait`, `@civitai/client`). civitai already uses it on
+// (`GetWorkflowData.query.wait`, `@civitai/orchestration-client`). civitai already uses it on
 // four non-blocks paths (`orchestrator.service.ts`, `comics/orchestrator-chat`,
 // `product-badge.service`, `training.service`); the blocks poll did not.
 // ─────────────────────────────────────────────────────────────────────────────

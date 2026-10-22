@@ -1,4 +1,4 @@
-import { BuzzClientAccount, TransactionType } from '@civitai/client';
+import { BuzzClientAccount, TransactionType } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { imageSelectTrainingFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { constants } from '~/server/common/constants';

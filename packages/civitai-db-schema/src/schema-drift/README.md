@@ -167,16 +167,18 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## The current snapshot, 2026-10-19
+## The current snapshot, 2026-10-20
 
-`__tests__/fixtures/catalog-production-2026-10-19.json` is what the CI gate compares against
+`__tests__/fixtures/catalog-production-2026-10-20.json` is what the CI gate compares against
 (`gate-cli.ts`'s default). It was captured read-only with `drift --dump-catalog` after the
-`Thread` entity-FK cascade migration (`20261101120000_thread_entity_fk_cascade`, #6155) was
-applied in production. Reproduce with:
+`Model` .com face migration (`20261016120000_model_sfw_face`) was applied in production. It
+differs from the 2026-10-19 capture it replaces only in those four nullable `Model` columns,
+which that capture reported missing; every relation, nullability and uniqueness finding is the
+same, so `drift-baseline.json` is unchanged. Reproduce with:
 
 ```bash
 pnpm --filter @civitai/db-schema drift \
-  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-19.json
+  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json
 ```
 
 ```
@@ -186,14 +188,16 @@ skipped (view / absent table)  : 29
 MISSING foreign key            : 32
 wrong referential action       : 67  (all ON UPDATE; ON DELETE agrees on every one)
 MISSING column                 : 0
-nullability checked            : 3296
+nullability checked            : 3343
 nullability drift              : 11
 uniqueness declarations checked: 159
 missing unique index           : 2
 ```
 
-That makes 112 findings, and `drift-baseline.json` accepts all 112. Against the baseline as it
-stood before the recapture (119 entries), 16 dropped out and 9 were added:
+That makes 112 findings, and `drift-baseline.json` accepts all 112. The 2026-10-19 capture had
+followed the `Thread` entity-FK cascade migration (`20261101120000_thread_entity_fk_cascade`,
+#6155); against the baseline as it stood before that recapture (119 entries), 16 dropped out and
+9 were added:
 
 - **Dropped (16).** The 15 `Thread` entity relations that were declared `ON DELETE Cascade`
   against a database `SetNull`, and `missing-foreign-key|Thread|challengeId`, which never had a
@@ -204,7 +208,7 @@ stood before the recapture (119 entries), 16 dropped out and 9 were added:
   `Item.itemDefinitionId`, `CosmeticShopItem.itemDefinitionId`). Same inert class as the App
   Blocks batch below; `ON DELETE` agrees on every one.
 
-The 2026-10-16 capture this one replaces is not kept: it lagged the schema on nothing the
+The 2026-10-16 capture that the 2026-10-19 one replaced is not kept: it lagged the schema on nothing the
 2026-08-03 fixture does not already cover, and a 640 KB fixture earns its place only by
 exercising a path.
 

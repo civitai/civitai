@@ -1,4 +1,4 @@
-import type { VideoInterpolationStepTemplate } from '@civitai/client';
+import type { VideoInterpolationStepTemplate } from '@civitai/orchestration-client';
 import * as z from 'zod';
 
 export type VideoInterpolationSchema = z.infer<typeof videoInterpolationSchema>;

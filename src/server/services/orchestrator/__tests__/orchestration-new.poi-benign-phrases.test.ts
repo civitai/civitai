@@ -111,7 +111,7 @@ describe('generation POI gate reads the benign-stripped prompt', () => {
     const message = await submitFor('émma stone portrait');
 
     // Asserted BEFORE the refusal deliberately. Anything reaching step assembly dies on
-    // `new TimeSpan(...)`, because the shared `@civitai/client` mock makes it a plain object —
+    // `new TimeSpan(...)`, because the shared `@civitai/orchestration-client` mock makes it a plain object —
     // so on a regression the refusal assertion fails with a constructor error that names
     // nothing. These two fail with the alphabet mismatch spelled out, so they go first.
     // The TYPE is here because nothing else can see it: swapping in `NegativeBenignPhrase`

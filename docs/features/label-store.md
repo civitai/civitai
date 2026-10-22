@@ -7,7 +7,8 @@ One record of every moderation judgement, from people and from models, in the Po
 functions. Do not add a per-feature label table. Queue tables (claims, quotas, leases) stay with the
 feature.
 
-Migration: `packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/`. The schema sits
+Migrations: `packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/`, then
+`20261124120000_label_store_attach_bytes/`. The schema sits
 outside Prisma (the drift guard reads `public` only), so there is no Prisma model; call it with raw SQL.
 
 ## Tables
@@ -35,6 +36,7 @@ change.
 | `record_prediction(...)` | site code recording a model output | same |
 | `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
 | `submit_predictions(p_items)` | the endpoint's batch: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
+| `attach_bytes(p_subject_type, p_subject_id, p_content_hash, p_bytes_ref, p_expire_at)` | pointing a subject at bytes the site keeps (no expiry when `p_expire_at` is NULL) | sets the pointer once, only on the subject with that exact `p_content_hash`; returns false (nothing changed) for an excluded subject, one that already has a pointer, or no such subject; raises on store errors |
 | `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop snapshot, pHash and bytes pointer |
 | `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns and tombstones the owner; not called on account deletion |
 
@@ -65,6 +67,21 @@ the ruling covers, with that text as the snapshot while it is unchanged; family 
 kind `appeal`. The ref is `TextScanRuling:Model:<id>:<label>:<kind>:<value>:<textHash>:<labeller hash>`,
 so a retried ruling records nothing. These questions have no `rule` row yet, so they never become
 trainable.
+
+Also wired from site code: moderator verdicts on Creator Shop listings
+(`src/server/services/creator-shop-labels.service.ts`), recorded in the verdict's own transaction, after
+its write, under the same savepoint helper (`recordUnderSavepoint` in `label-store.service.ts`). Subject `shop_cosmetic`, `shop_pack` or
+`shop_mystery_pack`, `subjectId` = the listing id, `contentHash` = sha256 of the judged art and text
+(artwork storage key, title, description; a pack's cover and members; a mystery pack's reviewed edit):
+price is in the snapshot, not the hash. Family `creator_shop`; question `creator_shop.listing.review`
+(`approve`, `request_changes`, `reject`, `revert`) or `creator_shop.listing.takedown` (`takedown`); the
+moderator's note is the `reasonNote`. `attach_bytes` points the subject at the artwork
+(`cf-image:<key>`, no expiry). The ref is `CreatorShopReview:<listingId>:<history entry at>:<value>`
+(`CreatorShopTakedown:<listingId>:<at>`), shared with the temporary backfill endpoint
+`POST /api/admin/temp/creator-shop-label-backfill` (deleted after the production run), which records past verdicts from each listing's review history. Listings reviewed before that history
+existed get one label inferred from their status, ref `CreatorShopReviewInferred:…` and `inferred: true`
+in the snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
+not excluded. No `rule` rows yet.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back

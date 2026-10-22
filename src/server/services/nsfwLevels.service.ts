@@ -547,7 +547,26 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     UPDATE "Model" m
     SET "nsfwLevel" = (
       CASE
-        WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+        -- A mature model with a complete .com face also carries its .com cover's safe level,
+        -- which is what lets it match .com's browsing level. Its .red standing is unchanged.
+        WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag} | COALESCE((
+          SELECT i."nsfwLevel"
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          JOIN "ModelVersion" cv ON cv.id = p."modelVersionId"
+          WHERE m."sfwName" IS NOT NULL
+            AND i.id = m."sfwCoverImageId"
+            AND cv."modelId" = m.id
+            AND cv.status = 'Published'
+            AND p."userId" = m."userId"
+            AND p."publishedAt" IS NOT NULL
+            AND i."nsfwLevel" != 0
+            AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) = i."nsfwLevel"
+            AND i."needsReview" IS NULL
+            AND i."acceptableMinor" = FALSE
+            AND i."tosViolation" = FALSE
+            AND i.ingestion = 'Scanned'
+        ), 0)
         ELSE level."nsfwLevel"
       END
     )

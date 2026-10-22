@@ -20,7 +20,10 @@ export function ogImageUrl(ogEndpoint: string) {
 export function modelOgEndpoint(model: {
   id: number;
   modelVersions: { id: number; status: ModelStatus }[];
+  updatedAt?: Date | string | null;
 }) {
   const version = model.modelVersions.find((v) => v.status === ModelStatus.Published);
-  return `/api/og?type=model&id=${model.id}${version ? `&mv=${version.id}` : ''}`;
+  // Saving the .com face or a cover changes what the card draws, and bumps `updatedAt`.
+  const edited = model.updatedAt ? `&u=${new Date(model.updatedAt).getTime()}` : '';
+  return `/api/og?type=model&id=${model.id}${version ? `&mv=${version.id}` : ''}${edited}`;
 }

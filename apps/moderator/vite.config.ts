@@ -42,9 +42,9 @@ export default defineConfig(({ mode }) => {
         '@civitai/brand',
         '@civitai/buzz',
         '@civitai/email',
-        // @civitai/client ships ESM with extensionless directory imports (dist/generated) that Node's
+        // @civitai/orchestration-client ships ESM with extensionless directory imports (dist/generated) that Node's
         // ESM loader rejects when externalized — bundle it so Vite resolves them.
-        '@civitai/client',
+        '@civitai/orchestration-client',
         '@civitai/clickhouse',
         '@civitai/db',
         '@civitai/db-queries',

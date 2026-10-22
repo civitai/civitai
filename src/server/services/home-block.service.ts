@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -22,6 +23,8 @@ import {
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getAllImagesIndex } from '~/server/services/image.service';
+import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
+import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
   bustSystemHomeBlockCaches,
   getHomeBlockCached,
@@ -58,7 +61,9 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
-import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { rotateShopSectionItems, shopBlockMaxItems } from '~/shared/utils/cosmetic-shop-rotation';
+import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
@@ -240,7 +245,24 @@ export const getHomeBlockById = async ({
   const metadata = await resolveHomeBlockMetadata(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
 
-  return getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata);
+  const rotation = metadata.cosmeticShopSection;
+  if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+  const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
+    sectionId: rotation.id,
+    rotateHours: rotation.rotateHours,
+    now: Date.now(),
+  });
+  return {
+    ...block,
+    cosmeticShopSection: {
+      ...block.cosmeticShopSection,
+      // A rotating block shows a handful of a section that can hold over a hundred. Three times
+      // that is room for the client to drop blocked sellers and still fill the row.
+      items: rotated.slice(0, 3 * (shopBlockMaxItems(rotation) ?? rotated.length)),
+    },
+  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -257,7 +279,8 @@ type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>
 /** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
 export type FeedBlockItems =
   | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
-  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] }
+  | { entity: 'crucibles'; items: AsyncReturnType<typeof getFeedCrucibles> };
 
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
@@ -359,6 +382,38 @@ const modelFeedDefaults = {
   favorites: false,
   hidden: false,
 } as const;
+
+const CRUCIBLE_FEED_LIMIT = 8;
+
+/**
+ * Running crucibles first, then upcoming, each by prize pool: `getCrucibles` under the PrizePool
+ * sort. No viewer, because the result is shared-cached; the client still applies the viewer's
+ * hidden users and browsing level.
+ */
+const getFeedCrucibles = async ({
+  eventTag,
+  limit,
+  browsingLevel,
+  domain,
+}: {
+  eventTag: string;
+  limit: number;
+  browsingLevel: number;
+  domain?: DomainColor;
+}) => {
+  const { items } = await getCrucibles({
+    input: {
+      limit: Math.min(limit, CRUCIBLE_FEED_LIMIT),
+      sort: CrucibleSort.PrizePool,
+      status: [CrucibleStatus.Active, CrucibleStatus.Pending],
+      browsingLevel,
+    },
+    select: crucibleListSelect,
+    isGreen: domain === 'green',
+    eventTag,
+  });
+  return withEntryCounts(items);
+};
 
 // PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
 // nothing on the home page has passed human review before appearing there.
@@ -542,6 +597,20 @@ export const getHomeBlockData = async ({
       // Metadata is cast rather than parsed and is hand-written, so `[]` is reachable.
       const baseModels = feed.baseModels?.length ? feed.baseModels : undefined;
 
+      if (feed.entity === 'crucibles') {
+        // Without a tag the block would list every running crucible on the site.
+        const eventTag = normalizeCrucibleEventTag(feed.eventTag ?? '');
+        if (!eventTag) return null;
+
+        const items = await getFeedCrucibles({
+          eventTag,
+          limit,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          domain: input.domain,
+        });
+        return { ...homeBlock, metadata, feedItems: { entity: 'crucibles' as const, items } };
+      }
+
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
           ...imageFeedDefaults,
@@ -592,10 +661,13 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // No feature flags in this context — creator-listed items stay excluded
-      // from homepage shop blocks until the creatorShop flag goes GA.
+      // This body is shared by every viewer, so the creatorShop flag is resolved as it is for a
+      // signed-out one: on while the flag is public, off when it is pulled or Flipt can't answer.
+      // The per-viewer block filter the shop page applies can't live in a shared body either; the
+      // block applies it on the client.
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
+        creatorShopEnabled: await isFliptPublic('creator-shop'),
       });
 
       const [cosmeticShopSection] = data;
@@ -696,6 +768,7 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
+                faceBrowsingLevel: sfwBrowsingLevelsFlag,
                 ...slimModelImages,
               })
             ).items

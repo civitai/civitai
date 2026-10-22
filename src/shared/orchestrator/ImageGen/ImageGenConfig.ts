@@ -1,4 +1,4 @@
-import type { ImageGenInput } from '@civitai/client';
+import type { ImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { WORKFLOW_TAGS, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
