@@ -182,3 +182,83 @@ export function parseModelRulesStoredResult(result: unknown): ParsedModelRulesRe
     heldAtPublish: meta.heldAtPublish,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Review hold: `TextScanHold.meta` of a `modelRules` hold, one per literal detection.
+
+export const MODEL_RULES_HOLD_LABEL = 'modelRules';
+
+/** The mode the detection ran in, which the hold keeps whatever the mode is switched to later. */
+export type ModelRulesHoldMode = 'shadow' | 'active';
+
+export type ModelRulesHoldField = { heading: string; text: string };
+
+/** Where a rule's subject or alias sits: `fields[fieldIndex].text.slice(start, end)` is the span as written. */
+export type ModelRulesHoldMatch = {
+  ruleId: number;
+  term: string;
+  field: string;
+  fieldIndex: number;
+  start: number;
+  end: number;
+};
+
+export type ModelRulesHoldMeta = {
+  mode: ModelRulesHoldMode;
+  /** The scanned fields in order, so the offsets in `matches` can be highlighted. */
+  fields: ModelRulesHoldField[];
+  matches: ModelRulesHoldMatch[];
+  /** Every matched rule as it read at detection. */
+  rules: StoredModelRuleSnapshot[];
+  /** The action was applied at detection (Auto): `TextScanHold.hiddenAt` is set. */
+  applied?: true;
+  /** Set when an earlier hold on this model exists; `priorHoldId` is that hold. */
+  kind?: 'redetected';
+  priorHoldId?: number;
+  /** A newer detection closed this hold without a ruling. */
+  decision?: 'superseded';
+};
+
+const holdFieldSchema = z.object({ heading: z.string(), text: z.string() });
+
+const holdMatchSchema = z.object({
+  ruleId: z.number(),
+  term: z.string(),
+  field: z.string(),
+  fieldIndex: z.number(),
+  start: z.number(),
+  end: z.number(),
+});
+
+const holdRuleSchema = z.object({
+  id: z.number(),
+  subject: z.string(),
+  description: z.string().catch(''),
+  aliases: z.array(z.string()).catch([]),
+});
+
+const holdMetaSchema = z.object({
+  mode: z.enum(['shadow', 'active']).catch('shadow'),
+  fields: tolerantList(holdFieldSchema),
+  matches: tolerantList(holdMatchSchema),
+  rules: tolerantList(holdRuleSchema),
+  applied: z.literal(true).optional().catch(undefined),
+  kind: z.literal('redetected').optional().catch(undefined),
+  priorHoldId: z.number().optional().catch(undefined),
+  decision: z.literal('superseded').optional().catch(undefined),
+});
+
+/** Keeps whatever entries parse: a hold written by an older build, or one with its meta nulled, still lists. */
+export function parseModelRulesHoldMeta(meta: unknown): ModelRulesHoldMeta {
+  const parsed = holdMetaSchema.safeParse(meta ?? {});
+  const { applied, kind, priorHoldId, decision, ...rest } = parsed.success
+    ? parsed.data
+    : holdMetaSchema.parse({});
+  return {
+    ...rest,
+    ...(applied ? { applied } : {}),
+    ...(kind ? { kind } : {}),
+    ...(priorHoldId !== undefined ? { priorHoldId } : {}),
+    ...(decision ? { decision } : {}),
+  };
+}

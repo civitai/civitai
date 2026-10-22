@@ -10,9 +10,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 }));
 
 const {
-  filterModelRuleMatches,
   loadModelRulesUnpublishDetail,
-  getModelRuleSnapshots,
   getModelRuleSubjects,
   MODEL_RULES_UNPUBLISH_MESSAGE,
   modelRulesUnpublishDetail,
@@ -91,48 +89,6 @@ describe('modelRulesFingerprint', () => {
     expect(modelRulesFingerprint([rule(), rule({ id: 2 })])).toBe(base);
     expect(modelRulesFingerprint([rule(), rule({ id: 2, updatedAt: 2000 })])).not.toBe(base);
     expect(modelRulesFingerprint([rule()])).not.toBe(base);
-  });
-});
-
-describe('filterModelRuleMatches', () => {
-  it('drops ids the prompt did not list and duplicate matches', () => {
-    const { kept, dropped } = filterModelRuleMatches(
-      [
-        { ruleId: 1, reason: 'a' },
-        { ruleId: 99, reason: 'invented' },
-        { ruleId: 1, reason: 'again' },
-        { ruleId: 2, reason: 'b' },
-      ],
-      [1, 2]
-    );
-    expect(kept).toEqual([
-      { ruleId: 1, reason: 'a' },
-      { ruleId: 2, reason: 'b' },
-    ]);
-    expect(dropped).toEqual([99]);
-  });
-
-  it('keeps nothing when the submit recorded no rule ids', () => {
-    expect(filterModelRuleMatches([{ ruleId: 1, reason: 'a' }], undefined).kept).toEqual([]);
-  });
-});
-
-describe('getModelRuleSnapshots', () => {
-  it('reads the matched rules by id from the primary, enabled only', async () => {
-    dbMock.dbWrite.moderationRule.findMany.mockResolvedValue([
-      { id: 3, definition: { type: 'semantic', subject: 'S', description: 'D', aliases: ['A'] } },
-    ]);
-    await expect(getModelRuleSnapshots([3])).resolves.toEqual([
-      { id: 3, subject: 'S', description: 'D', aliases: ['A'] },
-    ]);
-    expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [3] }, entityType: 'Model', enabled: true } })
-    );
-  });
-
-  it('skips the query for no ids', async () => {
-    await expect(getModelRuleSnapshots([])).resolves.toEqual([]);
-    expect(dbMock.dbWrite.moderationRule.findMany).not.toHaveBeenCalled();
   });
 });
 

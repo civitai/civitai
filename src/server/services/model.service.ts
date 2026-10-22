@@ -163,11 +163,7 @@ import type { holdModelForLiteralRules } from '~/server/services/text-scan/actio
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import {
-  scanEntitiesInBackground,
-  scanModelAndRules,
-  scanModelRules,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -3807,8 +3803,7 @@ const publishedModelSelect = {
   status: true,
 } satisfies Prisma.ModelSelect;
 
-// Fails open like the check: a model that cannot be held is published, and the post-publish
-// ModelRules scan is the backstop.
+// Fails open like the check: a model that cannot be held is published.
 async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
   try {
     // Dynamic: the action imports model-version.service, which imports this module.
@@ -6117,7 +6112,6 @@ export const publishPrivateModel = async (
       `;
     }
   });
-  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

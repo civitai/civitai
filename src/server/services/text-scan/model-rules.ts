@@ -1,7 +1,4 @@
-import {
-  storedModelRuleSchema,
-  type StoredModelRuleSnapshot,
-} from '@civitai/moderation/model-rules';
+import { storedModelRuleSchema } from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -55,48 +52,6 @@ export function renderModelRulesBlock(rules: ModelRuleForPrompt[]) {
 
 export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
   return hashContent(rules.map((rule) => `${rule.id}:${rule.updatedAt}`).join(','));
-}
-
-export type ModelRuleSnapshot = StoredModelRuleSnapshot;
-
-/**
- * Read by id from the primary, not from the cache, and enabled only: a rule disabled after the
- * submit must stop acting at once, and a match on it is dropped.
- */
-export async function getModelRuleSnapshots(ids: number[]): Promise<ModelRuleSnapshot[]> {
-  if (!ids.length) return [];
-  const rows = await dbWrite.moderationRule.findMany({
-    where: { id: { in: ids }, entityType: EntityType.Model, enabled: true },
-    select: { id: true, definition: true },
-  });
-  return rows.flatMap((row) => {
-    const parsed = storedModelRuleSchema.safeParse(row.definition);
-    if (!parsed.success) return [];
-    const { subject, description, aliases } = parsed.data;
-    return [{ id: row.id, subject, description, aliases }];
-  });
-}
-
-/**
- * Keeps one match per rule, and only rules the prompt actually listed: a model can name an id it
- * invented, and acting on one would unpublish a model for a rule nobody wrote.
- */
-export function filterModelRuleMatches<T extends { ruleId: number }>(
-  matched: T[],
-  promptRuleIds: number[] | undefined
-): { kept: T[]; dropped: number[] } {
-  const allowed = new Set(promptRuleIds ?? []);
-  const seen = new Set<number>();
-  const kept: T[] = [];
-  const dropped: number[] = [];
-  for (const match of matched) {
-    if (!allowed.has(match.ruleId)) dropped.push(match.ruleId);
-    else if (!seen.has(match.ruleId)) {
-      seen.add(match.ruleId);
-      kept.push(match);
-    }
-  }
-  return { kept, dropped };
 }
 
 /** A lab-only edit of a rule: a positive id replaces that rule, a negative id is a new, unsaved one. */

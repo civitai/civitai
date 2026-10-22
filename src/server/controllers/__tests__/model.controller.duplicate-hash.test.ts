@@ -45,7 +45,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   dataForModelsCache: { refresh: vi.fn() },
 }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
-vi.mock('~/server/services/text-scan/submit', () => ({ scanModelRules: vi.fn() }));
+vi.mock('~/server/services/text-scan/submit', () => ({ checkModelRulesInBackground: vi.fn() }));
 // Reached at import through the orchestrator caller, which throws without a token.
 vi.mock('~/server/services/training.service', () => ({}));
 

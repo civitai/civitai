@@ -928,7 +928,7 @@ export const publishModelVersionHandler = async ({
           ...literalHold,
         });
       } catch (error) {
-        // The version is already published; the ModelRules scan below is the backstop.
+        // The version is already published and stays so.
         logToAxiom({
           name: 'text-scan',
           type: 'error',
@@ -940,7 +940,7 @@ export const publishModelVersionHandler = async ({
       }
     }
     // The Model scan reads only public versions, so the newly public one needs a scan of its own.
-    scanModelAndRules(updatedVersion.modelId, { rules: !ctx.user.isModerator });
+    scanModelAndRules(updatedVersion.modelId, { rules: false });
     // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
     if (held) return { ...updatedVersion, held };
 

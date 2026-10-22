@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MODEL_RULE_LIMITS,
   isSemanticDefinition,
+  parseModelRulesHoldMeta,
   parseModelRulesStoredResult,
   semanticModelRuleSchema,
   storedModelRuleSchema,
@@ -104,5 +105,37 @@ describe('parseModelRulesStoredResult', () => {
       ...empty,
       literalRuleIds: [3],
     });
+  });
+});
+
+describe('parseModelRulesHoldMeta', () => {
+  it('reads a full hold meta back', () => {
+    const meta = {
+      mode: 'active',
+      fields: [{ heading: 'Name', text: 'Hero One LoRA' }],
+      matches: [{ ruleId: 3, term: 'Hero One', field: 'Name', fieldIndex: 0, start: 0, end: 8 }],
+      rules: [{ id: 3, subject: 'Example Franchise', description: 'd', aliases: ['Hero One'] }],
+      applied: true,
+      kind: 'redetected',
+      priorHoldId: 9,
+    };
+    expect(parseModelRulesHoldMeta(meta)).toEqual(meta);
+  });
+
+  it('keeps the entries that parse and tolerates an empty or missing meta', () => {
+    expect(
+      parseModelRulesHoldMeta({
+        fields: [{ heading: 'Name', text: 'x' }, { heading: 4 }],
+        matches: 'nope',
+        rules: [{ id: 1, subject: 'S' }],
+      })
+    ).toEqual({
+      mode: 'shadow',
+      fields: [{ heading: 'Name', text: 'x' }],
+      matches: [],
+      rules: [{ id: 1, subject: 'S', description: '', aliases: [] }],
+    });
+    for (const meta of [null, undefined, 'x', []])
+      expect(parseModelRulesHoldMeta(meta)).toMatchObject({ fields: [], matches: [], rules: [] });
   });
 });

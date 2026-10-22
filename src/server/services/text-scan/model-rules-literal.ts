@@ -5,12 +5,6 @@ import { foldDiacritics } from '~/utils/fold-diacritics';
 
 const MIN_TERM_LENGTH = 3;
 
-/**
- * Added to `EntityModeration.triggeredLabels` when the text names a rule literally, so a literal-only
- * hit (the model matched nothing) is still found by the moderator app's Matches list.
- */
-export const MODEL_RULES_LITERAL_LABEL = 'modelRulesLiteral';
-
 export type LiteralModelRule = { id: number; subject: string; aliases: string[] };
 
 function normalizeForLiteralMatch(value: string) {

@@ -80,13 +80,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model-moderation.adapter.ts',
     'export async function submitModelTextModeration(',
-    'if (model.isModerator) return;\n\n  if (model.rules !== false) scanModelRules(model.id)',
-    1,
-  ],
-  [
-    'src/server/controllers/model.controller.ts',
-    'export const publishModelHandler',
-    'if (!isModerator) scanModelRules(updatedModel.id)',
+    'if (model.isModerator) return;\n\n  if (model.rules !== false) checkModelRulesInBackground(model.id)',
     1,
   ],
   [
@@ -120,21 +114,15 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     1,
   ],
   [
-    'src/server/services/model.service.ts',
-    'export const publishPrivateModel',
-    'if (publishVersions && enforceModelRules) scanModelRules(modelId)',
-    1,
-  ],
-  [
     'src/server/services/text-scan/submit.ts',
     'export function scanModelAndRules(',
-    'if (rules) scanModelRules(modelId)',
+    'if (rules) checkModelRulesInBackground(modelId)',
     1,
   ],
   [
     'src/server/services/text-scan/submit.ts',
-    'export function scanModelRules(',
-    "scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId })",
+    'export function checkModelRulesInBackground(',
+    '.then(({ checkModelRulesOnEdit }) => checkModelRulesOnEdit(modelId))',
     1,
   ],
   [
