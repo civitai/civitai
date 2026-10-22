@@ -184,6 +184,14 @@ const sale = (prefix: string, buyerId: number): LedgerRow[] => [
   },
 ];
 const refundedIds = () => mocks.refundTransaction.mock.calls.map(([id]: [string]) => id);
+// Every leg reversed, whether refunded by id or as part of a prefix refund.
+const reversedLegs = () => [
+  ...refundedIds(),
+  ...mocks.refundMultiAccountTransaction.mock.calls.flatMap(
+    ([input]: [{ externalTransactionIdPrefix: string }]) =>
+      (ledger[input.externalTransactionIdPrefix] ?? []).map((l) => l.transactionId)
+  ),
+];
 
 describe('takedownCosmeticShopItem on a mystery box listing', () => {
   beforeEach(() => {
@@ -409,8 +417,10 @@ describe('takedownCosmeticShopItem', () => {
 
     const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
 
-    expect(refundedIds()).toEqual([charge, 'legacy-payout']);
+    // The buyer's charge comes back, and the creator gives back the payout once, not again.
+    expect(reversedLegs()).toContain(charge);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(refundedIds()).toEqual([charge, 'legacy-payout']);
     expect(result).toMatchObject({
       refunded: 1,
       refundedValue: 1000,
