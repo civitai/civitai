@@ -57,7 +57,7 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
       opened={open}
       onChange={setOpen}
       withinPortal
-      // Under the header's 199 (nothing overlaps it) and under the modals and dialogs that open over the menu.
+      // The header's own 199, which the sheet does not overlap, and below the modals (200+) and dialogs that open over the menu.
       zIndex={199}
       // The sheet covers the page, so Tab stays in it; Escape is handled inside the body.
       trapFocus

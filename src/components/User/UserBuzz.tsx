@@ -83,12 +83,12 @@ export function UserBuzz({
       component="div"
       c={config.color}
       tt="uppercase"
-      {...textProps}
       style={{
         '--buzz-gradient': gradient || config.color,
         ...textProps.style,
       }}
       className={clsx(classes.userBuzz, clipText && classes.withGradient, textProps.className)}
+      {...textProps}
     >
       <Group gap={iconGap} wrap="nowrap">
         <BuzzBoltSvg
