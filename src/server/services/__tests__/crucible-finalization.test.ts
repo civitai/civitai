@@ -209,12 +209,13 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a banned entrant's, a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
     expect(where).toEqual({
       crucibleId: 1,
+      user: { bannedAt: null },
       image: {
         needsReview: null,
         tosViolation: false,
