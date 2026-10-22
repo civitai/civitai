@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
+import type * as ModelCoverService from '~/server/services/model-cover.service';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -100,6 +101,13 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+const { mockAssertCoverImagesValid } = vi.hoisted(() => ({
+  mockAssertCoverImagesValid: vi.fn(),
+}));
+vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelCoverService>()),
+  assertCoverImagesValid: mockAssertCoverImagesValid,
+}));
 const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
   ...(await importOriginal<typeof AppealTextHash>()),
@@ -140,6 +148,8 @@ const storedModel = {
   allowCommercialUse: ['Image'] as string[],
   allowDerivatives: true,
   allowDifferentLicense: false,
+  coverImageId: null as number | null,
+  sfwCoverImageId: null as number | null,
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
@@ -706,5 +716,36 @@ describe('moderation log for flag edits', () => {
     await upsert({ userId: MODERATOR_ID, isModerator: true, poi: true, minor: true });
 
     expect(trackModActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('cover gate', () => {
+  // The create form sends both covers as explicit nulls. Comparing them to a missing stored row
+  // read as a cover change and refused every new model; keep null-vs-no-row equal.
+  it('lets a create with null covers through', async () => {
+    await upsert({ userId: OWNER_ID, coverImageId: null, sfwCoverImageId: null, sfwName: null });
+
+    expect(mockDbWrite.model.create).toHaveBeenCalledTimes(1);
+    expect(mockAssertCoverImagesValid).not.toHaveBeenCalled();
+  });
+
+  it.each(['coverImageId', 'sfwCoverImageId'] as const)(
+    'refuses a create that picks %s',
+    async (field) => {
+      await expect(upsert({ userId: OWNER_ID, [field]: 9 })).rejects.toThrow(
+        'Covers can be picked once the model has published images.'
+      );
+      expect(mockDbWrite.model.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('validates a cover changed on update', async () => {
+    mockStored({ coverImageId: null });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
+    );
   });
 });
