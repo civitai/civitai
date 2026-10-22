@@ -6,7 +6,6 @@ import {
   type LabLabel,
   type NsfwLevelName,
 } from '../text-scan-lab/types';
-import type { Workspace } from './types';
 
 export const FLAG_LABELS = ['poi', 'minor', 'scam', 'csam'] as const;
 export type FlagLabel = (typeof FLAG_LABELS)[number];
@@ -19,18 +18,9 @@ export type Expected = {
   minor?: boolean;
   scam?: boolean;
   csam?: boolean;
-  modelRules?: { ruleIds: number[] };
 };
 
-export const LABEL_ORDER: readonly LabLabel[] = [
-  'nsfw',
-  'poi',
-  'minor',
-  'scam',
-  'csam',
-  'modelRules',
-];
-export const MAX_EXPECTED_RULES = 200;
+export const LABEL_ORDER: readonly LabLabel[] = ['nsfw', 'poi', 'minor', 'scam', 'csam'];
 const MALFORMED = 'The expectation is malformed.';
 
 export const levelRank = (level: NsfwLevelName) => NSFW_LEVEL_NAMES.indexOf(level);
@@ -42,11 +32,6 @@ const level = z.enum(NSFW_LEVEL_NAMES, {
   error: `Use one of ${NSFW_LEVEL_NAMES.join(', ')}.`,
 });
 
-const sortedUnique = (ids: readonly number[]) => [...new Set(ids)].sort((a, b) => a - b);
-
-export const workspaceOf = (entityType: LabEntityType): Workspace =>
-  LAB_LABELS[entityType].includes('modelRules') ? 'modelRules' : 'prompts';
-
 export const expectedSchema = z.object({
   nsfw: z
     .object({ min: level, max: level })
@@ -56,14 +41,6 @@ export const expectedSchema = z.object({
   minor: z.boolean().optional(),
   scam: z.boolean().optional(),
   csam: z.boolean().optional(),
-  modelRules: z
-    .object({
-      ruleIds: z
-        .array(z.number().int().positive('Only saved rules can be expected.'))
-        .max(MAX_EXPECTED_RULES, `At most ${MAX_EXPECTED_RULES} rules.`)
-        .transform(sortedUnique),
-    })
-    .optional(),
 });
 
 export function parseExpected(json: unknown, entityType: LabEntityType): Expected | string {
@@ -78,18 +55,10 @@ export function parseExpected(json: unknown, entityType: LabEntityType): Expecte
 
 export function expectedFromOutput(
   output: Record<string, unknown> | null,
-  labels: readonly LabLabel[],
-  matchedRuleIds: readonly number[] | null
+  labels: readonly LabLabel[]
 ): Expected {
   const expected: Expected = {};
   for (const label of labels) {
-    if (label === 'modelRules') {
-      if (matchedRuleIds)
-        expected.modelRules = {
-          ruleIds: sortedUnique(matchedRuleIds.filter((id) => id > 0)).slice(0, MAX_EXPECTED_RULES),
-        };
-      continue;
-    }
     const verdict = output?.[label] as { level?: unknown; detected?: unknown } | undefined;
     if (!verdict || typeof verdict !== 'object') continue;
     if (label === 'nsfw') {

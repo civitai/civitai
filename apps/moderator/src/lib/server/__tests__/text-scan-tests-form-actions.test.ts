@@ -87,7 +87,6 @@ const event = (fields: Record<string, string>, grants: Record<string, boolean> =
 const DRAFT = {
   setId: '3',
   prompts: JSON.stringify({ 'label:scam': 'synthetic draft' }),
-  rules: '[]',
 };
 
 beforeEach(() => {
@@ -111,12 +110,11 @@ describe('quoteAction', () => {
     expect(deps.runsDeps).toHaveBeenCalledWith('session=synthetic');
     expect(runs.quoteRun).toHaveBeenCalledWith(DEPS, 3, 'prompts', {
       prompts: { 'label:scam': 'synthetic draft' },
-      rules: [],
     });
   });
 
   it('passes no draft when nothing is edited', async () => {
-    await quoteAction(event({ setId: '3', prompts: '{}', rules: '[]' }), 'prompts');
+    await quoteAction(event({ setId: '3', prompts: '{}' }), 'prompts');
     expect(runs.quoteRun).toHaveBeenCalledWith(DEPS, 3, 'prompts', null);
   });
 
@@ -154,7 +152,7 @@ describe('startAction', () => {
       {
         setId: 3,
         workspace: 'prompts',
-        draft: { prompts: { 'label:scam': 'synthetic draft' }, rules: [] },
+        draft: { prompts: { 'label:scam': 'synthetic draft' } },
         stamp: 's',
       },
       1
@@ -163,7 +161,7 @@ describe('startAction', () => {
 
   it('refuses when the workspace page is not open to the moderator', async () => {
     access.canAccess.mockReturnValue(false);
-    expect(await startAction(event({ ...DRAFT, stamp: 's' }), 'modelRules')).toMatchObject({
+    expect(await startAction(event({ ...DRAFT, stamp: 's' }), 'prompts')).toMatchObject({
       status: 403,
     });
     expect(runs.startRun).not.toHaveBeenCalled();

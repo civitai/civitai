@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import type { Workspace } from '$lib/text-scan-tests/types';
 import { MOD, useTestSetsDb, seedCase, seedRun, seedSet } from './text-scan-tests-pglite.harness';
 
 vi.mock('../user-actions.service', () => ({
@@ -17,7 +18,6 @@ vi.mock('$lib/server/mod-activity', () => ({ recordModActivity: vi.fn(async () =
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { runsDeps } = await import('../text-scan-tests/deps');
 const { cancelRun, quoteRun, rerunErrors, startRun } = await import('../text-scan-tests/runs');
-const { ruleStateHash } = await import('../text-scan-tests/rule-state');
 const { upsertCase } = await import('../text-scan-tests/store');
 
 let pg: PGlite;
@@ -27,10 +27,8 @@ let setId: number;
 const ACTIVE = {
   base: { id: 1, key: 'base', content: 'synthetic base' },
   'label:scam': { id: 2, key: 'label:scam', content: 'synthetic scam' },
-  'label:modelRules': { id: 5, key: 'label:modelRules', content: 'synthetic rules' },
 };
-const RULES = [{ id: 1, versionId: 10, enabled: true }];
-const DRAFT = { prompts: { 'label:scam': 'synthetic draft' }, rules: [] };
+const DRAFT = { prompts: { 'label:scam': 'synthetic draft' } };
 
 function makeDeps() {
   const prompts = {
@@ -41,7 +39,6 @@ function makeDeps() {
     db,
     getPrompts: vi.fn(async () => prompts),
     quoteTexts: vi.fn(async () => ({ count: 1, quoted: 1, maxCostTotal: 1 })),
-    liveRuleState: vi.fn(async () => RULES),
     launch: vi.fn(),
     audit: vi.fn(),
   };
@@ -119,30 +116,6 @@ describe('quoteRun', () => {
     });
   });
 
-  it('a rule change makes a Model rules baseline stale', async () => {
-    const rulesSet = await seedSet(db, { workspace: 'modelRules' });
-    const caseId = await seedCase(db, rulesSet, {
-      entityType: 'ModelRules',
-      expected: { modelRules: { ruleIds: [] } },
-    });
-    const runId = await seedRun(db, rulesSet, {
-      status: 'done',
-      promptIds: { base: 1, modelRules: 5 },
-      ruleStateHash: ruleStateHash(RULES),
-    });
-    await db
-      .insertInto('text_scan_test_result')
-      .values({ run_id: String(runId), case_id: String(caseId), status: 'ok', output: '{}' })
-      .execute();
-    const { deps } = makeDeps();
-    expect(await quoteRun(deps, rulesSet, 'modelRules', null).catch((e) => e.status)).toBe(409);
-    deps.liveRuleState.mockResolvedValue([{ id: 1, versionId: 11, enabled: true }]);
-    expect(await quoteRun(deps, rulesSet, 'modelRules', null)).toMatchObject({
-      baseline: 'new',
-      calls: 1,
-    });
-  });
-
   it('tops up a fresh baseline with the cases added since', async () => {
     const ids = await seedCases(2);
     await completeBaseline(ids);
@@ -203,7 +176,7 @@ describe('quoteRun', () => {
     await seedCases(3);
     const { deps } = makeDeps();
     expect(
-      await quoteRun(deps, setId, 'prompts', { prompts: { 'label:nsfw': 'synthetic' }, rules: [] })
+      await quoteRun(deps, setId, 'prompts', { prompts: { 'label:nsfw': 'synthetic' } })
     ).toMatchObject({ draft: false, baseline: 'new', calls: 3 });
   });
 
@@ -218,10 +191,12 @@ describe('quoteRun', () => {
     });
   });
 
-  it('refuses a set of the other workspace', async () => {
+  it('refuses a set stored under the retired Model rules workspace', async () => {
     await seedCases(1);
     const { deps } = makeDeps();
-    await expect(quoteRun(deps, setId, 'modelRules', DRAFT)).rejects.toMatchObject({ status: 409 });
+    await expect(quoteRun(deps, setId, 'modelRules' as Workspace, DRAFT)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 });
 

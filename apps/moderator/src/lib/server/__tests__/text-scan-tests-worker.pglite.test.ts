@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import type { Workspace } from '$lib/text-scan-tests/types';
 import type { LabOverrides } from '../text-scan-lab/harness-client';
 import { HARNESS_LIMITS } from '$lib/text-scan-lab/limits';
 import type { LabScanResult, LabText } from '$lib/text-scan-lab/types';
@@ -24,8 +25,9 @@ vi.mock('../user-actions.service', () => ({
 
 const { callModEndpoint } = await import('../user-actions.service');
 const { LabHarnessError, scanTexts } = await import('../text-scan-lab/harness-client');
-const { PROMPT_MOVED, RULES_MOVED, claimRun, releaseOwnLeases, resumableRunIds, runWorker } =
-  await import('../text-scan-tests/worker');
+const { PROMPT_MOVED, claimRun, releaseOwnLeases, resumableRunIds, runWorker } = await import(
+  '../text-scan-tests/worker'
+);
 const { baselineHistory } = await import('../text-scan-tests/reports');
 
 let db: Kysely<ModeratorDB>;
@@ -65,22 +67,17 @@ function fakeScan(
       overrides,
     });
     const results = impl ? await impl(texts, calls.length) : texts.map((t) => okResult(t.key));
-    return { results, system: null, rules: null };
+    return { results, system: null };
   });
   return { fn, calls };
 }
 
-const deps = (
-  scan: ReturnType<typeof fakeScan>['fn'],
-  workerId = 'host-a:1:aaaa',
-  liveRuleStateHash?: () => Promise<string | null>
-) => ({
+const deps = (scan: ReturnType<typeof fakeScan>['fn'], workerId = 'host-a:1:aaaa') => ({
   db,
   main,
   scanTexts: scan,
   workerId,
   log: vi.fn(),
-  liveRuleStateHash,
 });
 
 const seedCases = async (n: number, over: Parameters<typeof seedCase>[2] = {}) => {
@@ -181,14 +178,10 @@ describe('runWorker', () => {
       kind: 'draft',
       promptIds: { base: 1, scam: 0 },
       promptOverrides: { 'label:scam': 'synthetic draft' },
-      ruleOverrides: [],
     });
     const scan = fakeScan((texts) => texts.map((t) => okResult(t.key, { base: 1, scam: 0 })));
     await runWorker(deps(scan.fn), runId);
-    expect(scan.calls[0].overrides).toEqual({
-      prompts: { 'label:scam': 'synthetic draft' },
-      rules: [],
-    });
+    expect(scan.calls[0].overrides).toEqual({ prompts: { 'label:scam': 'synthetic draft' } });
     expect(await runRow(runId)).toMatchObject({ status: 'done' });
   });
 });
@@ -470,39 +463,6 @@ describe('auth refusals and live state', () => {
     expect(await runRow(runId)).toMatchObject({ status: 'done', case_done: 12, error_count: 0 });
   });
 
-  it('fails a Model rules run when the rules change mid-run, writing none of that chunk', async () => {
-    await seedCases(12);
-    const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
-    const hashes = ['rules-v1', 'rules-v1', 'rules-v2'];
-    let checks = 0;
-    const live = vi.fn(async () => hashes[Math.min(checks++, 2)]);
-    await runWorker(deps(fakeScan().fn, 'host-a:1:a', live), runId);
-
-    expect(await runRow(runId)).toMatchObject({ status: 'failed', failure: RULES_MOVED });
-    expect(await resultsOf(db, runId)).toHaveLength(8);
-  });
-
-  it('fails a Model rules run before its first scan when the rules already moved', async () => {
-    await seedCases(2);
-    const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
-    const scan = fakeScan();
-    await runWorker(
-      deps(scan.fn, 'host-a:1:a', async () => 'rules-v2'),
-      runId
-    );
-    expect(scan.calls).toHaveLength(0);
-    expect(await runRow(runId)).toMatchObject({ status: 'failed', failure: RULES_MOVED });
-  });
-
-  it('fails a Model rules run before its first scan when the rules cannot be checked', async () => {
-    await seedCases(2);
-    const runId = await seedRun(db, setId, { ruleStateHash: 'rules-v1' });
-    const scan = fakeScan();
-    await runWorker(deps(scan.fn), runId);
-    expect(scan.calls).toHaveLength(0);
-    expect(await runRow(runId)).toMatchObject({ status: 'failed' });
-  });
-
   const refusedSession = () =>
     fakeScan(() => {
       throw new LabHarnessError('Text-scan scan returned 401.', false, true);
@@ -541,20 +501,11 @@ describe('auth refusals and live state', () => {
     });
   });
 
-  it('never checks rules for a run that recorded no rule state', async () => {
-    await seedCases(2);
-    const runId = await seedRun(db, setId);
-    const live = vi.fn(async () => 'anything');
-    await runWorker(deps(fakeScan().fn, 'host-a:1:a', live), runId);
-    expect(live).not.toHaveBeenCalled();
-    expect(await runRow(runId)).toMatchObject({ status: 'done' });
-  });
-
   it('resumes only runs in the workspaces the viewer can open', async () => {
     const rulesSet = await seedSet(db, { workspace: 'modelRules' });
     const promptsRun = await seedRun(db, setId);
     const rulesRun = await seedRun(db, rulesSet);
-    expect(await resumableRunIds(db, ['modelRules'])).toEqual([rulesRun]);
+    expect(await resumableRunIds(db, ['modelRules' as Workspace])).toEqual([rulesRun]);
     expect(await resumableRunIds(db, ['prompts'])).toEqual([promptsRun]);
     expect(await resumableRunIds(db, [])).toEqual([]);
   });

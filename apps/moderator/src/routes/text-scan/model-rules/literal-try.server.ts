@@ -1,16 +1,46 @@
 import { fail, type ActionFailure } from '@sveltejs/kit';
 import { z } from 'zod';
-import type { ModelRulesHoldMatch } from '@civitai/moderation/model-rules';
-import { parseForm } from '$lib/server/query';
+import {
+  MODEL_RULE_LIMITS,
+  modelRuleAliasesField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+  type ModelRulesHoldMatch,
+} from '@civitai/moderation/model-rules';
+import { jsonField, parseForm } from '$lib/server/query';
 import { refused } from '$lib/server/text-scan-lab/errors';
 import { FREE_TEXT_KEY, composeEntities } from '$lib/server/text-scan-lab/harness-client';
-import { ruleOverridesField } from '$lib/server/text-scan-lab/try';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
 import { HARNESS_LIMITS } from '$lib/text-scan-lab/limits';
 import type { LabField } from '$lib/text-scan-lab/types';
 import type { LiteralTryItem, LiteralTryResult, LiteralTryRule } from './literal-try';
+
+const ruleOverridesField = jsonField(
+  z
+    .array(
+      z.object({
+        id: z
+          .number()
+          .int()
+          .refine((id) => id !== 0, 'Malformed rule.'),
+        subject: modelRuleSubjectField('A rule needs a subject.'),
+        description: modelRuleDescriptionField,
+        aliases: modelRuleAliasesField,
+        enabled: z.boolean(),
+      })
+    )
+    .max(
+      MODEL_RULE_LIMITS.rulesPerTry,
+      `At most ${MODEL_RULE_LIMITS.rulesPerTry} edited rules can be tried at once.`
+    )
+    .refine(
+      (rules) => new Set(rules.map((r) => r.id)).size === rules.length,
+      'Two edited rules share an id; reload the page.'
+    ),
+  'Malformed rules.'
+);
 
 const trySchema = z.object({
   input: z

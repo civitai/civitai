@@ -6,13 +6,10 @@ import {
 } from '../text-scan-lab/types';
 import { LABEL_ORDER } from './expected';
 
-export type RuleStateEntry = { id: number; versionId: number | null; enabled: boolean };
-
 export type LiveState = {
   promptIds: Record<string, number>;
   model: string;
   thinking: boolean;
-  ruleStateHash: string | null;
 };
 
 export type BaselineState = 'fresh' | 'running' | 'stale' | 'none';
@@ -51,14 +48,10 @@ export function samePromptIds(a: Record<string, number>, b: Record<string, numbe
   return ka.length === kb.length && ka.every((key, i) => key === kb[i] && a[key] === b[key]);
 }
 
-export const canonicalRuleState = (state: readonly RuleStateEntry[]) =>
-  JSON.stringify([...state].sort((a, b) => a.id - b.id).map((r) => [r.id, r.versionId, r.enabled]));
-
 export const matchesLive = (run: LiveState, live: LiveState) =>
   samePromptIds(run.promptIds, live.promptIds) &&
   run.model === live.model &&
-  run.thinking === live.thinking &&
-  run.ruleStateHash === live.ruleStateHash;
+  run.thinking === live.thinking;
 
 export function baselineState(
   latest: (LiveState & { status: string }) | null,

@@ -3,7 +3,6 @@
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { itemChanged, runIsStale, type TryResult } from '$lib/text-scan-lab/try';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import { workspaceOf } from '$lib/text-scan-tests/expected';
   import type { Workspace } from '$lib/text-scan-tests/types';
   import PromptSent from './PromptSent.svelte';
   import TryForm from './TryForm.svelte';
@@ -11,7 +10,6 @@
 
   let {
     prompts,
-    rules,
     editedKeys,
     draftsError,
     onedit = null,
@@ -19,7 +17,6 @@
     canCapture,
   }: {
     prompts: string;
-    rules: string;
     editedKeys: readonly PromptKey[];
     draftsError: string | null;
     onedit?: ((key: PromptKey) => void) | null;
@@ -31,15 +28,13 @@
   let ranWith = $state<string | null>(null);
   let onlyChanged = $state(false);
 
-  const drafts = $derived(`${prompts}\n${rules}`);
+  const drafts = $derived(prompts);
   const changed = $derived(
     result ? result.items.filter((item) => itemChanged(item, result!.labels)) : []
   );
   const visible = $derived(result ? (onlyChanged && result.edited ? changed : result.items) : []);
   const capture = $derived(
-    canCapture && result && workspaceOf(result.entityType) === workspace
-      ? { workspace, entityType: result.entityType }
-      : null
+    canCapture && result ? { workspace, entityType: result.entityType } : null
   );
   const sides = $derived(
     result
@@ -54,9 +49,7 @@
 <section class="min-w-0 space-y-4" aria-label="Try">
   <TryForm
     {prompts}
-    {rules}
     {editedKeys}
-    {workspace}
     {draftsError}
     onstart={() => {
       result = null;
@@ -97,8 +90,6 @@
       <TryItemCard
         {item}
         labels={result.labels}
-        current={result.current}
-        edited={result.edited}
         {onedit}
         {capture}
       />

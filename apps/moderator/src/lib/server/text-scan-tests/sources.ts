@@ -16,7 +16,6 @@ type Source = {
 
 export const SOURCES: Record<LabEntityType, Source> = {
   Model: { table: 'Model', key: 'id', author: 'userId', softDelete: true },
-  ModelRules: { table: 'Model', key: 'id', author: 'userId', softDelete: true },
   Article: { table: 'Article', key: 'id', author: 'userId', softDelete: false },
   Post: { table: 'Post', key: 'id', author: 'userId', softDelete: false },
   Bounty: { table: 'Bounty', key: 'id', author: 'userId', softDelete: false },
@@ -31,6 +30,9 @@ export const SOURCES: Record<LabEntityType, Source> = {
   User: { table: 'User', key: 'id', author: 'id', softDelete: true },
   UserProfile: { table: 'UserProfile', key: 'userId', author: 'userId', softDelete: false },
 };
+
+/** Entity types retired from the lab whose stored cases still hold text, read from this source. */
+const RETIRED_SOURCE_TYPES: Readonly<Record<string, LabEntityType>> = { ModelRules: 'Model' };
 
 export const SOURCE_BATCH = 500;
 
@@ -56,9 +58,10 @@ export async function goneCaseIds(
 ): Promise<Set<number>> {
   const byType = new Map<LabEntityType, Map<number, number[]>>();
   for (const ref of refs) {
-    if (!(ref.entityType in SOURCES)) continue;
-    const byId = byType.get(ref.entityType) ?? new Map<number, number[]>();
-    byType.set(ref.entityType, byId);
+    const type = ref.entityType in SOURCES ? ref.entityType : RETIRED_SOURCE_TYPES[ref.entityType];
+    if (!type) continue;
+    const byId = byType.get(type) ?? new Map<number, number[]>();
+    byType.set(type, byId);
     byId.set(ref.entityId, [...(byId.get(ref.entityId) ?? []), ref.caseId]);
   }
   const gone = new Set<number>();

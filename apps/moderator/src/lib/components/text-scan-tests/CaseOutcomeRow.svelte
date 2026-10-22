@@ -10,7 +10,7 @@
     describeVerdict,
     type VerdictSource,
   } from '$lib/text-scan-lab/labels';
-  import { LAB_LABELS, type LabLabel, type LabRule } from '$lib/text-scan-lab/types';
+  import { LAB_LABELS, type LabLabel } from '$lib/text-scan-lab/types';
   import { scoredLabels, type Expected, type FlagLabel } from '$lib/text-scan-tests/expected';
   import type { Flip } from '$lib/text-scan-tests/score';
   import ExpectedEditor from './ExpectedEditor.svelte';
@@ -18,12 +18,10 @@
   let {
     row,
     canEdit,
-    ruleSubjects,
     setId,
   }: {
     row: ReportCase;
     canEdit: boolean;
-    ruleSubjects: Record<number, string>;
     setId: number;
   } = $props();
 
@@ -47,27 +45,11 @@
     ].filter((s): s is { title: string; side: ReportSide } => s.side !== null)
   );
   const labels = $derived(scoredLabels(row.expected));
-  const ruleName = (id: number) => ruleSubjects[id] ?? `Rule ${id}`;
-  const rules = $derived(
-    Object.entries(ruleSubjects).map(([id, subject]) => ({ id: Number(id), subject }))
-  );
-  const ruleChoices = $derived.by((): LabRule[] => {
-    const ids = new Set(row.expected.modelRules?.ruleIds ?? []);
-    for (const { side } of sides)
-      for (const o of side.score.state === 'scored' ? side.score.labels : [])
-        if (o.label === 'modelRules')
-          for (const id of [...o.caught, ...o.falseFlags, ...o.missed]) ids.add(id);
-    return [...ids].map((id) => ({ id, subject: ruleName(id) }));
-  });
 
   function source(side: ReportSide): VerdictSource {
     const result = side.result;
     if (result?.status === 'ok')
-      return {
-        ok: true,
-        output: result.output as Record<string, unknown> | null,
-        literalRuleIds: result.literalRuleIds,
-      };
+      return { ok: true, output: result.output as Record<string, unknown> | null };
     const fallback = result?.status === 'skipped' ? 'text removed' : 'not scanned';
     return { ok: false, error: result?.error ?? fallback };
   }
@@ -76,8 +58,6 @@
     const e = row.expected;
     if (label === 'nsfw' && e.nsfw)
       return e.nsfw.min === e.nsfw.max ? e.nsfw.min : `${e.nsfw.min}–${e.nsfw.max}`;
-    if (label === 'modelRules' && e.modelRules)
-      return e.modelRules.ruleIds.map(ruleName).join(', ') || 'no match';
     const flag = e[label as FlagLabel];
     return flag === undefined ? '—' : flag ? 'yes' : 'no';
   }
@@ -121,7 +101,7 @@
               ? side.score.labels.find((o) => o.label === label)
               : undefined}
           <span class={outcome ? (outcome.pass ? 'text-green-300' : 'text-red-300') : 'text-dark-2'}>
-            {title}: {describeVerdict(label, source(side), rules).headline}{outcome
+            {title}: {describeVerdict(label, source(side)).headline}{outcome
               ? outcome.pass
                 ? ' ✓'
                 : ' ✗'
@@ -169,7 +149,6 @@
       <ExpectedEditor
         labels={LAB_LABELS[row.entityType]}
         bind:expected
-        {ruleChoices}
         idPrefix="case-{row.caseId}"
       />
       {#if edit.error}<p class="text-sm text-red-300">{edit.error}</p>{/if}

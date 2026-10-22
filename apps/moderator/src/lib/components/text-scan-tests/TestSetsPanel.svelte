@@ -20,7 +20,6 @@
     workspace,
     visible,
     prompts,
-    rules,
     hasDraft,
     draftsError,
     canEdit,
@@ -29,7 +28,6 @@
     workspace: Workspace;
     visible: boolean;
     prompts: string;
-    rules: string;
     hasDraft: boolean;
     draftsError: string | null;
     canEdit: boolean;
@@ -125,7 +123,6 @@
         <RunDialog
           setId={o.set.id}
           {prompts}
-          {rules}
           label={hasDraft ? 'Run with my draft' : 'Run baseline'}
           disabled={!!draftsError || o.active.length > 0}
           onstarted={() => version++}

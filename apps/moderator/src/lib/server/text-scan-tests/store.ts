@@ -7,9 +7,8 @@ import type {
 } from '../moderator-db/types';
 import { normaliseLabFields } from '../../text-scan-lab/compose';
 import { LAB_ENTITY_TYPES, type LabEntityType, type LabField } from '../../text-scan-lab/types';
-import { parseExpected, workspaceOf, type Expected } from '../../text-scan-tests/expected';
+import { parseExpected, type Expected } from '../../text-scan-tests/expected';
 import {
-  WORKSPACE_NAMES,
   type CaseOrigin,
   type TestCase,
   type TestSet,
@@ -199,15 +198,8 @@ export async function upsertCase(
   input: CaseInput,
   userId: number
 ): Promise<{ case: TestCase; created: boolean; rescore: boolean }> {
-  const set = await requireOpenSet(db, input.setId);
+  await requireOpenSet(db, input.setId);
   const { fields, expected } = validCase(input);
-  if (workspaceOf(input.entityType) !== set.workspace)
-    throw new TestSetError(
-      `Test set "${set.name}" belongs to ${WORKSPACE_NAMES[set.workspace]}, which does not score ${
-        input.entityType
-      } cases.`,
-      400
-    );
   const values = {
     set_id: String(input.setId),
     entity_type: input.entityType,

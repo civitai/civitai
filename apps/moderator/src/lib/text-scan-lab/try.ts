@@ -7,8 +7,6 @@ import {
   type LabEntityType,
   type LabField,
   type LabLabel,
-  type LabRule,
-  type LabRuleOverride,
   type LabScanResult,
   type PromptChanges,
   type PromptKey,
@@ -24,7 +22,7 @@ export type TrySubject = {
 
 export type TryItem = TrySubject & { current: LabScanResult; edited: LabScanResult | null };
 
-export type TrySide = { system: string | null; rules: LabRule[] | null };
+export type TrySide = { system: string | null };
 
 export type TryResult = {
   tried: true;
@@ -35,12 +33,6 @@ export type TryResult = {
   skipped: { entityId: number; error: string }[];
   current: TrySide;
   edited: TrySide | null;
-};
-
-// Entity types that read the same text, so a link to one can be judged as the other.
-const SAME_TEXT: Partial<Record<LabEntityType, readonly LabEntityType[]>> = {
-  Model: ['Model', 'ModelRules'],
-  ModelRules: ['Model', 'ModelRules'],
 };
 
 export function sourceTypeOf(
@@ -63,7 +55,7 @@ export function judgeCandidates(
   source: LabEntityType | null,
   edited: readonly PromptKey[]
 ): LabEntityType[] {
-  const pool = source === null ? LAB_ENTITY_TYPES : SAME_TEXT[source] ?? [source];
+  const pool = source === null ? LAB_ENTITY_TYPES : [source];
   const labels = edited.flatMap((key) =>
     key === 'base' ? [] : [key.slice('label:'.length) as LabLabel]
   );
@@ -72,11 +64,8 @@ export function judgeCandidates(
   return [...(using.length ? using : pool)];
 }
 
-export const editedPromptKeys = (
-  prompts: PromptChanges,
-  rules: readonly LabRuleOverride[]
-): PromptKey[] =>
-  PROMPT_KEYS.filter((key) => key in prompts || (key === 'label:modelRules' && rules.length > 0));
+export const editedPromptKeys = (prompts: PromptChanges): PromptKey[] =>
+  PROMPT_KEYS.filter((key) => key in prompts);
 
 export const itemChanged = (item: TryItem, labels: readonly LabLabel[]) =>
   item.edited !== null && labels.some((label) => verdictsDiffer(label, item.current, item.edited!));

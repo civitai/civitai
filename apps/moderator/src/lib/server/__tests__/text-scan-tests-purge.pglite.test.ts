@@ -84,6 +84,32 @@ describe('purgeDeletedSources', () => {
   });
 });
 
+describe('purgeDeletedSources and the retired ModelRules entity type', () => {
+  it('still wipes a stored ModelRules case once its model is gone', async () => {
+    await main
+      .insertInto('User')
+      .values([{ id: 10 }] as never)
+      .execute();
+    await main
+      .insertInto('Model')
+      .values([{ id: 7, userId: 10 }] as never)
+      .execute();
+    const live = await seedCase(db, setId, { entityType: 'ModelRules', entityId: 7, authorId: 10 });
+    const gone = await seedCase(db, setId, { entityType: 'ModelRules', entityId: 8, authorId: 10 });
+
+    expect(await purgeDeletedSources(db, main, { write: true })).toEqual({ checked: 2, wiped: 1 });
+    const cases = await db
+      .selectFrom('text_scan_test_case')
+      .select(['id', 'fields'])
+      .orderBy('id')
+      .execute();
+    expect(cases.map((c) => [Number(c.id), c.fields === null])).toEqual([
+      [live, false],
+      [gone, true],
+    ]);
+  });
+});
+
 describe('expireDraftResults', () => {
   it('drops expired draft results and keeps the run, its totals and every baseline', async () => {
     const caseId = await seedCase(db, setId);

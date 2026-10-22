@@ -26,9 +26,7 @@ vi.mock('~/server/services/text-scan/model-rules', async (importOriginal) => ({
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );
-const { registerTextScanProfile } = await import(
-  '~/server/services/text-scan/profiles'
-);
+const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt } = await import(
   '~/server/services/text-scan/prompt'
@@ -150,6 +148,16 @@ describe('literalModelRules', () => {
       body: Record<string, any>;
     };
     expect(body.results[0].matches).toMatchObject([{ ruleId: 3, term: 'Brand new' }]);
+  });
+
+  it('drops ruleOverrides from every other action instead of acting on them', () => {
+    const parsed = textScanHarnessSchema.parse({
+      action: 'scanTexts',
+      entityType: 'CommentV2',
+      texts,
+      ruleOverrides: [override(-1, 'Brand new')],
+    });
+    expect(parsed).not.toHaveProperty('ruleOverrides');
   });
 
   it('refuses duplicate rule ids, id 0 and more than 500 overrides', () => {

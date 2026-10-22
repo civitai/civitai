@@ -1,6 +1,5 @@
 export const LAB_ENTITY_TYPES = [
   'Model',
-  'ModelRules',
   'Article',
   'Post',
   'Bounty',
@@ -17,12 +16,11 @@ export const LAB_ENTITY_TYPES = [
 ] as const;
 export type LabEntityType = (typeof LAB_ENTITY_TYPES)[number];
 
-export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam' | 'modelRules';
+export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam';
 
 // Mirrors each main-app profile's `labels` (src/server/services/text-scan/profiles/*.profile.ts).
 export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
   Model: ['nsfw', 'poi', 'minor'],
-  ModelRules: ['modelRules'],
   Bounty: ['nsfw', 'poi'],
   Article: ['nsfw'],
   Post: ['nsfw'],
@@ -41,7 +39,6 @@ export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
 // Each profile's first heading, so free text reads to the model like that entity type.
 export const DEFAULT_HEADING: Record<LabEntityType, string> = {
   Model: 'Name',
-  ModelRules: 'Name',
   Article: 'Title',
   Post: 'Title',
   Bounty: 'Name',
@@ -72,7 +69,6 @@ export type LabScanResult =
       output: Record<string, unknown> | null;
       parseError?: string;
       rawContent?: string;
-      literalRuleIds?: number[];
       elapsedMs: number;
       segments?: number;
     }
@@ -85,7 +81,6 @@ export const PROMPT_KEYS = [
   'label:minor',
   'label:scam',
   'label:csam',
-  'label:modelRules',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -94,11 +89,6 @@ export type PromptChanges = Partial<Record<PromptKey, string>>;
 
 export const isPromptKey = (key: string): key is PromptKey =>
   (PROMPT_KEYS as readonly string[]).includes(key);
-
-export const MODEL_RULES_POLICY_KEY = 'label:modelRules' satisfies PromptKey;
-
-/** A rule as a run's prompt listed it, so a match on an unsaved (negative-id) rule still has a name. */
-export type LabRule = { id: number; subject: string };
 
 /** A moderator's unsaved rule edit for a try: a negative id is a rule not saved yet. */
 export type LabRuleOverride = {

@@ -25,8 +25,7 @@
     const head = `${s.passed}/${s.scored} pass`;
     if (s.label === 'nsfw')
       return `${head} · ${s.under} rated lower · ${s.over} rated higher · ${s.offByOne} off by one`;
-    const flags = `${head} · ${s.caught} caught · ${s.missed} missed · ${s.falseFlags} false flags`;
-    return s.label === 'modelRules' ? `${flags} · ${s.newRuleHits} new rule hits` : flags;
+    return `${head} · ${s.caught} caught · ${s.missed} missed · ${s.falseFlags} false flags`;
   }
 
   function delta(row: RunReport['summary'][number]): string {
