@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
+import { sessionCookieName } from '@civitai/auth';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as SettingsBootstrapService from '~/server/services/settings-bootstrap.service';
 import {
   CDN_HEADER_IMAGE_ID,
   fakeResponse,
@@ -10,7 +12,6 @@ import {
   renderSeedFor,
   USERS,
   type Fixture,
-  type FixtureUser,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
 
 /**
@@ -28,17 +29,23 @@ import {
  */
 
 const h = vi.hoisted(() => ({
-  bootstrapUser: { current: null as null | Record<string, unknown> },
+  /** Session cookie value → the user the session store answers with. */
+  tokens: new Map<string, Record<string, unknown>>(),
   bootstrapFails: { current: false },
   flagOn: { current: true },
-  bootstrap: vi.fn(),
+  seeds: vi.fn(),
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({
   getSessionFromBearerToken: vi.fn(async () => null),
 }));
 vi.mock('~/server/auth/session-client', () => ({
-  getHubSession: vi.fn(async () => null),
+  // The session store answers for the fixture viewer with a REAL Date in the user, as a warm
+  // session-cache hit does.
+  getHubSession: vi.fn(async (req: { cookies?: Record<string, string> }) => {
+    const user = h.tokens.get(Object.values(req.cookies ?? {})[0] ?? '');
+    return user ? { user } : null;
+  }),
   maybeRollHubCookie: vi.fn(async () => undefined),
   maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
@@ -51,10 +58,11 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   })),
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
-// The bootstrap's own members are pinned by its suites; here it answers for the fixture viewer
-// with a REAL Date in the session, as a warm session-cache hit does.
-vi.mock('~/server/services/settings-bootstrap.service', () => ({
-  resolveSettingsBootstrap: h.bootstrap,
+// The seeds' own members are pinned by their suites (and the request they are read with by
+// `image-detail.endpoint.bootstrap.test.ts`); here they answer for the session they are handed.
+vi.mock('~/server/services/settings-bootstrap.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsBootstrapService>()),
+  resolveSettingsBootstrapSeeds: h.seeds,
 }));
 vi.mock('~/server/routers', async () => {
   const { buildFixtureRouter } = await import('~/server/page-data/__tests__/image-detail.fixtures');
@@ -73,24 +81,28 @@ const page = (await import('~/pages/images/[imageId]')) as unknown as {
 };
 const handler = (await import('~/pages/api/page-data/images/[imageId]')).default;
 
-function bootstrapAs(user: FixtureUser | null) {
-  h.bootstrapUser.current = user;
-}
-
+let previousBaseUrl: string | undefined;
 beforeAll(() => {
+  // `bootstrapHost` needs a base URL; any will do here.
+  previousBaseUrl = process.env.NEXTAUTH_URL_INTERNAL;
+  process.env.NEXTAUTH_URL_INTERNAL = 'http://bootstrap.test:3000';
   // `dehydrate` stamps `dataUpdatedAt`; both sides must run at the same instant to compare.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-22T00:00:00.000Z'));
 });
-afterAll(() => vi.useRealTimers());
+afterAll(() => {
+  vi.useRealTimers();
+  if (previousBaseUrl === undefined) delete process.env.NEXTAUTH_URL_INTERNAL;
+  else process.env.NEXTAUTH_URL_INTERNAL = previousBaseUrl;
+});
 beforeEach(() => {
   procedureCalls.length = 0;
   h.flagOn.current = true;
   h.bootstrapFails.current = false;
-  h.bootstrap.mockReset();
-  h.bootstrap.mockImplementation(async () => {
-    if (h.bootstrapFails.current) throw new Error('session lookup failed');
-    const user = h.bootstrapUser.current;
+  h.seeds.mockReset();
+  h.seeds.mockImplementation(async (_req: unknown, session: { user?: unknown } | null) => {
+    if (h.bootstrapFails.current) throw new Error('bootstrap seeds failed');
+    const user = session?.user;
     return {
       settings: user ? SETTINGS : undefined,
       tosMeta: undefined,
@@ -99,7 +111,7 @@ beforeEach(() => {
       browsingSettingsAddons: undefined,
       liveNow: false,
       navBanners: undefined,
-      session: user ? { user } : null,
+      session,
     };
   });
 });
@@ -124,12 +136,13 @@ async function fetchPageData(
   { user, imageId, host }: Fixture,
   { method = 'GET' }: { method?: string } = {}
 ) {
-  bootstrapAs(user);
+  const token = user ? `viewer-${user.id}` : undefined;
+  if (user && token) h.tokens.set(token, user);
   const req = {
     method,
     url: `/api/page-data/images/${imageId}`,
     headers: { host },
-    cookies: {},
+    cookies: token ? { [sessionCookieName()]: token } : {},
     query: { imageId: String(imageId) },
   };
   const res = fakeResponse();
@@ -158,14 +171,6 @@ describe('page-data parity with getServerSideProps', () => {
     expect(jsonRoundTrip(owner.body?.trpcState)).not.toEqual(
       jsonRoundTrip(someoneElse.body?.trpcState)
     );
-  });
-
-  it('reads the bootstrap with the real request and response, so the session cookie can roll', async () => {
-    const { req, res } = await fetchPageData(ownerFixture);
-    expect(h.bootstrap).toHaveBeenCalledTimes(1);
-    const [args] = h.bootstrap.mock.calls[0] as [{ req: unknown; res: unknown }];
-    expect(args.req).toBe(req);
-    expect(args.res).toBe(res);
   });
 
   it('answers with the seeds a server render would have put in pageProps', async () => {
