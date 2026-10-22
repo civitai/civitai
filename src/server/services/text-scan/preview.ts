@@ -1,4 +1,4 @@
-import { submitWorkflow } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
 import { parseTextScanSteps } from '~/server/services/text-scan/parse';

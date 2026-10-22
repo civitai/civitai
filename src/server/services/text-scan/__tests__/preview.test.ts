@@ -5,7 +5,7 @@ import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
 // The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: vi.fn(() => ({})),
   submitWorkflow: mockSubmitWorkflow,
 }));
