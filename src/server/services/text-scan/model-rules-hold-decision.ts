@@ -52,6 +52,8 @@ export const MODEL_RULES_HOLD_BATCH_REASON = 'batch_apply';
 export const MODEL_RULES_STALE_HOLD_MESSAGE =
   'This hold changed after you opened it (the model text was edited). Reload to review the new text.';
 const SUPERSEDED_MESSAGE = 'A newer scan replaced this hold. Reload to review the current one.';
+const UNKNOWN_VERSIONS_MESSAGE =
+  'This hold did not record which versions it took down, so it cannot tell which to republish. Republish the model by hand.';
 const MOVED_ON_MESSAGE =
   'The model is no longer in the state this hold put it in (it was republished, deleted or held for different text), so there is nothing to restore.';
 
@@ -66,6 +68,16 @@ type DecideArgs = {
   /** Ruled along with other holds of the owner, without the moderator opening this one. */
   batched?: boolean;
 };
+
+type HoldEffects = { restored?: true; struck?: true };
+
+function parseEffects(meta: Prisma.JsonValue): HoldEffects {
+  const raw = (meta as { effects?: { restored?: unknown; struck?: unknown } } | null)?.effects;
+  return {
+    ...(raw?.restored === true ? { restored: true as const } : {}),
+    ...(raw?.struck === true ? { struck: true as const } : {}),
+  };
+}
 
 type ModelRow = {
   status: ModelStatus;
@@ -92,20 +104,23 @@ async function dropFromNeedsReview(modelId: number) {
   await dataForModelsCache.refresh(modelId);
 }
 
-/** Versions the take-down put away: the ones the publish was making public, and the ones it stamped. */
+/**
+ * Versions this hold's take-down put away: the ones the publish was making public (recorded on the hold) and
+ * the ones the take-down stamped. A version taken down for anything else stays down; with neither record the
+ * hold cannot say, so the caller refuses.
+ */
 async function versionsToRestore(modelId: number, model: ModelRow, publishing: number[]) {
   const takenDownAt = (model.meta as { unpublishedAt?: string } | null)?.unpublishedAt;
   const versions = await dbWrite.modelVersion.findMany({
     where: { modelId },
-    select: { id: true, status: true, meta: true },
+    select: { id: true, meta: true },
   });
   const ids = versions
     .filter(
       (v) =>
         publishing.includes(v.id) ||
-        (takenDownAt
-          ? (v.meta as { unpublishedAt?: string } | null)?.unpublishedAt === takenDownAt
-          : v.status === ModelStatus.UnpublishedViolation)
+        (!!takenDownAt &&
+          (v.meta as { unpublishedAt?: string } | null)?.unpublishedAt === takenDownAt)
     )
     .map((v) => v.id);
   return ids.sort((a, b) => a - b);
@@ -129,6 +144,7 @@ async function restoreModel(
   // Dynamic: the controller pulls in the whole model service graph.
   const { publishModelHandler } = await import('~/server/controllers/model.controller');
   const versionIds = await versionsToRestore(hold.entityId, model, publishing);
+  if (!versionIds.length) throw throwConflictError(UNKNOWN_VERSIONS_MESSAGE);
   // As a moderator, so the publish approves the matches (`modelRulesCleared`) and drops the take-down notice.
   await publishModelHandler({
     input: { id: hold.entityId, versionIds },
@@ -157,7 +173,7 @@ async function keepModelDown(
 /**
  * Applies a moderator's ruling to a pending `modelRules` hold. Like the csam decision, the hold is claimed
  * first and the effects run before the ruling is recorded; a failure releases the claim and leaves the hold
- * pending for a retry. The ruling and its label-store records are one transaction.
+ * pending for a retry, which skips the effects already recorded in `meta.effects`. The ruling and its label-store records are one transaction.
  */
 export async function decideModelRulesHold(args: DecideArgs) {
   const { holdId, textHash, decision, note, actor, batched } = args;
@@ -215,13 +231,27 @@ export async function decideModelRulesHold(args: DecideArgs) {
         throw throwConflictError(MODEL_RULES_STALE_HOLD_MESSAGE);
     }
 
-    let restored = false;
+    // Effects are not idempotent, so each one is recorded on the hold the moment it completes and a retry
+    // skips it instead of striking twice or finding the model already republished.
+    const effects: HoldEffects = { ...parseEffects(hold.meta) };
+    const done = async (effect: keyof HoldEffects) => {
+      effects[effect] = true;
+      await dbWrite.$executeRaw`UPDATE "TextScanHold"
+        SET "meta" = "meta" || jsonb_build_object('effects',
+          coalesce("meta"->'effects', '{}'::jsonb) || jsonb_build_object(${effect}::text, true))
+        WHERE "id" = ${holdId} AND "status" = 'Pending' AND "meta"->'decisionClaim'->>'at' = ${claimed[0].at}`;
+    };
+
     if (plan.confirm) await keepModelDown(target, model, ruleIds, args);
-    else if (meta.mode === 'active') {
+    else if (meta.mode === 'active' && !effects.restored) {
       await restoreModel(target, model, meta.versionIds ?? [], args);
-      restored = true;
+      await done('restored');
     }
-    if (plan.strike) await strikeOwner(hold, args);
+    const restored = !!effects.restored;
+    if (plan.strike && !effects.struck) {
+      await strikeOwner(hold, args);
+      await done('struck');
+    }
 
     const decidedAt = new Date();
     await dbWrite.$transaction(async (tx) => {
@@ -234,7 +264,11 @@ export async function decideModelRulesHold(args: DecideArgs) {
           decidedById: actor.id,
           decisionNote: note || null,
           ...(restored ? { restoredAt: decidedAt } : {}),
-          meta: { ...((hold.meta as Prisma.JsonObject | null) ?? {}), decision },
+          meta: {
+            ...((hold.meta as Prisma.JsonObject | null) ?? {}),
+            ...(Object.keys(effects).length ? { effects } : {}),
+            decision,
+          },
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');

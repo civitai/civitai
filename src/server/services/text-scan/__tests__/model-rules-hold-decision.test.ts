@@ -151,7 +151,8 @@ const decide = (
   });
 
 const hold = async () =>
-  (await db.pg.query<Record<string, unknown>>(`SELECT * FROM "TextScanHold" WHERE "id" = 12`)).rows[0];
+  (await db.pg.query<Record<string, unknown>>(`SELECT * FROM "TextScanHold" WHERE "id" = 12`))
+    .rows[0];
 const modelRow = async () =>
   (await db.pg.query<Record<string, unknown>>(`SELECT * FROM "Model" WHERE "id" = 9`)).rows[0];
 const labels = async () =>
@@ -334,6 +335,33 @@ describe('dismissing a hold', () => {
     expect(ruled.meta).toMatchObject({ decision: 'dismiss_allowed' });
   });
 
+  it('leaves down a version taken down for something else, and refuses when the hold cannot name its own', async () => {
+    await seed({ mode: 'active', holdMeta: { versionIds: [101] } });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 101, status: 'Draft', meta: {} },
+      { id: 103, status: 'UnpublishedViolation', meta: { unpublishedAt: '2026-01-01T00:00:00Z' } },
+    ]);
+    await decide('dismiss_allowed');
+    expect(mocks.publishModelHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { id: 9, versionIds: [101] } })
+    );
+  });
+
+  it('refuses to republish by guessing when the hold recorded no versions and the takedown left no stamp', async () => {
+    await seed({ mode: 'active' });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 103, status: 'UnpublishedViolation', meta: {} },
+    ]);
+    await expect(decide('dismiss_allowed')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('versions'),
+    });
+    expect(mocks.publishModelHandler).not.toHaveBeenCalled();
+    const left = await hold();
+    expect(left.status).toBe('Pending');
+    expect(left.meta).not.toHaveProperty('decisionClaim');
+  });
+
   it.each([
     ['the model was republished since', { status: 'Published' }],
     [
@@ -351,6 +379,39 @@ describe('dismissing a hold', () => {
     const left = await hold();
     expect(left.status).toBe('Pending');
     expect(left.meta).not.toHaveProperty('decisionClaim');
+  });
+});
+
+describe('retrying after an effect already ran', () => {
+  it('does not strike twice when the ruling failed after the strike', async () => {
+    await seed({ mode: 'shadow' });
+    const spy = vi.spyOn(dbMock.dbWrite.textScanHold, 'updateMany');
+    spy.mockRejectedValueOnce(new Error('db down'));
+    await expect(decide('confirm_strike')).rejects.toThrow('db down');
+    expect(mocks.createStrike).toHaveBeenCalledTimes(1);
+
+    await decide('confirm_strike');
+    expect(mocks.createStrike).toHaveBeenCalledTimes(1);
+    expect(await hold()).toMatchObject({ status: 'Confirmed' });
+  });
+
+  it('completes a dismissal whose republish already ran, without a moved-on conflict', async () => {
+    await seed({ mode: 'active', holdMeta: { versionIds: [101] } });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 101, status: 'Draft', meta: {} },
+    ]);
+    mocks.publishModelHandler.mockImplementationOnce(async () => {
+      await db.pg.query(`UPDATE "Model" SET "status" = 'Published', "meta" = '{}'::jsonb`);
+    });
+    const spy = vi.spyOn(dbMock.dbWrite.textScanHold, 'updateMany');
+    spy.mockRejectedValueOnce(new Error('db down'));
+    await expect(decide('dismiss_allowed')).rejects.toThrow('db down');
+
+    await decide('dismiss_allowed');
+    expect(mocks.publishModelHandler).toHaveBeenCalledTimes(1);
+    const ruled = await hold();
+    expect(ruled).toMatchObject({ status: 'Dismissed' });
+    expect(ruled.restoredAt).toBeInstanceOf(Date);
   });
 });
 

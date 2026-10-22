@@ -3,6 +3,9 @@ import '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/redis.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { TRPCError } from '@trpc/server';
+import { MODEL_RULES_STALE_HOLD_MESSAGE } from '~/server/services/text-scan/model-rules-hold-decision';
 import type * as DecisionModule from '~/server/services/text-scan/model-rules-hold-decision';
 
 const mocks = vi.hoisted(() => ({
@@ -156,8 +159,27 @@ describe('textScan.resolveModelRulesHold', () => {
     );
     expect(body).toMatchObject({
       decision: 'dismiss_allowed',
-      results: [{ holdId: 1, ok: true }, { holdId: 2, ok: false, stale: true }],
+      results: [
+        { holdId: 1, ok: true },
+        { holdId: 2, ok: false, stale: true },
+      ],
     });
     expect((await call({ holds, decision: 'confirm_strike' })).status).toBe(400);
+  });
+
+  it.each([
+    ['stale', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_STALE_HOLD_MESSAGE })],
+    ['error', new Error('db down')],
+  ])('audits a single decision that fails as %s, as a batch does', async (outcome, failure) => {
+    mocks.decide.mockRejectedValueOnce(failure);
+    await call({ holdId: 12, textHash: 'h-1', decision: 'confirm' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'model-rules-hold-decision',
+        holdId: 12,
+        outcome,
+        moderatorId: 7,
+      })
+    );
   });
 });
