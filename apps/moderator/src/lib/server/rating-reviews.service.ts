@@ -329,107 +329,169 @@ async function loadSummaries(
   return out;
 }
 
-/** The images a moderator rates an entity from; `total` is the full count, `images` at most `limit`. */
-export async function getRatingReviewImages(
+export type RatingReviewImages = { total: number; images: RatingReviewImage[] };
+
+const imageKey = (entityType: RatingReviewEntityType, entityId: number) =>
+  `${entityType}:${entityId}`;
+
+const CONNECTION_CAP = 5000;
+
+/**
+ * The images a moderator rates each entity from; `total` is the full count, `images` at most
+ * `limit`. One query per entity type present, never one per entity. Keyed by `imageKey`.
+ */
+async function loadImagesForType(
   entityType: RatingReviewEntityType,
-  entityId: number,
-  limit = 6
-): Promise<{ total: number; images: RatingReviewImage[] }> {
-  const empty = { total: 0, images: [] };
-  const single = async (imageId: number | null | undefined) => {
-    const img = (await imagesById([imageId ?? null])).get(imageId ?? 0);
-    return img ? { total: 1, images: [img] } : empty;
+  ids: number[],
+  limit: number
+): Promise<Map<number, RatingReviewImages>> {
+  const out = new Map<number, RatingReviewImages>();
+  if (!ids.length) return out;
+  const group = (rows: (RatingReviewImage & { key: number; total: string | number })[]) => {
+    for (const { key, total, ...img } of rows) {
+      const entry = out.get(key) ?? { total: Number(total), images: [] };
+      entry.images.push(img);
+      out.set(key, entry);
+    }
+  };
+  const single = async (imageIds: Map<number, number | null | undefined>) => {
+    const byId = await imagesById([...imageIds.values()].map((v) => v ?? null));
+    for (const [entityId, imageId] of imageIds) {
+      const img = byId.get(imageId ?? 0);
+      if (img) out.set(entityId, { total: 1, images: [img] });
+    }
   };
 
   switch (entityType) {
     case 'Post': {
-      const where = dbRead.selectFrom('Image as i').where('i.postId', '=', entityId);
-      const [images, count] = await Promise.all([
-        where
-          .select(IMAGE_FIELDS)
-          .orderBy(sql`i."index" asc nulls last`)
-          .orderBy('i.id')
-          .limit(limit)
-          .execute(),
-        where.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
-      ]);
-      return { total: Number(count?.c ?? 0), images };
+      const { rows } = await sql<
+        RatingReviewImage & { key: number; total: string; rn: string }
+      >`
+        SELECT * FROM (
+          SELECT i."id", i."url", i."type", i."nsfwLevel", i."postId" AS "key",
+            row_number() OVER (PARTITION BY i."postId" ORDER BY i."index" ASC NULLS LAST, i."id") AS rn,
+            count(*) OVER (PARTITION BY i."postId") AS total
+          FROM "Image" i WHERE i."postId" IN (${sql.join(ids)})) x
+        WHERE x.rn <= ${limit}
+        ORDER BY x."key", x.rn`.execute(dbRead);
+      group(rows);
+      return out;
     }
     case 'Model': {
-      const cover = (await modelCovers([entityId])).get(entityId);
-      if (!cover) return empty;
-      const [{ rows }, count] = await Promise.all([
-        sql<RatingReviewImage>`
-          SELECT i."id", i."url", i."type", i."nsfwLevel" ${modelGalleryJoins}
-          WHERE m."id" = ${entityId} AND mv."id" = ${cover.versionId}
-          ORDER BY p."id", i."index", i."id" LIMIT ${limit}`.execute(dbRead),
-        sql<{ c: string }>`
-          SELECT count(*) AS c ${modelGalleryJoins}
-          WHERE m."id" = ${entityId} AND mv."id" = ${cover.versionId}`.execute(dbRead),
-      ]);
-      return { total: Number(count.rows[0]?.c ?? 0), images: rows };
+      const covers = await modelCovers(ids);
+      if (!covers.size) return out;
+      const pairs = sql.join([...covers].map(([id, c]) => sql`(${id}, ${c.versionId})`));
+      const { rows } = await sql<
+        RatingReviewImage & { key: number; total: string; rn: string }
+      >`
+        SELECT * FROM (
+          SELECT i."id", i."url", i."type", i."nsfwLevel", m."id" AS "key",
+            row_number() OVER (PARTITION BY m."id" ORDER BY p."id", i."index", i."id") AS rn,
+            count(*) OVER (PARTITION BY m."id") AS total
+          ${modelGalleryJoins}
+          WHERE (m."id", mv."id") IN (${pairs})) x
+        WHERE x.rn <= ${limit}
+        ORDER BY x."key", x.rn`.execute(dbRead);
+      group(rows);
+      return out;
     }
-    case 'Article': {
-      const article = await dbRead
-        .selectFrom('Article')
-        .select('coverId')
-        .where('id', '=', entityId)
-        .executeTakeFirst();
-      return connected('Article', entityId, limit, article?.coverId ?? null);
-    }
+    case 'Article':
     case 'Bounty':
-    case 'BountyEntry':
-      return connected(entityType, entityId, limit, null);
+    case 'BountyEntry': {
+      const { rows: links } = await sql<{ entityId: number; imageId: number }>`
+        SELECT "entityId", "imageId" FROM (
+          SELECT "entityId", "imageId",
+            row_number() OVER (PARTITION BY "entityId" ORDER BY "imageId") AS rn
+          FROM "ImageConnection"
+          WHERE "entityType" = ${entityType} AND "entityId" IN (${sql.join(ids)})) x
+        WHERE x.rn <= ${CONNECTION_CAP}
+        ORDER BY "entityId", "imageId"`.execute(dbRead);
+      const covers = new Map<number, number>();
+      if (entityType === 'Article') {
+        const found = await dbRead
+          .selectFrom('Article')
+          .select(['id', 'coverId'])
+          .where('id', 'in', ids)
+          .execute();
+        for (const a of found) if (a.coverId) covers.set(a.id, a.coverId);
+      }
+      // The cover leads, then the connections by image id.
+      const idsByEntity = new Map<number, number[]>();
+      for (const id of ids) {
+        const cover = covers.get(id);
+        idsByEntity.set(id, cover ? [cover] : []);
+      }
+      for (const l of links) {
+        const list = idsByEntity.get(l.entityId);
+        if (list && !list.includes(l.imageId)) list.push(l.imageId);
+      }
+      const byId = await imagesById([...idsByEntity.values()].flatMap((l) => l.slice(0, limit)));
+      for (const [entityId, list] of idsByEntity)
+        if (list.length)
+          out.set(entityId, {
+            total: list.length,
+            images: list.slice(0, limit).flatMap((id) => byId.get(id) ?? []),
+          });
+      return out;
+    }
     case 'Challenge': {
-      const row = await dbRead
+      const found = await dbRead
         .selectFrom('Challenge')
-        .select('coverImageId')
-        .where('id', '=', entityId)
-        .executeTakeFirst();
-      return single(row?.coverImageId);
+        .select(['id', 'coverImageId'])
+        .where('id', 'in', ids)
+        .execute();
+      await single(new Map(found.map((r) => [r.id, r.coverImageId])));
+      return out;
     }
     case 'Crucible': {
-      const row = await dbRead
+      const found = await dbRead
         .selectFrom('Crucible')
-        .select(['imageId', 'heroImageId'])
-        .where('id', '=', entityId)
-        .executeTakeFirst();
-      return single(row?.imageId ?? row?.heroImageId);
+        .select(['id', 'imageId', 'heroImageId'])
+        .where('id', 'in', ids)
+        .execute();
+      await single(new Map(found.map((r) => [r.id, r.imageId ?? r.heroImageId])));
+      return out;
     }
     case 'Collection': {
-      const row = await dbRead
+      const found = await dbRead
         .selectFrom('Collection')
-        .select('imageId')
-        .where('id', '=', entityId)
-        .executeTakeFirst();
-      return single(row?.imageId);
+        .select(['id', 'imageId'])
+        .where('id', 'in', ids)
+        .execute();
+      await single(new Map(found.map((r) => [r.id, r.imageId])));
+      return out;
     }
   }
 }
 
-// Connection ids first, then images by id: the same shape as bulk-image's getImagesForConnection,
-// minus its appeal lookups, which a thumbnail strip has no use for.
-async function connected(
-  entityType: 'Article' | 'Bounty' | 'BountyEntry',
-  entityId: number,
-  limit: number,
-  coverId: number | null
-) {
-  const links = await dbRead
-    .selectFrom('ImageConnection')
-    .select('imageId')
-    .where('entityType', '=', entityType)
-    .where('entityId', '=', entityId)
-    .orderBy('imageId')
-    .limit(5000)
-    .execute();
-  const ids = [...new Set([...(coverId ? [coverId] : []), ...links.map((l) => l.imageId)])];
-  const byId = await imagesById(ids.slice(0, limit));
-  return {
-    total: ids.length,
-    images: ids.slice(0, limit).flatMap((id) => byId.get(id) ?? []),
-  };
+/** Preview images for many entities at once. A missing key means the entity has none. */
+export async function getRatingReviewImagesBatch(
+  entities: { entityType: RatingReviewEntityType; entityId: number }[],
+  limit = 6
+): Promise<Map<string, RatingReviewImages>> {
+  const idsByType = new Map<RatingReviewEntityType, Set<number>>();
+  for (const e of entities)
+    idsByType.set(e.entityType, (idsByType.get(e.entityType) ?? new Set()).add(e.entityId));
+  const loaded = await Promise.all(
+    [...idsByType].map(async ([t, ids]) => [t, await loadImagesForType(t, [...ids], limit)] as const)
+  );
+  const out = new Map<string, RatingReviewImages>();
+  for (const [t, found] of loaded) for (const [id, v] of found) out.set(imageKey(t, id), v);
+  return out;
 }
+
+/** The images a moderator rates one entity from. The batch with one entry, so they cannot drift. */
+export async function getRatingReviewImages(
+  entityType: RatingReviewEntityType,
+  entityId: number,
+  limit = 6
+): Promise<RatingReviewImages> {
+  const found = await getRatingReviewImagesBatch([{ entityType, entityId }], limit);
+  return found.get(imageKey(entityType, entityId)) ?? { total: 0, images: [] };
+}
+
+/** The key `getRatingReviewImagesBatch` files an entity's images under. */
+export const ratingReviewImagesKey = imageKey;
 
 async function loadScans(entityType: RatingReviewEntityType, ids: number[]) {
   const out = new Map<number, { level: number | null; reason: string | null }>();
@@ -446,22 +508,12 @@ async function loadScans(entityType: RatingReviewEntityType, ids: number[]) {
   return out;
 }
 
-export async function getRatingReviews({
-  status,
-  entityType,
-  page = 1,
-  limit = 20,
-}: {
-  status: RatingReviewStatusFilter;
-  entityType?: RatingReviewEntityType;
-  page?: number;
-  limit?: number;
-}): Promise<{ items: RatingReviewRow[]; page: number; limit: number }> {
-  let q = dbRead
+/** The review list's shared select: a review, its owner and its resolver. Callers add the filters. */
+export function ratingReviewRowQuery() {
+  return dbRead
     .selectFrom('RatingReview as rr')
     .innerJoin('User as owner', 'owner.id', 'rr.userId')
     .leftJoin('User as resolver', 'resolver.id', 'rr.resolvedBy')
-    .where('rr.status', '=', status)
     .select([
       'rr.id',
       'rr.entityType',
@@ -480,12 +532,14 @@ export async function getRatingReviews({
       'resolver.id as resolverId',
       'resolver.username as resolverUsername',
       'resolver.image as resolverImage',
-    ])
-    .orderBy('rr.id', 'desc')
-    .limit(limit)
-    .offset((page - 1) * limit);
-  if (entityType) q = q.where('rr.entityType', '=', entityType);
-  const found = (await q.execute()).filter((r) => isRatingReviewEntityType(r.entityType));
+    ]);
+}
+
+type ReviewRecord = Awaited<ReturnType<ReturnType<typeof ratingReviewRowQuery>['execute']>>[number];
+
+/** Turns raw review records into rows: entity summaries, text scans and the levels a moderator may apply. */
+export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<RatingReviewRow[]> {
+  const found = records.filter((r) => isRatingReviewEntityType(r.entityType));
 
   const idsByType = new Map<RatingReviewEntityType, number[]>();
   for (const r of found) {
@@ -500,7 +554,7 @@ export async function getRatingReviews({
   const summaries = new Map(loaded.map(([t, s]) => [t, s]));
   const scans = new Map(loaded.map(([t, , s]) => [t, s]));
 
-  const items = found.map((r): RatingReviewRow => {
+  return found.map((r): RatingReviewRow => {
     const t = r.entityType as RatingReviewEntityType;
     const s = summaries.get(t)?.get(r.entityId);
     return {
@@ -535,8 +589,26 @@ export async function getRatingReviews({
       levelOptions: moderatorLevelsFor(t, r.currentLevel, s?.nsfwLevel),
     };
   });
+}
 
-  return { items, page, limit };
+export async function getRatingReviews({
+  status,
+  entityType,
+  page = 1,
+  limit = 20,
+}: {
+  status: RatingReviewStatusFilter;
+  entityType?: RatingReviewEntityType;
+  page?: number;
+  limit?: number;
+}): Promise<{ items: RatingReviewRow[]; page: number; limit: number }> {
+  let q = ratingReviewRowQuery()
+    .where('rr.status', '=', status)
+    .orderBy('rr.id', 'desc')
+    .limit(limit)
+    .offset((page - 1) * limit);
+  if (entityType) q = q.where('rr.entityType', '=', entityType);
+  return { items: await hydrateRatingReviews(await q.execute()), page, limit };
 }
 
 export async function getRatingReviewCounts(
