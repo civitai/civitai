@@ -1,7 +1,7 @@
 import { deserialize } from '$app/forms';
 import { browserStorage } from '$lib/text-scan-lab/changes.svelte';
 import {
-  isStalePending,
+  pendingClaim,
   readPending,
   searchFingerprint,
   setPending,
@@ -93,25 +93,23 @@ const poll = async (
 };
 
 /**
- * The stored search for this rule version and these exact inputs, if any. A stale one belongs to an
- * edited rule or to other text (an unsaved draft), so it is dropped, never resumed or applied.
+ * The stored search for this rule version and these exact inputs, if any. One saved before the rule
+ * changed is dropped; one that ran on other text (another view's draft) is left for that view.
  */
 export function storedWorkflowId(slot: PendingSlot | null): string | undefined {
   if (!slot) return undefined;
   const entry = readPending(browserStorage(), slot.key)[slot.ruleId];
   if (!entry) return undefined;
-  if (isStalePending(entry, slot.updatedAt, slot.fingerprint)) {
-    setPending(browserStorage(), slot.key, slot.ruleId, null);
-    return undefined;
-  }
-  return entry.workflowId;
+  const claim = pendingClaim(entry, slot.updatedAt, slot.fingerprint);
+  if (claim === 'obsolete') setPending(browserStorage(), slot.key, slot.ruleId, null);
+  return claim === 'mine' ? entry.workflowId : undefined;
 }
 
 /** Whether a search stored for exactly this text can resume; unlike `storedWorkflowId`, it drops nothing. */
 export function canResumeSearch(slot: PendingSlot | null): boolean {
   if (!slot) return false;
   const entry = readPending(browserStorage(), slot.key)[slot.ruleId];
-  return !!entry && !isStalePending(entry, slot.updatedAt, slot.fingerprint);
+  return !!entry && pendingClaim(entry, slot.updatedAt, slot.fingerprint) === 'mine';
 }
 
 /**

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { parseAliases } from '$lib/model-rules';
 import {
   aliasPendingKey,
-  isStalePending,
+  pendingClaim,
   prunePending,
   readPending,
   setPending,
@@ -173,11 +174,32 @@ describe('pending searches', () => {
     expect(setPending(broken, PKEY, 3, pending)).toBe(false);
   });
 
-  it('is stale once the rule was saved again, and pruned when the rule is gone', () => {
-    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'), 'fp-a')).toBe(false);
-    expect(isStalePending(pending, new Date('2026-01-02T00:00:00.000Z'), 'fp-a')).toBe(true);
-    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'), 'fp-draft')).toBe(true);
+  it('is pruned when the rule is gone', () => {
     expect(Object.keys(prunePending({ 3: pending, 4: pending }, [{ id: 3 }]))).toEqual(['3']);
+  });
+});
+
+describe('pendingClaim', () => {
+  const pending = {
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    fingerprint: 'fp-a',
+    workflowId: 'wf_0123456789',
+  };
+  const at = new Date('2026-01-01T00:00:00.000Z');
+
+  it('is mine only for the same rule version and the same text', () => {
+    expect(pendingClaim(pending, at, 'fp-a')).toBe('mine');
+  });
+
+  it('is another consumer’s when the text differs, and is not to be deleted by this one', () => {
+    expect(pendingClaim(pending, at, 'fp-draft')).toBe('other');
+  });
+
+  it('is obsolete once the rule was saved again, whoever asks', () => {
+    expect(pendingClaim(pending, new Date('2026-01-02T00:00:00.000Z'), 'fp-a')).toBe('obsolete');
+    expect(pendingClaim(pending, new Date('2026-01-02T00:00:00.000Z'), 'fp-draft')).toBe(
+      'obsolete'
+    );
   });
 });
 
@@ -202,5 +224,18 @@ describe('searchFingerprint', () => {
     expect(searchFingerprint({ subject: 'a', description: 'b', aliases: [] })).not.toBe(
       searchFingerprint({ subject: 'a', description: '', aliases: ['b'] })
     );
+  });
+
+  it('is the same for an untouched editor as for the saved rule', () => {
+    const saved = {
+      subject: 'Alpha',
+      description: 'About',
+      aliases: ['Doe, Jane', 'Two  Spaces', 'two spaces'],
+    };
+    const formText = saved.aliases.join('\n');
+    expect(searchFingerprint({ ...saved, aliases: parseAliases(formText) })).toBe(
+      searchFingerprint(saved)
+    );
+    expect(searchFingerprint({ ...saved, aliases: [formText] })).toBe(searchFingerprint(saved));
   });
 });

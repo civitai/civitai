@@ -14,7 +14,9 @@ const storage = vi.hoisted(() => {
 vi.mock('$lib/text-scan-lab/changes.svelte', () => ({ browserStorage: () => storage.store }));
 vi.mock('$app/forms', () => ({ deserialize: (text: string) => JSON.parse(text) }));
 
-const { runRuleSearch, storedWorkflowId, pendingSlot } = await import('../alias-client');
+const { runRuleSearch, storedWorkflowId, canResumeSearch, pendingSlot } = await import(
+  '../alias-client'
+);
 const { aliasPendingKey, readPending, setPending, searchFingerprint } = await import(
   '../alias-suggestions-store'
 );
@@ -128,13 +130,20 @@ describe('storedWorkflowId', () => {
     expect(stored()).toBeUndefined();
   });
 
-  it('drops an id stored for other text, such as an unsaved draft', () => {
-    setPending(storage.store, KEY, 3, {
-      ...slotFor({ ...RULE, description: 'Unsaved draft' }),
-      workflowId: WF,
-    });
+  it('leaves an id stored for other text alone: it belongs to another consumer', () => {
+    const draft = slotFor({ ...RULE, description: 'Unsaved draft' });
+    setPending(storage.store, KEY, 3, { ...draft, workflowId: WF });
     expect(storedWorkflowId(slotFor())).toBeUndefined();
-    expect(stored()).toBeUndefined();
+    expect(stored()).toMatchObject({ workflowId: WF });
+    expect(storedWorkflowId(draft)).toBe(WF);
+  });
+
+  it('lets the backfill pass over an editor draft search without destroying it', () => {
+    const draft = slotFor({ ...RULE, aliases: ['One', 'Unsaved'] });
+    setPending(storage.store, KEY, 3, { ...draft, workflowId: WF });
+    expect(canResumeSearch(slotFor())).toBe(false);
+    expect(canResumeSearch(draft)).toBe(true);
+    expect(stored()).toMatchObject({ workflowId: WF });
   });
 
   it('has nothing for a rule without a slot', () => {

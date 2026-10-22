@@ -1,4 +1,5 @@
 import { aliasKindField, aliasWorkflowIdField } from '@civitai/moderation/model-rules';
+import { parseAliases } from '$lib/model-rules';
 import type { AliasSuggestion } from './suggest-aliases';
 
 /**
@@ -23,14 +24,19 @@ const isoOf = (value: Date | string) => new Date(value).toISOString();
 /**
  * The text a search ran on: subject, description and existing aliases as submitted. Held results
  * and pending ids are used only by a consumer whose text produces the same fingerprint, so a search
- * run on an unsaved draft is never applied to the saved rule.
+ * run on an unsaved draft is never applied to the saved rule. The aliases go through the form's own
+ * parsing, so the editor (form text) and the backfill (saved list) agree on untouched text.
  */
 export const searchFingerprint = (rule: {
   subject: string;
   description: string;
   aliases: readonly string[];
 }) =>
-  JSON.stringify([rule.subject.trim(), rule.description.trim(), rule.aliases.map((a) => a.trim())]);
+  JSON.stringify([
+    rule.subject.trim(),
+    rule.description.trim(),
+    parseAliases(rule.aliases.join('\n')),
+  ]);
 
 function readEntry(value: unknown): StoredSuggestions | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -167,11 +173,21 @@ export function setPending(
   }
 }
 
-export const isStalePending = (
+/**
+ * Whose a stored search is. `obsolete`: the rule was saved since, so nobody can use it and it may be
+ * dropped. `other`: it ran on different text (another view's draft); that view may still resume
+ * it, so this consumer leaves it untouched.
+ */
+export const pendingClaim = (
   entry: PendingSearch,
   ruleUpdatedAt: Date | string,
   fingerprint: string
-) => entry.updatedAt !== isoOf(ruleUpdatedAt) || entry.fingerprint !== fingerprint;
+): 'mine' | 'other' | 'obsolete' =>
+  entry.updatedAt !== isoOf(ruleUpdatedAt)
+    ? 'obsolete'
+    : entry.fingerprint === fingerprint
+    ? 'mine'
+    : 'other';
 
 export function prunePending(pending: PendingMap, rules: readonly { id: number }[]): PendingMap {
   const ids = new Set(rules.map((r) => r.id));

@@ -24,7 +24,8 @@ export type SearchOutcome =
 export class PollRefused extends Error {}
 
 export const POLL_INTERVAL_MS = 4000;
-export const MAX_WAIT_MS = 10 * 60_000;
+// Searches are observed to take 5-6.5 minutes.
+export const MAX_WAIT_MS = 20 * 60_000;
 const MAX_POLL_ERRORS = 3;
 
 const sleepUnlessAborted = (ms: number, signal?: AbortSignal) =>

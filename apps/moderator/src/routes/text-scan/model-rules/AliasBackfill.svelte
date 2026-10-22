@@ -20,8 +20,8 @@
   import {
     aliasPendingKey,
     aliasSuggestionsKey,
-    isStalePending,
     isStaleSuggestion,
+    pendingClaim,
     prunePending,
     pruneSuggestions,
     readPending,
@@ -92,9 +92,11 @@
     for (const rule of current) {
       const entry = pending[rule.id];
       if (!entry) continue;
-      if (isStalePending(entry, rule.updatedAt, searchFingerprint(searchRuleOf(rule))))
-        setPending(store, pendingKey, rule.id, null);
-      else if (rule.enabled && !rule.legacy && !held[rule.id]) resume.push(rule.id);
+      // Another view's draft search shares this entry: only a rule saved since makes it droppable.
+      const claim = pendingClaim(entry, rule.updatedAt, searchFingerprint(searchRuleOf(rule)));
+      if (claim === 'obsolete') setPending(store, pendingKey, rule.id, null);
+      else if (claim === 'mine' && rule.enabled && !rule.legacy && !held[rule.id])
+        resume.push(rule.id);
     }
     start(resume);
   });

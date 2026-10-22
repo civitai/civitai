@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PollRefused, searchAliases, type PollAnswer, type SearchAnswer } from '../alias-search';
+import {
+  MAX_WAIT_MS,
+  PollRefused,
+  searchAliases,
+  type PollAnswer,
+  type SearchAnswer,
+} from '../alias-search';
 
 const SUGGESTIONS = [{ alias: 'One Name', kind: 'stage_name' as const }];
 const done: PollAnswer = { status: 'done', suggestions: SUGGESTIONS, costTotal: 3 };
@@ -128,5 +134,22 @@ describe('searchAliases', () => {
     h.submit.mockRejectedValue(new Error('refused'));
     await expect(h.run()).rejects.toThrow('refused');
     expect(h.onWorkflowId).not.toHaveBeenCalled();
+  });
+
+  it('waits long enough by default for a search that takes over six minutes', async () => {
+    let clock = 0;
+    const poll = vi.fn<(id: string) => Promise<PollAnswer>>(async () =>
+      clock >= 6.5 * 60_000 ? done : pending
+    );
+    const outcome = await searchAliases({
+      workflowId: 'wf_0123456789',
+      submit: vi.fn(),
+      poll,
+      onWorkflowId: vi.fn(),
+      now: () => clock,
+      sleep: async (ms: number) => void (clock += ms),
+    });
+    expect(outcome.status).toBe('done');
+    expect(MAX_WAIT_MS).toBe(20 * 60_000);
   });
 });
