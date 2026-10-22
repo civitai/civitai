@@ -85,14 +85,14 @@
     <TriageKeyButton
       type="submit"
       key={i + 1}
-      primary={level === row.suggestedLevel}
+      tone={level === row.suggestedLevel ? 'blue' : undefined}
       selected={chosen === level}
       name="appliedLevel"
       value={level}
     >
       {levelLabel(level)}
       {#if level === row.suggestedLevel}
-        <span class="text-[11px] font-normal text-blue-300">owner asks</span>
+        <span class="text-[11px] font-normal text-blue-100">owner asks</span>
       {/if}
       {#if level === row.currentLevel}
         <span class="text-[11px] font-normal text-dark-2">current</span>
@@ -122,7 +122,11 @@
         class="rounded-md border-dark-4 bg-dark-7 text-[13px] dark:bg-dark-7"
       />
       <div class="flex items-center gap-2">
-        <Button type="submit" bind:ref={confirmButton} class="h-8 rounded-md px-3.5 text-[13px]">
+        <Button
+          type="submit"
+          bind:ref={confirmButton}
+          class="h-8 rounded-md bg-blue-600 px-3.5 text-[13px] text-white hover:bg-blue-700"
+        >
           Apply {levelLabel(chosen)}
         </Button>
         <Button type="button" variant="ghost" class="h-8 px-2.5 text-[13px]" onclick={cancel}>

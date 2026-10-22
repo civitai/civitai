@@ -206,7 +206,9 @@
                           <Icon size={18} stroke={1.5} />
                           <span>{item.label}</span>
                           {#if cnt !== null}
-                            <span class="ml-auto text-xs tabular-nums text-sidebar-foreground/50">
+                            <span
+                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                            >
                               {cnt}
                             </span>
                           {/if}
