@@ -203,6 +203,13 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: ['imageProps'],
     serverColumns: [],
   },
+  // Batch composer drafts: rows with no post. `scheduleBatch` sets `postId`/`index` later by a
+  // raw UPDATE scoped to the owner's postless rows.
+  'src/server/services/post-batch.service.ts#persistBatchMedia': {
+    calls: 1,
+    spreads: ['image', 'metadata'],
+    serverColumns: [],
+  },
   // `productionCoverImageDeps.createImage`, a pass-through counted under the function above it.
   'src/server/services/cover-image.service.ts#logExistenceUnknown': {
     calls: 1,
