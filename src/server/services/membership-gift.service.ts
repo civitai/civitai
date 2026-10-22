@@ -290,8 +290,9 @@ export async function fulfillMembershipGift({
 
   if (gift.status !== MembershipGiftStatus.Pending) return { alreadyProcessed: true as const };
 
-  await dbWrite.membershipGift.update({
-    where: { id: gift.id },
+  // Stripe can deliver the same success concurrently, and both deliveries read Pending above.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: { id: gift.id, status: MembershipGiftStatus.Pending },
     data: {
       status: MembershipGiftStatus.Fulfilled,
       fulfilledAt: new Date(),
@@ -302,6 +303,7 @@ export async function fulfillMembershipGift({
         : {}),
     },
   });
+  if (count === 0) return { alreadyProcessed: true as const };
 
   await createNotification({
     type: 'membership-gift-received',

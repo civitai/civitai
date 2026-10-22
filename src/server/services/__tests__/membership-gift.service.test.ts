@@ -205,6 +205,7 @@ beforeEach(() => {
   mockStripe.subscriptions.create.mockResolvedValue({ id: 'sub_residual', status: 'active' });
   mockStripe.subscriptions.deleteDiscount.mockResolvedValue({});
   mockDbWrite.membershipGift.update.mockResolvedValue({});
+  mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.delete.mockResolvedValue({});
   mockDbWrite.membershipGift.findMany.mockResolvedValue([]);
   mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
@@ -338,7 +339,17 @@ describe('fulfillMembershipGift', () => {
       status: 'Fulfilled',
     });
     expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
-    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when a concurrent delivery fulfilled the gift first', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue(baseGift);
+    mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockSendReceivedEmail).not.toHaveBeenCalled();
+    expect(mockSendSentEmail).not.toHaveBeenCalled();
   });
 
   it('queues the gift with its full months and touches NOTHING in Stripe', async () => {
@@ -347,8 +358,9 @@ describe('fulfillMembershipGift', () => {
     const result = await fulfillMembershipGift({ giftId: 'gift_1', paymentIntentId: 'pi_1' });
 
     expect(result).toMatchObject({ fulfilled: true, queued: true });
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: 'gift_1', status: 'Pending' },
         data: expect.objectContaining({ status: 'Fulfilled', monthsRemaining: 3 }),
       })
     );

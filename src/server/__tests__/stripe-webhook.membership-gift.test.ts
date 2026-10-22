@@ -165,6 +165,12 @@ beforeEach(() => {
     row = { ...row, ...data };
     return row;
   });
+  mockDbWrite.membershipGift.updateMany.mockImplementation(async ({ where, data }: any) => {
+    if (where.status && row.status !== where.status) return { count: 0 };
+    if (data.status) statusesWritten.push(data.status);
+    row = { ...row, ...data };
+    return { count: 1 };
+  });
   mockDbWrite.user.findFirst.mockResolvedValue({ id: 2 });
   mockGetPlans.mockResolvedValue([
     {
@@ -229,6 +235,16 @@ describe('stripe webhook: membership gift payments', () => {
 
     expect(statusesWritten).toEqual(['Failed']);
     expect(res.status).not.toHaveBeenCalledWith(400);
+  });
+
+  // Deliberate: the row exists before its checkout does, so a failure matching no gift is an
+  // anomaly. Refusing it keeps it visible as a failing delivery in Stripe instead of acked away.
+  it('refuses a delayed failure for a gift it cannot find, so Stripe retries it', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue(null);
+
+    const res = await deliver('checkout.session.async_payment_failed', giftSession('unpaid'));
+
+    expect(res.status).toHaveBeenCalledWith(400);
   });
 
   // Failed is terminal: a failed checkout's payment never clears, so no later event (a
@@ -331,10 +347,17 @@ describe('stripe webhook: membership gift payments', () => {
     });
   });
 
+  // Stripe retries a 400 for days, so routing a non-gift async event to the gift service
+  // would turn every delayed non-gift payment into a retry storm.
   it('leaves a non-gift checkout to the existing path', async () => {
-    await deliver('checkout.session.completed', giftSession('unpaid', {}));
-    await deliver('checkout.session.async_payment_failed', giftSession('unpaid', {}));
-    await deliver('checkout.session.async_payment_succeeded', giftSession('paid', {}));
+    for (const [type, status] of [
+      ['checkout.session.completed', 'unpaid'],
+      ['checkout.session.async_payment_failed', 'unpaid'],
+      ['checkout.session.async_payment_succeeded', 'paid'],
+    ]) {
+      const res = await deliver(type, giftSession(status, {}));
+      expect(res.status, type).not.toHaveBeenCalledWith(400);
+    }
 
     expect(mockManageCheckoutPayment).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.membershipGift.findUnique).not.toHaveBeenCalled();
