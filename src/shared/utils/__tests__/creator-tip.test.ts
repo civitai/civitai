@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { anyTipEligible, isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { constants } from '~/server/common/constants';
 
 describe('isCreatorTipEligible', () => {
   it('is true for an ordinary owner', () => {
@@ -20,6 +21,12 @@ describe('isCreatorTipEligible', () => {
 
   it('is false for the system owner (-1)', () => {
     expect(isCreatorTipEligible({ ownerId: -1, ownerFlags: 0 })).toBe(false);
+  });
+
+  it('is false for the official Civitai account', () => {
+    expect(isCreatorTipEligible({ ownerId: constants.system.officialUserId, ownerFlags: 0 })).toBe(
+      false
+    );
   });
 
   it('treats unknown owner flags as no flags', () => {
