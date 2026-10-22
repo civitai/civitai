@@ -93,6 +93,7 @@ export async function checkModelRulesLiteralHold({
       })),
       mode,
       applied: false,
+      ...(versionIds.length ? { versionIds } : {}),
     };
     if (mode === 'active') return detection;
     await syncModelRulesHold(modelId, detection);

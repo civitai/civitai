@@ -22,6 +22,8 @@ export type ModelRulesHoldDetection = {
   mode: ModelRulesHoldMode;
   /** The action was applied at detection, so the hold records `hiddenAt`. */
   applied: boolean;
+  /** The versions a publish was making public, kept so a dismissal can publish them. */
+  versionIds?: number[];
 };
 
 export type ModelRulesHoldWrite =
@@ -140,6 +142,7 @@ function holdMeta(detection: ModelRulesHoldDetection) {
     matches: detection.matches,
     rules: detection.rules,
     ...(detection.applied ? { applied: true } : {}),
+    ...(detection.versionIds?.length ? { versionIds: detection.versionIds } : {}),
   };
 }
 

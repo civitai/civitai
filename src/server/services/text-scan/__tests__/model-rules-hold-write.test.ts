@@ -91,6 +91,13 @@ describe('syncModelRulesHold', () => {
     });
   });
 
+  it('keeps the versions a publish was making public, so a dismissal can publish them', async () => {
+    await syncModelRulesHold(7, detection({ mode: 'active', applied: true, versionIds: [11, 12] }));
+
+    const [hold] = await rows();
+    expect(hold.meta).toMatchObject({ versionIds: [11, 12] });
+  });
+
   it('marks an applied detection hidden', async () => {
     await syncModelRulesHold(7, detection({ mode: 'active', applied: true }));
 

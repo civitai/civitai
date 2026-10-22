@@ -49,6 +49,7 @@ describe('checkModelRulesLiteralHold', () => {
       rules: [RULE_SNAPSHOT],
       mode: 'active',
       applied: false,
+      versionIds: [11],
     });
     expect(getTextScanMode).toHaveBeenCalledWith('ModelRules', 7);
     expect(loadModelScanSubjects).toHaveBeenCalledWith([7], { prePublish: { versionIds: [11] } });

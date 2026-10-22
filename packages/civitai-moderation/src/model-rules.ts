@@ -203,6 +203,15 @@ export type ModelRulesHoldMatch = {
   end: number;
 };
 
+/** What a moderator can rule on a pending `modelRules` hold; the dismissals say why. */
+export const MODEL_RULES_HOLD_DECISIONS = [
+  'confirm',
+  'confirm_strike',
+  'dismiss_not_subject',
+  'dismiss_allowed',
+] as const;
+export type ModelRulesHoldDecision = (typeof MODEL_RULES_HOLD_DECISIONS)[number];
+
 export type ModelRulesHoldMeta = {
   mode: ModelRulesHoldMode;
   /** The scanned fields in order, so the offsets in `matches` can be highlighted. */
@@ -212,11 +221,13 @@ export type ModelRulesHoldMeta = {
   rules: StoredModelRuleSnapshot[];
   /** The action was applied at detection (Auto): `TextScanHold.hiddenAt` is set. */
   applied?: true;
+  /** The versions the publish was making public, so dismissing a pre-publish takedown can publish them. */
+  versionIds?: number[];
   /** Set when an earlier hold on this model exists; `priorHoldId` is that hold. */
   kind?: 'redetected';
   priorHoldId?: number;
-  /** A newer detection closed this hold without a ruling. */
-  decision?: 'superseded';
+  /** The ruling, or `superseded` when a newer detection closed the hold without one. */
+  decision?: ModelRulesHoldDecision | 'superseded';
 };
 
 const holdFieldSchema = z.object({ heading: z.string(), text: z.string() });
@@ -243,20 +254,22 @@ const holdMetaSchema = z.object({
   matches: tolerantList(holdMatchSchema),
   rules: tolerantList(holdRuleSchema),
   applied: z.literal(true).optional().catch(undefined),
+  versionIds: z.array(z.number()).optional().catch(undefined),
   kind: z.literal('redetected').optional().catch(undefined),
   priorHoldId: z.number().optional().catch(undefined),
-  decision: z.literal('superseded').optional().catch(undefined),
+  decision: z.enum([...MODEL_RULES_HOLD_DECISIONS, 'superseded']).optional().catch(undefined),
 });
 
 /** Keeps whatever entries parse: a hold written by an older build, or one with its meta nulled, still lists. */
 export function parseModelRulesHoldMeta(meta: unknown): ModelRulesHoldMeta {
   const parsed = holdMetaSchema.safeParse(meta ?? {});
-  const { applied, kind, priorHoldId, decision, ...rest } = parsed.success
+  const { applied, versionIds, kind, priorHoldId, decision, ...rest } = parsed.success
     ? parsed.data
     : holdMetaSchema.parse({});
   return {
     ...rest,
     ...(applied ? { applied } : {}),
+    ...(versionIds?.length ? { versionIds } : {}),
     ...(kind ? { kind } : {}),
     ...(priorHoldId !== undefined ? { priorHoldId } : {}),
     ...(decision ? { decision } : {}),

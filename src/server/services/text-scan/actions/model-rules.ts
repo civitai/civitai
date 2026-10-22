@@ -46,29 +46,36 @@ async function claimAndUnpublishForModelRules({
   return true;
 }
 
-async function unpublishForModelRules({
+export async function unpublishForModelRules({
   entityId,
   meta,
   modelRules,
+  userId = constants.system.user.id,
+  needsReview = true,
 }: {
   entityId: number;
   meta: ModelMeta;
   modelRules: NonNullable<ModelMeta['modelRules']>;
+  /** Who the take-down is attributed to; the system user for a detection, the moderator for a ruling. */
+  userId?: number;
+  /** A detection queues the model for review; a moderator's ruling is the review. */
+  needsReview?: boolean;
 }) {
   const { unpublishModelById } = await loadModelService();
+  const { needsReview: _queued, ...kept } = meta;
   await unpublishModelById({
     id: entityId,
-    userId: constants.system.user.id,
+    userId,
     isModerator: true,
     reason: 'other',
     customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
-    meta: { ...meta, needsReview: true, modelRules },
+    meta: { ...kept, ...(needsReview ? { needsReview: true } : {}), modelRules },
   });
   await dataForModelsCache.refresh(entityId);
   await bustPublicModelResponseCache(entityId);
 }
 
-function literalModelRules(ruleIds: number[], textHash: string) {
+export function literalModelRules(ruleIds: number[], textHash: string) {
   return {
     ruleIds,
     // The rule ids are part of the claim: a stale claim for the same text (kept through a moderator
