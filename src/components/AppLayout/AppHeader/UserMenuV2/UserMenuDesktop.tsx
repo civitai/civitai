@@ -53,7 +53,7 @@ export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellP
       withinPortal
     >
       <Menu.Target>{trigger}</Menu.Target>
-      <Menu.Dropdown className="flex flex-col p-0">
+      <Menu.Dropdown className="flex max-h-[calc(100dvh-var(--header-height)-16px)] flex-col p-0">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           {switching ? (
             <AccountSwitcher onAccountClick={() => setSwitching(false)} />
@@ -80,7 +80,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
   const { toggle, announce, region } = usePinActions(pins);
 
   return (
-    <div className="p-1">
+    <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
       {region}
       {currentUser && <DesktopHeaderRows />}
       {events.map((item, i) => (
@@ -195,7 +195,7 @@ function SortablePinnedItem({
   );
 }
 
-function DesktopNodes({
+export function DesktopNodes({
   nodes,
   pins,
   onToggle,
@@ -204,6 +204,9 @@ function DesktopNodes({
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
 }) {
+  // One flyout per level: opening a group closes its siblings at once, instead of each on its own timer.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+
   return (
     <>
       {nodes.map((node) =>
@@ -215,7 +218,16 @@ function DesktopNodes({
             onToggle={onToggle}
           />
         ) : (
-          <DesktopGroup key={node.id} node={node} pins={pins} onToggle={onToggle} />
+          <DesktopGroup
+            key={node.id}
+            node={node}
+            pins={pins}
+            onToggle={onToggle}
+            opened={openGroup === node.id}
+            setOpened={(next) =>
+              setOpenGroup((current) => (next ? node.id : current === node.id ? null : current))
+            }
+          />
         )
       )}
     </>
@@ -242,12 +254,15 @@ function DesktopGroup({
   node,
   pins,
   onToggle,
+  opened,
+  setOpened,
 }: {
   node: Extract<ResolvedMenuNode, { kind: 'group' }>;
   pins: Pins;
   onToggle?: (item: ResolvedMenuItem) => void;
+  opened: boolean;
+  setOpened: (opened: boolean) => void;
 }) {
-  const [opened, setOpened] = useState(false);
   const timer = useRef<number>();
   const row = useRef<HTMLButtonElement>(null);
   const dropdown = useRef<HTMLDivElement>(null);

@@ -143,6 +143,8 @@ export type CapturableSearchInput = {
   newCreatorUserIds?: number[];
   postId?: number;
   postIds?: number[];
+  /** Server-only: the caller takes a post's images in the requested sort, not the author's order. */
+  postIdsInRequestedSort?: boolean;
   collectionId?: number;
   hubId?: number;
   /**

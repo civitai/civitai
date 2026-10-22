@@ -88,7 +88,9 @@ export async function cleanupTextScanRows({
   const { count: holdTextCleared } = await dbWrite.textScanHold.updateMany({
     where: {
       // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet.
+      // A migration-superseded duplicate has no decider and was never ruled on.
       status: 'Dismissed',
+      decidedById: { not: null },
       decidedAt: { lt: decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days') },
       text: { not: '' },
     },

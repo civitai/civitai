@@ -26,6 +26,7 @@ const {
   getFlaggedModels,
   getFlaggedSourceCounts,
   getHeldDetectionModelCount,
+  getModelAppealState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   reviewDaysLeft,
@@ -58,7 +59,8 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -266,13 +268,16 @@ describe('Needs review: held detections', () => {
     const { items } = await needsReview({ limit: 10 });
     const covers = (id: number) =>
       items.find((r) => r.modelId === id)?.coverImages.map((c) => c.url);
-    expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
+    expect(covers(1)).toEqual(['published.jpg', 'clip.mp4', 'draft.jpg']);
     expect(covers(7)).toEqual(['only-draft.jpg']);
     expect(covers(2)).toEqual([]);
     expect(items.find((r) => r.modelId === 1)?.coverImages[0]).toEqual({
       id: 11,
       url: 'published.jpg',
       nsfwLevel: 1,
+      type: 'image',
+      minor: false,
+      acceptableMinor: false,
     });
   });
 
@@ -502,6 +507,34 @@ describe('Auto-flagged: hash auto-flags', () => {
     expect(Object.fromEntries(items.map((r) => [r.modelId, r.hasPendingAppeal]))).toEqual({
       20: true,
       21: false,
+    });
+  });
+
+  it('reads the appeal state the Auto-flagged ruling routes on, ignoring site-form appeals', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 20, 'Pending', 1, NULL), (2, 'Model', 21, 'Pending', 1, 'Model')`);
+    expect(await getModelAppealState(20)).toMatchObject({ pendingAppeal: true, minor: true });
+    expect(await getModelAppealState(21)).toMatchObject({ pendingAppeal: false });
+  });
+
+  it('counts poi as flagged only with an open text-scan poi flag, as the appeal resolver does', async () => {
+    await seedModel(40, 1, {});
+    await seedModel(41, 1, { poi: { workflowId: 'wf', textHash: 'a' } });
+    await seedModel(42, 1, { poi: { workflowId: 'wf', textHash: 'a', appealGranted: grant } });
+    await pg.exec(`UPDATE "Model" SET minor = TRUE, poi = TRUE WHERE id IN (40, 41, 42)`);
+    expect(await getModelAppealState(40)).toMatchObject({ minor: true, poi: false });
+    expect(await getModelAppealState(41)).toMatchObject({ minor: true, poi: true });
+    expect(await getModelAppealState(42)).toMatchObject({ minor: true, poi: false });
+  });
+
+  it('reads the text each text-scan flag is bound to, and any newer held text', async () => {
+    await seedModel(43, 1, {
+      minor: { workflowId: 'wf', textHash: 'a', redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { workflowId: 'wf', textHash: 'a' },
+    });
+    expect((await getModelAppealState(43)).textScan).toEqual({
+      minor: { textHash: 'a', redetectedTextHash: 'new' },
+      poi: { textHash: 'a', redetectedTextHash: null },
     });
   });
 

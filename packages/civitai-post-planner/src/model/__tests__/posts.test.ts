@@ -27,6 +27,7 @@ const post = (iso: string, id = 1, extra: Partial<PlannerPost> = {}): PlannerPos
   imageCount: 1,
   cover: null,
   release: null,
+  model: null,
   ...extra,
 });
 
@@ -121,15 +122,19 @@ describe('neighbours', () => {
 });
 
 describe('modelFilterOptions', () => {
-  it('names a release version after its model and a bare version by its id', () => {
+  it('names each version after its model, release or not, and falls back to the id', () => {
     const posts = [
-      post(at(9, 9), 1, { modelVersionId: 5 }),
-      post(at(9, 9), 2, { modelVersionId: 5, release: release() }),
+      post(at(9, 9), 1, { modelVersionId: 5, release: release() }),
+      post(at(9, 9), 2, {
+        modelVersionId: 7,
+        model: { name: 'SumiInk', versionName: 'krea2_v1.0' },
+      }),
       post(at(9, 9), 3, { modelVersionId: 6 }),
       post(at(9, 9), 4),
     ];
     expect(modelFilterOptions(posts)).toEqual([
       { value: '5', label: 'Model · v1' },
+      { value: '7', label: 'SumiInk · krea2_v1.0' },
       { value: '6', label: 'Version #6' },
     ]);
   });

@@ -5,7 +5,7 @@ import {
   assistantSubagentRules,
   assistantSubagentInstructions,
 } from '@civitai/app-assistant';
-import { REFUSED_BY_PAGE_NOTE } from '@civitai/components-chat/core';
+import { REFUSED_BY_PAGE_NOTE, buildSystemPrompt } from '@civitai/components-chat/core';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 import type { ModelMessage, ToolSet } from 'ai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -179,6 +179,21 @@ describe('App Assistant’s tools on the runner', () => {
     expect(fake.callsTo('write_file')).toBe(0);
     expect(opensApps()).toEqual([]);
     expect(record.state).toBe('suspended');
+    expect(ended).toEqual([PAUSED_IDLE]);
+  });
+
+  it('an app found starting again (a pod restart) is not reported asleep: maybe finished, and the reply goes on', async () => {
+    const record = fake.add('my-app');
+    const { tools, ended } = await open();
+    record.state = 'starting';
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' })
+    ).toMatchObject({ error: expect.stringMatching(/may have finished/), retryable: true });
+    expect(ended).toEqual([]);
+    expect(opensApps()).toEqual([]);
+    // Control: a paused one does end the reply.
+    record.state = 'suspended';
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
     expect(ended).toEqual([PAUSED_IDLE]);
   });
 
@@ -486,6 +501,16 @@ describe('the runner’s prompt', () => {
     'web_search',
     'run_step',
     'run_workflow',
+    // Named by the chat's own rules (`defaultRules`), which the runner's system prompt starts with.
+    'ask_choice',
+    'open_panel',
+    'update_panel',
+    'post_to_civitai',
+    'search_models',
+    'find_services',
+    'get_input_schema',
+    'caption_media',
+    'transcribe_audio',
   ];
 
   it('names only tools the runner offers', async () => {
@@ -493,9 +518,15 @@ describe('the runner’s prompt', () => {
     const child = scriptedModel(() => ({ text: 'ok' }));
     const { tools } = await open({ subagents: true, model: () => child });
     const offered = Object.keys(tools.tools);
-    const prompt = `${tools.rules?.('')}\n${tools.instructions}\n${assistantSubagentInstructions(
-      'remote'
-    )}`;
+    // The whole system prompt, built as the runner builds it: the chat's own rules first, then App
+    // Assistant's, then the reply's instructions and what its subagents are told.
+    const system = buildSystemPrompt({
+      now: new Date(),
+      tools: offered,
+      host: { tools: tools.hostTools ?? [], instructs: true },
+      ...(tools.rules ? { rules: tools.rules } : {}),
+    });
+    const prompt = `${system}\n${tools.instructions}\n${assistantSubagentInstructions('remote')}`;
     const named = new Set<string>();
     for (const name of KNOWN) if (new RegExp(`\\b${name}\\b`).test(prompt)) named.add(name);
     for (const match of prompt.matchAll(/\bsandbox__([a-z_]+)(\*)?/g))
@@ -507,6 +538,12 @@ describe('the runner’s prompt', () => {
         : !offered.includes(name)
     );
     expect(missing).toEqual([]);
+  });
+
+  it('the chat’s own rules do name ask_choice (the control: the check reads them)', () => {
+    expect(buildSystemPrompt({ now: new Date(), tools: ['sandbox__read_file'] })).toMatch(
+      /\bask_choice\b/
+    );
   });
 
   it('the page’s prompt does name tools the runner lacks (the control)', async () => {

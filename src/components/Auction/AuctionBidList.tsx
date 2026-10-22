@@ -13,7 +13,7 @@ import {
 } from '~/components/Auction/VirtualRowList';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 
 type Bid = GetAuctionBySlugReturn['bids'][number];
 type Row = ChromeRow | { kind: 'bid'; bid: Bid; aboveThreshold: boolean };
@@ -27,7 +27,7 @@ export function AuctionBidList({
 }: {
   bidsAbove: Bid[];
   bidsBelow: Bid[];
-  addBidFn: (r: GenerationResource) => void;
+  addBidFn: (r: GenerationResourceValue) => void;
   searchText: string;
   canBid: boolean;
 }) {

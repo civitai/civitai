@@ -28,7 +28,16 @@ export interface EndedReply {
 }
 
 type Head = StoredConversationMetadata;
-type HeadTurn = SavedTurnV3;
+/**
+ * A saved turn, with the run that owns it (`runId`) when the runner started it: the latest run
+ * started for that turn (a retry of the same turn takes it over). An extra field the chat's own
+ * reader (`turnFrom`, `conversationMetadataOf`) ignores. The runner's store keeps it as written, but
+ * the browser runner's `ThreadStore` (components-chat 0.25.0) rebuilds every turn through `turnFrom`
+ * when it saves, which drops it: after a save in browser mode the turn has no owner again, and the
+ * runner writes it under the old rules (any run of the turn may), which fails open. A turn saved
+ * before the runner recorded owners has none either.
+ */
+export type HeadTurn = SavedTurnV3 & { runId?: string };
 
 export function lastSeq(head: Head | null): number {
   return Math.max(0, ...(head?.turns ?? []).map((turn) => turn.seq));
@@ -51,6 +60,8 @@ export interface TurnStart {
   now: Date;
   /** Saved steps the reply carries on from: saved at once as `running`, so the head shows them. */
   from?: ResumePoint;
+  /** The run starting this reply: it owns the turn from now on, and an older run's writes to it stop. */
+  runId?: string;
 }
 
 /** The head with the user's turn saved as the reply starts (a new head when there is none). */
@@ -72,6 +83,7 @@ export function startTurn(head: Head | null, start: TurnStart): Head {
     seq: start.seq,
     createdAt: existing?.createdAt ?? now,
     user: existing?.user ?? start.user,
+    ...(start.runId ? { runId: start.runId } : {}),
     ...(start.from
       ? { assistant: { messages: start.from.messages, status: 'running', savedAt: now } }
       : {}),
@@ -128,6 +140,19 @@ export const INTERRUPTED = 'interrupted';
 /** Whether the turn's reply has ended in the head (it is saved, and not `running`). */
 export function hasEnded(turn: HeadTurn | undefined): boolean {
   return turn?.assistant !== undefined && turn.assistant.status !== 'running';
+}
+
+/**
+ * Whether `runId` may write the turn's reply: the turn is its own, or has no recorded owner (saved
+ * before owners were, or by the browser). A run a retry of the same turn took over owns it no more.
+ */
+export function ownedBy(turn: HeadTurn | undefined, runId: string): turn is HeadTurn {
+  return turn !== undefined && (turn.runId === undefined || turn.runId === runId);
+}
+
+/** Whether `runId` may still save the turn's reply: its own, and not ended yet. */
+export function writableBy(turn: HeadTurn | undefined, runId: string): turn is HeadTurn {
+  return ownedBy(turn, runId) && !hasEnded(turn);
 }
 
 /** `run-ended` for a reply whose end the head saved: how the client hears an end the journal lacks. */

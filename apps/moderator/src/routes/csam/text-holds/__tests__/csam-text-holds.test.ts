@@ -5,9 +5,15 @@ const {
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  decideAuthorHolds,
   getHoldCoverImages,
+  getHoldContexts,
+  getCleanRescans,
 } = vi.hoisted(() => ({
+  decideAuthorHolds: vi.fn(),
   getHoldCoverImages: vi.fn(),
+  getCleanRescans: vi.fn(),
+  getHoldContexts: vi.fn(),
   listCsamHolds: vi.fn(),
   countCsamHoldsByType: vi.fn(),
   countPendingCsamHolds: vi.fn(),
@@ -15,6 +21,7 @@ const {
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+vi.mock('../hold-context.server', () => ({ getHoldContexts }));
 vi.mock('$lib/server/csam-holds.service', async () => ({
   // The real search parser: what a `q` becomes is part of what the load hands the query.
   csamHoldSearch: (
@@ -26,12 +33,22 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   countCsamHoldsByType,
   countPendingCsamHolds,
   decideCsamHold,
+  decideAuthorHolds,
   getHoldCoverImages,
+  getCleanRescans,
 }));
 
 const { actions, load } = await import('../+page.server');
-const { canRemoveHeld, holdDecisionEnabled, holdMeta, holdTitle, quotedPhrases, splitEmptyTypes } =
-  await import('../hold-entity');
+const {
+  canRemoveHeld,
+  decisionLabel,
+  holdDecisionEnabled,
+  holdEntityHref,
+  holdMeta,
+  holdTitle,
+  quotedPhrases,
+  splitEmptyTypes,
+} = await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -61,7 +78,10 @@ beforeEach(() => {
   countCsamHoldsByType.mockResolvedValue({ Post: 5, ChatMessage: 2 });
   countPendingCsamHolds.mockResolvedValue(9);
   decideCsamHold.mockResolvedValue({ ok: true });
+  decideAuthorHolds.mockResolvedValue([{ holdId: 13, ok: true }]);
   getHoldCoverImages.mockResolvedValue(new Map());
+  getCleanRescans.mockResolvedValue(new Map());
+  getHoldContexts.mockResolvedValue(new Map());
 });
 
 describe('csam text holds load', () => {
@@ -107,6 +127,21 @@ describe('csam text holds load', () => {
     expect(listCsamHolds).toHaveBeenCalledWith(
       expect.objectContaining({ search: { username: 'someone' } })
     );
+  });
+
+  it('filters on the author apart from the search, which also matches content ids', async () => {
+    const data = await loadAt('?author=42');
+    expect(listCsamHolds).toHaveBeenCalledWith(
+      expect.objectContaining({ author: 42, search: undefined })
+    );
+    expect(countCsamHoldsByType).toHaveBeenCalledWith(expect.objectContaining({ author: 42 }));
+    expect(data.author).toBe(42);
+  });
+
+  it('ignores an author that is not an id', async () => {
+    const data = await loadAt('?author=abc');
+    expect(listCsamHolds).toHaveBeenCalledWith(expect.objectContaining({ author: undefined }));
+    expect(data.author).toBeNull();
   });
 
   it.each(['?entityType=Image', '?entityType=ResourceReview'])(
@@ -174,6 +209,56 @@ describe('csam text holds load', () => {
     expect(data.items).toMatchObject([{ id: 1, coverImages: [], imageTotal: 0 }]);
   });
 
+  it('marks a hold whose content was scanned clean since, in one read for the page', async () => {
+    const scannedAt = new Date('2026-10-20T10:00:00Z');
+    listCsamHolds.mockResolvedValue({ items: [{ id: 1 }, { id: 2 }], hasMore: false });
+    getCleanRescans.mockResolvedValue(new Map([[2, scannedAt]]));
+    const data = await loadAt('');
+    expect(getCleanRescans).toHaveBeenCalledTimes(1);
+    expect(data.items).toMatchObject([
+      { id: 1, cleanRescanAt: null },
+      { id: 2, cleanRescanAt: scannedAt },
+    ]);
+  });
+
+  it('still lists the queue when the rescans cannot be read', async () => {
+    getCleanRescans.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data.items).toMatchObject([{ id: 1, cleanRescanAt: null }]);
+  });
+
+  it('hands each row its profile or comment parent from one batched read of the page', async () => {
+    listCsamHolds.mockResolvedValue({
+      items: [
+        { id: 1, entityType: 'UserProfile', entityId: 10 },
+        { id: 2, entityType: 'CommentV2', entityId: 20 },
+        { id: 3, entityType: 'Post', entityId: 30 },
+      ],
+      hasMore: false,
+    });
+    const profile = { bio: 'x', images: [] };
+    const parent = { type: 'post', id: 9, title: 't', images: [], imageTotal: 0 };
+    getHoldContexts.mockResolvedValue(
+      new Map([
+        [1, { profile, parent: null }],
+        [2, { profile: null, parent }],
+      ])
+    );
+    const data = await loadAt('');
+    expect(getHoldContexts).toHaveBeenCalledTimes(1);
+    expect(data.items).toMatchObject([
+      { id: 1, profile, parent: null },
+      { id: 2, profile: null, parent },
+      { id: 3, profile: null, parent: null },
+    ]);
+  });
+
+  it('still lists the queue when the context fails', async () => {
+    getHoldContexts.mockRejectedValue(new Error('db down'));
+    const data = await loadAt('');
+    expect(data.items).toMatchObject([{ id: 1, profile: null, parent: null }]);
+  });
+
   it('still lists the queue when the counts fail', async () => {
     countCsamHoldsByType.mockRejectedValue(new Error('db down'));
     const data = await loadAt('');
@@ -185,13 +270,18 @@ describe('csam text holds decide', () => {
   it.each(['dismiss', 'remove', 'remove_strike', 'remove_ban', 'remove_ban_report'])(
     'sends %s to the main app with the note',
     async (decision) => {
-      expect(await decide({ holdId: '12', decision, note: ' looked fine ' }, holder)).toMatchObject(
-        {
-          success: true,
-          key: 12,
-        }
-      );
-      expect(decideCsamHold).toHaveBeenCalledWith({ holdId: 12, decision, note: 'looked fine' });
+      expect(
+        await decide({ holdId: '12', textHash: 'h-12', decision, note: ' looked fine ' }, holder)
+      ).toMatchObject({
+        success: true,
+        key: 12,
+      });
+      expect(decideCsamHold).toHaveBeenCalledWith({
+        holdId: 12,
+        textHash: 'h-12',
+        decision,
+        note: 'looked fine',
+      });
     }
   );
 
@@ -201,33 +291,38 @@ describe('csam text holds decide', () => {
     ['remove_ban_report', 'user.ban'],
   ])('refuses %s without the %s grant', async (decision, grant) => {
     const withoutIt = { ...holder, [grant]: false };
-    expect(await decide({ holdId: '12', decision }, withoutIt)).toMatchObject({
+    expect(await decide({ holdId: '12', textHash: 'h-12', decision }, withoutIt)).toMatchObject({
       status: 403,
       data: { key: 12 },
     });
     expect(decideCsamHold).not.toHaveBeenCalled();
-    expect(await decide({ holdId: '12', decision }, { ...holder, [grant]: true })).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision }, { ...holder, [grant]: true })
+    ).toMatchObject({
       success: true,
     });
   });
 
   it('lets a removal or a dismissal through without the strike or ban grant', async () => {
-    await decide({ holdId: '12', decision: 'remove' }, csamOnly);
-    await decide({ holdId: '12', decision: 'dismiss' }, csamOnly);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, csamOnly);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'dismiss' }, csamOnly);
     expect(decideCsamHold).toHaveBeenCalledTimes(2);
   });
 
   it('sends no note when the field is blank', async () => {
-    await decide({ holdId: '12', decision: 'remove', note: '   ' }, holder);
+    await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', note: '   ' }, holder);
     expect(decideCsamHold).toHaveBeenCalledWith({
       holdId: 12,
+      textHash: 'h-12',
       decision: 'remove',
       note: undefined,
     });
   });
 
   it('refuses a moderator without the csam permission', async () => {
-    expect(await decide({ holdId: '12', decision: 'remove_ban' }, {})).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove_ban' }, {})
+    ).toMatchObject({
       status: 403,
     });
     expect(decideCsamHold).not.toHaveBeenCalled();
@@ -235,21 +330,107 @@ describe('csam text holds decide', () => {
 
   it.each([
     ['no hold id', { decision: 'remove' }],
-    ['no decision', { holdId: '12' }],
-    ['a decision that is not offered', { holdId: '12', decision: 'confirm' }],
+    ['no decision', { holdId: '12', textHash: 'h-12' }],
+    ['a decision that is not offered', { holdId: '12', textHash: 'h-12', decision: 'confirm' }],
     ['a hold id past int4', { holdId: '3000000000', decision: 'remove' }],
-    ['a note over the limit', { holdId: '12', decision: 'remove', note: 'x'.repeat(501) }],
+    [
+      'a note over the limit',
+      { holdId: '12', textHash: 'h-12', decision: 'remove', note: 'x'.repeat(501) },
+    ],
   ])('refuses %s before calling the main app', async (_, fields) => {
     expect(await decide(fields, holder)).toMatchObject({ status: 400 });
     expect(decideCsamHold).not.toHaveBeenCalled();
   });
 
+  it('shows the main app message when the hold changed since it was opened', async () => {
+    decideCsamHold.mockResolvedValue({
+      ok: false,
+      error: 'Decide hold: This hold changed after you opened it. Reload to review the new text.',
+    });
+    expect(
+      await decide({ holdId: '12', textHash: 'h-old', decision: 'remove' }, holder)
+    ).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('Reload'), key: 12 },
+    });
+    expect(decideCsamHold).toHaveBeenCalledWith(expect.objectContaining({ textHash: 'h-old' }));
+  });
+
   it('reports the main app refusal against the hold', async () => {
     decideCsamHold.mockResolvedValue({ ok: false, error: 'already decided or missing' });
-    expect(await decide({ holdId: '12', decision: 'remove' }, holder)).toMatchObject({
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, holder)
+    ).toMatchObject({
       status: 400,
       data: { error: 'already decided or missing', key: 12 },
     });
+  });
+});
+
+describe('csam text holds decide with the author’s other holds', () => {
+  const also = JSON.stringify([{ holdId: 13, textHash: 'h-13' }]);
+
+  it('decides the open hold first, then the others, and reports each', async () => {
+    const result = await decide(
+      { holdId: '12', textHash: 'h-12', decision: 'remove_ban', also, note: 'x' },
+      holder
+    );
+    expect(decideCsamHold).toHaveBeenCalledWith({
+      holdId: 12,
+      textHash: 'h-12',
+      decision: 'remove_ban',
+      note: 'x',
+    });
+    expect(decideAuthorHolds).toHaveBeenCalledWith({
+      holdId: 12,
+      also: [{ holdId: 13, textHash: 'h-13' }],
+      decision: 'remove_ban',
+      note: 'x',
+    });
+    expect(decideCsamHold.mock.invocationCallOrder[0]).toBeLessThan(
+      decideAuthorHolds.mock.invocationCallOrder[0]
+    );
+    expect(result).toMatchObject({ success: true, key: 12, others: [{ holdId: 13, ok: true }] });
+  });
+
+  it('touches no other hold when the open one is refused, so a refused ban removes nothing', async () => {
+    decideCsamHold.mockResolvedValue({ ok: false, error: 'already decided' });
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove_ban', also }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideAuthorHolds).not.toHaveBeenCalled();
+  });
+
+  it('keeps the open hold’s success when applying to the others throws', async () => {
+    decideAuthorHolds.mockRejectedValue(new Error('db down'));
+    const result = await decide(
+      { holdId: '12', textHash: 'h-12', decision: 'remove', also },
+      holder
+    );
+    expect(result).toMatchObject({
+      success: true,
+      others: [{ holdId: 13, ok: false, error: expect.any(String) }],
+    });
+  });
+
+  it('applies to no others when none are sent', async () => {
+    const result = await decide({ holdId: '12', textHash: 'h-12', decision: 'remove' }, holder);
+    expect(decideAuthorHolds).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('others');
+  });
+
+  it.each([
+    ['malformed JSON', '{nope'],
+    ['a hold without a hash', JSON.stringify([{ holdId: 13 }])],
+    [
+      'too many holds',
+      JSON.stringify(Array.from({ length: 51 }, (_, i) => ({ holdId: i + 1, textHash: 'h' }))),
+    ],
+  ])('refuses %s before deciding anything', async (_, bad) => {
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', also: bad }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideCsamHold).not.toHaveBeenCalled();
   });
 });
 
@@ -347,6 +528,15 @@ describe('quotedPhrases', () => {
   });
 });
 
+describe('decisionLabel', () => {
+  it('names a hold the migration superseded rather than calling it dismissed', () => {
+    expect(decisionLabel({ status: 'Dismissed', decision: 'superseded' })).toBe(
+      'Superseded by a newer scan'
+    );
+    expect(decisionLabel({ status: 'Dismissed', decision: 'dismiss' })).toBe('Dismissed');
+  });
+});
+
 describe('csam hold row text', () => {
   const base = { entityId: 5, title: null, username: null, userId: null };
 
@@ -363,6 +553,20 @@ describe('csam hold row text', () => {
     expect(holdTitle({ ...base, entityType: 'UserProfile', userId: 3 })).toBe('user #3');
   });
 
+  it('says when the text of a pending hold was last updated, once it was', () => {
+    const now = Date.parse('2026-10-20T12:00:00Z');
+    const createdAt = new Date('2026-10-20T02:00:00Z');
+    expect(
+      holdMeta(
+        { status: 'Pending', createdAt, decidedAt: null, textUpdatedAt: '2026-10-20T11:55:00Z' },
+        now
+      )
+    ).toBe('text updated 5m');
+    expect(
+      holdMeta({ status: 'Pending', createdAt, decidedAt: null, textUpdatedAt: null }, now)
+    ).toBe('held 10h');
+  });
+
   it('says how long ago a pending hold was held, and a decided one was decided', () => {
     const now = Date.parse('2026-10-20T12:00:00Z');
     const createdAt = new Date('2026-10-20T07:00:00Z');
@@ -370,6 +574,22 @@ describe('csam hold row text', () => {
     expect(
       holdMeta({ status: 'Confirmed', createdAt, decidedAt: new Date('2026-10-20T10:00:00Z') }, now)
     ).toBe('decided 2h');
+  });
+});
+
+describe('holdEntityHref', () => {
+  const ref = { entityId: 5, userId: null, username: null, chatId: null };
+
+  it('opens a legacy comment on its model, highlighting the comment', () => {
+    expect(
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: 70 })
+    ).toBe('https://site.test/models/70?dialog=commentThread&highlight=5');
+  });
+
+  it('has no link for a legacy comment whose model is unknown', () => {
+    expect(
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: null })
+    ).toBeNull();
   });
 });
 

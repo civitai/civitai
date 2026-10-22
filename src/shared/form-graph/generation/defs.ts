@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { rangeSchema } from '~/shared/zod/range.schema';
 import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
@@ -45,9 +46,25 @@ export type AspectRatioOption = {
   height: number;
 };
 
+/** The option a ratio label names: exact, else the closest for an `a:b` label, else the default. */
+export function resolveAspectRatioLabel<T extends AspectRatioOption>(
+  label: string,
+  options: T[],
+  defaultOption: T
+): T {
+  const exact = options.find((o) => o.value === label);
+  if (exact) return exact;
+  const parts = label.split(':').map(Number);
+  if (parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!)) {
+    return findClosestAspectRatio({ width: parts[0]!, height: parts[1]! }, options);
+  }
+  return defaultOption;
+}
+
 export * from '../defs';
 import { cachedFactory } from 'form-graph';
 import { snapToStep, type NumberMeta } from '../defs';
+import { imageObjectSchema, type ImageObjectValue } from '~/shared/generation/values';
 
 /**
  * The field definitions every generation family composes from. Each pairs a LENIENT
@@ -180,11 +197,7 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
         if (typeof val === 'object' && val.width && val.height) {
           return toValue(findClosestAspectRatio({ width: val.width, height: val.height }, options));
         }
-        const parts = value.split(':').map(Number);
-        if (parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!)) {
-          return toValue(findClosestAspectRatio({ width: parts[0]!, height: parts[1]! }, options));
-        }
-        return toValue(defaultOption);
+        return toValue(resolveAspectRatioLabel(value, options, defaultOption));
       }),
     output: z.object({ value: z.string(), width: z.number(), height: z.number() }),
     default: toValue(defaultOption),
@@ -353,26 +366,32 @@ export const SNIPPETS: FieldDef<SnippetsValue> = {
 
 // --- resources / model ---------------------------------------------------------
 
-const turboRangeSchema = z.object({ min: z.number(), max: z.number(), default: z.number() });
-
-export const resourceSchema = z.object({
+/** Client state: `settings` comes from a hydrated checkpoint and `resourceSchema` omits it, so it never reaches the request. */
+const resourceStateSchema = z.object({
+  settings: z
+    .object({ turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional() })
+    .optional(),
   id: z.number(),
   baseModel: z.string().optional(),
   model: z.object({ type: z.string() }),
   strength: z.number().optional(),
+  // Form state saved before the flag carries the band here; it still means turbo.
+  turbo: z.preprocess((v) => (v && typeof v === 'object' ? true : v), z.boolean().optional()),
   // Client-supplied: clamp before use.
-  turbo: z.object({ steps: turboRangeSchema, cfgScale: turboRangeSchema }).optional(),
-  turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
+  recommendedSettings: z
+    .object({ steps: rangeSchema.optional(), cfgScale: rangeSchema.optional() })
+    .optional(),
   trainedWords: z.array(z.string()).optional(),
   epochDetails: z.object({ epochNumber: z.number().optional() }).optional(),
-  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row) —
-  // negative id + air + workflowId. This schema serializes the whatIf/generate payloads,
-  // so dropping these makes the server's StrictAirMap 400 on the synthetic id.
+  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion row):
+  // negative id + air + workflowId. Dropping them from `resourceSchema` (derived from this)
+  // makes the server's StrictAirMap 400 on the synthetic id.
   air: z.string().optional(),
   workflowId: z.string().optional(),
   name: z.string().optional(),
 });
-export type ResourceData = z.infer<typeof resourceSchema>;
+export type ResourceData = z.infer<typeof resourceStateSchema>;
+export const resourceSchema = resourceStateSchema.omit({ settings: true });
 
 export const resourceInputSchema = z.union([
   z.number().transform((id) => ({ id })),
@@ -556,14 +575,9 @@ export const imagesDef = cachedFactory(function imagesDef(config: {
 }) {
   const max = config.slots?.length ?? config.max ?? 1;
   const min = config.slots ? config.slots.filter((s) => s.required).length : config.min ?? 1;
-  const imageObject = z.object({
-    url: z.string(),
-    width: z.number().optional(),
-    height: z.number().optional(),
-  });
   return {
     input: z
-      .union([z.url(), imageObject])
+      .union([z.url(), imageObjectSchema])
       .array()
       .optional()
       .transform((arr) =>
@@ -610,6 +624,76 @@ export const imagesDef = cachedFactory(function imagesDef(config: {
     },
   } satisfies FieldDef<ImageEntry[], ImagesMeta>;
 });
+
+export const hasImage = (e: unknown): e is { image: { url: string } } =>
+  typeof e === 'object' && e !== null && !!(e as { image?: { url?: string } }).image?.url;
+
+export type ImageEntryValue<S extends z.ZodRawShape> = { image: ImageObjectValue } & z.infer<
+  z.ZodObject<S>
+>;
+
+export interface ImageEntryListMeta {
+  limit: number;
+}
+
+/**
+ * Entries without an image are dropped on the output side, so a half-filled row never blocks submit.
+ * `correct`, not `coerce`: staged entries can outlive the family whose limit they came from, and
+ * `input` carries the same cap, so it never fires on the server parse.
+ */
+export function imageEntryListDef<S extends z.ZodRawShape, M extends object = object>(opts: {
+  /** The fields beside `image`, as their OUTPUT schema. */
+  fields: S;
+  /** Filled in on input when an entry omits a field. */
+  defaults: z.infer<z.ZodObject<S>>;
+  limit: number;
+  min?: number;
+  noun: { one: string; many: string };
+  refinements?: Array<[check: (entries: ImageEntryValue<S>[]) => boolean, message: string]>;
+  meta?: M;
+}) {
+  type Entry = ImageEntryValue<S>;
+  type EntryInput = { image?: string | ImageObjectValue } & Record<string, unknown>;
+  const { limit, noun } = opts;
+  const entryInputSchema = z
+    .object({ image: z.union([z.string(), imageObjectSchema]).optional() })
+    .extend(z.object(opts.fields).partial().shape) as unknown as z.ZodType<EntryInput, unknown>;
+  const entryOutputSchema = z.object({
+    image: imageObjectSchema,
+    ...opts.fields,
+  }) as unknown as z.ZodType<Entry, unknown>;
+
+  let entries = entryOutputSchema.array().max(limit, `Maximum ${limit} ${noun.many} allowed`);
+  if (opts.min)
+    entries = entries.min(
+      opts.min,
+      `At least ${opts.min === 1 ? `one ${noun.one} is` : `${opts.min} ${noun.many} are`} required`
+    );
+  let output: z.ZodType<Entry[], unknown> = entries;
+  for (const [check, message] of opts.refinements ?? []) output = output.refine(check, message);
+
+  return {
+    input: entryInputSchema
+      .array()
+      .max(limit)
+      .optional()
+      .transform((arr) =>
+        arr?.map((entry) => {
+          const { image, ...rest } = entry;
+          const given = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+          const object = typeof image === 'string' ? { url: image } : image;
+          return { ...opts.defaults, ...given, image: object?.url ? object : undefined };
+        })
+      ),
+    output: z.preprocess((arr) => (Array.isArray(arr) ? arr.filter(hasImage) : arr), output),
+    default: [] as Entry[],
+    correct: (value: Entry[] | undefined) =>
+      (value?.length ?? 0) > limit
+        ? { value: value!.slice(0, limit), reason: 'over_cap' }
+        : undefined,
+    meta: { limit, ...(opts.meta as M) } as ImageEntryListMeta & M,
+  };
+}
 
 const videoMetadataSchema = z.object({
   fps: z.number(),
@@ -698,17 +782,12 @@ export const refusingRangeDef = cachedFactory(function refusingRangeDef(opts: {
 
 // --- controlNets ----------------------------------------------------------------
 
-const controlNetImageObjectSchema = z.object({
-  url: z.string(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-});
 const controlNetModes = ['auto', 'preprocessed'] as const;
 
 const controlNetEntryInputSchema = z.object({
   preprocessor: z.string(),
   mode: z.enum(controlNetModes).optional(),
-  image: z.union([z.string(), controlNetImageObjectSchema]).optional(),
+  image: z.union([z.string(), imageObjectSchema]).optional(),
   weight: z.coerce.number().min(0).max(2).optional(),
   startStep: z.coerce.number().min(0).max(1).optional(),
   endStep: z.coerce.number().min(0).max(1).optional(),
@@ -724,7 +803,7 @@ const controlNetEntryOutputSchema = z.object({
     ]
   ),
   mode: z.enum(controlNetModes),
-  image: controlNetImageObjectSchema,
+  image: imageObjectSchema,
   weight: z.number().min(0).max(2),
   startStep: z.number().min(0).max(1),
   endStep: z.number().min(0).max(1),

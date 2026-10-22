@@ -1,5 +1,6 @@
+import { TRPCError } from '@trpc/server';
 import { bulkDeleteComments } from '~/server/services/comment.service';
-import { bulkDeleteCommentsV2 } from '~/server/services/commentsv2.service';
+import { isLegalHoldAbort } from '~/server/services/legal-hold.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import {
   commentAffected,
@@ -9,22 +10,31 @@ import {
 
 export default defineModeratorEndpoint('comment.bulkDelete', {
   summary: 'Delete comments in bulk, across both comment tables.',
-  returns: '{ commentDeleted, commentV2Deleted }',
-  notes: ['At least one of the two id lists must be non-empty.', 'Metric updates are queued.'],
+  returns: '{ commentDeleted, commentV2Deleted, retainedHidden }',
+  notes: [
+    'At least one of the two id lists must be non-empty.',
+    'Both tables change in one transaction: either all of it happens or none of it.',
+    'Metric updates are queued.',
+    'A comment that may not be deleted is kept hidden instead, and counted in `retainedHidden`.',
+  ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: commentIdSchema,
   async handler(input) {
     ensureAtLeastOneList(input);
-    const v1 = input.commentIds?.length
-      ? await bulkDeleteComments({ ids: input.commentIds })
-      : { count: 0 };
-    const v2 = input.commentV2Ids?.length
-      ? await bulkDeleteCommentsV2({ ids: input.commentV2Ids })
-      : { count: 0 };
-    return {
-      commentDeleted: v1.count,
-      commentV2Deleted: v2.count,
-      affected: commentAffected(input),
-    };
+    try {
+      const result = await bulkDeleteComments({
+        commentIds: input.commentIds ?? [],
+        commentV2Ids: input.commentV2Ids ?? [],
+      });
+      return { ...result, affected: commentAffected(input) };
+    } catch (e) {
+      // The database error names what stopped it; the moderator gets neutral wording instead.
+      if (isLegalHoldAbort(e))
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'The delete could not finish, so no comment was deleted. Reload and try again.',
+        });
+      throw e;
+    }
   },
 });

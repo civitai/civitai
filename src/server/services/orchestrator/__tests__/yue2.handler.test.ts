@@ -104,7 +104,7 @@ describe('YuE2', () => {
     expect(chat).toMatchObject({
       metadata: { suppressOutput: true },
       input: {
-        model: 'gpt-4o-mini',
+        model: 'openai/gpt-4o-mini',
         temperature: 0.9,
         responseFormat: {
           type: 'json_schema',

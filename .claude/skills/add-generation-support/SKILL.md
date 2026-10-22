@@ -352,7 +352,7 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 
 - Single-image example: see `img2imgImages` in `src/shared/form-graph/generation/defs.ts`.
 - `normalizeInput` (in `orchestration-new.service.ts`) folds any legacy `sourceImage` into `images[]`, so older stored/remixed data still resolves — do **not** reintroduce or depend on `sourceImage`.
-- Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references — each `{ image, strength }`) is a different shape and stays `image`; those are not top-level source images.
+- Exception: a per-entry `image` field *inside a list node* (controlnet entries, Krea2 style references, Flux 3 keyframes) is a different shape and stays `image`; those are not top-level source images. For images that each carry a setting (strength, frame position), use `imageEntryListDef({ fields, defaults, limit, noun })` from `defs.ts` (entries without an image are dropped on output) and render it with `ImageEntryListInput` (`src/components/form-graph/generation/inputs/`). Wrap it as `Krea2StyleReferencesInput` and `Flux3KeyframesInput` do; don't write a new schema, dropzone or row markup. Any image object schema is `imageObjectSchema` from `~/shared/generation/values`, not a local `z.object({ url, width, height })`.
 
 ### Don't use `.effect()` to reset slider values across variants
 
@@ -421,6 +421,7 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 | Simple video ecosystem | `form-graph/seedance.handler.ts`, `video/seedance.graph.ts` |
 | Complex video ecosystem (txt/img/ref variants) | `form-graph/vidu.handler.ts`, `video/vidu.graph.ts` |
 | Image+video on one ecosystem | `form-graph/grok.handler.ts`, `image/grok.graph.ts` + `video/grok.graph.ts` |
+| Images with a per-image setting (style strength, frame position) | `image/krea2.graph.ts` (`styleReferencesDef`), `video/flux3-video.graph.ts` (`img2vid:keyframes`) + `imageEntryListDef` in `defs.ts`, `inputs/ImageEntryListInput.tsx` |
 
 ## Notes
 

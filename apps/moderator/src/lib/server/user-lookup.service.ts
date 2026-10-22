@@ -84,15 +84,23 @@ export type UserStats = {
 };
 
 export type ProfileMedia = {
+  /** The Image row, where the caller needs to tell two profile images apart. */
+  id?: number;
   /** Cloudflare key (Image.url), not the numeric id — what EdgeMedia takes as `src`. */
   url: string;
   type: string | null;
   nsfwLevel: number | null;
+  /** The image scan's minor tags, for a moderator checking an avatar or cover. */
+  minor?: boolean;
+  acceptableMinor?: boolean;
 };
 
 export type UserProfileText = {
   bio: string | null;
   message: string | null;
+  /** The variants shown on the SFW site; null where the account set none. */
+  sfwBio: string | null;
+  sfwMessage: string | null;
   location: string | null;
   /** Retool's "Look at Cover Image". Both are kept: an account can pass on the SFW one and fail on
    *  the real one, and a moderator asked about a cover has to see the one that was reported. */
@@ -523,35 +531,93 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
 // in-tool action there; linking out to the profile instead means the moderator has to load the very
 // page they may be about to act on, in a normal browsing session.
 async function getProfile(userId: number): Promise<UserProfileText | null> {
-  const row = await dbRead
+  return (await getProfiles([userId])).get(userId) ?? null;
+}
+
+/** `getProfile` for many accounts in one read (the CSAM holds queue shows a page of them). */
+export async function getProfiles(userIds: number[]): Promise<Map<number, UserProfileText>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
     .selectFrom('UserProfile as up')
     .leftJoin('Image as ci', 'ci.id', 'up.coverImageId')
     .leftJoin('Image as si', 'si.id', 'up.sfwCoverImageId')
     .select([
+      'up.userId',
       'up.bio',
       'up.message',
+      'up.sfwBio',
+      'up.sfwMessage',
       'up.location',
+      'ci.id as coverId',
       'ci.url as coverUrl',
       sql<string | null>`ci.type::text`.as('coverType'),
       'ci.nsfwLevel as coverNsfwLevel',
+      'ci.minor as coverMinor',
+      'ci.acceptableMinor as coverAcceptableMinor',
+      'si.id as sfwCoverId',
       'si.url as sfwCoverUrl',
       sql<string | null>`si.type::text`.as('sfwCoverType'),
       'si.nsfwLevel as sfwCoverNsfwLevel',
+      'si.minor as sfwCoverMinor',
+      'si.acceptableMinor as sfwCoverAcceptableMinor',
     ])
-    .where('up.userId', '=', userId)
-    .executeTakeFirst();
-  if (!row) return null;
-  return {
-    bio: row.bio,
-    message: row.message,
-    location: row.location,
-    coverImage: row.coverUrl
-      ? { url: row.coverUrl, type: row.coverType, nsfwLevel: row.coverNsfwLevel }
-      : null,
-    sfwCoverImage: row.sfwCoverUrl
-      ? { url: row.sfwCoverUrl, type: row.sfwCoverType, nsfwLevel: row.sfwCoverNsfwLevel }
-      : null,
-  };
+    .where('up.userId', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map((row) => [
+      row.userId,
+      {
+        bio: row.bio,
+        message: row.message,
+        sfwBio: row.sfwBio,
+        sfwMessage: row.sfwMessage,
+        location: row.location,
+        coverImage: row.coverUrl
+          ? {
+              id: row.coverId ?? undefined,
+              url: row.coverUrl,
+              type: row.coverType,
+              nsfwLevel: row.coverNsfwLevel,
+              minor: row.coverMinor ?? false,
+              acceptableMinor: row.coverAcceptableMinor ?? false,
+            }
+          : null,
+        sfwCoverImage: row.sfwCoverUrl
+          ? {
+              id: row.sfwCoverId ?? undefined,
+              url: row.sfwCoverUrl,
+              type: row.sfwCoverType,
+              nsfwLevel: row.sfwCoverNsfwLevel,
+              minor: row.sfwCoverMinor ?? false,
+              acceptableMinor: row.sfwCoverAcceptableMinor ?? false,
+            }
+          : null,
+      },
+    ])
+  );
+}
+
+/** The avatars of many accounts in one read. `User.image` is the legacy URL; the modern avatar is the
+ *  Image row behind `profilePictureId` (see `getIdentity`). */
+export async function getProfilePictures(userIds: number[]): Promise<Map<number, ProfileMedia>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
+    .selectFrom('User as u')
+    .innerJoin('Image as i', 'i.id', 'u.profilePictureId')
+    .select([
+      'u.id as userId',
+      'i.id',
+      'i.url',
+      sql<string>`i.type::text`.as('type'),
+      'i.nsfwLevel',
+      'i.minor',
+      'i.acceptableMinor',
+    ])
+    .where('u.id', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map(({ userId, ...media }) => [userId, media] satisfies [number, ProfileMedia])
+  );
 }
 
 async function getScores(userId: number): Promise<UserScores | null> {

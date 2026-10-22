@@ -7,10 +7,12 @@ import {
   flaggedDecisionEnabled,
   flaggedDecisions,
   flaggedReasonGroups,
+  appealRuling,
   needsReviewDecisions,
   parseKeptIds,
   planDecision,
   planReasonProblem,
+  routesThroughAppeal,
   type FlagRef,
 } from '../flagged-decision';
 
@@ -21,19 +23,21 @@ describe('flaggedDecisionEnabled', () => {
     }
   });
 
-  it('turns keep off but leaves lift on for a hash row under appeal', () => {
-    expect(flaggedDecisionEnabled({ source: 'hash', hasPendingAppeal: true })).toEqual([
-      false,
-      true,
-    ]);
-  });
+  it.each(['hash', 'text-scan'] as const)(
+    'leaves both keys on for a %s row under appeal: the ruling resolves the appeal',
+    (source) => {
+      expect(flaggedDecisionEnabled({ source, hasPendingAppeal: true })).toEqual([true, true]);
+    }
+  );
 
-  it('turns keep off but leaves lift on for a text-scan row under appeal', () => {
-    expect(flaggedDecisionEnabled({ source: 'text-scan', hasPendingAppeal: true })).toEqual([
-      false,
-      true,
-    ]);
-  });
+  it.each(['hash', 'text-scan'] as const)(
+    'locks both keys for a %s row under appeal when the viewer lacks the Appeals tab',
+    (source) => {
+      const row = { source, hasPendingAppeal: true, canRuleAppeals: false };
+      expect(flaggedDecisionEnabled(row)).toEqual([false, false]);
+      expect(flaggedDecisionEnabled({ ...row, hasPendingAppeal: false })).toEqual([true, true]);
+    }
+  );
 
   it('locks both keys for a re-detection under appeal', () => {
     expect(flaggedDecisionEnabled({ source: 'redetected', hasPendingAppeal: true })).toEqual([
@@ -81,12 +85,11 @@ describe('decisionEnabled', () => {
   ];
   it('allows a decision only when every flag allows its part of it', () => {
     const [confirm, revert, keepMinor, keepPoi] = flaggedDecisions(both);
-    // An open appeal blocks keeping either flag, so only Revert both is left.
     expect([confirm, revert, keepMinor, keepPoi].map((d) => decisionEnabled(both, d))).toEqual([
-      false,
       true,
-      false,
-      false,
+      true,
+      true,
+      true,
     ]);
   });
 
@@ -235,5 +238,62 @@ describe('decisionReasonList', () => {
   it('offers the revert reasons for a revert and for a split, whose reason explains its revert', () => {
     expect(decisionReasonList(groups, revert, 2)).toBe(groups[1].reasons);
     expect(decisionReasonList(groups, split, 2)).toBe(groups[1].reasons);
+  });
+});
+
+describe('an Auto-flagged row with a pending appeal', () => {
+  const plan = (keep: string[], flags: FlagRef[] = [minorText, poiText]) =>
+    planDecision(flags, keep);
+
+  it('routes through the appeal only for hash and text-scan flags', () => {
+    expect(routesThroughAppeal([minorHash, poiText], true)).toBe(true);
+    expect(routesThroughAppeal([minorHash, poiText], false)).toBe(false);
+    expect(routesThroughAppeal([minorHeld], true)).toBe(false);
+  });
+
+  it('keeping every flag rejects the appeal, reverting every flag approves it', () => {
+    expect(appealRuling(plan(['minor:text-scan', 'poi:text-scan']))).toEqual({
+      verdict: 'Rejected',
+      lifted: [],
+      perLabel: null,
+    });
+    expect(appealRuling(plan([]))).toEqual({
+      verdict: 'Approved',
+      lifted: ['minor', 'poi'],
+      perLabel: null,
+    });
+  });
+
+  it('a split rules each label and approves the appeal for the reverted ones', () => {
+    expect(appealRuling(plan(['minor:text-scan']))).toEqual({
+      verdict: 'Approved',
+      lifted: ['poi'],
+      perLabel: { minor: 'uphold', poi: 'overturn' },
+    });
+  });
+
+  it('refuses a label that is both kept and reverted', () => {
+    expect(appealRuling(plan(['minor:hash'], [minorHash, minorText]))).toEqual({
+      error: expect.stringMatching(/same label/),
+    });
+  });
+
+  it('checks the reason against the appeal verdict, not the flag-review lists', () => {
+    const keepAll = plan(['minor:text-scan', 'poi:text-scan']);
+    expect(planReasonProblem(keepAll, 'Confirm both flags', 'flag-confirmed', '', true)).toBeNull();
+    expect(planReasonProblem(keepAll, 'Confirm both flags', 'detection-correct', '', true)).toMatch(
+      /not a reason/
+    );
+    expect(planReasonProblem(plan([]), 'Revert both', '', '', true)).toMatch(/Pick a reason/);
+    // A hash flag records no reason outside an appeal; the appeal always needs one.
+    expect(planReasonProblem(plan(['minor:hash'], [minorHash]), 'Confirm', '', '', true)).toMatch(
+      /Pick a reason/
+    );
+  });
+
+  it('offers the appeal reasons for keep and revert', () => {
+    const groups = flaggedReasonGroups([minorHash], { keep: 'Confirm', revert: 'Revert' }, true)!;
+    expect(groups[0].reasons.map((r) => r.value)).toEqual(['flag-confirmed', 'other']);
+    expect(groups[1].reasons.map((r) => r.value)).toContain('not-a-minor');
   });
 });

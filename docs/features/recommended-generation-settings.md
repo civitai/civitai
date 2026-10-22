@@ -1,6 +1,6 @@
 # Turbo LoRAs and the Turbo picker
 
-> Status: **PR 1 merged (#6350), PR 2 in progress** (2026-10-20). Agreed in the 2026-10-19 sync
+> Status: **PR 1 merged (#6350), PR 2 merged (#6463), resource data shape and weight split built on `feat/generation-resource-settings`, unmerged** (2026-10-20). Agreed in the 2026-10-19 sync
 > and refined with Briant the same day. Also covers where the MOSS Turbo toggle's
 > default LoRA lives.
 
@@ -101,10 +101,12 @@
 
 ## Reaching the generator
 
-A version's `turbo` block and a checkpoint's `generation.turboLora` ride the resource
-data the generator already hydrates, so nothing new is plumbed. Both are
-client-supplied by the time the graph sees them: they steer defaults and zones
-only, never a slider's range, and the orchestrator handlers do not read them.
+A version's settings ride the resource data the generator already hydrates:
+`settings` (the strength bounds and default, clip skip, and a checkpoint's
+companion turbo LoRA), the `turbo` flag and `recommendedSettings` (steps and
+CFG bands), per the shape below. All are client-supplied by the time the graph
+sees them: they steer defaults and zones only, never a slider's range, and the
+orchestrator handlers do not read them.
 
 ## Graph
 
@@ -116,11 +118,8 @@ first. The decisions the block encodes:
 
 - Turbo on is a turbo LoRA in `resources`. A LoRA added by hand and one added by
   the toggle are the same state, nothing merges at submit, and off means no turbo
-  LoRA at all. The pick (`turboLora`, per checkpoint) is client memory and never
-  rides the request.
-- A resource counts as turbo when it carries a `turbo` block, is the family
-  default, or is the current pick. The default pick is the checkpoint's own
-  `turboLora` (with the strength the checkpoint set), else the family's.
+  LoRA at all. The pick (the form's `turboLora` field, per checkpoint; not the resource's `settings.turboLora`) is client memory and never rides the request.
+- A resource counts as turbo when it carries the `turbo` flag, is the family default, or is the current pick. The default pick is the checkpoint's own `settings.turboLora` (with the strength the checkpoint set), else the family's.
 - One turbo LoRA at most: two distillations fight over the sampling schedule
   and the row has one slot, so a later arrival replaces the earlier one (a
   `correct`, during the parse). The active LoRA, which the row and the sliders
@@ -158,8 +157,7 @@ first. The decisions the block encodes:
 ## Rollout
 
 Two PRs (Briant, 2026-10-19), so the first can deploy and make turbo versions
-searchable before the generator changes land. A third change, the resource data
-shape below, follows PR 2 on its own (Briant, 2026-10-20).
+searchable before the generator changes land. A third PR, the resource data shape below, followed PR 2 (Briant, 2026-10-20).
 
 1. **PR 1: editor and index.** Settings schema, the version editor (Turbo section,
    the default turbo LoRA picker), ecosystem turbo defaults as the opt-in,
@@ -181,57 +179,48 @@ shape below, follows PR 2 on its own (Briant, 2026-10-20).
 Tests live beside the code; the MOSS turbo suite is the behaviour spec for the
 block, and the paint itself has no browser test, by choice.
 
-## Next: the resource data shape
+## The resource data shape
 
-Decided with Briant on 2026-10-20, deliberately kept out of PR 2 because it
-touches far more than turbo. PR 2 ships `turbo` and `turboLora` as two
-top-level fields on `GenerationResourceBase`; this change gives them, and the
-fields that were already loose, a home.
+Decided with Briant on 2026-10-20 and built right after PR 2 (#6463), which had
+shipped `turbo` and `turboLora` as two top-level fields on
+`GenerationResourceBase`. This gives them, and the fields that were already
+loose, a home.
 
 The rule: **settings** are what a resource requires or fixes, **recommended
 settings** are advisory bands inside the graph's own range that the user may
 leave, and being a turbo variant is a fact about the resource, so it is its own
-flag. Clip skip is a requirement, not advice; the VAE and the default turbo LoRA
-are companions a checkpoint starts with, the same kind of thing as each other.
+flag. Clip skip is a requirement, not advice; the default turbo LoRA is a
+companion a checkpoint starts with.
 
 ```ts
 // GenerationResourceBase: the server's resource data, for display and hydration
 settings: {
   strength: Range; // was minStrength / maxStrength / strength
   clipSkip?: number; // was top level
-  vae?: number; // was vaeId
   turboLora?: { id: number; strength?: number };
 };
 turbo?: boolean; // the variant flag the models index already carries
 recommendedSettings?: { steps?: Range; cfgScale?: Range };
 ```
 
-- `RecommendedRange` becomes `Range`. Nothing else declares that name.
-- The data type loses its top-level `strength`; only the form's resource value
-  keeps one, as the chosen amount the request needs. The four places that turn
-  data into a value set it from `settings.strength.default`: the picker's
-  commit, the Turbo row's add, the create/remix converter and the blocks
-  projection. Today the one field means both things and callers guess which.
+- The data type (`GenerationResource`) carries no weight; `GenerationResourceValue` adds the chosen one, and `asResourceValue` (`shared/utils/resource.utils`) is the one way data becomes a value, taking the chosen weight or the version's default. The server hands out values where a weight is already decided (generation data for the create button and remix, a version's recommended resources, the orchestrator's enriched step resources) and data everywhere else.
 - The turbo flag replaces presence of the turbo block as the test for a turbo
   LoRA, in the graph, the row's badge and the picker's exclusion, so a
   checkpoint may later recommend steps and CFG without reading as turbo. The
   band stays the recommendation; the ecosystem presets stay the fallback.
 - The MOSS graph's hard-coded defaults (25 steps, CFG 3) become a checkpoint's
   own recommendation once the editor can save one; that is the first use.
-- `RecommendedRange` becomes `Range`; the graph's inline `turboRangeSchema` in
-  `defs.ts` is the same shape and should derive from it.
+- `RecommendedRange` is now `Range` (`basemodel.constants.ts`), with one zod form in `src/shared/zod/range.schema.ts` that the graph and the server both use.
 - Identity, access, pricing and trained words (content the generator inserts,
   not a setting) stay on the base type; the substitute inherits the shape.
 
-Cost: the flattened strength fields are read in about fifteen non-test files,
-almost all mechanically. Two need care: the public App Blocks resource projection keeps
+Cost: the flattened strength fields were read across the picker, the form helpers, the controllers and the server mapping, almost all mechanically. Two need care: the public App Blocks resource projection keeps
 emitting the flat fields, mapped from the new shape, so external readers do
-not break; and stored client intent carrying the old fields stops reading as
-turbo until the resource is re-added, which is harmless.
+not break; and form state saved before the shape still renders (a missing range falls back to the full bounds, an old turbo block still reads as the flag) but is not re-fetched: such a LoRA shows the full strength range and such a checkpoint starts Turbo on the family default until the user picks it again. Re-fetching was tried and dropped: it swapped a saved training epoch for the latest and left a deleted version as a skeleton with no remove control.
 
-Closes when the shape above is on `main`, the blocks resource endpoint test
-(`src/tests/api/v1/blocks/generation-resources-endpoint.test.ts`) still passes on
-the flat output, and Briant has reviewed the diff of the data-to-value sites.
+Done (on `feat/generation-resource-settings`): the shape is in the types, the graph and the server mapping, with the mapping pinned by a test of its own, and the weight is split off the data type (`GenerationResourceValue`, `asResourceValue`). The blocks resource endpoint keeps its flat output (its test and the projection test pin it). The version editor's recommended-resources read sets only the pairing's own strength on the resource (the version's default when the row has none), since that is the one value its row sets; the rest of a row's settings JSON is a historical shape and is not read.
+
+Not done, by design: no editor saves a checkpoint's `recommendedSettings` yet, so the MOSS graph's hard-coded 25 steps and CFG 3 stay until one does. A `settings.vae` field was planned and dropped (Briant, 2026-10-21): nothing reads it, since a checkpoint's VAE is paired through linked components, and the idea of a checkpoint loading its VAE with it is not being built. Nothing here is a tracked item.
 
 ## Closing conditions
 

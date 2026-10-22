@@ -3,7 +3,7 @@
 import { getPostScheduleError } from '@civitai/shared/post-scheduling';
 import type { PlannerPost } from '../host';
 import { moveToDay } from './calendar';
-import { isScheduled, moveSetIssues, type PlannedMove } from './posts';
+import { isSelectable, moveSetIssues, type PlannedMove } from './posts';
 
 export type ShiftUnit = 'days' | 'hours';
 
@@ -22,9 +22,7 @@ export type MovePreview = {
 
 /** Release posts are never moved in bulk, so they drop out here as they do on the server. */
 function movable(posts: PlannerPost[], selectedIds: ReadonlySet<number>, now: Date): PlannerPost[] {
-  return posts.filter(
-    (post) => selectedIds.has(post.id) && !post.release && isScheduled(post, now)
-  );
+  return posts.filter((post) => selectedIds.has(post.id) && isSelectable(post, now));
 }
 
 export function shiftMoves(

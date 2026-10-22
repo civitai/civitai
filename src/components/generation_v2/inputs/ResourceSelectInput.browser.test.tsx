@@ -133,9 +133,8 @@ const makeContext = (over: Partial<Record<string, unknown>> = {}) =>
   } as any);
 
 // `useResourceData` returns { data, isLoading }; default = nothing fetched.
-const useResourceDataResult = (
-  over: Partial<{ data: unknown; isLoading: boolean }> = {}
-) => ({ data: undefined, isLoading: false, ...over } as any);
+const useResourceDataResult = (over: Partial<{ data: unknown; isLoading: boolean }> = {}) =>
+  ({ data: undefined, isLoading: false, ...over } as any);
 
 // A faithful, fully-hydrated GenerationResource (has model + name, so
 // needsHydration() is false and the component can render it directly).
@@ -147,8 +146,7 @@ const makeResource = (over: Partial<Record<string, unknown>> = {}) =>
     baseModel: 'SD1',
     canGenerate: true,
     hasAccess: true,
-    minStrength: -1,
-    maxStrength: 2,
+    settings: { strength: { min: -1, max: 2, default: 1 } },
     strength: 1,
     air: 'urn:air:sd1:checkpoint:civitai:1@555',
     model: { id: 42, name: 'My Cool Model', type: 'Checkpoint' as const },
@@ -196,9 +194,7 @@ describe('ResourceSelectInput (required-context-backed)', () => {
     const resource = makeResource({ model: { id: 42, name: 'My Cool Model', type: 'Checkpoint' } });
     useResourceDataMock.mockReturnValue(useResourceDataResult({ data: resource }));
 
-    renderWithProviders(
-      <ResourceSelectInput value={{ id: 555 }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<ResourceSelectInput value={{ id: 555 }} onChange={vi.fn()} />);
 
     // resourceData = fetchedData -> ResourceCard -> (stubbed) ResourceItemContent.
     await expect.element(page.getByTestId('resource-item')).toBeInTheDocument();
@@ -218,9 +214,7 @@ describe('ResourceSelectInput (required-context-backed)', () => {
     await expect.element(page.getByTestId('resource-item')).not.toBeInTheDocument();
     // ...the ResourceCardSkeleton uses Mantine <Skeleton> elements (no role/text,
     // so query the live DOM for the Mantine Skeleton class).
-    await vi.waitFor(() =>
-      expect(document.querySelector('.mantine-Skeleton-root')).not.toBeNull()
-    );
+    await vi.waitFor(() => expect(document.querySelector('.mantine-Skeleton-root')).not.toBeNull());
   });
 
   test('remove (X) handler calls onChange(undefined)', async () => {
@@ -246,9 +240,7 @@ describe('ResourceSelectInput (required-context-backed)', () => {
     const resource = makeResource();
     useResourceDataMock.mockReturnValue(useResourceDataResult({ data: resource }));
 
-    renderWithProviders(
-      <ResourceSelectInput value={{ id: 555 }} onChange={vi.fn()} allowSwap />
-    );
+    renderWithProviders(<ResourceSelectInput value={{ id: 555 }} onChange={vi.fn()} allowSwap />);
 
     await page.getByRole('button', { name: 'Swap', exact: true }).click();
 

@@ -1633,6 +1633,9 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   domain?: DomainColor;
   // Server-only: not in the tRPC schema, so a client cannot set or lift it.
   newCreatorsMaxFollowers?: number;
+  // Server-only: the caller takes a post's images in the requested sort (the gallery's post
+  // completion), so the feed service may serve `postIds` for the website too.
+  postIdsInRequestedSort?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;

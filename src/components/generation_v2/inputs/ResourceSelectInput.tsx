@@ -18,6 +18,8 @@ import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { clampStrength } from '~/shared/constants/generation.constants';
+import { asResourceValue, defaultStrength } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
@@ -134,7 +136,7 @@ function ResourceCard({
     >
       <ResourceItemContent
         resource={resource}
-        strengthValue={value.strength ?? resource.strength}
+        strengthValue={value.strength ?? defaultStrength(resource)}
         onStrengthChange={
           // Don't allow strength changes for disabled resources
           onChange && !resourceIsDisabled
@@ -152,7 +154,14 @@ function ResourceCard({
                 color="blue"
                 radius="xl"
                 size="compact-xs"
-                onClick={() => onChange({ ...value, ...resource.substitute! })}
+                onClick={() => {
+                  const substitute = resource.substitute!;
+                  onChange({
+                    ...value,
+                    ...substitute,
+                    strength: clampStrength(value.strength, substitute.settings.strength),
+                  });
+                }}
                 leftSection={<IconRotate size={14} />}
               >
                 Use Substitute
@@ -250,7 +259,7 @@ export function ResourceSelectInput({
   const handleVersionChange = (stringId: string) => {
     const numericId = Number(stringId);
     const versionResourceData = getResourceData(numericId);
-    onChange?.(versionResourceData);
+    onChange?.(versionResourceData && asResourceValue(versionResourceData));
   };
 
   const handleOpenResourceSearch = () => {
@@ -297,10 +306,7 @@ export function ResourceSelectInput({
 
   // Render selected resource
   // Use resourceData as the canonical value, with strength from form state
-  const displayValue: ResourceSelectValue = {
-    ...resourceData,
-    strength: value.strength ?? resourceData.strength,
-  };
+  const displayValue: ResourceSelectValue = asResourceValue(resourceData, value.strength);
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
