@@ -13,7 +13,8 @@ const reports = {
 };
 
 vi.mock('~/server/common/mod-alert', () => ({ notifyModAlert }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {} }));
+// The pgDb mock parity guard requires every pgDb export in the inline factory.
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('@civitai/telemetry/client', () => ({
   registerGauge: () => ({ set: () => undefined }),
   registerGaugeWithLabels: () => ({ set: () => undefined }),
