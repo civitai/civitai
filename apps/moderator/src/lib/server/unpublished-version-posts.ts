@@ -219,7 +219,12 @@ export async function enqueueUnpublishedVersionPosts({
       cursor = last;
     }
   } catch (e) {
-    void logAxiomError(e, { event: 'enqueue unpublished version posts page failed', reported });
+    // The Loki alert matches this event text (see logAxiomError); `source` says which job it was.
+    void logAxiomError(e, {
+      event: 'unhandled server error',
+      source: 'enqueue unpublished version posts',
+      reported,
+    });
     return { ok: false, reason: 'failed', reported, plan };
   }
   return { ok: true, reported, plan };

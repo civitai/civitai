@@ -36,8 +36,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 export const actions: Actions = {
   dryRun: async ({ request, locals }) => {
     requireAccess(locals.user, PAGE);
-    const input = parseForm(z.object({ reasons: reasonsField }), await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
+    const form = await request.formData();
+    const input = parseForm(z.object({ reasons: reasonsField }), form);
+    // The text as typed, so a refused list stays in the box to be corrected.
+    if (typeof input === 'string')
+      return fail(400, {
+        error: input,
+        typedReasons: String(form.get('reasons') ?? '').slice(0, 4000),
+      });
 
     return {
       kind: 'plan' as const,

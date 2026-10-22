@@ -19,17 +19,31 @@
   };
 
   let pending = $state(false);
+  // The counts stay on screen through a mistyped count (a 400 that names the same reasons), so the
+  // operator can read them again; anything else replaces or clears them.
+  let plan = $state<NonNullable<ActionData>['plan']>();
   // Keep what was typed: a reset after submit would clear the reasons the run form is built from.
   const submit: SubmitFunction = () => {
     pending = true;
-    return async ({ update }) => {
-      await update({ reset: false });
-      pending = false;
+    return async ({ result, update }) => {
+      try {
+        await update({ reset: false });
+        const data = result.type === 'success' || result.type === 'failure' ? result.data : undefined;
+        if (data?.plan) plan = data.plan;
+        else if (!(result.type === 'failure' && result.status === 400 && data?.reasons))
+          plan = undefined;
+      } finally {
+        pending = false;
+      }
     };
   };
 
   const reasons = $derived(form && 'reasons' in form && form.reasons ? form.reasons : []);
-  const plan = $derived(form && 'plan' in form ? form.plan : undefined);
+  const reasonsText = $derived(
+    form && 'typedReasons' in form && form.typedReasons !== undefined
+      ? form.typedReasons
+      : reasons.join('\n')
+  );
 </script>
 
 <header class="page-header">
@@ -56,7 +70,7 @@
   <h2 class="mb-1 text-sm font-semibold text-white">1. Dry run</h2>
   <p class="mb-3 text-xs text-dark-2">Counts only. Unpublish reason codes, one per line.</p>
   <form method="POST" action="?/dryRun" use:enhance={submit} class="space-y-2">
-    <Textarea name="reasons" rows={4} class="font-mono" value={reasons.join('\n')} required />
+    <Textarea name="reasons" rows={4} class="font-mono" value={reasonsText} required />
     <Button type="submit" variant="outline" disabled={pending}>Dry run</Button>
   </form>
 
@@ -66,11 +80,11 @@
       <dd class="font-semibold text-white">{num(plan.eligible)}</dd>
       {#each Object.entries(plan.byReason) as [reason, count] (reason)}
         <dt class="pl-3 font-mono text-dark-2">{reason}</dt>
-        <dd>{num(count)}</dd>
+        <dd class="text-dark-0">{num(count)}</dd>
       {/each}
       {#each Object.entries(plan.excluded) as [key, count] (key)}
         <dt class="text-dark-2">Skipped: {EXCLUSION_LABELS[key] ?? key}</dt>
-        <dd>{num(count)}</dd>
+        <dd class="text-dark-0">{num(count)}</dd>
       {/each}
     </dl>
   {/if}
@@ -83,6 +97,8 @@
       Files reports for <span class="font-mono">{reasons.join(', ')}</span>. Type the eligible count
       from the dry run; if it has moved, nothing is filed.
     </p>
+    <!-- Keyed on the result, so a count typed for one dry run is never left in the box for the next. -->
+    {#key form}
     <form method="POST" action="?/run" use:enhance={submit} class="flex flex-wrap gap-2">
       <input type="hidden" name="reasons" value={reasons.join('\n')} />
       <Input
@@ -95,6 +111,7 @@
       />
       <Button type="submit" disabled={pending}>Run</Button>
     </form>
+    {/key}
   {:else}
     <p class="text-sm text-dark-2">Dry-run first.</p>
   {/if}

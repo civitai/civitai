@@ -65,7 +65,11 @@ describe('dry run', () => {
   });
 
   it('refuses an empty reason list', async () => {
-    expect(await post('dryRun', { reasons: ' \n, ' })).toMatchObject({ status: 400 });
+    // The text comes back as typed, so the box is not wiped by the refusal.
+    expect(await post('dryRun', { reasons: ' \n, ' })).toMatchObject({
+      status: 400,
+      data: { typedReasons: ' \n, ' },
+    });
     expect(svc.planEnqueue).not.toHaveBeenCalled();
   });
 });

@@ -316,9 +316,10 @@ describe('enqueueing posts on unpublished resources for review', () => {
     expect(reports.rows[0].n).toBe(1);
     const activity = await pg.query<{ entityId: number }>(`SELECT "entityId" FROM "ModActivity"`);
     expect(activity.rows.map((r) => r.entityId)).toEqual([101]);
-    // The structured error line the alerting reads, not a console line.
+    // The alert matches the `unhandled server error` event text, so a failed page pages someone.
     expect(logAxiomError).toHaveBeenCalledExactlyOnceWith(expect.any(Error), {
-      event: 'enqueue unpublished version posts page failed',
+      event: 'unhandled server error',
+      source: 'enqueue unpublished version posts',
       reported: 1,
     });
   });
