@@ -117,7 +117,11 @@ describe('cleanupTextScanRows on csam holds', () => {
   const db = { pg: null as unknown as PGlite };
   const asRawSql = (strings: TemplateStringsArray, values: unknown[]) =>
     strings.reduce((acc, part, i) => acc + part + (i < values.length ? `$${i + 1}` : ''), '');
-  const SUPERSEDED = { decision: 'superseded', superseded: true, supersededBy: 1 };
+  const superseded = (by: number) => ({
+    decision: 'superseded',
+    superseded: true,
+    supersededBy: by,
+  });
 
   beforeAll(async () => {
     db.pg = await PGlite.create();
@@ -150,9 +154,10 @@ describe('cleanupTextScanRows on csam holds', () => {
     meta: object
   ) =>
     db.pg.query(
-      `INSERT INTO "TextScanHold" ("entityType","entityId","label","textHash","text","reason","status",
+      // The id is the entity id, so `supersededBy` can name a row.
+      `INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","text","reason","status",
          "decidedAt","decidedById","meta","updatedAt")
-       VALUES ('Comment',$1,'csam','h','held text','r',$2,$3,$4,$5::jsonb,now())`,
+       VALUES ($1,'Comment',$1,'csam','h','held text','r',$2,$3,$4,$5::jsonb,now())`,
       [entityId, status, decidedAt, decidedById, JSON.stringify(meta)]
     );
   const held = async () =>
@@ -162,29 +167,48 @@ describe('cleanupTextScanRows on csam holds', () => {
       )
     ).rows;
 
-  it('clears dismissed and superseded holds 30 days after the decision, keeping the superseded marker', async () => {
-    // System time is 2026-10-01; the cutoff is 2026-09-01.
-    await hold(1, 'Dismissed', '2026-08-31T00:00:00', 9, { decision: 'dismiss', note: 'x' });
-    await hold(2, 'Dismissed', '2026-08-31T00:00:00', null, SUPERSEDED);
-    await hold(3, 'Dismissed', '2026-09-02T00:00:00', null, SUPERSEDED);
-    await hold(4, 'Dismissed', '2026-09-02T00:00:00', 9, { decision: 'dismiss' });
-    await hold(5, 'Pending', null, null, { decisionClaim: { by: 9 } });
-    await hold(6, 'Confirmed', '2026-08-31T00:00:00', 9, { decision: 'remove' });
+  const PAST = '2026-08-31T00:00:00';
+  const RECENT = '2026-09-02T00:00:00';
+  const sweep = () =>
+    cleanupTextScanRows({ graduatedEntityTypes: [], cleanRowEntityTypes: [], olderThanDays: 1 });
 
-    const result = await cleanupTextScanRows({
-      graduatedEntityTypes: [],
-      cleanRowEntityTypes: [],
-      olderThanDays: 1,
-    });
+  // System time is 2026-10-01, so the cutoff is 2026-09-01.
+  it('clears a dismissed hold 30 days after its decision, never a pending or confirmed one', async () => {
+    await hold(1, 'Dismissed', PAST, 9, { decision: 'dismiss', note: 'x' });
+    await hold(2, 'Dismissed', RECENT, 9, { decision: 'dismiss' });
+    await hold(3, 'Pending', null, null, { decisionClaim: { by: 9 } });
+    await hold(4, 'Confirmed', PAST, 9, { decision: 'remove' });
 
-    expect(result.holdTextCleared).toBe(2);
+    expect((await sweep()).holdTextCleared).toBe(1);
     expect(await held()).toEqual([
       { entityId: 1, text: '', meta: null },
-      { entityId: 2, text: '', meta: SUPERSEDED },
-      { entityId: 3, text: 'held text', meta: SUPERSEDED },
-      { entityId: 4, text: 'held text', meta: { decision: 'dismiss' } },
-      { entityId: 5, text: 'held text', meta: { decisionClaim: { by: 9 } } },
-      { entityId: 6, text: 'held text', meta: { decision: 'remove' } },
+      { entityId: 2, text: 'held text', meta: { decision: 'dismiss' } },
+      { entityId: 3, text: 'held text', meta: { decisionClaim: { by: 9 } } },
+      { entityId: 4, text: 'held text', meta: { decision: 'remove' } },
+    ]);
+  });
+
+  it('clears a superseded hold only once the hold that replaced it is dismissed, both past 30 days', async () => {
+    await hold(1, 'Pending', null, null, {});
+    await hold(2, 'Confirmed', PAST, 9, { decision: 'remove' });
+    await hold(3, 'Dismissed', PAST, 9, { decision: 'dismiss' });
+    await hold(4, 'Dismissed', RECENT, 9, { decision: 'dismiss' });
+    await hold(11, 'Dismissed', PAST, null, superseded(1));
+    await hold(12, 'Dismissed', PAST, null, superseded(2));
+    await hold(13, 'Dismissed', PAST, null, superseded(3));
+    await hold(14, 'Dismissed', PAST, null, superseded(4));
+    await hold(15, 'Dismissed', RECENT, null, superseded(3));
+    await hold(16, 'Dismissed', PAST, null, superseded(99));
+
+    await sweep();
+    const rows = (await held()).filter((r) => r.entityId > 10);
+    expect(rows).toEqual([
+      { entityId: 11, text: 'held text', meta: superseded(1) },
+      { entityId: 12, text: 'held text', meta: superseded(2) },
+      { entityId: 13, text: '', meta: superseded(3) },
+      { entityId: 14, text: 'held text', meta: superseded(4) },
+      { entityId: 15, text: 'held text', meta: superseded(3) },
+      { entityId: 16, text: 'held text', meta: superseded(99) },
     ]);
   });
 });

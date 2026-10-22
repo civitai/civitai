@@ -86,19 +86,26 @@ export async function cleanupTextScanRows({
     : { deleted: 0, exhausted: false };
 
   // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet. A
-  // migration-superseded duplicate keeps its marker, which the hold writer and the queue read to tell it
-  // from a ruling.
-  const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days');
+  // migration-superseded duplicate was never reviewed, so it goes only once the hold that replaced it is
+  // dismissed too (a missing one keeps it); it keeps its marker, which the hold writer and the queue read
+  // to tell it from a ruling.
+  const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days').toISOString();
   const holdTextCleared = await dbWrite.$executeRaw`
-    UPDATE "TextScanHold" SET
+    UPDATE "TextScanHold" h SET
       "text" = '',
-      "meta" = CASE WHEN "meta"->>'decision' = 'superseded'
+      "meta" = CASE WHEN h."meta"->>'decision' = 'superseded'
         THEN jsonb_build_object('decision', 'superseded', 'superseded', true,
-          'supersededBy', "meta"->'supersededBy')
+          'supersededBy', h."meta"->'supersededBy')
         END,
       "updatedAt" = now()
-    WHERE "status" = 'Dismissed' AND "text" <> ''
-      AND "decidedAt" < (${holdCutoff.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+    WHERE h."status" = 'Dismissed' AND h."text" <> ''
+      AND h."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')
+      AND (h."meta"->>'decision' IS DISTINCT FROM 'superseded' OR EXISTS (
+        SELECT 1 FROM "TextScanHold" k
+        WHERE k."id" = CASE WHEN jsonb_typeof(h."meta"->'supersededBy') = 'number'
+            THEN (h."meta"->>'supersededBy')::int END
+          AND k."status" = 'Dismissed'
+          AND k."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')))
   `;
 
   return {

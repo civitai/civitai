@@ -97,10 +97,12 @@ re-detection. The file is safe to run again.
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
-Thirty days after a hold is dismissed or superseded, the daily `text-scan-retention` job clears its text
-and meta (`meta.previous` included); the row, status, reason and ids stay, and a superseded hold keeps
-its `superseded` marker so it is still not read as a ruling. Confirmed holds are kept whole, text and
-meta included.
+Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta
+(`meta.previous` included); the row, status, reason and ids stay. Confirmed holds are kept whole, text
+and meta included. A hold the migration superseded was never reviewed, so it is cleared only once the
+hold that replaced it (`meta.supersededBy`) is dismissed too, 30 days after the later of the two
+decisions; while that hold is pending, confirmed or missing, the superseded text is kept. A cleared
+superseded hold keeps its `superseded` marker, so it is still not read as a ruling.
 
 ## Decisions
 
