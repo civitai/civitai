@@ -97,7 +97,6 @@ function stub(name: string) {
   Stub.displayName = `Stub(${name})`;
   return Stub;
 }
-vi.mock('next/dynamic', () => ({ default: () => stub('dynamic') }));
 vi.mock('~/components/Logo/Logo', () => ({ Logo: stub('logo') }));
 vi.mock('~/components/SupportButton/SupportButton', () => ({ SupportButton: stub('support') }));
 vi.mock('~/components/ReadOnlyNotice/ReadOnlyNotice', () => ({ ReadOnlyNotice: stub('ro') }));

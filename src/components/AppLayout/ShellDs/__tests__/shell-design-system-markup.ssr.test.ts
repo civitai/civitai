@@ -17,7 +17,6 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowsingAddonsModule from '~/providers/BrowsingSettingsAddonsProvider';
 import type * as ConsentModule from '~/components/Consent/consent.context';
-import type * as PrivacyUiModule from '~/components/Consent/privacy-ui';
 
 const state = vi.hoisted(() => ({ ds: false, live: false }));
 
@@ -43,9 +42,6 @@ vi.mock('~/components/Consent/consent.context', async (importOriginal) => ({
   ...(await importOriginal<typeof ConsentModule>()),
   useThirdPartyConsent: () => ({ required: true, reset: () => undefined }),
 }));
-vi.mock('~/components/Consent/privacy-ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof PrivacyUiModule>();
-  actual.usePrivacyUiStore.setState({ visible: true });
   return actual;
 });
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -150,9 +146,15 @@ describe('AppFooter server render, shellDesignSystemMarkup ON', () => {
     const twitch = renderFooter().querySelector('a[href="/twitch"]');
     expect(twitch?.getAttribute('title')).toBe('Live now!');
     expect(twitch?.getAttribute('data-variant')).toBe('filled');
+    // Mantine's ActionIcon also emits `data-variant="filled"`, so the line above alone cannot tell
+    // the two footers apart.
+    expect(twitch?.getAttribute('data-civitai-ui')).toBe('button');
   });
 
-  it('renders the consent links and scroll-to-top as native design-system buttons', () => {
+  // `PrivacyPreferencesFooterLink` is absent from every server render, whatever the flag: its
+  // zustand store answers React's SERVER snapshot (the initial `visible: false`) during SSR, and
+  // the CMP only flips it on the client. The geometry test covers it, rendering on the client.
+  it('renders the consent link and scroll-to-top as native design-system buttons', () => {
     state.ds = true;
     const buttons = [...renderFooter().querySelectorAll('footer button')].map((b) => ({
       ...attrs(b),
@@ -164,7 +166,6 @@ describe('AppFooter server render, shellDesignSystemMarkup ON', () => {
     expect(buttons).toEqual([
       { text: '', ariaLabel: 'Scroll to top', ...none, variant: 'filled', size: 'md' },
       { text: 'Manage cookies', ariaLabel: null, ...none, variant: 'subtle', size: 'sm' },
-      { text: 'Privacy Preferences', ariaLabel: null, ...none, variant: 'subtle', size: 'sm' },
     ]);
   });
 
@@ -174,7 +175,7 @@ describe('AppFooter server render, shellDesignSystemMarkup ON', () => {
     for (const cls of [...MANTINE_BUTTON_CLASSES, 'mantine-Text-root'])
       expect(doc.getElementsByClassName(cls), cls).toHaveLength(0);
     // Control: the selector machinery sees the design-system buttons it is replacing them with.
-    expect(doc.querySelectorAll('[data-civitai-ui="button"]')).toHaveLength(19);
+    expect(doc.querySelectorAll('[data-civitai-ui="button"]')).toHaveLength(18);
     const copyright = doc.querySelector('footer p');
     expect(copyright?.textContent).toBe(`© Civitai ${new Date().getFullYear()}`);
   });
@@ -184,7 +185,7 @@ describe('AppFooter server render, shellDesignSystemMarkup OFF', () => {
   it('still renders the Mantine footer, with the same links', () => {
     const doc = renderFooter();
     expect(doc.querySelectorAll('[data-civitai-ui]')).toHaveLength(0);
-    expect(doc.getElementsByClassName('mantine-Button-root')).toHaveLength(11);
+    expect(doc.getElementsByClassName('mantine-Button-root')).toHaveLength(10);
     expect(doc.getElementsByClassName('mantine-ActionIcon-root')).toHaveLength(8);
     expect(doc.getElementsByClassName('mantine-Text-root')).toHaveLength(1);
     const tos = doc.querySelector('footer a[href="/content/tos"]');
@@ -199,7 +200,7 @@ describe('AppFooter server render, shellDesignSystemMarkup OFF', () => {
     const off = controls(renderFooter());
     state.ds = true;
     const on = controls(renderFooter());
-    expect(off).toHaveLength(19);
+    expect(off).toHaveLength(18);
     expect(on).toEqual(off);
   });
 });
