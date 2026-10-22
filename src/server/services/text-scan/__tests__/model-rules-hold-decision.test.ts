@@ -413,6 +413,22 @@ describe('retrying after an effect already ran', () => {
     expect(ruled).toMatchObject({ status: 'Dismissed' });
     expect(ruled.restoredAt).toBeInstanceOf(Date);
   });
+
+  it('aborts loudly when the effect marker cannot be recorded, leaving the new claim holder alone', async () => {
+    await seed({ mode: 'shadow' });
+    // The claim is taken over while the strike runs, so the marker write matches no row.
+    mocks.createStrike.mockImplementationOnce(async () => {
+      await db.pg.query(
+        `UPDATE "TextScanHold" SET meta = meta || jsonb_build_object('decisionClaim', jsonb_build_object('by', 8, 'at', now() + interval '1 second'))`
+      );
+      return { id: 31 };
+    });
+    await expect(decide('confirm_strike')).rejects.toMatchObject({ code: 'CONFLICT' });
+    const left = await hold();
+    expect(left.status).toBe('Pending');
+    expect(left.meta).toMatchObject({ decisionClaim: { by: 8 } });
+    expect(left.meta).not.toHaveProperty('effects');
+  });
 });
 
 describe('what a hold means', () => {
@@ -571,6 +587,7 @@ describe('deciding holds in a batch', () => {
       [2, false],
       [3, true],
     ]);
+    expect(results[1]).toMatchObject({ refused: false });
     expect(decideOne.mock.calls.map(([a]) => [a.holdId, a.decision, a.batched])).toEqual([
       [1, 'confirm', true],
       [2, 'confirm', true],

@@ -7,6 +7,7 @@ import {
   MODEL_RULES_STALE_HOLD_MESSAGE,
   decideModelRulesHold,
   decideModelRulesHoldBatch,
+  isModelRulesHoldRefusal,
   resolveModelRulesHoldInput,
 } from '~/server/services/text-scan/model-rules-hold-decision';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -30,7 +31,7 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
   async handler(input, ctx) {
     const log = (
       result: { holdId: number; entityId?: number; userId?: number | null },
-      outcome: 'ok' | 'stale' | 'error'
+      outcome: 'ok' | 'stale' | 'refused' | 'error'
     ) =>
       logToAxiom({
         name: 'text-scan',
@@ -55,7 +56,10 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
       });
       const decided = results.flatMap((r) => (r.ok ? [r] : []));
       for (const r of results)
-        log(r.ok ? r : { holdId: r.holdId }, r.ok ? 'ok' : r.stale ? 'stale' : 'error');
+        log(
+          r.ok ? r : { holdId: r.holdId },
+          r.ok ? 'ok' : r.stale ? 'stale' : r.refused ? 'refused' : 'error'
+        );
       return {
         decision: input.decision,
         results,
@@ -95,6 +99,8 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
         { holdId: input.holdId },
         error instanceof TRPCError && error.message === MODEL_RULES_STALE_HOLD_MESSAGE
           ? 'stale'
+          : isModelRulesHoldRefusal(error)
+          ? 'refused'
           : 'error'
       );
       throw error;

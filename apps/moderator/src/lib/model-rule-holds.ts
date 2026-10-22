@@ -37,7 +37,9 @@ export const MODEL_RULE_HOLD_SORT_LABELS: Record<ModelRuleHoldSort, string> = {
   newest: 'Newest first',
 };
 
-export const modelRuleHoldFilterParams = (filters: ModelRuleHoldFilters): Record<string, string> => {
+export const modelRuleHoldFilterParams = (
+  filters: ModelRuleHoldFilters
+): Record<string, string> => {
   const params: Record<string, string> = {};
   for (const key of ['status', 'mode', 'sort'] as const)
     if (filters[key] !== DEFAULT_MODEL_RULE_HOLD_FILTERS[key]) params[key] = filters[key];
@@ -48,6 +50,12 @@ export const modelRuleHoldFilterParams = (filters: ModelRuleHoldFilters): Record
 /** Stored as the detection mode; the moderator sees Review (`shadow`) and Auto (`active`). */
 export type HoldMode = 'shadow' | 'active';
 export const modeLabel = (mode: HoldMode) => (mode === 'active' ? 'Auto' : 'Review');
+
+/** A stored model status in words: `UnpublishedViolation` reads "Unpublished violation". */
+export const modelStatusLabel = (status: string) =>
+  status
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/ (\w)/g, (_, c: string) => ` ${c.toLowerCase()}`);
 
 /** Mirrors the main app's `MODEL_RULES_HOLD_DECISIONS`. */
 export const MODEL_RULE_HOLD_DECISIONS = [
@@ -85,7 +93,11 @@ export function decisionButtons(mode: HoldMode): {
 }[] {
   const auto = mode === 'active';
   return [
-    { decision: 'confirm', label: auto ? 'Confirm — keep down' : 'Confirm — unpublish', tone: 'red' },
+    {
+      decision: 'confirm',
+      label: auto ? 'Confirm — keep down' : 'Confirm — unpublish',
+      tone: 'red',
+    },
     {
       decision: 'confirm_strike',
       label: auto ? 'Confirm — keep down + strike' : 'Confirm — unpublish + strike',

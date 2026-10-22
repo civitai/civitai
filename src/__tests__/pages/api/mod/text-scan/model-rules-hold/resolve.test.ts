@@ -5,7 +5,11 @@ import '~/__tests__/mocks/redis.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { TRPCError } from '@trpc/server';
-import { MODEL_RULES_STALE_HOLD_MESSAGE } from '~/server/services/text-scan/model-rules-hold-decision';
+import {
+  MODEL_RULES_MOVED_ON_MESSAGE,
+  MODEL_RULES_STALE_HOLD_MESSAGE,
+  MODEL_RULES_SUPERSEDED_MESSAGE,
+} from '~/server/services/text-scan/model-rules-hold-decision';
 import type * as DecisionModule from '~/server/services/text-scan/model-rules-hold-decision';
 
 const mocks = vi.hoisted(() => ({
@@ -167,8 +171,28 @@ describe('textScan.resolveModelRulesHold', () => {
     expect((await call({ holds, decision: 'confirm_strike' })).status).toBe(400);
   });
 
+  it('audits a batch refusal as refused and an unexpected failure as error', async () => {
+    mocks.decideBatch.mockResolvedValueOnce([
+      { holdId: 1, ok: false, stale: false, refused: true, error: 'moved on' },
+      { holdId: 2, ok: false, stale: false, refused: false, error: 'Could not apply.' },
+    ]);
+    await call({
+      holds: [
+        { holdId: 1, textHash: 'a' },
+        { holdId: 2, textHash: 'b' },
+      ],
+      decision: 'confirm',
+    });
+    const outcome = (holdId: number) =>
+      loggingMock.logToAxiom.mock.calls.find(([l]) => l.holdId === holdId)?.[0].outcome;
+    expect(outcome(1)).toBe('refused');
+    expect(outcome(2)).toBe('error');
+  });
+
   it.each([
     ['stale', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_STALE_HOLD_MESSAGE })],
+    ['refused', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_SUPERSEDED_MESSAGE })],
+    ['refused', new TRPCError({ code: 'CONFLICT', message: MODEL_RULES_MOVED_ON_MESSAGE })],
     ['error', new Error('db down')],
   ])('audits a single decision that fails as %s, as a batch does', async (outcome, failure) => {
     mocks.decide.mockRejectedValueOnce(failure);

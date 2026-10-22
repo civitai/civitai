@@ -51,10 +51,11 @@ export const MODEL_RULES_HOLD_BATCH_REASON = 'batch_apply';
 
 export const MODEL_RULES_STALE_HOLD_MESSAGE =
   'This hold changed after you opened it (the model text was edited). Reload to review the new text.';
-const SUPERSEDED_MESSAGE = 'A newer scan replaced this hold. Reload to review the current one.';
+export const MODEL_RULES_SUPERSEDED_MESSAGE =
+  'A newer scan replaced this hold. Reload to review the current one.';
 const UNKNOWN_VERSIONS_MESSAGE =
   'This hold did not record which versions it took down, so it cannot tell which to republish. Republish the model by hand.';
-const MOVED_ON_MESSAGE =
+export const MODEL_RULES_MOVED_ON_MESSAGE =
   'The model is no longer in the state this hold put it in (it was republished, deleted or held for different text), so there is nothing to restore.';
 
 type DecideArgs = {
@@ -139,7 +140,7 @@ async function restoreModel(
     model.status !== ModelStatus.UnpublishedViolation ||
     held?.textHash !== hold.textHash
   )
-    throw throwConflictError(MOVED_ON_MESSAGE);
+    throw throwConflictError(MODEL_RULES_MOVED_ON_MESSAGE);
 
   // Dynamic: the controller pulls in the whole model service graph.
   const { publishModelHandler } = await import('~/server/controllers/model.controller');
@@ -197,7 +198,9 @@ export async function decideModelRulesHold(args: DecideArgs) {
   const meta = parseModelRulesHoldMeta(hold.meta);
   if (hold.status !== 'Pending')
     throw throwConflictError(
-      meta.decision === 'superseded' ? SUPERSEDED_MESSAGE : 'Hold already decided or missing.'
+      meta.decision === 'superseded'
+        ? MODEL_RULES_SUPERSEDED_MESSAGE
+        : 'Hold already decided or missing.'
     );
   if (hold.textHash !== textHash) throw throwConflictError(MODEL_RULES_STALE_HOLD_MESSAGE);
   if (plan.strike && !hold.userId)
@@ -236,10 +239,13 @@ export async function decideModelRulesHold(args: DecideArgs) {
     const effects: HoldEffects = { ...parseEffects(hold.meta) };
     const done = async (effect: keyof HoldEffects) => {
       effects[effect] = true;
-      await dbWrite.$executeRaw`UPDATE "TextScanHold"
+      const written = await dbWrite.$executeRaw`UPDATE "TextScanHold"
         SET "meta" = "meta" || jsonb_build_object('effects',
           coalesce("meta"->'effects', '{}'::jsonb) || jsonb_build_object(${effect}::text, true))
         WHERE "id" = ${holdId} AND "status" = 'Pending' AND "meta"->'decisionClaim'->>'at' = ${claimed[0].at}`;
+      // The claim expired or was taken: the effect ran but is unrecorded, so a retry would repeat it.
+      if (written !== 1)
+        throw throwConflictError('The decision lost its claim on this hold. Reload and check it.');
     };
 
     if (plan.confirm) await keepModelDown(target, model, ruleIds, args);
@@ -326,6 +332,10 @@ async function strikeOwner(
   });
 }
 
+/** Our own refusals (stale, superseded, moved on, no owner) carry text safe to show and are not faults. */
+export const isModelRulesHoldRefusal = (error: unknown): error is TRPCError =>
+  error instanceof TRPCError;
+
 export const MODEL_RULES_HOLD_BATCH_MAX = 50;
 /** A strike belongs to the owner once, with the hold the moderator is on, never per hold. */
 const BATCH_DECISIONS: readonly ModelRulesHoldDecision[] = [
@@ -392,7 +402,7 @@ export type ModelRulesHoldBatchResult =
       entityId: number;
       userId: number | null;
     }
-  | { holdId: number; ok: false; stale: boolean; error: string };
+  | { holdId: number; ok: false; stale: boolean; refused: boolean; error: string };
 
 /** Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest. */
 export async function decideModelRulesHoldBatch({
@@ -426,7 +436,7 @@ export async function decideModelRulesHoldBatch({
       results.push({ holdId: hold.holdId, ok: true, ...decided });
     } catch (error) {
       // Only our own refusals carry text safe to show.
-      const refusal = error instanceof TRPCError ? error : null;
+      const refusal = isModelRulesHoldRefusal(error) ? error : null;
       if (!refusal)
         // Code and name only: a Prisma message can echo the arguments, which here are the held text.
         logToAxiom({
@@ -441,6 +451,7 @@ export async function decideModelRulesHoldBatch({
         holdId: hold.holdId,
         ok: false,
         stale: refusal?.message === MODEL_RULES_STALE_HOLD_MESSAGE,
+        refused: !!refusal,
         error: refusal?.message ?? 'Could not apply the decision to this hold.',
       });
     }

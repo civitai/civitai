@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
   import { IconLock } from '@tabler/icons-svelte';
@@ -21,13 +22,14 @@
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
-  import { dateTime, plural, shortAge } from '$lib/format';
+  import { LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
   import { modelUrl } from '$lib/minor-flags/appeal-row';
   import { fetchModelFlagDetail } from '$lib/minor-flags/model-detail';
   import {
     BATCH_DECISIONS,
     BATCH_MAX,
     MODEL_RULE_MATCHES_PATH,
+    modelStatusLabel,
     NOTE_MAX_LENGTH,
     decisionButtons,
     decisionOutcome,
@@ -193,7 +195,7 @@
         <MetaChip tone={row.mode === 'active' ? 'amber' : 'blue'}>{modeLabel(row.mode)}</MetaChip>
         {#if row.applied}<MetaChip tone="red" solid>taken down</MetaChip>{/if}
         {#if row.modelStatus && row.modelStatus !== 'Published'}
-          <MetaChip>{row.modelStatus.toLowerCase()}</MetaChip>
+          <MetaChip>{modelStatusLabel(row.modelStatus)}</MetaChip>
         {/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
         {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
@@ -248,6 +250,7 @@
         }}
         {detail}
         otherLabel="other model with a rule match"
+        otherLabelMany="other models with rule matches"
       />
     </div>
 
@@ -259,6 +262,12 @@
         <IconLock class="size-3.5" aria-hidden="true" /> This hold is already decided.
       </p>
     {:else}
+      {#if error && /reload/i.test(error)}
+        <!-- Stale and superseded refusals both tell the moderator to reload; the current hold arrives with it. -->
+        <button type="button" class="text-[13px] {LINK_CLASS}" onclick={() => invalidateAll()}>
+          Reload the queue
+        </button>
+      {/if}
       <form
         bind:this={formEl}
         method="POST"

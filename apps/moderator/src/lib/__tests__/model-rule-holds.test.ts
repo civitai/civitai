@@ -7,6 +7,7 @@ import {
   expectedStatus,
   holdDecisionEnabled,
   modelRuleHoldFilterParams,
+  modelStatusLabel,
   DEFAULT_MODEL_RULE_HOLD_FILTERS,
 } from '../model-rule-holds';
 
@@ -32,10 +33,17 @@ describe('holdDecisionEnabled', () => {
   it('enables strike only with the grant and a known owner', () => {
     expect(holdDecisionEnabled(pending, { canStrike: true })).toEqual([true, true, true, true]);
     expect(holdDecisionEnabled(pending, { canStrike: false })).toEqual([true, false, true, true]);
-    expect(holdDecisionEnabled({ ...pending, userId: null }, { canStrike: true })).toEqual([true, false, true, true]);
+    expect(holdDecisionEnabled({ ...pending, userId: null }, { canStrike: true })).toEqual([
+      true,
+      false,
+      true,
+      true,
+    ]);
   });
   it('offers nothing once decided', () => {
-    expect(holdDecisionEnabled({ status: 'Confirmed', userId: 7 }, { canStrike: true })).toEqual([]);
+    expect(holdDecisionEnabled({ status: 'Confirmed', userId: 7 }, { canStrike: true })).toEqual(
+      []
+    );
   });
 });
 
@@ -66,5 +74,12 @@ describe('modelRuleHoldFilterParams', () => {
     expect(
       modelRuleHoldFilterParams({ status: 'confirmed', mode: 'auto', sort: 'newest', rule: 4 })
     ).toEqual({ status: 'confirmed', mode: 'auto', sort: 'newest', rule: '4' });
+  });
+});
+
+describe('modelStatusLabel', () => {
+  it('reads a stored status in words', () => {
+    expect(modelStatusLabel('UnpublishedViolation')).toBe('Unpublished violation');
+    expect(modelStatusLabel('Draft')).toBe('Draft');
   });
 });

@@ -123,7 +123,11 @@ export const actions: Actions = {
 
     // Any moderator who reaches the page may rule; the strike keeps the grant it carries on every other page.
     if (input.decision === 'confirm_strike' && !locals.grants[STRIKE_GRANT])
-      return fail(403, { scope: 'denied' as const, error: denied(STRIKE_GRANT), key: input.holdId });
+      return fail(403, {
+        scope: 'denied' as const,
+        error: denied(STRIKE_GRANT),
+        key: input.holdId,
+      });
 
     const { also, ...primary } = input;
     const result = await decideModelRuleHold(primary);
@@ -136,7 +140,9 @@ export const actions: Actions = {
           note: input.note,
         }).catch((err) => {
           console.error('Model rule hold batch decision failed', err);
-          return also.map(({ holdId }) => ({
+          const targets = new Set(also.map((hold) => hold.holdId));
+          targets.delete(input.holdId);
+          return [...targets].map((holdId) => ({
             holdId,
             ok: false,
             error: 'Could not apply the decision to this hold.',

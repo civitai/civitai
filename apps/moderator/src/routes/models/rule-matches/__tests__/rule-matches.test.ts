@@ -85,7 +85,9 @@ describe('model rule matches load', () => {
   });
 
   it('passes the filters, the search and the page through', async () => {
-    await loadAt('?status=confirmed&mode=auto&sort=newest&rule=7&q=somebody&owner=9&page=2&limit=10');
+    await loadAt(
+      '?status=confirmed&mode=auto&sort=newest&rule=7&q=somebody&owner=9&page=2&limit=10'
+    );
     expect(listModelRuleHolds).toHaveBeenCalledWith({
       status: 'confirmed',
       mode: 'auto',
@@ -106,7 +108,11 @@ describe('model rule matches load', () => {
     const data = await loadAt('');
     expect(data.pendingCount).toBeNull();
     expect(data.items).toEqual([
-      expect.objectContaining({ id: 12, coverImages: [], facts: expect.objectContaining({ tags: [] }) }),
+      expect.objectContaining({
+        id: 12,
+        coverImages: [],
+        facts: expect.objectContaining({ tags: [] }),
+      }),
     ]);
   });
 });
@@ -180,5 +186,18 @@ describe('model rule matches decide', () => {
       success: true,
       others: [{ holdId: 13, ok: false, error: expect.any(String) }],
     });
+  });
+
+  it('lists each other hold once, and never the primary, when the batch call throws', async () => {
+    decideOwnerHolds.mockRejectedValue(new Error('boom'));
+    const result = await decide({
+      ...base,
+      also: JSON.stringify([
+        { holdId: 12, textHash: 'abc' },
+        { holdId: 13, textHash: 'x' },
+        { holdId: 13, textHash: 'x' },
+      ]),
+    });
+    expect((result.others as { holdId: number }[]).map((o) => o.holdId)).toEqual([13]);
   });
 });
