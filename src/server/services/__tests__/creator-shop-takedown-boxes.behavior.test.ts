@@ -85,12 +85,7 @@ const bridge = (tx: { query: PGlite['query'] }) => {
       }
       return run(strings, ...values);
     };
-  // The shelf listing's own rows are on the db mock, in a transaction too.
-  return {
-    $executeRaw: hooked(raw.executeRaw),
-    $queryRaw: hooked(raw.queryRaw),
-    cosmeticShopItem: dbMock.dbWrite.cosmeticShopItem,
-  };
+  return { $executeRaw: hooked(raw.executeRaw), $queryRaw: hooked(raw.queryRaw) };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);

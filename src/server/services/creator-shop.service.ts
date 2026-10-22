@@ -2476,39 +2476,48 @@ export const takedownCosmeticShopItem = async ({
     // A retry finishes the first takedown: its record and archive date stand.
     retried = !!currentMeta.takedown;
     const note = retried ? `Retried: ${reason}` : reason;
-    const updated = await dbWrite.$transaction(async (tx) => {
-      const written = await tx.cosmeticShopItem.update({
-        where: { id },
-        data: {
-          status: CosmeticShopItemStatus.Archived,
-          listed: false,
-          ...(retried ? {} : { archivedAt: now }),
-          meta: appendItemHistory(
-            {
-              ...currentMeta,
-              takedown: currentMeta.takedown ?? { reason, moderatorId, at: now.toISOString() },
-            },
-            {
-              at: now.toISOString(),
-              userId: moderatorId,
-              kind: 'takedown',
-              status: CosmeticShopItemStatus.Archived,
-              note,
-            }
-          ) as Prisma.InputJsonValue,
-        },
-        select: creatorShopItemSelect,
-      });
-      await recordShopVerdict(tx, id, {
-        action: 'takedown',
-        moderatorId,
-        at: now.toISOString(),
-        note,
-        statusBefore: item.status,
-        statusAfter: CosmeticShopItemStatus.Archived,
-      });
-      return written;
-    }, SHOP_VERDICT_TRANSACTION);
+    const updated = await dbWrite.cosmeticShopItem.update({
+      where: { id },
+      data: {
+        status: CosmeticShopItemStatus.Archived,
+        listed: false,
+        ...(retried ? {} : { archivedAt: now }),
+        meta: appendItemHistory(
+          {
+            ...currentMeta,
+            takedown: currentMeta.takedown ?? { reason, moderatorId, at: now.toISOString() },
+          },
+          {
+            at: now.toISOString(),
+            userId: moderatorId,
+            kind: 'takedown',
+            status: CosmeticShopItemStatus.Archived,
+            note,
+          }
+        ) as Prisma.InputJsonValue,
+      },
+      select: creatorShopItemSelect,
+    });
+    // Its own transaction, after the archive commits: labelling must never delay stopping sales or
+    // fail the takedown.
+    await dbWrite
+      .$transaction(
+        (tx) =>
+          recordShopVerdict(tx, id, {
+            action: 'takedown',
+            moderatorId,
+            at: now.toISOString(),
+            note,
+            statusBefore: item.status,
+            statusAfter: CosmeticShopItemStatus.Archived,
+          }),
+        SHOP_VERDICT_TRANSACTION
+      )
+      .catch(() =>
+        logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: id }).catch(
+          () => null
+        )
+      );
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });

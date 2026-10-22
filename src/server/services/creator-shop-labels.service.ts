@@ -323,8 +323,8 @@ async function readRevision(tx: LabelStoreTx, revisionId: number) {
 }
 
 /**
- * Records a moderator's verdict on a listing as a label, inside the verdict's transaction and after its
- * write, so the label sees what the verdict left. Must be the transaction's last step (see
+ * Records a moderator's verdict on a listing as a label, in a transaction after the verdict's write, so
+ * the label sees what the verdict left. Must be the transaction's last step (see
  * `recordUnderSavepoint`); a failed label never fails the verdict.
  */
 export function recordShopVerdict(

@@ -354,10 +354,15 @@ describe('takedownCosmeticShopItem', () => {
     });
   });
 
-  it('records the takedown as a label in the archive write, before the refunds', async () => {
+  it('records the takedown label in its own transaction, after the archive is written', async () => {
     const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
     vi.mocked(recordShopVerdict).mockClear();
     const order: string[] = [];
+    const update = mocks.shopItemUpdate.getMockImplementation();
+    mocks.shopItemUpdate.mockImplementationOnce(async (...args: unknown[]) => {
+      order.push('archive');
+      return update?.(...args);
+    });
     vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
       order.push('label');
       return true;
@@ -371,8 +376,7 @@ describe('takedownCosmeticShopItem', () => {
 
     await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
 
-    expect(order).toEqual(['begin', 'label', 'commit']);
-
+    expect(order).toEqual(['archive', 'begin', 'label', 'commit']);
     const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
     expect(recordShopVerdict).toHaveBeenCalledTimes(1);
     expect(recordShopVerdict).toHaveBeenCalledWith(
@@ -386,11 +390,25 @@ describe('takedownCosmeticShopItem', () => {
         statusAfter: 'Archived',
       })
     );
-    const [labelledAt] = vi.mocked(recordShopVerdict).mock.invocationCallOrder;
-    expect(labelledAt).toBeGreaterThan(mocks.shopItemUpdate.mock.invocationCallOrder[0]);
-    expect(labelledAt).toBeLessThan(
-      mocks.refundMultiAccountTransaction.mock.invocationCallOrder[0]
-    );
+  });
+
+  it('finishes the takedown when its label cannot be recorded', async () => {
+    dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('label transaction timed out'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data.status).toBe('Archived');
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalled();
+    expect(result.failures).toEqual([]);
+    expect(mocks.logToAxiom).toHaveBeenCalledWith({
+      type: 'error',
+      name: 'shop-label-record-failed',
+      itemId: 42,
+    });
   });
 
   // The backfill labels each takedown history entry by its `at`; a retry's label must match its own entry.
