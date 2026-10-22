@@ -111,7 +111,7 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
 
 export type FlagClearHoldLeg = keyof ReturnType<typeof flagClearHoldLegs>;
 
-async function holdMarkerState(db: Kysely<DB>): Promise<HoldMarkerState> {
+export async function holdMarkerState(db: Kysely<DB>): Promise<HoldMarkerState> {
   const { rows } = await sql<{ view: unknown; table: unknown }>`
     SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS view,
            to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS table`.execute(db);
