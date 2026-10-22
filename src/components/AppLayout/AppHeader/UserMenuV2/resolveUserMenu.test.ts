@@ -77,6 +77,33 @@ describe('resolveUserMenu', () => {
     expect(nodes.map((node) => node.kind === 'group' && node.badge)).toEqual([5, 1]);
   });
 
+  it('keeps a muted count on its row and out of the group and pinned totals', () => {
+    const registry: UserMenuRegistry = {
+      collections: entry('collections', { badge: 2 }),
+      vault: entry('vault'),
+      downloads: entry('downloads', { badge: 3 }),
+      inventory: entry('inventory', { badge: 1 }),
+    };
+
+    const { nodes, pinned } = resolveUserMenu(
+      layout,
+      registry,
+      ['collections'],
+      new Set(['collections', 'inventory'])
+    );
+
+    // Only downloads still counts; the muted rows keep their own number, marked muted.
+    expect(nodes.map((node) => node.kind === 'group' && node.badge)).toEqual([3, 0]);
+    const collections = pinned[0];
+    expect(collections).toMatchObject({ badge: 2, badgeMuted: true });
+    const stuff = nodes[0];
+    const inGroup = stuff.kind === 'group' && stuff.children[0];
+    expect(inGroup && inGroup.kind === 'item' && inGroup.item).toMatchObject({
+      badge: 2,
+      badgeMuted: true,
+    });
+  });
+
   it('lists pins in saved order, skipping hidden, unknown, repeated and unpinnable ids', () => {
     const registry: UserMenuRegistry = {
       collections: entry('collections'),

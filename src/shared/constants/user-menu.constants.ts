@@ -48,6 +48,23 @@ export const USER_MENU_ITEM_IDS = [
 export type UserMenuItemId = (typeof USER_MENU_ITEM_IDS)[number];
 
 /**
+ * The items whose row carries a count of things waiting on the viewer, and whose count lights the
+ * avatar. Each can be muted, and the muted ids are saved by id like pins.
+ */
+export const USER_MENU_BADGE_ITEM_IDS = [
+  'inventory',
+  'placements',
+  'collections',
+  'prizes',
+] as const satisfies readonly UserMenuItemId[];
+
+export type UserMenuBadgeItemId = (typeof USER_MENU_BADGE_ITEM_IDS)[number];
+
+const BADGE_IDS: ReadonlySet<string> = new Set(USER_MENU_BADGE_ITEM_IDS);
+export const isUserMenuBadgeItemId = (id: unknown): id is UserMenuBadgeItemId =>
+  typeof id === 'string' && BADGE_IDS.has(id);
+
+/**
  * What a viewer with no saved pins sees when the `userMenuDefaultPins` KeyValue row is absent,
  * unreadable, or not loaded yet. The row is the source of truth; change defaults there.
  */

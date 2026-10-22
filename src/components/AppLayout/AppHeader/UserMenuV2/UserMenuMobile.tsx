@@ -31,7 +31,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  BadgeMuteCtx,
+  canMuteBadge,
   MenuItemLabel,
+  MuteGlyph,
   PinGlyph,
   PROFILE_PIN,
   useDragClickGuard,
@@ -91,9 +94,11 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
     opened: true,
     pins: pins.pins,
+    muted: pins.mutedBadges,
   });
   const pinActions = usePinActions(pins);
   const { announce, region } = pinActions;
+  const toggleMute = signedIn ? pinActions.toggleMute : undefined;
 
   const focusFirst = () =>
     window.requestAnimationFrame(() =>
@@ -143,53 +148,55 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     );
 
   return (
-    <div ref={container} className="flex flex-1 flex-col overflow-hidden" onKeyDown={onKeyDown}>
-      {region}
-      <div
-        key={path.map((step) => step.id).join('/') || 'top'}
-        className={clsx(
-          'flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin',
-          path.length || direction === 'back'
-            ? classes[direction === 'in' ? 'panelIn' : 'panelBack']
-            : undefined
-        )}
-        // A vertical pan still scrolls; the browser leaves the horizontal swipe to us.
-        style={path.length ? { touchAction: 'pan-y' } : undefined}
-        {...swipe}
-      >
-        {panel ? (
-          <>
-            <UnstyledButton className={ROW} onClick={back} data-panel-row>
-              <IconChevronLeft />
-              <span className="text-sm font-semibold leading-none">{panel.label}</span>
-            </UnstyledButton>
-            <Divider />
-            <MobileNodes nodes={panel.children} pins={pins} onToggle={toggle} onEnter={enter} />
-          </>
-        ) : (
-          <TopLevel
-            signedIn={signedIn}
-            events={events}
-            pinned={pinned}
-            nodes={nodes}
-            pins={pins}
-            onToggle={toggle}
-            onEnter={enter}
-            close={close}
-            announce={announce}
+    <BadgeMuteCtx.Provider value={toggleMute}>
+      <div ref={container} className="flex flex-1 flex-col overflow-hidden" onKeyDown={onKeyDown}>
+        {region}
+        <div
+          key={path.map((step) => step.id).join('/') || 'top'}
+          className={clsx(
+            'flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin',
+            path.length || direction === 'back'
+              ? classes[direction === 'in' ? 'panelIn' : 'panelBack']
+              : undefined
+          )}
+          // A vertical pan still scrolls; the browser leaves the horizontal swipe to us.
+          style={path.length ? { touchAction: 'pan-y' } : undefined}
+          {...swipe}
+        >
+          {panel ? (
+            <>
+              <UnstyledButton className={ROW} onClick={back} data-panel-row>
+                <IconChevronLeft />
+                <span className="text-sm font-semibold leading-none">{panel.label}</span>
+              </UnstyledButton>
+              <Divider />
+              <MobileNodes nodes={panel.children} pins={pins} onToggle={toggle} onEnter={enter} />
+            </>
+          ) : (
+            <TopLevel
+              signedIn={signedIn}
+              events={events}
+              pinned={pinned}
+              nodes={nodes}
+              pins={pins}
+              onToggle={toggle}
+              onEnter={enter}
+              close={close}
+              announce={announce}
+            />
+          )}
+        </div>
+        {!panel && (
+          <UserMenuFooter
+            onSwitchAccount={() => {
+              // The top level remounts when the switcher closes; it should not replay a back slide.
+              setDirection('in');
+              setSwitching(true);
+            }}
           />
         )}
       </div>
-      {!panel && (
-        <UserMenuFooter
-          onSwitchAccount={() => {
-            // The top level remounts when the switcher closes; it should not replay a back slide.
-            setDirection('in');
-            setSwitching(true);
-          }}
-        />
-      )}
-    </div>
+    </BadgeMuteCtx.Provider>
   );
 }
 
@@ -421,12 +428,13 @@ export function MobileItem({
   fromPins = false,
   onToggle,
 }: {
-  item: UserMenuItem;
+  item: UserMenuItem & { badgeMuted?: boolean };
   pinned?: boolean;
   fromPins?: boolean;
   onToggle?: (item: ResolvedMenuItem) => void;
 }) {
   const { handleClose } = useContext(UserMenuCtx);
+  const toggleMute = useContext(BadgeMuteCtx);
   const trackOpen = useTrackMenuOpen('mobile');
   const { id } = item;
   // Replaces each row's own `handleClose` click handler, so it has to close the menu too.
@@ -435,6 +443,7 @@ export function MobileItem({
     handleClose();
   };
   const canPin = !!onToggle && !!id && isPinnable(id);
+  const canMute = canMuteBadge(item, toggleMute);
   const content = (
     <>
       <item.icon stroke={1.5} color={item.color} />
@@ -448,7 +457,7 @@ export function MobileItem({
         href={item.href}
         target="_blank"
         rel="nofollow noreferrer"
-        className={clsx(ROW, { ['flex-1']: canPin })}
+        className={clsx(ROW, { ['flex-1']: canPin || canMute })}
         onClick={open}
         data-panel-row
       >
@@ -459,7 +468,7 @@ export function MobileItem({
         href={item.href}
         as={item.as}
         rel={item.rel}
-        className={clsx('rounded-lg', { ['flex-1']: canPin })}
+        className={clsx('rounded-lg', { ['flex-1']: canPin || canMute })}
         onClick={open}
         data-panel-row
       >
@@ -472,28 +481,42 @@ export function MobileItem({
         open();
         item.onClick?.();
       }}
-      className={clsx('rounded-lg', { ['flex-1']: canPin })}
+      className={clsx('rounded-lg', { ['flex-1']: canPin || canMute })}
       data-panel-row
     >
       {content}
     </MenuItemButton>
   );
 
-  if (!canPin) return link;
-  // A row, not one button: the pin is a second control, and a button cannot hold another.
+  if (!canPin && !canMute) return link;
+  // A row, not one button: the pin and the mute are controls of their own, and a button cannot hold another.
   return (
     <div className="flex items-center pr-2">
       {link}
-      <LegacyActionIcon
-        size="lg"
-        variant="subtle"
-        color="gray"
-        aria-label={`${pinned ? 'Unpin' : 'Pin'} ${item.label}`}
-        aria-pressed={pinned}
-        onClick={() => onToggle({ ...item, id })}
-      >
-        <PinGlyph pinned={pinned} touch />
-      </LegacyActionIcon>
+      {canMute && (
+        <LegacyActionIcon
+          size="lg"
+          variant="subtle"
+          color="gray"
+          aria-label={`${item.badgeMuted ? 'Unmute' : 'Mute'} the count on ${item.label}`}
+          aria-pressed={!!item.badgeMuted}
+          onClick={() => id && toggleMute?.({ ...item, id })}
+        >
+          <MuteGlyph muted={!!item.badgeMuted} touch />
+        </LegacyActionIcon>
+      )}
+      {canPin && (
+        <LegacyActionIcon
+          size="lg"
+          variant="subtle"
+          color="gray"
+          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${item.label}`}
+          aria-pressed={pinned}
+          onClick={() => onToggle({ ...item, id })}
+        >
+          <PinGlyph pinned={pinned} touch />
+        </LegacyActionIcon>
+      )}
     </div>
   );
 }
