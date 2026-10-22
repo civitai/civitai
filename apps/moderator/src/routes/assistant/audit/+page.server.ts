@@ -39,6 +39,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     const t = addresses ? text : redactAddresses(text);
     return emails ? t : redactEmails(t);
   };
+  // Each string in place: redacting the serialised JSON can eat an escape (`\n` + an email) and leave
+  // text that no longer parses.
+  const redactValues = (value: unknown): unknown =>
+    typeof value === 'string'
+      ? redact(value)
+      : Array.isArray(value)
+      ? value.map(redactValues)
+      : value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v)]))
+      : value;
   const shown =
     addresses && emails
       ? page
@@ -48,10 +58,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
           prompt: redact(r.prompt),
           answer: r.answer && redact(r.answer),
           reasoning: r.reasoning && redact(r.reasoning),
-          toolCalls: r.toolCalls.map((c) => ({
-            ...c,
-            args: JSON.parse(redact(JSON.stringify(c.args))) as unknown,
-          })),
+          error: r.error && redact(r.error),
+          toolCalls: r.toolCalls.map((c) => ({ ...c, args: redactValues(c.args) })),
         }));
   return {
     storeError,

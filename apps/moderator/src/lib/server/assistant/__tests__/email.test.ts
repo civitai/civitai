@@ -32,4 +32,12 @@ describe('redactEmails', () => {
       '[email] and [email], on 192.0.2.16'
     );
   });
+
+  it.each([
+    ['upper case', 'Mail JDOE@GMAIL.COM now', 'Mail [email] now'],
+    ['end of a sentence', 'It was o_brien%1@tempmail.xyz.', 'It was [email].'],
+    ['an apostrophe in the name', "o'neil&co@example.org", '[email]'],
+  ])('catches %s', (_, text, out) => {
+    expect(redactEmails(text)).toBe(out);
+  });
 });

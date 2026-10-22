@@ -38,7 +38,7 @@ import {
   MAX_ACCOUNTS,
   searchAccounts,
 } from './reads';
-import { getRegistrationEmails, normalizeEmail } from './email';
+import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
 
 // The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
@@ -109,7 +109,7 @@ async function withEmails<T extends { userId: number }>(ctx: ToolContext, rows: 
   return rows.map((r) => ({ ...r, ...fields(r.userId) }));
 }
 const EMAILS_NOTE =
-  'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence.';
+  'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
 const userSource = (id: number, username: string | null = null): TurnSource => ({
   ref: `user:${id}`,
@@ -410,7 +410,8 @@ export const TOOLS = [
   tool({
     name: 'accounts_on_address',
     description:
-      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact.',
+      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact. ' +
+      EMAILS_NOTE,
     input: z.object({
       address: z.string().min(3).max(60),
       days: reactionDays,
@@ -758,9 +759,16 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ slug, title, summary, body, note }, ctx) => {
+      // A playbook is read by every assistant user and goes into every moderator's prompt, so an
+      // email from this chat must not ride along; the method never needs one.
       const { version } = await addPlaybookVersion({
         slug,
-        draft: { title, summary, body, note: note ?? null },
+        draft: {
+          title: redactEmails(title),
+          summary: redactEmails(summary),
+          body: redactEmails(body),
+          note: note ? redactEmails(note) : null,
+        },
         authorId: ctx.moderatorId,
         byAssistant: true,
         sourceTurnId: ctx.turnId,
@@ -785,14 +793,19 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ need, reason, example }, ctx) => {
+      // Read by every assistant user (the conversation by every auditor), none of whom need an email
+      // to build a tool.
       const id = await fileToolRequest({
         chatId: ctx.chatId,
         turnId: ctx.turnId,
         moderatorId: ctx.moderatorId,
-        need,
-        reason,
-        example: example ?? null,
-        conversation: ctx.conversation(),
+        need: redactEmails(need),
+        reason: redactEmails(reason),
+        example: example ? redactEmails(example) : null,
+        conversation: ctx.conversation().map((c) => ({
+          prompt: redactEmails(c.prompt),
+          answer: c.answer && redactEmails(c.answer),
+        })),
       });
       return { data: { filed: true, requestId: id }, rows: 1, truncated: false, sources: [] };
     },

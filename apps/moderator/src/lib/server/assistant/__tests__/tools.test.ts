@@ -76,7 +76,20 @@ vi.mock('../email', async (importOriginal) => ({
   getRegistrationEmails,
 }));
 
+const getAccounts = vi.fn(async (ids: number[]) => ({
+  accounts: ids.map((userId) => ({ userId, username: `u${userId}` })),
+  missing: [],
+}));
+vi.mock('../reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../reads')>()),
+  getAccounts,
+}));
+
+const addPlaybookVersion = vi.fn(async () => ({ version: 1 }));
+const fileToolRequest = vi.fn(async () => 1);
 vi.mock('../store', () => ({
+  addPlaybookVersion,
+  fileToolRequest,
   getPlaybook: vi.fn(async (slug: string) => ({
     slug,
     version: 2,
@@ -233,6 +246,56 @@ describe('registration emails', () => {
       normalizedEmail: 'sock5@gmail.com',
       linked: { accounts: [{ userId: 7, normalizedEmail: 'sock7@gmail.com' }] },
     });
+  });
+
+  it.each([
+    ['find_user', { query: '9' }],
+    ['get_accounts', { userIds: [9] }],
+  ])('%s carries them only with both User Lookup and assistant.emails', async (name, args) => {
+    resolveUserId.mockImplementation(async () => 9 as never);
+    expect(JSON.stringify(await run(name, args, [LOOKUP_PAGE]))).not.toContain('@');
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    const out = JSON.stringify(await run(name, args, [LOOKUP_PAGE], ['assistant.emails']));
+    expect(out).toContain('"normalizedEmail":"sock9@gmail.com"');
+    resolveUserId.mockImplementation(async () => null);
+  });
+
+  const EMAIL = 'b.o.t+1@gmail.com';
+  const pilot = { ...ctx([LOOKUP_PAGE], ['assistant.emails']) };
+
+  it('are dropped from a proposed playbook, which every assistant user reads', async () => {
+    const tool = TOOLS.find((t) => t.name === 'propose_playbook')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        slug: 'chain',
+        title: `Chains like ${EMAIL}`,
+        summary: `Accounts sharing ${EMAIL} as one inbox.`,
+        body: `Example:\n${EMAIL}\nand ${EMAIL.toUpperCase()}`,
+        note: EMAIL,
+      }),
+      pilot
+    );
+    const saved = JSON.stringify(addPlaybookVersion.mock.lastCall);
+    expect(saved).toContain('[email]');
+    expect(saved.toLowerCase()).not.toContain('gmail');
+  });
+
+  it('are dropped from a tool request, its attached conversation included', async () => {
+    const tool = TOOLS.find((t) => t.name === 'request_tool')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        need: `Group accounts by inbox, e.g. ${EMAIL}`,
+        reason: `The chain all used ${EMAIL}.`,
+        example: EMAIL,
+      }),
+      {
+        ...pilot,
+        conversation: () => [{ prompt: `who is ${EMAIL}?`, answer: `${EMAIL} is a sock.` }],
+      }
+    );
+    const filed = JSON.stringify(fileToolRequest.mock.lastCall);
+    expect(filed).toContain('[email]');
+    expect(filed).not.toContain('gmail');
   });
 });
 

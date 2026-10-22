@@ -88,6 +88,24 @@ describe('/assistant/audit', () => {
       expect(JSON.stringify(turn)).not.toContain('gmail');
     });
 
+    it('are redacted inside nested and multi-line arguments, and the error, without breaking the page', async () => {
+      listAuditTurns.mockResolvedValue([
+        {
+          ...quoting,
+          error: `provider echoed ${EMAIL}`,
+          toolCalls: [
+            { name: 'request_tool', args: { need: `line one\n${EMAIL}`, list: [`\t${EMAIL}`] } },
+          ],
+        },
+      ]);
+      canSeeAddresses.mockReturnValue(true);
+      const turn = await run();
+      expect(turn.toolCalls[0]).toMatchObject({
+        args: { need: 'line one\n[email]', list: ['\t[email]'] },
+      });
+      expect(JSON.stringify(turn)).not.toContain('gmail');
+    });
+
     it('are shown to a viewer holding assistant.emails', async () => {
       listAuditTurns.mockResolvedValue([quoting]);
       canSeeAddresses.mockReturnValue(true);
