@@ -49,6 +49,8 @@ const CUR_BRONZE = 101; // this month's badges
 const CUR_SILVER = 102;
 const PREV_BRONZE = 103; // last month's
 const NAMEPLATE = 201; // undated Supporter Nameplate
+const DATED_ITEM = 202; // dated this month, but not a badge
+const OPEN_ENDED_BADGE = 203; // a badge with no end date
 
 const CASH_MEMBER = 1;
 const BUZZ_MEMBER = 2; // bought before this month's badge opened
@@ -88,7 +90,7 @@ beforeAll(async () => {
       metadata jsonb NOT NULL DEFAULT '{}',
       "updatedAt" timestamp(3)
     );
-    CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "productId" text, "availableStart" timestamp(3), "availableEnd" timestamp(3));
+    CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "productId" text, "availableStart" timestamp(3), "availableEnd" timestamp(3), type text NOT NULL);
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL,
       "cosmeticId" int NOT NULL,
@@ -126,10 +128,12 @@ beforeEach(async () => {
   await holder.db.exec(`
     TRUNCATE "CustomerSubscription", "Cosmetic", "UserCosmetic";
     INSERT INTO "Cosmetic" VALUES
-      (${CUR_BRONZE}, '${CASH_BRONZE}', ${MONTH_START} + interval '11 hours', ${MONTH_START} + interval '1 month' - interval '1 day'),
-      (${CUR_SILVER}, '${CASH_SILVER}', ${MONTH_START} + interval '11 hours', ${MONTH_START} + interval '1 month' - interval '1 day'),
-      (${PREV_BRONZE}, '${CASH_BRONZE}', ${MONTH_START} - interval '1 month' + interval '11 hours', ${MONTH_START} - interval '1 day'),
-      (${NAMEPLATE}, '${CASH_BRONZE}', NULL, NULL);
+      (${CUR_BRONZE}, '${CASH_BRONZE}', ${MONTH_START} + interval '11 hours', ${MONTH_START} + interval '1 month' - interval '1 day', 'Badge'),
+      (${CUR_SILVER}, '${CASH_SILVER}', ${MONTH_START} + interval '11 hours', ${MONTH_START} + interval '1 month' - interval '1 day', 'Badge'),
+      (${PREV_BRONZE}, '${CASH_BRONZE}', ${MONTH_START} - interval '1 month' + interval '11 hours', ${MONTH_START} - interval '1 day', 'Badge'),
+      (${NAMEPLATE}, '${CASH_BRONZE}', NULL, NULL, 'Badge'),
+      (${DATED_ITEM}, '${CASH_BRONZE}', ${MONTH_START} + interval '11 hours', ${MONTH_START} + interval '1 month' - interval '1 day', 'ProfileDecoration'),
+      (${OPEN_ENDED_BADGE}, '${CASH_BRONZE}', ${MONTH_START} + interval '11 hours', NULL, 'Badge');
     INSERT INTO "CustomerSubscription" (id, "userId", "productId", "priceId", status, "currentPeriodStart", "currentPeriodEnd", "createdAt", metadata) VALUES
       ${sub(
         's-cash',
@@ -189,13 +193,18 @@ describe('monthly delivery (deliverMonthlyCosmetics)', () => {
     expect(await badgesOf(BUZZ_SILVER_MEMBER)).toEqual([CUR_BRONZE, CUR_SILVER]);
   });
 
-  // Decision (Justin, 2026-10-22): Buzz memberships get the monthly badge ONLY. The undated
-  // nameplate is never revoked from a Buzz month (cancelAt is NULL on those rows), so
-  // dropping this guard hands out a permanent cosmetic. Do not "simplify" it away.
-  it('keeps the undated Supporter Nameplate cash-only', async () => {
+  // Decision (Justin, 2026-10-22): Buzz memberships get the monthly badge ONLY. Nothing is
+  // ever revoked from a Buzz month (cancelAt is NULL on those rows), so loosening this guard
+  // hands out permanent cosmetics. Do not "simplify" it away.
+  it('gives a Buzz member only the dated monthly badge, and a cash member everything as before', async () => {
     await deliverMonthlyCosmetics({});
-    expect(await badgesOf(BUZZ_MEMBER)).not.toContain(NAMEPLATE);
-    expect(await badgesOf(CASH_MEMBER)).toEqual([CUR_BRONZE, NAMEPLATE]);
+    expect(await badgesOf(BUZZ_MEMBER)).toEqual([CUR_BRONZE]);
+    expect(await badgesOf(CASH_MEMBER)).toEqual([
+      CUR_BRONZE,
+      NAMEPLATE,
+      DATED_ITEM,
+      OPEN_ENDED_BADGE,
+    ]);
   });
 
   it('gives nothing to a Buzz month that ends today or has lapsed', async () => {
@@ -233,12 +242,11 @@ describe('purchase (purchaseMembershipWithBuzz)', () => {
       username: 'buyer',
       email: 'buyer@example.com',
     });
-    // Write the row the purchase creates, so the delivery inside the same transaction sees it.
-    dbMock.dbWrite.customerSubscription.upsert.mockImplementation((async ({
-      create,
-    }: {
-      create: Record<string, unknown>;
-    }) => {
+    // The purchase's transaction is its own client, and the only one that sees the row it
+    // writes: outside it, the uncommitted subscription does not exist yet. So a delivery
+    // made on dbWrite instead of `tx` inserts nothing, as it would in Postgres.
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    const upsert = async ({ create }: { create: Record<string, unknown> }) => {
       await holder.db.query(
         `INSERT INTO "CustomerSubscription" (id, "userId", "productId", "priceId", status, "currentPeriodStart", "currentPeriodEnd", "createdAt")
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -254,7 +262,13 @@ describe('purchase (purchaseMembershipWithBuzz)', () => {
         ]
       );
       return create;
-    }) as never);
+    };
+    const tx = {
+      customerSubscription: { findFirst: async () => null, upsert },
+      $executeRaw: bridge('execute'),
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (client: unknown) => unknown) =>
+      fn(tx)) as never);
   });
 
   it("gives this month's badge at purchase", async () => {

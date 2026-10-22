@@ -15,6 +15,7 @@ type MembershipCosmetic = {
   id: number;
   name: string;
   productId: string;
+  type: string;
   availableStart: Date | null;
   availableEnd: Date | null;
 };
@@ -68,6 +69,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       c.id,
       c.name,
       c."productId",
+      c.type,
       c."availableStart",
       c."availableEnd"
     FROM "Cosmetic" c
@@ -115,9 +117,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           pr.metadata->>'monthlyBuzz' IS NOT NULL
           OR (pr.metadata->>'buzzPurchase') = 'true'
         )
-        -- Buzz memberships earn dated monthly badges only, as in deliverMonthlyCosmetics.
+        -- Buzz memberships earn the monthly badge only, as in deliverMonthlyCosmetics.
         ${
-          cosmetic.availableStart
+          cosmetic.type === 'Badge' && cosmetic.availableStart && cosmetic.availableEnd
             ? Prisma.empty
             : Prisma.sql`AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'`
         }

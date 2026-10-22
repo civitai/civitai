@@ -78,8 +78,8 @@ FROM "Product"
 WHERE (metadata ->> 'buzzPurchase')::boolean IS TRUE
 ORDER BY id;
 
--- Fail (and roll back) unless every Buzz product now shows a badge and still withholds
--- monthly Buzz (key absent or 0) and the bonus multipliers.
+-- Fail (and roll back) unless every Buzz product now shows a badge, keeps its level, and
+-- still withholds monthly Buzz (key absent or 0) and the bonus multipliers.
 DO $$
 DECLARE
   bad text;
@@ -89,6 +89,8 @@ BEGIN
   WHERE (metadata ->> 'buzzPurchase')::boolean IS TRUE
     AND (
       COALESCE(metadata ->> 'badgeType', 'none') = 'none'
+      -- Without a level the delivery's level join maps them to no badge, silently.
+      OR NOT (metadata ? 'level')
       OR COALESCE((metadata ->> 'monthlyBuzz')::numeric, 0) <> 0
       OR COALESCE((metadata ->> 'purchasesMultiplier')::numeric, 1) <> 1
       OR COALESCE((metadata ->> 'rewardsMultiplier')::numeric, 1) <> 1

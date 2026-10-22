@@ -461,9 +461,13 @@ export const deliverMonthlyCosmetics = async ({
         -- their badge (cron fired 10h before the window opened, then never retried).
         AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
-        -- Buzz memberships get the dated monthly badge only. Undated cosmetics (the
-        -- Supporter Nameplate) are never revoked from them: their rows have no cancelAt.
-        AND (NOT p."buzzPurchase" OR c."availableStart" IS NOT NULL)
+        -- Buzz memberships get the monthly badge only: a Badge with both ends of its window
+        -- set, as upsertProductBadge creates them. Anything else (the undated Supporter
+        -- Nameplate, open-ended items) would never be revoked: Buzz rows have no cancelAt.
+        AND (
+          NOT p."buzzPurchase"
+          OR (c.type = 'Badge' AND c."availableStart" IS NOT NULL AND c."availableEnd" IS NOT NULL)
+        )
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
@@ -650,6 +654,8 @@ export const purchaseMembershipWithBuzz = async ({
           update: { ...period, updatedAt: now.toDate() },
         });
 
+        // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
+        // any other client reads no active sub and silently inserts nothing.
         await deliverMonthlyCosmetics({ userIds: [userId], tx });
       },
       // Same allowance as code redemption, which delivers cosmetics in its transaction too.

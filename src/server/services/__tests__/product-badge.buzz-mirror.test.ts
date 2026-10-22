@@ -70,8 +70,13 @@ const updatedMetadata = () =>
 
 beforeEach(() => {
   dbMock.dbWrite.product.update.mockReset();
-  dbMock.dbRead.product.findMany.mockImplementation((async (args: { where: { id?: unknown } }) =>
-    args.where.id ? products : [...products, buzzBronze, buzzSilver]) as never);
+  dbMock.dbRead.product.findMany.mockImplementation((async (args: {
+    where: { id?: unknown; provider?: string };
+  }) => {
+    if (args.where.id) return products;
+    // Only the Civitai catalog holds Buzz products: the variant lookup must ask for it.
+    return args.where.provider === 'Civitai' ? [...products, buzzBronze, buzzSilver] : products;
+  }) as never);
 });
 
 describe('syncActiveBadgeMetadata', () => {
