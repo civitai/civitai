@@ -6,11 +6,18 @@ lets newer articles count for more.
 
 ## Why
 
-The Writers board (`writer`) scores `√(views) / 2 + √(reactions) × 7 + √(bookmarks) × 10` on an
-author's totals. Taking the square root of totals means article count barely matters, and nothing
-loses value with age: on 22 October 2026, 52 of its top 100 had published fewer than three articles
-in the previous year. It stays exactly as it is, as the all-time board. The new boards are added
-beside it.
+The Writers board (`writer`) scores `√(views) / 2 + √(reactions) × 7 + √(bookmarks) × 10` on the
+totals of an author's articles published in the last 30 days. Until 22 October 2026 it counted every
+article ever published, and 52 of its top 100 had published fewer than three articles in the previous
+year. The window fixed that. The board still:
+
+- counts the author's own reactions, because it reads them from `ArticleMetric`;
+- counts an article in full for 30 days, then not at all;
+- scores every kind of article on one formula: simulated on 22 October 2026 data, 33 of its top 100
+  were release-note writers, against 16 on Active Writers;
+- ignores comments and articles written in answer.
+
+It stays as it is. The new boards are added beside it.
 
 ## Who writes
 
