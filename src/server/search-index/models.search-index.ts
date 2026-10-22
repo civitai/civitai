@@ -46,6 +46,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -476,6 +477,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
+        hasSfwFace: hasCompleteSfwFace(model),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: {
@@ -610,10 +612,19 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         coveredVersionIds.push(version.id);
       }
 
-      const modelImages = coveredVersionIds.flatMap((versionId) =>
-        images.filter(
-          (image) =>
-            image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+      // lands on theirs, while a .red viewer keeps the creator's pick.
+      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
+        (list, coverId) =>
+          hoistCoverImage(
+            list,
+            list.find((image) => image.id === coverId)
+          ),
+        coveredVersionIds.flatMap((versionId) =>
+          images.filter(
+            (image) =>
+              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+          )
         )
       );
 

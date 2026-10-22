@@ -44,6 +44,8 @@ import { resolveSearchTarget } from '~/components/Search/search-target';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 
 // Sentinel option value for the "image search is in maintenance" dropdown item. Not a numeric id,
 // so `hitIds`/`onHits` filter it out and `onItemSelected` is never called with it.
@@ -336,6 +338,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
+  const showSfwFace = useShowsSfwFace();
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -361,7 +364,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         'prompt' in hit
           ? truncate(hit.prompt, { length: 50 })
           : 'name' in hit
-          ? hit.name
+          ? searchHitName(hit, showSfwFace)
           : 'title' in hit
           ? hit.title
           : 'username' in hit
@@ -369,7 +372,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           : '',
     }));
     return items;
-  }, [filtered, imageSearchMaintenance]);
+  }, [filtered, imageSearchMaintenance, showSfwFace]);
 
   // Report what is on offer. Keyed on the joined id list rather than on `items`, whose identity
   // changes on every re-render of the memo's inputs — re-firing on an unchanged set would make a

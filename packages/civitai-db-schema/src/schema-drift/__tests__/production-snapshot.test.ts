@@ -186,9 +186,9 @@ describe('production catalog snapshot (2026-08-03)', () => {
  * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
  * for the same reason.
  */
-describe('production catalog snapshot (2026-10-19)', () => {
+describe('production catalog snapshot (2026-10-20)', () => {
   const current = JSON.parse(
-    readFileSync(join(here, 'fixtures/catalog-production-2026-10-19.json'), 'utf8')
+    readFileSync(join(here, 'fixtures/catalog-production-2026-10-20.json'), 'utf8')
   ) as DbCatalog;
   const currentReport = compareSchemaToCatalog(schema, current);
   const currentFound = (kind: DriftKind) =>
@@ -199,7 +199,7 @@ describe('production catalog snapshot (2026-10-19)', () => {
   it('is a catalog the differ could actually read, captured with a real instant', () => {
     expect(() => assertCatalogSanity(current)).not.toThrow();
     expect(assessCoverage(currentReport)).toEqual([]);
-    expect(current.capturedAt).toBe('2026-10-19T17:31:16.592Z');
+    expect(current.capturedAt).toBe('2026-10-20T16:23:29.382Z');
   });
 
   it('compares every referential action (a live capture carries them)', () => {

@@ -297,6 +297,8 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
+  // Model editor: the .com title, description and per-site covers. Reads are not flagged.
+  modelComFace: { availability: ['mod'], fliptKey: 'model-com-face' },
   // The embedded Training Studio (/training-studio), the default trainer for whoever Flipt grants.
   // Keep `availability: ['mod']`: it is the static fallback when the Flipt flag is missing or
   // unreachable, and with `default: true` anything wider makes the Studio everyone's trainer.

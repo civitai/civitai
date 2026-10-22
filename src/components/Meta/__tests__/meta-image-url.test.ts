@@ -117,4 +117,17 @@ describe('Meta og:image for a model card', () => {
     const after = cardFor([v(11, ModelStatus.Draft), v(10, ModelStatus.Published)]);
     expect(after).toBe(before);
   });
+
+  it('changes when the model is edited, since its .com face and covers feed the card', () => {
+    const card = (updatedAt: string) =>
+      ogImages({
+        ogEndpoint: modelOgEndpoint({
+          id: 1,
+          modelVersions: [v(10, ModelStatus.Published)],
+          updatedAt,
+        }),
+      }).og[0];
+    expect(card('2026-10-20T10:00:00Z')).not.toBe(card('2026-10-20T11:00:00Z'));
+    expect(card('2026-10-20T10:00:00Z')).toMatch(/&v=\d+$/);
+  });
 });
