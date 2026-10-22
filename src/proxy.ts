@@ -20,6 +20,8 @@ export const config = {
     '/api/testing/:path*',
     '/api/trpc/:path*',
     '/api/v1/:path*',
+    // Viewer page data for static shells: needs the region block the page itself gets.
+    '/api/page-data/:path*',
     '/images/:path*', // Explicitly include image pages for region blocking
     // '/models/:path*',
     '/user/:path*',

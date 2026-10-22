@@ -222,8 +222,9 @@ describe('page-data cache headers', () => {
   it('a shared-cache header a procedure wrote does not survive', async () => {
     const { res } = await fetchPageData({ ...ownerFixture, imageId: CDN_HEADER_IMAGE_ID });
     expect(res.statusCode).toBe(200);
-    // Positive control: the procedure did run and write it.
+    // Positive control: the procedure did run and write it onto this response.
     expect(procedureCalls).toContain('image.get');
+    expect(res.headerWrites).toContainEqual(['cache-control', 'public, s-maxage=300']);
     expectPrivateNoStore(res);
   });
 

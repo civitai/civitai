@@ -169,8 +169,11 @@ export function fakeResponse() {
     statusCode: 200,
     body: undefined as unknown,
     headersSent: false,
+    /** Every header write, in order, including ones later overwritten. */
+    headerWrites: [] as [string, unknown][],
     setHeader(name: string, value: unknown) {
       if (res.headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+      res.headerWrites.push([name.toLowerCase(), value]);
       headers.set(name.toLowerCase(), value);
       return res;
     },
