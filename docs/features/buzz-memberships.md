@@ -175,8 +175,9 @@ perks being sold, so they should never diverge. `badge` / `badgeType` then follo
 product every month: `syncActiveBadgeMetadata` copies a Civitai cash tier's live badge onto
 the Buzz product of the same tier.
 
-Catalogs seeded before the monthly badge was included carry `badgeType: none`;
-`scripts/oneoffs/buzz-membership-products-badge.sql` corrects them in place.
+The `badge` image on rows seeded earlier is whatever month it was seeded in;
+`scripts/oneoffs/buzz-membership-products-badge.sql` brings it up to date in place (the
+daily sync does the same on its next run).
 
 `Price.unitAmount` mirrors the cash plan (the script copies it). The Buzz price is derived
 from it as `dollars × 1000 buzz/$ × 1.25` (`getBuzzMembershipPrice`), so with today's cash
@@ -190,21 +191,24 @@ prices:
 
 Set `buzzPrice` in metadata to override.
 
-### `monthlyBuzz` is removed, not set to 0
+### `monthlyBuzz`: absent in the seed, `0` in prod
 
-The prepaid-token unlock cron filters on `pr.metadata->>'monthlyBuzz' IS NOT NULL`, so an
-absent key keeps it off these rows: that is what withholds monthly Buzz. (`0` would have
-kept them in scope, which is why it isn't used here even though the referral-perks products
-do.) **Never add a `monthlyBuzz` key to these products.**
+The seed removes the key, but the prod rows carry `monthlyBuzz: 0` (replica, 2026-10-22).
+Don't rely on either: the prepaid-token unlock filters on `monthlyBuzz IS NOT NULL`, which
+`0` passes, so it excludes `buzzPurchase` products explicitly. That exclusion is what
+withholds monthly Buzz. **Never set a non-zero `monthlyBuzz` on these products.**
 
 The monthly badge is delivered the same way as for cash members: `purchaseMembershipWithBuzz`
-calls `deliverMonthlyCosmetics` at purchase, and the daily run picks them up through their
-`buzzPurchase` flag instead of `monthlyBuzz`. Buzz memberships get **dated** badges only —
+calls `deliverMonthlyCosmetics` at purchase, and the daily run picks them up by
+`monthlyBuzz` or by their `buzzPurchase` flag, so both shapes are covered. Buzz memberships get **dated** badges only —
 the undated Supporter Nameplate stays cash-only, because a Buzz row has no `cancelAt` and the
 nightly revoke would never take it back.
 
 The plan card reads "0 Buzz per month" either way — `getPlanDetails` falls back to 0 when
 the key is missing.
+
+The plan card's badge line comes from `badgeType` (`getPlanDetails`); the "what it does not
+include" list on `/pricing/buzz` and `/user/membership` is `BuzzMembershipCallout`.
 
 ## Rules
 

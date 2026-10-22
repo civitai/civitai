@@ -43,14 +43,21 @@ const buzzBronze = {
   metadata: {
     tier: 'bronze',
     buzzPurchase: true,
+    monthlyBuzz: 0, // prod shape (replica, 2026-10-22)
     badge: AUG_URL,
-    badgeType: 'none',
-    rewardsMultiplier: 1,
+    badgeType: 'static',
+    rewardsMultiplier: '1',
   },
 };
 const buzzSilver = {
   id: 'civitai-buzz-silver',
-  metadata: { tier: 'silver', buzzPurchase: true, badge: AUG_URL, badgeType: 'none' },
+  metadata: {
+    tier: 'silver',
+    buzzPurchase: true,
+    monthlyBuzz: 0,
+    badge: AUG_URL,
+    badgeType: 'static',
+  },
 };
 
 const updatedMetadata = () =>

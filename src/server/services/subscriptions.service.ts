@@ -439,9 +439,8 @@ export const deliverMonthlyCosmetics = async ({
         AND "currentPeriodEnd" > NOW()
         AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
         AND pr.provider = 'Civitai'
-        -- Buzz-purchased memberships earn the monthly badge but carry no monthlyBuzz key,
-        -- which keeps the prepaid-token unlock (and so monthly Buzz) off them. Matched by
-        -- their own flag here rather than by adding the key.
+        -- Buzz-purchased memberships earn the monthly badge whether or not their product
+        -- carries a monthlyBuzz key (prod rows hold 0; the seed omits it).
         AND (
           pr.metadata->>'monthlyBuzz' IS NOT NULL
           OR (pr.metadata->>'buzzPurchase') = 'true'
@@ -1098,6 +1097,9 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
     AND cs."currentPeriodEnd"::date > ${date}::date
     AND pr.provider = 'Civitai'
     AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+    -- Buzz-purchased memberships never earn monthly Buzz. Their products carry
+    -- monthlyBuzz: 0 in prod, which the line above lets through.
+    AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
   `;
 
   if (!memberships.length) {

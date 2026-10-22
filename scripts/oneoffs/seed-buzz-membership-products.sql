@@ -16,7 +16,7 @@
 --   rewardsMultiplier   -> 1        (no bonus Buzz on daily rewards)
 --   buzzPurchase        -> true
 --   buzzType            -> REMOVED  (see below)
---   monthlyBuzz         -> REMOVED  (no monthly Buzz: keeps the token-unlock cron off these rows)
+--   monthlyBuzz         -> REMOVED  (no monthly Buzz)
 --
 -- THREE products total, shared by every site. `buzzType` is stripped rather than set:
 -- these memberships grant no Buzz, so there is no colour to tag them with, and `getPlans`
@@ -76,9 +76,8 @@ SELECT
   -- Keys dropped rather than overridden:
   --   buzzType    — these are site-agnostic; a leftover colour reads as a display hint
   --                 the membership doesn't earn.
-  --   monthlyBuzz — the token-unlock cron requires it to be present. Absent = it never
-  --                 matches these rows: no monthly Buzz. (deliverMonthlyCosmetics matches
-  --                 them by buzzPurchase instead, for the monthly badge.)
+  --   monthlyBuzz — no monthly Buzz. (The token-unlock cron also excludes buzzPurchase
+  --                 products outright; prod rows carry 0, which its key check lets through.)
   (s.source_metadata - 'buzzType' - 'monthlyBuzz')
     || jsonb_build_object(
          'buzzPurchase', true,

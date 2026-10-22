@@ -1,13 +1,15 @@
--- Give the Buzz membership catalog its cash tier's monthly badge on the plan card.
+-- Sync the Buzz membership catalog's plan-card badge IMAGE with its cash tier.
 --
 -- Context: docs/features/buzz-memberships.md
 --
--- Catalogs seeded by seed-buzz-membership-products.sql before the monthly badge was
--- included carry `badgeType: none` (plan card: "No monthly badge") and a `badge` image
--- copied at seed time. This copies `badge` and `badgeType` from the matching cash product
--- (civitai-bronze / -silver / -gold) onto each `buzzPurchase` product. Nothing else
--- changes: monthlyBuzz stays absent, the multipliers stay 1. After this,
--- syncActiveBadgeMetadata keeps the two in step every month.
+-- The three `buzzPurchase` products hold the `badge` image copied when they were seeded,
+-- so their plan cards show a stale month's badge. This copies `badge` and `badgeType` from
+-- the matching cash product (civitai-bronze / -silver / -gold). In prod (replica,
+-- 2026-10-22) badgeType already matches, so in practice only the image changes. Nothing
+-- else is touched: monthlyBuzz stays absent or 0, the multipliers stay 1.
+--
+-- Optional: once the app change ships, the 01:00 UTC syncActiveBadgeMetadata run makes the
+-- same update on its own. This only makes it happen sooner.
 --
 -- This only changes what the plan card shows. Badge DELIVERY does not read these keys.
 --
@@ -77,7 +79,7 @@ WHERE (metadata ->> 'buzzPurchase')::boolean IS TRUE
 ORDER BY id;
 
 -- Fail (and roll back) unless every Buzz product now shows a badge and still withholds
--- monthly Buzz and the bonus multipliers.
+-- monthly Buzz (key absent or 0) and the bonus multipliers.
 DO $$
 DECLARE
   bad text;
@@ -87,7 +89,7 @@ BEGIN
   WHERE (metadata ->> 'buzzPurchase')::boolean IS TRUE
     AND (
       COALESCE(metadata ->> 'badgeType', 'none') = 'none'
-      OR metadata ? 'monthlyBuzz'
+      OR COALESCE((metadata ->> 'monthlyBuzz')::numeric, 0) <> 0
       OR COALESCE((metadata ->> 'purchasesMultiplier')::numeric, 1) <> 1
       OR COALESCE((metadata ->> 'rewardsMultiplier')::numeric, 1) <> 1
     );

@@ -57,15 +57,18 @@ const BUZZ_ENDS_TODAY = 4;
 const BUZZ_LAPSED = 5;
 const BUYER = 6;
 
-// Seed metadata for the Buzz catalog: no monthlyBuzz key, multipliers at 1.
-const buzzMeta = (tier: string, level: number) =>
+// Buzz catalog metadata as prod holds it (replica, 2026-10-22): `monthlyBuzz: 0` present,
+// the cash tier's badgeType, multipliers "1". Silver uses the seed script's shape instead (no
+// monthlyBuzz key) so both shapes stay covered.
+const buzzMeta = (tier: string, level: number, { seedShape = false } = {}) =>
   JSON.stringify({
     tier,
     level,
     buzzPurchase: true,
-    badgeType: 'none',
-    purchasesMultiplier: 1,
-    rewardsMultiplier: 1,
+    badgeType: 'static',
+    purchasesMultiplier: '1',
+    rewardsMultiplier: '1',
+    ...(seedShape ? {} : { monthlyBuzz: 0 }),
   });
 
 beforeAll(async () => {
@@ -98,7 +101,7 @@ beforeAll(async () => {
       ('${CASH_BRONZE}', 'Civitai', true, '{"tier": "bronze", "level": 1, "monthlyBuzz": 10000, "badgeType": "static"}'),
       ('${CASH_SILVER}', 'Civitai', true, '{"tier": "silver", "level": 2, "monthlyBuzz": 25000, "badgeType": "static"}'),
       ('${BUZZ_BRONZE}', 'Civitai', true, '${buzzMeta('bronze', 1)}'),
-      ('${BUZZ_SILVER}', 'Civitai', true, '${buzzMeta('silver', 2)}');
+      ('${BUZZ_SILVER}', 'Civitai', true, '${buzzMeta('silver', 2, { seedShape: true })}');
   `);
 });
 
