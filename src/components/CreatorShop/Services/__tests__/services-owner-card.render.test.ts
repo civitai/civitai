@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   viewerId: 9 as number | null,
   deals: [] as { id: number; offering: { id: number } }[],
   hasNextPage: false,
+  hiddenOffDomain: 0,
   dealsEnabled: [] as boolean[],
 }));
 
@@ -47,7 +48,11 @@ vi.mock('~/components/CreatorShop/Services/deals/deal.util', async (importOrigin
   ...(await importOriginal<object>()),
   useMyServiceDeals: ({ enabled }: { enabled: boolean }) => {
     mocks.dealsEnabled.push(enabled);
-    return { deals: enabled ? mocks.deals : [], hasNextPage: enabled && mocks.hasNextPage };
+    return {
+      deals: enabled ? mocks.deals : [],
+      hasNextPage: enabled && mocks.hasNextPage,
+      hiddenOffDomain: enabled ? mocks.hiddenOffDomain : 0,
+    };
   },
 }));
 vi.mock('~/components/CreatorShop/Services/deals/ServiceRequestModal', () => ({
@@ -85,6 +90,7 @@ beforeEach(() => {
   mocks.viewerId = SELLER;
   mocks.deals = [];
   mocks.hasNextPage = false;
+  mocks.hiddenOffDomain = 0;
   mocks.dealsEnabled = [];
 });
 
@@ -116,6 +122,22 @@ describe("seller's own service card", () => {
   it('marks the count a floor, and does not jump to one deal, when more deals are unloaded', () => {
     mocks.deals = [deal(7)];
     mocks.hasNextPage = true;
+    const html = render();
+    expect(html).toContain('Open deal (1+)');
+    expect(hrefs(html)).not.toContain('/services/deals/7');
+  });
+
+  it('still offers the list when unloaded deals may be on this service', () => {
+    mocks.deals = [deal(8, 99)];
+    mocks.hasNextPage = true;
+    const html = render();
+    expect(html).toContain('Open deals');
+    expect(html).not.toContain('Open deal (');
+  });
+
+  it('does not jump to one deal when mature deals are left out on this domain', () => {
+    mocks.deals = [deal(7)];
+    mocks.hiddenOffDomain = 1;
     const html = render();
     expect(html).toContain('Open deal (1+)');
     expect(hrefs(html)).not.toContain('/services/deals/7');

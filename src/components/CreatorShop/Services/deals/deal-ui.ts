@@ -386,17 +386,23 @@ export const cancellationSide = (viewerRole: 'buyer' | 'seller' | 'moderator') =
 
 /**
  * A seller's open deals on one offering, for their own storefront card. One deal opens straight
- * to it; several open the list. `complete` is false when more deals exist than were loaded, so
- * the count is a floor and there may be other deals on this offering.
+ * to it; several open the list. `complete` is false when the list holds open deals that were not
+ * loaded (a later page, or mature deals left out on this domain): the count is then a floor, the
+ * card never jumps to one deal, and it still offers the list, since this offering may have deals
+ * among the unloaded ones.
  */
 export function openDealsOnOffering(
   deals: { id: number; offering: { id: number } }[],
   offeringId: number,
   complete: boolean
-) {
+): { label: string; dealId?: number } | undefined {
   const onOffering = deals.filter((deal) => deal.offering.id === offeringId);
-  return {
-    count: onOffering.length,
-    dealId: complete && onOffering.length === 1 ? onOffering[0].id : undefined,
-  };
+  if (complete)
+    return onOffering.length === 0
+      ? undefined
+      : {
+          label: `Open deal (${onOffering.length})`,
+          dealId: onOffering.length === 1 ? onOffering[0].id : undefined,
+        };
+  return { label: onOffering.length ? `Open deal (${onOffering.length}+)` : 'Open deals' };
 }

@@ -26,7 +26,11 @@ export function ServicesSection({
   const { offerings } = useQueryShopServices(ownerUserId, ownerUserId > 0);
   const isOwner = !!currentUser && currentUser.id === ownerUserId;
   // The seller's own open deals: the same list as Incoming requests on the manage page.
-  const { deals: openDeals, hasNextPage: moreOpenDeals } = useMyServiceDeals({
+  const {
+    deals: openDeals,
+    hasNextPage,
+    hiddenOffDomain,
+  } = useMyServiceDeals({
     role: 'seller',
     status: 'open',
     enabled: isOwner && offerings.length > 0,
@@ -34,6 +38,7 @@ export function ServicesSection({
   if (offerings.length === 0) return null;
 
   const manageHref = `/user/${username}/shop/manage?tab=services`;
+  const allOpenDealsLoaded = !hasNextPage && hiddenOffDomain === 0;
 
   return (
     <Stack gap="md" id={storefrontSectionId('services')} className="scroll-mt-20">
@@ -45,8 +50,8 @@ export function ServicesSection({
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {offerings.map((offering) => {
           const full = offering.slotsOpen === 0;
-          const open = isOwner
-            ? openDealsOnOffering(openDeals, offering.id, !moreOpenDeals)
+          const openDeal = isOwner
+            ? openDealsOnOffering(openDeals, offering.id, allOpenDealsLoaded)
             : undefined;
           return (
             <ServiceOfferingCard
@@ -61,19 +66,19 @@ export function ServicesSection({
                         : `${offering.slotsOpen} slot${offering.slotsOpen === 1 ? '' : 's'} open`}
                     </Badge>
                   )}
-                  {open && (
+                  {isOwner && (
                     <Group gap={4} ml="auto" wrap="nowrap">
                       <Button component={NextLink} href={manageHref} size="xs" variant="default">
                         Manage
                       </Button>
-                      {open.count > 0 && (
+                      {openDeal && (
                         <Button
                           component={NextLink}
-                          href={open.dealId ? `/services/deals/${open.dealId}` : manageHref}
+                          href={openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref}
                           size="xs"
                           color="yellow"
                         >
-                          {`Open deal (${open.count}${moreOpenDeals ? '+' : ''})`}
+                          {openDeal.label}
                         </Button>
                       )}
                     </Group>

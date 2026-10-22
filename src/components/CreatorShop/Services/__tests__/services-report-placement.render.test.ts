@@ -39,7 +39,7 @@ vi.mock('~/components/CreatorShop/Services/creator-service.util', async (importO
 }));
 vi.mock('~/components/CreatorShop/Services/deals/deal.util', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useMyServiceDeals: () => ({ deals: [], hasNextPage: false }),
+  useMyServiceDeals: () => ({ deals: [], hasNextPage: false, hiddenOffDomain: 0 }),
 }));
 vi.mock('~/components/CreatorShop/Services/deals/ServiceRequestModal', () => ({
   ServiceRequestModal: () => null,
