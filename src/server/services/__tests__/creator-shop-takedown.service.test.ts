@@ -629,6 +629,36 @@ describe('takedownCosmeticShopItem', () => {
     ]);
   });
 
+  // Payouts keyed `<P>` or `<P>:<userId>` only exist for sales that stored the charge's own id (a
+  // GUID). Under any other purchase id such a row is not known to be a payout, so nothing is
+  // refunded from it: refunding a row on a guess is not undoable.
+  it('refuses a bank row keyed by a non-legacy purchase id rather than refund it as a payout', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([purchases[0]]);
+    ledger = {
+      'purchase-1': [
+        sale('purchase-1', 101)[0],
+        {
+          transactionId: 'bank-55',
+          externalTransactionId: 'purchase-1:55',
+          accountId: 0,
+          amount: 200,
+        },
+      ],
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([
+      {
+        stage: 'refund',
+        userId: 101,
+        amount: 1000,
+        error: 'unexpected transactions under the purchase: 1',
+      },
+    ]);
+  });
+
   it('retries a transient refund failure instead of writing the sale off', async () => {
     mocks.purchaseFindMany.mockResolvedValue([purchases[0]]);
     const refund = mocks.refundTransaction.getMockImplementation()!;
