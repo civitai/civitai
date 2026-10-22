@@ -1,4 +1,4 @@
-import { appendAliases } from '$lib/model-rules';
+import { appendAliases, parseAliases } from '$lib/model-rules';
 
 type ApprovalRule = {
   id: number;
@@ -9,13 +9,19 @@ type ApprovalRule = {
   updatedAt: Date | string;
 };
 
+/** The ticked aliases the rule doesn't already have, as `appendAliases` would keep them. */
+export function newAliases(existing: readonly string[], picked: readonly string[]) {
+  const had = new Set(parseAliases(existing.join('\n')).map((alias) => alias.toLowerCase()));
+  return parseAliases(picked.join('\n')).filter((alias) => !had.has(alias.toLowerCase()));
+}
+
 /** The `saveAll` entries for the ticked aliases: the saved rule plus its additions, written against the version the moderator saw. */
 export function buildApprovalPayload(
   rules: readonly ApprovalRule[],
   picks: Record<number, readonly string[]>
 ) {
   return rules.flatMap((rule) => {
-    const added = picks[rule.id] ?? [];
+    const added = newAliases(rule.aliases, picks[rule.id] ?? []);
     if (!added.length) return [];
     return [
       {

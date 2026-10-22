@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildApprovalPayload, readApprovalResult } from '../alias-approval';
+import { buildApprovalPayload, newAliases, readApprovalResult } from '../alias-approval';
 
 const rule = (id: number, aliases: string[], over = {}) => ({
   id,
@@ -41,6 +41,16 @@ describe('buildApprovalPayload', () => {
 
   it('skips rules with nothing ticked and ticks for rules that are gone', () => {
     expect(buildApprovalPayload([rule(3, []), rule(4, [])], { 3: [], 9: ['X'] })).toEqual([]);
+  });
+
+  it('skips a rule whose ticked aliases it already has', () => {
+    expect(buildApprovalPayload([rule(3, ['Old One'])], { 3: ['old one'] })).toEqual([]);
+  });
+});
+
+describe('newAliases', () => {
+  it('counts only the ticked aliases the rule does not already have', () => {
+    expect(newAliases(['Old One'], ['old one', 'New One', 'new  one'])).toEqual(['New One']);
   });
 });
 

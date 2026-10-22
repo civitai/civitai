@@ -13,7 +13,7 @@
   import { BROAD_ALIAS_WARNING, aliasBreadth, ruleMatchesText } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { browserStorage } from '$lib/text-scan-lab/changes.svelte';
-  import { buildApprovalPayload, readApprovalResult } from './alias-approval';
+  import { buildApprovalPayload, newAliases, readApprovalResult } from './alias-approval';
   import { createRunner, progressOf, type RuleRunStatus } from './alias-queue';
   import {
     aliasSuggestionsKey,
@@ -57,7 +57,9 @@
     eligible.filter((rule) => held[rule.id] && !isStaleSuggestion(held[rule.id], rule.updatedAt))
   );
   const payload = $derived(buildApprovalPayload(fresh, picks));
-  const pickedCount = $derived(payload.reduce((n, p) => n + (picks[p.id]?.length ?? 0), 0));
+  const pickedCount = $derived(
+    fresh.reduce((n, rule) => n + newAliases(rule.aliases, picks[rule.id] ?? []).length, 0)
+  );
 
   onMount(() => {
     held = pruneSuggestions(readSuggestions(browserStorage(), storageKey), untrack(() => rules));
