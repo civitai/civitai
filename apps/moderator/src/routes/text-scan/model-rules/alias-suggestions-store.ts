@@ -7,6 +7,8 @@ import type { AliasSuggestion } from './suggest-aliases';
  */
 export type StoredSuggestions = {
   updatedAt: string;
+  /** `searchFingerprint` of the text they were fetched for; empty when stored before it existed. */
+  fingerprint: string;
   costTotal?: number;
   suggestions: AliasSuggestion[];
 };
@@ -17,6 +19,18 @@ export const aliasSuggestionsKey = (moderatorId: number) =>
   `model-rules:alias-suggestions:${moderatorId}`;
 
 const isoOf = (value: Date | string) => new Date(value).toISOString();
+
+/**
+ * The text a search ran on: subject, description and existing aliases as submitted. Held results
+ * and pending ids are used only by a consumer whose text produces the same fingerprint, so a search
+ * run on an unsaved draft is never applied to the saved rule.
+ */
+export const searchFingerprint = (rule: {
+  subject: string;
+  description: string;
+  aliases: readonly string[];
+}) =>
+  JSON.stringify([rule.subject.trim(), rule.description.trim(), rule.aliases.map((a) => a.trim())]);
 
 function readEntry(value: unknown): StoredSuggestions | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -38,6 +52,7 @@ function readEntry(value: unknown): StoredSuggestions | null {
   }
   return {
     updatedAt: v.updatedAt,
+    fingerprint: typeof v.fingerprint === 'string' ? v.fingerprint : '',
     ...(typeof v.costTotal === 'number' && Number.isFinite(v.costTotal)
       ? { costTotal: v.costTotal }
       : {}),
@@ -76,8 +91,12 @@ export function writeSuggestions(store: Store | null, key: string, held: Held): 
   }
 }
 
-export const isStaleSuggestion = (entry: StoredSuggestions, ruleUpdatedAt: Date | string) =>
-  entry.updatedAt !== isoOf(ruleUpdatedAt);
+/** Stale when the rule was saved since, or the text it was fetched for is not the text in hand. */
+export const isStaleSuggestion = (
+  entry: StoredSuggestions,
+  ruleUpdatedAt: Date | string,
+  fingerprint: string
+) => entry.updatedAt !== isoOf(ruleUpdatedAt) || !fingerprint || entry.fingerprint !== fingerprint;
 
 export function pruneSuggestions(held: Held, rules: readonly { id: number }[]): Held {
   const ids = new Set(rules.map((r) => r.id));
@@ -86,9 +105,10 @@ export function pruneSuggestions(held: Held, rules: readonly { id: number }[]): 
 
 /**
  * A billed search that was submitted and may still be running, held per rule so a reload resumes
- * polling it instead of paying for a second one. `updatedAt` is the rule version it was started for.
+ * polling it instead of paying for a second one. `updatedAt` is the rule version it was started for and
+ * `fingerprint` the text it ran on.
  */
-export type PendingSearch = { updatedAt: string; workflowId: string };
+export type PendingSearch = { updatedAt: string; fingerprint: string; workflowId: string };
 type PendingMap = Record<number, PendingSearch>;
 
 export const aliasPendingKey = (moderatorId: number) => `model-rules:alias-pending:${moderatorId}`;
@@ -108,8 +128,17 @@ export function readPending(store: Store | null, key: string): PendingMap {
   for (const [id, value] of Object.entries(parsed)) {
     const v = value as Record<string, unknown> | null;
     const workflowId = aliasWorkflowIdField.safeParse(v?.workflowId);
-    if (/^[1-9]\d*$/.test(id) && typeof v?.updatedAt === 'string' && workflowId.success)
-      out[Number(id)] = { updatedAt: v.updatedAt, workflowId: workflowId.data };
+    if (
+      /^[1-9]\d*$/.test(id) &&
+      typeof v?.updatedAt === 'string' &&
+      typeof v.fingerprint === 'string' &&
+      workflowId.success
+    )
+      out[Number(id)] = {
+        updatedAt: v.updatedAt,
+        fingerprint: v.fingerprint,
+        workflowId: workflowId.data,
+      };
   }
   return out;
 }
@@ -138,8 +167,11 @@ export function setPending(
   }
 }
 
-export const isStalePending = (entry: PendingSearch, ruleUpdatedAt: Date | string) =>
-  entry.updatedAt !== isoOf(ruleUpdatedAt);
+export const isStalePending = (
+  entry: PendingSearch,
+  ruleUpdatedAt: Date | string,
+  fingerprint: string
+) => entry.updatedAt !== isoOf(ruleUpdatedAt) || entry.fingerprint !== fingerprint;
 
 export function prunePending(pending: PendingMap, rules: readonly { id: number }[]): PendingMap {
   const ids = new Set(rules.map((r) => r.id));

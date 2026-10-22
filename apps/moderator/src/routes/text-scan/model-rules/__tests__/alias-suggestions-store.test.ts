@@ -7,6 +7,7 @@ import {
   setPending,
   aliasSuggestionsKey,
   isStaleSuggestion,
+  searchFingerprint,
   pruneSuggestions,
   readSuggestions,
   writeSuggestions,
@@ -25,6 +26,7 @@ const memory = (initial: Record<string, string> = {}) => {
 const KEY = aliasSuggestionsKey(7);
 const entry = (over: Partial<StoredSuggestions> = {}): StoredSuggestions => ({
   updatedAt: '2026-01-01T00:00:00.000Z',
+  fingerprint: 'fp-a',
   costTotal: 3,
   suggestions: [
     { alias: 'One Name', kind: 'stage_name', note: 'n', source: 'https://example.com' },
@@ -89,12 +91,23 @@ describe('suggestion persistence', () => {
 
 describe('isStaleSuggestion', () => {
   it('is fresh while the rule keeps the updatedAt the suggestions were fetched for', () => {
-    expect(isStaleSuggestion(entry(), new Date('2026-01-01T00:00:00.000Z'))).toBe(false);
-    expect(isStaleSuggestion(entry(), '2026-01-01T00:00:00.000Z')).toBe(false);
+    expect(isStaleSuggestion(entry(), new Date('2026-01-01T00:00:00.000Z'), 'fp-a')).toBe(false);
+    expect(isStaleSuggestion(entry(), '2026-01-01T00:00:00.000Z', 'fp-a')).toBe(false);
   });
 
   it('is stale once the rule was saved again', () => {
-    expect(isStaleSuggestion(entry(), new Date('2026-01-02T00:00:00.000Z'))).toBe(true);
+    expect(isStaleSuggestion(entry(), new Date('2026-01-02T00:00:00.000Z'), 'fp-a')).toBe(true);
+  });
+
+  it('is stale when it was fetched for other text than the consumer will use', () => {
+    expect(isStaleSuggestion(entry(), '2026-01-01T00:00:00.000Z', 'fp-draft')).toBe(true);
+  });
+
+  it('reads an entry stored before fingerprints existed as stale, never as matching', () => {
+    const raw = JSON.stringify({ 3: { updatedAt: '2026-01-01T00:00:00.000Z', suggestions: [] } });
+    const read = readSuggestions(memory({ [KEY]: raw }), KEY)[3];
+    expect(isStaleSuggestion(read, '2026-01-01T00:00:00.000Z', 'fp-a')).toBe(true);
+    expect(isStaleSuggestion(read, '2026-01-01T00:00:00.000Z', '')).toBe(true);
   });
 });
 
@@ -106,7 +119,11 @@ describe('pruneSuggestions', () => {
 
 describe('pending searches', () => {
   const PKEY = aliasPendingKey(7);
-  const pending = { updatedAt: '2026-01-01T00:00:00.000Z', workflowId: 'wf_0123456789' };
+  const pending = {
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    fingerprint: 'fp-a',
+    workflowId: 'wf_0123456789',
+  };
 
   it('is keyed per moderator and apart from the held suggestions', () => {
     expect(aliasPendingKey(1)).not.toBe(aliasPendingKey(2));
@@ -134,8 +151,9 @@ describe('pending searches', () => {
     expect(readPending(memory({ [PKEY]: '{nope' }), PKEY)).toEqual({});
     const raw = JSON.stringify({
       3: pending,
-      4: { updatedAt: 5, workflowId: 'wf_0123456789' },
-      5: { updatedAt: pending.updatedAt, workflowId: '../x' },
+      4: { updatedAt: 5, fingerprint: 'fp-a', workflowId: 'wf_0123456789' },
+      5: { updatedAt: pending.updatedAt, fingerprint: 'fp-a', workflowId: '../x' },
+      6: { updatedAt: pending.updatedAt, workflowId: 'wf_0123456789' },
       nope: pending,
     });
     expect(Object.keys(readPending(memory({ [PKEY]: raw }), PKEY))).toEqual(['3']);
@@ -156,8 +174,33 @@ describe('pending searches', () => {
   });
 
   it('is stale once the rule was saved again, and pruned when the rule is gone', () => {
-    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'))).toBe(false);
-    expect(isStalePending(pending, new Date('2026-01-02T00:00:00.000Z'))).toBe(true);
+    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'), 'fp-a')).toBe(false);
+    expect(isStalePending(pending, new Date('2026-01-02T00:00:00.000Z'), 'fp-a')).toBe(true);
+    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'), 'fp-draft')).toBe(true);
     expect(Object.keys(prunePending({ 3: pending, 4: pending }, [{ id: 3 }]))).toEqual(['3']);
+  });
+});
+
+describe('searchFingerprint', () => {
+  const rule = { subject: 'Alpha Beta', description: 'About', aliases: ['One', 'Two'] };
+
+  it('is the same for the same text however the edges are spaced', () => {
+    expect(searchFingerprint({ ...rule, subject: ' Alpha Beta ', description: 'About\n' })).toBe(
+      searchFingerprint(rule)
+    );
+  });
+
+  it('differs when the subject, description or aliases differ', () => {
+    const base = searchFingerprint(rule);
+    expect(searchFingerprint({ ...rule, subject: 'Alpha' })).not.toBe(base);
+    expect(searchFingerprint({ ...rule, description: 'Other' })).not.toBe(base);
+    expect(searchFingerprint({ ...rule, aliases: ['One'] })).not.toBe(base);
+    expect(searchFingerprint({ ...rule, aliases: ['Two', 'One'] })).not.toBe(base);
+  });
+
+  it('cannot be forged by moving text between fields', () => {
+    expect(searchFingerprint({ subject: 'a', description: 'b', aliases: [] })).not.toBe(
+      searchFingerprint({ subject: 'a', description: '', aliases: ['b'] })
+    );
   });
 });

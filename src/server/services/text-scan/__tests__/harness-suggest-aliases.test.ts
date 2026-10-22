@@ -206,8 +206,33 @@ describe('aliasSuggestionResult', () => {
     expect(body).not.toHaveProperty('suggestions');
   });
 
-  it('reports a workflow that cannot be read', async () => {
+  it('reports a workflow that cannot be read as an outage when the orchestrator did not say it is gone', async () => {
     vi.mocked(getWorkflow).mockResolvedValue({ data: undefined, error: 'nope' } as never);
-    expect(await poll()).toMatchObject({ ok: false });
+    expect(await poll()).toMatchObject({ ok: false, reason: 'unavailable' });
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: undefined,
+      error: 'down',
+      response: { status: 503 },
+    } as never);
+    expect(await poll()).toMatchObject({ ok: false, reason: 'unavailable' });
+  });
+
+  it.each([404, 410])(
+    'reports a workflow the orchestrator no longer has (%i) as not_found',
+    async (status) => {
+      vi.mocked(getWorkflow).mockResolvedValue({
+        data: undefined,
+        error: 'gone',
+        response: { status },
+      } as never);
+      expect(await poll()).toMatchObject({ ok: false, reason: 'not_found' });
+    }
+  );
+
+  it('tags the refusal of a workflow without the feature tag', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      reply(answer, 'succeeded', 'stop', ['text-scan']) as never
+    );
+    expect(await poll()).toMatchObject({ ok: false, reason: 'not_alias_workflow' });
   });
 });

@@ -199,6 +199,38 @@ describe('runAliasSuggestionResult', () => {
     expect(endpoint.callModEndpoint).not.toHaveBeenCalled();
   });
 
+  it.each(['not_found', 'not_alias_workflow'])(
+    'answers failed when the main app permanently refuses the search (%s)',
+    async (reason) => {
+      endpoint.callModEndpoint.mockResolvedValue(
+        answered({ ok: false, reason, error: 'workflow not found' })
+      );
+      expect(await runAliasSuggestionResult(form(fields))).toEqual({
+        suggested: true,
+        status: 'failed',
+        error: 'workflow not found',
+      });
+    }
+  );
+
+  it('reports the main app rejecting the request as invalid (400), not as an outage', async () => {
+    endpoint.callModEndpoint.mockResolvedValue({ ok: false, error: 'bad id', status: 400 });
+    expect(await runAliasSuggestionResult(form(fields))).toMatchObject({
+      status: 400,
+      data: { error: 'bad id' },
+    });
+  });
+
+  it('keeps an unreadable workflow without a permanent reason a transport error', async () => {
+    endpoint.callModEndpoint.mockResolvedValue(
+      answered({ ok: false, reason: 'unavailable', error: 'orchestrator 503' })
+    );
+    expect(await runAliasSuggestionResult(form(fields))).toMatchObject({
+      status: 502,
+      data: { error: 'orchestrator 503' },
+    });
+  });
+
   it('surfaces a refusal from the main app as a transport error', async () => {
     endpoint.callModEndpoint.mockResolvedValue({ ok: false, error: 'down', status: 502 });
     expect(await runAliasSuggestionResult(form(fields))).toMatchObject({

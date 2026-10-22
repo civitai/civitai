@@ -6,7 +6,7 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { LINK_CLASS, plural } from '$lib/format';
-  import { runRuleSearch, storedWorkflowId, type PendingSlot } from './alias-client';
+  import { canResumeSearch, pendingSlot, runRuleSearch, type PendingSlot } from './alias-client';
   import { aliasPendingKey } from './alias-suggestions-store';
   import { parseAliases } from '$lib/model-rules';
   import { ALIAS_KIND_LABELS, type AliasSuggestion } from './suggest-aliases';
@@ -35,14 +35,10 @@
   const selected = new SvelteSet<string>();
   const controller = new AbortController();
 
+  // The stored id belongs to the text it ran on: the draft in the fields, not the saved rule.
+  const searchRule = $derived({ subject, description, aliases: parseAliases(aliases) });
   const slot = $derived<PendingSlot | null>(
-    rule
-      ? {
-          key: aliasPendingKey(page.data.user?.id ?? 0),
-          ruleId: rule.id,
-          updatedAt: new Date(rule.updatedAt).toISOString(),
-        }
-      : null
+    rule ? pendingSlot(aliasPendingKey(page.data.user?.id ?? 0), rule, searchRule) : null
   );
 
   async function search() {
@@ -51,17 +47,20 @@
     error = null;
     suggestions = null;
     selected.clear();
+    const slotAtStart = slot;
     try {
       const outcome = await runRuleSearch({
         pathname: page.url.pathname,
-        rule: { subject, description, aliases: parseAliases(aliases) },
-        slot,
+        rule: searchRule,
+        slot: slotAtStart,
         signal: controller.signal,
       });
       if (outcome.status === 'done') suggestions = outcome.suggestions;
       else if (outcome.status === 'failed') error = outcome.error;
       else if (outcome.status === 'unresolved')
-        error = `${outcome.reason} The search is kept: click again to check it without paying twice.`;
+        error = slotAtStart
+          ? `${outcome.reason} The search is kept: click again to check it without paying twice.`
+          : `${outcome.reason} This rule is not saved, so nothing was kept: clicking again starts, and bills, a new search.`;
     } catch (e) {
       error = e instanceof Error ? e.message : 'The call failed.';
     } finally {
@@ -71,7 +70,7 @@
 
   // A search submitted before a reload is still running and billed: poll it, never submit again.
   onMount(() => {
-    if (untrack(() => storedWorkflowId(slot))) void search();
+    if (untrack(() => canResumeSearch(slot))) void search();
   });
   // Leaving the page keeps the stored workflow id; the next visit resumes it.
   onDestroy(() => controller.abort());

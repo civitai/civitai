@@ -17,6 +17,12 @@ export type SearchOutcome =
   | { status: 'unresolved'; reason: string }
   | { status: 'stopped' };
 
+/**
+ * A poll the far side refused for good (rejected request): the search can never be read back, so
+ * it ends as `failed` at once. Any other thrown error is a transport error and counts as an outage.
+ */
+export class PollRefused extends Error {}
+
 export const POLL_INTERVAL_MS = 4000;
 export const MAX_WAIT_MS = 10 * 60_000;
 const MAX_POLL_ERRORS = 3;
@@ -38,7 +44,7 @@ const sleepUnlessAborted = (ms: number, signal?: AbortSignal) =>
  *
  * A search that is still running is never submitted again: `workflowId` resumes it, and giving up
  * (cap, stop, unreachable) leaves it to the caller to keep that id. Only a search that really
- * failed reports `failed`. A submit error is thrown, since nothing was billed or stored.
+ * failed, or whose poll was permanently refused (`PollRefused`), reports `failed`. A submit error is thrown, since nothing was billed or stored.
  */
 export async function searchAliases(opts: {
   workflowId?: string;
@@ -77,7 +83,8 @@ export async function searchAliases(opts: {
       const answer = await opts.poll(workflowId);
       errors = 0;
       if (answer.status !== 'pending') return answer;
-    } catch {
+    } catch (e) {
+      if (e instanceof PollRefused) return { status: 'failed', error: e.message };
       if (++errors >= MAX_POLL_ERRORS)
         return {
           status: 'unresolved',

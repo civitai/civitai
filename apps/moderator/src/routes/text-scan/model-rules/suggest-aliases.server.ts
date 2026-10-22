@@ -50,6 +50,12 @@ const done = z.object({
   costTotal: costField,
 });
 const refused = z.object({ ok: z.literal(false), error: z.string() });
+/** The search can never be read back (gone, or not an alias search): polling it again is pointless. */
+const gone = z.object({
+  ok: z.literal(false),
+  reason: z.enum(['not_found', 'not_alias_workflow']),
+  error: z.string(),
+});
 
 const submitAnswer = z.union([
   done,
@@ -60,6 +66,7 @@ const resultAnswer = z.union([
   done,
   z.object({ ok: z.literal(true), status: z.literal('pending') }),
   z.object({ ok: z.literal(true), status: z.literal('failed'), error: z.string() }),
+  gone,
   refused,
 ]);
 
@@ -119,11 +126,15 @@ export async function runAliasSuggestionResult(
     'Read model rule alias suggestions',
     REQUEST_TIMEOUT_MS
   );
-  if (!result.ok) return fail(502, { error: result.error });
+  // The main app rejecting the request itself is a permanent refusal; anything else is transport.
+  if (!result.ok) return fail(result.status === 400 ? 400 : 502, { error: result.error });
 
   const answer = resultAnswer.safeParse(result.body);
   if (!answer.success) return fail(502, { error: UNREADABLE });
-  if (!answer.data.ok) return fail(502, { error: answer.data.error });
+  if (!answer.data.ok)
+    return 'reason' in answer.data
+      ? { suggested: true, status: 'failed', error: answer.data.error }
+      : fail(502, { error: answer.data.error });
   if (answer.data.status === 'pending') return { suggested: true, status: 'pending' };
   if (answer.data.status === 'failed')
     return { suggested: true, status: 'failed', error: answer.data.error };

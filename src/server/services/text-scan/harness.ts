@@ -605,14 +605,27 @@ async function aliasSuggestionResult(input: {
   subject: string;
   existingAliases: string[];
 }) {
-  const { data, error } = await getWorkflow({
+  const { data, error, response } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId: input.workflowId },
   });
-  if (!data) return { ok: false as const, error: workflowErrorText(error, 'workflow not found') };
+  // `reason` is what the caller branches on: a gone or foreign workflow will never answer, while
+  // `unavailable` (any other read failure) may succeed on the next poll.
+  if (!data) {
+    const status = response?.status;
+    return {
+      ok: false as const,
+      reason: status === 404 || status === 410 ? ('not_found' as const) : ('unavailable' as const),
+      error: workflowErrorText(error, 'workflow not found'),
+    };
+  }
   const workflow = data as AliasWorkflow;
   if (!(workflow.tags ?? []).includes(ALIAS_WORKFLOW_TAG))
-    return { ok: false as const, error: 'workflow is not an alias suggestion' };
+    return {
+      ok: false as const,
+      reason: 'not_alias_workflow' as const,
+      error: 'workflow is not an alias suggestion',
+    };
   const outcome = aliasWorkflowOutcome(workflow, input);
   // A finished workflow that failed is an answer, not a transport error: the caller stops polling.
   return outcome.ok ? outcome : { ...outcome, ok: true as const, status: 'failed' as const };

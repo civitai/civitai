@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { searchAliases, type PollAnswer, type SearchAnswer } from '../alias-search';
+import { PollRefused, searchAliases, type PollAnswer, type SearchAnswer } from '../alias-search';
 
 const SUGGESTIONS = [{ alias: 'One Name', kind: 'stage_name' as const }];
 const done: PollAnswer = { status: 'done', suggestions: SUGGESTIONS, costTotal: 3 };
@@ -87,6 +87,21 @@ describe('searchAliases', () => {
     const outcome = await h.run();
     expect(outcome).toMatchObject({ status: 'unresolved' });
     expect(h.poll).toHaveBeenCalledTimes(3);
+  });
+
+  it('ends a permanently refused poll as failed at once, instead of counting it as an outage', async () => {
+    const h = harness({ workflowId: 'wf_stored_0001' });
+    h.poll.mockRejectedValue(new PollRefused('The search is gone.'));
+    expect(await h.run()).toEqual({ status: 'failed', error: 'The search is gone.' });
+    expect(h.poll).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let earlier transport errors hide a later permanent refusal', async () => {
+    const h = harness({ workflowId: 'wf_stored_0001' });
+    h.poll
+      .mockRejectedValueOnce(new Error('network'))
+      .mockRejectedValueOnce(new PollRefused('Not an alias search.'));
+    expect(await h.run()).toEqual({ status: 'failed', error: 'Not an alias search.' });
   });
 
   it('stops polling when aborted and reports stopped', async () => {

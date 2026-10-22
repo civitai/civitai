@@ -14,7 +14,7 @@
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { browserStorage } from '$lib/text-scan-lab/changes.svelte';
   import { buildApprovalPayload, newAliases, readApprovalResult } from './alias-approval';
-  import { runRuleSearch, type PendingSlot } from './alias-client';
+  import { pendingSlot, runRuleSearch, type PendingSlot, type SearchRule } from './alias-client';
   import { createRunner, progressOf, type RuleRunStatus } from './alias-queue';
   import type { SearchOutcome } from './alias-search';
   import {
@@ -26,6 +26,7 @@
     pruneSuggestions,
     readPending,
     readSuggestions,
+    searchFingerprint,
     setPending,
     writeSuggestions,
     type StoredSuggestions,
@@ -64,18 +65,22 @@
   const progress = $derived(progressOf(Object.values(statuses)));
   const working = $derived(progress.remaining > 0);
   const fresh = $derived(
-    eligible.filter((rule) => held[rule.id] && !isStaleSuggestion(held[rule.id], rule.updatedAt))
+    eligible.filter((rule) => held[rule.id] && !isStale(held[rule.id], rule))
   );
   const payload = $derived(buildApprovalPayload(fresh, picks));
   const pickedCount = $derived(
     fresh.reduce((n, rule) => n + newAliases(rule.aliases, picks[rule.id] ?? []).length, 0)
   );
 
-  const slotOf = (rule: ModelRuleView): PendingSlot => ({
-    key: pendingKey,
-    ruleId: rule.id,
-    updatedAt: new Date(rule.updatedAt).toISOString(),
+  // The backfill only ever uses the saved rule's text, so a search that ran on any other text
+  // (an unsaved draft in the editor) must not resume or be applied here.
+  const searchRuleOf = (rule: ModelRuleView): SearchRule => ({
+    subject: rule.subject,
+    description: rule.description,
+    aliases: rule.aliases,
   });
+  const isStale = (entry: StoredSuggestions, rule: ModelRuleView) =>
+    isStaleSuggestion(entry, rule.updatedAt, searchFingerprint(searchRuleOf(rule)));
 
   onMount(() => {
     const current = untrack(() => rules);
@@ -87,7 +92,8 @@
     for (const rule of current) {
       const entry = pending[rule.id];
       if (!entry) continue;
-      if (isStalePending(entry, rule.updatedAt)) setPending(store, pendingKey, rule.id, null);
+      if (isStalePending(entry, rule.updatedAt, searchFingerprint(searchRuleOf(rule))))
+        setPending(store, pendingKey, rule.id, null);
       else if (rule.enabled && !rule.legacy && !held[rule.id]) resume.push(rule.id);
     }
     start(resume);
@@ -97,20 +103,20 @@
     kept = writeSuggestions(browserStorage(), storageKey, $state.snapshot(held));
   }
 
-  const runner = createRunner<number, { updatedAt: string; outcome: SearchOutcome }>({
+  const runner = createRunner<number, { slot: PendingSlot; outcome: SearchOutcome }>({
     concurrency: CONCURRENCY,
     worker: async (id) => {
       const rule = untrack(() => rules).find((r) => r.id === id);
       if (!rule) throw new Error('This rule no longer exists.');
       statuses[id] = 'running';
-      const slot = slotOf(rule);
+      const slot = pendingSlot(pendingKey, rule, searchRuleOf(rule));
       const outcome = await runRuleSearch({
         pathname: page.url.pathname,
-        rule: { subject: rule.subject, description: rule.description, aliases: rule.aliases },
+        rule: searchRuleOf(rule),
         slot,
         signal: controller.signal,
       });
-      return { updatedAt: slot.updatedAt, outcome };
+      return { slot, outcome };
     },
     // A finished call is billed, so its answer is stored before anything else can go wrong.
     onSettled: (id, settled) => {
@@ -119,7 +125,7 @@
         errors[id] = settled.error instanceof Error ? settled.error.message : 'The call failed.';
         return;
       }
-      const { updatedAt, outcome } = settled.value;
+      const { slot, outcome } = settled.value;
       if (outcome.status === 'stopped') {
         statuses[id] = 'idle';
         return;
@@ -135,7 +141,12 @@
         return;
       }
       spent += outcome.costTotal ?? 0;
-      held[id] = { updatedAt, costTotal: outcome.costTotal, suggestions: outcome.suggestions };
+      held[id] = {
+        updatedAt: slot.updatedAt,
+        fingerprint: slot.fingerprint,
+        costTotal: outcome.costTotal,
+        suggestions: outcome.suggestions,
+      };
       delete picks[id];
       delete errors[id];
       statuses[id] = 'done';
@@ -284,7 +295,7 @@
     <ul class="divide-y divide-dark-4" aria-label="Rules">
       {#each shown as rule (rule.id)}
         {@const entry = held[rule.id]}
-        {@const stale = !!entry && isStaleSuggestion(entry, rule.updatedAt)}
+        {@const stale = !!entry && isStale(entry, rule)}
         {@const status = statuses[rule.id] ?? 'idle'}
         <li class="space-y-2 py-3">
           <div class="flex flex-wrap items-center gap-2" data-touch-target>
@@ -316,8 +327,8 @@
           {#if entry}
             {#if stale}
               <p class="text-sm text-yellow-300">
-                This rule was edited after these were fetched, so they are out of date. Discard them
-                and suggest again.
+                These were fetched for other text than this rule has now (it was edited, or the search ran on
+                an unsaved draft), so they are out of date. Discard them and suggest again.
               </p>
             {/if}
             {#if !entry.suggestions.length}
