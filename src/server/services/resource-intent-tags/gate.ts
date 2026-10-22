@@ -105,7 +105,8 @@ export function gateEligibleEcosystems(
 
 /**
  * The media type a v1_tags request generates. Image only: the request carries no media type, and the
- * stage-3 question it shares states the prompt is an image-generation prompt. A request that can be
+ * route's stage-3 question (resource-intent.schema.ts) states the prompt is an image-generation
+ * prompt. A request that can be
  * a video one must pass its own media type here instead of this constant.
  */
 export const V1_TAGS_REQUEST_MEDIA_TYPE: MediaType = 'image';

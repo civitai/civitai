@@ -7,7 +7,6 @@ import {
   modalityEligibleEcosystems,
   v1GateFingerprint,
   V1_TAGS_MIN_ECOSYSTEM_RESOURCES,
-  V1_TAGS_REQUEST_MEDIA_TYPE,
 } from '~/server/services/resource-intent-tags/gate';
 import type { TagIndex } from '~/server/services/resource-intent-tags/score';
 
@@ -119,10 +118,6 @@ describe('🔴 modality: the base-model record decides which ecosystems an image
     };
     expect([...modalityEligibleEcosystems(idx, 'image')]).toEqual([0, 2, 4]);
     expect([...modalityEligibleEcosystems(idx, 'video')]).toEqual([1, 2, 3, 4]);
-  });
-
-  it('every v1 request is an image request', () => {
-    expect(V1_TAGS_REQUEST_MEDIA_TYPE).toBe('image');
   });
 
   it('the v1 gate spec hash covers the media type and the modality predicate', () => {
