@@ -31,6 +31,7 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { recordSourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import { resolveSourceDimensions } from '~/components/generation_v2/utils/resolve-source-dimensions';
 import { getImageDimensions } from '~/utils/image-utils';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
@@ -269,6 +270,8 @@ async function applyWorkflowToForm({
     images = [{ url: image.url, ...dimensions }];
   }
 
+  recordSourceRating(image.url, image.nsfwLevel);
+
   if (isEnhancement && (image.params || image.resources)) {
     // Store original generation data as source metadata
     sourceMetadataStore.setMetadata(image.url, {
@@ -466,6 +469,7 @@ export async function applyBulkWorkflow(
 
   // Store source metadata for each image
   for (const image of batch) {
+    recordSourceRating(image.url, image.nsfwLevel);
     if (image.params || image.resources) {
       sourceMetadataStore.setMetadata(image.url, {
         params: image.params,
