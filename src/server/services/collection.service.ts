@@ -784,8 +784,8 @@ export async function getPendingReviewCount(collectionId: number) {
  *
  * Prod covers the `(collectionId, status)` filter with `CollectionItem_collectionId_status_covered`
  * (`(collectionId, status, createdAt DESC) INCLUDE (...)`), both equality columns in the Index
- * Cond. `reviewQueueVisibleTargetSql` then adds one primary-key probe per pending row, so cost
- * grows with pending rows, not collection size.
+ * Cond. `reviewQueueVisibleTargetSql` then adds a primary-key lookup or two per pending row, so
+ * cost grows with pending rows, not collection size.
  * That index is NOT in `schema.full.prisma`, so an environment built from the schema alone does
  * not have it and this query will be slower there. That is known, not a regression.
  *
