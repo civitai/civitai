@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {

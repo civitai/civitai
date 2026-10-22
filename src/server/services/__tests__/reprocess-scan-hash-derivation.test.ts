@@ -20,7 +20,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // reprocess-scan imports the real model-file-scan.service for normalizeScanHashes. That module's
 // import graph reaches clickhouse/redis/search-index/flipt at load time; stub the edges so the
 // helper under test is the only real code in the path.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: vi.fn(),
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),

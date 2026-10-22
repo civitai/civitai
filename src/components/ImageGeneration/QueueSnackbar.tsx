@@ -13,7 +13,7 @@ import { generationStatusColors } from '~/shared/constants/generation.constants'
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useRouter } from 'next/router';
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import React from 'react';
 import classes from './QueueSnackbar.module.scss';
 import clsx from 'clsx';

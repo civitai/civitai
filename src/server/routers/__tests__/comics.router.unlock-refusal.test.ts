@@ -4,7 +4,7 @@ import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 /**
  * The orchestrator client resolves on an HTTP error, so a refused unlock (no Buzz, the cap) must be
- * surfaced by the site. The orchestrator client is faked at `@civitai/client`; the site's own
+ * surfaced by the site. The orchestrator client is faked at `@civitai/orchestration-client`; the site's own
  * `updateWorkflow` runs for real and turns the response into the error the panel's toast shows.
  */
 
@@ -22,7 +22,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   getWorkflow: mocks.getWorkflow,
 }));
 
-import { handleError, updateWorkflow as clientUpdateWorkflow } from '@civitai/client';
+import { handleError, updateWorkflow as clientUpdateWorkflow } from '@civitai/orchestration-client';
 import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';

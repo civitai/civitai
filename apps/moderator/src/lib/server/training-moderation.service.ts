@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
-import { getWorkflow } from '@civitai/client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from './db';
 import {
   getManagerWorkflow,

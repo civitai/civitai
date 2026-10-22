@@ -1,4 +1,4 @@
-import type { NsfwLevel } from '@civitai/client';
+import type { NsfwLevel } from '@civitai/orchestration-client';
 import type { Model3dBlob } from '@civitai/orchestration-client';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { isGlbFormat } from '~/shared/orchestrator/model3d-output';

@@ -1,7 +1,7 @@
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
-import type { createCivitaiClient } from '@civitai/client';
+import type { createCivitaiClient } from '@civitai/orchestration-client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow,
@@ -11,7 +11,7 @@ import {
   type BlobArchiveEntry,
   type BuzzClientAccount,
   type WorkflowStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   CIVITAI_TAG,
   TRAINING_TAG,

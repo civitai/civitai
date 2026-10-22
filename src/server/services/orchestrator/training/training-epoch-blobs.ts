@@ -3,7 +3,7 @@ import type {
   TrainingOutputEpochResult,
   Workflow,
   WorkflowStatus,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import { parseAIRSafe } from '~/shared/utils/air';
 

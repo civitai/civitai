@@ -22,7 +22,7 @@
  * the counter again, which would otherwise corrupt the finalize trigger. We
  * guard against that by no-op-ing if the field is already present.
  */
-import type { WorkflowEvent } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis, REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '~/server/redis/client';
 import { handleResultCallback } from '~/server/services/scanner-policies-test.service';

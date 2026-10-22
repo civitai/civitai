@@ -68,7 +68,7 @@ import {
   getPolyGenPostBlock,
   getPolyGenPrimaryModel,
 } from '~/server/orchestrator/polygen/polygen-output';
-import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {

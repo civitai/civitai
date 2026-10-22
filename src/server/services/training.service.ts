@@ -6,14 +6,14 @@ import type {
   WdTaggingStepTemplate,
   Workflow,
   WorkflowStepTemplate,
-} from '@civitai/client';
-import type { WorkflowStatus } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -755,6 +755,9 @@ export async function submitAutoLabelWorkflow({
             mediaUrl: img.mediaUrl,
             temperature: params.temperature,
             maxNewTokens: params.maxNewTokens,
+            // Training wants the caption itself, not the moderation-oriented transcript.
+            includeCaption: true,
+            prepareForModeration: false,
           },
           metadata: stepMetadata,
         };

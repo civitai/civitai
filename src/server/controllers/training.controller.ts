@@ -1,4 +1,4 @@
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';

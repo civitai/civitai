@@ -79,7 +79,7 @@ const nativePoolPlugin = {
 // 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
 // optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
 // `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
-// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted.
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/orchestration-client` until the cache was deleted.
 const optimizerCacheKeyPlugin = {
   name: 'civitai:fs-cache-optimizer-key',
   configureVitest({

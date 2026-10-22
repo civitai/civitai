@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
  * one allowlists rot without, and it is what keeps this list draining rather than growing.
  *
  * SCOPE. Only calls through the `~/server/services/orchestrator/workflows` wrapper that pass
- * `token`. A call passing `client:` is the generated `@civitai/client` used with
+ * `token`. A call passing `client:` is the generated `@civitai/orchestration-client` used with
  * `internalOrchestratorClient` — the system account, which legitimately owns what it submits.
  */
 

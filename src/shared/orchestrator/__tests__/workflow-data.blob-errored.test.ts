@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { BlobData } from '~/shared/orchestrator/workflow-data';
 import type { StepData } from '~/shared/orchestrator/workflow-data';
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 
 /**
  * `errored` is the factual half of the question: the step reached a terminal state

@@ -66,7 +66,8 @@ const {
   };
 });
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: mockGetWorkflow,
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),

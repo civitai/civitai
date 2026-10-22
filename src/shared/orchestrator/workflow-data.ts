@@ -1,4 +1,4 @@
-import type { NsfwLevel, WorkflowCost } from '@civitai/client';
+import type { NsfwLevel, WorkflowCost } from '@civitai/orchestration-client';
 import { isGlbFormat } from '~/shared/orchestrator/model3d-output';
 import type {
   NormalizedWorkflow,

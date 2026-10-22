@@ -27,11 +27,9 @@ If any are missing, stop and direct the user to run `add-ecosystem` first.
 
 ### 1. Check @civitai/orchestration-client for ecosystem-specific types
 
-The orchestrator client package is **`@civitai/orchestration-client`**. It is the continuation of the old
-`@civitai/client`, which can no longer be published to and is frozen at `0.2.0-beta.98`; the version line
-carries on unbroken in the new package (`0.2.0-beta.101` and up). **The repo depends on both** — the new
-package for anything recent, the frozen one for the handlers and workflow types that still import it. New
-ecosystem types only ever land in the new package.
+The orchestrator client package is **`@civitai/orchestration-client`**. It replaced `@civitai/client`,
+which can no longer be published to; the version line carries on unbroken in the new package. Nothing in
+the repo imports the old name any more, so do not reintroduce it.
 
 **Always** check the latest published client version, even if types aren't in the currently installed version.
 
@@ -63,9 +61,7 @@ If the installed version is older than the latest and the latest has useful type
 pnpm add @civitai/orchestration-client@<latest-version>
 ```
 
-Import new types from `@civitai/orchestration-client` rather than hand-rolling them. Handlers already
-importing from `@civitai/client` keep working — leave them unless migrating them is the task you were
-asked to do.
+Import new types from `@civitai/orchestration-client` rather than hand-rolling them.
 
 ### 2. Research model defaults
 
@@ -170,7 +166,7 @@ its family grouping.
 `src/server/services/orchestrator/form-graph/<name>.handler.ts`:
 
 ```ts
-import type { <StepTemplateType> } from '@civitai/client';          // ImageGenStepTemplate | VideoGenStepTemplate
+import type { <StepTemplateType> } from '@civitai/orchestration-client';          // ImageGenStepTemplate | VideoGenStepTemplate
 import type { <EcosystemSpecificInputType> } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { <name>VersionIds } from '~/shared/form-graph/generation/<modality>/<name>.graph';

@@ -13,7 +13,7 @@ import type {
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -55,11 +55,6 @@ import {
   isKohyaEnabled,
   trainingModelInfo,
 } from '~/utils/training';
-
-// @civitai/client's AiToolkitTrainingInput still requires requiresAgeClassification; the
-// orchestration-client YuE2 input (beta.124+) omits it.
-type YuE2TrainingInput = YuE2AiToolkitTrainingInput &
-  Pick<AiToolkitTrainingInput, 'requiresAgeClassification'>;
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -149,7 +144,7 @@ const createTrainingStep_Run = (
     };
   } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
     // All rapid/fast training engines use the same input structure
-    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    // Type assertion needed because flux2 engine types aren't in @civitai/orchestration-client yet
     const input = {
       ...inputBase,
       engine,
@@ -216,7 +211,7 @@ export const buildAiToolkitTrainingStep = (
     metadata,
   } = input;
 
-  let trainingInput: AiToolkitTrainingInput | YuE2TrainingInput = {
+  let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 

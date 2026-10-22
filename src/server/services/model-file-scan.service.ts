@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
-import type { WorkflowEvent } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -582,7 +582,7 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *
  * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
  *
- *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *   AutoV3     arrives full-length (per @civitai/orchestration-client: "SHA256 of the file with safetensors
  *              header metadata stripped"). We store 12 chars, the width A1111 writes.
  *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
  *              which no other stored hash matches, so resource detection fails without it.

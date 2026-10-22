@@ -26,7 +26,7 @@ These parameters are still present in the frontend state (for consistency with K
 ## Key Findings
 
 ### ✅ Client Types Available
-The `@civitai/client` beta 12 package **already includes** all required types:
+The `@civitai/orchestration-client` beta 12 package **already includes** all required types:
 - `TrainingStep` / `TrainingStepTemplate` (with `$type: 'training'`)
 - `TrainingInput` type with all required fields
 - These types match the HTTP API examples exactly!
@@ -192,7 +192,7 @@ import {
   TrainingStep,              // NEW - for ai-toolkit
   TrainingStepTemplate,      // NEW - for ai-toolkit
   TrainingInput,             // NEW - for ai-toolkit
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 ```
 
 **IMPORTANT DISCOVERY**: The civitai client beta 12 has TWO training API formats:
@@ -831,7 +831,7 @@ runs.forEach(async (run, idx) => {
 ## Open Questions & Decisions Needed
 
 ### Critical Questions
-1. ✅ **Client Type Availability**: CONFIRMED - `@civitai/client` beta 12 exposes `TrainingInput`, `TrainingStep`, and `TrainingStepTemplate` types that match the HTTP API examples exactly.
+1. ✅ **Client Type Availability**: CONFIRMED - `@civitai/orchestration-client` beta 12 exposes `TrainingInput`, `TrainingStep`, and `TrainingStepTemplate` types that match the HTTP API examples exactly.
 
 2. ✅ **Parameter Mapping**: CONFIRMED - The `TrainingInput` type uses the correct parameter names (`epochs`, `lr`, `textEncoderLr`, `shuffleTokens`, etc.) that match the HTTP examples.
 

@@ -8,7 +8,7 @@
  * cause the orchestrator to stamp a new `policyHash` on subsequent results,
  * which lights up A/B comparison in our audit log.
  *
- * These endpoints aren't part of the @civitai/client SDK, so we hit them with
+ * These endpoints aren't part of the @civitai/orchestration-client SDK, so we hit them with
  * plain fetch + Bearer auth. Admin operations — failures throw.
  */
 import { env } from '~/env/server';

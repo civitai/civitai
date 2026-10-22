@@ -1,4 +1,4 @@
-import { NsfwLevel } from '@civitai/client';
+import { NsfwLevel } from '@civitai/orchestration-client';
 import { describe, expect, it } from 'vitest';
 
 import { getPolyGenPostBlock } from '~/server/orchestrator/polygen/polygen-output';

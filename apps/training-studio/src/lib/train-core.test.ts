@@ -12,10 +12,10 @@ import {
 const submitWorkflow = vi.fn();
 const getWorkflow = vi.fn();
 const getResource = vi.fn();
-// Hand-listed rather than spread over importOriginal: @civitai/client's dist imports a directory,
+// Hand-listed rather than spread over importOriginal: @civitai/orchestration-client's dist imports a directory,
 // which Node's ESM loader refuses when the factory resolves the real module — the main app's
 // suites mock this package the same way.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   Air: {
     isAir: () => false,
     stringify: (p: Record<string, string>) =>

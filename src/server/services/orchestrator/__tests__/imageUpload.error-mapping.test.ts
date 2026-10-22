@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
  * Error mapping for orchestrator.imageUpload (imageUpload.ts).
  *
  * Drives the REAL `imageUpload` through its `if (!data)` → `switch (status)`
- * branches, mocking ONLY the generated `@civitai/client` + the client factory so
+ * branches, mocking ONLY the generated `@civitai/orchestration-client` + the client factory so
  * the real `~/server/utils/errorHandling` TRPCError mapping AND the real
  * `~/shared/constants/orchestrator.constants` `isMature` run end-to-end.
  *
@@ -29,7 +29,7 @@ const { mockInvokeImageUploadStepTemplate } = vi.hoisted(() => ({
 
 // NsfwLevel + WorkflowStatus are read at module-load by orchestrator.constants; give
 // them real-ish string enums so `isMature` runs against the SAME values as the test.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   invokeImageUploadStepTemplate: mockInvokeImageUploadStepTemplate,
   // handleError derives the fallback user-facing message string from the client error.
   handleError: vi.fn((e: unknown) => {
@@ -61,14 +61,12 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 
-// A resolve shape (NOT a reject): the @civitai/client with no `throwOnError` RESOLVES
+// A resolve shape (NOT a reject): the @civitai/orchestration-client with no `throwOnError` RESOLVES
 // `{ data: undefined, error }` on an upstream error response.
 const errorResolve = (error: unknown) => ({ data: undefined, error });
 
 const run = (allowMatureContent?: boolean) =>
-  imageUpload({ sourceImage: 'https://x/y.png', token: 'tok', allowMatureContent }).catch(
-    (e) => e
-  );
+  imageUpload({ sourceImage: 'https://x/y.png', token: 'tok', allowMatureContent }).catch((e) => e);
 
 beforeEach(() => {
   vi.clearAllMocks();

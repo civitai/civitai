@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Blob, ImageResourceTrainingOutput, TrainingOutput, Workflow } from '@civitai/client';
+import type {
+  Blob,
+  ImageResourceTrainingOutput,
+  TrainingOutput,
+  Workflow,
+} from '@civitai/orchestration-client';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
 /**

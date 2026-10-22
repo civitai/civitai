@@ -18,7 +18,7 @@
  * See docs/features/legacy-metadata-mapping.md for mapping details and known gaps.
  */
 
-import type { WorkflowStep } from '@civitai/client';
+import type { WorkflowStep } from '@civitai/orchestration-client';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import type { ResourceData } from '~/shared/generation/values';

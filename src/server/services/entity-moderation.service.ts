@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
-import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/client';
+import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   PromptIds,

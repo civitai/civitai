@@ -1,4 +1,4 @@
-import type { ChatCompletionStepTemplate } from '@civitai/client';
+import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import { DEFAULT_CHAT_COMPLETION_MODEL } from './chatCompletion';
 
 const SIMPLE_CHAT_TEMPERATURE = 0.9;

@@ -1,4 +1,7 @@
-import type { ChatCompletionInput, ChatCompletionStepTemplate } from '@civitai/client';
+import type {
+  ChatCompletionInput,
+  ChatCompletionStepTemplate,
+} from '@civitai/orchestration-client';
 
 /**
  * Default vision-capable model. `gpt-4o-mini` accepts text + image inputs
