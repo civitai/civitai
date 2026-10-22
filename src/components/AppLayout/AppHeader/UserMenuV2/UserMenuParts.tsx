@@ -54,12 +54,12 @@ export function PinGlyph({ pinned, touch }: { pinned: boolean; touch?: boolean }
   );
 }
 
-/** Render `region` once in the menu: it is the live region the announcements go to. */
 export type PinTarget = Pick<ResolvedMenuItem, 'id' | 'label'>;
 
 /** The profile row above the menu is in no group, but it is a pinnable item. */
 export const PROFILE_PIN: PinTarget = { id: 'profile', label: 'Your Profile' };
 
+/** Render `region` once in the menu: it is the live region the announcements go to. */
 export function usePinActions(pins: ReturnType<typeof useUserMenuPins>) {
   const [message, setMessage] = useState('');
   const announce = useCallback((text: string) => setMessage(text), []);
