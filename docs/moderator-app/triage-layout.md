@@ -11,9 +11,9 @@ open item across the rest, judged in the middle and ruled from a sidebar on the 
 | **Detail** | `TriageColumns`, inside the shell's `detail` snippet. `header` heads the middle column only, so the sidebar runs the pane's full height; `evidence` is what is being judged; `info` is the sidebar's cards (why it is here, the owner's side, history, the ruling once made); `decision` is pinned under the sidebar, and is omitted for an item already ruled. Below `xl` the columns stack and the pane scrolls as one. |
 | **Decision** | `TriageDecisionBar` and `InlineReasonFields` with `compact`: buttons two to a row, reason and note on one line. A full-width bar in a sidebar stacks into a block that hides the sidebar on a 1080p screen. An action the viewer lacks the grant for is shown disabled with `denied(...)`, not left out — an absent button reads as the page having none. |
 
-On it: Model Flags (all three tabs, via `ModelFlagDetailFrame`), rating disputes and generator
-restrictions (`RestrictionTriage`). Still on the single-column `TriageDetailFrame`: CSAM text
-holds and site appeals. Scam restrictions is deliberately not a triage page: nearly every row is banned,
+On it: Model Flags (all three tabs, via `ModelFlagDetailFrame`), rating disputes, generator
+restrictions (`RestrictionTriage`) and CSAM text holds. Still on the single-column `TriageDetailFrame`: site
+appeals. Scam restrictions is deliberately not a triage page: nearly every row is banned,
 so it is a bulk review — a reading column of each account's scanned text, all ticked, one submit that bans
 the ticked as spam and lifts the rest (`$lib/server/scam-review.ts`).
 
