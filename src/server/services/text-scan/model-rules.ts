@@ -27,7 +27,7 @@ export async function getEnabledModelRules(): Promise<EnabledModelRule[]> {
         orderBy: [{ order: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
       });
       return rows.flatMap((row) => {
-        // A regex definition, or a converted rule a person has not reviewed yet, never reaches the scan.
+        // A regex definition, or a converted rule a person has not reviewed yet, never reaches the matcher.
         const parsed = storedModelRuleSchema.safeParse(row.definition);
         if (!parsed.success || parsed.data.needsAttention) return [];
         const { subject, description, aliases } = parsed.data;
@@ -52,12 +52,7 @@ export function applyModelRuleOverrides(
   overrides: ModelRuleOverride[] | undefined
 ): EnabledModelRule[] {
   if (!overrides?.length) return live;
-  const toRule = ({
-    id,
-    subject,
-    description,
-    aliases,
-  }: ModelRuleOverride): EnabledModelRule => ({
+  const toRule = ({ id, subject, description, aliases }: ModelRuleOverride): EnabledModelRule => ({
     id,
     subject,
     description,

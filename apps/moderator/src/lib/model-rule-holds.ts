@@ -51,7 +51,6 @@ export const modelRuleHoldFilterParams = (
 export type HoldMode = 'shadow' | 'active';
 export const modeLabel = (mode: HoldMode) => (mode === 'active' ? 'Auto' : 'Review');
 
-/** A stored model status in words: `UnpublishedViolation` reads "Unpublished violation". */
 export const modelStatusLabel = (status: string) =>
   status
     .replace(/([a-z])([A-Z])/g, '$1 $2')

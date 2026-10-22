@@ -1,9 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import {
-  BATCH_MAX,
-  expectedStatus,
-  type ModelRuleHoldDecision,
-} from '$lib/model-rule-holds';
+import { BATCH_MAX, expectedStatus, type ModelRuleHoldDecision } from '$lib/model-rule-holds';
 import { dbRead } from './db';
 import { modelFactsJoin } from './minor-hash.service';
 import { filterOwnerPendingHolds } from './model-rule-holds.queries';
@@ -73,7 +69,7 @@ const BATCH_TIMEOUT_MS = 120_000;
 
 type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };
 
-/** Decides the owner's other pending holds in one call, each against the hash its listing gave; a changed hold is reported, never forced. Call only after the on-screen hold is decided, so a refused strike never leaves the others decided. */
+/** Decides the owner's other pending holds, each against the hash its listing gave; a changed hold is reported, never forced. Call only after the on-screen hold is decided, so a refused strike never leaves the others decided. */
 export async function decideOwnerHolds({
   holdId,
   also,
@@ -106,7 +102,11 @@ export async function decideOwnerHolds({
       });
   const decidable = targets.filter((target) => sameOwner.has(target.holdId));
   for (const target of decidable.slice(BATCH_MAX))
-    outcome.set(target.holdId, { holdId: target.holdId, ok: false, error: 'Too many holds at once.' });
+    outcome.set(target.holdId, {
+      holdId: target.holdId,
+      ok: false,
+      error: 'Too many holds at once.',
+    });
 
   const batch = decidable.slice(0, BATCH_MAX);
   if (batch.length)

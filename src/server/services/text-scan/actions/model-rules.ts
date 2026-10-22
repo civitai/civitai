@@ -27,8 +27,7 @@ async function claimAndUnpublishForModelRules({
   modelRules: NonNullable<ModelMeta['modelRules']>;
 }): Promise<boolean> {
   const { workflowId } = modelRules;
-  // Claimed in one statement so a model the owner unpublished or deleted since the scan, or a second
-  // delivery of the same callback, is never taken down (or notified) again.
+  // Claimed in one statement so a model unpublished or deleted meanwhile, or a concurrent duplicate check, is never taken down (or notified) again.
   const claimed = await dbWrite.$executeRaw`
     UPDATE "Model"
     SET meta = ${asJsonbObjectSql('meta')} || jsonb_build_object('modelRules', ${JSON.stringify(

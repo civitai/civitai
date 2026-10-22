@@ -106,7 +106,7 @@ type ModelRow = {
 
 const isLive = (model: ModelRow) => !model.deletedAt && isPublicModel(model);
 
-/** The text as it reads now, hashed the way the detection hashed it. Null when the model is not public. */
+/** Hashed the way the detection hashed it, so the two compare. Null when the model is not public. */
 async function currentTextHash(modelId: number) {
   const subject = (await loadModelScanSubjects([modelId], { publicOnly: true })).get(modelId);
   return subject ? textScanTextHash(subject) : null;
@@ -187,11 +187,7 @@ async function keepModelDown(
   await tracker.modelEvent({ type: 'Unpublish', modelId: hold.entityId, nsfw: model.nsfw });
 }
 
-/**
- * Applies a moderator's ruling to a pending `modelRules` hold. Like the csam decision, the hold is claimed
- * first and the effects run before the ruling is recorded; a failure releases the claim and leaves the hold
- * pending for a retry, which skips the effects already recorded in `meta.effects`. The ruling and its label-store records are one transaction.
- */
+/** Claims the hold, runs the effects, then records the ruling and its label-store rows in one transaction. A failure releases the claim; a retry skips effects already in `meta.effects`. */
 export async function decideModelRulesHold(args: DecideArgs) {
   const { holdId, textHash, decision, note, actor, batched } = args;
   const plan = PLAN[decision];

@@ -20,12 +20,9 @@ export type ModelRulesLiteralHold = ModelRulesHoldDetection & { ruleIds: number[
 
 /**
  * Checks a model's text against the Model rules and records what it finds as a `modelRules` hold.
- * `shadow` records the hold and returns null: nothing is acted on. `active` returns the detection
- * for the caller to act on (and record as applied). Text that matches nothing closes the model's
- * pending hold. Callers decide who is checked (moderators never are). `versionIds` are the versions
- * this publish makes public, so the hash equals the one a rescan computes and a moderator's
- * clearance applies to it; `live` reads a public model as it is now, for an edit. A failing check
- * lets the publish through.
+ * `versionIds` (the versions this publish makes public) and `live` (a public model as it is now)
+ * exist so the hash equals the one a rescan computes and a moderator's clearance applies to it.
+ * A failing check lets the publish through.
  */
 export async function checkModelRulesLiteralHold({
   modelId,
