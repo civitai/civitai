@@ -85,6 +85,7 @@
     <TriageKeyButton
       type="submit"
       key={i + 1}
+      primary={level === row.suggestedLevel}
       selected={chosen === level}
       name="appliedLevel"
       value={level}

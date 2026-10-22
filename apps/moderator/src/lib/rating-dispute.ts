@@ -1,3 +1,4 @@
+import { NsfwLevel } from '@civitai/shared';
 import {
   ratingReviewLevelLabel,
   ratingReviewEntityLabels,
@@ -10,24 +11,42 @@ export type DisputeTab = (typeof DISPUTE_TABS)[number];
 
 export const DEFAULT_DISPUTE_TAB: DisputeTab = 'posts';
 
+/** The entity types the Other tab holds, and can be narrowed to. */
+export const OTHER_KINDS = [
+  'Bounty',
+  'BountyEntry',
+  'Challenge',
+  'Crucible',
+  'Collection',
+] as const satisfies readonly RatingReviewEntityType[];
+export type OtherKind = (typeof OTHER_KINDS)[number];
+
 export const DISPUTE_TAB_TYPES: Record<DisputeTab, readonly RatingReviewEntityType[]> = {
   posts: ['Post'],
   models: ['Model'],
   articles: ['Article'],
-  other: ['Bounty', 'BountyEntry', 'Challenge', 'Crucible', 'Collection'],
+  other: OTHER_KINDS,
 };
 
-export const DISPUTE_TAB_LABELS: Record<DisputeTab, { label: string; hint: string; noun: string }> =
-  {
-    posts: { label: 'Posts', hint: 'image sets, rated by their highest image', noun: 'post' },
-    models: { label: 'Models', hint: 'SFW or NSFW only', noun: 'model' },
-    articles: { label: 'Articles', hint: 'cover and body text', noun: 'article' },
-    other: {
-      label: 'Other',
-      hint: 'bounties, challenges, crucibles, collections',
-      noun: 'other',
-    },
-  };
+export const DISPUTE_TAB_LABELS: Record<DisputeTab, { label: string; noun: string }> = {
+  posts: { label: 'Posts', noun: 'post' },
+  models: { label: 'Models', noun: 'model' },
+  articles: { label: 'Articles', noun: 'article' },
+  other: { label: 'Other', noun: 'other' },
+};
+
+export const KIND_FILTERS = ['all', ...OTHER_KINDS] as const;
+export const KIND_LABELS: Record<(typeof KIND_FILTERS)[number], string> = {
+  all: 'All',
+  Bounty: ratingReviewEntityLabels.Bounty,
+  BountyEntry: ratingReviewEntityLabels.BountyEntry,
+  Challenge: ratingReviewEntityLabels.Challenge,
+  Crucible: ratingReviewEntityLabels.Crucible,
+  Collection: ratingReviewEntityLabels.Collection,
+};
+
+/** Only R and above is NSFW; PG and PG-13 are safe to show plain. */
+export const isNsfwRating = (level: number) => level >= NsfwLevel.R;
 
 export const DISPUTE_SORTS = ['oldest', 'newest'] as const;
 export type DisputeSort = (typeof DISPUTE_SORTS)[number];

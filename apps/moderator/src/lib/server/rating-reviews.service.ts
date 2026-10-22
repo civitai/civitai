@@ -19,6 +19,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
+import { cappedText } from './html-to-text';
 import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
@@ -338,6 +339,9 @@ const imageKey = (entityType: RatingReviewEntityType, entityId: number) =>
 
 const CONNECTION_CAP = 5000;
 
+/** How many preview images a dispute carries; `total` still counts them all. */
+export const PREVIEW_LIMIT = 12;
+
 /**
  * The images a moderator rates each entity from; `total` is the full count, `images` at most
  * `limit`. One query per entity type present, never one per entity. Keyed by `imageKey`.
@@ -458,7 +462,7 @@ async function loadImagesForType(
 /** Preview images for many entities at once. A missing key means the entity has none. */
 export async function getRatingReviewImagesBatch(
   entities: { entityType: RatingReviewEntityType; entityId: number }[],
-  limit = 6
+  limit = PREVIEW_LIMIT
 ): Promise<Map<string, RatingReviewImages>> {
   const idsByType = new Map<RatingReviewEntityType, Set<number>>();
   for (const e of entities)
@@ -477,7 +481,7 @@ export async function getRatingReviewImagesBatch(
 export async function getRatingReviewImages(
   entityType: RatingReviewEntityType,
   entityId: number,
-  limit = 6
+  limit = PREVIEW_LIMIT
 ): Promise<RatingReviewImages> {
   const found = await getRatingReviewImagesBatch([{ entityType, entityId }], limit);
   return found.get(imageKey(entityType, entityId)) ?? { total: 0, images: [] };
@@ -485,6 +489,191 @@ export async function getRatingReviewImages(
 
 /** The key `getRatingReviewImagesBatch` files an entity's images under. */
 export const ratingReviewImagesKey = imageKey;
+
+export type ScannedTextField = { heading: string; text: string };
+export type ScannedText = { fields: ScannedTextField[]; truncated: boolean };
+
+const SCANNED_FIELD_CAP = 6000;
+const SCANNED_TEXT_CAP = 12000;
+
+type RawField = { heading: string; text: string | null | undefined; html?: boolean };
+
+/** Plain text, or stored HTML as text; each field and the whole are capped so a page of long articles stays small. */
+function composeScannedText(raw: RawField[]): ScannedText {
+  const fields: ScannedTextField[] = [];
+  let used = 0;
+  let truncated = false;
+  for (const { heading, text, html } of raw) {
+    const capped = html
+      ? cappedText(text, SCANNED_FIELD_CAP)
+      : text?.trim()
+      ? {
+          text: text.trim().slice(0, SCANNED_FIELD_CAP),
+          truncated: text.trim().length > SCANNED_FIELD_CAP,
+        }
+      : null;
+    if (!capped) continue;
+    const room = SCANNED_TEXT_CAP - used;
+    if (room <= 0) {
+      truncated = true;
+      break;
+    }
+    const kept = capped.text.slice(0, room);
+    fields.push({ heading, text: kept });
+    used += kept.length;
+    if (capped.truncated || kept.length < capped.text.length) truncated = true;
+  }
+  return { fields, truncated };
+}
+
+const joinedThemeElements = (metadata: unknown) => {
+  const list = (metadata as { themeElements?: unknown } | null)?.themeElements;
+  return Array.isArray(list) ? list.filter((e) => typeof e === 'string').join(', ') : null;
+};
+
+/**
+ * The text the main app's text scan reads for each entity (`src/server/services/text-scan/profiles/*`),
+ * same fields in the same order, HTML as plain text. A Model's version text covers its public versions
+ * only, as the scan does. One query per entity type (two for Model); the key is `ratingReviewImagesKey`.
+ */
+async function loadScannedTextForType(
+  entityType: RatingReviewEntityType,
+  ids: number[]
+): Promise<Map<number, RawField[]>> {
+  const out = new Map<number, RawField[]>();
+  if (!ids.length) return out;
+  switch (entityType) {
+    case 'Post': {
+      const found = await dbRead
+        .selectFrom('Post')
+        .select(['id', 'title', 'detail'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Title', text: r.title },
+          { heading: 'Detail', text: r.detail, html: true },
+        ]);
+      return out;
+    }
+    case 'Article': {
+      const found = await dbRead
+        .selectFrom('Article')
+        .select(['id', 'title', 'content'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Title', text: r.title },
+          { heading: 'Content', text: r.content, html: true },
+        ]);
+      return out;
+    }
+    case 'Model': {
+      const [found, versions] = await Promise.all([
+        dbRead
+          .selectFrom('Model')
+          .select(['id', 'name', 'description'])
+          .where('id', 'in', ids)
+          .execute(),
+        dbRead
+          .selectFrom('ModelVersion')
+          .select(['modelId', 'name', 'description', 'trainedWords'])
+          .where('modelId', 'in', ids)
+          .where('status', 'in', ['Published', 'Scheduled'])
+          .orderBy('modelId')
+          .orderBy('index')
+          .execute(),
+      ]);
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Name', text: r.name },
+          { heading: 'Description', text: r.description, html: true },
+        ]);
+      for (const v of versions)
+        out
+          .get(v.modelId)
+          ?.push(
+            { heading: 'Version name', text: v.name },
+            { heading: 'Version description', text: v.description, html: true },
+            { heading: 'Trained words', text: v.trainedWords.join(', ') }
+          );
+      return out;
+    }
+    case 'Bounty': {
+      const found = await dbRead
+        .selectFrom('Bounty')
+        .select(['id', 'name', 'description'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Name', text: r.name },
+          { heading: 'Description', text: r.description, html: true },
+        ]);
+      return out;
+    }
+    case 'BountyEntry': {
+      const found = await dbRead
+        .selectFrom('BountyEntry')
+        .select(['id', 'description'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [{ heading: 'Description', text: r.description, html: true }]);
+      return out;
+    }
+    case 'Challenge': {
+      const found = await dbRead
+        .selectFrom('Challenge')
+        .select(['id', 'title', 'theme', 'description', 'invitation', 'metadata'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Title', text: r.title },
+          { heading: 'Theme', text: r.theme },
+          { heading: 'Theme elements', text: joinedThemeElements(r.metadata) },
+          { heading: 'Description', text: r.description, html: true },
+          { heading: 'Invitation', text: r.invitation },
+        ]);
+      return out;
+    }
+    case 'Crucible':
+    case 'Collection': {
+      const found = await dbRead
+        .selectFrom(entityType)
+        .select(['id', 'name', 'description'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        out.set(r.id, [
+          { heading: 'Name', text: r.name },
+          { heading: 'Description', text: r.description, html: true },
+        ]);
+      return out;
+    }
+  }
+}
+
+/** The scanned text for many entities at once; an entity with none is absent. */
+export async function getRatingReviewScannedTextBatch(
+  entities: { entityType: RatingReviewEntityType; entityId: number }[]
+): Promise<Map<string, ScannedText>> {
+  const idsByType = new Map<RatingReviewEntityType, Set<number>>();
+  for (const e of entities)
+    idsByType.set(e.entityType, (idsByType.get(e.entityType) ?? new Set()).add(e.entityId));
+  const loaded = await Promise.all(
+    [...idsByType].map(async ([t, ids]) => [t, await loadScannedTextForType(t, [...ids])] as const)
+  );
+  const out = new Map<string, ScannedText>();
+  for (const [t, found] of loaded)
+    for (const [id, raw] of found) {
+      const composed = composeScannedText(raw);
+      if (composed.fields.length) out.set(imageKey(t, id), composed);
+    }
+  return out;
+}
 
 async function loadScans(entityType: RatingReviewEntityType, ids: number[]) {
   const out = new Map<number, { level: number | null; reason: string | null }>();

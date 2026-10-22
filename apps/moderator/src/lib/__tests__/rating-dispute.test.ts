@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '@civitai/shared';
-import { disputeOutcome, imageCaption, recordedVerdict } from '../rating-dispute';
+import { disputeOutcome, imageCaption, isNsfwRating, recordedVerdict } from '../rating-dispute';
 
 const { PG, PG13, R } = NsfwLevel;
+
+describe('isNsfwRating', () => {
+  it('treats PG and PG-13 as safe and R and above as NSFW', () => {
+    expect([PG, PG13].map(isNsfwRating)).toEqual([false, false]);
+    expect([R, NsfwLevel.X, NsfwLevel.XXX].map(isNsfwRating)).toEqual([true, true, true]);
+  });
+});
 
 describe('disputeOutcome', () => {
   it('rejects with nothing applied when the entity is gone, whatever level is chosen', () => {

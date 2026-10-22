@@ -12,11 +12,13 @@ import { int4Id, parseQueryKeys } from './query';
 import { resolveRatingReviewAction } from './rating-review-actions';
 import {
   getRatingReviewImagesBatch,
+  getRatingReviewScannedTextBatch,
   hydrateRatingReviews,
   ratingReviewImagesKey,
   ratingReviewRowQuery,
   type RatingReviewImages,
   type RatingReviewRow,
+  type ScannedText,
 } from './rating-reviews.service';
 import {
   DEFAULT_DISPUTE_TAB,
@@ -24,8 +26,10 @@ import {
   DISPUTE_SORTS,
   DISPUTE_TAB_TYPES,
   DISPUTE_TABS,
+  OTHER_KINDS,
   type DisputeSort,
   type DisputeTab,
+  type OtherKind,
 } from '$lib/rating-dispute';
 import type { RatingReviewStatusFilter } from '$lib/rating-review';
 
@@ -41,16 +45,21 @@ export type DisputeFilters = {
   scan: 'raised' | undefined;
   sort: DisputeSort;
   owner: number | undefined;
+  /** One entity type of the Other tab; always undefined on the other tabs. */
+  kind: OtherKind | undefined;
 };
 
 export type RatingDisputeRow = RatingReviewRow & {
   ownerDisputeCount: number;
   preview: RatingReviewImages;
+  scannedText: ScannedText | null;
 };
 
 export type DisputeFacets = {
   tabs: Record<DisputeTab, number>;
   chips: { lower: number; higher: number; raised: number };
+  /** The Other tab's rows per entity type, before the `kind` filter narrows them. */
+  kinds: Record<OtherKind, number>;
 };
 
 // Read key by key (`parseQueryKeys`), not through `parseQuery`: that walks `searchParams.keys()`,
@@ -60,6 +69,7 @@ const querySchema = z.object({
   status: z.enum(STATUSES).catch('Pending'),
   ask: z.enum(ASKS).optional().catch(undefined),
   scan: z.literal('raised').optional().catch(undefined),
+  kind: z.enum(OTHER_KINDS).optional().catch(undefined),
   sort: z.enum(DISPUTE_SORTS).optional().catch(undefined),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
@@ -98,10 +108,17 @@ function searchPredicate(q: string) {
 
 function withScope<QB extends FilterBase>(
   qb: QB,
-  scope: { status: RatingReviewStatusFilter; q: string; tab?: DisputeTab; owner?: number }
+  scope: {
+    status: RatingReviewStatusFilter;
+    q: string;
+    tab?: DisputeTab;
+    owner?: number;
+    kind?: OtherKind;
+  }
 ): QB {
   let out = qb.where('rr.status', '=', scope.status) as QB;
   if (scope.tab) out = out.where('rr.entityType', 'in', [...DISPUTE_TAB_TYPES[scope.tab]]) as QB;
+  if (scope.kind) out = out.where('rr.entityType', '=', scope.kind) as QB;
   if (scope.owner) out = out.where('rr.userId', '=', scope.owner) as QB;
   const search = searchPredicate(scope.q);
   if (search) out = out.where(search) as QB;
@@ -124,6 +141,7 @@ async function getFacets(scope: {
   q: string;
   tab: DisputeTab;
   owner?: number;
+  kind?: OtherKind;
 }): Promise<DisputeFacets> {
   const [byType, chips] = await Promise.all([
     withScope(countsBase(), { status: scope.status, q: scope.q, owner: scope.owner })
@@ -142,10 +160,13 @@ async function getFacets(scope: {
       .executeTakeFirst(),
   ]);
   const tabs: Record<DisputeTab, number> = { posts: 0, models: 0, articles: 0, other: 0 };
-  for (const row of byType)
+  const kinds = Object.fromEntries(OTHER_KINDS.map((k) => [k, 0])) as Record<OtherKind, number>;
+  for (const row of byType) {
+    if (row.entityType in kinds) kinds[row.entityType as OtherKind] += Number(row.c);
     for (const tab of DISPUTE_TABS)
       if ((DISPUTE_TAB_TYPES[tab] as readonly string[]).includes(row.entityType))
         tabs[tab] += Number(row.c);
+  }
   return {
     tabs,
     chips: {
@@ -153,6 +174,7 @@ async function getFacets(scope: {
       higher: Number(chips?.higher ?? 0),
       raised: Number(chips?.raised ?? 0),
     },
+    kinds,
   };
 }
 
@@ -168,9 +190,10 @@ async function ownerDisputeOrdinals(reviewIds: number[]): Promise<Map<number, nu
 
 /** The queue rows plus what only the triage view shows: each dispute's number among its owner's and the preview strip. */
 async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
-  const [owners, previews] = await Promise.all([
+  const [owners, previews, texts] = await Promise.all([
     ownerDisputeOrdinals(rows.map((r) => r.id)),
     getRatingReviewImagesBatch(rows),
+    getRatingReviewScannedTextBatch(rows),
   ]);
   return rows.map((r) => ({
     ...r,
@@ -179,6 +202,7 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
       total: 0,
       images: [],
     },
+    scannedText: texts.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? null,
   }));
 }
 
@@ -189,11 +213,12 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
 export async function ratingDisputeTriageLoad(url: URL) {
   const parsed = parseQueryKeys(url, querySchema);
   const { tab, status, ask, scan, q, page, selected, owner } = parsed;
+  const kind = tab === 'other' ? parsed.kind : undefined;
   const sort = parsed.sort ?? defaultDisputeSort(status);
-  const filters: DisputeFilters = { tab, status, ask, scan, sort, owner };
+  const filters: DisputeFilters = { tab, status, ask, scan, sort, owner, kind };
 
   const scoped = () =>
-    withFilters(withScope(ratingReviewRowQuery(), { status, q, tab, owner }), filters);
+    withFilters(withScope(ratingReviewRowQuery(), { status, q, tab, owner, kind }), filters);
   const dir = sort === 'oldest' ? 'asc' : 'desc';
   const sortColumn = status === 'Pending' ? 'rr.createdAt' : 'rr.resolvedAt';
 
@@ -204,11 +229,11 @@ export async function ratingDisputeTriageLoad(url: URL) {
       .limit(PAGE_SIZE + 1)
       .offset((page - 1) * PAGE_SIZE)
       .execute(),
-    withFilters(withScope(countsBase(), { status, q, tab, owner }), filters)
+    withFilters(withScope(countsBase(), { status, q, tab, owner, kind }), filters)
       .select((eb: ExpressionBuilder<any, any>) => eb.fn.countAll<string>().as('c')) // eslint-disable-line @typescript-eslint/no-explicit-any
       .executeTakeFirst(),
     // Counts are decoration: a failed count must not take the list down with it.
-    getFacets({ status, q, tab, owner }).catch((err) => {
+    getFacets({ status, q, tab, owner, kind }).catch((err) => {
       console.error('Rating dispute facet counts failed', err);
       return undefined;
     }),

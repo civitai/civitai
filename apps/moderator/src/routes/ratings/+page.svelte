@@ -22,6 +22,8 @@
     DISPUTE_TAB_LABELS,
     DISPUTE_TABS,
     disputeTitle,
+    KIND_FILTERS,
+    KIND_LABELS,
     recordedVerdict,
     SCAN_LABELS,
   } from '$lib/rating-dispute';
@@ -56,6 +58,7 @@
       status: f.status === 'Pending' ? undefined : f.status,
       ask: f.ask,
       scan: f.scan,
+      kind: f.kind,
       owner: f.owner,
       sort: f.sort === defaultDisputeSort(f.status) ? undefined : f.sort,
       q: data.q,
@@ -85,6 +88,16 @@
     labels: DISPUTE_SORT_LABELS,
     active: f.sort,
     defaultValue: defaultDisputeSort(f.status),
+  } satisfies ChipGroup);
+  const kindGroup = $derived({
+    key: 'kind',
+    label: 'Type',
+    values: KIND_FILTERS,
+    labels: KIND_LABELS,
+    active: f.kind ?? 'all',
+    defaultValue: 'all',
+    counts: data.facets?.kinds,
+    compact: true,
   } satisfies ChipGroup);
   const chipGroups = $derived([
     {
@@ -145,6 +158,9 @@
       <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
       <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
     </div>
+    {#if f.tab === 'other'}
+      <TriageFilterChips groups={[kindGroup]} selectionParam={SELECTION} />
+    {/if}
     <TriageFilterChips groups={chipGroups} selectionParam={SELECTION} />
     {#if ownerName}
       <div class="flex items-center gap-1.5 text-xs text-dark-1">

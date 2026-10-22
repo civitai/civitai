@@ -162,8 +162,6 @@ export const NAVIGATION: NavLink[] = [
       },
     ],
   },
-  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
-  { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
     label: 'Items',
@@ -295,6 +293,8 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
+  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge, Crucible, Collection).
+  { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];

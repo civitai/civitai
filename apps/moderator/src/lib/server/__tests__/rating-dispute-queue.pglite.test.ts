@@ -291,6 +291,127 @@ describe('ratingDisputeTriageLoad facets', () => {
   });
 });
 
+describe('ratingDisputeTriageLoad kind filter', () => {
+  const OTHER = ['Bounty', 'BountyEntry', 'Challenge', 'Crucible', 'Collection'] as const;
+
+  it('narrows the Other tab to one entity type: rows, total and chip counts, leaving the tab counts whole', async () => {
+    const byType: Record<string, number> = {};
+    for (const t of OTHER)
+      byType[t] = await fileReview({ entityType: t, currentLevel: 4, suggestedLevel: 1 });
+    await fileReview({ entityType: 'Challenge', currentLevel: 1, suggestedLevel: 4 });
+
+    const challenges = await load('?tab=other&kind=Challenge');
+    expect(challenges.items.map((i) => i.entityType)).toEqual(['Challenge', 'Challenge']);
+    expect(challenges.totalCount).toBe(2);
+    expect(challenges.filters.kind).toBe('Challenge');
+    expect(challenges.facets?.chips).toEqual({ lower: 1, higher: 1, raised: 0 });
+    expect(challenges.facets?.tabs.other).toBe(6);
+    expect(challenges.facets?.kinds).toEqual({
+      Bounty: 1,
+      BountyEntry: 1,
+      Challenge: 2,
+      Crucible: 1,
+      Collection: 1,
+    });
+
+    expect(ids(await load('?tab=other&kind=Crucible'))).toEqual([byType.Crucible]);
+  });
+
+  it('ignores a kind on other tabs and an unknown or foreign kind on the Other tab', async () => {
+    const post = await fileReview({ entityType: 'Post' });
+    await fileReview({ entityType: 'Bounty' });
+    await fileReview({ entityType: 'Crucible' });
+
+    const onPosts = await load('?kind=Bounty');
+    expect(ids(onPosts)).toEqual([post]);
+    expect(onPosts.filters.kind).toBeUndefined();
+
+    expect((await load('?tab=other&kind=Post')).totalCount).toBe(2);
+    expect((await load('?tab=other&kind=bogus')).filters.kind).toBeUndefined();
+  });
+});
+
+describe('ratingDisputeTriageLoad scanned text', () => {
+  const textOf = async (query: string, id: number) =>
+    (await load(query)).items.find((i) => i.id === id)?.scannedText;
+
+  it('loads the fields the text scan reads for a post, with HTML as plain text', async () => {
+    const postId = await seedEntity(db, 'Post', {
+      userId: alice,
+      title: 'Sunset',
+      detail: '<p>First <b>line</b></p><script>alert(1)</script><p>Second</p>',
+    });
+    const id = await fileReview({ entityType: 'Post', entityId: postId });
+
+    const text = await textOf('', id);
+
+    expect(text?.fields.map((f) => f.heading)).toEqual(['Title', 'Detail']);
+    expect(text?.fields[0].text).toBe('Sunset');
+    expect(text?.fields[1].text).toContain('First line');
+    expect(text?.fields[1].text).toContain('Second');
+    expect(text?.fields[1].text).not.toMatch(/<|alert/);
+    expect(text?.truncated).toBe(false);
+  });
+
+  it('reads a model’s name and description, then only its public versions with their trained words', async () => {
+    const modelId = await seedEntity(db, 'Model', {
+      userId: alice,
+      name: 'Model X',
+      description: '<p>About</p>',
+    });
+    await seedEntity(db, 'ModelVersion', {
+      modelId,
+      index: 1,
+      name: 'v1',
+      description: '<p>one</p>',
+      trainedWords: ['alpha', 'beta'],
+    });
+    await seedEntity(db, 'ModelVersion', {
+      modelId,
+      index: 2,
+      status: 'Draft',
+      name: 'draft-only',
+      trainedWords: ['hidden'],
+    });
+    const id = await fileReview({ entityType: 'Model', entityId: modelId });
+
+    const text = await textOf('?tab=models', id);
+
+    expect(text?.fields).toEqual([
+      { heading: 'Name', text: 'Model X' },
+      { heading: 'Description', text: 'About' },
+      { heading: 'Version name', text: 'v1' },
+      { heading: 'Version description', text: 'one' },
+      { heading: 'Trained words', text: 'alpha, beta' },
+    ]);
+  });
+
+  it('reads a challenge’s theme elements, caps long text, and omits an entity with no text', async () => {
+    const challengeId = await seedEntity(db, 'Challenge', {
+      title: 'Ch',
+      theme: 'Neon',
+      description: `<p>${'word '.repeat(5000)}</p>`,
+      metadata: JSON.stringify({ themeElements: ['rain', 'glow'] }),
+    });
+    const challenge = await fileReview({ entityType: 'Challenge', entityId: challengeId });
+    const bountyId = await seedEntity(db, 'Bounty', { userId: alice, name: '   ' });
+    const empty = await fileReview({ entityType: 'Bounty', entityId: bountyId });
+
+    const text = await textOf('?tab=other', challenge);
+
+    expect(text?.fields.map((f) => f.heading)).toEqual([
+      'Title',
+      'Theme',
+      'Theme elements',
+      'Description',
+    ]);
+    expect(text?.fields[2].text).toBe('rain, glow');
+    expect(text?.truncated).toBe(true);
+    expect(text?.fields[3].text.length).toBeLessThanOrEqual(6000);
+    expect(await textOf('?tab=other', empty)).toBeNull();
+  });
+});
+
 describe('ratingDisputeTriageLoad rows', () => {
   it('numbers each dispute within its owner’s own, oldest first, whatever the status or type', async () => {
     const a1 = await fileReview({ userId: alice });
@@ -418,9 +539,24 @@ describe('getRatingReviewImagesBatch covers', () => {
       'body-3',
       'body-4',
       'body-5',
+      'body-6',
+      'body-7',
     ]);
     expect(bnt?.total).toBe(7);
-    expect(bnt?.images).toHaveLength(6);
+    expect(bnt?.images).toHaveLength(7);
+  });
+
+  it('previews at most the preview limit of a post’s images and still reports the full total', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: alice });
+    for (let i = 1; i <= service.PREVIEW_LIMIT + 7; i++)
+      await seedImage({ url: `p-${i}`, postId, index: i });
+
+    const found = await batch(['Post', postId]);
+    const post = found.get(service.ratingReviewImagesKey('Post', postId));
+
+    expect(post?.total).toBe(service.PREVIEW_LIMIT + 7);
+    expect(post?.images).toHaveLength(service.PREVIEW_LIMIT);
+    expect(post?.images[0].url).toBe('p-1');
   });
 
   it('previews a challenge, crucible and collection by their cover, a crucible falling back to its hero image', async () => {

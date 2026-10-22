@@ -2,7 +2,7 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { IconExternalLink, IconSearch, IconUser } from '@tabler/icons-svelte';
   import { page } from '$app/state';
-  import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
+  import { getBrowsingLevelLabel } from '@civitai/shared';
   import { ratingReviewEntityLabels, ratingReviewLevelLabel } from '@civitai/shared/rating-review';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
@@ -12,12 +12,13 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userUrl } from '$lib/entity-url';
   import { LINK_BUTTON, dateTime, ordinal, shortAge } from '$lib/format';
-  import { disputeTitle, imageCaption } from '$lib/rating-dispute';
+  import { disputeTitle, imageCaption, isNsfwRating } from '$lib/rating-dispute';
   import { ratingReviewStatusBadge } from '$lib/rating-review';
   import type { RatingDisputeRow } from '$lib/server/rating-dispute-queue';
   import type { Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import RatingDecisionForm from './RatingDecisionForm.svelte';
+  import ScannedTextCard from './ScannedTextCard.svelte';
 
   let {
     row,
@@ -143,23 +144,29 @@
         {#if caption.hint}<span class="text-xs text-dark-2">{caption.hint}</span>{/if}
       </div>
       {#if row.preview.images.length}
-        <ul class="m-0 grid list-none grid-cols-3 gap-2 p-0 sm:grid-cols-6">
+        <!-- The same tile the sibling queues use for evidence images (4:5, EdgeMedia at 450px), in one
+             scrolling strip so a dispute with many images never wraps. -->
+        <ul class="m-0 flex list-none gap-2.5 overflow-x-auto p-0 pb-2">
           {#each row.preview.images as img (img.id)}
+            {@const nsfw = isNsfwRating(img.nsfwLevel)}
             <li
               class={cn(
-                'relative aspect-[3/4] overflow-hidden rounded-md border bg-dark-7',
-                img.nsfwLevel > NsfwLevel.PG ? 'border-amber-500' : 'border-dark-4'
+                'relative aspect-[4/5] w-40 shrink-0 overflow-hidden rounded-lg border bg-dark-6',
+                nsfw ? 'border-amber-500' : 'border-dark-4'
               )}
             >
               <EdgeMedia
                 src={img.url}
                 type={img.type}
                 anim={img.type === 'video' ? false : undefined}
-                width={320}
-                class="size-full object-cover"
+                width={450}
+                class="size-full object-cover object-top"
               />
               <span
-                class="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-px text-[11px] font-semibold text-white"
+                class={cn(
+                  'absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',
+                  nsfw ? 'bg-amber-500 text-black' : 'bg-black/60 text-white'
+                )}
               >
                 {getBrowsingLevelLabel(img.nsfwLevel)}
               </span>
@@ -185,6 +192,12 @@
       <TriageCard title="Why the scan raised it" dense accent="amber">
         <p class="m-0 break-words whitespace-pre-wrap text-dark-0">{row.scan.reason}</p>
       </TriageCard>
+    {/if}
+
+    {#if row.scannedText}
+      {#key row.id}
+        <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
+      {/key}
     {/if}
 
     {#if row.userComment}
