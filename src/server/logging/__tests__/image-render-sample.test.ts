@@ -7,15 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * user, cookie or address — and is dark until the `shell-images-render-sample` Flipt flag is on.
  *
  * Flipt is mocked key-aware (only the real key answers), so a typo in the declared `fliptKey`
- * turns the "logs" cases red. `~/server/logging/client` is mocked so nothing reaches stderr.
+ * turns the "logs" cases red. `~/server/logging/client` is the canonical shared mock (registered
+ * by the test setup), so nothing reaches stderr.
  */
 
 const mocks = vi.hoisted(() => ({
-  logToAxiom: vi.fn(async (_data: Record<string, unknown>) => undefined),
   isFliptSync: vi.fn((_key: string, _entity?: string, _ctx?: unknown): boolean | null => null),
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(async () => false),
@@ -24,6 +23,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   getFliptClientSync: vi.fn(() => null),
 }));
 
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 import {
@@ -35,6 +35,7 @@ import {
 } from '~/server/logging/image-render-sample';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 
+const logToAxiom = loggingMock.logToAxiom;
 const FLAG_KEY = 'shell-images-render-sample';
 const ROUTE = '/images/[imageId]';
 // 2026-10-22T10:15:42.123Z
@@ -72,7 +73,7 @@ function flagOn() {
 
 beforeEach(() => {
   __resetImageRenderSampleForTest();
-  mocks.logToAxiom.mockClear();
+  logToAxiom.mockClear();
   mocks.isFliptSync.mockReset();
   mocks.isFliptSync.mockImplementation(() => null);
 });
@@ -84,8 +85,8 @@ describe('sampleImageRender', () => {
   it('logs exactly imageId, colo and minute for a signed-in render when the flag is on', async () => {
     flagOn();
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(1);
-    const [payload, datastream] = mocks.logToAxiom.mock.calls[0] as unknown as [
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    const [payload, datastream] = logToAxiom.mock.calls[0] as unknown as [
       Record<string, unknown>,
       string | undefined
     ];
@@ -115,11 +116,11 @@ describe('sampleImageRender', () => {
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
     mocks.isFliptSync.mockImplementation((key: string) => (key === FLAG_KEY ? false : null));
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
     // Control: the same request logs once the flag answers true.
     flagOn();
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it.each<[string, string, Record<string, unknown>, Partial<Req>]>([
@@ -144,10 +145,10 @@ describe('sampleImageRender', () => {
   ])('logs nothing for %s', async (_, route, query, overrides) => {
     flagOn();
     await sampleImageRender(route, query, signedInReq(overrides), NOW);
-    expect(mocks.logToAxiom).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
     // Positive control: the unmodified request does log under the same flag state.
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it(`caps output at ${IMAGE_RENDER_SAMPLE_MAX_PER_SEC} lines per second and reports what it dropped`, async () => {
@@ -156,17 +157,16 @@ describe('sampleImageRender', () => {
     for (let i = 0; i < 27; i++) {
       await sampleImageRender(ROUTE, { imageId: String(1000 + i) }, signedInReq(), NOW + i);
     }
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(20);
-    expect(mocks.logToAxiom.mock.calls.map(([p]) => p.imageId)).toEqual(
+    expect(logToAxiom).toHaveBeenCalledTimes(20);
+    expect(logToAxiom.mock.calls.map(([p]) => p.imageId)).toEqual(
       Array.from({ length: 20 }, (_, i) => 1000 + i)
     );
-    for (const [p] of mocks.logToAxiom.mock.calls)
-      expect(p).not.toHaveProperty('droppedSinceLastLog');
+    for (const [p] of logToAxiom.mock.calls) expect(p).not.toHaveProperty('droppedSinceLastLog');
 
     // The next window logs again and carries the 7 lines the cap suppressed.
     await sampleImageRender(ROUTE, { imageId: '5555' }, signedInReq(), NOW + 1000);
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(21);
-    expect(mocks.logToAxiom.mock.calls[20][0]).toStrictEqual({
+    expect(logToAxiom).toHaveBeenCalledTimes(21);
+    expect(logToAxiom.mock.calls[20][0]).toStrictEqual({
       name: 'shell-images-render-sample',
       type: 'info',
       imageId: 5555,
@@ -176,7 +176,7 @@ describe('sampleImageRender', () => {
     });
     // ...and only once.
     await sampleImageRender(ROUTE, { imageId: '5556' }, signedInReq(), NOW + 1001);
-    expect(mocks.logToAxiom.mock.calls[21][0]).not.toHaveProperty('droppedSinceLastLog');
+    expect(logToAxiom.mock.calls[21][0]).not.toHaveProperty('droppedSinceLastLog');
   });
 
   it('does not spend the cap on renders the flag rejects', async () => {
@@ -185,13 +185,13 @@ describe('sampleImageRender', () => {
     }
     flagOn();
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).toHaveBeenCalledTimes(1);
-    expect(mocks.logToAxiom.mock.calls[0][0]).not.toHaveProperty('droppedSinceLastLog');
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom.mock.calls[0][0]).not.toHaveProperty('droppedSinceLastLog');
   });
 
   it('never throws, even when the log write rejects', async () => {
     flagOn();
-    mocks.logToAxiom.mockRejectedValueOnce(new Error('sink down'));
+    logToAxiom.mockRejectedValueOnce(new Error('sink down'));
     await expect(
       sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW)
     ).resolves.toBeUndefined();
@@ -201,7 +201,7 @@ describe('sampleImageRender', () => {
     flagOn();
     vi.stubGlobal('window', {});
     await sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW);
-    expect(mocks.logToAxiom).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 
