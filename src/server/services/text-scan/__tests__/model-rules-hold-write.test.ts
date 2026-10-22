@@ -170,6 +170,20 @@ describe('syncModelRulesHold', () => {
     expect(await rows()).toHaveLength(1);
   });
 
+  it('holds ruled text again when the detection took the model down', async () => {
+    await syncModelRulesHold(7, detection());
+    await db.pg.query(`UPDATE "TextScanHold" SET "status" = 'Dismissed' WHERE "id" = 1`);
+
+    await expect(syncModelRulesHold(7, detection({ mode: 'active', applied: true }))).resolves.toBe(
+      'created'
+    );
+
+    const [, next] = await rows();
+    expect(next).toMatchObject({ status: 'Pending', textHash: 'hash-1' });
+    expect(next.hiddenAt).toBeInstanceOf(Date);
+    expect(next.meta).toMatchObject({ mode: 'active', kind: 'redetected', priorHoldId: 1 });
+  });
+
   it('holds edited text again after a ruling, linked to that ruling', async () => {
     await syncModelRulesHold(7, detection());
     await db.pg.query(`UPDATE "TextScanHold" SET "status" = 'Confirmed' WHERE "id" = 1`);

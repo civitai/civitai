@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
 const { checkModelRulesOnEdit } = vi.hoisted(() => ({ checkModelRulesOnEdit: vi.fn() }));
@@ -48,6 +49,14 @@ describe('scanModelAndRules', () => {
   it('never lets a failing rules check surface', async () => {
     checkModelRulesOnEdit.mockRejectedValue(new Error('db down'));
     scanModelAndRules(9);
-    await vi.waitFor(() => expect(checkModelRulesOnEdit).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'model rules edit check failed',
+          entityId: 9,
+          errorName: 'Error',
+        })
+      )
+    );
   });
 });

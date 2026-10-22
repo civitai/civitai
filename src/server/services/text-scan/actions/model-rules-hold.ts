@@ -55,7 +55,7 @@ type PendingRow = {
 /**
  * Keeps the model's one pending hold current with the text as it reads now: new text supersedes the
  * pending hold (the new one links back through `priorHoldId`), text that matches nothing closes it as
- * superseded, and text a moderator already ruled on is not held again. Neither closes with a ruling.
+ * superseded, and text a moderator already ruled on is not held again unless the detection took the model down. Neither closes with a ruling.
  */
 export async function syncModelRulesHold(
   modelId: number,
@@ -108,7 +108,9 @@ export async function syncModelRulesHold(
         AND "meta"->>'decision' IS DISTINCT FROM 'superseded'
       ORDER BY "id" DESC
     `;
-    if (decided.some((row) => row.textHash === detection.textHash)) return 'skipped';
+    // A takedown must reach the queue even for text ruled on before; a detection that acted on nothing need not.
+    if (!detection.applied && decided.some((row) => row.textHash === detection.textHash))
+      return 'skipped';
     const priorHoldId = pending?.id ?? decided[0]?.id ?? null;
 
     await tx.$executeRaw`
