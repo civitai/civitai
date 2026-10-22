@@ -11,7 +11,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ checkModelRulesOnEdit }));
 
-const { scanModelAndRules, textScanContentHash } = await import(
+const { scanModelAndRules } = await import(
   '~/server/services/text-scan/submit'
 );
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
@@ -19,18 +19,6 @@ const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getTextScanMode).mockResolvedValue('off');
-});
-
-describe('textScanContentHash', () => {
-  const base = { user: 'u', promptIds: { base: 1 }, model: 'm', thinking: false };
-
-  it('is unchanged for scans without rules, and moves with the rule set', () => {
-    const plain = textScanContentHash(base);
-    expect(textScanContentHash({ ...base, rulesFingerprint: undefined })).toBe(plain);
-    const a = textScanContentHash({ ...base, rulesFingerprint: 'a' });
-    expect(a).not.toBe(plain);
-    expect(textScanContentHash({ ...base, rulesFingerprint: 'b' })).not.toBe(a);
-  });
 });
 
 describe('scanModelAndRules', () => {

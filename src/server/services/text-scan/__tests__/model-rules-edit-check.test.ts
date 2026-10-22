@@ -4,13 +4,13 @@ import '~/__tests__/mocks/logging.mock';
 
 const {
   getTextScanMode,
-  getModelRulesForPrompt,
+  getEnabledModelRules,
   loadModelScanSubjects,
   syncModelRulesHold,
   unpublishModelById,
 } = vi.hoisted(() => ({
   getTextScanMode: vi.fn(),
-  getModelRulesForPrompt: vi.fn(),
+  getEnabledModelRules: vi.fn(),
   loadModelScanSubjects: vi.fn(),
   syncModelRulesHold: vi.fn(),
   unpublishModelById: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('~/server/services/model-version.service', () => ({
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 vi.mock('~/server/services/text-scan/mode', () => ({ getTextScanMode }));
 vi.mock('~/server/services/text-scan/model-rules', () => ({
-  getModelRulesForPrompt,
+  getEnabledModelRules,
   MODEL_RULES_UNPUBLISH_MESSAGE: 'in review',
 }));
 vi.mock('~/server/services/text-scan/profiles/model.profile', () => ({ loadModelScanSubjects }));
@@ -43,7 +43,7 @@ const RULES = [{ id: 3, subject: 'Example Franchise', description: '', aliases: 
 beforeEach(() => {
   vi.clearAllMocks();
   getTextScanMode.mockResolvedValue('shadow');
-  getModelRulesForPrompt.mockResolvedValue(RULES);
+  getEnabledModelRules.mockResolvedValue(RULES);
   loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Hero One LoRA v2')]]));
   dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: {} });
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);

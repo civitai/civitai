@@ -26,11 +26,9 @@ import {
 } from '~/server/services/text-scan/mode';
 import {
   applyModelRuleOverrides,
-  getModelRulesForPrompt,
-  type ModelRuleOverride,
+  getEnabledModelRules,
 } from '~/server/services/text-scan/model-rules';
-import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
-import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
+import { findLiteralMatchesInSubject } from '~/server/services/text-scan/model-rules-literal';
 import {
   getTextScanProfile,
   isTextScanEntityType,
@@ -80,6 +78,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'composeEntities',
   'scanTexts',
   'quoteTexts',
+  'literalModelRules',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -267,7 +266,6 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     entityId: z.number().int().positive(),
     pass: harnessPass,
     promptOverrides,
-    ruleOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
     wait: waitSecondsSchema,
@@ -321,8 +319,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       pass: harnessPass,
       labels: labelsOverride,
       promptOverrides,
-      ruleOverrides,
-      model: z.string().min(1).optional(),
+        model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
       wait: waitSecondsSchema,
@@ -330,6 +327,11 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     .superRefine(({ texts, concurrency, wait }, ctx) =>
       textsWithinBudget({ items: texts.length, concurrency, wait }, ctx)
     ),
+  z.object({
+    action: z.literal('literalModelRules'),
+    texts,
+    ruleOverrides,
+  }),
   z.object({
     action: z.literal('quoteTexts'),
     entityType,
@@ -393,7 +395,6 @@ type ComposeInput = {
   pass?: HarnessPass;
   labels?: TextScanLabel[];
   promptOverrides?: Record<string, string>;
-  ruleOverrides?: ModelRuleOverride[];
   model?: string;
   thinking?: boolean;
 };
@@ -404,17 +405,11 @@ async function composeSteps({
   pass = 'main',
   labels: labelsOverride,
   promptOverrides,
-  ruleOverrides,
   model,
   thinking,
 }: ComposeInput) {
   const labels = await labelsForPass(profile, pass, labelsOverride);
-  const [config, active, liveRules] = await Promise.all([
-    getTextScanConfig(),
-    getActiveTextScanPrompts(),
-    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
-  ]);
-  const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
+  const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
@@ -426,7 +421,6 @@ async function composeSteps({
       labels,
       subject,
       maxInputChars: config.maxInputChars,
-      modelRules,
       maxSegments: config.maxSegments,
     });
   } catch (e) {
@@ -438,7 +432,6 @@ async function composeSteps({
   return {
     ok: true as const,
     composed,
-    modelRules,
     labels,
     pass,
     thinking: useThinking,
@@ -576,12 +569,6 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
     flaggedSegments: merged.flaggedSegments,
     elapsedMs: Date.now() - startedAt,
     system: ctx.composed.system,
-    ...(ctx.modelRules
-      ? {
-          rules: ctx.modelRules.map(({ id, subject }) => ({ id, subject })),
-          literalRuleIds: findLiteralHitsInSubject(input.subject, ctx.modelRules),
-        }
-      : {}),
     ...segmentInfo,
   };
 }
@@ -665,36 +652,21 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
-// Lab reads model text regardless of visibility; production profiles stay public-only.
-const LAB_LOADERS: Partial<Record<TextScanEntityType, TextScanProfile['load']>> = {
-  ModelRules: (ids) => loadModelScanSubjects(ids),
-};
-
-/** Up to 50 results share one system prompt and rule list, so a request carries them once. */
+/** Up to 50 results share one system prompt, so a request carries it once. */
 function hoistSharedPrompt<T extends object>(results: T[]) {
-  const shared: { system: string | null; rules: { id: number; subject: string }[] | null } = {
-    system: null,
-    rules: null,
-  };
-  const slim: Omit<T, 'system' | 'rules'>[] = [];
+  let system: string | null = null;
+  const slim: Omit<T, 'system'>[] = [];
   for (const result of results) {
-    const { system, rules, ...rest } = result as T & {
-      system?: string;
-      rules?: { id: number; subject: string }[];
-    };
-    if (system !== undefined && shared.system === null) {
-      shared.system = system;
-      shared.rules = rules ?? null;
-    }
-    slim.push(rest as Omit<T, 'system' | 'rules'>);
+    const { system: own, ...rest } = result as T & { system?: string };
+    if (own !== undefined && system === null) system = own;
+    slim.push(rest as Omit<T, 'system'>);
   }
-  return { ...shared, results: slim };
+  return { system, results: slim };
 }
 
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
-  const load = LAB_LOADERS[entityType] ?? profile.load;
-  const [subjects, config] = await Promise.all([load(entityIds), getTextScanConfig()]);
+  const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
   const results = entityIds.map((entityId) => {
     const subject = subjects.get(entityId);
     if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
@@ -734,10 +706,6 @@ type ShadowRow = {
 function verdictSummary(verdict: TextScanOutput[TextScanLabel] | undefined) {
   if (!verdict) return null;
   if ('level' in verdict) return verdict.level;
-  if ('matched' in verdict)
-    return verdict.matched.length
-      ? `matched: ${verdict.matched.map((m) => m.ruleId).join(', ')}`
-      : 'clear';
   if ('names' in verdict)
     return verdict.detected ? `detected: ${verdict.names.join(', ')}` : 'clear';
   return verdict.detected ? 'detected' : 'clear';
@@ -790,10 +758,7 @@ async function sampleShadow(input: ShadowSampleInput) {
       scannedAt: new Date(row.updatedAt).toISOString(),
       triggered: row.triggeredLabels.includes(input.label),
       verdict: verdictSummary(verdict),
-      reason:
-        verdict && 'matched' in verdict
-          ? verdict.matched.map((m) => `[${m.ruleId}] ${m.reason}`).join(' | ') || null
-          : verdict?.reason ?? null,
+      reason: verdict?.reason ?? null,
       declared: (subject?.declared ?? null) as TextScanDeclared | null,
       promptIds: row.result.promptIds,
       model: row.result.model,
@@ -807,7 +772,6 @@ async function sampleShadow(input: ShadowSampleInput) {
               promptIds: row.result.promptIds,
               model: row.result.model,
               thinking: config.thinking,
-              rulesFingerprint: row.result.modelRules?.fingerprint,
               segmentBudget: config,
             }) !== row.contentHash,
     };
@@ -1028,6 +992,20 @@ export async function runTextScanHarnessAction(
       return {
         kind: 'json',
         body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
+      };
+    }
+
+    case 'literalModelRules': {
+      const rules = applyModelRuleOverrides(await getEnabledModelRules(), input.ruleOverrides);
+      return {
+        kind: 'json',
+        body: {
+          rules: rules.map(({ id, subject }) => ({ id, subject })),
+          results: input.texts.map(({ key, fields }) => ({
+            key,
+            matches: findLiteralMatchesInSubject(freeTextSubject(fields), rules),
+          })),
+        },
       };
     }
 

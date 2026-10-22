@@ -5,7 +5,7 @@ import {
   type ModelRulesHoldDetection,
 } from '~/server/services/text-scan/actions/model-rules-hold';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
-import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
+import { getEnabledModelRules } from '~/server/services/text-scan/model-rules';
 import { findLiteralMatchesInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
@@ -41,7 +41,7 @@ export async function checkModelRulesLiteralHold({
   try {
     const mode = await getTextScanMode('ModelRules', modelId);
     if (mode === 'off') return null;
-    const rules = await getModelRulesForPrompt();
+    const rules = await getEnabledModelRules();
     if (!rules.length) return null;
     const subject = (
       await loadModelScanSubjects(

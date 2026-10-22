@@ -7,7 +7,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { removeTags } from '~/utils/string-helpers';
 
 /**
- * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
+ * Also read by the Model rules hold, so detection and rulings see the same model text. `publicOnly` loads
  * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
  * `publicVersionsOnly` keeps every model but reads only its public versions, so a draft version's
  * text is scanned when it is published, not before. The default load returns a model whatever its

@@ -14,23 +14,12 @@ const {
   getModelRuleSubjects,
   MODEL_RULES_UNPUBLISH_MESSAGE,
   modelRulesUnpublishDetail,
-  getModelRulesForPrompt,
-  modelRulesFingerprint,
-  renderModelRulesBlock,
+  getEnabledModelRules,
 } = await import('~/server/services/text-scan/model-rules');
-
-const rule = (over: Record<string, unknown> = {}) => ({
-  id: 1,
-  subject: 'Example Franchise',
-  description: 'Characters from the Example books',
-  aliases: ['Hero One', 'Hero Two'],
-  updatedAt: 1000,
-  ...over,
-});
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getModelRulesForPrompt', () => {
+describe('getEnabledModelRules', () => {
   it('returns enabled semantic rules, skipping regex rows and rules awaiting review', async () => {
     dbMock.dbWrite.moderationRule.findMany.mockResolvedValue([
       {
@@ -53,42 +42,15 @@ describe('getModelRulesForPrompt', () => {
       },
     ]);
 
-    await expect(getModelRulesForPrompt()).resolves.toEqual([
+    await expect(getEnabledModelRules()).resolves.toEqual([
       { id: 4, subject: 'Jane Doe', description: 'Likeness claim', aliases: [], updatedAt: 5000 },
     ]);
     expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { entityType: 'Model', enabled: true },
-        // The order is the prompt's order, and so part of the fingerprint.
         orderBy: [{ order: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
       })
     );
-  });
-});
-
-describe('renderModelRulesBlock', () => {
-  it('lists each rule by id with its description and aliases', () => {
-    expect(
-      renderModelRulesBlock([
-        rule(),
-        rule({ id: 9, subject: 'Solo', description: '', aliases: [] }),
-      ])
-    ).toBe(
-      [
-        '### Rules',
-        '[1] Example Franchise — Characters from the Example books. Also known as: Hero One, Hero Two.',
-        '[9] Solo',
-      ].join('\n')
-    );
-  });
-});
-
-describe('modelRulesFingerprint', () => {
-  it('changes when a rule is edited, added or removed, and only then', () => {
-    const base = modelRulesFingerprint([rule(), rule({ id: 2 })]);
-    expect(modelRulesFingerprint([rule(), rule({ id: 2 })])).toBe(base);
-    expect(modelRulesFingerprint([rule(), rule({ id: 2, updatedAt: 2000 })])).not.toBe(base);
-    expect(modelRulesFingerprint([rule()])).not.toBe(base);
   });
 });
 

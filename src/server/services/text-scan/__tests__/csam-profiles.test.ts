@@ -16,9 +16,17 @@ const CSAM_PROFILES: readonly string[] = [
 ];
 
 describe('csam profiles', () => {
-  it.each(TEXT_SCAN_ENTITY_TYPES)('%s asks for csam only if it is a csam profile', (entityType) => {
-    const profile = getTextScanProfile(entityType);
-    expect(profile).toBeDefined();
-    expect(profile!.labels.includes('csam')).toBe(CSAM_PROFILES.includes(entityType));
+  // ModelRules keeps a mode and a retired adapter for its leftover rows, but no profile.
+  it.each(TEXT_SCAN_ENTITY_TYPES.filter((entityType) => entityType !== 'ModelRules'))(
+    '%s asks for csam only if it is a csam profile',
+    (entityType) => {
+      const profile = getTextScanProfile(entityType);
+      expect(profile).toBeDefined();
+      expect(profile!.labels.includes('csam')).toBe(CSAM_PROFILES.includes(entityType));
+    }
+  );
+
+  it('ModelRules has no profile: it is matched literally, not scanned', () => {
+    expect(getTextScanProfile('ModelRules')).toBeUndefined();
   });
 });

@@ -4,20 +4,18 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { hashContent } from '~/server/services/entity-moderation.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
-export type ModelRuleForPrompt = {
+export type EnabledModelRule = {
   id: number;
   subject: string;
   description: string;
   aliases: string[];
-  /** Epoch ms; part of the rule-set fingerprint, so an edited rule changes the dedup hash. */
   updatedAt: number;
 };
 
-export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
+export async function getEnabledModelRules(): Promise<EnabledModelRule[]> {
   return fetchThroughCache(
     REDIS_KEYS.CACHES.MOD_RULES.MODELS,
     async () => {
@@ -40,21 +38,7 @@ export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
   );
 }
 
-export function renderModelRulesBlock(rules: ModelRuleForPrompt[]) {
-  const lines = rules.map((rule) => {
-    const description = rule.description.replace(/\.+$/, '');
-    const parts = [`[${rule.id}] ${rule.subject}${description ? ` — ${description}` : ''}`];
-    if (rule.aliases.length) parts.push(`Also known as: ${rule.aliases.join(', ')}.`);
-    return parts.join('. ');
-  });
-  return `### Rules\n${lines.join('\n')}`;
-}
-
-export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
-  return hashContent(rules.map((rule) => `${rule.id}:${rule.updatedAt}`).join(','));
-}
-
-/** A lab-only edit of a rule: a positive id replaces that rule, a negative id is a new, unsaved one. */
+/** A moderator's unsaved edit of a rule, tried before it is saved: a positive id replaces that rule, a negative id is a new, unsaved one. */
 export type ModelRuleOverride = {
   id: number;
   subject: string;
@@ -64,16 +48,16 @@ export type ModelRuleOverride = {
 };
 
 export function applyModelRuleOverrides(
-  live: ModelRuleForPrompt[],
+  live: EnabledModelRule[],
   overrides: ModelRuleOverride[] | undefined
-): ModelRuleForPrompt[] {
+): EnabledModelRule[] {
   if (!overrides?.length) return live;
   const toRule = ({
     id,
     subject,
     description,
     aliases,
-  }: ModelRuleOverride): ModelRuleForPrompt => ({
+  }: ModelRuleOverride): EnabledModelRule => ({
     id,
     subject,
     description,

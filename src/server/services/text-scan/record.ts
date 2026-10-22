@@ -1,4 +1,3 @@
-import type { MODEL_RULES_RESULT_KEYS, StoredModelRules } from '@civitai/moderation/model-rules';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import type { StoredTextScanVerdict } from '~/server/services/text-scan/merge';
@@ -13,21 +12,7 @@ export type TextScanResult = {
   /** `textScanTextHash` of the subject as submitted. */
   textHash?: string;
   meta?: Record<string, unknown>;
-  /**
-   * `ModelRules` scans only: the rule set the prompt carried, and the matched rules as they read then.
-   * `literalRuleIds` are the rules the text names literally, whether or not the model matched them;
-   * `snapshot` covers both.
-   */
-  modelRules?: StoredModelRules;
 };
-
-// The moderator app reads these keys back through @civitai/moderation; a rename here must not compile.
-export type ModelRulesReadKeys = Pick<
-  TextScanResult,
-  | typeof MODEL_RULES_RESULT_KEYS.labels
-  | typeof MODEL_RULES_RESULT_KEYS.modelRules
-  | typeof MODEL_RULES_RESULT_KEYS.meta
->;
 
 type RowKey = { entityType: string; entityId: number };
 

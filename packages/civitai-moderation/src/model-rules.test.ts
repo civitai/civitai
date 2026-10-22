@@ -3,7 +3,6 @@ import {
   MODEL_RULE_LIMITS,
   isSemanticDefinition,
   parseModelRulesHoldMeta,
-  parseModelRulesStoredResult,
   semanticModelRuleSchema,
   storedModelRuleSchema,
 } from './model-rules';
@@ -73,38 +72,6 @@ describe('term word cap', () => {
     expect(
       storedModelRuleSchema.safeParse({ type: 'semantic', subject: words(max + 5) }).success
     ).toBe(true);
-  });
-});
-
-describe('parseModelRulesStoredResult', () => {
-  it('reads matches, snapshot, literal ids and the hold flag', () => {
-    expect(
-      parseModelRulesStoredResult({
-        labels: { modelRules: { matched: [{ ruleId: 1, reason: ' r ' }, 'x', { ruleId: 'y' }] } },
-        modelRules: {
-          snapshot: [{ id: 1, subject: 'A' }, { id: 'b' }],
-          literalRuleIds: [7, 'x', 5],
-        },
-        meta: { heldAtPublish: true },
-      })
-    ).toEqual({
-      matched: [{ ruleId: 1, reason: ' r ' }],
-      snapshot: [{ id: 1, subject: 'A' }],
-      literalRuleIds: [7, 5],
-      heldAtPublish: true,
-    });
-  });
-
-  it('degrades to empty for anything else', () => {
-    const empty = { matched: [], snapshot: [], literalRuleIds: [], heldAtPublish: false };
-    expect(parseModelRulesStoredResult(null)).toEqual(empty);
-    expect(parseModelRulesStoredResult({ labels: { modelRules: { matched: 'x' } } })).toEqual(
-      empty
-    );
-    expect(parseModelRulesStoredResult({ modelRules: { literalRuleIds: [3] } })).toEqual({
-      ...empty,
-      literalRuleIds: [3],
-    });
   });
 });
 

@@ -1,11 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
-import {
-  modelRulesFingerprint,
-  renderModelRulesBlock,
-  type ModelRuleForPrompt,
-} from '~/server/services/text-scan/model-rules';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import {
   isTextScanWebSearchEntityType,
@@ -223,7 +218,7 @@ export async function setTextScanCsamMode(
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam|modelRules))$/;
+export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(
@@ -294,38 +289,26 @@ export function subjectTextLength(subject: TextScanSubject) {
   return subject.fields.reduce((sum, field) => sum + (field.text?.trim().length ?? 0), 0);
 }
 
-/** Stands in for the rule set in `MissingTextScanPromptError`: no enabled rule is a missing prompt. */
-export const MODEL_RULES_SET_KEY = 'modelRules:rules';
-
 export function composeTextScanMessages({
   prompts,
   labels,
   subject,
   maxInputChars,
-  modelRules,
   maxSegments,
 }: {
   prompts: Record<string, ActiveTextScanPrompt>;
   labels: TextScanLabel[];
   subject: TextScanSubject;
   maxInputChars: number;
-  /** Required when `labels` includes `modelRules`. */
-  modelRules?: ModelRuleForPrompt[];
   maxSegments: number;
 }) {
   const keys = ['base', ...labels.map((label) => `label:${label}`)];
   // A blank row would compose an empty definition and be submitted everywhere; treat it as missing.
   const missing = keys.filter((key) => !prompts[key]?.content?.trim());
-  const scansRules = labels.includes('modelRules');
-  if (scansRules && !modelRules?.length) missing.push(MODEL_RULES_SET_KEY);
   if (missing.length) throw new MissingTextScanPromptError(missing);
 
-  const labelSection = (label: TextScanLabel) => {
-    const section = `## Label: ${label}\n${prompts[`label:${label}`].content}`;
-    return label === 'modelRules' && modelRules
-      ? `${section}\n\n${renderModelRulesBlock(modelRules)}`
-      : section;
-  };
+  const labelSection = (label: TextScanLabel) =>
+    `## Label: ${label}\n${prompts[`label:${label}`].content}`;
   const system = [prompts.base.content, ...labels.map(labelSection)].join('\n\n');
 
   const promptIds: PromptIds = { base: prompts.base.id };
@@ -343,12 +326,6 @@ export function composeTextScanMessages({
     inputChars,
     scannedChars,
     inputCut,
-    ...(scansRules && modelRules
-      ? {
-          ruleIds: modelRules.map((rule) => rule.id),
-          rulesFingerprint: modelRulesFingerprint(modelRules),
-        }
-      : {}),
   };
 }
 

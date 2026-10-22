@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getTextScanMode, getModelRulesForPrompt, loadModelScanSubjects, syncModelRulesHold } =
+const { getTextScanMode, getEnabledModelRules, loadModelScanSubjects, syncModelRulesHold } =
   vi.hoisted(() => ({
     getTextScanMode: vi.fn(),
-    getModelRulesForPrompt: vi.fn(),
+    getEnabledModelRules: vi.fn(),
     loadModelScanSubjects: vi.fn(),
     syncModelRulesHold: vi.fn(),
   }));
 
 vi.mock('~/server/services/text-scan/mode', () => ({ getTextScanMode }));
-vi.mock('~/server/services/text-scan/model-rules', () => ({ getModelRulesForPrompt }));
+vi.mock('~/server/services/text-scan/model-rules', () => ({ getEnabledModelRules }));
 vi.mock('~/server/services/text-scan/profiles/model.profile', () => ({ loadModelScanSubjects }));
 vi.mock('~/server/services/text-scan/actions/model-rules-hold', () => ({ syncModelRulesHold }));
 
@@ -28,7 +28,7 @@ const base = { modelId: 7, versionIds: [11] };
 beforeEach(() => {
   vi.clearAllMocks();
   getTextScanMode.mockResolvedValue('active');
-  getModelRulesForPrompt.mockResolvedValue(RULES);
+  getEnabledModelRules.mockResolvedValue(RULES);
   loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Hero One LoRA')]]));
 });
 
@@ -75,7 +75,7 @@ describe('checkModelRulesLiteralHold', () => {
   it('does nothing in off mode, and loads no rules', async () => {
     getTextScanMode.mockResolvedValue('off');
     await expect(checkModelRulesLiteralHold(base)).resolves.toBeNull();
-    expect(getModelRulesForPrompt).not.toHaveBeenCalled();
+    expect(getEnabledModelRules).not.toHaveBeenCalled();
     expect(loadModelScanSubjects).not.toHaveBeenCalled();
     expect(syncModelRulesHold).not.toHaveBeenCalled();
   });
@@ -116,7 +116,7 @@ describe('checkModelRulesLiteralHold', () => {
 
   it('reports only the rules left once a moderator cleared some for this text', async () => {
     loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Hero One and Other Name')]]));
-    getModelRulesForPrompt.mockResolvedValue([
+    getEnabledModelRules.mockResolvedValue([
       ...RULES,
       { id: 4, subject: 'Other Name', description: '', aliases: [] },
     ]);
@@ -129,13 +129,13 @@ describe('checkModelRulesLiteralHold', () => {
   });
 
   it('does nothing when there are no rules', async () => {
-    getModelRulesForPrompt.mockResolvedValue([]);
+    getEnabledModelRules.mockResolvedValue([]);
     await expect(checkModelRulesLiteralHold(base)).resolves.toBeNull();
     expect(loadModelScanSubjects).not.toHaveBeenCalled();
   });
 
   it('lets the publish through when the check itself fails', async () => {
-    getModelRulesForPrompt.mockRejectedValue(new Error('redis down'));
+    getEnabledModelRules.mockRejectedValue(new Error('redis down'));
     await expect(checkModelRulesLiteralHold(base)).resolves.toBeNull();
   });
 

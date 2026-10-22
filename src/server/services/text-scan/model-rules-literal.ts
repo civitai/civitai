@@ -16,7 +16,6 @@ function normalizeForLiteralMatch(value: string) {
 const wordsIn = (term: string) => term.split(' ').length;
 
 type CompiledRules = {
-  rules: { id: number; terms: string[] }[];
   /** Normalized term -> the rules and authored spellings that produce it. */
   byTerm: Map<string, { ruleId: number; term: string }[]>;
   maxWords: number;
@@ -35,7 +34,7 @@ function compileRules(rules: LiteralModelRule[]): CompiledRules {
   if (memo?.key === key) return memo.compiled;
   let maxWords = 1;
   const byTerm = new Map<string, { ruleId: number; term: string }[]>();
-  const compiled = rules.map((rule) => {
+  for (const rule of rules) {
     const authored = new Map<string, string>();
     for (const term of [rule.subject, ...rule.aliases]) {
       const normalized = normalizeForLiteralMatch(term);
@@ -49,9 +48,8 @@ function compileRules(rules: LiteralModelRule[]): CompiledRules {
       entries.push({ ruleId: rule.id, term });
       byTerm.set(normalized, entries);
     }
-    return { id: rule.id, terms: [...authored.keys()] };
-  });
-  const result = { rules: compiled, byTerm, maxWords };
+  }
+  const result = { byTerm, maxWords };
   memo = { key, compiled: result };
   return result;
 }
@@ -68,35 +66,6 @@ function wordRuns(text: string, maxWords: number): Set<string> {
     }
   }
   return runs;
-}
-
-function hitIds(texts: (string | null | undefined)[], rules: LiteralModelRule[]): Set<number> {
-  const compiled = compileRules(rules);
-  const hit = new Set<number>();
-  for (const text of texts) {
-    if (!text) continue;
-    const runs = wordRuns(text, compiled.maxWords);
-    for (const rule of compiled.rules) {
-      if (!hit.has(rule.id) && rule.terms.some((term) => runs.has(term))) hit.add(rule.id);
-    }
-  }
-  return hit;
-}
-
-/** Ids of the rules whose subject or alias appears in `text` as a whole word or phrase. */
-export function findLiteralModelRuleHits(text: string, rules: LiteralModelRule[]): number[] {
-  if (!text || !rules.length) return [];
-  const hit = hitIds([text], rules);
-  return rules.filter((rule) => hit.has(rule.id)).map((rule) => rule.id);
-}
-
-export function findLiteralHitsInSubject(subject: TextScanSubject, rules: LiteralModelRule[]) {
-  if (!rules.length) return [];
-  const hit = hitIds(
-    subject.fields.map((field) => field.text),
-    rules
-  );
-  return rules.filter((rule) => hit.has(rule.id)).map((rule) => rule.id);
 }
 
 export type LiteralModelRuleMatch = {

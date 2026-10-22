@@ -146,7 +146,6 @@ export function textScanContentHash({
   promptIds,
   model,
   thinking,
-  rulesFingerprint,
   variant,
   segmentBudget,
 }: {
@@ -154,7 +153,6 @@ export function textScanContentHash({
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
-  rulesFingerprint?: string;
   variant?: TextScanVariant;
   segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
@@ -162,8 +160,6 @@ export function textScanContentHash({
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
-  // Appended only when present, so every existing row's hash is unchanged.
-  const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
   const tail = variant ? `\u0000${variant}` : '';
   // Only text over the budget is split, so only its hash may change with the budget: a shorter
   // text keeps its hash and is not rescanned when the budget changes.
@@ -172,7 +168,7 @@ export function textScanContentHash({
       ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
       : '';
   return hashContent(
-    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}${segmenting}`
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}${segmenting}`
   );
 }
 
@@ -261,7 +257,6 @@ async function clearStaleVerdict({
   for (const label of labels) {
     if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
     else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
-    else if (label === 'modelRules') output.modelRules = { matched: [] };
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
@@ -442,7 +437,6 @@ async function submitTextScanPass({
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
-    rulesFingerprint: composed.rulesFingerprint,
     variant,
     segmentBudget: config,
   });
