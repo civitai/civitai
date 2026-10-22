@@ -46,7 +46,10 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
-import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
+import {
+  createPreviewTools,
+  runnerPreviewAction,
+} from '~/components/Apps/AppAssistant/previewTools';
 import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
@@ -271,12 +274,26 @@ export function AppAssistantWorkspace({
   const openRef = useRef(sandboxes.open.mutateAsync);
   openRef.current = sandboxes.open.mutateAsync;
 
+  // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
     const current = live.current.session;
     if (!current) return;
+    live.current.session = null;
     setSession(null);
-    stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
+    if (current.sessionId) stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
+  /** Shows a preview that (re)started: the first one of an app moves a phone to the Preview tab. */
+  const showPreview = useCallback((next: PreviewSession | null) => {
+    live.current.session = next;
+    setSession(next);
+    // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
+    if (next && !previewShown.current) {
+      previewShown.current = true;
+      setTab('preview');
+    }
+  }, []);
+  // Each preview the server runner starts gets its own frame, even on the same host.
+  const runnerViews = useRef(0);
 
   const appTools = useMemo(
     () =>
@@ -323,20 +340,12 @@ export function AppAssistantWorkspace({
         startDevTunnel: (input) => startRef.current(input),
         stopDevTunnel: (input) => stopRef.current(input),
         getSession: () => live.current.session,
-        setSession: (next) => {
-          live.current.session = next;
-          setSession(next);
-          // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
-          if (next && !previewShown.current) {
-            previewShown.current = true;
-            setTab('preview');
-          }
-        },
+        setSession: showPreview,
       }),
       ...appTools.tools,
       ...gate.tools,
     }),
-    [canPreview, gate, appTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -360,11 +369,18 @@ export function AppAssistantWorkspace({
       })),
     [remoteRunner]
   );
-  // On the runner, create_app opens an app the page did not: it follows, once its list has it.
+  // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
+  // the runner's start_preview says only which block it shows and where (never the tunnel's id):
+  // the pane fetches that block's frame, which civitai finds by the user's live tunnel.
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
-      if (!remoteRunner || result.name !== CREATE_APP || result.isError) return;
+      if (!remoteRunner || result.isError) return;
+      const preview = runnerPreviewAction(result);
+      if (preview && 'show' in preview)
+        return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
+      if (preview) return stopPreview();
+      if (result.name !== CREATE_APP) return;
       const app = (result.output as { app?: unknown } | null)?.app;
       if (typeof app !== 'string') return;
       void refetchRef.current().then(({ data }) => {
@@ -372,7 +388,7 @@ export function AppAssistantWorkspace({
         if (opened) setActiveName(opened.name);
       });
     },
-    [gate, remoteRunner]
+    [gate, remoteRunner, showPreview, stopPreview]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.

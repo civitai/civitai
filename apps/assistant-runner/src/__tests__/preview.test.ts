@@ -187,6 +187,17 @@ describe('start_preview on the runner', () => {
     expect(tunnels.stopped).toEqual([SESSION]);
   });
 
+  it('runs two starts of one step one after the other, so neither key replaces the other’s', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const results = await Promise.all([
+      call(tools.tools, 'start_preview'),
+      call(tools.tools, 'start_preview'),
+    ]);
+    expect(results.map((r) => r.shown)).toEqual([true, true]);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect', 'tunnel_key', 'tunnel_connect']);
+  });
+
   it('refuses a block id that is not one, before anything is asked', async () => {
     fake.add('my-app');
     const { tools } = await open();

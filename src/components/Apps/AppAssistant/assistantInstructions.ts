@@ -2,7 +2,8 @@
 export {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,
-  REMOTE_NO_PREVIEW,
+  NO_PREVIEW,
+  REMOTE_PREVIEW,
   buildAssistantInstructions,
   buildAssistantSystemPrompt,
   buildAssistantSystemPromptWithSubagents,

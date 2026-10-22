@@ -1,6 +1,7 @@
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
 import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
@@ -80,11 +81,19 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
+  // The live preview's tunnels, which civitai opens for a run's user: each call reads the run's
+  // grant from the grants table inside its own fetch, as a mint does.
+  const devTunnels = new CivitaiDevTunnels({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
+        devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
         log,
       })
     : noTools;
