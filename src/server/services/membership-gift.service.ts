@@ -236,8 +236,11 @@ export async function handleMembershipGiftCheckoutEvent({
   const giftId = session.metadata?.giftId;
   if (!giftId) throw new Error('membershipGift checkout session missing giftId');
 
-  if (type === 'checkout.session.async_payment_failed')
-    return failMembershipGiftPayment({ giftId });
+  if (type === 'checkout.session.async_payment_failed') {
+    const revoked = await revokeMembershipGift({ giftId, reason: 'payment_failed' });
+    if (!revoked) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
+    return revoked;
+  }
 
   const paid =
     type === 'checkout.session.async_payment_succeeded' || session.payment_status === 'paid';
@@ -260,24 +263,6 @@ export async function handleMembershipGiftCheckoutEvent({
         ? session.payment_intent
         : session.payment_intent?.id,
   });
-}
-
-async function failMembershipGiftPayment({ giftId }: { giftId: string }) {
-  const gift = await dbWrite.membershipGift.findUnique({
-    where: { id: giftId },
-    select: { id: true, status: true },
-  });
-  if (!gift) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
-
-  if (gift.status !== MembershipGiftStatus.Pending)
-    return revokeMembershipGift({ giftId, reason: 'payment_failed' });
-
-  await dbWrite.membershipGift.update({
-    where: { id: gift.id },
-    data: { status: MembershipGiftStatus.Failed },
-  });
-  await log({ type: 'warning', stage: 'payment-failed', giftId: gift.id });
-  return true;
 }
 
 /**
@@ -919,7 +904,7 @@ const revokedStatus = {
 /**
  * Undo a gift after a refund, chargeback or failed payment on the gifter's payment.
  * Best-effort by design: Buzz already granted for elapsed months is not clawed back.
- * Returns false when the payment intent doesn't belong to a gift.
+ * Returns false when no gift matches.
  */
 export async function revokeMembershipGift({
   reason,

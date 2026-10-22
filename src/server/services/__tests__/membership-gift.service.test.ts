@@ -311,8 +311,8 @@ describe('createMembershipGiftCheckout', () => {
     expect(result).toMatchObject({ giftId: 'gift_1', sessionId: 'cs_1' });
   });
 
-  // Pinned on purpose, not an oversight to widen: a bank debit can be reversed as unauthorized
-  // weeks after it succeeded, long after the recipient has the membership. Cards only.
+  // Deliberate: do not widen to dynamic payment methods. The paid gate cannot see a debit
+  // reversed after it succeeded.
   it('offers only card payment for a gift', async () => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
 

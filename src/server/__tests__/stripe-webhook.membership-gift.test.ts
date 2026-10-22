@@ -282,28 +282,53 @@ describe('stripe webhook: membership gift payments', () => {
       expect(mockStripe.subscriptions.del).not.toHaveBeenCalled();
       expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
     });
+  });
 
-    it('does not mint a new membership when the cancelled one reports back', async () => {
-      mockStripe.subscriptions.retrieve.mockResolvedValue({
-        id: 'sub_residual',
-        status: 'active',
-        metadata: { membershipGiftId: 'gift_1' },
+  describe('a gift fulfilled before its payment cleared, riding on a membership the recipient pays for', () => {
+    beforeEach(() => {
+      seedGift({
+        status: 'Active',
+        monthsRemaining: 2,
+        monthsConsumed: 1,
+        acceptedAt: new Date(),
+        stripePaymentIntentId: 'pi_1',
+        armedCouponId: 'gift_gift_1_m2',
       });
+      mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+        id: 'sub_own',
+        status: 'active',
+        product: { id: 'prod_gold', provider: 'Stripe', metadata: { tier: 'gold' } },
+        price: { id: 'price_gold_usd', interval: 'month', currency: 'usd' },
+      });
+      mockStripe.subscriptions.retrieve.mockResolvedValue({
+        id: 'sub_own',
+        status: 'active',
+        discount: { coupon: { id: 'gift_gift_1_m2' } },
+      });
+    });
+
+    it('takes the gifted month off their subscription when the payment fails', async () => {
+      await deliver('checkout.session.async_payment_failed', giftSession('unpaid'));
+
+      expect(mockStripe.subscriptions.deleteDiscount).toHaveBeenCalledWith('sub_own');
+      expect(mockStripe.coupons.del).toHaveBeenCalledWith('gift_gift_1_m2');
+      expect(statusesWritten).toEqual(['Failed']);
+    });
+
+    it('does not mint the cancelled months when their membership later ends', async () => {
       await deliver('checkout.session.async_payment_failed', giftSession('unpaid'));
 
       await holderSubscriptionEnded();
 
       expect(mockStripe.subscriptions.create).not.toHaveBeenCalled();
     });
-  });
 
-  // Control for the test above: the subscription-ended path does mint for a gift still owed.
-  it('mints the owed months of a live gift when the holder subscription ends', async () => {
-    seedGift({ status: 'Active', monthsRemaining: 2, stripePaymentIntentId: 'pi_1' });
+    // Control for the test above: with the failure never delivered, the same ending mints.
+    it('mints the owed months when their membership ends and the payment never failed', async () => {
+      await holderSubscriptionEnded();
 
-    await holderSubscriptionEnded();
-
-    expect(mockStripe.subscriptions.create).toHaveBeenCalledTimes(1);
+      expect(mockStripe.subscriptions.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('leaves a non-gift checkout to the existing path', async () => {
