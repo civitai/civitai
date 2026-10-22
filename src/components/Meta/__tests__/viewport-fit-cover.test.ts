@@ -429,7 +429,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   });
 
   /**
-   * The eight global stylesheets `_app.tsx` loads, in its own order. Order
+   * The nine global stylesheets `_app.tsx` loads, in its own order. Order
    * matters and is asserted with them: globals.css is imported FIRST, which is
    * why the drawer rule needs a doubled class to win a same-layer source-order
    * tie against Mantine's own `top: 0`.
@@ -443,6 +443,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     '@mantine/nprogress/styles.layer.css',
     '@mantine/tiptap/styles.layer.css',
     'mantine-react-table/styles.css',
+    '@civitai/components/styles.css',
   ];
 
   /**
@@ -469,6 +470,9 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     ['@mantine/nprogress/styles.layer.css', 1, 0],
     ['@mantine/tiptap/styles.layer.css', 0, 1],
     ['mantine-react-table/styles.css', 1, 9],
+    // The package ships a REAL root `styles.css` (byte-identical to `dist/components.css`, which is
+    // what the `exports` alias resolves to), so the path under node_modules is the import spec.
+    ['@civitai/components/styles.css', 1, 0],
     ['draft-js/dist/Draft.css', 0, 0],
   ];
 

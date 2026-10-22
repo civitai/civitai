@@ -15,7 +15,7 @@ See [Not built yet](#not-built-yet).
 
 ## How it works
 
-- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.22.1`, entry
+- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.25.0`, entry
   `@civitai/components-chat/runner-protocol`, protocol version `v: 1`:
 
   | Call                             | Answer                                                                                                                                                        |
@@ -75,7 +75,7 @@ See [Not built yet](#not-built-yet).
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
     call may go 610 s without progress: the chat's own MCP connection and added-server tool adapter
-    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.22.1), so a lost
+    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.25.0), so a lost
     reply stream is answered at once, as in the browser.
   - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
     (the connection cannot be opened, or the MCP address answers with an error status), the runner

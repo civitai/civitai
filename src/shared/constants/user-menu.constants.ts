@@ -12,6 +12,7 @@ export const USER_MENU_ITEM_IDS = [
   'inventory',
   'prizes',
   'my-shop',
+  'service-requests',
   'placements',
   'training',
   'collections',

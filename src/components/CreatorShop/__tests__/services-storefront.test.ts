@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isSectionAvailable, withMissingSections } from '~/components/CreatorShop/section-meta';
+import {
+  isSectionAvailable,
+  storefrontSectionKeys,
+  withMissingSections,
+} from '~/components/CreatorShop/section-meta';
 import { isStorefrontEmpty } from '~/components/CreatorShop/Storefront/storefront.util';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
@@ -36,5 +40,18 @@ describe('services-only storefront', () => {
     expect(
       isStorefrontEmpty({ cosmeticCount: 0, activeServiceCount: 0, servicesEnabled: true })
     ).toBe(true);
+  });
+});
+
+// The shop header's Services link shows only where this list includes 'services'.
+describe('storefront section keys', () => {
+  it('leaves out a Services section the seller hid', () => {
+    const hidden = [{ key: 'services' as const, visible: false }];
+    expect(storefrontSectionKeys(hidden, flags(true))).not.toContain('services');
+  });
+
+  it('includes Services for a shop with no saved order, after Cosmetics', () => {
+    const keys = storefrontSectionKeys(null, flags(true));
+    expect(keys.indexOf('services')).toBe(keys.indexOf('cosmetics') + 2);
   });
 });

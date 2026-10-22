@@ -54,6 +54,8 @@ const { RESTRICTION_TYPES, RULINGS_WIRED_FOR, unwiredRulingReason } = await impo
 
 type LoadResult = {
   type: string;
+  filters: { status: string; origin: string; sort: string };
+  facets: unknown;
   items: { id: number }[];
   pinned: { id: number } | null;
   selectedMissing: number | null;
@@ -142,6 +144,38 @@ describe('generator-restrictions load — type', () => {
         page: 3,
       })
     );
+  });
+});
+
+describe('generator-restrictions load — filters', () => {
+  it('resolves the sort to the status default and reports the origin as all', async () => {
+    expect((await runLoad()).filters).toEqual({ status: 'Pending', origin: 'all', sort: 'oldest' });
+    expect((await runLoad('?status=Upheld&origin=typed')).filters).toEqual({
+      status: 'Upheld',
+      origin: 'typed',
+      sort: 'newest',
+    });
+    expect((await runLoad('?origin=nonsense&sort=sideways')).filters).toEqual({
+      status: 'Pending',
+      origin: 'all',
+      sort: 'oldest',
+    });
+  });
+
+  it('asks the root layout for the edge-to-edge page with an inline header', async () => {
+    expect(await runLoad()).toMatchObject({ fullBleed: true, headerInline: true });
+  });
+
+  // Counts are decoration: a failed count query must leave the list up, not turn the page into a 500.
+  it('still serves the list when the facet counts fail', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    getGenerationRestrictions.mockResolvedValue({ items: [row({ id: 5 })], totalCount: 1 });
+    getRestrictionFacets.mockRejectedValue(new Error('timeout'));
+
+    const data = await runLoad();
+
+    expect(data.items).toHaveLength(1);
+    expect(data.facets).toBeUndefined();
   });
 });
 
@@ -544,7 +578,7 @@ describe('generator-restrictions actions — ruling reason', () => {
 
 describe('generator-restrictions load — origin and sources', () => {
   type TriageResult = {
-    origin: string | null;
+    filters: { origin: string };
     sources: Record<number, unknown>;
     sourcesFailed: boolean;
   };
@@ -556,7 +590,7 @@ describe('generator-restrictions load — origin and sources', () => {
   it('passes a known origin filter to the list and to the facets', async () => {
     const data = await run('?origin=remix');
 
-    expect(data.origin).toBe('remix');
+    expect(data.filters.origin).toBe('remix');
     expect(getGenerationRestrictions).toHaveBeenCalledWith(
       expect.objectContaining({ origin: 'remix' })
     );
@@ -568,7 +602,7 @@ describe('generator-restrictions load — origin and sources', () => {
     async (search) => {
       const data = await run(search);
 
-      expect(data.origin).toBeNull();
+      expect(data.filters.origin).toBe('all');
       expect(getGenerationRestrictions.mock.calls[0][0].origin).toBeUndefined();
     }
   );

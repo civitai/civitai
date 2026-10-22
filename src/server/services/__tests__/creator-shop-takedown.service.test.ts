@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 const { mocks } = vi.hoisted(() => ({
@@ -81,6 +82,10 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
 }));
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopTakedownLabel: vi.fn(async () => undefined),
+}));
 // Real retry semantics, no wall-clock wait — the service's 1s backoff would make
 // the failure cases take seconds each.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
@@ -93,6 +98,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
 
 import { takedownCosmeticShopItem, unarchiveCreatorShopItem } from '../creator-shop.service';
 import { refundShopPurchases } from '../creator-shop-withdrawn-refund.service';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
@@ -346,6 +352,99 @@ describe('takedownCosmeticShopItem', () => {
       revokedFrom: 3,
       failures: [],
     });
+  });
+
+  it('records the takedown label once the archive is written and the buyers refunded', async () => {
+    const { recordShopTakedownLabel } = await import(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(recordShopTakedownLabel).mockClear();
+    const order: string[] = [];
+    const update = mocks.shopItemUpdate.getMockImplementation();
+    mocks.shopItemUpdate.mockImplementationOnce(async (...args: unknown[]) => {
+      order.push('archive');
+      return update?.(...args);
+    });
+    const refund = mocks.refundMultiAccountTransaction.getMockImplementation();
+    mocks.refundMultiAccountTransaction.mockImplementation(async (...args: unknown[]) => {
+      order.push('refund');
+      return refund?.(...args);
+    });
+    mocks.createNotification.mockImplementation(async () => {
+      order.push('notify');
+    });
+    vi.mocked(recordShopTakedownLabel).mockImplementationOnce(async () => {
+      order.push('label');
+    });
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    expect(order[0]).toBe('archive');
+    expect(order).toContain('refund');
+    // After the refund lock is released, which the creator notice is sent after.
+    expect(order.slice(-2)).toEqual(['notify', 'label']);
+    const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
+    expect(recordShopTakedownLabel).toHaveBeenCalledTimes(1);
+    expect(recordShopTakedownLabel).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        moderatorId: 999,
+        at: archivedAt.toISOString(),
+        note: 'IP infringement',
+        statusAfter: 'Archived',
+      })
+    );
+  });
+
+  it('finishes the takedown when its label cannot be recorded', async () => {
+    const labels = await import('~/server/services/creator-shop-labels.service');
+    const actual = await vi.importActual<typeof CreatorShopLabels>(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(labels.recordShopTakedownLabel).mockImplementationOnce(
+      actual.recordShopTakedownLabel
+    );
+    dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('label transaction timed out'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data.status).toBe('Archived');
+    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalled();
+    expect(result.failures).toEqual([]);
+    expect(mocks.logToAxiom).toHaveBeenCalledWith({
+      type: 'error',
+      name: 'shop-label-record-failed',
+      itemId: 42,
+    });
+  });
+
+  // The backfill labels each takedown history entry by its `at`; a retry's label must match its own entry.
+  it('labels a retried takedown with the history entry the retry wrote', async () => {
+    const { recordShopTakedownLabel } = await import(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(recordShopTakedownLabel).mockClear();
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      status: 'Archived',
+      meta: { takedown: { reason: 'IP infringement', moderatorId: 999, at: '2026-08-03' } },
+    });
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    const { meta } = mocks.shopItemUpdate.mock.calls[0][0].data as {
+      meta: CosmeticShopItemMeta;
+    };
+    const entry = meta.history!.at(-1)!;
+    expect(recordShopTakedownLabel).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ at: entry.at, note: entry.note })
+    );
+    expect(entry.note).toBe('Retried: IP infringement');
   });
 
   it('never refunds the creator submission fee', async () => {

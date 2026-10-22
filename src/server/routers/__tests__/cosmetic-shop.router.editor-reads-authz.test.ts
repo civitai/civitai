@@ -11,14 +11,26 @@ import { TRPCError } from '@trpc/server';
  * record it saves, so the rung and scope are the control.
  */
 
-const { mockGetShopItemById, mockGetSectionById } = vi.hoisted(() => ({
+const {
+  mockGetShopItemById,
+  mockGetSectionById,
+  mockGetShopItemSections,
+  mockAddShopItemToSection,
+  mockRemoveShopItemFromSection,
+} = vi.hoisted(() => ({
   mockGetShopItemById: vi.fn(async () => ({ id: 1 })),
   mockGetSectionById: vi.fn(async () => ({ id: 2 })),
+  mockGetShopItemSections: vi.fn(async () => [{ id: 2 }]),
+  mockAddShopItemToSection: vi.fn(async () => [{ id: 2 }]),
+  mockRemoveShopItemFromSection: vi.fn(async () => [{ id: 2 }]),
 }));
 
 vi.mock('~/server/services/cosmetic-shop.service', () => ({
   getShopItemById: mockGetShopItemById,
   getSectionById: mockGetSectionById,
+  getShopItemSections: mockGetShopItemSections,
+  addShopItemToSection: mockAddShopItemToSection,
+  removeShopItemFromSection: mockRemoveShopItemFromSection,
   getPaginatedCosmeticShopItems: vi.fn(),
   getShopSections: vi.fn(),
   getShopSectionsWithItems: vi.fn(),
@@ -66,9 +78,28 @@ const READS = [
     mock: mockGetSectionById,
     call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) => c.getSectionById({ id: 2 }),
   },
+  // The review drawer's section picker: what a homepage shop block shows is decided here.
+  {
+    name: 'getShopItemSections',
+    mock: mockGetShopItemSections,
+    call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) =>
+      c.getShopItemSections({ shopItemId: 1 }),
+  },
+  {
+    name: 'addShopItemToSection',
+    mock: mockAddShopItemToSection,
+    call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) =>
+      c.addShopItemToSection({ shopItemId: 1, sectionId: 2 }),
+  },
+  {
+    name: 'removeShopItemFromSection',
+    mock: mockRemoveShopItemFromSection,
+    call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) =>
+      c.removeShopItemFromSection({ shopItemId: 1, sectionId: 2 }),
+  },
 ];
 
-describe('the cosmetic shop editor reads are moderator-only', () => {
+describe('the cosmetic shop editor reads and section placements are moderator-only', () => {
   beforeEach(() => vi.clearAllMocks());
 
   for (const read of READS) {

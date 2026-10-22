@@ -62,6 +62,7 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -1252,6 +1253,19 @@ function CreatorShopReviewPage() {
                         />
                       </Paper>
                     </Stack>
+
+                    {selected.status === CosmeticShopItemStatus.Published && (
+                      <ShopSectionsPanel
+                        shopItemId={selected.id}
+                        placeable={
+                          isMysteryPack
+                            ? 'Mystery packs are sold only through their own page.'
+                            : selected.cosmetic && !selectedMeta.sellableByOthers
+                            ? "The creator hasn't allowed resale, so it can't be placed in an official section."
+                            : true
+                        }
+                      />
+                    )}
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
