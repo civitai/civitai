@@ -107,9 +107,9 @@ want: a ruling changes the queue.
 
 | | |
 |---|---|
-| `ReportQueueShell` | The page: the queue section and the detail section, sized against the viewport. The layout renders it with `detail={children}`. |
-| `ReportQueueColumn` | Title, `ReportFilters` (or the note for a `?report=` view), the striped listbox, Prev/Next. The page supplies each row's content as a `row` snippet, and `isOpen` / `onOpen`. Every filter or page change goes to the bare path, so the new view opens on its own first item. |
-| `ReportDetailColumns` | The open item's two scrolling columns: `evidence` (optional) and `actions`. Both are `relative` — see below. |
+| `ReportQueueShell` | The page: the `title` in a `TriagePageHeader`, then a fixed-width queue flush against the detail, sized against the viewport. The layout renders it with `detail={children}`, and its load returns `fullBleed` and `headerInline`. |
+| `ReportQueueColumn` | `ReportFilters` (or the note for a `?report=` view), the listbox with the open row marked as a `TriageRow` is, and a footer with the range and Prev/Next. The page supplies each row's content as a `row` snippet, and `isOpen` / `onOpen`. Every filter or page change goes to the bare path, so the new view opens on its own first item. |
+| `ReportDetailColumns` | The open item: `evidence` (optional) in the middle under the item's `header`, and `actions` in a right sidebar that runs the pane's full height, with an optional `footer` pinned under it. Both columns scroll on their own (see "A scrolling column is `relative`"). The Model Flags tabs use it too, through `ModelFlagDetailFrame`, with `ModelPreview` (`$lib/components/`) as the evidence and a compact decision bar as the footer. |
 | `ReportList` | The item's reports, one compact row each, one row open at a time; nothing is truncated. A ruling opens the next open report. Each report keeps its own ruling, since reports about one item can need different answers. `details` adds to the open row (the model queue's merge-permission check). The open row ends with the report's internal notes (`ReportNotes`), editable by whoever can rule and posting to the queue's `?/saveNotes`. |
 | `ReportStatusButtons` | A report's ruling, Actioned/Unactioned by default (`REPORT_RULINGS`). Pass `statuses` to offer more. |
 | `reportsForItem` | The item's open reports plus any of its reports the queue is showing, so a resolved report reached by a link can still be ruled on. |
@@ -147,15 +147,15 @@ a second copy of any of it is how the two pages drifted before this existed.
    included. The bare page calls it for `parent()`'s first item; `[id]` validates the id (404 when it is
    not one) and calls it.
 3. The actions object, exported from both pages.
-4. `+layout.svelte`: `ReportQueueShell` around the type's queue component (`ReportQueueColumn` with its
-   `row` snippet).
-5. The item view: header, then `ReportDetailColumns` with the evidence and a `ReportList` above the
-   type's own actions.
+4. `+layout.svelte`: `ReportQueueShell` with the queue's `title`, around the type's queue component
+   (`ReportQueueColumn` with its `row` snippet). The layout load returns `fullBleed` and `headerInline`.
+5. The item view: `ReportDetailColumns` with the header, the evidence, and a `ReportList` above the
+   type's own actions in the sidebar.
 6. Copy the layout-tracking test. Remove the type's branch from `routes/reports/[slug]`.
-
-A type that needs no route of its own goes on the shared route instead — see above.
 7. Before calling it done, compile every changed `.svelte` file as the dev server does — `preprocess`
    with `vitePreprocess()`, `compile` for `server` and `client`, `node --check` the output.
    `svelte-check` validates the TypeScript, not the JavaScript Svelte emits. An optional arrow-function parameter
    (`(x?: T) => …`) compiled to `(x?) => …` and took both user report pages down with a 500 that
    typecheck and the tests passed over.
+
+A type that needs no route of its own goes on the shared route instead — see above.

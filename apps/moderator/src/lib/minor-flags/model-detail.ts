@@ -4,8 +4,6 @@ import { ago, yearMonth } from '$lib/minor-flags/appeal-row';
 
 /** The payload of `<tab>/detail/[modelId]`: what only the open detail pane shows. */
 export type ModelFlagDetail = {
-  /** Images on the owner's posts of the model; the row carries the first few. */
-  previewCount: number;
   /** Pending and Processing reports on the model. */
   openReports: number;
   versionCount: number;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import ModelFlagTabs from '../ModelFlagTabs.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
@@ -40,7 +41,7 @@
   let {
     data,
     form,
-  }: { data: NeedsReviewQueueData & { civitaiUrl: string }; form: QueueForm | undefined } =
+  }: { data: NeedsReviewQueueData & { civitaiUrl: string; canViewTrainingData: boolean }; form: QueueForm | undefined } =
     $props();
 
   type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
@@ -118,7 +119,10 @@
 </script>
 
 {#snippet listHeader()}
-  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  <div class="flex flex-col gap-2.5">
+    <ModelFlagTabs />
+    <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  </div>
 {/snippet}
 
 {#snippet empty()}
@@ -200,6 +204,7 @@
     <NeedsReviewDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       verdict={state.verdict}
       error={state.error}
       submit={state.submit}

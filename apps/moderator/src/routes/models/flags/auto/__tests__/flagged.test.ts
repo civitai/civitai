@@ -388,8 +388,9 @@ describe('one decision over every flag on the model', () => {
 describe('queue load', () => {
   type Loaded = { flaggedFilters: unknown; items: unknown[] };
   const loadQueue = async (query = '') =>
-    (await (load as unknown as (e: { url: URL }) => Promise<Loaded>)({
+    (await (load as unknown as (e: { url: URL; locals: { user: null } }) => Promise<Loaded>)({
       url: new URL(`http://x/models/flags/auto${query}`),
+      locals: { user: null },
     })) as Loaded;
 
   it('ignores a leftover ?view or ?tab param', async () => {
