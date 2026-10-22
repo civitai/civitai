@@ -8,6 +8,7 @@ import { textScanRaisedMinLevel } from '@civitai/shared/rated-entity-sql';
 import { RATING_REVIEW_ENTITY_TYPES } from '@civitai/shared/rating-review';
 import { dbRead } from './db';
 import { escapeLike } from './like';
+import { int4Id, parseQueryKeys } from './query';
 import { resolveRatingReviewAction } from './rating-review-actions';
 import {
   getRatingReviewImagesBatch,
@@ -29,7 +30,6 @@ import {
 import type { RatingReviewStatusFilter } from '$lib/rating-review';
 
 const PAGE_SIZE = 50;
-const MAX_INT4 = 2_147_483_647;
 
 const STATUSES = ['Pending', 'Actioned', 'Unactioned'] as const;
 const ASKS = ['lower', 'higher'] as const;
@@ -40,6 +40,7 @@ export type DisputeFilters = {
   ask: (typeof ASKS)[number] | undefined;
   scan: 'raised' | undefined;
   sort: DisputeSort;
+  owner: number | undefined;
 };
 
 export type RatingDisputeRow = RatingReviewRow & {
@@ -52,10 +53,8 @@ export type DisputeFacets = {
   chips: { lower: number; higher: number; raised: number };
 };
 
-// Read key by key, not through `parseQuery`: that walks `searchParams.keys()`, which makes SvelteKit
-// rerun the load on a query param it does not use.
-const param = (url: URL, key: string) => url.searchParams.get(key) ?? undefined;
-
+// Read key by key (`parseQueryKeys`), not through `parseQuery`: that walks `searchParams.keys()`,
+// which makes SvelteKit rerun the load on a query param it does not use.
 const querySchema = z.object({
   tab: z.enum(DISPUTE_TABS).catch(DEFAULT_DISPUTE_TAB),
   status: z.enum(STATUSES).catch('Pending'),
@@ -64,7 +63,8 @@ const querySchema = z.object({
   sort: z.enum(DISPUTE_SORTS).optional().catch(undefined),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
-  selected: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  selected: int4Id.optional().catch(undefined),
+  owner: int4Id.optional().catch(undefined),
 });
 
 // Both sides of the join the filters read; the select list is the caller's.
@@ -89,20 +89,20 @@ const askHigherSql = sql<boolean>`rr."suggestedLevel" > rr."currentLevel"`;
 
 function searchPredicate(q: string) {
   if (!q) return null;
-  const asId = Number(q);
-  if (/^\d+$/.test(q) && asId > 0 && asId <= MAX_INT4)
-    return sql<boolean>`(rr."id" = ${asId} OR rr."entityId" = ${asId})`;
-  // A number too large for an id is not a username either; `<= MAX_INT4` above sends it here and the
-  // prefix simply matches nobody.
+  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
+  if (asId?.success) return sql<boolean>`(rr."id" = ${asId.data} OR rr."entityId" = ${asId.data})`;
+  // A number too large for an id is not a username either; it lands here and the prefix simply
+  // matches nobody.
   return sql<boolean>`owner."username" ILIKE ${escapeLike(q) + '%'}`;
 }
 
 function withScope<QB extends FilterBase>(
   qb: QB,
-  scope: { status: RatingReviewStatusFilter; q: string; tab?: DisputeTab }
+  scope: { status: RatingReviewStatusFilter; q: string; tab?: DisputeTab; owner?: number }
 ): QB {
   let out = qb.where('rr.status', '=', scope.status) as QB;
   if (scope.tab) out = out.where('rr.entityType', 'in', [...DISPUTE_TAB_TYPES[scope.tab]]) as QB;
+  if (scope.owner) out = out.where('rr.userId', '=', scope.owner) as QB;
   const search = searchPredicate(scope.q);
   if (search) out = out.where(search) as QB;
   return out;
@@ -123,9 +123,10 @@ async function getFacets(scope: {
   status: RatingReviewStatusFilter;
   q: string;
   tab: DisputeTab;
+  owner?: number;
 }): Promise<DisputeFacets> {
   const [byType, chips] = await Promise.all([
-    withScope(countsBase(), { status: scope.status, q: scope.q })
+    withScope(countsBase(), { status: scope.status, q: scope.q, owner: scope.owner })
       .select([
         'rr.entityType',
         (eb: ExpressionBuilder<any, any>) => eb.fn.countAll<string>().as('c'),
@@ -155,27 +156,25 @@ async function getFacets(scope: {
   };
 }
 
-async function ownerDisputeCounts(userIds: number[]): Promise<Map<number, number>> {
-  const wanted = [...new Set(userIds)];
-  if (!wanted.length) return new Map();
-  const found = await dbRead
-    .selectFrom('RatingReview')
-    .select(['userId', (eb) => eb.fn.countAll<string>().as('c')])
-    .where('userId', 'in', wanted)
-    .groupBy('userId')
-    .execute();
-  return new Map(found.map((r) => [r.userId, Number(r.c)]));
+/** Each review's place in its owner's disputes, oldest first: how many of the owner's reviews have an id up to its own. */
+async function ownerDisputeOrdinals(reviewIds: number[]): Promise<Map<number, number>> {
+  if (!reviewIds.length) return new Map();
+  const { rows } = await sql<{ id: number; n: number }>`
+    SELECT r."id", (SELECT count(*) FROM "RatingReview" o WHERE o."userId" = r."userId" AND o."id" <= r."id")::int AS n
+    FROM "RatingReview" r
+    WHERE r."id" IN (${sql.join(reviewIds)})`.execute(dbRead);
+  return new Map(rows.map((r) => [r.id, r.n]));
 }
 
-/** The queue rows plus what only the triage view shows: the owner's total disputes and the preview strip. */
+/** The queue rows plus what only the triage view shows: each dispute's number among its owner's and the preview strip. */
 async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
   const [owners, previews] = await Promise.all([
-    ownerDisputeCounts(rows.map((r) => r.user.id)),
+    ownerDisputeOrdinals(rows.map((r) => r.id)),
     getRatingReviewImagesBatch(rows),
   ]);
   return rows.map((r) => ({
     ...r,
-    ownerDisputeCount: owners.get(r.user.id) ?? 0,
+    ownerDisputeCount: owners.get(r.id) ?? 0,
     preview: previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? {
       total: 0,
       images: [],
@@ -185,24 +184,16 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
 
 /**
  * The two-pane triage read for the rating-dispute queue. The whole page ships at once: selection is
- * client state, so every row carries its own preview images and the owner's dispute count.
+ * client state, so every row carries its own preview images and its number among the owner's disputes.
  */
 export async function ratingDisputeTriageLoad(url: URL) {
-  const parsed = querySchema.parse({
-    tab: param(url, 'tab'),
-    status: param(url, 'status'),
-    ask: param(url, 'ask'),
-    scan: param(url, 'scan'),
-    sort: param(url, 'sort'),
-    q: param(url, 'q'),
-    page: param(url, 'page'),
-    selected: param(url, 'selected'),
-  });
-  const { tab, status, ask, scan, q, page, selected } = parsed;
+  const parsed = parseQueryKeys(url, querySchema);
+  const { tab, status, ask, scan, q, page, selected, owner } = parsed;
   const sort = parsed.sort ?? defaultDisputeSort(status);
-  const filters: DisputeFilters = { tab, status, ask, scan, sort };
+  const filters: DisputeFilters = { tab, status, ask, scan, sort, owner };
 
-  const scoped = () => withFilters(withScope(ratingReviewRowQuery(), { status, q, tab }), filters);
+  const scoped = () =>
+    withFilters(withScope(ratingReviewRowQuery(), { status, q, tab, owner }), filters);
   const dir = sort === 'oldest' ? 'asc' : 'desc';
   const sortColumn = status === 'Pending' ? 'rr.createdAt' : 'rr.resolvedAt';
 
@@ -213,11 +204,11 @@ export async function ratingDisputeTriageLoad(url: URL) {
       .limit(PAGE_SIZE + 1)
       .offset((page - 1) * PAGE_SIZE)
       .execute(),
-    withFilters(withScope(countsBase(), { status, q, tab }), filters)
+    withFilters(withScope(countsBase(), { status, q, tab, owner }), filters)
       .select((eb: ExpressionBuilder<any, any>) => eb.fn.countAll<string>().as('c')) // eslint-disable-line @typescript-eslint/no-explicit-any
       .executeTakeFirst(),
     // Counts are decoration: a failed count must not take the list down with it.
-    getFacets({ status, q, tab }).catch((err) => {
+    getFacets({ status, q, tab, owner }).catch((err) => {
       console.error('Rating dispute facet counts failed', err);
       return undefined;
     }),
@@ -258,7 +249,7 @@ export async function ratingDisputeTriageLoad(url: URL) {
 }
 
 const resolveSchema = z.object({
-  reviewId: z.coerce.number().int().positive().max(MAX_INT4),
+  reviewId: int4Id,
   appliedLevel: z.coerce.number().int().positive(),
   modComment: z
     .string()

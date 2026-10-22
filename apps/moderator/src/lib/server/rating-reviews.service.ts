@@ -19,6 +19,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
+import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
@@ -125,28 +126,29 @@ async function connectionCovers(
   return new Map(found.map((r) => [r.entityId, r]));
 }
 
-// Mirrors the cover the main app picks for a model (image.service getImagesForModelsCover): the
-// first published version that has a visible image. A version with none falls through to the next
-// rather than leaving the model blank.
-const modelGalleryJoins = sql`
-  FROM "Model" m
-  JOIN "ModelVersion" mv ON mv."modelId" = m."id" AND mv."status" = 'Published'
-  JOIN "Post" p ON p."modelVersionId" = mv."id"
-    AND (p."userId" = m."userId" OR m."userId" = -1)
-    AND p."publishedAt" IS NOT NULL
-  JOIN "Image" i ON i."postId" = p."id" AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`;
+const MODEL_COUNT_CAP = 5000;
 
-async function modelCovers(
-  ids: number[]
-): Promise<Map<number, RatingReviewImage & { versionId: number }>> {
-  if (!ids.length) return new Map();
-  const { rows } = await sql<RatingReviewImage & { modelId: number; versionId: number }>`
-    SELECT DISTINCT ON (m."id") m."id" AS "modelId", mv."id" AS "versionId",
-      i."id", i."url", i."type", i."nsfwLevel"
-    ${modelGalleryJoins}
+type ModelCoverRow = RatingReviewImage & { modelId: number; total: number };
+
+// A model's first `limit` images and the count behind them, in the order the CSAM queue shows them
+// (`model-covers.ts`): one lateral query for every model id passed.
+async function modelCoverRows(ids: number[], limit: number): Promise<ModelCoverRow[]> {
+  if (!ids.length) return [];
+  const { rows } = await sql<ModelCoverRow>`
+    SELECT m."id" AS "modelId", c.id, c.url, c.type, c."nsfwLevel", n.total
+    FROM "Model" m
+    CROSS JOIN LATERAL (${modelCoverImages(sql.ref('m.id'), sql.ref('m.userId'), limit)}) c
+    CROSS JOIN LATERAL (${modelCoverCount(sql.ref('m.id'), sql.ref('m.userId'), MODEL_COUNT_CAP)}) n
     WHERE m."id" IN (${sql.join(ids)})
-    ORDER BY m."id", mv."index", p."id", i."index", i."id"`.execute(dbRead);
-  return new Map(rows.map((r) => [r.modelId, r]));
+    ORDER BY m."id", ${MODEL_COVER_ORDER}`.execute(dbRead);
+  return rows;
+}
+
+async function modelCovers(ids: number[]): Promise<Map<number, RatingReviewImage>> {
+  const first = new Map<number, RatingReviewImage>();
+  for (const { modelId, id, url, type, nsfwLevel } of await modelCoverRows(ids, 1))
+    first.set(modelId, { id, url, type, nsfwLevel });
+  return first;
 }
 
 const asCover = (img: RatingReviewImage | undefined) => ({
@@ -376,19 +378,9 @@ async function loadImagesForType(
       return out;
     }
     case 'Model': {
-      const covers = await modelCovers(ids);
-      if (!covers.size) return out;
-      const pairs = sql.join([...covers].map(([id, c]) => sql`(${id}, ${c.versionId})`));
-      const { rows } = await sql<RatingReviewImage & { key: number; total: string; rn: string }>`
-        SELECT * FROM (
-          SELECT i."id", i."url", i."type", i."nsfwLevel", m."id" AS "key",
-            row_number() OVER (PARTITION BY m."id" ORDER BY p."id", i."index", i."id") AS rn,
-            count(*) OVER (PARTITION BY m."id") AS total
-          ${modelGalleryJoins}
-          WHERE (m."id", mv."id") IN (${pairs})) x
-        WHERE x.rn <= ${limit}
-        ORDER BY x."key", x.rn`.execute(dbRead);
-      group(rows);
+      group(
+        (await modelCoverRows(ids, limit)).map(({ modelId, ...img }) => ({ key: modelId, ...img }))
+      );
       return out;
     }
     case 'Article':

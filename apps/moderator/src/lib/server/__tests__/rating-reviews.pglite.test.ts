@@ -845,28 +845,47 @@ describe('rating review images', () => {
     expect(items[0].entity?.coverUrl).toBeNull();
   });
 
-  it('picks a model cover from its first published version, skipping excluded images', async () => {
+  it('shows a model its owner’s images in the CSAM-queue order: published first, then version, post, image index', async () => {
     const { modelId, draft, first, second, post } = await seedModelWithVersions();
-    await seedImage({ url: 'draft-img', postId: await post(draft), index: 0 });
+    const draftPost = await post(draft, { publishedAt: null });
+    await seedImage({ url: 'draft-img', postId: draftPost, index: 0 });
     const firstPost = await post(first);
-    await seedImage({ url: 'needs-review', postId: firstPost, index: 0, needsReview: 'minor' });
-    await seedImage({ url: 'minor', postId: firstPost, index: 1, acceptableMinor: true });
-    await seedImage({ url: 'first-ok', postId: firstPost, index: 2 });
+    await seedImage({ url: 'first-b', postId: firstPost, index: 2 });
+    await seedImage({ url: 'needs-review', postId: firstPost, index: 1, needsReview: 'minor' });
+    await seedImage({ url: 'first-a', postId: firstPost, index: 0 });
+    await seedImage({ url: 'minor', postId: firstPost, index: 3, acceptableMinor: true });
     await seedImage({ url: 'second-img', postId: await post(second), index: 0 });
-    // Another account's post, and an unpublished one, never feed the model's gallery.
+    // Another account's post never feeds the model's gallery.
     await seedImage({ url: 'foreign', postId: await post(first, { userId: mod }), index: 0 });
+    await fileReview('Model', modelId);
+
+    const items = await listPending();
+    expect(items[0].entity?.coverUrl).toBe('first-a');
+
+    const preview = await service.getRatingReviewImages('Model', modelId, 10);
+    expect(preview.images.map((i) => i.url)).toEqual([
+      'first-a',
+      'needs-review',
+      'first-b',
+      'minor',
+      'second-img',
+      'draft-img',
+    ]);
+    expect(preview.total).toBe(6);
+  });
+
+  it('still shows the images of a model whose posts are all unpublished', async () => {
+    const { modelId, first, post } = await seedModelWithVersions();
     await seedImage({
-      url: 'unpublished',
+      url: 'only-unpublished',
       postId: await post(first, { publishedAt: null }),
       index: 0,
     });
     await fileReview('Model', modelId);
 
-    const items = await listPending();
-    expect(items[0].entity?.coverUrl).toBe('first-ok');
-
+    expect((await listPending())[0].entity?.coverUrl).toBe('only-unpublished');
     const preview = await service.getRatingReviewImages('Model', modelId);
-    expect(preview.images.map((i) => i.url)).toEqual(['first-ok']);
+    expect(preview.images.map((i) => i.url)).toEqual(['only-unpublished']);
     expect(preview.total).toBe(1);
   });
 

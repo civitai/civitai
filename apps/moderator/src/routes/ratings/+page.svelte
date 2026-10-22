@@ -22,6 +22,7 @@
     DISPUTE_TAB_LABELS,
     DISPUTE_TABS,
     disputeTitle,
+    recordedVerdict,
     SCAN_LABELS,
   } from '$lib/rating-dispute';
   import { ratingReviewStatusFilters, type RatingReviewStatusFilter } from '$lib/rating-review';
@@ -42,11 +43,10 @@
 
   // The open dispute, reported by the shell; a level picked for confirmation belongs to it alone.
   let current = $state<number | null>(null);
-  let chosen = $state<number | null>(null);
-  $effect(() => {
-    void current;
-    chosen = null;
-  });
+  let pick = $state<{ id: number; level: number } | null>(null);
+  const chosen = $derived(pick !== null && pick.id === current ? pick.level : null);
+  const setChosen = (level: number | null) =>
+    (pick = level === null || current === null ? null : { id: current, level });
 
   const f = $derived(data.filters);
 
@@ -56,6 +56,7 @@
       status: f.status === 'Pending' ? undefined : f.status,
       ask: f.ask,
       scan: f.scan,
+      owner: f.owner,
       sort: f.sort === defaultDisputeSort(f.status) ? undefined : f.sort,
       q: data.q,
       page: data.page > 1 ? data.page : undefined,
@@ -109,6 +110,13 @@
     },
   ] satisfies ChipGroup[]);
 
+  const ownerName = $derived(
+    f.owner === undefined
+      ? null
+      : ([...data.items, ...(data.pinned ? [data.pinned] : [])].find((r) => r.user.id === f.owner)
+          ?.user.username ?? `#${f.owner}`)
+  );
+  const clearOwnerHref = $derived(urlWith(page.url, { owner: null, page: null, [SELECTION]: null }));
   const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
   const tabs = DISPUTE_TABS.map((value) => ({ value, ...DISPUTE_TAB_LABELS[value] }));
 
@@ -138,6 +146,18 @@
       <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
     </div>
     <TriageFilterChips groups={chipGroups} selectionParam={SELECTION} />
+    {#if ownerName}
+      <div class="flex items-center gap-1.5 text-xs text-dark-1">
+        <span>Owner: {ownerName}</span>
+        <a
+          href={clearOwnerHref}
+          class="rounded border border-dark-4 px-1.5 py-px text-dark-0 hover:bg-dark-5"
+          aria-label="Clear owner filter"
+        >
+          ×
+        </a>
+      </div>
+    {/if}
   </div>
 {/snippet}
 
@@ -183,7 +203,12 @@
       queueLabel="Dispute queue"
       itemLabel="Dispute"
       decisionEnabled={(row) => row.levelOptions.map(() => row.status === 'Pending')}
-      ondecision={(row, index) => (chosen = row.levelOptions[index] ?? chosen)}
+      ondecision={(row, index) => {
+        const level = row.levelOptions[index];
+        if (level !== undefined) pick = { id: row.id, level };
+      }}
+      outcomeFor={(result, outcome) =>
+        result.type === 'success' ? recordedVerdict(result.data?.status, outcome) : outcome}
       pinned={data.pinned}
       bind:current
       pageNumber={data.page}
@@ -241,7 +266,7 @@
           error={state.error}
           submit={state.submit}
           {actionHref}
-          bind:chosen
+          bind:chosen={() => chosen, setChosen}
         />
       {/snippet}
     </TriageShell>

@@ -29,11 +29,11 @@
   const outcome = $derived(
     chosen === null
       ? null
-      : disputeOutcome(row.entityType, {
-          current: row.currentLevel,
-          suggested: row.suggestedLevel,
-          chosen,
-        })
+      : disputeOutcome(
+          row.entityType,
+          { current: row.currentLevel, suggested: row.suggestedLevel, chosen },
+          row.entity !== null
+        )
   );
 
   let confirmButton = $state<HTMLElement | null>(null);
@@ -54,9 +54,10 @@
       input.cancel();
       return;
     }
-    return submit(`${outcome.approves ? 'Approved' : 'Rejected'}: applied ${levelLabel(chosen)}`)(
-      input
-    );
+    const verdict = outcome.approves ? 'Approved' : 'Rejected';
+    return submit(
+      row.entity ? `${verdict}: applied ${levelLabel(chosen)}` : `${verdict}: content deleted`
+    )(input);
   };
 
   const cancel = () => {

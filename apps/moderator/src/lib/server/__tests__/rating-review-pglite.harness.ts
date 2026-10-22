@@ -32,7 +32,7 @@ CREATE TABLE "AppPageAccess" ("app" TEXT NOT NULL, "path" TEXT NOT NULL, "roles"
 CREATE TABLE "JobQueue" ("type" "JobQueueType" NOT NULL, "entityType" "EntityType" NOT NULL, "entityId" INTEGER NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" "EntityModerationStatus" NOT NULL DEFAULT 'Pending', "blocked" BOOLEAN, "triggeredLabels" TEXT[] NOT NULL DEFAULT '{}', "nsfwLevel" INTEGER, "result" JSONB, "contentHash" TEXT, UNIQUE ("entityType", "entityId"));
 
-CREATE TABLE "Image" ("id" SERIAL PRIMARY KEY, "url" TEXT, "type" TEXT, "postId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "index" INTEGER, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "Image" ("id" SERIAL PRIMARY KEY, "url" TEXT, "type" TEXT, "postId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "index" INTEGER, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER NOT NULL, "entityId" INTEGER NOT NULL, "entityType" TEXT NOT NULL);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "reason" "ReportReason" NOT NULL, "status" "ReportStatus" NOT NULL);
 CREATE TABLE "ArticleReport" ("articleId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);

@@ -11,8 +11,8 @@
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userUrl } from '$lib/entity-url';
-  import { LINK_BUTTON, dateTime, shortAge } from '$lib/format';
-  import { disputeTitle, imageCaption, ordinal } from '$lib/rating-dispute';
+  import { LINK_BUTTON, dateTime, ordinal, shortAge } from '$lib/format';
+  import { disputeTitle, imageCaption } from '$lib/rating-dispute';
   import { ratingReviewStatusBadge } from '$lib/rating-review';
   import type { RatingDisputeRow } from '$lib/server/rating-dispute-queue';
   import type { Outcome } from '$lib/triage/queue';
@@ -49,21 +49,28 @@
     row.resolver ? (row.resolver.username ?? `User #${row.resolver.id}`) : null
   );
   const disputesHref = $derived(
-    row.user.username
-      ? urlWith(page.url, {
-          q: row.user.username,
-          status: null,
-          sort: null,
-          page: null,
-          selected: null,
-        })
-      : null
+    urlWith(page.url, {
+      owner: row.user.id,
+      q: null,
+      status: null,
+      sort: null,
+      page: null,
+      selected: null,
+    })
   );
 </script>
 
-{#snippet levelCard(heading: string, value: string, sub: string, accent: 'blue' | 'amber' | undefined = undefined)}
+{#snippet statusBadge()}
+  {#if status}
+    <span class="rounded px-1.5 py-px text-[11px] font-semibold {status.class}">
+      {status.label}
+    </span>
+  {/if}
+{/snippet}
+
+{#snippet levelCard(heading: string, value: string, sub: string, accent: 'blue' | 'amber' | undefined = undefined, muted = false)}
   <TriageCard title={heading} dense {accent}>
-    <p class="m-0 text-xl font-semibold text-white">{value}</p>
+    <p class="m-0 text-xl font-semibold {muted ? 'text-dark-2' : 'text-white'}">{value}</p>
     <p class="m-0 mt-0.5 text-xs text-dark-2">{sub}</p>
   </TriageCard>
 {/snippet}
@@ -80,11 +87,7 @@
           <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-semibold text-white">
             {typeLabel}
           </span>
-          {#if status}
-            <span class="rounded px-1.5 py-px text-[11px] font-semibold {status.class}">
-              {status.label}
-            </span>
-          {/if}
+          {@render statusBadge()}
           {#if !row.entity}<span class="text-xs text-dark-2 italic">Deleted</span>{/if}
         {/snippet}
         {#snippet links()}
@@ -112,11 +115,9 @@
               <IconUser aria-hidden="true" /> Owner
             </Button>
           {/if}
-          {#if disputesHref}
-            <Button variant="outline" size="sm" class={LINK_BUTTON} href={disputesHref}>
-              <IconSearch aria-hidden="true" /> Owner's disputes
-            </Button>
-          {/if}
+          <Button variant="outline" size="sm" class={LINK_BUTTON} href={disputesHref}>
+            <IconSearch aria-hidden="true" /> Owner's disputes
+          </Button>
         {/snippet}
       </TriageDetailHeader>
       <p class="m-0 text-sm text-dark-2">
@@ -176,10 +177,7 @@
       {#if row.scan}
         {@render levelCard('Text scan', levelLabel(row.scan.level), 'raised by the text scan', 'amber')}
       {:else}
-        <TriageCard title="Text scan" dense>
-          <p class="m-0 text-xl font-semibold text-dark-2">None</p>
-          <p class="m-0 mt-0.5 text-xs text-dark-2">nothing raised</p>
-        </TriageCard>
+        {@render levelCard('Text scan', 'None', 'nothing raised', undefined, true)}
       {/if}
     </div>
 
@@ -201,11 +199,7 @@
       <TriageCard title="Resolution" dense>
         <div class="space-y-1.5 text-dark-0">
           <p class="m-0 flex flex-wrap items-center gap-2">
-            {#if status}
-              <span class="rounded px-1.5 py-px text-[11px] font-semibold {status.class}">
-                {status.label}
-              </span>
-            {/if}
+            {@render statusBadge()}
             {#if row.appliedLevel !== null}
               Applied {levelLabel(row.appliedLevel)} (owner asked {levelLabel(row.suggestedLevel)})
             {/if}

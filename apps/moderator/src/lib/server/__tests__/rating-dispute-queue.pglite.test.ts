@@ -190,6 +190,26 @@ describe('ratingDisputeTriageLoad filters', () => {
   });
 });
 
+describe('ratingDisputeTriageLoad owner filter', () => {
+  it('keeps only that user’s reviews, not those of a username sharing the text, and counts them alone', async () => {
+    const mine = await fileReview({ userId: alice, entityType: 'Post' });
+    await fileReview({ userId: bob, entityType: 'Post' });
+    const collider = await seedUser(db, '1');
+    await fileReview({ userId: collider, entityType: 'Post' });
+    await fileReview({ userId: alice, entityType: 'Model' });
+
+    const data = await load(`?owner=${alice}`);
+
+    expect(ids(data)).toEqual([mine]);
+    expect(data.filters.owner).toBe(alice);
+    expect(data.totalCount).toBe(1);
+    expect(data.facets?.tabs).toEqual({ posts: 1, models: 1, articles: 0, other: 0 });
+    expect(ids(await load(`?owner=${collider}`))).toHaveLength(1);
+    expect(ids(await load('?owner=abc'))).toHaveLength(3);
+    expect((await load('?owner=abc')).filters.owner).toBeUndefined();
+  });
+});
+
 describe('ratingDisputeTriageLoad ordering and paging', () => {
   it('orders Pending oldest-first and decided newest-first, and honours sort', async () => {
     const p1 = await fileReview({ createdAt: '2026-09-01T10:00:00.000Z' });
@@ -272,15 +292,20 @@ describe('ratingDisputeTriageLoad facets', () => {
 });
 
 describe('ratingDisputeTriageLoad rows', () => {
-  it('counts every dispute each owner has filed, whatever its status or type', async () => {
+  it('numbers each dispute within its owner’s own, oldest first, whatever the status or type', async () => {
     const a1 = await fileReview({ userId: alice });
-    await fileReview({ userId: alice, status: 'Actioned', entityType: 'Model' });
-    await fileReview({ userId: bob });
+    const a2 = await fileReview({ userId: alice, status: 'Actioned', entityType: 'Model' });
+    const a3 = await fileReview({ userId: alice });
+    const b1 = await fileReview({ userId: bob });
 
-    const data = await load();
+    const data = await load('?status=Pending');
+    const count = (id: number) => data.items.find((i) => i.id === id)?.ownerDisputeCount;
+    expect(count(a1)).toBe(1);
+    expect(count(a3)).toBe(3);
+    expect(count(b1)).toBe(1);
 
-    expect(data.items.find((i) => i.id === a1)?.ownerDisputeCount).toBe(2);
-    expect(data.items.find((i) => i.user.id === bob)?.ownerDisputeCount).toBe(1);
+    const decided = await load('?status=Actioned&tab=models');
+    expect(decided.items.find((i) => i.id === a2)?.ownerDisputeCount).toBe(2);
   });
 
   it('attaches preview images to items and pinned, equal to the single-entity read', async () => {
