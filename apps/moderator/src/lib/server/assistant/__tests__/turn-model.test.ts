@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * to. Either alone would let the audit name a model that never ran, or run one nobody chose.
  */
 
-const { complete, startTurn } = vi.hoisted(() => ({
+const { complete, startTurn, finishTurn, listPrices } = vi.hoisted(() => ({
   complete: vi.fn(),
   startTurn: vi.fn(),
+  finishTurn: vi.fn(),
+  listPrices: vi.fn(),
 }));
 
 // The real model resolution; only the network call is faked.
@@ -15,6 +17,7 @@ vi.mock('../../xguard-api', () => ({ openrouterKey: () => 'test-key' }));
 vi.mock('../openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../openrouter')>()),
   complete,
+  listPrices,
 }));
 vi.mock('../tools', () => ({ LOOKUP: '/lookup', toolSpec: () => ({}), toolsFor: () => [] }));
 vi.mock('../store', () => ({
@@ -25,7 +28,7 @@ vi.mock('../store', () => ({
   getPlaybook: vi.fn(async () => null),
   getMaskSalt: vi.fn(async () => 'salt'),
   startTurn,
-  finishTurn: vi.fn(async () => {}),
+  finishTurn,
   renameChat: vi.fn(async () => true),
   hasRunningTurn: vi.fn(async () => false),
   tokensToday: vi.fn(async () => 0),
@@ -33,7 +36,7 @@ vi.mock('../store', () => ({
 
 const { executeTurn } = await import('../turn.service');
 
-const ask = (model: string | null) =>
+const ask = (model: string | null, allowance = { spentUsd: 0, capUsd: 1, usedTokens: 0 }) =>
   executeTurn({
     chatId: 1,
     moderator: { id: 1, username: 'mod' },
@@ -42,12 +45,14 @@ const ask = (model: string | null) =>
     model,
     canAccess: () => true,
     hasGrant: () => true,
-    used: 0,
+    allowance,
     emit: () => {},
   });
 
 beforeEach(() => {
   startTurn.mockReset().mockResolvedValue(9);
+  finishTurn.mockReset().mockResolvedValue(undefined);
+  listPrices.mockReset().mockResolvedValue({});
   complete.mockReset().mockResolvedValue({
     message: { content: 'ok' },
     finishReason: 'stop',
@@ -72,5 +77,19 @@ describe('executeTurn', () => {
         expect.objectContaining({ model: 'z-ai/glm-5.3-flash' })
       );
     }
+  });
+
+  it('records the cost at the list price when the live price reads lower', async () => {
+    complete.mockResolvedValue({
+      message: { content: 'ok' },
+      finishReason: 'stop',
+      usage: { prompt: 1_000_000, completion: 1_000_000 },
+    });
+    listPrices.mockResolvedValue({
+      'stepfun/step-5-preview': { input: 0.5, output: 3, current: true },
+    });
+    await ask('stepfun/step-5-preview');
+    // List is 1 in / 2.7 out: input at list (1), output at live (3).
+    expect(finishTurn).toHaveBeenCalledWith(9, expect.anything(), { usd: 4, source: 'live' });
   });
 });

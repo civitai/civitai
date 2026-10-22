@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { TurnEvent } from '$lib/assistant/types';
 import type { PermissionId } from '$lib/permissions';
-import { complete, resolveModel } from './openrouter';
+import { complete, listPrices, resolveModel } from './openrouter';
 import { env } from '$env/dynamic/private';
 import {
   DAILY_TOKEN_CAP,
@@ -14,6 +14,8 @@ import { systemPrompt } from './prompt';
 import { LOOKUP, toolSpec, toolsFor } from './tools';
 import { redactAddresses } from '../redact-addresses';
 import type { Playbook } from './store';
+import { capPrice, costUsd } from '$lib/assistant/models';
+import { capsFor, resolveDailyCap } from './spend-cap';
 import {
   finishTurn,
   DEFAULT_CHAT_TITLE,
@@ -26,6 +28,7 @@ import {
   renameChat,
   startTurn,
   tokensToday,
+  usdToday,
 } from './store';
 
 const MIN_TURN_BUDGET = 5_000;
@@ -46,26 +49,52 @@ export type TurnRefusal = { status: 404 | 409 | 429; error: string };
 
 export const BUSY = 'Another of your questions is still being answered. Wait for it to finish.';
 
+export const OVER_ALLOWANCE =
+  'You have used today’s assistant allowance. It resets at midnight UTC.';
+
+/** Where a moderator's day stands against their dollar cap and the token circuit breaker. */
+export type Allowance = { spentUsd: number; capUsd: number; usedTokens: number };
+
+export async function allowanceToday(moderator: {
+  id: number;
+  roles: readonly string[];
+}): Promise<Allowance> {
+  const [spentUsd, caps, usedTokens] = await Promise.all([
+    usdToday(moderator.id),
+    capsFor(moderator),
+    tokensToday(moderator.id),
+  ]);
+  return { spentUsd, capUsd: resolveDailyCap(caps, moderator).usd, usedTokens };
+}
+
 /**
  * Everything a turn checks before it may start. Separate from running it so the endpoint can refuse
  * with a status code before it opens a stream.
  */
 export async function admitTurn(
   chatId: number,
-  moderatorId: number
-): Promise<{ ok: true; used: number } | ({ ok: false } & TurnRefusal)> {
-  const chat = await getChat(chatId, moderatorId);
+  moderator: { id: number; roles: readonly string[] }
+): Promise<{ ok: true; allowance: Allowance } | ({ ok: false } & TurnRefusal)> {
+  const chat = await getChat(chatId, moderator.id);
   if (!chat) return { ok: false, status: 404, error: 'No such chat.' };
-  if (await hasRunningTurn(moderatorId, TURN_DEADLINE_MS * 2))
+  if (await hasRunningTurn(moderator.id, TURN_DEADLINE_MS * 2))
     return { ok: false, status: 409, error: BUSY };
-  const used = await tokensToday(moderatorId);
-  if (used >= DAILY_TOKEN_CAP)
-    return {
-      ok: false,
-      status: 429,
-      error: 'You have used today’s assistant allowance. It resets at midnight UTC.',
-    };
-  return { ok: true, used };
+  const allowance = await allowanceToday(moderator);
+  if (allowance.spentUsd >= allowance.capUsd || allowance.usedTokens >= DAILY_TOKEN_CAP)
+    return { ok: false, status: 429, error: OVER_ALLOWANCE };
+  return { ok: true, allowance };
+}
+
+/**
+ * The tokens left in the day on this model: the dollars left at the dearer of its input and output
+ * price, so whatever the prompt/completion split, spending them cannot cost more than is left. Never
+ * past the circuit breaker.
+ */
+export function remainingTokens(allowance: Allowance, price: { input: number; output: number }) {
+  const perToken = Math.max(price.input, price.output) / 1_000_000;
+  const dollars = Math.max(allowance.capUsd - allowance.spentUsd, 0);
+  const byDollars = perToken > 0 ? Math.floor(dollars / perToken) : Infinity;
+  return Math.max(Math.min(byDollars, DAILY_TOKEN_CAP - allowance.usedTokens), 0);
 }
 
 export async function executeTurn(input: {
@@ -77,7 +106,7 @@ export async function executeTurn(input: {
   model: string | null;
   canAccess: (path: string) => boolean;
   hasGrant: (permission: PermissionId) => boolean;
-  used: number;
+  allowance: Allowance;
   emit: (event: TurnEvent) => void;
 }): Promise<TurnOutcome & { turnId: number }> {
   const [chat, turns, allPlaybooks, chosen, salt] = await Promise.all([
@@ -96,6 +125,7 @@ export async function executeTurn(input: {
   const playbook = chosen && shown(chosen);
 
   const model = resolveModel(input.model);
+  const { price } = capPrice(model, await listPrices());
   const turnId = await startTurn({
     chatId: input.chatId,
     moderatorId: input.moderator.id,
@@ -140,14 +170,19 @@ export async function executeTurn(input: {
     tools,
     specs: tools.map(toolSpec),
     ctx,
-    budget: DAILY_TOKEN_CAP - input.used,
+    budget: remainingTokens(input.allowance, price),
     turnBudget: turnTokenBudget(),
     knownRefs: turns.flatMap((t) => t.sources.map((s) => s.ref)),
     complete: (req) => complete({ ...req, model }),
     emit: input.emit,
   });
 
-  await finishTurn(turnId, outcome);
+  // Priced again at the end: the live price is re-read at most hourly, and a turn can straddle it.
+  const charged = capPrice(model, await listPrices());
+  await finishTurn(turnId, outcome, {
+    usd: costUsd(outcome.promptTokens, outcome.completionTokens, charged.price),
+    source: charged.source,
+  });
   input.emit({
     type: 'done',
     turnId,

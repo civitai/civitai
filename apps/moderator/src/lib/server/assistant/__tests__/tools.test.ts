@@ -442,7 +442,7 @@ describe('turnTokenBudget', () => {
   it('clamps a setting into range, so a tighter budget never comes out looser', () => {
     expect(turnTokenBudget('3000')).toBe(5_000);
     expect(turnTokenBudget('40000')).toBe(40_000);
-    expect(turnTokenBudget('99000000')).toBe(2_000_000);
+    expect(turnTokenBudget('99000000')).toBe(10_000_000);
   });
 
   it('falls back to the default when unset or not a whole number', () => {

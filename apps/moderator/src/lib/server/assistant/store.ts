@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { getModeratorDb } from '../moderator-db';
-import type { AssistantTables } from './tables';
-import type { TokenRow } from '$lib/assistant/models';
+import type { AssistantTables, PriceSource } from './tables';
+import { CEILING_PRICE, type TokenRow } from '$lib/assistant/models';
 import type {
   PlaybookStatus,
   ToolRequestStatus,
@@ -223,7 +223,8 @@ export async function finishTurn(
     error: string | null;
     promptTokens: number;
     completionTokens: number;
-  }
+  },
+  cost: { usd: number; source: PriceSource }
 ): Promise<void> {
   // jsonb columns take a JSON string; handing Kysely the array would bind it as a Postgres array.
   await db()
@@ -239,6 +240,8 @@ export async function finishTurn(
       prompt_tokens: outcome.promptTokens,
       completion_tokens: outcome.completionTokens,
       total_tokens: outcome.promptTokens + outcome.completionTokens,
+      cost_usd: cost.usd,
+      price_source: cost.source,
       finished_at: sql`now()`,
     })
     .where('id', '=', id)
@@ -279,6 +282,27 @@ export async function tokensToday(moderatorId: number): Promise<number> {
 export const sumTokens = (rows: TokenRow[]) =>
   rows.reduce((sum, r) => sum + r.promptTokens + r.completionTokens, 0);
 
+const startOfUtcDay = sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
+
+/**
+ * USD this moderator's turns have cost since midnight UTC: what the daily dollar cap compares against.
+ * A turn with no recorded cost (one from before costs were kept, or one that never finished) is charged
+ * at `CEILING_PRICE`, so a gap in the record can only make the cap stricter.
+ */
+export async function usdToday(moderatorId: number): Promise<number> {
+  const row = await db()
+    .selectFrom('assistant_turn')
+    .select(
+      sql<string>`coalesce(sum(coalesce(cost_usd, (prompt_tokens * ${CEILING_PRICE.input}::numeric + completion_tokens * ${CEILING_PRICE.output}::numeric) / 1000000)), 0)`.as(
+        'usd'
+      )
+    )
+    .where('moderator_id', '=', moderatorId)
+    .where('created_at', '>=', startOfUtcDay)
+    .executeTakeFirstOrThrow();
+  return Number(row.usd);
+}
+
 /** The same day's tokens split by model and direction, which is what a price applies to. */
 export async function tokensTodayByModel(moderatorId: number): Promise<TokenRow[]> {
   const rows = await db()
@@ -289,11 +313,7 @@ export async function tokensTodayByModel(moderatorId: number): Promise<TokenRow[
       sql<string>`coalesce(sum(completion_tokens), 0)`.as('completion'),
     ])
     .where('moderator_id', '=', moderatorId)
-    .where(
-      'created_at',
-      '>=',
-      sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`
-    )
+    .where('created_at', '>=', startOfUtcDay)
     .groupBy('model')
     .orderBy('model')
     .execute();

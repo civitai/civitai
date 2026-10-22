@@ -18,6 +18,12 @@ vi.mock('$lib/server/assistant/store', async (importOriginal) => ({
   listPlaybooks: vi.fn(async () => []),
   listTurns,
   tokensTodayByModel,
+  tokensToday: vi.fn(async () => 0),
+  usdToday: vi.fn(async () => 0.4),
+}));
+vi.mock('$lib/server/assistant/spend-cap', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/assistant/spend-cap')>()),
+  capsFor: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => ({}) }));
 vi.mock('$lib/server/xguard-api', () => ({ openrouterKey: () => 'test-key' }));
@@ -38,7 +44,11 @@ const run = async () =>
   (await (load as unknown as (e: unknown) => Promise<unknown>)({
     params: { chatId: '7' },
     locals: { user: { id: 1 } },
-  })) as { model: string; spend: { usd: number } };
+  })) as {
+    model: string;
+    spend: { usd: number };
+    allowance: { spentUsd: number; capUsd: number };
+  };
 
 beforeEach(() => {
   listTurns.mockReset().mockResolvedValue([]);
@@ -60,5 +70,9 @@ describe('/assistant/[chatId] load', () => {
     expect((await run()).model).toBe('z-ai/glm-5.3');
     listTurns.mockResolvedValue([{ model: 'retired/model', sources: [] }]);
     expect((await run()).model).toBe('z-ai/glm-5.3-flash');
+  });
+
+  it("shows today's spend against the moderator's dollar cap", async () => {
+    expect((await run()).allowance).toEqual({ spentUsd: 0.4, capUsd: 1 });
   });
 });

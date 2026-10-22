@@ -30,6 +30,8 @@ afterEach(async () => {
   await pg.close();
 });
 
+const NO_COST = { usd: 0, source: 'list' } as const;
+
 const draft = (title: string) => ({
   title,
   summary: 'When to use this one.',
@@ -137,17 +139,21 @@ describe('turns', () => {
         playbookVersion: null,
         model: 'm',
       });
-      await store.finishTurn(turnId, {
-        status: 'done',
-        toolCalls: [],
-        sources: [],
-        answer: 'a',
-        reasoning: null,
-        unverified: [],
-        error: null,
-        promptTokens: 100,
-        completionTokens: 50,
-      });
+      await store.finishTurn(
+        turnId,
+        {
+          status: 'done',
+          toolCalls: [],
+          sources: [],
+          answer: 'a',
+          reasoning: null,
+          unverified: [],
+          error: null,
+          promptTokens: 100,
+          completionTokens: 50,
+        },
+        NO_COST
+      );
     }
     expect(await store.tokensToday(1)).toBe(300);
     expect(await store.tokensToday(2)).toBe(150);
@@ -169,17 +175,21 @@ describe('turns', () => {
         playbookVersion: null,
         model,
       });
-      await store.finishTurn(turnId, {
-        status: 'done',
-        toolCalls: [],
-        sources: [],
-        answer: 'a',
-        reasoning: null,
-        unverified: [],
-        error: null,
-        promptTokens: prompt,
-        completionTokens: completion,
-      });
+      await store.finishTurn(
+        turnId,
+        {
+          status: 'done',
+          toolCalls: [],
+          sources: [],
+          answer: 'a',
+          reasoning: null,
+          unverified: [],
+          error: null,
+          promptTokens: prompt,
+          completionTokens: completion,
+        },
+        NO_COST
+      );
       return turnId;
     };
     await turn(1, 'b-model', 10, 1);
@@ -244,17 +254,21 @@ describe('turns', () => {
       },
     ];
     const sources = [{ ref: 'user:5', href: '/retool/user-lookup?q=5', label: 'five' }];
-    await store.finishTurn(turnId, {
-      status: 'done',
-      toolCalls,
-      sources,
-      answer: 'see [user:5]',
-      reasoning: '- look up 5',
-      unverified: ['user:6'],
-      error: null,
-      promptTokens: 7,
-      completionTokens: 3,
-    });
+    await store.finishTurn(
+      turnId,
+      {
+        status: 'done',
+        toolCalls,
+        sources,
+        answer: 'see [user:5]',
+        reasoning: '- look up 5',
+        unverified: ['user:6'],
+        error: null,
+        promptTokens: 7,
+        completionTokens: 3,
+      },
+      NO_COST
+    );
     expect((await store.listTurns(id))[0]).toMatchObject({
       prompt: 'q',
       playbookSlug: 'p',

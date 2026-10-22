@@ -10,8 +10,11 @@ import type { z } from 'zod';
 
 /** Rounds in which the model may call tools. One further call, with tools off, forces an answer. */
 export const MAX_ROUNDS = 10;
-/** Tokens one moderator may spend per UTC day, across all chats. */
-export const DAILY_TOKEN_CAP = 2_000_000;
+/**
+ * Tokens one moderator may spend per UTC day, across all chats, whatever their dollar cap allows: a
+ * circuit breaker for a price read wrong, not the allowance. The allowance is the dollar cap.
+ */
+export const DAILY_TOKEN_CAP = 10_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
 /** A whole turn; past this the in-flight model call is aborted. */
 export const TURN_DEADLINE_MS = 4 * 60_000;
@@ -76,7 +79,7 @@ export async function runTurn(input: {
   tools: readonly AnyTool[];
   specs: ToolSpec[];
   ctx: ToolContext;
-  /** Tokens left in the moderator's day. The turn stops once it has spent them. */
+  /** Tokens left in the moderator's day, at this model's price. The turn stops once it has spent them. */
   budget: number;
   /** Tokens this question may spend before it must answer. Defaults to `TURN_TOKEN_BUDGET`. */
   turnBudget?: number;
@@ -175,7 +178,11 @@ export async function runTurn(input: {
       // 🔴 Checked after the call that crossed it, so a turn overshoots by at most one model call; it
       // can never start another.
       if (promptTokens + completionTokens >= input.budget)
-        return finish('capped', null, 'Daily token limit reached. It resets at midnight UTC.');
+        return finish(
+          'capped',
+          null,
+          'Today’s assistant allowance is used up. It resets at midnight UTC.'
+        );
 
       messages.push({ role: 'assistant', content: completion.message.content, tool_calls: calls });
       const results = await Promise.all(calls.map((call) => callTool(call, input, now)));

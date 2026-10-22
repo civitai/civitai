@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ASSISTANT_MODELS, DEFAULT_ASSISTANT_MODEL, estimateSpend, findModel } from '../models';
+import {
+  ASSISTANT_MODELS,
+  DEFAULT_ASSISTANT_MODEL,
+  capPrice,
+  costUsd,
+  estimateSpend,
+  findModel,
+} from '../models';
 
 describe('estimateSpend', () => {
   it('prices each model at its own price, input and output apart', () => {
@@ -60,5 +67,38 @@ describe('the model list', () => {
   it('holds the default, and only distinct ids', () => {
     expect(findModel(DEFAULT_ASSISTANT_MODEL)).not.toBeNull();
     expect(new Set(ASSISTANT_MODELS.map((m) => m.id)).size).toBe(ASSISTANT_MODELS.length);
+  });
+});
+
+describe('capPrice', () => {
+  const million = (model: string, prices = {}) => {
+    const { price, source } = capPrice(model, prices);
+    return { usd: costUsd(1_000_000, 1_000_000, price), source };
+  };
+
+  it('charges the list price when the live one reads lower', () => {
+    expect(
+      million('z-ai/glm-5.3-flash', {
+        'z-ai/glm-5.3-flash': { input: 0, output: 0, current: true },
+      })
+    ).toEqual({ usd: 0.65, source: 'live' });
+  });
+
+  it('charges the live price when it is higher', () => {
+    expect(
+      million('z-ai/glm-5.3-flash', {
+        'z-ai/glm-5.3-flash': { input: 1, output: 2, current: true },
+      })
+    ).toEqual({ usd: 3, source: 'live' });
+  });
+
+  it('ignores a price that was not read live', () => {
+    expect(
+      million('z-ai/glm-5.3-flash', { 'z-ai/glm-5.3-flash': { input: 5, output: 5 } })
+    ).toEqual({ usd: 0.65, source: 'list' });
+  });
+
+  it('charges a model it cannot price at the dearest listed price, never $0', () => {
+    expect(million('retired/model')).toEqual({ usd: 3.7, source: 'list' });
   });
 });
