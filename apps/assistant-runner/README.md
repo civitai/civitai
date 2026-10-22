@@ -7,7 +7,7 @@ any tab or device, and stops it.
 
 **Status:** sign-in (civitai viewer tokens), run grants, the orchestration model, the
 orchestration-backed conversation store, and App Assistant's tools and gate (the sandbox MCP tools,
-`create_app`, `set_checklist`, `report_ready`, read-only subagents) are real. App Assistant's page uses
+`create_app`, `set_checklist`, `report_ready`, read-only subagents, the live preview) are real. App Assistant's page uses
 it behind `appAssistantRemoteRunner` (dark until its Flipt flag turns it on). Without civitai's public
 key configured the service refuses every run-API request (401); with it but without `SANDBOX_URL` it
 refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
@@ -90,7 +90,9 @@ See [Not built yet](#not-built-yet).
     A reply ended this way keeps its saved steps, every call in them answered. Waking at the start makes
     no new app: if the service's open made a new, empty one (deleted meanwhile), the reply ends with an
     error. A call whose reply was lost (no progress for 610 s) is not made again either.
-  - **The tunnel tools** (`tunnel_*`) are not offered: they serve only the page's live preview.
+  - **The tunnel tools** (`tunnel_*`) are not offered to the assistant: the runner drives them itself,
+    inside `start_preview` and `stop_preview`, so the assistant cannot point the sandbox at a host
+    civitai did not open.
   - **Stop and the end of a reply close the MCP transport**, which aborts every request in flight:
     the only way to reach a `sandbox__run_command` still running in the sandbox.
   - **Save before run.** Every call, sandbox ones included, waits until the head save that records its
@@ -109,13 +111,43 @@ See [Not built yet](#not-built-yet).
     (a command, a result's first 200 characters, a page tool's result), never a file's contents.
   - **The prompt is App Assistant's**, the runner's variant from the same builders
     (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
-    only tools the runner has (the setup guide read with `sandbox__run_command`, no tunnel, no guide tool
+    only tools the runner has (the setup guide read with `sandbox__run_command`, no raw tunnel tools, no guide tool
     for subagents, and none of the chat's own rules' sentences naming `ask_choice`, which waits for a
     viewer who may not be there), built from the sandbox it found, in place of the page's
     `hostInstructions`. A test checks every tool the whole system prompt names is offered.
-  - **Page-only:** the live preview (`start_preview`, `stop_preview`) needs the page's iframe, which may
-    be closed. The runner does not offer them, and the instructions tell the assistant the preview is not
-    available in this mode. The `page` state is not used to relay them.
+  - **The live preview** (`src/app-assistant/preview.ts`, `dev-tunnel.ts`): `start_preview` and
+    `stop_preview`, the page's names (so one prompt fits both), through the App Blocks dev tunnel, so
+    the user's page and the assistant see the same running dev server (port 5173):
+    1. `start_preview { block_id?, declared_scopes?, declared_auth? }` asks the sandbox for a fresh
+       single-use key (`tunnel_key`, which returns only its public half), then civitai's
+       `POST /api/internal/app-assistant/dev-tunnel/start` with the runner's secret and the run's
+       grant (read from the grants table inside that request, as a mint is) opens the tunnel for the
+       grant's user: civitai re-judges every gate there (App Assistant's, `appAssistantRemoteRunner`,
+       `appBlocksAuthor`, the dev-tunnel flag, ownership of the block, the hourly start limit). The
+       sandbox then dials the host civitai named, pinning the sish host key civitai gave
+       (`tunnel_connect`). A refusal (403, 404, 429) or a failed connect is a tool error the
+       assistant reads, and a tunnel civitai opened but the sandbox could not reach is closed again.
+       No civitai credential reaches the sandbox, only its own key's host and host key, as in the
+       browser.
+    2. The result is `{ shown, blockId, host, next_step }`, journaled like every call as
+       `tool-reported`. The page reads `blockId` and `host` from it and (re)fetches
+       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
+       tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
+    3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
+       window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
+       a `NOT_FOUND`, refusal or dead grant stops it. When the run ends it stops keeping the tunnel
+       alive and civitai's normal idle expiry applies, so the user keeps the preview for a while.
+       The 8-hour cap never moves.
+    4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
+       (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
+       and idles out at civitai.
+    A later reply (or Continue after the app was paused) starts the dev server and calls
+    `start_preview` again; civitai replaces the user's tunnel for that block. The instructions tell
+    the assistant to start the dev server first and to use `sandbox__preview_check` (with
+    `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
+    model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
+    keeps only the text (`mcpResultToText`), so the instructions tell the assistant to go by the
+    text when no image comes back and never to describe a picture it did not receive.
   - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
     run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
     page's word is not taken). Their progress is journaled as `subagent-progress`.
@@ -286,10 +318,17 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 - The route from the page's origin (`/api/assistant-runner`) to the runner: the deployment's job.
 - The orchestration and site MCP tools the browser's chat adds (`fetch_page`, `get_guide`, …).
-- The live preview on the runner.
 
 Known gaps:
 
+- The page learns of a runner's preview only from the live `tool-reported` event, which a reload
+  or another device does not replay: the pane then shows nothing until the assistant calls
+  `start_preview` again (the instructions say to when the preview is gone). Asking civitai's
+  preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
+  window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
+  preview), so it would show a dead preview.
+- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
+  keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
 
 - A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
   arrives at once (orchestration has no reattach to a stream in flight). One cut before

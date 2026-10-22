@@ -9,6 +9,7 @@ import {
   createMcpConnection,
   extraToolSet,
   McpConnectionClosedError,
+  mcpResultToText,
   namespacedToolName,
   type ChatMcpServer,
   type McpConnection,
@@ -141,8 +142,9 @@ export class AppSandbox {
       token: this.#deps.token,
     };
     const named = listed
-      // The tunnel only serves the live preview, which is page-only: not offered with nobody watching.
-      .filter((tool) => !PAGE_ONLY_TOOL.test(tool.name))
+      // The tunnel is the runner's to drive, inside `start_preview` and `stop_preview` (`preview.ts`):
+      // the assistant never gets it, so it cannot point the sandbox at a host civitai did not open.
+      .filter((tool) => !RUNNER_ONLY_TOOL.test(tool.name))
       .map((tool) => ({ name: namespacedToolName(SANDBOX_SERVER_ID, tool.name), tool }))
       .filter(({ name }) => /^[A-Za-z0-9_-]{1,64}$/.test(name));
     const tools = extraToolSet([{ server, connection, tools: named }], { taken: {} });
@@ -163,6 +165,25 @@ export class AppSandbox {
       } as typeof tool;
     }
     return tools;
+  }
+
+  /**
+   * Calls one of the sandbox's own tools for the runner itself (the tunnel's, for the preview), never
+   * for the assistant: its text, and whether the tool said it failed. Throws when the app has no
+   * connection (it is not running, or `create_app` opened another one meanwhile) or the call fails.
+   */
+  async call(
+    tool: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ text: string; isError: boolean }> {
+    const connection = this.#connection;
+    if (!connection || this.#closed) throw new Error('Your app is not running.');
+    const result = await connection.callTool(tool, args, {
+      ...(signal ? { signal } : {}),
+      timeoutMs: RUNNER_CALL_TIMEOUT_MS,
+    });
+    return { text: mcpResultToText(result, Infinity), isError: result.isError === true };
   }
 
   async close(): Promise<void> {
@@ -291,8 +312,10 @@ export class AppSandbox {
   }
 }
 
-/** The sandbox's own tools the runner does not offer: the tunnel, which serves only the page's preview. */
-const PAGE_ONLY_TOOL = /^tunnel_/;
+/** The sandbox's own tools the runner keeps to itself: the tunnel, which only `start_preview` drives. */
+const RUNNER_ONLY_TOOL = /^tunnel_/;
+/** A tunnel call waits up to 20 s for sish (`tunnel_connect`); this bounds one the runner makes. */
+const RUNNER_CALL_TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

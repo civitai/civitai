@@ -1,0 +1,428 @@
+import { PREVIEW_NOT_ENABLED, REMOTE_PREVIEW } from '@civitai/app-assistant';
+import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
+import type { ToolSet } from 'ai';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  CivitaiDevTunnels,
+  DEV_TUNNEL_PATH,
+  DevTunnelError,
+  type DevTunnels,
+  type DevTunnelStartInput,
+} from '../app-assistant/dev-tunnel';
+import { PREVIEW_KEEPALIVE_MS, publicKeyOf } from '../app-assistant/preview';
+import { AppAssistantTools } from '../app-assistant/provider';
+import type { OpenTools } from '../interfaces';
+import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
+
+const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
+/** The tunnel's id civitai answers with: distinct from every other string here, so a leak shows. */
+const SESSION = 'bki_TEST_ONLY_session_7f3e9a';
+const HOST = 'dev-0123456789abcdef.civit.ai';
+const HOST_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlySishHostKey';
+const KEEPALIVE_MS = 1_000;
+
+/** civitai's dev-tunnel endpoints as one run sees them, recording what it was asked. */
+class FakeTunnels implements DevTunnels {
+  readonly started: DevTunnelStartInput[] = [];
+  readonly kept: string[] = [];
+  readonly stopped: string[] = [];
+  startError: unknown = null;
+  keepaliveError: unknown = null;
+  sessions = [SESSION];
+
+  async start(input: DevTunnelStartInput) {
+    this.started.push(input);
+    if (this.startError) throw this.startError;
+    const sessionId = this.sessions[Math.min(this.started.length, this.sessions.length) - 1]!;
+    return { sessionId, host: HOST, sshHostPublicKey: HOST_KEY };
+  }
+
+  async keepalive(sessionId: string) {
+    this.kept.push(sessionId);
+    if (this.keepaliveError) throw this.keepaliveError;
+  }
+
+  async stop(sessionId: string) {
+    this.stopped.push(sessionId);
+  }
+}
+
+let fake: FakeSandboxService;
+let tunnels: FakeTunnels;
+let opened: OpenTools[];
+
+beforeEach(async () => {
+  fake = new FakeSandboxService();
+  await fake.start();
+  tunnels = new FakeTunnels();
+  opened = [];
+});
+
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.all(opened.map((tools) => tools.close()));
+  await fake.stop();
+});
+
+async function open() {
+  const reported: ChatToolResult[] = [];
+  const tools = await new AppAssistantTools({
+    sandboxUrl: fake.url,
+    tokens: () => async (purpose) => `test-token-${purpose}`,
+    devTunnels: () => tunnels,
+    log: quiet,
+    wakePollMs: 5,
+    wakeTimeoutMs: 5_000,
+    previewKeepaliveMs: KEEPALIVE_MS,
+  }).open({
+    userId: 'u-1',
+    runId: 'run-1',
+    conversationId: 'conv-1',
+    page: { app: 'my-app' },
+    signal: new AbortController().signal,
+    report: (result) => reported.push(result),
+  });
+  opened.push(tools);
+  return { tools, reported };
+}
+
+let callId = 0;
+function call(tools: ToolSet, name: string, input: Record<string, unknown> = {}) {
+  const tool = tools[name];
+  if (!tool?.execute) throw new Error(`no tool ${name}`);
+  return Promise.resolve(
+    tool.execute(input as never, { toolCallId: `p-${++callId}`, messages: [] } as never)
+  ) as Promise<Record<string, unknown>>;
+}
+
+const tunnelCalls = () => fake.calls.filter((c) => c.tool.startsWith('tunnel_')).map((c) => c.tool);
+
+describe('start_preview on the runner', () => {
+  it('is offered with stop_preview, and the raw tunnel tools are not', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const names = Object.keys(tools.tools);
+    expect(names).toEqual(expect.arrayContaining(['start_preview', 'stop_preview']));
+    expect(names.filter((name) => /tunnel/.test(name))).toEqual([]);
+    // Control: the sandbox does list them; the runner keeps them to itself.
+    expect(names).toContain('sandbox__dev_server_start');
+    expect(tools.instructions).toContain(REMOTE_PREVIEW);
+  });
+
+  it('takes a key from the sandbox, has civitai open the tunnel, then connects the sandbox to it', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    const result = await call(tools.tools, 'start_preview', {
+      declared_scopes: ['models:read'],
+      declared_auth: 'block-token',
+    });
+
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+    expect(tunnels.started).toEqual([
+      {
+        blockId: 'my-app',
+        sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY,
+        declaredScopes: ['models:read'],
+        declaredAuth: 'block-token',
+      },
+    ]);
+    // The sandbox dials exactly the host civitai named, pinning the host key civitai gave.
+    expect(fake.calls.find((c) => c.tool === 'tunnel_connect')!.args).toEqual({
+      host: HOST,
+      ssh_host_public_key: HOST_KEY,
+    });
+    expect(result).toEqual({
+      shown: true,
+      blockId: 'my-app',
+      host: HOST,
+      next_step: expect.stringContaining('sandbox__preview_check'),
+    });
+    // What the page is told (journaled as `tool-reported`): the block and the host, for the frame.
+    const shown = reported.find((r) => r.name === 'start_preview')!;
+    expect(shown).toMatchObject({ isError: false, output: { blockId: 'my-app', host: HOST } });
+  });
+
+  it('never puts the tunnel’s id in what the assistant, the journal or the page sees', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    const result = await call(tools.tools, 'start_preview');
+    // Control: civitai did hand the runner that id.
+    expect(tunnels.started).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain(SESSION);
+    expect(reported.length).toBeGreaterThan(0);
+    expect(JSON.stringify(reported)).not.toContain(SESSION);
+    // ...and the runner still holds it: stop_preview closes that tunnel.
+    await call(tools.tools, 'stop_preview');
+    expect(tunnels.stopped).toEqual([SESSION]);
+  });
+
+  it.each([
+    [403, 'FORBIDDEN', PREVIEW_NOT_ENABLED],
+    [404, 'NOT_FOUND', 'That block_id belongs to another app'],
+    [429, 'TOO_MANY_REQUESTS', 'Too many previews were started in the last hour'],
+    [403, 'refused', 'The preview was refused for this account'],
+    [503, 'unavailable', 'The preview could not start just now'],
+  ])(
+    'a civitai refusal (%i %s) is a tool error saying why, and nothing is connected',
+    async (status, code, words) => {
+      fake.add('my-app');
+      const { tools, reported } = await open();
+      tunnels.startError = new DevTunnelError('no', status, code);
+      const result = await call(tools.tools, 'start_preview');
+      expect(String(result.error)).toContain(words);
+      expect(tunnelCalls()).toEqual(['tunnel_key']);
+      expect(reported.find((r) => r.name === 'start_preview')).toMatchObject({ isError: true });
+    }
+  );
+
+  it('a dead grant says to send the message again; an unconfigured runner says there is no preview', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    // civitai's own words for it, which are not for the assistant.
+    tunnels.startError = new DevTunnelError('Not a current run grant', 401, 'invalid_grant');
+    expect(String((await call(tools.tools, 'start_preview')).error)).toBe(
+      'This reply can no longer act for the user. Tell them to send their message again.'
+    );
+    tunnels.startError = new DevTunnelError('x', 503, 'not_configured');
+    expect(String((await call(tools.tools, 'start_preview')).error)).toMatch(
+      /^The live preview is not set up here/
+    );
+  });
+
+  it('logs no tunnel id when keeping alive or closing fails', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const logged: unknown[] = [];
+    const log = {
+      info: (o: object, m?: string) => void logged.push(o, m),
+      warn: (o: object, m?: string) => void logged.push(o, m),
+      error: (o: object, m?: string) => void logged.push(o, m),
+    };
+    const tools = await new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      devTunnels: () => tunnels,
+      log,
+      previewKeepaliveMs: KEEPALIVE_MS,
+    }).open({
+      userId: 'u-1',
+      runId: 'run-1',
+      conversationId: 'conv-1',
+      page: { app: 'my-app' },
+      signal: new AbortController().signal,
+    });
+    opened.push(tools);
+    await call(tools.tools, 'start_preview');
+    tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    // Control: the failure was logged.
+    expect(logged).toContain('keeping a preview alive failed');
+    expect(JSON.stringify(logged)).not.toContain(SESSION);
+  });
+
+  it('closes the tunnel civitai opened when the sandbox cannot reach it', async () => {
+    fake.add('my-app');
+    fake.tools.set('tunnel_connect', () => {
+      throw new Error('ssh exited: host key mismatch');
+    });
+    const { tools } = await open();
+    const result = await call(tools.tools, 'start_preview');
+    expect(String(result.error)).toMatch(/^The preview could not connect: error: ssh exited/);
+    expect(tunnels.stopped).toEqual([SESSION]);
+  });
+
+  it('runs two starts of one step one after the other, so neither key replaces the other’s', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const results = await Promise.all([
+      call(tools.tools, 'start_preview'),
+      call(tools.tools, 'start_preview'),
+    ]);
+    expect(results.map((r) => r.shown)).toEqual([true, true]);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect', 'tunnel_key', 'tunnel_connect']);
+  });
+
+  it('refuses a block id that is not one, before anything is asked', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const result = await call(tools.tools, 'start_preview', { block_id: 'Not A Block' });
+    expect(String(result.error)).toMatch(/^Pass block_id/);
+    expect(tunnelCalls()).toEqual([]);
+    expect(tunnels.started).toEqual([]);
+  });
+});
+
+describe('keeping the preview alive', () => {
+  it('stamps it on a cadence while the run lives, and stops when the run ends', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    expect(tunnels.kept).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    // The control: alive while the run lives.
+    expect(tunnels.kept).toEqual([SESSION, SESSION, SESSION]);
+
+    // The run ends: the runner closes its tools.
+    await tools.close();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 10);
+    expect(tunnels.kept).toHaveLength(3);
+    // Ending the run does not close the tunnel: civitai's idle expiry does that later.
+    expect(tunnels.stopped).toEqual([]);
+  });
+
+  it('keeps no preview alive before one is started', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    await open();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toEqual([]);
+  });
+
+  it('gives up on a tunnel civitai no longer has, and asks again after `unavailable`', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    expect(tunnels.kept).toHaveLength(2);
+    tunnels.keepaliveError = new DevTunnelError('gone', 404, 'NOT_FOUND');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toHaveLength(3);
+  });
+
+  it('is every 5 minutes, well inside civitai’s 30-minute idle window', () => {
+    expect(PREVIEW_KEEPALIVE_MS).toBe(5 * 60_000);
+  });
+});
+
+describe('stop_preview on the runner', () => {
+  it('closes the run’s tunnel at civitai and in the sandbox, and stops keeping it alive', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnels.stopped).toEqual([SESSION]);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect', 'tunnel_disconnect']);
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toEqual([]);
+  });
+
+  it('closes the sandbox’s side of a preview an earlier reply started', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnelCalls()).toEqual(['tunnel_disconnect']);
+    expect(tunnels.stopped).toEqual([]);
+  });
+
+  it('a second start of another block closes the first one', async () => {
+    fake.add('my-app');
+    tunnels.sessions = [SESSION, 'bki_TEST_ONLY_second'];
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    await call(tools.tools, 'start_preview', { block_id: 'other-block' });
+    expect(tunnels.stopped).toEqual([SESSION]);
+  });
+});
+
+describe('publicKeyOf', () => {
+  it('reads the one key line sandbox__tunnel_key answers with, and nothing else', () => {
+    expect(publicKeyOf(JSON.stringify({ publicKey: ` ${FAKE_TUNNEL_PUBLIC_KEY} ` }))).toBe(
+      FAKE_TUNNEL_PUBLIC_KEY
+    );
+    for (const text of [
+      'not json',
+      JSON.stringify({}),
+      JSON.stringify({ publicKey: 42 }),
+      JSON.stringify({ publicKey: 'a\nb' }),
+      JSON.stringify({ publicKey: '' }),
+    ])
+      expect(publicKeyOf(text)).toBeNull();
+  });
+});
+
+describe('CivitaiDevTunnels', () => {
+  const SECRET = 'test-only-runner-secret-0123456789abcdef';
+  const GRANT = 'test-only-grant';
+  function client(answer: (url: string, init: RequestInit) => Response | Promise<Response>) {
+    const sent: { url: string; init: RequestInit }[] = [];
+    const tunnels = new CivitaiDevTunnels({
+      civitaiUrl: 'https://civitai.example/',
+      secret: SECRET,
+      log: quiet,
+      fetch: async (input, init) => {
+        sent.push({ url: String(input), init: init! });
+        return answer(String(input), init!);
+      },
+    });
+    return { sent, tunnels };
+  }
+
+  it('posts each call with the runner’s secret and the run’s grant, read per call', async () => {
+    let grants = 0;
+    const { sent, tunnels } = client(() =>
+      Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY })
+    );
+    const run = tunnels.forRun(async () => {
+      grants++;
+      return GRANT;
+    });
+    expect(await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })).toEqual({
+      sessionId: SESSION,
+      host: HOST,
+      sshHostPublicKey: HOST_KEY,
+    });
+    await run.keepalive(SESSION);
+    await run.stop(SESSION);
+    expect(grants).toBe(3);
+    expect(sent.map((s) => s.url)).toEqual(
+      ['start', 'keepalive', 'stop'].map((a) => `https://civitai.example/${DEV_TUNNEL_PATH}/${a}`)
+    );
+    for (const { init } of sent)
+      expect(new Headers(init.headers).get('authorization')).toBe(`Bearer ${SECRET}`);
+    expect(sent.map((s) => JSON.parse(String(s.init.body)))).toEqual([
+      { grant: GRANT, blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY },
+      { grant: GRANT, sessionId: SESSION },
+      { grant: GRANT, sessionId: SESSION },
+    ]);
+  });
+
+  it('a refusal keeps civitai’s status and code', async () => {
+    const { tunnels } = client(() =>
+      Response.json({ error: 'No such dev tunnel', code: 'NOT_FOUND' }, { status: 404 })
+    );
+    const error = await tunnels
+      .forRun(async () => GRANT)
+      .keepalive(SESSION)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DevTunnelError);
+    expect(error).toMatchObject({ status: 404, code: 'NOT_FOUND' });
+  });
+
+  it('a run with no live grant asks civitai nothing', async () => {
+    const { sent, tunnels } = client(() => Response.json({}));
+    await expect(tunnels.forRun(async () => null).keepalive(SESSION)).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it('civitai out of reach, or answering a start oddly, is `unavailable`', async () => {
+    const down = client(() => {
+      throw new TypeError('fetch failed');
+    });
+    await expect(down.tunnels.forRun(async () => GRANT).stop(SESSION)).rejects.toMatchObject({
+      status: 503,
+      code: 'unavailable',
+    });
+    const odd = client(() => Response.json({ sessionId: SESSION }));
+    await expect(
+      odd.tunnels.forRun(async () => GRANT).start({ blockId: 'my-app', sshPublicKey: 'k' })
+    ).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});

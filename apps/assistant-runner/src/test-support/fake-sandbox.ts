@@ -30,6 +30,10 @@ export type FakeToolBody = (
   signal: AbortSignal
 ) => Promise<string> | string;
 
+/** The public half of the single-use key the fake sandbox's `tunnel_key` makes (TEST-ONLY, not a real key). */
+export const FAKE_TUNNEL_PUBLIC_KEY =
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyNotARealKey sandbox-dev-tunnel';
+
 /** The tools a hosted sandbox lists (as App Assistant's prompt names them). */
 const TOOLS: { name: string; description: string }[] = [
   'read_file',
@@ -80,6 +84,14 @@ export class FakeSandboxService {
     this.tools.set('write_file', (args) => `wrote ${String(args.content ?? '').length} bytes`);
     this.tools.set('preview_check', () => 'render: ok\npage_errors: 0');
     this.tools.set('dev_server_logs', () => 'ready');
+    // As sandbox-mcp answers them: JSON text.
+    this.tools.set('tunnel_key', () =>
+      JSON.stringify({ publicKey: FAKE_TUNNEL_PUBLIC_KEY, stoppedTunnel: false })
+    );
+    this.tools.set('tunnel_connect', (args) =>
+      JSON.stringify({ running: true, host: args.host, localPort: 5173 })
+    );
+    this.tools.set('tunnel_disconnect', () => JSON.stringify({ stopped: true }));
     this.tools.set('run_command', async (args, signal) => {
       if (args.command === 'hang')
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
@@ -220,7 +232,15 @@ export class FakeSandboxService {
         const body = this.tools.get(request.params.name);
         if (!body) return { content: [{ type: 'text', text: 'no such tool' }], isError: true };
         const signal = AbortSignal.any([closed, extra.signal]);
-        return { content: [{ type: 'text', text: await body(args, signal) }] };
+        // A body that throws fails as sandbox-mcp's tools fail: an error result, never a thrown call.
+        try {
+          return { content: [{ type: 'text', text: await body(args, signal) }] };
+        } catch (error) {
+          return {
+            content: [{ type: 'text', text: `error: ${(error as Error)?.message ?? error}` }],
+            isError: true,
+          };
+        }
       }
     );
     return server;
