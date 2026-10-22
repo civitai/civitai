@@ -11,6 +11,7 @@ import {
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -58,6 +59,10 @@ vi.mock('~/server/services/notification.service', () => notifications);
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: (_options: unknown, operation: () => Promise<unknown>) => operation(),
 }));
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopVerdict: vi.fn(async () => true),
+}));
 // No wall-clock backoff on a retry.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
   const actual = await importOriginal<typeof ErrorHandling>();
@@ -80,7 +85,12 @@ const bridge = (tx: { query: PGlite['query'] }) => {
       }
       return run(strings, ...values);
     };
-  return { $executeRaw: hooked(raw.executeRaw), $queryRaw: hooked(raw.queryRaw) };
+  // The shelf listing's own rows are on the db mock, in a transaction too.
+  return {
+    $executeRaw: hooked(raw.executeRaw),
+    $queryRaw: hooked(raw.queryRaw),
+    cosmeticShopItem: dbMock.dbWrite.cosmeticShopItem,
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
