@@ -147,6 +147,11 @@
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.6) 40%, rgba(0, 0, 0, 0.85));
 }
 
+/* Darkens the browsing-level badge tint so its white label stays readable on a white image. */
+.badgeScrim {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5));
+}
+
 /* Stat chip */
 .statChip {
   border-radius: var(--mantine-radius-sm);
