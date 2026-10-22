@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 
 import { baseModelByName, getCompatibleBaseModels } from '~/shared/constants/basemodel.constants';
-import type { ModelType } from '~/shared/utils/prisma/enums';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { TAG_SCORE_PARAMS, type TagIndex, type TagKind } from './score';
 
 /** Per model type, the base models a listed version may carry. */
@@ -104,11 +104,52 @@ export function gateEligibleEcosystems(
 }
 
 /**
- * Hashes the floor and what the gate and the eligibility count produce on fixed inputs, so the v1
- * cache key moves when either does. Request-path only: the snapshot is keyed by
- * `RESOURCE_INTENT_TAGS_SPEC_HASH`, which this must not feed.
+ * The media type a v1_tags request generates. Image only: the request carries no media type, and the
+ * stage-3 question it shares states the prompt is an image-generation prompt. A request that can be
+ * a video one must pass its own media type here instead of this constant.
  */
-function v1GateFingerprint() {
+export const V1_TAGS_REQUEST_MEDIA_TYPE: MediaType = 'image';
+
+/**
+ * Whether `baseModel` generates `mediaType`, read from its base-model record's `type` (one media
+ * type, or several for a model that generates more than one). A name with no record has no known
+ * media type and is not excluded. The one modality predicate of the tag-chosen ecosystem.
+ */
+export function baseModelGeneratesMediaType(baseModel: string, mediaType: MediaType): boolean {
+  const type = baseModelByName.get(baseModel)?.type;
+  if (type === undefined) return true;
+  return Array.isArray(type) ? type.includes(mediaType) : type === mediaType;
+}
+
+const modalityCache = new WeakMap<object, Map<MediaType, ReadonlySet<number>>>();
+
+/**
+ * The index's ecosystem ids whose base model generates `mediaType` (`baseModelGeneratesMediaType`):
+ * the only ecosystems the tags may choose for a request of that media type. Cached per index.
+ */
+export function modalityEligibleEcosystems(
+  index: Pick<TagIndex, 'ecosystems'>,
+  mediaType: MediaType
+): ReadonlySet<number> {
+  const byType = modalityCache.get(index) ?? new Map<MediaType, ReadonlySet<number>>();
+  modalityCache.set(index, byType);
+  const cached = byType.get(mediaType);
+  if (cached) return cached;
+  const eligible = new Set<number>();
+  index.ecosystems.forEach((e, id) => {
+    if (baseModelGeneratesMediaType(e.name, mediaType)) eligible.add(id);
+  });
+  byType.set(mediaType, eligible);
+  return eligible;
+}
+
+/**
+ * Hashes the floor, the request's media type, and what the gate, the eligibility count and the
+ * modality predicate produce on fixed inputs, so the v1 cache key moves when any of them does.
+ * Request-path only: the snapshot is keyed by `RESOURCE_INTENT_TAGS_SPEC_HASH`, which this must not
+ * feed. Exported for its test.
+ */
+export function v1GateFingerprint() {
   const types: ModelType[] = ['LORA', 'LoCon', 'DoRA', 'TextualInversion'];
   const names = ['Krea 2 Turbo', 'Krea 2', 'SDXL Lightning', 'SDXL 1.0', 'NoobAI', 'Illustrious'];
   const n = V1_TAGS_MIN_ECOSYSTEM_RESOURCES;
@@ -128,10 +169,17 @@ function v1GateFingerprint() {
       checkpoint: { ecosystems: [], userByEcosystem: new Map() },
     },
   } as unknown as Pick<TagIndex, 'ecosystems' | 'kinds'>;
+  // One of each media-type shape: image, video, image and video, audio, and no record.
+  const modalityNames = ['SDXL 1.0', 'MiniMax H3', 'Grok', 'ACE Audio', 'Not A Base Model'];
+  const modalityIndex = {
+    ecosystems: modalityNames.map((name) => ({ name, users: 0, observations: 0 })),
+  };
   return {
     minResources: n,
     gates: names.map((name) => [...ecosystemBaseModelGate(name, types)]),
     eligible: [...gateEligibleEcosystems(index, 'addon', types)],
+    mediaType: V1_TAGS_REQUEST_MEDIA_TYPE,
+    modalityEligible: [...modalityEligibleEcosystems(modalityIndex, V1_TAGS_REQUEST_MEDIA_TYPE)],
   };
 }
 
