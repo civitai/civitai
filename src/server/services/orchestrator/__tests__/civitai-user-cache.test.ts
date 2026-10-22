@@ -1,20 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { envMock } from '~/__tests__/mocks/env.mock';
 
 const { deleteMock } = vi.hoisted(() => ({ deleteMock: vi.fn(async () => undefined) }));
-vi.mock('~/env/server', () => ({ env: { ORCHESTRATOR_ACCESS_TOKEN: 'system-token' } }));
 vi.mock('~/server/services/orchestrator/client', () => ({
   createOrchestratorClient: vi.fn(() => ({ delete: deleteMock })),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => undefined),
-  safeError: (e: unknown) => e,
 }));
 
 const { invalidateCivitaiUser, revokeCivitaiUserTokens } = await import(
   '~/server/services/orchestrator/civitai'
 );
 
-beforeEach(() => deleteMock.mockClear());
+beforeEach(() => {
+  deleteMock.mockClear();
+  envMock.set({ ORCHESTRATOR_ACCESS_TOKEN: 'system-token' });
+});
 
 describe('orchestrator user cache invalidation', () => {
   // The user-info route does not touch the orchestrator's cached auth; only the tokens route does.
