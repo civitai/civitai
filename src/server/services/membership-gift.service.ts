@@ -1220,6 +1220,12 @@ export type UnpaidGiftRevocation =
       paymentIntentId: string;
     }
   | {
+      outcome: 'stopped';
+      reason: 'holder-will-be-billed';
+      paymentIntentId: string;
+      effect: GiftRevocationEffect;
+    }
+  | {
       outcome: 'would-revoke' | 'revoked';
       paymentIntentId: string;
       paymentStatus: string;
@@ -1273,6 +1279,10 @@ export async function revokeUnpaidMembershipGift({
   }
 
   const effect = await describeRevocationEffect(stripe, gift);
+  // Removing a gifted month from a subscription the holder pays for bills their next renewal at full
+  // price, which no notification here tells them about; that needs a person to decide.
+  if (effect.kind === 'discount-removed')
+    return { outcome: 'stopped', reason: 'holder-will-be-billed', paymentIntentId: pi.id, effect };
   const selfGift = gift.gifterId === gift.holderId;
   const plan = { paymentIntentId: pi.id, paymentStatus: pi.status, selfGift, effect };
   if (!execute) return { outcome: 'would-revoke', ...plan, notified: false };
@@ -1296,7 +1306,6 @@ export async function revokeUnpaidMembershipGift({
         tier: gift.tier,
         months: gift.months,
         selfGift,
-        ...(effect.kind === 'discount-removed' ? { renewsAt: effect.renewsAt } : {}),
       },
     });
 

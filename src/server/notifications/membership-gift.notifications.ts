@@ -1,6 +1,5 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { formatDate } from '~/utils/date-helpers';
 
 export const membershipGiftNotifications = createNotificationProcessor({
   'membership-gift-received': {
@@ -35,14 +34,6 @@ export const membershipGiftNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => {
       const gift = `${details.months}-month ${details.tier} membership gift`;
-      if (details.renewsAt)
-        return {
-          message: `Your ${gift} has been canceled because the gifter's payment didn't go through. This isn't anything you did. Your own membership continues, and your next renewal on ${formatDate(
-            new Date(details.renewsAt * 1000),
-            'MMMM D'
-          )} will be billed at the regular price. You can change or cancel your membership anytime from your membership page.`,
-          url: '/user/membership',
-        };
       if (details.selfGift)
         return {
           message: `Your ${gift} has been canceled because the payment for it never arrived. If you'd still like a membership, you can start one anytime.`,

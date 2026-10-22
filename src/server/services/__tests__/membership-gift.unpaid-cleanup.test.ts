@@ -45,6 +45,7 @@ vi.mock('~/server/utils/errorHandling', () => ({
   },
 }));
 
+import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
 import {
   refundUnfulfilledMembershipGift,
   revokeMembershipGift,
@@ -255,6 +256,69 @@ describe('revokeUnpaidMembershipGift', () => {
     });
     expect(result).toMatchObject({ effect: { kind: 'nothing-live' }, notified: false });
     expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('stops, revoking nothing, when the holder would be billed full price on their own subscription', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...unpaidGift,
+      status: 'Active',
+      monthsRemaining: 2,
+      armedCouponId: 'coupon_armed',
+      stripeSubscriptionId: null,
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'sub_own',
+      status: 'active',
+    });
+    mockStripe.subscriptions.retrieve.mockResolvedValue({
+      id: 'sub_own',
+      status: 'active',
+      currency: 'usd',
+      current_period_end: 1800000000,
+      discount: { coupon: { id: 'coupon_armed' } },
+      default_payment_method: 'pm_1',
+      customer: { id: 'cus_2', invoice_settings: {} },
+      items: { data: [{ quantity: 1, price: { unit_amount: 1000 } }] },
+      metadata: {},
+    });
+
+    const result = await revokeUnpaidMembershipGift({
+      giftId: 'gift_1',
+      execute: true,
+      notify: true,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'stopped',
+      reason: 'holder-will-be-billed',
+      effect: { kind: 'discount-removed', fullPriceAmount: 1000, hasPaymentMethod: true },
+    });
+    expect(mockStripe.paymentIntents.cancel).not.toHaveBeenCalled();
+    expect(mockStripe.subscriptions.deleteDiscount).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+});
+
+// This copy was approved word for word. Change it only with a new approval.
+describe('membership-gift-canceled notification copy', () => {
+  const prepare = (details: Record<string, unknown>) =>
+    membershipGiftNotifications['membership-gift-canceled'].prepareMessage({ details } as never);
+
+  it('tells a recipient whose gifter did not pay that it is not their doing', () => {
+    expect(prepare({ months: 3, tier: 'bronze', selfGift: false })).toEqual({
+      message:
+        "The 3-month bronze membership gift you received has been canceled because the gifter's payment didn't go through. This isn't anything you did, and your account is in good standing.",
+      url: '/pricing',
+    });
+  });
+
+  it('tells someone who gifted themselves that their payment never arrived', () => {
+    expect(prepare({ months: 1, tier: 'bronze', selfGift: true })).toEqual({
+      message:
+        "Your 1-month bronze membership gift has been canceled because the payment for it never arrived. If you'd still like a membership, you can start one anytime.",
+      url: '/pricing',
+    });
   });
 });
 
