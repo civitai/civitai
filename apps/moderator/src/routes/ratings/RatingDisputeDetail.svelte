@@ -61,7 +61,7 @@
   );
 </script>
 
-{#snippet levelCard(heading: string, value: string, sub: string, accent?: 'blue' | 'amber')}
+{#snippet levelCard(heading: string, value: string, sub: string, accent: 'blue' | 'amber' | undefined = undefined)}
   <TriageCard title={heading} dense {accent}>
     <p class="m-0 text-xl font-semibold text-white">{value}</p>
     <p class="m-0 mt-0.5 text-xs text-dark-2">{sub}</p>
