@@ -46,6 +46,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');

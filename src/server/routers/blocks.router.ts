@@ -3870,7 +3870,7 @@ export const blocksRouter = router({
       // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
       // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
       // real hole (a Redis failure threw past it, so the mirror was never touched), but
-      // `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator
+      // `revokeOauthConsentForBlock` awaits `revokeCivitaiUserTokens`, an outbound orchestrator
       // `DELETE` with NO timeout — so a slow orchestrator delayed the "immediate" half of the
       // revoke for exactly as long as it was slow. That window is the one the 503 below
       // apologises for. A `finally` gets both: the marker goes out first, and the teardown runs
@@ -3901,7 +3901,7 @@ export const blocksRouter = router({
         // which can be switched off after rows exist; and position after the publish. Dropping
         // all gates closed those but overcorrected — the callee is NOT a no-op without a row (an
         // earlier comment here claimed it was, and that was false): it does two primary
-        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
+        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `revokeCivitaiUserTokens`,
         // regardless. One cheap existence read gates all of it on the only condition that
         // matters.
         await (async () => {

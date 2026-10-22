@@ -29,7 +29,7 @@ vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
-  invalidateCivitaiUser: invalidateMock,
+  revokeCivitaiUserTokens: invalidateMock,
 }));
 
 const { oauthConsentRouter } = await import('~/server/routers/oauth-consent.router');
