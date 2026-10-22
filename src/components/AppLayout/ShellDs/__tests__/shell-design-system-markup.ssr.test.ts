@@ -42,8 +42,6 @@ vi.mock('~/components/Consent/consent.context', async (importOriginal) => ({
   ...(await importOriginal<typeof ConsentModule>()),
   useThirdPartyConsent: () => ({ required: true, reset: () => undefined }),
 }));
-  return actual;
-});
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../../test/trpcProxyStub');
   return { ...(await importOriginal<typeof TrpcModule>()), trpc: makeTrpcProxy() };
