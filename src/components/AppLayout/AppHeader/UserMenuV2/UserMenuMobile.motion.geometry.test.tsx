@@ -1,8 +1,15 @@
 import { IconBox } from '@tabler/icons-react';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
-import { box, PHONE_VIEWPORT, renderAtViewport } from '../../../../../test/geometry-setup';
+import {
+  box,
+  nextLayout,
+  PHONE_VIEWPORT,
+  renderAtViewport,
+} from '../../../../../test/geometry-setup';
+import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
+import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
 import type * as AppProvider from '~/providers/AppProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as TrackUtils from '~/components/TrackView/track.utils';
@@ -13,15 +20,32 @@ import type * as TrackUtils from '~/components/TrackView/track.utils';
  */
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useCurrentUser: () => null,
+  useCurrentUser: () => ({ id: 1, username: 'tester' }),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
   useFeatureFlags: () => ({}),
 }));
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: () => createElement('span', null, 'avatar'),
+}));
+vi.mock('~/components/BrowsingMode/BrowsingMode', () => ({
+  BrowsingModeMenu: () => createElement('div', null, 'filters'),
+}));
+vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof HeaderHooks>()),
+  useGetCreator: () => undefined,
+}));
+vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
+vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzUtils>()),
+  useBuyBuzz: () => vi.fn(),
+}));
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof AppProvider>()),
   useAppContext: () => ({ seed: 1 }),
+  useMaybeAppContext: () => ({ seed: 1 }),
+  useServerDomains: () => ({} as never),
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
@@ -82,14 +106,26 @@ async function renderMenu() {
   );
 }
 
+/** Clicks and lets React commit before returning, so the slide it starts has barely begun. */
+const press = (el: HTMLElement) =>
+  act(async () => {
+    el.click();
+  });
 const groupRow = () => document.querySelector<HTMLElement>('[data-group-row="your-stuff"]');
 const downloads = () => document.querySelector('a[href="/downloads"]');
-const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-const settled = async () => {
-  for (const el of document.querySelectorAll('.mantine-Popover-dropdown *'))
-    await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
-  await frame();
-};
+const backRow = () =>
+  document.querySelector<HTMLElement>('.mantine-Popover-dropdown button[data-panel-row]');
+const scrollPanel = (el: Element | null) => el!.closest('.overflow-y-auto')!;
+const finishAnimations = (panel: Element) => panel.getAnimations().forEach((a) => a.finish());
+
+/** Freezes the panel's slide at `ms` in, so the pixel position does not depend on frame timing. */
+function freezeSlide(panel: Element, ms: number) {
+  const slide = panel.getAnimations()[0];
+  expect(slide, 'the panel should be animating').toBeDefined();
+  slide.pause();
+  slide.currentTime = ms;
+  return slide;
+}
 
 function swipe(target: Element, dx: number, dy: number) {
   const touch = (x: number, y: number) =>
@@ -108,42 +144,73 @@ function swipe(target: Element, dx: number, dy: number) {
 }
 
 describe('phone menu levels', () => {
-  test('drilling into a group slides the panel in over a visible duration', async () => {
+  test('drilling into a group slides the panel in from the right, over a visible duration', async () => {
     await renderMenu();
-    groupRow()!.click();
-    await frame();
-    await frame();
-    const panel = downloads()!.closest('.overflow-y-auto')!;
-    const slide = panel.getAnimations()[0];
-    expect(slide, 'the panel should be animating').toBeDefined();
+    await press(groupRow()!);
+    const panel = scrollPanel(downloads());
+    const slide = freezeSlide(panel, 50);
     expect(Number(slide.effect!.getTiming().duration)).toBeGreaterThanOrEqual(250);
-    // Mid-slide the panel is still off to the right of its resting place.
-    expect(box(panel).left).toBeGreaterThan(0);
-    await settled();
-    expect(box(panel).left).toBe(box(panel.parentElement!).left);
+    // Past the frame where the menu moves focus to the back row: focusing a row that is still off
+    // to the right must not scroll the container, or the slide is lost.
+    await nextLayout();
+    expect(document.activeElement).toBe(backRow());
+    const resting = box(panel.parentElement!).left;
+    expect(panel.parentElement!.scrollLeft).toBe(0);
+    expect(box(panel).left).toBeGreaterThan(resting);
+    slide.finish();
+    expect(box(panel).left).toBe(resting);
   });
 
-  test('a right swipe goes back one level; a vertical or leftward one does not', async () => {
+  test('going back slides the panel in from the left, over a visible duration', async () => {
     await renderMenu();
-    groupRow()!.click();
-    await settled();
-    expect(downloads()).not.toBeNull();
+    await press(groupRow()!);
+    finishAnimations(scrollPanel(downloads()));
+    await press(backRow()!);
+    const panel = scrollPanel(groupRow());
+    const slide = freezeSlide(panel, 50);
+    expect(Number(slide.effect!.getTiming().duration)).toBeGreaterThanOrEqual(250);
+    const resting = box(panel.parentElement!).left;
+    expect(box(panel).left).toBeLessThan(resting);
+    slide.finish();
+    expect(box(panel).left).toBe(resting);
+  });
 
-    swipe(downloads()!, 20, 150);
-    swipe(downloads()!, -150, 5);
-    await settled();
+  test('a right swipe on a nested level goes back one level', async () => {
+    await renderMenu();
+    await press(groupRow()!);
+    finishAnimations(scrollPanel(downloads()));
     expect(downloads()).not.toBeNull();
 
     swipe(downloads()!, 150, 10);
-    await settled();
+    await nextLayout();
     expect(downloads()).toBeNull();
     expect(groupRow()).not.toBeNull();
   });
 
-  test('a right swipe on the top level changes nothing', async () => {
+  test('a right swipe on the top level does not start a slide', async () => {
     await renderMenu();
     swipe(groupRow()!, 150, 10);
-    await settled();
+    await nextLayout();
     expect(groupRow()).not.toBeNull();
+    expect(scrollPanel(groupRow()).getAnimations()).toHaveLength(0);
+  });
+
+  test('the top level does not slide in when the account switcher closes after a back', async () => {
+    await renderMenu();
+    await press(groupRow()!);
+    finishAnimations(scrollPanel(downloads()));
+    await press(backRow()!);
+    finishAnimations(scrollPanel(groupRow()));
+
+    await press(document.querySelector<HTMLElement>('[aria-label="Switch account"]')!);
+    expect(groupRow()).toBeNull();
+    const menu = document.querySelector('.mantine-Popover-dropdown')!.firstElementChild!;
+    await act(async () => {
+      menu.firstElementChild!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+    expect(groupRow()).not.toBeNull();
+    expect(scrollPanel(groupRow()).getAnimations()).toHaveLength(0);
   });
 });

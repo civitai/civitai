@@ -180,7 +180,15 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
           />
         )}
       </div>
-      {!panel && <UserMenuFooter onSwitchAccount={() => setSwitching(true)} />}
+      {!panel && (
+        <UserMenuFooter
+          onSwitchAccount={() => {
+            // The top level remounts when the switcher closes; it should not replay a back slide.
+            setDirection('in');
+            setSwitching(true);
+          }}
+        />
+      )}
     </div>
   );
 }
