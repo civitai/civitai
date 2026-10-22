@@ -237,7 +237,7 @@ function semantics(el: HTMLElement) {
  * Compared on the control's ROOT. Deliberately absent: `white-space`, `text-align` and
  * `text-transform`. Mantine sets those on the label span INSIDE its button, the design-system
  * markup on the root, so the root's computed value legitimately differs; what they DO — no
- * wrapping, centred, capitalised — is measured by `content` (the rect of the text and icons),
+ * wrapping, centred, capitalised — is measured by `ink` (the rect of the text and icons),
  * which moves if any of them is lost.
  */
 const STYLE_PROPS = [
@@ -278,18 +278,39 @@ function rect(r: DOMRect) {
   return { x: r1(r.x), y: r1(r.y), w: r1(r.width), h: r1(r.height) };
 }
 
-/** The box, the computed style, and where the CONTENT (text + icons) sits inside the box. */
+/**
+ * Where the INK sits inside a control: the union of its text runs and its icons, relative to the
+ * control's box. Leaves only — a range over the element's contents would also include Mantine's
+ * full-height wrapper spans (`inner`, `label`), which the design-system markup does not have, and
+ * report that as a difference in content placement when nothing visible moved.
+ */
+function inkRect(el: HTMLElement): DOMRect | null {
+  const rects: DOMRect[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (!(n.textContent ?? '').trim()) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    rects.push(range.getBoundingClientRect());
+  }
+  el.querySelectorAll('svg').forEach((svg) => rects.push(svg.getBoundingClientRect()));
+  const real = rects.filter((r) => r.width > 0 && r.height > 0);
+  if (!real.length) return null;
+  const left = Math.min(...real.map((r) => r.left));
+  const top = Math.min(...real.map((r) => r.top));
+  const right = Math.max(...real.map((r) => r.right));
+  const bottom = Math.max(...real.map((r) => r.bottom));
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+/** The box, the computed style, and where the ink (text + icons) sits inside the box. */
 function look(el: HTMLElement) {
   const s = getComputedStyle(el);
-  const range = document.createRange();
-  range.selectNodeContents(el);
   const box = el.getBoundingClientRect();
-  const content = range.getBoundingClientRect();
-  const svg = el.querySelector('svg')?.getBoundingClientRect();
+  const ink = inkRect(el);
   return {
     box: rect(box),
-    content: rect(new DOMRect(content.x - box.x, content.y - box.y, content.width, content.height)),
-    icon: svg ? rect(new DOMRect(svg.x - box.x, svg.y - box.y, svg.width, svg.height)) : null,
+    ink: ink ? rect(new DOMRect(ink.x - box.x, ink.y - box.y, ink.width, ink.height)) : null,
     style: Object.fromEntries(STYLE_PROPS.map((p) => [p, s.getPropertyValue(p)])),
   };
 }
