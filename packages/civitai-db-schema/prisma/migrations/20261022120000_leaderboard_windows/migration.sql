@@ -119,6 +119,9 @@ BEGIN
     IF NOT FOUND THEN
       RAISE EXCEPTION 'leaderboard % not found', r.id;
     END IF;
+    IF d IS NULL THEN
+      RAISE EXCEPTION 'leaderboard % has a NULL scoringDescription - set it by hand first', r.id;
+    END IF;
 
     IF position(r.line IN d) = 0 THEN
       UPDATE "Leaderboard"
@@ -137,7 +140,7 @@ BEGIN
   SELECT string_agg(id, ', ' ORDER BY id) INTO missing
   FROM "Leaderboard"
   WHERE public AND active
-    AND "scoringDescription" !~* '(last [0-9]+ days|rolling [0-9]+ days|all time)';
+    AND coalesce("scoringDescription", '') !~* '(last [0-9]+ days|rolling [0-9]+ days|all time)';
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'public active leaderboards with no window in scoringDescription: % - add them to this list', missing;
   END IF;
