@@ -223,6 +223,29 @@ describe('/apps/dev/[blockId] client', () => {
     expect(router.reload).not.toHaveBeenCalled();
   });
 
+  // The CLI command is `civitai app dev-tunnel` (no colon), and the scaffolds send the headers
+  // that let this page frame the app only under `npm run dev:tunnel`, so the copy names both.
+  const COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
+  const commandBlocks = (container: HTMLElement) =>
+    [...container.querySelectorAll('pre')].map((el) => el.textContent);
+
+  test('without a tunnel it shows the commands that start one', async () => {
+    const screen = await renderWithProviders(
+      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />
+    );
+    await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
+    expect(commandBlocks(screen.container)).toEqual([COMMANDS]);
+  });
+
+  test('a failed mint shows the same commands to restart the tunnel', async () => {
+    m.useBlockToken.mockReturnValue({ token: null, error: new Error('nope') });
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect
+      .element(page.getByText('Can’t run this app in the dev tunnel'))
+      .toBeInTheDocument();
+    expect(commandBlocks(screen.container)).toEqual([COMMANDS]);
+  });
+
   test('a resolvable tunnel never shows the gate', async () => {
     await renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
