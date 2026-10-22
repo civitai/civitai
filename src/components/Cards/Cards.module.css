@@ -144,7 +144,7 @@
   gap: 8px;
   margin: -8px;
   padding: 40px 8px 8px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6) 40%, rgba(0, 0, 0, 0.75));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6) 40%, rgba(0, 0, 0, 0.85));
 }
 
 /* Stat chip */
