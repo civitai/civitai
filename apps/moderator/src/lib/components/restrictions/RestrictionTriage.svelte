@@ -159,10 +159,7 @@
       <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
       <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
     </div>
-    <!-- Where a prompt came from (remix, enhancer, typed): scam triggers are text-scan hits with no prompt. -->
-    {#if data.type !== 'scam'}
-      <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
-    {/if}
+    <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
   </div>
 {/snippet}
 
