@@ -91,7 +91,7 @@
 
   .subtleGray {
     --shell-bg: transparent;
-    --shell-hover: var(--mantine-color-default-hover); /* MUTANT */
+    --shell-hover: var(--mantine-color-gray-light-hover);
     --shell-color: var(--mantine-color-gray-light-color);
     --shell-bd: transparent;
   }
@@ -122,7 +122,7 @@
   .sizeXs {
     --shell-height: calc(1.875rem * var(--mantine-scale));
     --shell-px: calc(0.875rem * var(--mantine-scale));
-    --shell-fz: var(--mantine-font-size-sm); /* MUTANT */
+    --shell-fz: var(--mantine-font-size-xs);
   }
 
   .sizeSm {
