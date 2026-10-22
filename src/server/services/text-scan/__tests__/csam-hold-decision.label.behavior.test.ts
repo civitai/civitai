@@ -24,7 +24,9 @@ vi.mock('~/server/services/post.service', () => ({ deletePost: vi.fn() }));
 vi.mock('~/server/services/report.service', () => ({ closeAppealsDeletedByOwner: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 
-const { decideCsamHold } = await import('~/server/services/text-scan/csam-hold-decision');
+const { decideCsamHold, decideCsamHoldBatch } = await import(
+  '~/server/services/text-scan/csam-hold-decision'
+);
 
 const db = { pg: null as unknown as PGlite };
 
@@ -128,6 +130,43 @@ describe('the csam hold decision record, against the real label store', () => {
     await decide('remove');
     expect(await labels()).toHaveLength(1);
   });
+});
+
+describe("a decision applied to the author's other holds", () => {
+  beforeEach(async () => {
+    await db.pg
+      .exec(`INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","userId","text","reason","updatedAt")
+      VALUES (13, 'CommentV2', 56, 'csam', 'h13', 900, 'other held text', 'r', now())`);
+    dbMock.dbWrite.textScanHold.findFirst.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        (
+          await db.pg.query(
+            `SELECT "id","status"::text AS "status","entityType","entityId","userId","text","textHash","meta"
+           FROM "TextScanHold" WHERE "id" = $1`,
+            [where.id]
+          )
+        ).rows[0] ?? null) as never
+    );
+  });
+
+  it.each(['remove', 'dismiss'] as const)(
+    '%s: records the batched hold apart from the one the moderator reviewed',
+    async (decision) => {
+      await decide(decision);
+      const results = await decideCsamHoldBatch({
+        holds: [{ holdId: 13, textHash: 'h13' }],
+        decision,
+        actor: { id: 7 },
+        tracker: tracker as never,
+      });
+      expect(results).toMatchObject([{ holdId: 13, ok: true }]);
+      const value = decision === 'remove' ? 'csam' : 'not_csam';
+      expect((await labels()).sort((a, b) => Number(a.subjectId) - Number(b.subjectId))).toEqual([
+        { value, reason: decision, subjectType: 'comment_v2_text', subjectId: '55' },
+        { value, reason: 'batch_apply', subjectType: 'comment_v2_text', subjectId: '56' },
+      ]);
+    }
+  );
 });
 
 describe('claiming the hold before its effects run, against the real hold table', () => {

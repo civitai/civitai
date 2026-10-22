@@ -16,7 +16,7 @@ const { mockDbRead, mockDbWrite, mockGetPermissions, mockGetCollectionById, mock
     mockDbRead: {
       collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
       collectionInvite: { findMany: vi.fn().mockResolvedValue([]) },
-      collectionItem: { count: vi.fn().mockResolvedValue(0) },
+      $queryRaw: vi.fn().mockResolvedValue([{ pending: 0 }]),
     },
     mockDbWrite: {},
     mockGetPermissions: vi.fn(),
@@ -92,7 +92,7 @@ beforeEach(() => {
   arrangeCollection();
   mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
   mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
-  mockDbRead.collectionItem.count.mockResolvedValue(0);
+  mockDbRead.$queryRaw.mockResolvedValue([{ pending: 0 }]);
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
@@ -270,15 +270,15 @@ describe('collection.getById roster — invite data', () => {
   // business knowing — and computing it for every reader would put an extra count on the hottest
   // read in the product. Dropping the gate has to fail here rather than in a metrics graph.
   it('computes the pending review count only for a manage holder', async () => {
-    mockDbRead.collectionItem.count.mockResolvedValue(7);
+    mockDbRead.$queryRaw.mockResolvedValue([{ pending: 7 }]);
 
     const reader = await callHandler();
     expect(reader.pendingReviewCount).toBe(0);
-    expect(mockDbRead.collectionItem.count).not.toHaveBeenCalled();
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
 
     arrangePermissions({ manage: true });
     const manager = await callHandler();
     expect(manager.pendingReviewCount).toBe(7);
-    expect(mockDbRead.collectionItem.count).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });

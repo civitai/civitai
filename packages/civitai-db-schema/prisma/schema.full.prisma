@@ -10674,6 +10674,9 @@ model Crucible {
   // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
   // (the migration backfills false); new rows default to true.
   timeAdjustedPlacement Boolean    @default(true)
+  // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
+  // shown to non-moderators.
+  eventTags         String[]       @default([])
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
@@ -10684,6 +10687,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([eventTags], type: Gin)
   @@index([status, ingestion])
 }
 

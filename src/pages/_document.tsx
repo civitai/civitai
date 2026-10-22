@@ -30,11 +30,15 @@ export default class _Document extends Document {
             and Next 16 / Turbopack injects each CSS Module's `@layer modules`
             block at runtime — potentially before globals.css parses. Declaring
             the order here (the first node in <head>) makes it deterministic:
-            preflight < theme < mantine < modules < unlayered Tailwind utils.
+            preflight < theme < mantine < civitai.components < modules < unlayered
+            Tailwind utils. `civitai.components` is `@civitai/components`' sheet (the
+            `shellDesignSystemMarkup` shell): above preflight and `theme`, whose resets
+            would otherwise strip its borders and backgrounds, and below CSS modules, so
+            `ShellDs.module.css` can map civitai's exact Mantine values onto it.
           */}
           <style
             dangerouslySetInnerHTML={{
-              __html: '@layer tailwind-preflight, theme, mantine, modules;',
+              __html: '@layer tailwind-preflight, theme, mantine, civitai.components, modules;',
             }}
           />
           <ColorSchemeScript />
