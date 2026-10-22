@@ -25,7 +25,7 @@ import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { useSupportOption } from '~/components/SupportButton/SupportButton';
+import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -44,7 +44,7 @@ import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
 import classes from './UserMenuMobile.module.scss';
 
-const ROW = 'flex items-center gap-2.5 px-4 py-3 hover:bg-gray-1 hover:dark:bg-dark-4';
+const ROW = 'flex items-center gap-2.5 rounded-lg px-4 py-3 hover:bg-gray-1 hover:dark:bg-dark-4';
 
 type Pins = UserMenuShellProps['pins'];
 type GroupNode = Extract<ResolvedMenuNode, { kind: 'group' }>;
@@ -56,6 +56,7 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
       position="bottom-end"
       opened={open}
       onChange={setOpen}
+      withinPortal
       // Escape steps back a panel first; the body handles it.
       closeOnEscape={false}
     >
@@ -63,9 +64,13 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
         {/* Popover.Target does not toggle on click; Menu.Target does, on desktop. */}
         {React.cloneElement(trigger, { onClick: () => setOpen(!open) })}
       </Popover.Target>
-      <Popover.Dropdown className="mt-2 flex h-[calc(100%-var(--header-height))] flex-col p-0">
+      {/* A sheet from the header down to the screen edge: the `!` classes beat floating-ui's inline position. */}
+      <Popover.Dropdown className="!fixed !inset-x-0 !bottom-0 !top-[var(--header-height)] flex !h-auto !w-full !max-w-none flex-col !rounded-none !border-x-0 !border-b-0 p-0">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
-          <MobileBody pins={pins} close={() => setOpen(false)} />
+          {/* Portaled out of the page's `@container`, so the menu's `@md:` variants need their own. */}
+          <div className="flex min-h-0 flex-1 flex-col @container">
+            <MobileBody pins={pins} close={() => setOpen(false)} />
+          </div>
         </UserMenuCtx.Provider>
       </Popover.Dropdown>
     </Popover>
@@ -191,8 +196,6 @@ function TopLevel({
   announce: (text: string) => void;
 }) {
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-  const support = useSupportOption();
 
   return (
     <>
@@ -201,12 +204,6 @@ function TopLevel({
           pinned={pins.pins.includes(PROFILE_PIN.id)}
           onTogglePin={onToggle ? () => onToggle(PROFILE_PIN) : undefined}
         />
-      )}
-      {currentUser && features.buzzSpendPop && features.canWrite && (
-        <MenuItemLink href={support.href}>
-          <support.icon stroke={1.5} />
-          <span className="text-sm leading-none">{support.text}</span>
-        </MenuItemLink>
       )}
       {events.map((item, i) => (
         <MobileItem key={`event-${i}`} item={item} />
@@ -220,7 +217,7 @@ function TopLevel({
         <>
           <Divider />
           <div className="p-3">
-            <BrowsingModeMenu closeMenu={close} />
+            <BrowsingModeMenu closeMenu={close} compact />
           </div>
         </>
       )}
@@ -236,40 +233,45 @@ export function MobileHeaderRows({
   onTogglePin?: () => void;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const creator = useGetCreator();
   const { handleClose } = useContext(UserMenuCtx);
   const trackHeader = useTrackHeaderOpen('mobile');
   if (!currentUser) return null;
 
   return (
-    <>
-      <div className="flex items-center pr-2">
-        <MenuItemLink
-          href={`/user/${currentUser.username}`}
-          className={clsx({ ['flex-1']: !!onTogglePin })}
-          onClick={() => {
-            trackHeader('profile');
-            handleClose();
-          }}
-          data-panel-row
-        >
+    <div className="flex items-center gap-1 pr-1">
+      <MenuItemLink
+        href={`/user/${currentUser.username}`}
+        className="min-w-0 rounded-lg !pr-2"
+        onClick={() => {
+          trackHeader('profile');
+          handleClose();
+        }}
+        data-panel-row
+      >
+        <div className="min-w-0 overflow-hidden">
           <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </MenuItemLink>
-        {onTogglePin && (
-          <LegacyActionIcon
-            size="lg"
-            variant="subtle"
-            color="gray"
-            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
-            aria-pressed={pinned}
-            onClick={onTogglePin}
-          >
-            <PinGlyph pinned={pinned} touch />
-          </LegacyActionIcon>
-        )}
+        </div>
+      </MenuItemLink>
+      {features.buzzSpendPop && features.canWrite && <SupportChip onClick={handleClose} />}
+      <div className="ml-auto">
+        <BuzzMenuItem compact onOpen={() => trackHeader('buzz-dashboard')} />
       </div>
-      <BuzzMenuItem onOpen={() => trackHeader('buzz-dashboard')} />
-    </>
+      {onTogglePin && (
+        <LegacyActionIcon
+          size="lg"
+          variant="subtle"
+          color="gray"
+          className="shrink-0"
+          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
+          aria-pressed={pinned}
+          onClick={onTogglePin}
+        >
+          <PinGlyph pinned={pinned} touch />
+        </LegacyActionIcon>
+      )}
+    </div>
   );
 }
 
@@ -438,7 +440,7 @@ export function MobileItem({
         href={item.href}
         as={item.as}
         rel={item.rel}
-        className={clsx({ ['flex-1']: canPin })}
+        className={clsx('rounded-lg', { ['flex-1']: canPin })}
         onClick={open}
         data-panel-row
       >
@@ -451,7 +453,7 @@ export function MobileItem({
         open();
         item.onClick?.();
       }}
-      className={clsx({ ['flex-1']: canPin })}
+      className={clsx('rounded-lg', { ['flex-1']: canPin })}
       data-panel-row
     >
       {content}
