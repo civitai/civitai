@@ -81,7 +81,7 @@ export const shopLabelQuestion = (action: ShopVerdictAction) =>
 
 export const shopLabelValue = (action: ShopVerdictAction) => VALUES[action];
 
-/** Keyed on the verdict's history entry `at`; the labels backfilled from history carry the same refs, so the shape must not change. */
+/** Keyed on the verdict's history entry `at` and its answer; labels backfilled from history carry the same refs, so the shape must not change. */
 export function shopVerdictSourceRef(listingId: number, verdict: ShopVerdict) {
   if (verdict.action === 'takedown') return `CreatorShopTakedown:${listingId}:${verdict.at}`;
   return `CreatorShopReview:${listingId}:${verdict.at}:${shopLabelValue(verdict.action)}`;
@@ -155,7 +155,7 @@ export function shopLabelSnapshot(state: ShopListingState, verdict: ShopVerdict)
   return {
     v: 1,
     kind: subjectType,
-    // Backfilled labels say `reconstructed` or `backfill` here; consumers read it.
+    // Backfilled labels carry `reconstructed` or `backfill` here.
     contentAt: 'verdict',
     listingId: state.listingId,
     title: state.title,

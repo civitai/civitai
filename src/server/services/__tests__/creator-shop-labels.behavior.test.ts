@@ -94,8 +94,6 @@ const labels = () =>
        s."ownerHash", s."bytesRef", s."bytesExpireAt"::text AS "bytesExpireAt", s."excludedReason"
      FROM label_store.label l JOIN label_store.subject s ON s.id = l."subjectId" ORDER BY l.id`
   );
-const subjectCount = async () =>
-  Number((await rows<{ n: number }>(`SELECT count(*)::int AS n FROM label_store.subject`))[0].n);
 const personHash = async (kind: 'owner' | 'labeller', id: number) =>
   (await rows<{ h: string }>(`SELECT label_store.person_hash($1, $2) AS h`, [kind, id]))[0].h;
 

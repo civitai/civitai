@@ -81,7 +81,8 @@ moderator's note is the `reasonNote`. `attach_bytes` points the subject at the a
 once from each listing's review history under the same refs, with snapshot `contentAt: 'reconstructed'`
 (live labels say `verdict`). Listings reviewed before that history existed got one label inferred from
 their status, ref `CreatorShopReviewInferred:…`, `contentAt: 'backfill'` and `inferred: true` in the
-snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
+snapshot; filter them out by ref prefix. Mystery packs were not backfilled: their labels start with
+the live path. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
