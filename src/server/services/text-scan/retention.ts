@@ -98,7 +98,7 @@ export async function cleanupTextScanRows({
           'supersededBy', h."meta"->'supersededBy')
         END,
       "updatedAt" = now()
-    WHERE h."status" = 'Dismissed' AND h."text" <> ''
+    WHERE h."label" = 'csam' AND h."status" = 'Dismissed' AND h."text" <> ''
       AND h."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')
       AND (h."meta"->>'decision' IS DISTINCT FROM 'superseded' OR EXISTS (
         SELECT 1 FROM "TextScanHold" k
