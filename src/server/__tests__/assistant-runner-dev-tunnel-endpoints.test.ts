@@ -99,7 +99,7 @@ type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown> |
 
 async function call(handler: Handler, { headers = asRunner, body }: CallOpts) {
   let status = 200;
-  let json: Record<string, any> | undefined;
+  let json: Record<string, unknown> | undefined;
   const sent = new Map<string, unknown>();
   const res = {
     status(code: number) {
@@ -137,23 +137,25 @@ function okRes(body = '{}') {
 
 /** Every tunnel route the reaper's label-scoped LIST should see, created long ago. */
 function listRoutesFor(sessionIds: string[]) {
-  k8sFetchMock.mockImplementation(async (_target: unknown, path: string, init: any) => {
-    if (
-      init?.method === 'GET' &&
-      path.includes('ingressroutes?labelSelector=civitai.com%2Fdev-tunnel%3Dtrue')
-    )
-      return okRes(
-        JSON.stringify({
-          items: sessionIds.map((id) => ({
-            metadata: {
-              labels: { 'civitai.com/dev-tunnel-session': id },
-              creationTimestamp: '2020-01-01T00:00:00Z',
-            },
-          })),
-        })
-      );
-    return okRes(JSON.stringify({ items: [] }));
-  });
+  k8sFetchMock.mockImplementation(
+    async (_target: unknown, path: string, init?: { method?: string }) => {
+      if (
+        init?.method === 'GET' &&
+        path.includes('ingressroutes?labelSelector=civitai.com%2Fdev-tunnel%3Dtrue')
+      )
+        return okRes(
+          JSON.stringify({
+            items: sessionIds.map((id) => ({
+              metadata: {
+                labels: { 'civitai.com/dev-tunnel-session': id },
+                creationTimestamp: '2020-01-01T00:00:00Z',
+              },
+            })),
+          })
+        );
+      return okRes(JSON.stringify({ items: [] }));
+    }
+  );
 }
 
 beforeEach(() => {

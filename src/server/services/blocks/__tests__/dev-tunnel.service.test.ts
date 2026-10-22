@@ -668,6 +668,18 @@ describe('keepAliveDevTunnel (the server runner’s idle refresh, ownership-chec
   const ageSession = (lastActivityAt: number) =>
     sysRedis._store.set(SESSION_KEY, JSON.stringify({ ...readSession(), lastActivityAt }));
 
+  // Two cases below queue a one-shot answer on `get`/`set`. If the function under test never
+  // consumes it (absent, or returning early), it would leak into whichever test runs next — the
+  // reaper's, measured — so every case ends with both queues drained and the fakes restored.
+  const baseGet = sysRedis.get.getMockImplementation()!;
+  const baseSet = sysRedis.set.getMockImplementation()!;
+  afterEach(() => {
+    sysRedis.get.mockReset();
+    sysRedis.get.mockImplementation(baseGet);
+    sysRedis.set.mockReset();
+    sysRedis.set.mockImplementation(baseSet);
+  });
+
   beforeEach(async () => {
     await startDevTunnel({ userId: OWNER, blockId: 'kept-app', sshPublicKey: PUBKEY });
     ageSession(1000);
