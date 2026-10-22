@@ -4031,6 +4031,8 @@ export interface CsamReport {
   details: JsonValue;
   images: JsonValue;
   type: CsamReportType;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
 }
 
 export interface CsamReportAudit {

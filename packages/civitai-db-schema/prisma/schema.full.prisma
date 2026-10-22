@@ -6535,6 +6535,9 @@ model CsamReport {
   details          Json           @default("{}")
   images           Json           @default("[]")
   type             CsamReportType @default(Image)
+  /// The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+  sendClaimId      String?        @db.Uuid
+  sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
 }
 

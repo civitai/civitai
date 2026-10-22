@@ -949,6 +949,43 @@ describe('archiveCsamDataForReport (upload failure)', () => {
   });
 });
 
+describe('archiveCsamDataForReport (generated-image report as sent)', () => {
+  const report = {
+    id: 4747,
+    userId: 606060,
+    reportedById: 5,
+    reportId: 82,
+    type: 'GeneratedImage',
+    // As the send leaves it: the filed jobs, and NCMEC's upload results beside them.
+    details: {
+      generatedImages: [
+        { jobId: 'job-1', blobs: [{ url: 'https://example.invalid/filed-1.jpeg' }], prompt: 'p' },
+      ],
+      generatedImageUploads: [
+        { url: 'https://example.invalid/filed-1.jpeg', fileId: 'file-1', hash: 'h' },
+      ],
+    },
+    images: [],
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+  });
+
+  it('archives the filed generated images', async () => {
+    await archiveCsamDataForReport(report as never);
+
+    expect(probes.flatMap((p) => p.entryNames)).toContain('filed-1.jpeg');
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
+    );
+  });
+});
+
 describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
   const report = {
     id: 4646,
