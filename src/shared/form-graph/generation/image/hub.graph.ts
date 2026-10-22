@@ -93,7 +93,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['Flux3'], flux3],
       [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
       [['Flux3Klein', 'Flux3Klein_base'], flux3Klein],
-      [['MossImage'], mossImage],
+      [['Moss'], mossImage],
       [['Boogu'], boogu],
       [['Krea2'], krea2],
       [['Krea3'], krea3],

@@ -184,7 +184,7 @@ function createStep(
     case 'Flux3Klein_base':
       return createFlux3KleinInput(data, handlerCtx);
 
-    case 'MossImage':
+    case 'Moss':
       return createMossImageInput(data, handlerCtx);
 
     case 'Boogu':

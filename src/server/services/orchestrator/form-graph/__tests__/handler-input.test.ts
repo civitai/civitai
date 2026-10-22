@@ -521,7 +521,7 @@ describe('moss-image.handler', () => {
   it('SFT pins its whole imageGen payload', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage',
+      ecosystem: 'Moss',
       prompt: 'a cat',
       negativePrompt: 'blurry',
       aspectRatio: '16:9',
@@ -551,7 +551,7 @@ describe('moss-image.handler', () => {
   it('a creator checkpoint reaches the orchestrator as diffusionModel', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage',
+      ecosystem: 'Moss',
       prompt: 'a cat',
       model: { id: 424242, baseModel: 'MOSS Image', model: { type: 'Checkpoint' } },
     });
@@ -566,7 +566,7 @@ describe('moss-image.handler', () => {
   it.each([8, 4])('SFT with a turbo LoRA reaches the orchestrator at %i steps', async (n) => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage',
+      ecosystem: 'Moss',
       prompt: 'a cat',
       steps: n,
       cfgScale: 1,
@@ -578,7 +578,7 @@ describe('moss-image.handler', () => {
   it('the Base version selects the base model and keeps the graph defaults', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage',
+      ecosystem: 'Moss',
       model: { id: 3409868, baseModel: 'MOSS Image' },
       prompt: 'a cat',
     });

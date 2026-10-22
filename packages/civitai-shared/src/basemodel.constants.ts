@@ -229,7 +229,7 @@ export const ECO = {
   Flux3: 92,
   Flux3Klein: 94,
   Flux3Klein_base: 95,
-  MossImage: 96,
+  Moss: 96,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -935,8 +935,8 @@ export const ecosystems: EcosystemRecord[] = [
 
   // OpenMOSS
   {
-    id: ECO.MossImage,
-    key: 'MossImage',
+    id: ECO.Moss,
+    key: 'Moss',
     displayName: 'MOSS Image',
     familyId: 29,
     sortOrder: 272,
@@ -1063,7 +1063,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux3Klein',
   'Flux3Klein_base',
   // ComfyMossImage{Sft,Base}CreateImageInput
-  'MossImage',
+  'Moss',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1299,7 +1299,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // MOSS Image - open weights, checkpoint and LoRA
-  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Moss, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1818,7 +1818,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
-    ecosystemId: ECO.MossImage,
+    ecosystemId: ECO.Moss,
     defaults: {
       model: { id: 3409867 },
       turbo: { settings: TURBO_PRESETS.mossDmd },
@@ -3101,7 +3101,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     name: 'MOSS Image',
     description: "OpenMOSS's 5B text-to-image model, the Base and SFT releases",
     type: 'image',
-    ecosystemId: ECO.MossImage,
+    ecosystemId: ECO.Moss,
     licenseId: 13,
   },
   {

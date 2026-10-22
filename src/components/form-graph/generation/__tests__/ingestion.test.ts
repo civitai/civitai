@@ -345,7 +345,7 @@ describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
     const store = makeStore();
     applyGenerationData(store, {
       runType: 'remix',
-      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p', steps: 9, cfgScale: 1 },
+      params: { workflow: 'txt2img', ecosystem: 'Moss', prompt: 'p', steps: 9, cfgScale: 1 },
       resources: [
         res({ id: 3409867, model: { id: 2960000, type: 'Checkpoint' }, baseModel: 'MOSS Image' }),
         res({ id: 3411385, model: { id: 3006599, type: 'LORA' }, baseModel: 'MOSS Image' }),
@@ -368,7 +368,7 @@ describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
     };
     applyGenerationData(store, {
       runType: 'remix',
-      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p' },
+      params: { workflow: 'txt2img', ecosystem: 'Moss', prompt: 'p' },
       resources: [
         res({ id: 3409867, model: { id: 2960000, type: 'Checkpoint' }, baseModel: 'MOSS Image' }),
         res({
@@ -391,7 +391,7 @@ describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
     const store = makeStore();
     applyGenerationData(store, {
       runType: 'remix',
-      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p' },
+      params: { workflow: 'txt2img', ecosystem: 'Moss', prompt: 'p' },
       resources: [
         res({
           id: 3409868,

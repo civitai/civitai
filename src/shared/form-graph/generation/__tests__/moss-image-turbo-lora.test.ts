@@ -61,7 +61,7 @@ function mossStore(
   const store = generationHub.createStore({ ext: EXT, storage });
   store.set({
     workflow: 'txt2img',
-    ecosystem: 'MossImage',
+    ecosystem: 'Moss',
     model: mossCheckpoint(checkpoint, modelExtra),
     prompt: 'x',
   });
@@ -263,7 +263,7 @@ describe('MOSS Image Turbo toggle', () => {
     const parsed = generationHub.parse(
       {
         workflow: 'txt2img',
-        ecosystem: 'MossImage',
+        ecosystem: 'Moss',
         model: mossCheckpoint('sft'),
         prompt: 'x',
         resources: [otherLora, turboLoraValue(SFT_TURBO), communityTurbo],
