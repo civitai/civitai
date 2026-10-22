@@ -1,18 +1,18 @@
 import { createElement } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 import { box, PHONE_VIEWPORT, renderAtViewport } from '../../../../../test/geometry-setup';
 import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
 import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
 import type * as UseBuzz from '~/components/Buzz/useBuzz';
+import type * as TrackUtils from '~/components/TrackView/track.utils';
 import type * as AppProvider from '~/providers/AppProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 
 /**
  * The account menu's header row on a 390px phone: avatar and name, the Pro chip, and the Buzz amount
- * with Buy Buzz, all on one line. Real cascade and Tailwind; only the session, the balance and the
- * avatar's image are stubbed.
+ * with Buy Buzz, all on one line. Real cascade and Tailwind; the session, the balance and the avatar
+ * are stubbed, so this pins the row's own layout, not the real avatar's sizing.
  */
 const mocks = vi.hoisted(() => ({ username: 'tester' }));
 
@@ -40,7 +40,8 @@ vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzUtils>()),
   useBuyBuzz: () => vi.fn(),
 }));
-vi.mock('~/components/TrackView/track.utils', () => ({
+vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackUtils>()),
   trackAction: () => ({ catch: () => undefined }),
   useTrackEvent: () => ({ trackAction: () => ({ catch: () => undefined }) }),
 }));
@@ -104,15 +105,14 @@ describe('mobile menu header row', () => {
   ])('keeps avatar, Pro chip, Buzz and Buy Buzz on one line for %s', async (_label, username) => {
     mocks.username = username;
     const { row, profile, buzz, chip } = await renderHeader();
-    await page.screenshot({
-      path: `__screenshots__/header-${username.length}.png`,
-    });
 
     const parts = [profile, chip, buzz].map(box);
     const centres = parts.map((b) => b.top + b.height / 2);
     // One line: every part is centred on the same horizontal axis, and the row is one row tall.
     expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(1);
     expect(box(row).height).toBeLessThanOrEqual(56);
+    // The name keeps room: the avatar and part of the name, not a sliver.
+    expect(parts[0].width).toBeGreaterThanOrEqual(100);
     // The chip keeps its full width and its label is not cut off.
     expect(chip.scrollWidth).toBeLessThanOrEqual(chip.clientWidth);
     // Left to right: name, Pro chip, Buzz, with nothing past the phone's edge.
@@ -151,9 +151,6 @@ describe('mobile menu sheet', () => {
       </ContainerProvider>,
       PHONE_VIEWPORT
     );
-    await page.screenshot({
-      path: '__screenshots__/sheet.png',
-    });
     const sheet = document.querySelector('.mantine-Popover-dropdown')!;
     const header = box(document.querySelector('header')!);
     expect(header.height).toBeGreaterThan(0);

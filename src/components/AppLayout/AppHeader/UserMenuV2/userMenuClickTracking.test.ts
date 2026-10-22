@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackActionInput } from '~/server/schema/track.schema';
 import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
 import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
+import type * as AppProvider from '~/providers/AppProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as IsMobile from '~/hooks/useIsMobile';
 
@@ -19,6 +20,7 @@ import type * as IsMobile from '~/hooks/useIsMobile';
 const mocks = vi.hoisted(() => ({
   actions: [] as TrackActionInput[],
   user: { id: 1, username: 'tester' } as { id: number; username: string } | null,
+  flags: { buzz: true } as Record<string, boolean>,
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -50,6 +52,10 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobile>()),
   useIsMobile: () => true,
 }));
+vi.mock('~/providers/AppProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppProvider>()),
+  useAppContext: () => ({ seed: 1 }),
+}));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
 vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzUtils>()),
@@ -57,7 +63,7 @@ vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  useFeatureFlags: () => ({ buzz: true }),
+  useFeatureFlags: () => mocks.flags,
 }));
 vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof HeaderHooks>()),
@@ -125,6 +131,7 @@ beforeEach(() => {
   window.addEventListener('click', noNavigate);
   mocks.actions = [];
   mocks.user = { id: 1, username: 'tester' };
+  mocks.flags = { buzz: true };
   handleClose.mockClear();
   buyBuzz.mockClear();
   civitaiLink.onClick.mockClear();
@@ -301,6 +308,16 @@ describe('UserMenu_Click', () => {
       preventDefault.mockRestore();
     }
   );
+
+  // The Pro chip replaced a full row that closed the menu through `MenuItemLink`.
+  it('closes the menu from the Pro chip, and records nothing', async () => {
+    mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
+    await mount(createElement(MobileHeaderRows));
+    await click(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]'));
+
+    expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(mocks.actions).toEqual([]);
+  });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
   it('closes the legacy Buzz row without onOpen, and records nothing', async () => {
