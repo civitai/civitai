@@ -8,9 +8,12 @@
   let {
     row,
     detail,
+    otherLabel = 'other flagged model',
   }: {
     row: { userId: number; username: string | null; otherFlaggedModels: number };
     detail: Promise<ModelFlagDetail>;
+    /** What the count of `otherFlaggedModels` counts, when it is not flags. */
+    otherLabel?: string;
   } = $props();
 </script>
 
@@ -34,7 +37,7 @@
       {@render loaded(
         (d) => `${d.uploaderPublished} published, ${d.uploaderModUnpublished} unpublished by mods`
       )}
-      · {plural(row.otherFlaggedModels, 'other flagged model')}
+      · {plural(row.otherFlaggedModels, otherLabel)}
     </FactRow>
     <FactRow label="Flags">{@render loaded((d) => flagsText(d.flagsReverted, d.strikes))}</FactRow>
     <FactRow label="Notes">

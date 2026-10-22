@@ -277,7 +277,7 @@ const latestVersionOrder = sql`(mv.status::text = 'Published') DESC, mv."created
 
 /** Latest version's base model and trigger words, plus the model's tags, joined to a CTE named `pg`
  *  with "modelId". Bounded by the page, like the cover images. */
-const modelFactsJoin = sql`
+export const modelFactsJoin = sql`
 LEFT JOIN LATERAL (
   SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
     String(APPEAL_TRAINED_WORDS_CAP)
