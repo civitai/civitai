@@ -176,6 +176,54 @@ describe('start_preview on the runner', () => {
     }
   );
 
+  it('a dead grant says to send the message again; an unconfigured runner says there is no preview', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    tunnels.startError = new DevTunnelError(
+      'This reply can no longer act for you. Send your message again.',
+      401,
+      'invalid_grant'
+    );
+    expect(String((await call(tools.tools, 'start_preview')).error)).toBe(
+      'This reply can no longer act for you. Send your message again.'
+    );
+    tunnels.startError = new DevTunnelError('x', 503, 'not_configured');
+    expect(String((await call(tools.tools, 'start_preview')).error)).toMatch(
+      /^The live preview is not set up here/
+    );
+  });
+
+  it('logs no tunnel id when keeping alive or closing fails', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const logged: unknown[] = [];
+    const log = {
+      info: (o: object, m?: string) => void logged.push(o, m),
+      warn: (o: object, m?: string) => void logged.push(o, m),
+      error: (o: object, m?: string) => void logged.push(o, m),
+    };
+    const tools = await new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      devTunnels: () => tunnels,
+      log,
+      previewKeepaliveMs: KEEPALIVE_MS,
+    }).open({
+      userId: 'u-1',
+      runId: 'run-1',
+      conversationId: 'conv-1',
+      page: { app: 'my-app' },
+      signal: new AbortController().signal,
+    });
+    opened.push(tools);
+    await call(tools.tools, 'start_preview');
+    tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    // Control: the failure was logged.
+    expect(logged).toContain('keeping a preview alive failed');
+    expect(JSON.stringify(logged)).not.toContain(SESSION);
+  });
+
   it('closes the tunnel civitai opened when the sandbox cannot reach it', async () => {
     fake.add('my-app');
     fake.tools.set('tunnel_connect', () => {

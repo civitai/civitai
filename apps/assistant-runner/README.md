@@ -131,7 +131,9 @@ See [Not built yet](#not-built-yet).
        browser.
     2. The result is `{ shown, blockId, host, next_step }`, journaled like every call as
        `tool-reported`. The page reads `blockId` and `host` from it and (re)fetches
-       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
+       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. A
+       report is not replayed after a reload or on another device, so in runner mode the page also
+       asks that route once the open app runs, and shows a tunnel that is still up. The
        tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
     3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
        window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
@@ -146,7 +148,8 @@ See [Not built yet](#not-built-yet).
     the assistant to start the dev server first and to use `sandbox__preview_check` (with
     `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
     model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
-    keeps only the text (`mcpResultToText`).
+    keeps only the text (`mcpResultToText`), so the instructions tell the assistant to go by the
+    text when no image comes back and never to describe a picture it did not receive.
   - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
     run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
     page's word is not taken). Their progress is journaled as `subagent-progress`.

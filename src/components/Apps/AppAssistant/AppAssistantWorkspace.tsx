@@ -45,6 +45,7 @@ import {
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
+import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import {
   createPreviewTools,
@@ -587,6 +588,31 @@ export function AppAssistantWorkspace({
   useEffect(() => {
     if (session && (active?.state === 'suspended' || revoked)) stopPreview();
   }, [session, active?.state, revoked, stopPreview]);
+  // On the runner the page learns of a preview only from a live report, which a reload or another
+  // device never replays: once the open app runs, the page asks whether the user's tunnel for it is
+  // still up (civitai finds it by itself) and shows it if so. Asks nothing in the browser mode, where
+  // the page's own start_preview is the only way a preview starts.
+  const runningApp = active?.state === 'running' ? active.app : null;
+  useEffect(() => {
+    if (!remoteRunner || !canPreview || !runningApp || !isAppBlockId(runningApp)) return;
+    if (live.current.session) return;
+    let cancelled = false;
+    fetchPreviewFrame(runningApp)
+      .then((frame) => {
+        if (cancelled || live.current.session || live.current.active?.app !== runningApp) return;
+        showPreview({
+          blockId: runningApp,
+          host: ('preparing' in frame ? null : frame.host) ?? '',
+          sessionId: null,
+          view: ++runnerViews.current,
+        });
+      })
+      // No tunnel up (409), or none to ask about: nothing to show.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteRunner, canPreview, runningApp, showPreview]);
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);

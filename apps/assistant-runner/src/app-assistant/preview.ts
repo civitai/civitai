@@ -214,7 +214,7 @@ export class RunnerPreview {
       blockId,
       host: started.host,
       next_step:
-        'The user sees the preview now. To see what they see, call sandbox__preview_check (screenshot: true when how it looks matters).',
+        'The user sees the preview now. To see what they see, call sandbox__preview_check.',
     };
   }
 
@@ -301,6 +301,9 @@ function refusalMessage(error: unknown): string {
     return 'The preview could not start. Tell the user it failed and try again later.';
   const known = previewRefusal(error.code);
   if (known) return known;
+  if (error.code === 'invalid_grant') return error.message;
+  if (error.code === 'not_configured')
+    return 'The live preview is not set up here. Tell the user, and keep building without it.';
   if (error.code === 'refused')
     return `The preview was refused for this account: ${error.message} Tell the user, and keep building without it.`;
   if (error.code === 'unavailable')
