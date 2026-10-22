@@ -199,6 +199,8 @@ describe('cleanupTextScanRows on csam holds', () => {
     await hold(14, 'Dismissed', PAST, null, superseded(4));
     await hold(15, 'Dismissed', RECENT, null, superseded(3));
     await hold(16, 'Dismissed', PAST, null, superseded(99));
+    // Not an id: kept, and the sweep still runs.
+    await hold(17, 'Dismissed', PAST, null, superseded(3.5));
 
     await sweep();
     const rows = (await held()).filter((r) => r.entityId > 10);
@@ -209,6 +211,7 @@ describe('cleanupTextScanRows on csam holds', () => {
       { entityId: 14, text: 'held text', meta: superseded(4) },
       { entityId: 15, text: 'held text', meta: superseded(3) },
       { entityId: 16, text: 'held text', meta: superseded(99) },
+      { entityId: 17, text: 'held text', meta: superseded(3.5) },
     ]);
   });
 });

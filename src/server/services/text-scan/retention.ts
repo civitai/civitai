@@ -102,7 +102,8 @@ export async function cleanupTextScanRows({
       AND h."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')
       AND (h."meta"->>'decision' IS DISTINCT FROM 'superseded' OR EXISTS (
         SELECT 1 FROM "TextScanHold" k
-        WHERE k."id" = CASE WHEN jsonb_typeof(h."meta"->'supersededBy') = 'number'
+        -- Only a plain integer is cast: one bad value must not abort the whole sweep.
+        WHERE k."id" = CASE WHEN h."meta"->>'supersededBy' ~ '^[0-9]{1,9}$'
             THEN (h."meta"->>'supersededBy')::int END
           AND k."status" = 'Dismissed'
           AND k."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')))
