@@ -569,7 +569,10 @@ export function MenuItemLink({
 }
 
 /** `onOpen` runs when the row itself is opened, not when Buy Buzz is pressed. */
-export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
+export function BuzzMenuItem({
+  onOpen,
+  compact = false,
+}: { onOpen?: () => void; compact?: boolean } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
@@ -579,6 +582,39 @@ export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
+
+  const buyBuzz = (
+    <Button
+      component="div"
+      variant={compact ? 'light' : 'white'}
+      radius="xl"
+      px={12}
+      size="compact-xs"
+      onClick={(e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onBuyBuzz({});
+      }}
+    >
+      Buy Buzz
+    </Button>
+  );
+
+  // One blended total beside the Buy Buzz button, so the row fits a phone line next to the name.
+  if (compact)
+    return (
+      <NextLink
+        href="/user/buzz-dashboard"
+        className="flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-4"
+        onClick={() => {
+          onOpen?.();
+          handleClose();
+        }}
+      >
+        <UserBuzz animated={features.buzzSpendPop} iconSize={16} iconGap={2} textSize="sm" />
+        {buyBuzz}
+      </NextLink>
+    );
 
   return (
     <MenuItemLink
@@ -607,20 +643,7 @@ export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
           accountTypes={[mainBuzzColor]}
         />
       </div>
-      <Button
-        component="div"
-        variant="white"
-        radius="xl"
-        px={12}
-        size="compact-xs"
-        onClick={(e: React.MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onBuyBuzz({});
-        }}
-      >
-        Buy Buzz
-      </Button>
+      {buyBuzz}
     </MenuItemLink>
   );
 }
