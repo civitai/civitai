@@ -156,7 +156,9 @@ describe('revokeUnpaidMembershipGift', () => {
     expect(mockStripe.paymentIntents.cancel).toHaveBeenCalledWith('pi_1', {
       cancellation_reason: 'abandoned',
     });
-    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual', {
+      cancellation_details: { comment: 'membership-gift-revoked' },
+    });
     const statusWrite = revokedStatusWrite();
     expect(statusWrite?.[0].where).toEqual({ id: 'gift_1' });
     const cancelOrder = mockStripe.paymentIntents.cancel.mock.invocationCallOrder[0];
@@ -351,7 +353,9 @@ describe('revokeUnpaidMembershipGift: the holder is paying, or Stripe cannot be 
     const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
 
     expect(result.outcome).toBe('revoked');
-    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual', {
+      cancellation_details: { comment: 'membership-gift-revoked' },
+    });
   });
 
   it('throws, changing nothing, when the subscription cannot be read', async () => {
