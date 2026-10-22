@@ -2,9 +2,16 @@ import * as z from 'zod';
 import {
   POST_BATCH_CHUNK_MAX_IMAGES,
   POST_BATCH_CHUNK_POSTS,
+  POST_BATCH_MAX_IMAGES,
   POST_BATCH_MAX_POSTS,
 } from '@civitai/shared/post-scheduling';
-import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  MAX_MANUAL_RESOURCES_PER_IMAGE,
+  POST_IMAGE_LIMIT,
+  POST_TAG_LIMIT,
+} from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -401,15 +408,35 @@ export const validateBatchScheduleSchema = z.object({
 // Only an upload key, like `post.addImage`: a batch is the first server path that writes
 // `Image.url` from the body, and an arbitrary URL would be served as-is.
 export const scheduleBatchImageSchema = addPostImageSchema
-  .omit({ postId: true, index: true, modelVersionId: true })
+  .omit({ postId: true, index: true, modelVersionId: true, externalDetailsUrl: true })
   .extend({ url: z.string().uuid() });
+
+/** Uploads per `persistBatchMedia` call; each one is a `createImage` with its scan enqueued. */
+export const POST_BATCH_PERSIST_MAX_IMAGES = 20;
+
+export type PersistBatchMediaInput = z.infer<typeof persistBatchMediaSchema>;
+export const persistBatchMediaSchema = z.object({
+  images: z.array(scheduleBatchImageSchema).min(1).max(POST_BATCH_PERSIST_MAX_IMAGES),
+});
+
+const batchMediaIdsSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(POST_BATCH_MAX_IMAGES),
+});
+export type BatchMediaStatusInput = z.infer<typeof batchMediaStatusSchema>;
+export const batchMediaStatusSchema = batchMediaIdsSchema;
+export type RemoveBatchMediaInput = z.infer<typeof removeBatchMediaSchema>;
+export const removeBatchMediaSchema = batchMediaIdsSchema;
 
 export const scheduleBatchPostSchema = z.object({
   /** Stable for one post across every attempt to create it, so a retry is recognised. */
   clientKey: z.string().uuid().optional(),
   title: z.string().trim().max(255).nullish(),
   publishedAt: z.coerce.date(),
-  images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+  /** Rows `persistBatchMedia` created for this creator, still without a post. */
+  images: z
+    .array(z.object({ imageId: z.number().int().positive() }))
+    .min(1)
+    .max(POST_IMAGE_LIMIT),
 });
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
@@ -421,16 +448,20 @@ export const scheduleBatchSchema = z.object({
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
   tools: z.array(z.number().int().positive()).default([]),
   techniques: z.array(z.number().int().positive()).default([]),
+  /** Model versions listed on every image of every post, as the post editor's manual resources. */
+  resourceIds: z.array(z.number().int().positive()).max(MAX_MANUAL_RESOURCES_PER_IMAGE).default([]),
   posts: z
     .array(scheduleBatchPostSchema)
     .min(1)
     .max(POST_BATCH_CHUNK_POSTS)
     .superRefine((posts, ctx) => {
-      const imageCount = posts.reduce((count, post) => count + post.images.length, 0);
-      if (imageCount > POST_BATCH_CHUNK_MAX_IMAGES)
+      const imageIds = posts.flatMap((post) => post.images.map((image) => image.imageId));
+      if (imageIds.length > POST_BATCH_CHUNK_MAX_IMAGES)
         ctx.addIssue({
           code: 'custom',
-          message: `One call can attach up to ${POST_BATCH_CHUNK_MAX_IMAGES} images; this one has ${imageCount}.`,
+          message: `One call can attach up to ${POST_BATCH_CHUNK_MAX_IMAGES} images; this one has ${imageIds.length}.`,
         });
+      if (new Set(imageIds).size !== imageIds.length)
+        ctx.addIssue({ code: 'custom', message: 'An image can only be in one post.' });
     }),
 });

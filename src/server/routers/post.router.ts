@@ -44,6 +44,9 @@ import {
   removeResourceFromPostImageInput,
   reorderPostImagesSchema,
   scheduleBatchSchema,
+  persistBatchMediaSchema,
+  batchMediaStatusSchema,
+  removeBatchMediaSchema,
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
   validateBatchScheduleSchema,
@@ -57,7 +60,13 @@ import {
   shiftPlannerPosts,
   unschedulePlannerPosts,
 } from './../services/post-planner.service';
-import { scheduleBatch, validateBatchSchedule } from './../services/post-batch.service';
+import {
+  getBatchMediaStatus,
+  persistBatchMedia,
+  removeBatchMedia,
+  scheduleBatch,
+  validateBatchSchedule,
+} from './../services/post-batch.service';
 import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -267,6 +276,25 @@ export const postRouter = router({
     .use(isFlagProtected('batchPostScheduling'))
     .use(rateLimit({ limit: 30, period: CacheTTL.hour }))
     .mutation(({ ctx, input }) => scheduleBatch({ input, ctx })),
+  // Per call, not per image: the composer may persist each upload as it completes.
+  persistBatchMedia: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(persistBatchMediaSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 600, period: CacheTTL.hour }))
+    .mutation(({ ctx, input }) => persistBatchMedia({ input, user: ctx.user })),
+  // The composer polls this every few seconds while uploads are still being scanned.
+  getBatchMediaStatus: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(batchMediaStatusSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 1200, period: CacheTTL.hour }))
+    .query(({ ctx, input }) => getBatchMediaStatus({ input, user: ctx.user })),
+  removeBatchMedia: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaDelete })
+    .input(removeBatchMediaSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .mutation(({ ctx, input }) => removeBatchMedia({ input, user: ctx.user })),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {
