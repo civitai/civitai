@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { ReviewCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
@@ -322,9 +323,31 @@ async function readRevision(tx: LabelStoreTx, revisionId: number) {
   return row ?? null;
 }
 
+async function writeVerdictLabel(
+  tx: LabelStoreTx,
+  listingId: number,
+  verdict: Omit<ShopVerdict, 'contentAt' | 'inferred'>,
+  revisionId?: number | null
+) {
+  const [state] = await readShopListingStates(tx, [listingId]);
+  if (!state) return false;
+  if (revisionId != null) state.revision = await readRevision(tx, revisionId);
+  return writeShopLabel(tx, state, { ...verdict, contentAt: 'verdict' });
+}
+
+const logVerdictNotRecorded = (listingId: number, action: ShopVerdictAction) => (error: unknown) =>
+  logToAxiom({
+    type: 'error',
+    name: 'creator-shop',
+    message: 'review verdict not recorded as a label',
+    shopItemId: listingId,
+    action,
+    error: error instanceof Error ? error.message : String(error),
+  }).catch(() => null);
+
 /**
- * Records a moderator's verdict on a listing as a label, in a transaction after the verdict's write, so
- * the label sees what the verdict left. Must be the transaction's last step (see
+ * Records a moderator's verdict on a listing as a label, inside the verdict's transaction and after its
+ * write, so the label sees what the verdict left. Must be the transaction's last step (see
  * `recordUnderSavepoint`); a failed label never fails the verdict.
  */
 export function recordShopVerdict(
@@ -335,22 +358,41 @@ export function recordShopVerdict(
 ) {
   return recordUnderSavepoint(
     tx,
-    async () => {
-      const [state] = await readShopListingStates(tx, [listingId]);
-      if (!state) return false;
-      if (revisionId != null) state.revision = await readRevision(tx, revisionId);
-      return writeShopLabel(tx, state, { ...verdict, contentAt: 'verdict' });
-    },
-    (error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'creator-shop',
-        message: 'review verdict not recorded as a label',
-        shopItemId: listingId,
-        action: verdict.action,
-        error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null)
+    () => writeVerdictLabel(tx, listingId, verdict, revisionId),
+    logVerdictNotRecorded(listingId, verdict.action)
   );
+}
+
+/**
+ * A takedown's label, in its own transaction once the takedown is done: a label must not hold up or
+ * fail the money path. Never throws; any failure logs `shop-label-record-failed` for alerting.
+ */
+export async function recordShopTakedownLabel(
+  listingId: number,
+  verdict: Omit<ShopVerdict, 'contentAt' | 'inferred' | 'action'>
+) {
+  const takedown = { ...verdict, action: 'takedown' as const };
+  let failed = false;
+  await dbWrite
+    .$transaction(
+      (tx) =>
+        recordUnderSavepoint(
+          tx,
+          () => writeVerdictLabel(tx, listingId, takedown),
+          (error) => {
+            failed = true;
+            logVerdictNotRecorded(listingId, 'takedown')(error);
+          }
+        ),
+      SHOP_VERDICT_TRANSACTION
+    )
+    .catch(() => {
+      failed = true;
+    });
+  if (failed)
+    await logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: listingId }).catch(
+      () => null
+    );
 }
 
 /** Takes a deleted listing's subjects out of training: judgements stay, content goes. */

@@ -84,7 +84,7 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShopLabels>()),
-  recordShopVerdict: vi.fn(async () => true),
+  recordShopTakedownLabel: vi.fn(async () => undefined),
 }));
 // Real retry semantics, no wall-clock wait — the service's 1s backoff would make
 // the failure cases take seconds each.
@@ -354,36 +354,36 @@ describe('takedownCosmeticShopItem', () => {
     });
   });
 
-  it('records the takedown label in its own transaction, after the archive is written', async () => {
-    const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
-    vi.mocked(recordShopVerdict).mockClear();
+  it('records the takedown label once the archive is written and the buyers refunded', async () => {
+    const { recordShopTakedownLabel } = await import(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(recordShopTakedownLabel).mockClear();
     const order: string[] = [];
     const update = mocks.shopItemUpdate.getMockImplementation();
     mocks.shopItemUpdate.mockImplementationOnce(async (...args: unknown[]) => {
       order.push('archive');
       return update?.(...args);
     });
-    vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
-      order.push('label');
-      return true;
+    const refund = mocks.refundMultiAccountTransaction.getMockImplementation();
+    mocks.refundMultiAccountTransaction.mockImplementation(async (...args: unknown[]) => {
+      order.push('refund');
+      return refund?.(...args);
     });
-    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
-      order.push('begin');
-      const result = await fn(dbMock.dbWrite);
-      order.push('commit');
-      return result;
+    vi.mocked(recordShopTakedownLabel).mockImplementationOnce(async () => {
+      order.push('label');
     });
 
     await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
 
-    expect(order).toEqual(['archive', 'begin', 'label', 'commit']);
+    expect(order[0]).toBe('archive');
+    expect(order).toContain('refund');
+    expect(order.at(-1)).toBe('label');
     const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
-    expect(recordShopVerdict).toHaveBeenCalledTimes(1);
-    expect(recordShopVerdict).toHaveBeenCalledWith(
-      dbMock.dbWrite,
+    expect(recordShopTakedownLabel).toHaveBeenCalledTimes(1);
+    expect(recordShopTakedownLabel).toHaveBeenCalledWith(
       42,
       expect.objectContaining({
-        action: 'takedown',
         moderatorId: 999,
         at: archivedAt.toISOString(),
         note: 'IP infringement',
@@ -393,6 +393,13 @@ describe('takedownCosmeticShopItem', () => {
   });
 
   it('finishes the takedown when its label cannot be recorded', async () => {
+    const labels = await import('~/server/services/creator-shop-labels.service');
+    const actual = await vi.importActual<typeof CreatorShopLabels>(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(labels.recordShopTakedownLabel).mockImplementationOnce(
+      actual.recordShopTakedownLabel
+    );
     dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('label transaction timed out'));
 
     const result = await takedownCosmeticShopItem({
@@ -413,8 +420,10 @@ describe('takedownCosmeticShopItem', () => {
 
   // The backfill labels each takedown history entry by its `at`; a retry's label must match its own entry.
   it('labels a retried takedown with the history entry the retry wrote', async () => {
-    const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
-    vi.mocked(recordShopVerdict).mockClear();
+    const { recordShopTakedownLabel } = await import(
+      '~/server/services/creator-shop-labels.service'
+    );
+    vi.mocked(recordShopTakedownLabel).mockClear();
     mocks.shopItemFindUnique.mockResolvedValue({
       ...shopItemRow,
       status: 'Archived',
@@ -427,10 +436,9 @@ describe('takedownCosmeticShopItem', () => {
       meta: CosmeticShopItemMeta;
     };
     const entry = meta.history!.at(-1)!;
-    expect(recordShopVerdict).toHaveBeenCalledWith(
-      dbMock.dbWrite,
+    expect(recordShopTakedownLabel).toHaveBeenCalledWith(
       42,
-      expect.objectContaining({ action: 'takedown', at: entry.at, note: entry.note })
+      expect.objectContaining({ at: entry.at, note: entry.note })
     );
     expect(entry.note).toBe('Retried: IP infringement');
   });

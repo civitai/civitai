@@ -9,6 +9,7 @@ import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   excludeDeletedShopListing,
+  recordShopTakedownLabel,
   recordShopVerdict,
   SHOP_VERDICT_TRANSACTION,
 } from '~/server/services/creator-shop-labels.service';
@@ -2464,6 +2465,7 @@ export const takedownCosmeticShopItem = async ({
   const now = new Date();
 
   let retried = false;
+  let note = reason;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
     // Read again from the primary: the refund this waited on appends its own history entry, and
@@ -2475,7 +2477,7 @@ export const takedownCosmeticShopItem = async ({
     const currentMeta = (current?.meta ?? meta) as CosmeticShopItemMeta;
     // A retry finishes the first takedown: its record and archive date stand.
     retried = !!currentMeta.takedown;
-    const note = retried ? `Retried: ${reason}` : reason;
+    note = retried ? `Retried: ${reason}` : reason;
     const updated = await dbWrite.cosmeticShopItem.update({
       where: { id },
       data: {
@@ -2498,26 +2500,6 @@ export const takedownCosmeticShopItem = async ({
       },
       select: creatorShopItemSelect,
     });
-    // Its own transaction, after the archive commits: labelling must never delay stopping sales or
-    // fail the takedown.
-    await dbWrite
-      .$transaction(
-        (tx) =>
-          recordShopVerdict(tx, id, {
-            action: 'takedown',
-            moderatorId,
-            at: now.toISOString(),
-            note,
-            statusBefore: item.status,
-            statusAfter: CosmeticShopItemStatus.Archived,
-          }),
-        SHOP_VERDICT_TRANSACTION
-      )
-      .catch(() =>
-        logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: id }).catch(
-          () => null
-        )
-      );
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
@@ -3122,6 +3104,14 @@ export const takedownCosmeticShopItem = async ({
     boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
+  });
+
+  await recordShopTakedownLabel(id, {
+    moderatorId,
+    at: now.toISOString(),
+    note,
+    statusBefore: item.status,
+    statusAfter: CosmeticShopItemStatus.Archived,
   });
 
   return {

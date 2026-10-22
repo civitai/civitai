@@ -5,6 +5,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
 import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 
@@ -53,6 +54,7 @@ async function inTransaction<T>(fn: (client: typeof tx) => Promise<T>) {
 
 const {
   recordShopVerdict,
+  recordShopTakedownLabel,
   excludeDeletedShopListing,
   shopLabelSubject,
   SHOP_REVIEW_QUESTION,
@@ -334,6 +336,60 @@ describe('recordShopVerdict', () => {
     } finally {
       await db.pg.exec(readFileSync(ATTACH_BYTES, 'utf8'));
     }
+  });
+});
+
+describe('recordShopTakedownLabel', () => {
+  const takedown = {
+    moderatorId: MOD,
+    at: at(5),
+    note: 'not theirs',
+    statusBefore: 'Published' as const,
+    statusAfter: 'Archived' as const,
+  };
+  const alerts = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'shop-label-record-failed'
+    );
+
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+  it('records the takedown in its own transaction', async () => {
+    await seed({ status: 'Archived' });
+
+    await recordShopTakedownLabel(LISTING, takedown);
+
+    expect(await labels()).toEqual([
+      expect.objectContaining({
+        question: SHOP_TAKEDOWN_QUESTION,
+        sourceRef: `CreatorShopTakedown:${LISTING}:${at(5)}`,
+      }),
+    ]);
+    expect(alerts()).toEqual([]);
+  });
+
+  it('alerts, and does not throw, when the store refuses the label', async () => {
+    await seed({ status: 'Archived' });
+    await db.pg.exec(
+      `ALTER FUNCTION label_store.record_label(text,text,text,text,text,text,text,text,timestamptz,integer,text,integer,text,text,integer,jsonb,bigint,integer) RENAME TO record_label_away`
+    );
+
+    await expect(recordShopTakedownLabel(LISTING, takedown)).resolves.toBeUndefined();
+
+    expect(await labels()).toEqual([]);
+    expect(alerts()).toEqual([
+      [{ type: 'error', name: 'shop-label-record-failed', itemId: LISTING }],
+    ]);
+  });
+
+  it('alerts, and does not throw, when its transaction cannot run', async () => {
+    dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('pool exhausted'));
+
+    await expect(recordShopTakedownLabel(LISTING, takedown)).resolves.toBeUndefined();
+
+    expect(alerts()).toEqual([
+      [{ type: 'error', name: 'shop-label-record-failed', itemId: LISTING }],
+    ]);
   });
 });
 

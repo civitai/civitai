@@ -61,7 +61,7 @@ vi.mock('~/server/utils/distributed-lock', () => ({
 }));
 vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShopLabels>()),
-  recordShopVerdict: vi.fn(async () => true),
+  recordShopTakedownLabel: vi.fn(async () => undefined),
 }));
 // No wall-clock backoff on a retry.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
