@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { modelRuleFormSchema, parseAliases, ruleMatchesText } from '$lib/model-rules';
+import {
+  aliasBreadth,
+  appendAliases,
+  modelRuleFormSchema,
+  parseAliases,
+  ruleMatchesText,
+} from '$lib/model-rules';
 
 describe('parseAliases', () => {
   it('splits on commas and newlines, trims and dedupes case-insensitively', () => {
@@ -31,5 +37,36 @@ describe('ruleMatchesText', () => {
     expect(ruleMatchesText(rule, 'REQUEST')).toBe(true);
     expect(ruleMatchesText(rule, 'nobody')).toBe(false);
     expect(ruleMatchesText(rule, '  ')).toBe(true);
+  });
+});
+
+describe('aliasBreadth', () => {
+  it.each([
+    ['Doe', 'single-word'],
+    ['Jane', 'single-word'],
+    ['Foo_Bar', null],
+    ['Jane Doe', null],
+    ['J D', 'short'],
+    ['Al B', 'short'],
+    ['Al Bo', null],
+    ['Zoë', 'single-word'],
+    ['  ', null],
+  ])('%j -> %s', (alias, expected) => {
+    expect(aliasBreadth(alias)).toBe(expected);
+  });
+
+  it('judges the form the matcher compares: punctuation separates words', () => {
+    expect(aliasBreadth('Doe.')).toBe('single-word');
+    expect(aliasBreadth('Jane-Doe')).toBeNull();
+  });
+});
+
+describe('appendAliases', () => {
+  it('appends new aliases one per line, skipping ones already there in any case', () => {
+    expect(appendAliases('One\ntwo', ['Two', 'Three', 'three'])).toBe('One\ntwo\nThree');
+  });
+
+  it('works on an empty field', () => {
+    expect(appendAliases('', ['A B'])).toBe('A B');
   });
 });

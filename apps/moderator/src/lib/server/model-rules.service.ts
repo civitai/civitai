@@ -1,6 +1,7 @@
 import { sql, type Insertable, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { MODEL_RULES_HOLD_LABEL } from '@civitai/moderation/model-rules';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
   isSemanticDefinition,
@@ -9,7 +10,7 @@ import {
 } from '$lib/model-rules';
 import { sameRuleState, type ModelRuleVersionView } from '$lib/model-rule-versions';
 import { bustKeyBestEffort } from './cache';
-import { dbWrite } from './db';
+import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { usersByIds } from './users.service';
 
@@ -88,6 +89,23 @@ export async function listModelRules(): Promise<ModelRuleView[]> {
     editedBy: users.get(editedById)?.username ?? null,
     updatedAt: row.updatedAt,
   }));
+}
+
+/**
+ * Model-rule holds dismissed as "not this subject", per matched rule. Reads the hold's rule snapshot,
+ * the same field the review queue's rule filter uses, so a rule's count and its queue link agree.
+ */
+export async function countNotSubjectDismissalsByRule(): Promise<Record<number, number>> {
+  const { rows } = await sql<{ id: number; count: number }>`
+    select (r->>'id')::int as id, count(distinct h.id)::int as count
+    from "TextScanHold" h
+    cross join lateral jsonb_array_elements(case when jsonb_typeof(h.meta->'rules') = 'array' then h.meta->'rules' else '[]'::jsonb end) r
+    where h.label = ${MODEL_RULES_HOLD_LABEL}
+      and h.status = 'Dismissed'
+      and h.meta->>'decision' = 'dismiss_not_subject'
+      and r->>'id' ~ '^[0-9]{1,9}$'
+    group by 1`.execute(dbRead);
+  return Object.fromEntries(rows.map((row) => [row.id, row.count]));
 }
 
 export type WriteResult = { cacheStale: boolean };

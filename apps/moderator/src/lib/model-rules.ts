@@ -44,3 +44,26 @@ export function ruleMatchesText(
     s.toLowerCase().includes(needle)
   );
 }
+
+/** The words of an alias as the literal matcher compares them, approximated: no confusable folding. */
+const aliasWords = (alias: string) =>
+  alias
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+export const BROAD_ALIAS_WARNING = 'May match unrelated models — prefer a full name.';
+
+/** `single-word` and `short` aliases match far beyond their subject; a full name rarely does. */
+export function aliasBreadth(alias: string): 'single-word' | 'short' | null {
+  const words = aliasWords(alias);
+  if (!words.length) return null;
+  if (words.length === 1) return 'single-word';
+  return words.join(' ').length < 5 ? 'short' : null;
+}
+
+export function appendAliases(raw: string, added: readonly string[]): string {
+  return parseAliases([raw, ...added].join('\n')).join('\n');
+}

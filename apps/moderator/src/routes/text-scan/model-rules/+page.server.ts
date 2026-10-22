@@ -11,6 +11,7 @@ import {
   ModelRuleVersionNotFoundError,
   RestoreRefusedError,
   RuleNeedsReviewError,
+  countNotSubjectDismissalsByRule,
   createModelRule,
   listModelRules,
   restoreModelRuleVersion,
@@ -20,17 +21,25 @@ import {
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { runLiteralTry } from './literal-try.server';
+import { runSuggestAliases } from './suggest-aliases.server';
 
 const querySchema = z.object({
   q: z.string().trim().max(200).catch(''),
   status: z.enum(['all', 'enabled', 'disabled']).catch('all'),
 });
 
-export const load: PageServerLoad = async ({ url }) => ({
-  query: parseQuery(url, querySchema),
-  rules: await listModelRules(),
-  wide: true,
-});
+export const load: PageServerLoad = async ({ url }) => {
+  const query = parseQuery(url, querySchema);
+  // The counts are decoration: a failure leaves the rules listed without them.
+  const [rules, dismissals] = await Promise.all([
+    listModelRules(),
+    countNotSubjectDismissalsByRule().catch((err) => {
+      console.error('Model rule dismissal counts failed', err);
+      return {} as Record<number, number>;
+    }),
+  ]);
+  return { query, rules, dismissals, wide: true };
+};
 
 const ruleSaveSchema = modelRuleFormSchema.extend({
   id: int4Id.optional().catch(undefined),
@@ -87,6 +96,11 @@ async function saveRule(
 
 export const actions: Actions = {
   try: async ({ request }) => runLiteralTry(await request.formData()),
+
+  // Billed on every run, so it takes the same grant as saving the rule it feeds.
+  suggestAliases: requiresGrant('textScan.modelRules.edit', async ({ request }) =>
+    runSuggestAliases(await request.formData())
+  ),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {
     const form = await request.formData();

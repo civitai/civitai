@@ -15,7 +15,10 @@ const service = vi.hoisted(() => ({
   setModelRuleEnabled: vi.fn(),
   restoreModelRuleVersion: vi.fn(),
   listModelRules: vi.fn(),
+  countNotSubjectDismissalsByRule: vi.fn(),
 }));
+const suggest = vi.hoisted(() => ({ runSuggestAliases: vi.fn() }));
+vi.mock('../suggest-aliases.server', () => suggest);
 vi.mock('$lib/server/model-rules.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RulesService>()),
   ...service,
@@ -46,16 +49,18 @@ const post = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  service.countNotSubjectDismissalsByRule.mockResolvedValue({});
 });
 
 describe('permissions', () => {
-  it.each(['save', 'saveAll', 'toggle', 'restoreRule'] as const)(
+  it.each(['save', 'saveAll', 'toggle', 'restoreRule', 'suggestAliases'] as const)(
     '%s returns 403 without textScan.modelRules.edit, even with the prompt publish permission',
     async (action) => {
       expect(await post(action, {}, { 'textScan.prompt.publish': true })).toMatchObject({
         status: 403,
       });
-      for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
+      for (const fn of [...Object.values(service), suggest.runSuggestAliases])
+        expect(fn).not.toHaveBeenCalled();
     }
   );
 });
@@ -217,7 +222,37 @@ describe('toggle', () => {
   });
 });
 
+describe('suggestAliases', () => {
+  it('hands the form to the suggester for a moderator who can edit rules', async () => {
+    suggest.runSuggestAliases.mockResolvedValue({ suggested: true, suggestions: [] });
+    expect(await post('suggestAliases', { subject: 'Example' })).toEqual({
+      suggested: true,
+      suggestions: [],
+    });
+    expect(suggest.runSuggestAliases).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('load', () => {
+  it('returns the not-this-subject dismissal counts by rule', async () => {
+    service.listModelRules.mockResolvedValue([]);
+    service.countNotSubjectDismissalsByRule.mockResolvedValue({ 3: 2 });
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data.dismissals).toEqual({ 3: 2 });
+  });
+
+  it('still lists the rules when the dismissal counts fail', async () => {
+    service.listModelRules.mockResolvedValue([{ id: 3 }]);
+    service.countNotSubjectDismissalsByRule.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data).toMatchObject({ rules: [{ id: 3 }], dismissals: {} });
+  });
+
   it('lists the rules with the filters from the url', async () => {
     const rule = { id: 3, subject: 'Example' };
     service.listModelRules.mockResolvedValue([rule]);

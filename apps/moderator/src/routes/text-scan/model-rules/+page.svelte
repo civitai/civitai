@@ -17,6 +17,7 @@
 
 <RulesWorkspace
   rules={data.rules}
+  dismissals={data.dismissals}
   query={data.query}
   {canEdit}
   userId={data.user?.id ?? 0}

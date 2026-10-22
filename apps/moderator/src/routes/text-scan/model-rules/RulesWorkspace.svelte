@@ -8,12 +8,15 @@
 
   let {
     rules,
+    dismissals,
     query,
     canEdit,
     userId,
     url,
   }: {
     rules: ModelRuleView[];
+    /** Holds dismissed as "not this subject", by rule id. */
+    dismissals: Record<number, number>;
     query: PageData['query'];
     canEdit: boolean;
     userId: number;
@@ -27,7 +30,7 @@
 
 <div class="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
   <div class="min-w-0">
-    <RulesList {rules} {drafts} {query} {canEdit} {url} />
+    <RulesList {rules} {dismissals} {drafts} {query} {canEdit} {url} />
   </div>
   <LiteralTry rules={tryRules} editedCount={overrides.length} />
 </div>
