@@ -22,6 +22,10 @@
 -- Tallies change on the next prepare-leaderboard run.
 --
 -- Do not apply between 23:00 and 00:01 UTC (see prepare-leaderboard / isLeaderboardPopulated timing).
+--
+-- One transaction: if block 2 RAISEs, block 1's writer change rolls back with it.
+
+BEGIN;
 
 DO $$
 DECLARE
@@ -138,3 +142,5 @@ BEGIN
     RAISE EXCEPTION 'public active leaderboards with no window in scoringDescription: % - add them to this list', missing;
   END IF;
 END $$;
+
+COMMIT;
