@@ -40,6 +40,7 @@ import {
   useTrackMenuOpen,
 } from './UserMenuParts';
 import type { PinTarget } from './UserMenuParts';
+import { useSwipeBack } from './swipeBack';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
 import classes from './UserMenuMobile.module.scss';
@@ -124,6 +125,8 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     undefined
   );
 
+  const swipe = useSwipeBack(back, path.length > 0);
+
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
     event.stopPropagation();
@@ -150,6 +153,9 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
             ? classes[direction === 'in' ? 'panelIn' : 'panelBack']
             : undefined
         )}
+        // A vertical pan still scrolls; the browser leaves the horizontal swipe to us.
+        style={path.length ? { touchAction: 'pan-y' } : undefined}
+        {...swipe}
       >
         {panel ? (
           <>
@@ -174,7 +180,15 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
           />
         )}
       </div>
-      {!panel && <UserMenuFooter onSwitchAccount={() => setSwitching(true)} />}
+      {!panel && (
+        <UserMenuFooter
+          onSwitchAccount={() => {
+            // The top level remounts when the switcher closes; it should not replay a back slide.
+            setDirection('in');
+            setSwitching(true);
+          }}
+        />
+      )}
     </div>
   );
 }
