@@ -74,7 +74,7 @@ export function UserBuzz({
   const clipText = !!gradient && !animated;
 
   const content = isLoading ? (
-    <Group gap={4} wrap="nowrap">
+    <Group gap={iconGap} wrap="nowrap">
       <Icon size={iconSize} color={config.color} fill={config.color} />
       <Loader color={config.color} type="dots" size="xs" />
     </Group>
@@ -83,12 +83,12 @@ export function UserBuzz({
       component="div"
       c={config.color}
       tt="uppercase"
+      {...textProps}
       style={{
         '--buzz-gradient': gradient || config.color,
         ...textProps.style,
       }}
       className={clsx(classes.userBuzz, clipText && classes.withGradient, textProps.className)}
-      {...textProps}
     >
       <Group gap={iconGap} wrap="nowrap">
         <BuzzBoltSvg

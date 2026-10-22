@@ -127,38 +127,60 @@ describe('mobile menu header row', () => {
 });
 
 describe('mobile menu sheet', () => {
-  test('fills the screen from the header down, edge to edge', async () => {
-    const pins = {
-      pins: [],
-      canEdit: true,
-      toggle: () => undefined,
-      move: () => undefined,
-      flush: () => undefined,
-    };
-    await renderAtViewport(
-      <ContainerProvider containerName="main">
-        <header
-          className="flex items-center justify-end"
-          style={{ height: 'var(--header-height)' }}
-        >
-          <UserMenuMobile
-            open
-            setOpen={() => undefined}
-            pins={pins as never}
-            trigger={<button id="burger">menu</button>}
-          />
-        </header>
-      </ContainerProvider>,
-      PHONE_VIEWPORT
-    );
-    const sheet = document.querySelector('.mantine-Popover-dropdown')!;
-    const header = box(document.querySelector('header')!);
-    expect(header.height).toBeGreaterThan(0);
-    expect(box(sheet)).toMatchObject({
-      left: 0,
-      right: PHONE_VIEWPORT.width,
-      top: header.bottom,
-      bottom: PHONE_VIEWPORT.height,
-    });
+  // A notched phone: the page pads the header down by the top inset and the home bar takes the bottom.
+  const INSET_TOP = 47;
+  const INSET_BOTTOM = 34;
+
+  test('fills the screen under the header, edge to edge, clear of both insets', async () => {
+    const root = document.documentElement;
+    root.style.setProperty('--safe-area-inset-top', `${INSET_TOP}px`);
+    root.style.setProperty('--safe-area-inset-bottom', `${INSET_BOTTOM}px`);
+    try {
+      const pins = {
+        pins: [],
+        canEdit: true,
+        toggle: () => undefined,
+        move: () => undefined,
+        flush: () => undefined,
+      };
+      await renderAtViewport(
+        <ContainerProvider containerName="main">
+          <div style={{ paddingTop: 'var(--safe-area-inset-top)' }}>
+            <header
+              className="flex items-center justify-end"
+              style={{ height: 'var(--header-height)' }}
+            >
+              <UserMenuMobile
+                open
+                setOpen={() => undefined}
+                pins={pins as never}
+                trigger={<button>menu</button>}
+              />
+            </header>
+          </div>
+        </ContainerProvider>,
+        PHONE_VIEWPORT
+      );
+      const sheet = document.querySelector('.mantine-Popover-dropdown')!;
+      const header = box(document.querySelector('header')!);
+      expect(header.top).toBe(INSET_TOP);
+      expect(box(sheet)).toMatchObject({
+        left: 0,
+        right: PHONE_VIEWPORT.width,
+        top: header.bottom,
+        bottom: PHONE_VIEWPORT.height,
+      });
+      // The footer buttons stay above the home bar, and the burger is not covered.
+      expect(box(sheet.querySelector('[aria-label="Switch account"]')!).bottom).toBeLessThanOrEqual(
+        PHONE_VIEWPORT.height - INSET_BOTTOM
+      );
+      const burger = box(
+        [...document.querySelectorAll('button')].find((b) => b.textContent === 'menu')!
+      );
+      expect(burger.bottom).toBeLessThanOrEqual(box(sheet).top);
+    } finally {
+      root.style.removeProperty('--safe-area-inset-top');
+      root.style.removeProperty('--safe-area-inset-bottom');
+    }
   });
 });

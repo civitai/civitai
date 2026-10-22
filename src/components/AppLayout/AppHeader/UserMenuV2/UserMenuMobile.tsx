@@ -57,6 +57,11 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
       opened={open}
       onChange={setOpen}
       withinPortal
+      // Under the header's 199 (nothing overlaps it) and under the modals and dialogs that open over the menu.
+      zIndex={199}
+      // The sheet covers the page, so Tab stays in it; Escape is handled inside the body.
+      trapFocus
+      returnFocus
       // Escape steps back a panel first; the body handles it.
       closeOnEscape={false}
     >
@@ -64,8 +69,8 @@ export function UserMenuMobile({ open, setOpen, pins, trigger }: UserMenuShellPr
         {/* Popover.Target does not toggle on click; Menu.Target does, on desktop. */}
         {React.cloneElement(trigger, { onClick: () => setOpen(!open) })}
       </Popover.Target>
-      {/* A sheet from the header down to the screen edge: the `!` classes beat floating-ui's inline position. */}
-      <Popover.Dropdown className="!fixed !inset-x-0 !bottom-0 !top-[var(--header-height)] flex !h-auto !w-full !max-w-none flex-col !rounded-none !border-x-0 !border-b-0 p-0">
+      {/* A sheet from under the header to the screen edge: the `!` classes beat floating-ui's inline position, and the insets are the page's own (`#__next` pads the top, no one pads the bottom). */}
+      <Popover.Dropdown className="!fixed !inset-x-0 !bottom-0 !top-[calc(var(--safe-area-inset-top)+var(--header-height))] flex !h-auto !w-full !max-w-none flex-col !rounded-none !border-x-0 !border-b-0 p-0 pb-[var(--safe-area-inset-bottom)]">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           {/* Portaled out of the page's `@container`, so the menu's `@md:` variants need their own. */}
           <div className="flex min-h-0 flex-1 flex-col @container">
