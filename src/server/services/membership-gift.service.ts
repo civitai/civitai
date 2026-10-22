@@ -1127,7 +1127,14 @@ async function findFundsInFlight(stripe: Stripe, pi: Stripe.PaymentIntent) {
 }
 
 export type GiftRevocationEffect =
-  | { kind: 'residual-subscription-ends'; subscriptionId: string; cancelAt: number | null }
+  | {
+      kind: 'residual-subscription-ends';
+      subscriptionId: string;
+      status: string;
+      cancelAt: number | null;
+      hasPaymentMethod: boolean;
+      hasPaidInvoice: boolean;
+    }
   | {
       kind: 'discount-removed';
       subscriptionId: string;
@@ -1140,7 +1147,23 @@ export type GiftRevocationEffect =
   | { kind: 'unaccepted-offer-withdrawn'; monthsRemaining: number }
   | { kind: 'nothing-live' };
 
-/** What revoking this gift takes away from its holder, read from live Stripe. */
+/** Whether Stripe could charge this subscription: the same test keepGiftMembership applies. */
+async function canBill(stripe: Stripe, sub: Stripe.Subscription) {
+  const customer = sub.customer as Stripe.Customer;
+  if (
+    sub.default_payment_method ||
+    customer.invoice_settings?.default_payment_method ||
+    customer.default_source
+  )
+    return true;
+  const cards = await stripe.paymentMethods.list({ customer: customer.id, type: 'card', limit: 1 });
+  return cards.data.length > 0;
+}
+
+/**
+ * What revoking this gift takes away from its holder, read from live Stripe. A failed read throws:
+ * read as "nothing there", it would let the revoke strip a subscription nobody looked at.
+ */
 async function describeRevocationEffect(
   stripe: Stripe,
   gift: {
@@ -1153,29 +1176,29 @@ async function describeRevocationEffect(
   }
 ): Promise<GiftRevocationEffect> {
   if (gift.stripeSubscriptionId) {
-    const sub = await stripe.subscriptions.retrieve(gift.stripeSubscriptionId).catch(() => null);
-    if (
-      sub &&
-      !TERMINAL_STATUSES.includes(sub.status) &&
-      sub.metadata?.membershipGiftId === gift.id
-    )
+    const sub = await stripe.subscriptions.retrieve(gift.stripeSubscriptionId, {
+      expand: ['customer'],
+    });
+    if (!TERMINAL_STATUSES.includes(sub.status) && sub.metadata?.membershipGiftId === gift.id) {
+      const paid = await stripe.invoices.list({ subscription: sub.id, status: 'paid', limit: 100 });
       return {
         kind: 'residual-subscription-ends',
         subscriptionId: sub.id,
+        status: sub.status,
         cancelAt: sub.cancel_at,
+        hasPaymentMethod: await canBill(stripe, sub),
+        hasPaidInvoice: paid.data.some((invoice) => invoice.amount_paid > 0),
       };
+    }
   }
 
   if (gift.armedCouponId) {
     const holderSub = await getGreenSubscription(gift.holderId);
     const live =
       holderSub && !TERMINAL_STATUSES.includes(holderSub.status)
-        ? await stripe.subscriptions
-            .retrieve(holderSub.id, { expand: ['customer'] })
-            .catch(() => null)
+        ? await stripe.subscriptions.retrieve(holderSub.id, { expand: ['customer'] })
         : null;
     if (live && live.discount?.coupon?.id === gift.armedCouponId) {
-      const customer = live.customer as Stripe.Customer;
       const item = live.items.data[0];
       return {
         kind: 'discount-removed',
@@ -1184,10 +1207,7 @@ async function describeRevocationEffect(
         fullPriceAmount:
           item?.price.unit_amount != null ? item.price.unit_amount * (item.quantity ?? 1) : null,
         currency: live.currency,
-        hasPaymentMethod:
-          !!live.default_payment_method ||
-          !!customer.invoice_settings?.default_payment_method ||
-          !!customer.default_source,
+        hasPaymentMethod: await canBill(stripe, live),
       };
     }
   }
@@ -1199,6 +1219,18 @@ async function describeRevocationEffect(
 
   return { kind: 'nothing-live' };
 }
+
+/**
+ * Revoking takes away something the holder pays for: a gifted month on their own subscription
+ * (the next renewal bills full price), or a gift's subscription they kept and can be billed for or
+ * have paid on. These need a person.
+ */
+const holderPaysForEffect = (effect: GiftRevocationEffect) =>
+  effect.kind === 'discount-removed' ||
+  (effect.kind === 'residual-subscription-ends' &&
+    (effect.hasPaymentMethod ||
+      effect.hasPaidInvoice ||
+      !['active', 'trialing'].includes(effect.status)));
 
 export type UnpaidGiftRevocation =
   | { outcome: 'not-found' }
@@ -1218,10 +1250,12 @@ export type UnpaidGiftRevocation =
       outcome: 'stopped';
       reason: 'partially-funded' | 'unapplied-cash-balance';
       paymentIntentId: string;
+      /** The payment was cancelled by this call before the money was found. */
+      paymentCancelled?: boolean;
     }
   | {
       outcome: 'stopped';
-      reason: 'holder-will-be-billed';
+      reason: 'holder-pays-for-it';
       paymentIntentId: string;
       effect: GiftRevocationEffect;
     }
@@ -1273,28 +1307,59 @@ export async function revokeUnpaidMembershipGift({
   if (pi.status !== 'canceled' && !UNFUNDED_PI_STATUSES.includes(pi.status))
     return { outcome: 'skipped', reason: 'payment-not-cancellable', paymentStatus: pi.status };
 
-  if (pi.status !== 'canceled') {
-    const inFlight = await findFundsInFlight(stripe, pi);
-    if (inFlight) return { outcome: 'stopped', reason: inFlight, paymentIntentId: pi.id };
-  }
+  // Checked for a cancelled payment too: cancelling a partly funded transfer moves what arrived into
+  // the customer's cash balance, where nothing returns it.
+  const inFlight = await findFundsInFlight(stripe, pi);
+  if (inFlight) return { outcome: 'stopped', reason: inFlight, paymentIntentId: pi.id };
 
   const effect = await describeRevocationEffect(stripe, gift);
-  // Removing a gifted month from a subscription the holder pays for bills their next renewal at full
-  // price, which no notification here tells them about; that needs a person to decide.
-  if (effect.kind === 'discount-removed')
-    return { outcome: 'stopped', reason: 'holder-will-be-billed', paymentIntentId: pi.id, effect };
+  if (holderPaysForEffect(effect))
+    return { outcome: 'stopped', reason: 'holder-pays-for-it', paymentIntentId: pi.id, effect };
   const selfGift = gift.gifterId === gift.holderId;
   const plan = { paymentIntentId: pi.id, paymentStatus: pi.status, selfGift, effect };
   if (!execute) return { outcome: 'would-revoke', ...plan, notified: false };
 
   // Cancel first: once cancelled, a late transfer can no longer complete this payment, and Stripe
   // refuses to cancel one that has started to clear, which stops the revoke here.
-  if (pi.status !== 'canceled')
-    await stripe.paymentIntents.cancel(pi.id, { cancellation_reason: 'abandoned' });
+  if (pi.status !== 'canceled') {
+    const cancelled = await stripe.paymentIntents.cancel(pi.id, {
+      cancellation_reason: 'abandoned',
+    });
+    // Money can land between the check above and the cancel.
+    const arrived = await findFundsInFlight(stripe, cancelled);
+    if (arrived)
+      return {
+        outcome: 'stopped',
+        reason: arrived,
+        paymentIntentId: pi.id,
+        paymentCancelled: true,
+      };
+  }
+
+  // A webhook can arm a month or accept the gift while the cancel runs; decide on the row as it is now.
+  const current = await dbWrite.membershipGift.findUniqueOrThrow({ where: { id: gift.id } });
+  const currentEffect = await describeRevocationEffect(stripe, current);
+  if (holderPaysForEffect(currentEffect))
+    return {
+      outcome: 'stopped',
+      reason: 'holder-pays-for-it',
+      paymentIntentId: pi.id,
+      effect: currentEffect,
+    };
 
   await revokeMembershipGift({ giftId: gift.id, reason: 'payment_failed' });
 
-  const notified = notify && effect.kind !== 'nothing-live';
+  // revokeMembershipGift reads the subscription again and skips it if that read fails, so a gift can
+  // be marked revoked while its subscription runs on. Look, rather than report success.
+  if (currentEffect.kind === 'residual-subscription-ends') {
+    const after = await stripe.subscriptions.retrieve(currentEffect.subscriptionId);
+    if (!TERMINAL_STATUSES.includes(after.status))
+      throw new Error(
+        `gift ${gift.id} revoked but subscription ${after.id} is still ${after.status}`
+      );
+  }
+
+  const notified = notify && currentEffect.kind !== 'nothing-live';
   if (notified)
     await createNotification({
       type: 'membership-gift-canceled',
@@ -1314,11 +1379,11 @@ export async function revokeUnpaidMembershipGift({
     stage: 'revoke-unpaid',
     giftId: gift.id,
     paymentIntentId: pi.id,
-    effect: effect.kind,
+    effect: currentEffect.kind,
     notified,
   });
 
-  return { outcome: 'revoked', ...plan, notified };
+  return { outcome: 'revoked', ...plan, effect: currentEffect, notified };
 }
 
 export type UnfulfilledGiftRefund =
@@ -1331,6 +1396,7 @@ export type UnfulfilledGiftRefund =
         | 'no-payment-intent'
         | 'payment-mismatch'
         | 'payment-not-succeeded'
+        | 'not-a-card-payment'
         | 'nothing-refundable';
       status?: string;
     }
@@ -1373,9 +1439,17 @@ export async function refundUnfulfilledMembershipGift({
   if (pi.status !== 'succeeded')
     return { outcome: 'skipped', reason: 'payment-not-succeeded', status: pi.status };
 
-  const charge = pi.latest_charge as Stripe.Charge | null;
+  const charge = pi.latest_charge;
+  if (typeof charge === 'string') throw new Error(`charge ${charge} was not expanded`);
+  // A refund of a bank transfer goes to the customer's cash balance, not back to the bank.
+  if (charge && charge.payment_method_details?.type !== 'card')
+    return {
+      outcome: 'skipped',
+      reason: 'not-a-card-payment',
+      status: charge.payment_method_details?.type,
+    };
   const amount = charge ? charge.amount_captured - charge.amount_refunded : 0;
-  if (!charge || amount <= 0) return { outcome: 'skipped', reason: 'nothing-refundable' };
+  if (!charge || !(amount > 0)) return { outcome: 'skipped', reason: 'nothing-refundable' };
 
   const plan = { paymentIntentId: pi.id, chargeId: charge.id, amount, currency: charge.currency };
   if (!execute) return { outcome: 'would-refund', ...plan };

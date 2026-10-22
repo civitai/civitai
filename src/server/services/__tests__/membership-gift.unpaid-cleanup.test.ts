@@ -11,6 +11,8 @@ const { mockStripe, mockCreateNotification } = vi.hoisted(() => ({
     paymentIntents: { retrieve: vi.fn(), cancel: vi.fn() },
     customers: { retrieveCashBalance: vi.fn() },
     refunds: { create: vi.fn() },
+    invoices: { list: vi.fn() },
+    paymentMethods: { list: vi.fn() },
   },
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
 }));
@@ -87,22 +89,36 @@ const transferIntent = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+// Free for the gifted months, set to end, nothing to bill.
 const residualSub = {
   id: 'sub_residual',
   status: 'active',
   cancel_at: 1800000000,
+  default_payment_method: null,
+  customer: { id: 'cus_2', invoice_settings: {}, default_source: null },
   metadata: { membershipGiftId: 'gift_1' },
 };
+let residualLive: Record<string, unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...unpaidGift });
   mockDbWrite.membershipGift.update.mockResolvedValue({});
   mockStripe.paymentIntents.retrieve.mockResolvedValue(transferIntent());
-  mockStripe.paymentIntents.cancel.mockResolvedValue({ id: 'pi_1', status: 'canceled' });
+  mockStripe.paymentIntents.cancel.mockResolvedValue(
+    transferIntent({ status: 'canceled', next_action: null })
+  );
   mockStripe.customers.retrieveCashBalance.mockResolvedValue({ available: null });
-  mockStripe.subscriptions.retrieve.mockResolvedValue(residualSub);
-  mockStripe.subscriptions.del.mockResolvedValue({});
+  mockDbWrite.membershipGift.findUniqueOrThrow.mockResolvedValue({ ...unpaidGift });
+  // The subscription reads as cancelled once revoke has deleted it, as Stripe's would.
+  residualLive = { ...residualSub };
+  mockStripe.subscriptions.retrieve.mockImplementation(async () => residualLive);
+  mockStripe.subscriptions.del.mockImplementation(async () => {
+    residualLive = { ...residualLive, status: 'canceled' };
+    return residualLive;
+  });
+  mockStripe.invoices.list.mockResolvedValue({ data: [{ amount_paid: 0 }] });
+  mockStripe.paymentMethods.list.mockResolvedValue({ data: [] });
   mockStripe.coupons.del.mockResolvedValue({});
 });
 
@@ -121,7 +137,10 @@ describe('revokeUnpaidMembershipGift', () => {
       effect: {
         kind: 'residual-subscription-ends',
         subscriptionId: 'sub_residual',
+        status: 'active',
         cancelAt: 1800000000,
+        hasPaymentMethod: false,
+        hasPaidInvoice: false,
       },
       notified: false,
     });
@@ -237,6 +256,7 @@ describe('revokeUnpaidMembershipGift', () => {
   it('notifies the holder only when asked and only when they lose something live', async () => {
     await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
     expect(mockCreateNotification).not.toHaveBeenCalled();
+    residualLive = { ...residualSub };
 
     await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true, notify: true });
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
@@ -248,7 +268,7 @@ describe('revokeUnpaidMembershipGift', () => {
     });
 
     mockCreateNotification.mockClear();
-    mockStripe.subscriptions.retrieve.mockResolvedValue({ ...residualSub, status: 'canceled' });
+    residualLive = { ...residualSub, status: 'canceled' };
     const result = await revokeUnpaidMembershipGift({
       giftId: 'gift_1',
       execute: true,
@@ -270,7 +290,7 @@ describe('revokeUnpaidMembershipGift', () => {
       id: 'sub_own',
       status: 'active',
     });
-    mockStripe.subscriptions.retrieve.mockResolvedValue({
+    mockStripe.subscriptions.retrieve.mockReset().mockResolvedValue({
       id: 'sub_own',
       status: 'active',
       currency: 'usd',
@@ -290,13 +310,131 @@ describe('revokeUnpaidMembershipGift', () => {
 
     expect(result).toMatchObject({
       outcome: 'stopped',
-      reason: 'holder-will-be-billed',
+      reason: 'holder-pays-for-it',
       effect: { kind: 'discount-removed', fullPriceAmount: 1000, hasPaymentMethod: true },
     });
     expect(mockStripe.paymentIntents.cancel).not.toHaveBeenCalled();
     expect(mockStripe.subscriptions.deleteDiscount).not.toHaveBeenCalled();
     expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('revokeUnpaidMembershipGift: the holder is paying, or Stripe cannot be read', () => {
+  const expectNothingChanged = () => {
+    expect(mockStripe.subscriptions.del).not.toHaveBeenCalled();
+    expect(mockStripe.subscriptions.deleteDiscount).not.toHaveBeenCalled();
+    expect(revokedStatusWrite()).toBeUndefined();
+  };
+
+  it.each([
+    ['kept, with a card to bill', { cancel_at: null, default_payment_method: 'pm_1' }, null],
+    ['kept, and paid on', { cancel_at: null }, [{ amount_paid: 1000 }]],
+    ['past due', { status: 'past_due' }, null],
+  ])(
+    'stops on a gift subscription the holder pays for (%s)',
+    async (_case, subOverride, invoices) => {
+      residualLive = { ...residualSub, ...subOverride };
+      if (invoices) mockStripe.invoices.list.mockResolvedValue({ data: invoices });
+
+      const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
+
+      expect(result).toMatchObject({ outcome: 'stopped', reason: 'holder-pays-for-it' });
+      expect(mockStripe.paymentIntents.cancel).not.toHaveBeenCalled();
+      expectNothingChanged();
+    }
+  );
+
+  it('ends a kept gift subscription nobody can be billed for', async () => {
+    residualLive = { ...residualSub, cancel_at: null };
+
+    const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(result.outcome).toBe('revoked');
+    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+  });
+
+  it('throws, changing nothing, when the subscription cannot be read', async () => {
+    mockStripe.subscriptions.retrieve.mockRejectedValue(new Error('stripe unavailable'));
+
+    await expect(revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true })).rejects.toThrow(
+      'stripe unavailable'
+    );
+    expect(mockStripe.paymentIntents.cancel).not.toHaveBeenCalled();
+    expectNothingChanged();
+  });
+
+  it('stops before revoking when money arrives while the payment is cancelled', async () => {
+    mockStripe.paymentIntents.cancel.mockResolvedValue(
+      transferIntent({ status: 'canceled', next_action: null, amount_received: 400 })
+    );
+
+    const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(result).toEqual({
+      outcome: 'stopped',
+      reason: 'partially-funded',
+      paymentIntentId: 'pi_1',
+      paymentCancelled: true,
+    });
+    expectNothingChanged();
+  });
+
+  it('checks the cash balance of an already-cancelled payment too', async () => {
+    mockStripe.paymentIntents.retrieve.mockResolvedValue(
+      transferIntent({ status: 'canceled', next_action: null })
+    );
+    mockStripe.customers.retrieveCashBalance.mockResolvedValue({ available: { usd: 1000 } });
+
+    const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(result).toMatchObject({ outcome: 'stopped', reason: 'unapplied-cash-balance' });
+    expectNothingChanged();
+  });
+
+  it('decides on the row as it is after the cancel, when a month was armed meanwhile', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...unpaidGift,
+      status: 'Active',
+      monthsRemaining: 2,
+      stripeSubscriptionId: null,
+    });
+    mockDbWrite.membershipGift.findUniqueOrThrow.mockResolvedValue({
+      ...unpaidGift,
+      status: 'Active',
+      monthsRemaining: 2,
+      stripeSubscriptionId: null,
+      armedCouponId: 'coupon_armed',
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'sub_own',
+      status: 'active',
+    });
+    residualLive = {
+      id: 'sub_own',
+      status: 'active',
+      currency: 'usd',
+      current_period_end: 1800000000,
+      discount: { coupon: { id: 'coupon_armed' } },
+      default_payment_method: 'pm_1',
+      customer: { id: 'cus_2', invoice_settings: {} },
+      items: { data: [{ quantity: 1, price: { unit_amount: 1000 } }] },
+      metadata: {},
+    };
+
+    const result = await revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(result).toMatchObject({ outcome: 'stopped', reason: 'holder-pays-for-it' });
+    expect(mockStripe.paymentIntents.cancel).toHaveBeenCalled();
+    expectNothingChanged();
+  });
+
+  it('fails loudly when the gift is revoked but its subscription is still running', async () => {
+    mockStripe.subscriptions.del.mockResolvedValue({});
+
+    await expect(revokeUnpaidMembershipGift({ giftId: 'gift_1', execute: true })).rejects.toThrow(
+      'gift gift_1 revoked but subscription sub_residual is still active'
+    );
   });
 });
 
@@ -334,7 +472,13 @@ describe('refundUnfulfilledMembershipGift', () => {
       status: 'succeeded',
       payment_method_types: ['card'],
       next_action: null,
-      latest_charge: { id: 'ch_1', currency: 'usd', amount_refunded: 0, ...charge },
+      latest_charge: {
+        id: 'ch_1',
+        currency: 'usd',
+        amount_refunded: 0,
+        payment_method_details: { type: 'card' },
+        ...charge,
+      },
     });
 
   beforeEach(() => {
@@ -386,6 +530,24 @@ describe('refundUnfulfilledMembershipGift', () => {
     const result = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
 
     expect(result).toEqual({ outcome: 'skipped', reason: 'nothing-refundable' });
+    expect(mockStripe.refunds.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a payment that was not made by card', async () => {
+    mockStripe.paymentIntents.retrieve.mockResolvedValue(
+      paidIntent({
+        amount_captured: 1000,
+        payment_method_details: { type: 'customer_balance' },
+      })
+    );
+
+    const result = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(result).toEqual({
+      outcome: 'skipped',
+      reason: 'not-a-card-payment',
+      status: 'customer_balance',
+    });
     expect(mockStripe.refunds.create).not.toHaveBeenCalled();
   });
 
