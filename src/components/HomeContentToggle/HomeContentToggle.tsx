@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ShellLink } from '~/components/AppLayout/ShellDs/ShellDs';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
 import { navRegistry, type NavRegistryEntry } from '~/components/HomeContentToggle/nav-registry';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
@@ -36,6 +37,7 @@ export function HomeTabs() {
   const router = useRouter();
   const activePath = router.pathname.split('/')[1] || 'home';
   const { bar, more, showLabels } = useResolvedNav();
+  const ds = !!useFeatureFlags().shellDesignSystemMarkup;
 
   const [moreOpened, setMoreOpened] = useState(false);
   const [lastSeenChangelog] = useLocalStorage<number>({
@@ -83,7 +85,31 @@ export function HomeTabs() {
         // still appends a div to document.body per item and pays useFloating on every render of
         // a component that re-renders on every navigation. Nobody has a saved config on day one,
         // so `showLabels` is true for everyone: wrap only when the tooltip can actually open.
-        const button = (
+        const pillClassName = clsx('h-8 overflow-visible rounded-full border-none py-2', {
+          ['pl-3 pr-4']: showLabels,
+          ['px-3']: !showLabels,
+          ['bg-gray-4 dark:bg-dark-4']: isActive(entry),
+          [classes.tabHighlight]: entry.key === 'shop',
+        });
+        const button = ds ? (
+          <ShellLink
+            key={entry.key}
+            variant="default"
+            size="sm"
+            href={entry.url}
+            aria-label={showLabels ? undefined : label}
+            // Mantine's label slot carried `flex gap-2 items-center capitalize`; the design-system
+            // button is already an `inline-flex` row with an 8px gap, so only `capitalize` moves.
+            className={clsx(pillClassName, 'capitalize')}
+          >
+            {navIcons[entry.key]({ size: 16 })}
+            {/* NO `text-base font-medium` here, unlike the Mantine branch: those never rendered
+                there (see that branch's comment), and with no `.mantine-Button-label` ancestor
+                they WOULD render here, as 16px/500 against the pill's 14px/600. */}
+            {showLabels && <span>{label}</span>}
+            {dot(entry, '-ml-1 -mr-2')}
+          </ShellLink>
+        ) : (
           <Button
             key={entry.key}
             variant="default"
@@ -91,12 +117,7 @@ export function HomeTabs() {
             href={entry.url}
             // Icon-only tabs lose their accessible name with the text, so it moves to the label.
             aria-label={showLabels ? undefined : label}
-            className={clsx('h-8 overflow-visible rounded-full border-none py-2', {
-              ['pl-3 pr-4']: showLabels,
-              ['px-3']: !showLabels,
-              ['bg-gray-4 dark:bg-dark-4']: isActive(entry),
-              [classes.tabHighlight]: entry.key === 'shop',
-            })}
+            className={pillClassName}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >
             {navIcons[entry.key]({ size: 16 })}
